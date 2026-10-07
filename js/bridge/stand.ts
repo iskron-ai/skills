@@ -238,7 +238,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (base && a.take !== true && name === base) {
     const listensOnBoard = (n: string): boolean =>
       entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
-    const seat = await seatFor(realm, karta, base, listensOnBoard, beside);
+    const seat = await seatFor(realm, karta, base, listensOnBoard, beside, cwd);
     const choice = seat.choice;
     byRecord = seat.resumed;
     if ("refusal" in choice) {

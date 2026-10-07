@@ -7,7 +7,9 @@
 // либо доска «слушает», а запись держания этой сессии этого не опровергает
 // (держатель вне каталога гранта или своё не доказано); чья сессия — по записи
 // держания, которую пишет держатель.
+import { sameDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
+import { harnessName } from "./client.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { NAME_MAX } from "./names.ts";
@@ -27,19 +29,23 @@ export const suffixed = (base: string, n: number): string =>
 
 /**
  * Своё по записи держания: на ней стояла та же сессия харнесса, что у этого
- * моста (харнесс, не называющий сессий, — без сессии с обеих сторон: мёртвый
- * предшественник этого каталога — всё, что о нём известно), а локальный сокет
- * места не отвечает. Доска может ещё читать его слушающим — место возвращается
- * по записи со слухом, не подписью без него (#6706).
+ * моста (харнесс, не называющий сессий, — без сессии с обеих сторон, и запись
+ * этого харнесса из этого каталога `cwd`: мёртвый предшественник здесь — всё,
+ * что о нём известно; дом моста общий у всех каталогов и харнессов), а
+ * локальный сокет места не отвечает. Доска может ещё читать его слушающим —
+ * место возвращается по записи со слухом, не подписью без него (#6706).
  */
 export async function ownByRecord(
   realm: string,
   karta: string | number,
   name: string,
+  cwd: string,
 ): Promise<boolean> {
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
-  if (!rec || (rec.session ?? null) !== sessionOfBridge()) return false;
+  const me = sessionOfBridge();
+  if (!rec || (rec.session ?? null) !== me) return false;
+  if (!me && (rec.client !== harnessName() || !sameDir(rec.cwd, cwd))) return false;
   return !(await localSocketAlive(localSocketPathOf(key)));
 }
 
@@ -51,6 +57,7 @@ async function holderOf(
   karta: string,
   name: string,
   listensOnBoard: (name: string) => boolean,
+  cwd: string,
 ): Promise<Holder> {
   if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return "mine";
   if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
@@ -62,7 +69,7 @@ async function holderOf(
   }
   // Доска «слушает», а живого локального держателя нет: своё доказывает только
   // запись этой сессии (возврат по ней); иначе слушающий — не наш, встаём рядом.
-  return listensOnBoard(name) && !(await ownByRecord(realm, karta, name)) ? "taken" : "free";
+  return listensOnBoard(name) && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
 }
 
 export type PlaceChoice = { name: string; own: boolean; note: string | null } | { refusal: string };
@@ -71,23 +78,26 @@ export type PlaceChoice = { name: string; own: boolean; note: string | null } | 
  * Куда встать под именем base: на него самого (своё, свободное либо прежнего
  * моста этой сессии — `own`, его мост возвращает сам), иначе на первое `base.N`,
  * которое свободно или своё. Все сто заняты — отказ: подписи без слуха нет.
- * `baseTaken` — само имя занято наверняка (возврат по записи не дал слуха).
+ * `taken` — имена, занятые наверняка (возврат по записи не дал слуха).
  */
 export async function placeFor(
   realm: string,
   karta: string,
   base: string,
   listensOnBoard: (name: string) => boolean,
-  baseTaken = false,
+  cwd: string,
+  taken: ReadonlySet<string> = new Set(),
 ): Promise<PlaceChoice> {
-  const first = baseTaken ? "taken" : await holderOf(realm, karta, base, listensOnBoard);
+  const holder = async (name: string): Promise<Holder> =>
+    taken.has(name) ? "taken" : await holderOf(realm, karta, name, listensOnBoard, cwd);
+  const first = await holder(base);
   if (first !== "taken") {
     const own = first === "session";
     return { name: base, own, note: own ? SEP.ownSession(base) : null };
   }
   for (let n = 2; n <= 99; n++) {
     const cand = suffixed(base, n);
-    const h = await holderOf(realm, karta, cand, listensOnBoard);
+    const h = await holder(cand);
     if (h === "taken") continue;
     const own = h === "session";
     return { name: cand, own, note: SEP.beside(base, cand, own) };
@@ -98,9 +108,10 @@ export async function placeFor(
 export type Resumed = { word: string; pending: number };
 
 /**
- * Выбор места с возвратом по записи (#6706): доска читает само имя слушающим,
- * а своё доказывает запись держания — место возвращается с диска со слухом
- * сразу; возврат не дал слуха — имя считается занятым, встаём рядом.
+ * Выбор места с возвратом по записи (#6706): доска читает выбранное место —
+ * само имя или своё место рядом `имя.N` — слушающим, а своё доказывает запись
+ * держания — место возвращается с диска со слухом сразу; возврат не дал слуха —
+ * место считается занятым, встаём на следующее.
  * Место другого графа рядом (`besideRealm`) с диска не возвращается — его
  * слух даёт register на канале этого моста.
  */
@@ -110,15 +121,23 @@ export async function seatFor(
   base: string,
   listensOnBoard: (name: string) => boolean,
   besideRealm: boolean,
+  cwd: string,
 ): Promise<{ choice: PlaceChoice; resumed: Resumed | null }> {
-  const choice = await placeFor(realm, karta, base, listensOnBoard);
-  if ("refusal" in choice || choice.name !== base || choice.own || besideRealm)
-    return { choice, resumed: null };
-  if (!listensOnBoard(base) || !(await ownByRecord(realm, karta, base)))
-    return { choice, resumed: null };
-  const resumed = await resumeFromDisk(realm, karta, base);
-  if (resumed) return { choice, resumed };
-  return { choice: await placeFor(realm, karta, base, listensOnBoard, true), resumed: null };
+  const taken = new Set<string>();
+  for (;;) {
+    const choice = await placeFor(realm, karta, base, listensOnBoard, cwd, taken);
+    if ("refusal" in choice || choice.own || besideRealm) return { choice, resumed: null };
+    const at = choice.name;
+    if (!listensOnBoard(at) || !(await ownByRecord(realm, karta, at, cwd)))
+      return { choice, resumed: null };
+    const resumed = await resumeFromDisk(realm, karta, at);
+    if (resumed)
+      return {
+        choice: at === base ? choice : { ...choice, note: SEP.beside(base, at, true) },
+        resumed,
+      };
+    taken.add(at);
+  }
 }
 
 const SEP = {

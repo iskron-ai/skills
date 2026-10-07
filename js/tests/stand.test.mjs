@@ -1531,43 +1531,61 @@ test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is n
 // каталога остановлен, запись держания цела): исхода «только register» без слуха
 // не бывает (#6706). Запись той же сессии (у харнесса без сессий — без неё с
 // обеих сторон) доказывает своё — место возвращается по ней со слухом; иначе,
-// и когда возврат слуха не дал, — место рядом со слухом.
-async function stoppedHolder(t, first, then = first, mute = false) {
+// и когда возврат слуха не дал, — место рядом со слухом. `beside` — прежний мост
+// сам стоял рядом (proba слушает чужой); `init` и `cwd` — харнесс и каталог
+// нового моста, когда они не те, что у прежнего.
+async function stoppedHolder(t, first, then = first, mute = false, opts = {}) {
   const { fake, dir, bridge } = await ready(t);
   const cwd = mkdtempSync(join(tmpdir(), "iskron-stopped-"));
   const args = { realm: "nks-dev", karta: 931, name: "proba", cwd };
+  const seat = opts.beside ? "proba.2" : "proba";
+  if (opts.beside) await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
   if (first) await bridge.call("iskron/resume", { cwd, session: first });
   const stood = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.ok(!stood.result?.isError, standText(stood));
+  assert.equal(placeOf(stood), seat, standText(stood));
   await bridge.stop();
   await until(() => fake.state.ws.size === 0, "the stopped bridge's socket to close");
   const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
   assert.equal(holds.length, 1, "the stopped bridge's record is kept");
-  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  const listening = opts.beside ? ["proba", "proba.2"] : ["proba"];
+  await fake.control({
+    places: listening.map((name) => ({ karta: 931, name, listening: true })),
+  });
   const next = startBridge(fake.mcpUrl, dir);
   t.after(() => next.stop());
-  assert.ok((await next.call("initialize", INIT)).result);
+  assert.ok((await next.call("initialize", opts.init ?? INIT)).result);
   // Сессию называет плагин; без ключа и каталога iskron/resume сам места не возвращает.
   if (then) await next.call("iskron/resume", { session: then });
   if (mute) await fake.control({ ws_mute: true }); // возврат по записи не получит hello
-  const r = await next.call("tools/call", { name: "iskron_stand", arguments: args });
+  const nextArgs = opts.cwd ? { ...args, cwd: opts.cwd } : args;
+  const r = await next.call("tools/call", { name: "iskron_stand", arguments: nextArgs });
   return { fake, dir, r };
 }
 
-const besideHeard = (r) => {
+const besideHeard = (r, seat = "proba.2") => {
   const text = standText(r);
   assert.ok(!r.result?.isError, text);
-  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет/, text);
-  assert.equal(placeOf(r), "proba.2", text);
-  assert.match(text, /Слушать: .*watchdog proba\.2--931--nks-dev/, text);
+  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет|возврат места с диска/, text);
+  assert.equal(placeOf(r), seat, text);
+  assert.match(
+    text,
+    new RegExp(`Слушать: .*watchdog ${seat.replace(".", "\\.")}--931--nks-dev`),
+    text,
+  );
 };
-const backByRecord = (r) => {
+const backByRecord = (r, seat = "proba") => {
   const text = standText(r);
   assert.ok(!r.result?.isError, text);
-  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет|встаю рядом/, text);
-  assert.equal(placeOf(r), "proba", text);
+  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет|Отказано/, text);
+  if (seat === "proba") assert.doesNotMatch(text, /встаю рядом/, text);
+  assert.equal(placeOf(r), seat, text);
   assert.match(text, /возврат места с диска/, text);
-  assert.match(text, /Слушать: .*watchdog proba--931--nks-dev/, text);
+  assert.match(
+    text,
+    new RegExp(`Слушать: .*watchdog ${seat.replace(".", "\\.")}--931--nks-dev`),
+    text,
+  );
 };
 
 test("iskron_stand: the board reads a stopped holder of ANOTHER session listening — the bridge stands beside with hearing, never «register only»", async (t) => {
@@ -1584,6 +1602,31 @@ test("iskron_stand: a harness without sessions, the board reads this directory's
 
 test("iskron_stand: the record proves the seat own, but taking it back brings no hello — the bridge stands beside with hearing, never «register only»", async (t) => {
   besideHeard((await stoppedHolder(t, null, null, true)).r);
+});
+
+// Своё место рядом (имя.N), которое доска ещё читает слушающим, возвращается по
+// записи так же, как само имя; без hello — следующее свободное N (#6706).
+test("iskron_stand: the bridge's own seat beside (name.2), its stopped holder still read listening, is taken back by its record with hearing", async (t) => {
+  const { fake, r } = await stoppedHolder(t, null, null, false, { beside: true });
+  backByRecord(r, "proba.2");
+  assert.match(standText(r), /встаю рядом на proba\.2 со слухом \(его держал прежний мост/);
+  assert.equal(fake.state.counts.webhooks_added, 0, "no role-inbox hook for the seat beside");
+});
+
+test("iskron_stand: taking the own seat beside back brings no hello — the bridge stands on the next free name.N with hearing", async (t) => {
+  besideHeard((await stoppedHolder(t, null, null, true, { beside: true })).r, "proba.3");
+});
+
+// Харнесс без сессий: своё по записи — только предшественник этого каталога в
+// этом харнессе; запись другого каталога или харнесса в общем доме — не своё.
+test("iskron_stand: a harness without sessions, the listening seat's record is of ANOTHER directory — not taken back, the bridge stands beside", async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-stopped-other-"));
+  besideHeard((await stoppedHolder(t, null, null, false, { cwd })).r);
+});
+
+test("iskron_stand: a harness without sessions, the listening seat's record is of ANOTHER harness — not taken back, the bridge stands beside", async (t) => {
+  const init = { ...INIT, clientInfo: { name: "stand-probe-other", version: "0" } };
+  besideHeard((await stoppedHolder(t, null, null, false, { init })).r);
 });
 
 // Встать рядом после отъёма не вышло по сети: сессия узнаёт это словом с ходом,
