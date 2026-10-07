@@ -184,6 +184,9 @@ export async function setupTools(
   const lost = takeLostMarker(authDir(), home);
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
+  // Остановленный экземпляр маркеров не берёт: отложенный приём переноса (moves.ts) и
+  // бужение близнеца пережили бы остановку и сняли маркер следующего экземпляра папки.
+  const adoptNow = () => void (stopped || adopt.now());
 
   function shake(slot: Slot): void {
     slot.ready = handshake(slot.bridge, login.on, login.done);
@@ -465,11 +468,11 @@ export async function setupTools(
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
-    adopt: () => adopt.now(),
+    adopt: adoptNow,
     // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (handoff.ts, #6695).
     moved: (s, to) =>
       handoff(s, to, home) ||
-      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
+      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);

@@ -2675,6 +2675,36 @@ test("a session moved into a folder whose instance loads after the event: the pl
   }
 });
 
+// A live instance of the new folder takes the move's marker a moment after the event
+// (moves.ts). Stopped within that moment, it takes nothing: the next marker of its
+// folder belongs to the instance that comes after it, not to a stopped keeper.
+test("an instance stopped right after a move into its folder takes no later marker of that folder", async () => {
+  const calls = join(SANDBOX, "move-stopped.calls");
+  const resume = join(SANDBOX, "move-stopped.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move-stopped", { FB_CALLS: calls, FB_RESUME: resume });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    const ADOPT_MS = 3000;
+    const C = await plugin({ ...b.env, ISKRON_MOVE_ADOPT_MS: ADOPT_MS }, inLoc(LOC_B, "s9"));
+    C.emit({ type: "session.moved", data: { sessionID: "s9", location: LOC_B } });
+    const moment = Date.now() + ADOPT_MS;
+    await delay(0);
+    await C.stop();
+    A.emit({ type: "session.moved", data: { sessionID: "s1", location: LOC_B } });
+    await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    assert.ok(Date.now() < moment, "the marker lay before the stopped instance's moment");
+    await delay(moment + 300 - Date.now());
+    assert.equal(lostMarkers().length, 1, "the marker waits for the next instance of B");
+  } finally {
+    await A.stop();
+  }
+});
+
 // Without the event at the old instance, a take from the new folder evicts the old
 // bridge — that is the session's own bridge taking its place: no «taken away» word.
 test("an eviction of a session that moved to another folder is not said into it as «taken away»", async () => {
