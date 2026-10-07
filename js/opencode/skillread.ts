@@ -86,6 +86,19 @@ export function within(p: string, root: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+/**
+ * The root of the delivery's set, told by a listed skill: the bridge skill in its own
+ * directory (`<root>/<BRIDGE_SKILL>/SKILL.md`) carrying the bridge in scripts/; else null.
+ * The path as listed, not canonical.
+ */
+export function bridgeRoot(s: any): string | null {
+  const path = typeof s?.path === "string" ? s.path : null;
+  if (s?.id !== BRIDGE_SKILL || !path || !isAbsolute(path)) return null;
+  const dir = dirname(path);
+  if (basename(dir) !== BRIDGE_SKILL || !existsSync(join(dir, "scripts", BRIDGE_FILE))) return null;
+  return dirname(dir);
+}
+
 /** Canonical directories of the delivery skills OpenCode has loaded. */
 async function skillDirs(ctx: Context): Promise<string[]> {
   const res: any = await ctx.skill.list();
@@ -105,9 +118,11 @@ async function skillDirs(ctx: Context): Promise<string[]> {
   // a root shares its directory with any other set. No lock proves nothing, and a lock
   // that does not parse is a refusal — either root opens nothing.
   const sets = new Map<string, ReturnType<typeof skillLock>>();
-  for (const { id, dir } of listed)
-    if (id === BRIDGE_SKILL && existsSync(join(dir, "scripts", BRIDGE_FILE)))
-      sets.set(dirname(dir), skillLock(dirname(dir)));
+  for (const s of list) {
+    const root = bridgeRoot(s);
+    const c = root ? canon(root) : null;
+    if (c) sets.set(c, skillLock(c));
+  }
   return listed
     .filter(({ id, dir }) => {
       const lock = sets.get(dirname(dir));
@@ -211,26 +226,33 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
 
   // Only an ask is lifted: an explicit deny of the user's config stays a deny. The
   // evaluation does not tell a configured ask from the default one — both are lifted.
-  await permission.hook("evaluate", async (e) => {
-    if (e?.action !== "external_directory" || e.effect !== "ask") return;
+  const lifts = async (e: any): Promise<boolean> => {
+    if (e?.action !== "external_directory" || e.effect !== "ask") return false;
     const id = e.source?.type === "tool" ? e.source.id : null;
     const call = typeof id === "string" ? calls.get(id) : undefined;
     // The call is the ask's only when it is of the same session: an id is not unique across them.
-    if (!call || !READERS.has(call.tool) || typeof e.sessionID !== "string") return;
-    if (e.sessionID !== call.session) return;
+    if (!call || !READERS.has(call.tool) || typeof e.sessionID !== "string") return false;
+    if (e.sessionID !== call.session) return false;
     const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
-    if (!paths) return;
+    if (!paths) return false;
     const roots = await skillDirs(ctx);
     const walked = new Set<string>();
     for (const p of paths) {
       const c = canonReach(p);
       const root = c ? roots.find((r) => within(c, r)) : undefined;
-      if (!root) return;
+      if (!root) return false;
       walked.add(root);
     }
     // A read is judged by its realpath above; a glob or grep descends and follows what it meets.
-    if (call.tool !== "read" && [...walked].some(leadsOut)) return;
-    e.effect = "allow";
+    return call.tool === "read" || ![...walked].some(leadsOut);
+  };
+  // Whatever fails while judging (the skill list, the file system) leaves the ask as it is.
+  await permission.hook("evaluate", async (e) => {
+    try {
+      if (await lifts(e)) e.effect = "allow";
+    } catch {
+      /* the ask stays */
+    }
   });
   return true;
 }

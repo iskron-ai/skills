@@ -502,12 +502,14 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
 
 // The plugin's bridge is the home copy, outside any set (#6226): the set it
 // names in attrs.skills is the one OpenCode loaded establish-mcp from —
-// ctx.skill.list(), as the commands read it.
+// ctx.skill.list(), as the commands read it — and carries the bridge in its scripts/,
+// the same mark the skill reads go by (skillread.ts bridgeRoot).
 test("the plugin hands the bridge the root of the skill set that carries establish-mcp", async () => {
   const root = join(SANDBOX, "set-root", "skills");
   const path = join(root, "establish-mcp", "SKILL.md");
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(join(dirname(path), "scripts"), { recursive: true });
   writeFileSync(path, "---\nname: establish-mcp\n---\n");
+  writeFileSync(join(dirname(path), "scripts", "iskron.mjs"), "");
   const skills = [
     { id: "builtin", name: "builtin", description: "x", path: "/builtin/x.md", content: "" },
     { id: "establish-mcp", name: "establish-mcp", description: "x", path, content: "" },
@@ -3349,6 +3351,15 @@ test("a delivery skill's files outside the working copy are read without an ask 
       ]),
       "ask",
       "only the external_directory check is touched",
+    );
+    // The skill list fails at the ask: the hook throws nothing, the ask stays.
+    rec.ctx.skill.list = async () => {
+      throw new Error("list down");
+    };
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, ext, [`${refs}/*`]),
+      "ask",
+      "a skill list that fails keeps the ask, and the hook does not throw",
     );
   } finally {
     await rec.stop();
