@@ -40,18 +40,22 @@ export const askWord = (who: string, action: string, resources: string[]): strin
   const what = cut.length ? `${action}: ${cut.join("; ")}${more}` : action;
   // Слово «ответь в его сессии» модель родителя поняла как «напиши ребёнку» (живой прогон 7.4.0):
   // ответ на запрос разрешения из сессии родителя невозможен, его даёт только человек в окне ребёнка.
+  // Отмены хода ребёнка у родителя тоже нет — и её слово отдаёт человеку.
   return L(
     `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. ` +
       "Ты ответить не можешь, и никакое слово субагенту его не разблокирует. " +
-      "Скажи человеку, что и где ждёт; не ждёшь — отмени ход субагента.",
+      "Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.",
     `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. ` +
       "You cannot answer it, and no message to the subagent unblocks it. " +
-      "Tell the human what is waiting and where; if you will not wait, cancel the subagent's turn.",
+      "Tell the human what is waiting and where: only they can answer or cancel the subagent's turn.",
   );
 };
 
 export const interruptWord = (who: string, reason: string): string =>
-  `Искрон: ход субагента ${who} прерван (${reason}).`;
+  L(
+    `Искрон: ход субагента ${who} прерван (${reason}).`,
+    `Iskron: the turn of subagent ${who} was interrupted (${reason}).`,
+  );
 
 export function createWaits(ctx: Context, d: WaitDoors) {
   const home = homeOf(ctx);

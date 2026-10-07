@@ -5887,7 +5887,8 @@ test("a background child waiting on a permission: the parent hears it once, woke
     );
     assert.doesNotMatch(w.text, /ответь в его сессии/, "not read as «write to the child»");
     assert.match(w.text, /никакое слово субагенту его не разблокирует/);
-    assert.match(w.text, /не ждёшь — отмени ход субагента/);
+    assert.match(w.text, /ответить или отменить ход субагента может только он/);
+    assert.doesNotMatch(w.text, /отмени(?!ть)|не ждёшь/, "no call to cancel by itself");
     ask("per_1", "child");
     await delay(300);
     assert.equal(waitWords(rec).length, 1, "the same request is told once");
@@ -5898,7 +5899,7 @@ test("a background child waiting on a permission: the parent hears it once, woke
   }
 });
 
-test("the permission word in English: only the human answers, in the child's session window; the parent cannot, a message to the child does not unblock it", async () => {
+test("the wait words in English: only the human answers or cancels, in the child's session window; a message to the child does not unblock it; an interruption is English too", async () => {
   const env = { ISKRON_PERMISSION_WAIT_MS: 100, ISKRON_BRIDGE_LANG: "en" };
   const rec = await plugin(bridgeEnv("permission-asked-en", env).env, {
     location: { directory: SANDBOX },
@@ -5918,8 +5919,24 @@ test("the permission word in English: only the human answers, in the child's ses
       /subagent «разбор \(@general subagent\)» \(child\) is waiting for a permission: bash: a; b; c and 1 more\. Only the human can answer this request — in the window of the subagent's session «разбор \(@general subagent\)» \(child\)/,
     );
     assert.match(w.text, /You cannot answer it, and no message to the subagent unblocks it/);
-    assert.match(w.text, /cancel the subagent's turn/);
+    assert.match(w.text, /only they can answer or cancel the subagent's turn/);
+    assert.doesNotMatch(
+      w.text,
+      /if you will not wait|(?<!or )cancel/,
+      "no call to cancel by itself",
+    );
     assert.doesNotMatch(w.text, /[а-яё]{3,} [а-яё]{3,}/i, "no Russian prose besides the title");
+    rec.emit({
+      type: "session.execution.interrupted",
+      id: "evt_en",
+      data: { sessionID: "child", reason: "shutdown" },
+    });
+    const cut = () => rec.synthetics.filter((s) => /was interrupted/.test(s.text));
+    await until(() => cut().length === 1, "the interruption word to the parent");
+    assert.match(
+      cut()[0].text,
+      /^Iskron: the turn of subagent «разбор \(@general subagent\)» \(child\) was interrupted \(shutdown\)\.$/,
+    );
   } finally {
     await rec.stop();
   }
