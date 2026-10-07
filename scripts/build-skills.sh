@@ -2,7 +2,7 @@
 # Regenerate <name>.skill bundles from skills/<name>/ (the source of truth).
 #
 # Each bundle is a zip whose single top-level entry is <name>/ (so it installs as
-# ~/.claude/skills/<name>/ and uploads to claude.ai as a Skill). The .skill files are
+# ~/.claude/skills/<name>/ and uploads to Claude Desktop as a Skill). The .skill files are
 # committed derived artifacts — never hand-edit them; edit skills/<name>/SKILL.md and rebuild.
 #
 # Детерминированно ПОПЕРЁК МАШИН, а не только на одной: упаковку делает

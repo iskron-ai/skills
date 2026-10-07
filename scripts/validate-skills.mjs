@@ -146,14 +146,14 @@ function validateSkill(name) {
       } else if (bytes > 900) {
         warn(where, `\`description\` is ${bytes} UTF-8 bytes — inside the 1024-byte cliff's blast radius; keep ≤900 for headroom`);
       }
-      // The claude.ai plugin loader refuses a description with XML-tag-shaped
-      // content ("SKILL.md description cannot contain XML tags") — and the
-      // refusal takes down the whole plugin install, not just the one skill.
+      // The claude.ai skill loader (Claude Desktop uploads go through it)
+      // refuses a description with XML-tag-shaped content ("SKILL.md
+      // description cannot contain XML tags").
       // Its exact matcher is unknown (behaviour over prose), and no
       // description needs angle brackets, so ban them outright: write
       // placeholders as @handle/mind, not @<handle>/mind.
       if (/[<>]/.test(rendered)) {
-        fail(where, "`description` contains `<` or `>` — the claude.ai plugin loader rejects XML-tag-shaped descriptions and the whole plugin install fails with it; write placeholders without angle brackets (@handle/mind, not @<handle>/mind)");
+        fail(where, "`description` contains `<` or `>` — the claude.ai skill loader rejects XML-tag-shaped descriptions; write placeholders without angle brackets (@handle/mind, not @<handle>/mind)");
       }
     }
   }
@@ -503,37 +503,27 @@ try {
   }
 }
 
-// 7. Отгружаемая MCP-запись обязана целить в КАНОНИЧЕСКИЙ идентификатор
-//    ресурса — ту самую строку, что сервер печатает в своём protected-resource
-//    (снимок несёт её наблюдением, `make surface`). Совпадение здесь побайтовое
-//    не из педантизма: наивный клиент сравнивает строки, и хвостовая косая, —
-//    которую пишут по привычке, — разводит идентификаторы. Отказ приходит
-//    немым: «сервер недоступен» вместо «идентификаторы разошлись», и цену
-//    платит каждый, кто поставил отгружаемую запись. Правило принято по слову
-//    держателя поверхности; форму его сервера здесь не нормализуем.
+// 7. Путь к графу один — мост (слово владельца): отгружаемая MCP-запись —
+//    только stdio-процесс моста, http-записи к серверу нет ни в одном манифесте.
+//    Запись с url в обход моста пишет в граф без места, и подпись записи
+//    теряется молча.
 try {
-  const snapPath = join(root, "fixtures/surface.json");
-  // Две отгружаемые записи: stdio-мост в .mcp.json (url там нет) и http-объект
-  // в манифесте Codex, который едет и в архив claude.ai.
   const records = [
     [".mcp.json", () => JSON.parse(readFileSync(join(root, ".mcp.json"), "utf8")).mcpServers],
     [".codex-plugin/plugin.json", () => JSON.parse(readFileSync(join(root, ".codex-plugin/plugin.json"), "utf8")).mcpServers],
   ];
-  if (existsSync(snapPath)) {
-    const canonical = JSON.parse(readFileSync(snapPath, "utf8")).resource;
-    for (const [label, read] of records) {
-      if (!canonical || !existsSync(join(root, label))) continue;
-      const servers = read();
-      if (!servers || typeof servers !== "object") continue;
-      for (const [name, rec] of Object.entries(servers)) {
-        if (rec?.url && rec.url !== canonical) {
-          fail(label, `запись \`${name}\` целит в ${JSON.stringify(rec.url)}, а канонический идентификатор ресурса — ${JSON.stringify(canonical)}: наивный клиент сравнит строки и откатится на «сервер авторизации = сам ресурс», сказав «сервер недоступен»`);
-        }
+  for (const [label, read] of records) {
+    if (!existsSync(join(root, label))) continue;
+    const servers = read();
+    if (!servers || typeof servers !== "object") continue;
+    for (const [name, rec] of Object.entries(servers)) {
+      if (rec?.url || (rec?.type && rec.type !== "stdio") || !rec?.command) {
+        fail(label, `запись \`${name}\` — не stdio-мост: путь к графу в поставке только мост, http-записи к серверу быть не должно`);
       }
     }
   }
 } catch (e) {
-  fail(".mcp.json", `не удалось сверить с каноническим идентификатором: ${e.message}`);
+  fail(".mcp.json", `не удалось прочесть отгружаемые записи MCP: ${e.message}`);
 }
 
 // Код `node -e` записи моста-спутника живёт в десятке копий (ролевые файлы,

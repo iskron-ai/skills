@@ -39,8 +39,8 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
   ];
   // Своя запись двух родов, и цена у них разная: локальный мост той же поставки
   // (тулы namespaced, мост общий для сессий сервиса — чужая подпись) и нативная
-  // http-запись на адрес Искрона (законный запасной путь, стояния у неё нет
-  // вовсе). Чужой сервер, лежащий в каталоге со словом iskron в пути, — не наш.
+  // http-запись на адрес Искрона (мимо моста: стояния у неё нет вовсе, а путь к
+  // графу один — мост). Чужой сервер, лежащий в каталоге со словом iskron в пути, — не наш.
   const kindOf = (v: unknown): "bridge" | "http" | null => {
     const e = (v ?? {}) as { command?: string | string[]; args?: string[]; url?: string };
     const parts = [
@@ -121,8 +121,8 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
                 `OpenCode: the mcp entry "${name}" in ${file} calls ${bridgePath(v)} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
               )
             : L(
-                `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http — её тулы namespaced, и стояния канала у неё нет; это запасной путь, и он законен там, где мост не поднять`,
-                `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http — its tools are namespaced and it has no channel standing; this is the fallback path, legitimate where the bridge cannot be raised`,
+                `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http, мимо моста — её тулы namespaced, стояния канала у неё нет, и записи уходят без места. Путь к графу один — мост, его приносит плагин поставки. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет`,
+                `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http, around the bridge — its tools are namespaced, it has no channel standing, and its writes go out without a seat. The one path to the graph is the bridge, brought by the delivery plugin. Remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command`,
               ),
         );
       }
