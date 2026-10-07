@@ -48,8 +48,10 @@ function trimOf(w: unknown, top: unknown): StatusTrim {
  * знаков с «…» — правило обрезки api 0.108.0 (дело №234 [22], #6729).
  */
 export function trimToWord(text: string, max: number): string {
-  const head = [...text].slice(0, max - 1).join("");
-  const cut = head.lastIndexOf(" ");
+  const chars = [...text];
+  const head = chars.slice(0, max - 1).join("");
+  // Знак за головой — пробел: голова кончается словом целиком.
+  const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
   return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
 }
 

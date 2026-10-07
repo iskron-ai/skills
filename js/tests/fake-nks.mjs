@@ -73,11 +73,15 @@ const registeredTextEn = (name, id) =>
 
 // Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
 /** Обрезка прозы по слову до max знаков с «…» — как api 0.108.0 (#6729). */
+// Своя запись правила, не код моста: слова набираются, пока влезают в max-1 знаков.
 function trimToWord(text, max) {
-  const chars = [...text];
-  const head = chars.slice(0, max - 1).join("");
-  const cut = head.lastIndexOf(" ");
-  return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
+  let kept = "";
+  for (const w of text.split(" ")) {
+    const next = kept ? `${kept} ${w}` : w;
+    if ([...next].length > max - 1) break;
+    kept = next;
+  }
+  return (kept || [...text].slice(0, max - 1).join("")) + "…";
 }
 
 function wsFrame(opcode, payload) {

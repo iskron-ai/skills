@@ -3476,6 +3476,11 @@ test("a busy line the server trims: every status move names the accepted line an
     bare.includes(`: ${fake.state.status}; сервер обрезал строку до 64 знаков`),
     `the accepted line, by the server's trimming rule:\n${bare}`,
   );
+  // Слово, кончающееся ровно на пределе, остаётся целым.
+  const edge = `${"а".repeat(30)} ${"б".repeat(32)} вввв`;
+  const atEdge = textOf(await stand({ realm: "nks-dev", status: edge }));
+  assert.equal(fake.state.status, `${"а".repeat(30)} ${"б".repeat(32)}…`);
+  assert.ok(atEdge.includes(`: ${fake.state.status};`), `a word at the limit was cut:\n${atEdge}`);
   // В держание ложится принятая строка: возврат места не опубликует отправленную.
   const held = readdirSync(join(dir, "standings"))
     .filter((f) => f.endsWith(".hold"))

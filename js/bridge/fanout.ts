@@ -61,6 +61,8 @@ function redundantEvent(
   // инбокса не держит — та несёт событие текстом и вынимает её из лежалой пачки.
   const room = isRoomCopy(frame);
   const holds = (f: Frame | null): boolean => eventKeyOf(f) === ev && (room || !isRoomCopy(f));
+  // Отданная пачка лежалых гасит и копию дела: та не будит и текста не несёт; живую
+  // копию инбокса — нет, она будит (#5842).
   const keys = stale || room ? [ev, `evs:${ev.slice(3)}`] : [ev];
   if (isDelivered(keys, seen, seenPath) || ring.some((r) => holds(r.frame))) return ev;
   if ((stale || room) && burst.hasEvent(ev, !room)) return ev;
