@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -19,6 +20,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -1583,9 +1585,116 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
     !again.out.includes("первое слово"),
     `a delivered frame must not come a second time:\n${again.out}`,
   );
-  assert.match(again.out, /слушаю стояние \S+ \(2 кадра задним числом\)/, again.out);
+  // hello — доказательство держания, не слово делателю: в счёт не входит (#5671).
+  assert.match(again.out, /слушаю стояние \S+ \(1 кадр задним числом\)/, again.out);
   again.proc.kill("SIGKILL");
   await again.done;
+});
+
+// #5671: every reopen of the socket leaves its hello in the ring, and a re-armed
+// watchdog used to count them all as frames «back-dated» — a count that grew from
+// arming to arming with nothing for the doer to read. Hello replays once, the
+// latest; the count names only the frames the watchdog will print.
+test("a re-armed watchdog counts back-dated only what it prints: the hellos of reopens neither count nor pile up", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (let i = 0; i < 2; i++) {
+    const before = new Set(fake.state.ws);
+    await fake.control({ ws_close: 1001 }); // the service drops the socket: the bridge reopens, a new hello lands in the ring
+    await waitFor(
+      () => [...fake.state.ws].some((s) => !before.has(s)),
+      `reopen ${i + 1} of the socket`,
+    );
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  for (let arming = 1; arming <= 2; arming++) {
+    const wd = runClient("watchdog", dir, key, 6000);
+    await waitFor(() => wd.out.includes("слушаю стояние"), `arming ${arming} to attach`);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.doesNotMatch(
+      wd.out,
+      /задним числом/,
+      `arming ${arming}: only hellos — no call to read:\n${wd.out}`,
+    );
+    assert.equal(
+      (wd.out.match(/"type":"hello"/g) ?? []).length,
+      1,
+      `arming ${arming}: one hello, the latest — proof of holding, not a pile:\n${wd.out}`,
+    );
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  }
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "m-9", body: "слово мимо сторожа" }),
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const wd = runClient("watchdog", dir, key, 6000);
+  await waitFor(() => wd.out.includes("слово мимо сторожа"), "the unseen word");
+  await waitSeen(standings, "m-9");
+  assert.match(wd.out, /слушаю стояние \S+ \(1 кадр задним числом\)\n/, wd.out);
+  assert.ok(
+    wd.out.indexOf("слушаю стояние") < wd.out.indexOf("слово мимо сторожа"),
+    `the listening line comes first:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The listening line waits for the ring the bridge named; the watchdog's last word must
+// not wait behind it. A door gone (or a dead token) before the ring is out is loud: the
+// listening line, the alarm, exit 1 — never a silent exit 0.
+for (const [what, after] of [
+  ["the door closes", (sock) => setTimeout(() => sock.destroy(), 100)],
+  [
+    "a dead token comes",
+    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4001, text: "токен мёртв" }) + "\n"),
+  ],
+]) {
+  test(`${what} before the ring the bridge named is out: the watchdog says so and exits 1`, async (t) => {
+    const { socketPathOf } = await import("../shared/standings.ts");
+    const dir = mkdtempSync(join(tmpdir(), "iskron-ring-"));
+    const key = "ring--931--nks-dev";
+    const path = socketPathOf(dir, key);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const door = createServer((sock) => {
+      sock.write(JSON.stringify({ kind: "attached", key, buffered: 3 }) + "\n");
+      sock.write(JSON.stringify({ kind: "frame", raw: '{"type":"hello"}' }) + "\n");
+      after(sock);
+    });
+    await new Promise((r) => door.listen(path, r));
+    t.after(() => door.close());
+    const wd = runClient("watchdog", dir, key, 6000);
+    const { exit } = await wd.done;
+    assert.equal(exit, 1, `exit ${exit}:\n${wd.out}`);
+    assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello"\}\n/, wd.out);
+    assert.match(wd.out, /ДЕЛАТЕЛЬ|токен мёртв/, wd.out);
+  });
+}
+
+// A handover inside the ring's wait re-attaches: the listening line of the first
+// attach still waits in the queue, and it says its own ring — not the next one's.
+test("a handover before the ring is out: each listening line carries its own ring's hello", async (t) => {
+  const { socketPathOf } = await import("../shared/standings.ts");
+  const dir = mkdtempSync(join(tmpdir(), "iskron-ring-"));
+  const key = "ring--931--nks-dev";
+  const path = socketPathOf(dir, key);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  let n = 0;
+  const door = createServer((sock) => {
+    const i = ++n;
+    sock.write(JSON.stringify({ kind: "attached", key, buffered: i === 1 ? 2 : 1 }) + "\n");
+    sock.write(JSON.stringify({ kind: "frame", raw: `{"type":"hello","n":${i}}` }) + "\n");
+    if (i === 1) {
+      sock.write(JSON.stringify({ kind: "handover" }) + "\n");
+      setTimeout(() => sock.destroy(), 50);
+    } else setTimeout(() => sock.destroy(), 300);
+  });
+  await new Promise((r) => door.listen(path, r));
+  t.after(() => door.close());
+  const wd = runClient("watchdog", dir, key, 6000);
+  await wd.done;
+  assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello","n":1\}\n/, wd.out);
+  assert.match(wd.out, /слушаю стояние ring--931--nks-dev\n\{"type":"hello","n":2\}\n/, wd.out);
 });
 
 // A bridge raised anew under a place a previous bridge of this auth dir held

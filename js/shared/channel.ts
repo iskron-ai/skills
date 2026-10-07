@@ -11,7 +11,7 @@
 //     догадкой 1006, которую даёт error;
 //   три быстрых обрыва спрашивают /version прежде, чем винить токен: служба
 //     жива, а нас рвёт — слово делателю и переоткрытие реже, место не бросаем;
-//     служба молчит — выкатка, держим токен.
+//     служба молчит — выкатка, держим токен; слово о ней — раз до hello.
 //   соединение, молчащее дольше трёх интервалов пинга из hello, переоткрывается
 //     тем же адресом вслух (граф nks-dev: #5397); пока ни одного пинга не видно,
 //     таймер не взведён — рантайм, не показывающий пингов, живое мёртвым не объявит.
@@ -226,6 +226,7 @@ export interface Holder {
 export function holdSocket(o: HoldOptions): Holder {
   let fastDrops = 0;
   let slowdown = 0; // сколько пауз подряд служба жива, а сокет рвут
+  let rolloutTold = false; // заметка о раскатке — раз на полосу недоступности; кончает её hello (#6726)
   let dead = false;
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -287,7 +288,10 @@ export function holdSocket(o: HoldOptions): Holder {
           /* не JSON — донесём как есть */
         }
       }
-      if (frame?.type === "hello") watchLife(Number(frame.ping_interval_seconds) * 1000);
+      if (frame?.type === "hello") {
+        rolloutTold = false;
+        watchLife(Number(frame.ping_interval_seconds) * 1000);
+      }
       o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
     });
     // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
@@ -380,12 +384,14 @@ export function holdSocket(o: HoldOptions): Holder {
           retry = setTimeout(open, wait);
           return;
         }
-        o.onNote?.(
-          L(
-            "служба не отвечает — идёт раскатка, держу тот же токен",
-            "the service is not answering — a rollout is under way, keeping the same token",
-          ),
-        );
+        if (!rolloutTold)
+          o.onNote?.(
+            L(
+              "служба не отвечает — идёт раскатка, держу тот же токен",
+              "the service is not answering — a rollout is under way, keeping the same token",
+            ),
+          );
+        rolloutTold = true;
         fastDrops = 1; // простой не должен перерасти в вопрос о токене
       }
       retry = setTimeout(open, code === ROLLOUT_CODE ? 3000 : 2000);
