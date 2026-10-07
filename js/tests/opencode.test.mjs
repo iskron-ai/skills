@@ -73,6 +73,7 @@ import {
   ME,
   ME_ID,
   MY_KARTA,
+  OTHER_KEY,
   ownBody,
   PLATFORM,
   progress,
@@ -6120,7 +6121,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     assert.equal(q.delivery, "queue", "a question to my role comes in words, not interrupting");
     assert.match(q.text, /варианты: now «Сейчас», later «После обеда» \(после выкладки api\)/);
     assert.doesNotMatch(q.text, /рекомендация/, "no recommendation — no words for it");
-    await quiet(ask(95, MY_KARTA + 1));
+    await quiet(ask(95, MY_KARTA + 1, {}, OTHER_KEY));
     await quiet(answer(96, 95, BORIS));
     await quiet(askWithdrawn(98, 95)); // a question to another withdrawn
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
@@ -6139,7 +6140,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const sibling = ask(100);
     sibling.line.fields.to.standing = { id: "id-sibling", standing: "@tester:other" };
     assert.equal((await send(sibling, 4)).delivery, "queue", "my account, my role — mine");
-    const foreign = ask(101);
+    const foreign = ask(101, MY_KARTA, {}, OTHER_KEY);
     foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
     await quiet(foreign);
     // The withdrawal of a question to me (fields.withdraws) is mine, in words, without a wake.

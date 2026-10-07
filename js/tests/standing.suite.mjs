@@ -5266,40 +5266,41 @@ test("question kinds under the Monitor watchdog: a question to me, its withdrawa
 // The withdrawal of a question to me names only the ask's number: the exit
 // watchdog gets it in a new process, and the bridge may have restarted since
 // the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
-test("a withdrawn question to me across a bridge restart: the exit watchdog wakes on it in words", async (t) => {
-  const { fake, dir, key, bridge } = await connected(t, {
-    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+// A re-ask on the key to another role puts my question out the same way (#6867, #6778).
+for (const [what, closer, words] of [
+  ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят"],
+  ["a question re-asked of another role", () => ask(91, MY_KARTA + 1), "[91] Алексей"],
+])
+  test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
+    const { fake, dir, key, bridge } = await connected(t, {
+      env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+    });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const first = runClient("watchdog-exit", dir, key, 15_000);
+    await waitFor(() => first.err.includes("hello"), "hello to be noted");
+    await sendRoom(fake, ask(90));
+    assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
+    assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
+    bridge.proc.kill("SIGKILL");
+    await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+    await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+    const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
+    t.after(() => second.stop());
+    assert.ok((await second.call("initialize", 1, INIT)).result);
+    await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+    const st = await second.call("tools/call", 2, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!st.result?.isError, JSON.stringify(st));
+    await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+    const next = runClient("watchdog-exit", dir, key, 6000);
+    await waitFor(() => next.err.includes("hello"), "hello to be noted");
+    await sendRoom(fake, closer());
+    const r2 = await next.done;
+    assert.equal(r2.exit, 0, `${what} must wake after the restart: ${next.err}`);
+    assert.ok(next.out.includes(words), `${what} in words:\n${next.out}`);
   });
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const first = runClient("watchdog-exit", dir, key, 15_000);
-  await waitFor(() => first.err.includes("hello"), "hello to be noted");
-  await sendRoom(fake, ask(90));
-  assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
-  assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
-  bridge.proc.kill("SIGKILL");
-  await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
-  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
-  const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
-  t.after(() => second.stop());
-  assert.ok((await second.call("initialize", 1, INIT)).result);
-  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
-  const st = await second.call("tools/call", 2, {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.ok(!st.result?.isError, JSON.stringify(st));
-  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
-  const next = runClient("watchdog-exit", dir, key, 6000);
-  await waitFor(() => next.err.includes("hello"), "hello to be noted");
-  await sendRoom(fake, askWithdrawn(91, 90));
-  const r2 = await next.done;
-  assert.equal(
-    r2.exit,
-    0,
-    `the withdrawal of my question must wake after the restart: ${next.err}`,
-  );
-  assert.ok(next.out.includes("вопрос [90] снят"), `the withdrawal in words:\n${next.out}`);
-});
 
 // A batch whose every frame was handed already (#6574): its head went out with
 // them and does not wait to ride before another's line.

@@ -387,6 +387,8 @@ export const addressedBody = (entry_id, refers_to, addressee = BORIS) => ({
 // Роды ask, answer, ack под свободным ключом; payload записи — поля строки
 // (fields), как у прочих родов провода. Форма — по контракту, боем не наблюдена.
 export const ASK_KEY = "выкат: сегодня?";
+/** Ключ чужого вопроса — другой открытый вопрос дела. */
+export const OTHER_KEY = "схема: менять?";
 /** Человек, отвечающий на вопрос, — место роли-адресата, не участник дела. */
 export const HUMAN = {
   kind: "standing",
@@ -396,10 +398,10 @@ export const HUMAN = {
 };
 
 /** Вопрос роли seq (по умолчанию моей): yes_no с рекомендацией. */
-export const ask = (entry_id, seq = MY_KARTA, fields = {}) =>
+export const ask = (entry_id, seq = MY_KARTA, fields = {}, key = ASK_KEY) =>
   roomFrame("ask", {
     entry_id,
-    key: ASK_KEY,
+    key,
     line: { done: "Выкатывать сегодня?", verdict: "partial" },
     fields: {
       to: { karta: { id: "k-tile", seq, name: "🚚 Поставщик плитки", realm: MY_REALM } },

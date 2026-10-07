@@ -70,6 +70,7 @@ import {
   ME,
   ME_ID,
   MY_KARTA,
+  OTHER_KEY,
   progress,
   roleCall,
   roleInvite,
@@ -839,6 +840,8 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
       [ack(92, 91, ME), "followUp"],
       [roleCall(93, "ownerless"), "steer"],
       [roleCall(94, "answer_waiting"), "steer"],
+      // A re-ask on the key of my question, to another role, puts mine out (#6867, #6778).
+      [ask(103, MY_KARTA + 1), "followUp"],
     ];
     const echo = ask(99);
     echo.line.author = { kind: "standing", standing: ME, name: "proba" };
@@ -852,7 +855,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     myAnswer.line.author = { kind: "standing", standing: ME, name: "proba" };
     myAnswer.provenance = { from_standing: ME, from_karta_seq: MY_KARTA, auth: "pat", via: "room" };
     const rest = [
-      ask(95, MY_KARTA + 1),
+      ask(95, MY_KARTA + 1, {}, OTHER_KEY),
       answer(96, 95, BORIS),
       ack(97, 96),
       askWithdrawn(98, 95),

@@ -49,7 +49,7 @@ export const askWord = (key: string): string | undefined =>
 const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "", values);
 
 /**
- * Адресат записи — fields.to (провод api, наблюдено по коду PR-A): у ask —
+ * Адресат записи — fields.to (#6867, абзац ЧТЕНИЕ): у ask —
  * {karta {seq, name, realm}, standing? — место}; у answer и ack — само место
  * ждавшего {id, standing, name?, karta?}.
  */
@@ -92,9 +92,9 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
 }
 
 /**
- * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask. Его гасят
- * снятие и ответ другого места моей роли (адресован спросившему, не мне) —
- * их месту несут словами. Сторож выхода и перезапущенный мост вопроса не
+ * Вопросы мне, которые видел этот процесс: ключ — дело и номер ask (и ключ
+ * строки). Его гасят снятие, ответ другого места моей роли (адресован
+ * спросившему, не мне) и переспрос другому — их месту несут словами. Сторож выхода и перезапущенный мост вопроса не
  * видели — гасящее им метит мост (bridge/addressmark.ts) по .seen места.
  */
 const asksToMe = new Set<string>();
@@ -107,18 +107,23 @@ const askKey = (frame: Rec, entry: unknown): string =>
     `${mineOf(frame)[0] ?? ""}|${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(entry)}`,
   );
 
-/** Ключ памяти вопроса этого кадра ask. */
+/** Ключ памяти вопроса этого кадра ask — по номеру; по ключу строки — переспрос гасит его. */
 export const askKeyOf = (frame: Rec): string =>
   askKey(frame, obj(frame.line).entry_id ?? frame.entry_id);
+export const askLineKeyOf = (frame: Rec): string =>
+  askKey(frame, `key:${str(obj(frame.line).key)}`);
 /**
  * Ключ памяти вопроса, который гасит этот кадр: у снятия — fields.withdraws,
- * у ответа — line.refers_to, иначе in_reply_to конверта; иного — пусто.
+ * у ответа — line.refers_to, иначе in_reply_to конверта; у переспроса (новый ask
+ * на ключе, не мне) — ключ строки: прежний вопрос гаснет (#6867, #6778); иного — пусто.
  */
 export const closedKeyOf = (frame: Rec): string => {
-  // Эхо своего ответа или снятия адресовано не мне — гасить у меня нечего.
+  // Эхо своей записи адресовано не мне — гасить у меня нечего.
   if (byMe(frame)) return "";
   const line = obj(frame.line);
   const kind = str(line.kind);
+  if (kind === "ask")
+    return askedMine(frame, obj(line.fields)) || !str(line.key) ? "" : askLineKeyOf(frame);
   const n =
     kind === "progress"
       ? str(obj(line.fields).withdraws)
@@ -128,16 +133,17 @@ export const closedKeyOf = (frame: Rec): string => {
   return n ? askKey(frame, n) : "";
 };
 
-/** Запомнить вопрос мне — его снятие придёт строкой progress с номером этого ask. */
+/** Запомнить вопрос мне — его погасят снятие, ответ другого места или переспрос. */
 export function rememberAsk(frame: Rec): void {
   asksToMe.add(askKeyOf(frame));
+  if (str(obj(frame.line).key)) asksToMe.add(askLineKeyOf(frame));
   for (const old of asksToMe) {
     if (asksToMe.size <= ASKS_KEPT) break;
     asksToMe.delete(old);
   }
 }
 
-/** Снятие или ответ, гасящие вопрос, который был задан мне. */
+/** Снятие, ответ или переспрос, гасящие вопрос, который был задан мне. */
 export const closesMine = (frame: Rec): boolean => {
   const k = closedKeyOf(frame);
   return !!k && asksToMe.has(k);

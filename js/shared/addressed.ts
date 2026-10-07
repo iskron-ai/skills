@@ -93,8 +93,11 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     rememberAsk(f);
     return true;
   }
-  // Ответ другого места моей роли на вопрос мне — тоже: вопрос больше не открыт.
-  if ((rk?.kind === "progress" || rk?.kind === "answer") && (closesMine(f) || f.addressed === true))
+  // Ответ другого места моей роли и переспрос другому — тоже: вопрос мне больше не открыт.
+  if (
+    (rk?.kind === "progress" || rk?.kind === "answer" || rk?.kind === "ask") &&
+    (closesMine(f) || f.addressed === true)
+  )
     return true;
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
