@@ -15,7 +15,7 @@
 'Стек — источник': 'выведено'
 'Гейт': '`make check`'
 'Гейт — источник': 'выведено'
-'Потребители': 'агенты над iskron через плагин `iskron@iskron`, архив claude.ai, pi, OpenCode, Codex; о поломке прозы не узнаёт никто — дрейф методологии; о поломке кода — человек, чей логин ушёл в никуда'
+'Потребители': 'агенты над iskron через плагин `iskron@iskron`, Claude Desktop (скиллы загрузкой, мост stdio-записью), pi, OpenCode, Codex; о поломке прозы не узнаёт никто — дрейф методологии; о поломке кода — человек, чей логин ушёл в никуда'
 'Потребители — источник': 'согласовано: владелец'
 'Цена поломки': 'ниже, «Production statement»'
 'Цена поломки — источник': 'согласовано: владелец'
@@ -35,7 +35,7 @@
 # iskron/skills
 Скилл-бандлы NKS для агентов (Claude Code skills) под деплой **iskron.ru**, смотрящий на `mcp.iskron.ru`. Среди них `iskronify` — скилл, приводящий любой репозиторий к стандарту этого `AGENTS.md`.
 
-**Поставка и релиз.** Раздаётся маркетплейсом плагинов Claude Code (`iskron@iskron`), семвер в `.claude-plugin/plugin.json` поднимает **release-please** из Conventional Commits на `main` (feat→minor, feat!/BREAKING→major, иначе patch): мерж релизного PR пишет версию, тег `vX.Y.Z`, GitHub Release и `CHANGELOG.md` (`.github/workflows/release-please.yml` + `release-please-config.json`, никогда руками). MCP — `https://mcp.iskron.ru/`; `.mcp.json` плагина — **stdio-мост из поставки** (`${CLAUDE_PLUGIN_ROOT}/…/iskron.mjs` — ровно этот токен, готчи #4522; для разработки — пользовательская запись `iskron-bridge`); манифест Codex несёт ту же запись объектом `mcpServers` (относительный путь, `cwd` — корень плагина; валидатор Codex берёт либо объект, либо файл ровно `.mcp.json`, а это имя занято записью Claude Code); http-запись есть только в архиве claude.ai, её выводит `make plugin` из `fixtures/surface.json`. Пишущая в граф сессия идёт через `iskron-bridge` — привязку стояния и сокет держит только он (скилл `establish-mcp`); вход — OAuth в браузере либо личный токен (`ISKRON_BRIDGE_TOKEN` или `~/.iskron-bridge/token`, тогда без OAuth). В OpenCode мост поднимает плагин поставки (копия в `~/.config/opencode/plugins/iskron.js`), не запись `mcp` (готчи #4522). CI: формат, сверка поверхности и джоб `widgets-in-sync` (скилл виджетов против снимка) без зависимостей плюс JS-лестница lint → format → typecheck → check-js → пробы с покрытием (`.github/workflows/ci.yml`).
+**Поставка и релиз.** Раздаётся маркетплейсом плагинов Claude Code (`iskron@iskron`), семвер в `.claude-plugin/plugin.json` поднимает **release-please** из Conventional Commits на `main` (feat→minor, feat!/BREAKING→major, иначе patch): мерж релизного PR пишет версию, тег `vX.Y.Z`, GitHub Release и `CHANGELOG.md` (`.github/workflows/release-please.yml` + `release-please-config.json`, никогда руками). MCP — `https://mcp.iskron.ru/`; `.mcp.json` плагина — **stdio-мост из поставки** (`${CLAUDE_PLUGIN_ROOT}/…/iskron.mjs` — ровно этот токен, готчи #4522; для разработки — пользовательская запись `iskron-bridge`); манифест Codex несёт ту же запись объектом `mcpServers` (относительный путь, `cwd` — корень плагина; валидатор Codex берёт либо объект, либо файл ровно `.mcp.json`, а это имя занято записью Claude Code); http-записи к серверу в поставке нет нигде — путь к графу один, мост (слово владельца к #6728; `make validate` роняет отгружаемую запись не stdio). Пишущая в граф сессия идёт через `iskron-bridge` — привязку стояния и сокет держит только он (скилл `establish-mcp`); вход — OAuth в браузере либо личный токен (`ISKRON_BRIDGE_TOKEN` или `~/.iskron-bridge/token`, тогда без OAuth). В OpenCode мост поднимает плагин поставки (копия в `~/.config/opencode/plugins/iskron.js`), не запись `mcp` (готчи #4522). CI: формат, сверка поверхности и джоб `widgets-in-sync` (скилл виджетов против снимка) без зависимостей плюс JS-лестница lint → format → typecheck → check-js → пробы с покрытием (`.github/workflows/ci.yml`).
 
 **Production statement.** Скиллы определяют, как каждый агент над iskron пользуется NKS через `mcp.iskron.ru`. Неверная инструкция (например, тул, который сервер выбросил) тихо деградирует каждого агента, загрузившего скилл: краха нет, есть дрейф методологии; потребитель — агент. Синхрон скиллов с поверхностью тулов — основная обязанность.
 
@@ -121,7 +121,7 @@
 - **поверхность тулов сервера за `mcp.iskron.ru`** — снимок `fixtures/surface.json`, `make check-surface`;
 - **файловые поверхности агентов Claude Code и OpenCode** — чеклист пересверки в `skills/iskronify/references/delegation.md`;
 - **плагинная поверхность OpenCode 2** (`@opencode/plugin` 2.0.4, dev-зависимость только ради типов, `make typecheck`) — узел #5048;
-- **загрузчик плагинов claude.ai** — отвергает описание с содержимым в форме XML-тега, отсюда запрет `<`/`>` в `description`.
+- **загрузчик скиллов claude.ai** (им загружает и Claude Desktop) — отвергает описание с содержимым в форме XML-тега, отсюда запрет `<`/`>` в `description`.
 
 Правила:
 - **Прежде работы зафиксируй трогаемую часть поверхности** узлом в графе, с версией.
@@ -184,7 +184,6 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Обновить снимок поверхности | `make surface` (сеть + грант; через встроенный iskron-bridge, включая его тул `iskron_stand`) |
 | Пересобрать скилл виджетов из графа | `make widgets` (сеть + грант: снимок договора и узлов-виджетов в `fixtures/widgets.json`, затем `skills/widgets/SKILL.md`; руками не правится); `make check-widgets` — офлайн-сверка, входит в `make check` |
 | Обновить поставку на машине | `node ~/.iskron-bridge/iskron-bridge.mjs update` (релизы GitHub; мост, плагин OpenCode, `SETUP.md` в дом) |
-| Архив плагина для claude.ai | `make plugin` (→ `dist/iskron.zip`; CI прикладывает к релизу) |
 
 Pre-commit-хук (`.githooks/pre-commit`) на каждом коммите линтует и форматирует застейдженные исходники `js/` (lint-staged), собирает dev-выходы в `dist/dev/` и пересобирает и стейджит бандлы; закоммиченные выходы JS не трогает и не даёт закоммитить вне ветки выпуска (включается `make hooks`; без него — `make build` и `make check` руками до коммита). Гейт корпуса — формат и сверка с поверхностью; для моста и сторожей — поведение. Существо прозы не ловит ни одна проверка — это человеческий обзор дифа.
 
