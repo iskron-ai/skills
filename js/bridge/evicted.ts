@@ -5,6 +5,7 @@
 // рядом на имя.N со слухом тем же ходом, что iskron_stand, и говорит это в сессию.
 import { scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
+import { signedRealm } from "./deaf.ts";
 import { type ChannelEvent } from "./door.ts";
 import { UpstreamError } from "./errors.ts";
 import { broadcast, ledKey, notify, releaseStanding, wasEvicted } from "./hold.ts";
@@ -202,9 +203,6 @@ export async function standBesideAgain(): Promise<boolean> {
   );
 }
 
-/** Ходы канала, которые записей не подписывают, — им отнятое место не помеха. */
-const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
-
 /**
  * Вызов харнеса в граф любого места отнятого канала, пока мост не встал рядом:
  * сессия всё ещё привязана к ним, и запись легла бы под подписью места без
@@ -212,16 +210,10 @@ const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
  */
 export function evictedRefusal(msg: JsonRpcMessage): string | null {
   const s = state.standing;
-  if (msg?.method !== "tools/call" || !s || !wasEvicted(s.realm, s.karta, s.name ?? ""))
-    return null;
-  const tool = msg.params?.name;
-  const a = msg.params?.arguments ?? {};
-  if (tool === "iskron_stand") return null;
-  if (tool === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
+  if (!s || !wasEvicted(s.realm, s.karta, s.name ?? "")) return null;
   // Отъём закрывает весь канал: места других графов на нём глухи так же, как основное.
-  const realm = a.realm;
-  if (typeof realm !== "string" || [s, ...state.places].every((p) => otherRealm(realm, p.realm)))
-    return null;
+  const realm = signedRealm(msg);
+  if (realm == null || [s, ...state.places].every((p) => otherRealm(realm, p.realm))) return null;
   return holdWords.evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
 }
 

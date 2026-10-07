@@ -23,6 +23,17 @@ type Place = { realm: string; karta: string | number; name?: string };
 const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
 
 /**
+ * Граф, в котором вызов харнеса подписался бы местом канала; null — не
+ * подписывает (не вызов тула, iskron_stand, неподписывающий ход канала, нет графа).
+ */
+export function signedRealm(msg: JsonRpcMessage): string | null {
+  if (msg?.method !== "tools/call" || msg.params?.name === "iskron_stand") return null;
+  const a = msg.params?.arguments ?? {};
+  if (msg.params?.name === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
+  return typeof a.realm === "string" ? a.realm : null;
+}
+
+/**
  * Места канала без слуха — привязка у сервера жива, а сокет, который мост
  * держал, ушёл (уход словом, мёртвый токен, переоткрытие без hello) или
  * открывается заново, а hello ещё нет; слух есть или сокета не было вовсе (одна привязка register) — пусто.
@@ -63,13 +74,9 @@ export async function deafSeatTaken(
 
 /** Вызов харнеса в граф места без слуха, которое может слушать другая сессия, — отказ вслух. */
 export async function deafRefusal(msg: JsonRpcMessage): Promise<string | null> {
-  if (msg?.method !== "tools/call") return null;
-  const tool = msg.params?.name;
-  const a = msg.params?.arguments ?? {};
-  if (tool === "iskron_stand") return null;
-  if (tool === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
-  if (H.unheard && deafPlaceIn(a.realm)) await awaitHello(4000); // своё переоткрытие — дождаться его hello
-  const p = deafPlaceIn(a.realm);
+  const realm = signedRealm(msg);
+  if (H.unheard && deafPlaceIn(realm)) await awaitHello(4000); // своё переоткрытие — дождаться его hello
+  const p = deafPlaceIn(realm);
   const why = p ? await deafSeatTaken(p) : null;
   return why
     ? L(
