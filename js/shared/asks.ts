@@ -1,7 +1,7 @@
 // Вопрос в деле — роды ask, answer, ack (граф nks-dev: контракт #6866, роды
 // #6867, зов роли #6870; доля моста — #6868): кому вопрос, кому ответ и приём,
 // и их слова. Правило стопки держит словарь родов (room-kinds.ts), слова — здесь.
-import { type Frame } from "./channel.ts";
+import { classifyOrigin, type Frame } from "./channel.ts";
 import { L, lang } from "./lang.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
@@ -55,6 +55,21 @@ const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "
  */
 const toOf = (fields: Rec): Rec => obj(fields.to);
 
+/** Строку написало моё место — эхо своей записи. */
+const byMe = (frame: Rec): boolean => {
+  const mine = mineOf(frame);
+  const author = obj(obj(frame.line).author);
+  return [str(author.id), str(author.standing)].some((a) => a && mine.includes(a));
+};
+
+/**
+ * Строка вопроса от места человека (окно, бот): её раскладывает адресованность,
+ * не правило слова человека «всегда целиком» (#6867). Одно определение — мосту
+ * (пометка origin для пачки сторожей) и плагинам.
+ */
+export const askFromPerson = (frame: Rec): boolean =>
+  ASK_KINDS.has(str(obj(frame.line).kind)) && classifyOrigin(frame as Frame) === "human";
+
 /** Аккаунт места по адресу @handle:name; без адреса — пусто. */
 const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ?? "";
 
@@ -66,8 +81,7 @@ const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ??
 export function askedMine(frame: Rec, fields: Rec): boolean {
   const mine = mineOf(frame);
   // Эхо своего вопроса — не вопрос мне, даже если спрошена моя же роль.
-  const author = obj(obj(frame.line).author);
-  if ([str(author.id), str(author.standing)].some((a) => a && mine.includes(a))) return false;
+  if (byMe(frame)) return false;
   const to = toOf(fields);
   const place = addresseeOf(to.standing);
   if (place?.addr.some((a) => mine.includes(a))) return true;
@@ -101,6 +115,8 @@ export const askKeyOf = (frame: Rec): string =>
  * у ответа — line.refers_to, иначе in_reply_to конверта; иного — пусто.
  */
 export const closedKeyOf = (frame: Rec): string => {
+  // Эхо своего ответа или снятия адресовано не мне — гасить у меня нечего.
+  if (byMe(frame)) return "";
   const line = obj(frame.line);
   const kind = str(line.kind);
   const n =

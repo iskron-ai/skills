@@ -832,6 +832,10 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     const otherSeat = askWithdrawn(100, 90);
     Object.assign(otherSeat, { to_standing: "@tester:other", to_standing_id: "id-other" });
     const otherCount = { ...askWithdrawn(101, 90), numbering: "case" };
+    // The echo of my own answer to the question asked of me goes to the asker, not to me.
+    const myAnswer = answer(102, 90, BORIS);
+    myAnswer.line.author = { kind: "standing", standing: ME, name: "proba" };
+    myAnswer.provenance = { from_standing: ME, from_karta_seq: MY_KARTA, auth: "pat", via: "room" };
     const rest = [
       ask(95, MY_KARTA + 1),
       answer(96, 95, BORIS),
@@ -840,6 +844,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
       echo, // my own question to my own role is not a question to me
       otherSeat,
       otherCount,
+      myAnswer,
     ];
     for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
     await delay(1000);
@@ -865,7 +870,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     assert.match(waiting, /ответ ждёт приёма, спросившее место @aleksei:gone ушло/);
     const count = rec.messages.at(-1);
     assert.equal(count.opts.deliverAs, "nextTurn");
-    assert.match(count.msg.content, /^№7 «Стенд»: записей 7, тебе 0/);
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 8, тебе 0/);
   } finally {
     await rec.stop();
   }
