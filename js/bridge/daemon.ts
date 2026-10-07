@@ -47,6 +47,7 @@ import { parseArgs } from "./config.ts";
 import { idleWatch } from "./daemon-idle.ts";
 import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
+import { pruneFallbacks } from "./fallback.ts";
 import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
 import { pauseForHandover } from "./pauserecord.ts";
@@ -339,6 +340,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
     }
   }
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
+  pruneFallbacks(authDir); // отметки сессий мимо демона, убитых без exit (doctor, fallback.ts)
 
   // Процессная часть движка — одна на все сессии; сверка с релизами — своя:
   // отставание говорится каждой сессии, а скачанная свежая копия поднимает преемника.
