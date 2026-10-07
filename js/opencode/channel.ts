@@ -57,6 +57,12 @@ const CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5_000;
 const CASE_BATCH_CAP = 20;
 /** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
 const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
+/**
+ * Слово платформы, о взятии чьего промпта OpenCode молчит, держит свой повтор не
+ * дольше этого: предел длиннее часа такта внимания, иначе повтор следующего часа
+ * прошёл бы — ровно тот случай (#6569); встав, сессия снимает держание раньше.
+ */
+const WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 3_600_000;
 
 /**
  * Кадр дела в пачку: не прямое слово и не слово человека (его полёт и обрыв —
@@ -156,6 +162,26 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   // отданный промпт.
   const piles = new Map<string, Pile>();
   const takenEarly = new Set<string>();
+  // Слова платформы в промптах побудки, ждущих в очереди сессии (inbox → сессия и
+  // текст промпта): такт внимания шлёт голове кадр в час, каждый со своим id, и
+  // ход в несколько часов копил в очереди OpenCode те же слова подряд (#6569).
+  // Пока промпт не взят, тот же промпт в очередь второй раз не встаёт; ключ —
+  // весь текст, не тело: то же тело в другом деле — другое слово. О взятии
+  // OpenCode может молчать — слово ждёт его не дольше своего предела (WAKE_HOLD_MS).
+  const queuedWakes = new Map<string, { session: string; word: string; at: number }>();
+  // Гасится только пачка из одного кадра: пачка показывает лишь первые кадры
+  // окна, а мост метит отданными все — у пачки больше одного кадра непоказанное
+  // ушло бы вместе с ней.
+  /** Текст пачки из единственного кадра платформы; иначе null. */
+  const platformWord = (ev: ChannelEvent): string | null => {
+    const f = ev.frames?.length === 1 ? ev.frames[0] : null;
+    return f && ev.text && (f.origin ?? classifyOrigin(f)) === "platform" ? ev.text : null;
+  };
+  const waiting = (session: string | null, word: string): boolean => {
+    const id = session ?? freshestRoot();
+    for (const [k, q] of queuedWakes) if (q.at + WAKE_HOLD_MS <= Date.now()) queuedWakes.delete(k);
+    return [...queuedWakes.values()].some((q) => q.session === id && q.word === word);
+  };
 
   function schedule(p: Pile): void {
     if (p.timer) clearTimeout(p.timer);
@@ -241,6 +267,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
 
   return {
     taken(session, inbox) {
+      if (inbox) queuedWakes.delete(inbox);
+      else for (const [k, q] of queuedWakes) if (q.session === session) queuedWakes.delete(k);
       let matched = false;
       for (const p of piles.values()) {
         if (!p.pending || (inbox ? p.pending.inbox !== inbox : p.pending.session !== session))
@@ -309,14 +337,26 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Очередью — сознательная развилка: пачка в полтора десятка кадров,
           // вставленная посреди хода, режет работу делателя; одним промптом она
           // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
-          if (ev.text)
+          if (ev.text) {
+            const word = platformWord(ev);
+            if (word !== null && waiting(session, word))
+              return say(
+                "Искрон: пачка побудки повторяет слово, ждущее в очереди сессии, — второй раз не вкладываю",
+                "info",
+              );
             void deliver(
               session,
               ev.text,
               `пачка побудки (${ev.frames?.length ?? 0})`,
               "queue",
               child,
-            );
+            ).then((got) => {
+              // Без id взятия не увидеть — повтор такого промпта не гасится.
+              if (word === null || !got?.inbox || takenEarly.delete(got.inbox)) return;
+              queuedWakes.set(got.inbox, { session: got.session, word, at: Date.now() });
+              for (const k of queuedWakes.keys()) if (queuedWakes.size > 100) queuedWakes.delete(k);
+            });
+          }
           return;
         case "lost":
           // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
@@ -339,7 +379,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           loud(
             session,
             `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
-              "Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.",
+              "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.",
             child,
           );
           return;

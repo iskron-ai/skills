@@ -328,6 +328,8 @@ const ENV_KEYS = [
   "ISKRON_KEEPALIVE_MS",
   "ISKRON_PERMISSION_WAIT_MS",
   "ISKRON_WAKE_MS",
+  "ISKRON_OPENCODE_PENDING_MS",
+  "ISKRON_OPENCODE_WAKE_HOLD_MS",
 ];
 
 let seq = 0;
@@ -1330,7 +1332,7 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   }
 });
 
-test("an eviction is loud in OpenCode: a prompt into the holder's session naming the place beside and take=true on the human's word", async () => {
+test("an eviction is loud in OpenCode: a prompt into the holder's session — the bridge stands beside by itself, take=true on the human's word", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);
   try {
@@ -1343,10 +1345,8 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session naming
     await until(() => rec.prompts.length === 1, "the eviction prompt");
     assert.equal(rec.prompts[0].sessionID, "s-evicted");
     assert.match(rec.prompts[0].text, /место отняли/);
-    assert.match(
-      rec.prompts[0].text,
-      /встанет рядом на имя\.N; отбить место \(take=true\) — только словом человека/,
-    );
+    assert.match(rec.prompts[0].text, /Мост сам встаёт рядом на имя\.N со слухом/);
+    assert.match(rec.prompts[0].text, /Вытеснить ту сессию \(take=true\) — только словом человека/);
   } finally {
     await rec.stop();
   }
@@ -1433,6 +1433,119 @@ test("a backlog burst — the wake with everything that waited — is one prompt
     assert.match(rec.said(), /пачка побудки \(2\) вложен/);
     await delay(200);
     assert.equal(rec.prompts.length, 1, "one burst, one prompt — never one per frame");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #6569: the attention tact sends one frame an hour, each its own id; the bridge
+// hands each on as a wake burst, and the plugin queued every one — a turn that ran
+// for hours let four of the same text pile up in OpenCode's queue and come one
+// after another. While a wake prompt waits untaken, the same platform word again
+// is not queued a second time; once it is taken, the next hour's word goes.
+test("a platform word that repeats one still waiting in the session's queue is not queued again; taken, the next one goes", async () => {
+  const b = bridgeEnv("tact");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact");
+    const pid = pidOf(b.log);
+    const tact = (id, body) =>
+      event("backlog", {
+        frames: [
+          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body },
+        ],
+        text: `Побудка: кадров 1\n\n${body}`,
+      });
+    const HOUR = "Час на «вахта» — подними голову";
+    for (const id of ["t1", "t2", "t3", "t4"]) {
+      appendFileSync(`${b.events}.${pid}`, tact(id, HOUR));
+      await delay(150);
+    }
+    await until(() => rec.prompts.length >= 1, "the first tact prompt");
+    await delay(300);
+    assert.equal(rec.prompts.length, 1, "one tact word in the queue, not four");
+    assert.equal(rec.prompts[0].delivery, "queue");
+    appendFileSync(`${b.events}.${pid}`, tact("t5", "Час на «ревью» — подними голову"));
+    await until(() => rec.prompts.length === 2, "a different word goes");
+    // A burst shows only the first frames of its window, and the bridge has marked all of
+    // them delivered: one of more than a frame goes whole, or what it left out is lost.
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("backlog", {
+        frames: Array.from({ length: 20 }, (_, i) => ({
+          type: "message",
+          id: `w${i}`,
+          origin: "platform",
+          provenance: { via: "platform" },
+          body: HOUR,
+        })),
+        text: "Побудка: кадров 25, здесь первые 20, не вошло 5",
+      }),
+    );
+    await until(() => rec.prompts.length === 3, "a burst of more than one frame goes whole");
+    // The same body from another case is another word: its prompt text differs, and it goes.
+    const caseWord = (id, room) =>
+      event("backlog", {
+        frames: [
+          {
+            type: "message",
+            id,
+            room,
+            origin: "platform",
+            provenance: { via: "room" },
+            body: "место покинуло дело",
+          },
+        ],
+        text: `Побудка: кадров 1\n\nзапись дела ${room} от платформы\nместо покинуло дело`,
+      });
+    appendFileSync(`${b.events}.${pid}`, caseWord("c1", "№5"));
+    await until(() => rec.prompts.length === 4, "the word of case №5");
+    appendFileSync(`${b.events}.${pid}`, caseWord("c2", "№7"));
+    await until(() => rec.prompts.length === 5, "the same body from case №7 goes too");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-tact", inboxID: "inbox-1" },
+    });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
+    await until(() => rec.prompts.length === 6, "the next hour's word after the take");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The take of a queued wake prompt is a signal OpenCode may never give: a word whose
+// prompt has waited untaken past its own bound no longer holds back the same word.
+// That bound is longer than the hour of the attention tact and than the case piles'
+// bound — a shorter one would let the next hour's word through, the very case.
+test("a platform word waiting untaken holds back the same word past the case piles' bound, up to its own", async () => {
+  const b = bridgeEnv("tact-silent");
+  const rec = await plugin(
+    { ...b.env, ISKRON_OPENCODE_PENDING_MS: 200, ISKRON_OPENCODE_WAKE_HOLD_MS: 1200 },
+    { inboxIds: true },
+  );
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact-silent");
+    const pid = pidOf(b.log);
+    const HOUR = "Час на «вахта» — подними голову";
+    const tact = (id) =>
+      event("backlog", {
+        frames: [
+          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body: HOUR },
+        ],
+        text: `Побудка: кадров 1\n\n${HOUR}`,
+      });
+    appendFileSync(`${b.events}.${pid}`, tact("t1"));
+    await until(() => rec.prompts.length === 1, "the first tact prompt");
+    await delay(400);
+    appendFileSync(`${b.events}.${pid}`, tact("t2"));
+    await delay(200);
+    assert.equal(rec.prompts.length, 1, "past the case piles' bound the repeat is still held back");
+    await delay(800);
+    appendFileSync(`${b.events}.${pid}`, tact("t3"));
+    await until(() => rec.prompts.length === 2, "the word after the bound, no take seen");
   } finally {
     await rec.stop();
   }
@@ -2190,10 +2303,12 @@ test("a marker whose writer still lives is never taken, however old", async () =
   }
 });
 
-// The session's own place (by its key, or stood by it) is held by a live bridge of
-// another session: the resume takes nothing, and the session is told so with the
-// way back — not left to believe the place is its own (#6626).
-test("a session whose own place a live bridge of another session holds is told the return failed, and how to take it", async () => {
+// The session's own place (by its key, or stood by it) is held by another live
+// bridge: the resume takes nothing, and the session is told so with the way back —
+// not left to believe the place is its own (#6626). The way is iskron_stand by the
+// name, no take: the bridge tells its own session's former bridge from another
+// session's itself — not the agent's memory, not the human (#6702, #6706).
+test("a session whose own place another live bridge holds is told the return failed, and that iskron_stand by the name sorts it without take", async () => {
   const resume = join(SANDBOX, "elsewhere.resume");
   writeFileSync(
     resume,
@@ -2217,7 +2332,9 @@ test("a session whose own place a live bridge of another session holds is told t
     await until(() => rec.prompts.some((p) => /не удался/.test(p.text)), "the word to s1");
     const word = rec.prompts.find((p) => /не удался/.test(p.text));
     assert.equal(word.sessionID, "s1");
-    assert.match(word.text, /k-own[\s\S]*другой сессии[\s\S]*iskron_stand\(take=true\)/);
+    assert.match(word.text, /k-own[\s\S]*iskron_stand с этим именем, take не нужен/);
+    assert.match(word.text, /прежнего моста этой же сессии мост вернёт сам/);
+    assert.doesNotMatch(word.text, /take=true/);
     assert.ok(!rec.prompts.some((p) => /сам вернул место/.test(p.text)));
     // The word comes once, after the wait for the other socket to go — not per attempt.
     const resumes = callsIn(calls).filter((c) => c.name === "iskron/resume").length;

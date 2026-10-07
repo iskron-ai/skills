@@ -12,6 +12,7 @@ import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import { noteCaseEntry } from "./caseexit.ts";
+import { deafRefusal } from "./deaf.ts";
 import {
   AuthPending,
   errorMessage,
@@ -20,7 +21,9 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
+import { evictedRefusal } from "./evicted.ts";
 import { forHarness, structuredOf } from "./fields.ts";
+import { rawSeatRefusal, seatRealm } from "./hearing.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
@@ -36,6 +39,7 @@ import { localStatus } from "./status.ts";
 import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
+import { beginTaking } from "./taking.ts";
 import { noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -246,6 +250,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
     emit(m);
   };
 
+  let endTaking: (() => void) | null = null;
   for (;;) {
     try {
       if (
@@ -270,6 +275,17 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
+      // Место отнято, рядом встать не вышло, либо без слуха и, может быть, взято другой
+      // сессией — записью в его граф не подписываться (#6706).
+      const taken = hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null;
+      if (taken) {
+        emit({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text: taken }] },
+        });
+        return;
+      }
       if (isStand) {
         // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
         emit(withNotice(await serialized(() => runStand(msg))));
@@ -317,7 +333,12 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.method === "tools/call" &&
         msg.params?.name === "iskron_channel" &&
         ["connect", "mint", "register"].includes(String(ch.action));
-      const notOwner = takes ? await ownerRefusal(ch.realm, ch.karta) : null;
+      // Граф своего места — его написанием (hearing.ts); место, которое слушает другая сессия,
+      // сырым ходом не берётся и им не подписываются (#6706).
+      if (takes && ch.realm != null) ch.realm = await seatRealm(ch.realm, ch.name);
+      const notOwner = takes
+        ? ((await ownerRefusal(ch.realm, ch.karta)) ?? (await rawSeatRefusal(msg)))
+        : null;
       if (notOwner) {
         emit({
           jsonrpc: "2.0",
@@ -333,6 +354,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.params.arguments
       )
         msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
+      // Сырой connect или mint — под намерением до записи держания (taking.ts, #6706).
+      endTaking =
+        msg.params?.name === "iskron_channel" ? beginTaking(msg.params.arguments ?? {}) : null;
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
       if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
@@ -351,7 +375,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
             log("the call ran unattributed — re-binding the standing and repeating it once");
             await ensureStanding();
             if (state.standingSession !== state.sessionId) await ensureStanding(); // one passing refusal is not the hour
-            if (state.standingSession === state.sessionId) continue;
+            if (state.standingSession === state.sessionId) {
+              endTaking?.();
+              continue;
+            }
           } else {
             log(
               `a write went out unattributed (${replyText(held).slice(0, 120)}) — the standing is re-bound before the next call`,
@@ -361,16 +388,13 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
         // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
-        emit(
-          forHarness(
-            withNotice(
-              absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held))),
-            ),
-          ),
-        );
+        const reply = absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)));
+        emit(forHarness(withNotice(reply)));
       }
+      endTaking?.();
       return;
     } catch (e) {
+      endTaking?.();
       note(e);
       if (
         e instanceof UpstreamError &&

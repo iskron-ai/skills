@@ -211,6 +211,8 @@ export async function startFakeNks(opts = {}) {
     messages: new Map(), // id → полный текст: то, что history view=message отдаёт мосту при дочитывании
     status: null, // последняя принятая строка занятости
     wsToken: "tok",
+    turned404: false, // апгрейд по адресу, который повернул connect того же места, — HTTP 404, как у контура
+    latestToken: new Map(), // имя места → адрес сокета последнего connect
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
@@ -439,10 +441,20 @@ export async function startFakeNks(opts = {}) {
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (patch.case_leave_hang) st.caseLeaveHang = true;
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
+      if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
         for (const sock of st.ws) {
           sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
+          setTimeout(() => sock.end(), 200).unref();
+        }
+      }
+      // Отъём места новым держателем (#6706): кодом закрываются прежние сокеты места, новейший цел.
+      if (patch.ws_close_old) {
+        const { name, code } = patch.ws_close_old;
+        const of = [...st.ws].filter((s) => st.wsNames.get(s) === name);
+        for (const sock of of.slice(0, -1)) {
+          sock.write(wsFrame(0x8, Buffer.from([code >> 8, code & 0xff])));
           setTimeout(() => sock.end(), 200).unref();
         }
       }
@@ -581,6 +593,9 @@ export async function startFakeNks(opts = {}) {
       if ("unattributed_rule" in patch) st.unattributedRule = patch.unattributed_rule; // правило отказа безавторному send (под structured)
       if (patch.unbind) st.standings.clear(); // привязки сессий к каналам потеряны, каналы и места целы
       if ("connect_delay_ms" in patch) st.connectDelayMs = Number(patch.connect_delay_ms) || 0;
+      // Адрес повёрнут и прежний сокет места закрыт 4000 сразу, а ответ connect — позже (#6706).
+      if ("connect_reply_delay_ms" in patch)
+        st.connectReplyDelayMs = Number(patch.connect_reply_delay_ms) || 0;
       if ("case_join_delay_ms" in patch) st.caseJoinDelayMs = Number(patch.case_join_delay_ms) || 0; // медленный вход в дело
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
@@ -1233,6 +1248,7 @@ export async function startFakeNks(opts = {}) {
           st.standings.set(sid, chan);
           st.wsChannel.set(st.wsToken, chan);
           st.wsTokens.set(st.wsToken, name);
+          st.latestToken.set(name, st.wsToken);
           st.placeAttrs.set(`${karta}:${name}`, a.attrs);
           st.closedPlaces.delete(`${karta}:${name}`);
           st.places.set(`${karta}:${name}`, {
@@ -1242,6 +1258,13 @@ export async function startFakeNks(opts = {}) {
             incoming: `${base}/api/channel/in/mailbox-${a.name ?? "unnamed"}`,
             listening: true,
           });
+          if (st.connectReplyDelayMs) {
+            for (const old of [...st.ws].filter((s) => st.wsNames.get(s) === name)) {
+              old.write(wsFrame(0x8, Buffer.from([4000 >> 8, 4000 & 0xff])));
+              setTimeout(() => old.end(), 200).unref();
+            }
+            await new Promise((r) => setTimeout(r, st.connectReplyDelayMs));
+          }
           const wsUrl = `${base.replace(/^http:/, "ws:")}/channel/ws/${st.wsToken}`;
           return json(
             res,
@@ -1747,6 +1770,12 @@ export async function startFakeNks(opts = {}) {
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
     if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
+    const token = u.pathname.slice("/channel/ws/".length);
+    const seat = st.wsTokens.get(token);
+    if (st.turned404 && seat !== undefined && st.latestToken.get(seat) !== token) {
+      socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+      return;
+    }
     const accept = createHash("sha1")
       .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
       .digest("base64");

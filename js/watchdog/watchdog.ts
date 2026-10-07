@@ -15,6 +15,7 @@ import { L } from "../shared/lang.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, heldHeads, resolveStanding } from "./client.ts";
+import { RingReplay } from "./replay.ts";
 import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
@@ -58,13 +59,23 @@ let queue: Promise<void> = Promise.resolve();
 let lastAt = 0;
 let lastAlone = false;
 
+/** Сколько строка прицепления ждёт кадров кольца, названных мостом, не дольше. */
+const REPLAY_WAIT_MS = 1000;
+
 /**
  * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
  * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
- * Строки-функция составляется в миг печати: по памяти, где уже метки напечатанного выше.
+ * Строки-функция составляется в миг печати: по памяти, где уже метки напечатанного выше;
+ * ready — строки известны позже, чем встают в очередь: очередь ждёт их на своём месте.
  */
-const out = (lines: string[] | (() => string[]), alone = false, after?: () => void): void => {
+const out = (
+  lines: string[] | (() => string[]),
+  alone = false,
+  after?: () => void,
+  ready?: Promise<void>,
+): void => {
   queue = queue.then(async () => {
+    await ready;
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     const text = typeof lines === "function" ? lines() : lines;
@@ -134,15 +145,38 @@ export function runWatchdog(argv: string[]): void {
       marks: riderMarks.splice(0),
     };
   };
+  // Строка прицепления — после кадров кольца, со счётом напечатанного (replay.ts).
+  const ring = new RingReplay();
+  // Последнее слово сторожа не ждёт ворот кольца.
+  const leave = (s: string, code: number): void => {
+    ring.end();
+    loudExit(s, code);
+  };
   attach(target.path, {
     onEvent: (ev) => {
+      const fromRing = ev.kind === "frame" && ring.next();
       switch (ev.kind) {
-        case "attached":
+        case "attached": {
           seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          log(wd.listening(ev.key, ev.buffered ? wd.backfilled(plural(ev.buffered)) : ""));
+          const ready = ring.start(ev.buffered ?? 0, REPLAY_WAIT_MS);
+          const key = ev.key;
+          out(
+            () => [
+              wd.listening(key, ring.printed ? wd.backfilled(plural(ring.printed)) : ""),
+              ...(ring.hello ? [ring.hello] : []),
+            ],
+            false,
+            undefined,
+            ready,
+          );
           break;
+        }
         case "frame": {
           const f = ev.frame;
+          if (fromRing && f?.type === "hello") {
+            ring.hello = ev.raw ?? "";
+            break;
+          }
           if (f?.type !== "message") {
             log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
             break;
@@ -180,6 +214,7 @@ export function runWatchdog(argv: string[]): void {
               else {
                 const first = !cases.has(caseKey(f));
                 cases.add(caseKey(f));
+                if (fromRing) ring.printed++;
                 block.lines.push(...wrapLines(batchLine(f, ev.batch.fold, first)));
                 block.marks.push(all);
                 block.carriers.push(f);
@@ -202,6 +237,7 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           if (!again) {
+            if (fromRing) ring.printed++;
             const r = take([f]);
             out(r.lines, false, () => r.marks.forEach((m) => m()));
             out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
@@ -221,18 +257,19 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "dead":
         case "evicted":
-          loudExit(ev.text ?? wd.seatLost(), 1);
+          leave(ev.text ?? wd.seatLost(), 1);
           break;
         case "alive":
           log(ev.text ?? wd.aliveNote()); // держание идёт, сторож слушает дальше
           break;
         case "released":
           // Своё close/revoke — последнее слово сторожа, без тревоги и ненулевого кода (#6638).
-          if (ev.own) loudExit(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
+          if (ev.own) leave(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
           else log(wd.bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
+      ring.settle(); // кольцо отдано: строка прицепления знает счёт
     },
-    onGone: (why) => loudExit(doer(why), 1),
+    onGone: (why) => leave(doer(why), 1),
   });
 }
