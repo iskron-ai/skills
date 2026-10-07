@@ -113,7 +113,11 @@ if (process.env.FB_EVENTS) {
       } catch {
         continue;
       }
-      const lines = text.split("\n").filter((l) => l.trim());
+      // Only finished lines: a long append is read half-written now and then.
+      const lines = text
+        .split("\n")
+        .slice(0, -1)
+        .filter((l) => l.trim());
       for (const line of lines.slice(seen.get(file) ?? 0)) {
         send({
           jsonrpc: "2.0",
