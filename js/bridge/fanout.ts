@@ -4,7 +4,7 @@
 import { statSync } from "node:fs";
 
 import { type Frame } from "../shared/channel.ts";
-import { asText, eventIn, eventKeyOf, type Marks, sameCopy, seenIds } from "../shared/seen.ts";
+import { eventIn, eventKeyOf, type Marks, sameCopy, seenIds } from "../shared/seen.ts";
 import { type Door } from "./door.ts";
 import { log } from "./streams.ts";
 
@@ -48,10 +48,8 @@ export const marksOf =
 
 /**
  * Метка события, если эту копию предлагать незачем: событие уже в ходе (seen.ts eventIn)
- * или копия того же рода ещё ждёт в кольце либо в копящейся пачке лежалых и будет
- * предложена и так. Кадр, вытесненный из кольца неотданным, не держит событие:
- * следующая копия предлагается. Живая текстовая копия будит (#5842) — лежалые
- * текстовые копии того же события вынимает из копящейся пачки.
+ * или копия того же рода будет предложена не позже этой. Кадр, вытесненный из кольца
+ * неотданным, не держит событие: следующая копия предлагается.
  */
 function redundantEvent(
   frame: Frame | null,
@@ -60,10 +58,13 @@ function redundantEvent(
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
   if (!ev || !frame) return "";
   if (eventIn(frame, marksOf(d.seen, d.seenPath))) return ev;
+  // Кольцо держит копией, которая будет предложена не позже и вытеснится не раньше этой.
   if (d.ring.some((r) => sameCopy(r.frame, frame))) return ev;
-  const wakes = asText(frame) && frame.stale !== true;
-  if (!wakes && d.stale.holdsCopy(frame)) return ev;
-  if (wakes) d.stale.dropCopies(frame);
+  // Лежалую держит копия в той же копящейся пачке — у них одна отдача. Живую пачка не держит:
+  // она ещё не отдана и в кольцо не входит; живая идёт сама и вынимает из пачки лежалые копии
+  // своего рода — событие дойдёт ею (живая будит, #5842).
+  if (frame.stale === true) return d.stale.holdsCopy(frame) ? ev : "";
+  d.stale.dropCopies(frame);
   return "";
 }
 

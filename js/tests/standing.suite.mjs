@@ -3723,7 +3723,7 @@ test("a wake-up window does not count a case copy whose inbox frame is in the sa
 
 // Копия дела гаснет только перед копией инбокса, вошедшей в ход ТЕКСТОМ: копия инбокса
 // за пределом показанных пачкой (её назвало лишь число) копии дела не гасит — ни в
-// пачке, ни меткой отданного после неё (решение стюарда #931 по краю окна).
+// пачке, ни меткой отданного после неё (граф @nks/nks-dev, узел #5842).
 const others = (n, from, extra) =>
   Array.from({ length: n }, (_, i) => graphEvent(`other-${from + i}`, from + i, "другое", extra));
 
@@ -4168,6 +4168,100 @@ test("a stale case copy whose event a live inbox frame already took into the Cod
   for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
   wd.proc.kill("SIGKILL");
   await wd.done;
+});
+
+// Гасит только вошедшее в ход: лежалая копия в ещё не отданной пачке живую копию той же
+// записи не гасит — пачка ушла в пустой сокет (сторож выхода между выходом и перевзводом),
+// а живая копия в кольце доходит перевзведённому сторожу — один раз.
+test("a live case copy is not swallowed by a stale copy waiting in an unsent burst: with the socket empty the event reaches the exit watchdog once", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await sendRoom(fake, { ...nodeOp("updated", 110), event_id: 501, stale: true });
+  await sendRoom(fake, { ...nodeOp("updated", 111), event_id: 501 });
+  await new Promise((r) => setTimeout(r, 2000)); // пачка лежалых и окно дела ушли в пустой сокет
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await nudge(fake, 996);
+  await wd.done;
+  assert.ok(wd.out.includes("[996]"), `the word to me:\n${wd.out}`);
+  const counted = wd.out.match(/записей 1/g) ?? [];
+  assert.equal(counted.length, 1, `the event reached the doer ${counted.length} times:\n${wd.out}`);
+});
+
+// Копия, удержанная копией того же рода в кольце, не теряется: та будет предложена не позже
+// и вытеснится не раньше удержанной — событие доходит один раз (страж удержания кольцом).
+test("a copy held back by an unprinted ring copy is not lost when that one is evicted: the event reaches the watchdog once", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-ra", 503, "событие пятьсот три"),
+      graphEvent("inbox-rb", 503, "событие пятьсот три"),
+      ...Array.from({ length: 19 }, (_, i) =>
+        JSON.stringify({ id: `fr-${i}`, type: "message", body: `fr ${i}` }),
+      ),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("fr 18"), "the replayed ring");
+  const got = wd.out.match(/событие пятьсот три/g) ?? [];
+  assert.equal(got.length, 1, `the event reached the watchdog ${got.length} times:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("two live copies of one event reach an attached Monitor watchdog once", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-ma", 504, "событие пятьсот четыре"),
+      graphEvent("inbox-mb", 504, "событие пятьсот четыре"),
+      JSON.stringify({ id: "live-m", type: "message", body: "живое-м" }),
+    ],
+  });
+  await waitFor(() => wd.out.includes("живое-м"), "the live frame");
+  const got = wd.out.match(/событие пятьсот четыре/g) ?? [];
+  assert.equal(got.length, 1, `the event reached the watchdog ${got.length} times:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Пустая шапка — ход в тред не начинается: метки ждавших пишутся, turn/start с пустым текстом нет.
+test("on its own close the Codex watchdog starts no empty turn when the waiting count holds only a copy of an event already in the thread", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 4000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-e", 502, "событие пятьсот два") });
+  await new Promise((r) => setTimeout(r, 200));
+  await sendRoom(fake, { ...nodeOp("updated", 112), event_id: 502 });
+  await new Promise((r) => setTimeout(r, 1200)); // окно дела ушло: копия ждёт счётом у сторожа
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  await wd.done;
+  const turns = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.method === "turn/start")
+    .map((c) => c.params.input[0].text);
+  assert.ok(
+    turns.some((x) => x.includes("событие пятьсот два")),
+    JSON.stringify(turns),
+  );
+  assert.ok(!turns.includes(""), `an empty turn went into the thread: ${JSON.stringify(turns)}`);
 });
 
 // Ход уходит в тред Codex с мига постановки во вложение, не с открытия двери: пачка

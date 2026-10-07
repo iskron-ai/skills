@@ -40,8 +40,8 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
   return evOf((body as Record<string, unknown>).event_id);
 }
 
-// Одно событие — один раз в ход: текстом или числом (граф nks-dev: #5842, #6563, #6574;
-// решение стюарда #931). Правило — две функции ниже, и только они: deliveryKeys — что
+// Одно событие — один раз в ход: текстом или числом (граф @nks/nks-dev, узел #5842; #6563,
+// #6574). Правило — две функции ниже, и только они: deliveryKeys — что
 // метит доставка, eventIn — гасит ли копию уже помеченное. Метку пишет тот, кто внёс
 // кадр в ход (шапка файла), в миг внесения; составляющий счёт проверяет eventIn.
 
@@ -52,7 +52,7 @@ export type Marks = (key: string) => boolean;
  * Копия, которую доставка вносит в ход ТЕКСТОМ: всё, кроме записи дела, не адресованной
  * месту, — та входит числом (#6574). Копия инбокса и слово человека в деле — текст.
  */
-export const asText = (frame: Frame): boolean => addressedToMine(frame);
+const asText = (frame: Frame): boolean => addressedToMine(frame);
 
 /**
  * Метки доставки кадра: id и, если кадр несёт событие графа и вошёл текстом, — событие:
@@ -73,7 +73,7 @@ export function deliveryKeys(frame: Frame | null | undefined, named = false): st
  * текст события (`ev:`); копию, входящую числом, и лежалую — ещё лежалый текст (`evs:`);
  * текстовую — и копия, названная числом (`cev:`, у лежалой и `cevs:`). Живую текстовую
  * копию лежалый текст не гасит: она будит (#5842); запись дела, текстом не вошедшую, —
- * только текст события (решение стюарда #931).
+ * только текст события (граф @nks/nks-dev, узел #5842).
  */
 export function eventIn(frame: Frame | null | undefined, has: Marks): boolean {
   const ev = frame ? eventKeyOf(frame) : "";

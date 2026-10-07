@@ -149,10 +149,11 @@ export function runWatchdogCodex(argv: string[]): void {
       (k) => seen.has(k) || sent.has(k),
       carrier ? [carrier] : [],
     );
-    void deliver([...head, ...(text ? [text] : [])].join("\n"), [
-      ...got.flatMap((g) => g.ids),
-      ...ids,
-    ]);
+    const keys = [...got.flatMap((g) => g.ids), ...ids];
+    const lines = [...head, ...(text ? [text] : [])];
+    // Нечего вкладывать — ждавшее уже в ходе: метки пишутся, пустого хода в тред нет.
+    if (!lines.length) return void keys.forEach((k) => noteSeen(seenPath, k, seen));
+    void deliver(lines.join("\n"), keys);
   };
   attach(target.path, {
     onEvent: (ev) => {
