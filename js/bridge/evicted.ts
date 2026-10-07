@@ -6,14 +6,17 @@
 import { scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
+import { UpstreamError } from "./errors.ts";
 import { broadcast, ledKey, notify, releaseStanding, wasEvicted } from "./hold.ts";
 import { readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { H, whenEvicted } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
+import { otherRealm } from "./realms.ts";
 import { baseOf } from "./separate.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
-import { type Standing, state } from "./transport.ts";
+import { reinitialize, type Standing, state } from "./transport.ts";
+import { type JsonRpcMessage } from "./types.ts";
 
 /** Сколько ждать записи нового держателя: она ложится сразу за его connect, 4000 может её обогнать. */
 const WAIT_MS = 1500;
@@ -58,14 +61,29 @@ async function standBeside(
   beside: StandBeside,
   once = false,
 ): Promise<{ ok: boolean; text: string } | null> {
-  for (let retry = once; ; retry = true) {
-    if (!wasEvicted(s.realm, s.karta, name)) return null;
+  // Попытка, сорванная после connect места рядом, уже увела мост с отнятого — повтор доводит её, не молчит.
+  let moved = false;
+  let reopened = false;
+  let retry = once;
+  for (;;) {
+    if (!moved && !wasEvicted(s.realm, s.karta, name)) return null;
     try {
       return await beside(s, H.standCwd);
     } catch (e) {
+      moved ||= ledKey() !== key;
+      // Сессия к серверу умерла под попыткой — переоткрыть и повторить, не считая сбоем сети.
+      if (e instanceof UpstreamError && e.kind === "session" && !reopened) {
+        reopened = true;
+        const back = await reinitialize().then(
+          () => true,
+          () => false,
+        );
+        if (back) continue;
+      }
       const why = e instanceof Error ? e.message : String(e);
       standingLog(`evicted ${key}: standing beside failed (${why})${retry ? "" : " — one retry"}`);
       if (retry) return { ok: false, text: why };
+      retry = true;
       await new Promise((res) => setTimeout(res, RETRY_MS));
     }
   }
@@ -139,6 +157,8 @@ const F = scoped(() => ({
     extras: Standing[];
   } | null,
   again: null as Promise<void> | null,
+  /** ход после отъёма в полёте — вызов харнеса ждёт его, а не подписывается отнятым */
+  pending: null as Promise<void> | null,
 }));
 
 /**
@@ -147,6 +167,7 @@ const F = scoped(() => ({
  * подписываться им нельзя (#6706).
  */
 export async function standBesideAgain(): Promise<boolean> {
+  if (F.pending) await F.pending;
   const s = state.standing;
   if (!s || !wasEvicted(s.realm, s.karta, s.name ?? "")) {
     F.failed = null;
@@ -165,9 +186,33 @@ export async function standBesideAgain(): Promise<boolean> {
   );
 }
 
+/** Ходы канала, которые записей не подписывают, — им отнятое место не помеха. */
+const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
+
+/**
+ * Вызов харнеса в граф отнятого места, пока мост не встал рядом: сессия всё ещё
+ * привязана к нему, и запись легла бы под подписью места, которое слушает
+ * другой (#6706). Отказ вслух; iskron_stand и неподписывающие ходы канала идут.
+ */
+export function evictedRefusal(msg: JsonRpcMessage): string | null {
+  const s = state.standing;
+  if (msg?.method !== "tools/call" || !s || !wasEvicted(s.realm, s.karta, s.name ?? ""))
+    return null;
+  const tool = msg.params?.name;
+  const a = msg.params?.arguments ?? {};
+  if (tool === "iskron_stand") return null;
+  if (tool === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
+  if (typeof a.realm !== "string" || otherRealm(a.realm, s.realm)) return null;
+  return holdWords.evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
+}
+
 /** Чем встать рядом — iskron_stand (stand.ts), переданный сюда, чтобы не замкнуть импорты. */
 const B: { beside: StandBeside | null } = { beside: null };
-whenEvicted((key, url, code) => void yieldPlace(key, url, code));
+whenEvicted((key, url, code) => {
+  F.pending = yieldPlace(key, url, code).finally(() => {
+    F.pending = null;
+  });
+});
 export function wireEviction(beside: StandBeside): void {
   B.beside = beside;
 }

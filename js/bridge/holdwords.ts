@@ -21,9 +21,9 @@ export const holdWords = {
   evicted: (code: number) =>
     L(
       `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
-        "привязка записей цела, занятость — пока адрес не повернули connect-ом; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека",
+        "записи в этот граф мост не отправит, пока не встанешь своим местом — его подписью они легли бы; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека",
       `DOER: close ${code} — the seat was taken, another holder is listening; ` +
-        "the write binding is intact, the seat stays occupied until the address is turned with connect; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word",
+        "the bridge sends no writes into this graph until you stand on your own seat — they would go under its signature; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word",
     ),
   /** Отнятое место другой сессии (#6706): держатель встаёт рядом сам, исход — следующим словом. */
   evictedBeside: (code: number, name: string, base: string) =>
@@ -40,6 +40,12 @@ export const holdWords = {
     L(
       `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said} Ход — iskron_stand с name=${base} без take: мост встанет рядом на ${base}.N со слухом.`,
       `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said} The move — iskron_stand with name=${base} without take: the bridge stands beside as ${base}.N with hearing.`,
+    ),
+  /** Вызов в граф отнятого места, пока мост не встал рядом. */
+  evictedRefusal: (name: string, base: string) =>
+    L(
+      `Отказано (мост): место ${name} отняли (4000), его слушает другой держатель, а встать рядом мост пока не смог — запись легла бы под его подписью; вызов не отправлен. Ход — iskron_stand с name=${base} без take: мост встанет рядом на ${base}.N со слухом; затем повтори вызов.`,
+      `Refused (bridge): the seat ${name} was taken (4000), another holder listens on it, and the bridge could not stand beside yet — the write would go under its signature; the call was not sent. The move — iskron_stand with name=${base} without take: the bridge stands beside as ${base}.N with hearing; then repeat the call.`,
     ),
   /** Место другого графа на отнятом канале — встало ли снова на новом. */
   besideOther: (place: string, ok: boolean, said: string) =>

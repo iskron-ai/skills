@@ -59,6 +59,8 @@ async function holderOf(
   listensOnBoard: (name: string) => boolean,
   cwd: string,
 ): Promise<Holder> {
+  // Ушёл с места словом — своё, пока адрес жив: взявшая его сессия повернула бы адрес,
+  // и возврат это докажет отказом сокета (stand.ts); доска в окне после ухода ещё читает «слушает».
   if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return "mine";
   if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
   const key = keyOf(realm, karta, name);

@@ -20,6 +20,7 @@ import {
   TokenRefused,
   UpstreamError,
 } from "./errors.ts";
+import { evictedRefusal } from "./evicted.ts";
 import { structuredOf } from "./fields.ts";
 import { rawSeatRefusal } from "./hearing.ts";
 import { localLeave } from "./leave.ts";
@@ -271,6 +272,16 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
+      // Место отнято, рядом встать не вышло — записью в его граф не подписываться (#6706).
+      const taken = hasId ? evictedRefusal(msg) : null;
+      if (taken) {
+        emit({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { isError: true, content: [{ type: "text", text: taken }] },
+        });
+        return;
+      }
       if (isStand) {
         // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
         emit(withNotice(await serialized(() => runStand(msg))));

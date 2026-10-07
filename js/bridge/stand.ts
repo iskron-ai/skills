@@ -11,7 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { sessionCwd } from "../shared/scope.ts";
+import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
   besideRefusal,
@@ -67,6 +67,9 @@ import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } 
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
+
+/** Повтор вызова после отказанного возврата на оставленное место — один. */
+const R = scoped(() => ({ again: false }));
 
 /** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
 const ledName = (): string => state.standing?.name ?? "";
@@ -247,11 +250,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // встаём рядом на имя.N со слухом; чужим местом не подписываемся (#6706).
   let ownSession = false;
   let byRecord: Resumed | null = null; // своё место, возвращённое по записи держания (seatFor)
+  // Основа, от которой выбирается место рядом: место рядом, названное своим именем, — его основа, не base.N.N (#6706).
+  const root = base ? baseOf(realm, karta, base) : "";
   if (base && a.take !== true && name === base) {
     const listensOnBoard = (n: string): boolean =>
       entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
-    // Место рядом, названное своим именем, занято — следующее от его основы, не base.N.N (#6706).
-    const root = baseOf(realm, karta, base);
     const seat = await seatFor(realm, karta, base, listensOnBoard, beside, cwd, root);
     const choice = seat.choice;
     byRecord = seat.resumed;
@@ -266,10 +269,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(SW.boardAmbiguous(own.length, name, karta));
       return done(true);
     }
+    // Выбранное место рядом — среди нераспознанных строк? Его могла слушать другая сессия: вслепую не берётся.
+    if (unread && own.length === 0 && !choice.own) {
+      lines.push(SW.boardCount(declared ?? 0, entries.length));
+      return done(true);
+    }
     if (choice.note) nameNotes.push(choice.note);
   }
   // До connect: запись держания несёт основу; известную мосту не перезаписывать — явный proba.2 остаётся рядом с proba (#6706).
-  if (base && !seatBaseOf(keyOf(realm, karta, name))) noteSeatBase(keyOf(realm, karta, name), base);
+  if (base && !seatBaseOf(keyOf(realm, karta, name))) noteSeatBase(keyOf(realm, karta, name), root);
   const take = a.take === true || ownSession;
   const sub = !!sat || baseOf(realm, karta, name) !== name; // место рядом и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
@@ -352,6 +360,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = `${resumed.word}, register`;
   } else if (!take && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
     // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
+    // Адрес за это время повернула другая сессия — сокет отказан и отпущен: место её,
+    // подписи им нет — тот же вызов заново выберет место рядом (#6706).
+    await awaitHello(4000);
+    if (!holdsStanding(realm, karta, name) && !R.again) {
+      R.again = true;
+      try {
+        return await runStand(msg);
+      } finally {
+        R.again = false;
+      }
+    }
     const r = await register();
     if (r.isError) {
       lines.push(SW.refused("register", short(r.text)));

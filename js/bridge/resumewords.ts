@@ -96,9 +96,9 @@ export const resumeWords = {
   gaveUp: (key: string, limit: number): string =>
     L(
       `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — ` +
-        `больше не рву; проверь доску и сервер, вернуть слух — ${via} с take=true.`,
+        `больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true — только словом человека.`,
       `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — ` +
-        `I no longer tear it; check the board and the server, to restore hearing — ${via} with take=true.`,
+        `I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true — only on the human's word.`,
     ),
   deafBoard: (): string =>
     L("доска не читает слушающим", "the board does not read it as listening"),

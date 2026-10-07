@@ -103,8 +103,8 @@ async function setup(t) {
   const dir = mkdtempSync(join(tmpdir(), "iskron-ownseat-"));
   const cwd = mkdtempSync(join(tmpdir(), "iskron-ownseat-cwd-"));
   t.after(() => fake.stop());
-  const up = async () => {
-    const b = startBridge(fake.mcpUrl, dir);
+  const up = async (authDir = dir) => {
+    const b = startBridge(fake.mcpUrl, authDir);
     t.after(() => b.stop());
     assert.ok((await b.call("initialize", INIT)).result);
     return b;
@@ -278,4 +278,94 @@ test("an eviction of a channel that carries a seat in another graph: that seat s
     `proba-b stands again after the seat beside: ${regs}\n${word}`,
   );
   assert.match(word, /встало снова на новом/, word);
+});
+
+const write = (b) =>
+  b.call("tools/call", {
+    name: "iskron_add_phenomenon",
+    arguments: { realm: "nks-dev", name: "x", given_as: "ding" },
+  });
+const boardLine = (name) =>
+  `  #931 👨‍💻 Роль 能 · @tester:${name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester\n     📥 http://x/api/channel/in/${name}`;
+
+test("an unread board line, the asked name another listens on: the seat beside is not chosen blind either", async (t) => {
+  const { fake, up } = await setup(t);
+  await fake.control({
+    boardText: `Каналы (3):\n${boardLine("proba")}\n${boardLine("other")}\n  ??? строка иной формы`,
+  });
+  const b = await up();
+  const r = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(r.result?.isError, textOf(r));
+  assert.deepEqual(placeArgs(fake, "connect"), [], "no blind connect");
+});
+
+test("right after an eviction, the move beside still in flight: a write waits for it and is signed by the seat beside", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  assert.equal(placeOf(await stand(b, { realm: "nks-dev", karta: 931, name: "proba" })), "proba");
+  await until(() => fake.state.ws.size === 1, "socket");
+  await fake.control({ listDelayMs: 2000 });
+  await fake.control({ ws_close: 4000 });
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  await until(() => saidKind(b, "evicted"), "the eviction word");
+  const w = await write(b);
+  assert.notEqual(fake.state.writes.at(-1)?.author, "proba", textOf(w));
+});
+
+test("an eviction the network kept from standing beside: a write is refused aloud, not signed with the taken seat", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  assert.equal(placeOf(await stand(b, { realm: "nks-dev", karta: 931, name: "proba" })), "proba");
+  await until(() => fake.state.ws.size === 1, "socket");
+  await fake.control({ mcpDrop: 50, mcpDropAction: "iskron_channel:list" });
+  await fake.control({ ws_close: 4000 });
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  await until(
+    () => b.notifications.some((n) => /встать рядом мост не смог/.test(n.params?.data?.text ?? "")),
+    "the failure word",
+  );
+  const w = await write(b);
+  assert.ok(w.result?.isError, textOf(w));
+  assert.match(textOf(w), /вызов не отправлен/, textOf(w));
+  assert.ok(
+    !fake.state.writes.some((x) => x.author === "proba"),
+    JSON.stringify(fake.state.writes),
+  );
+});
+
+test("left by word, then another machine's session stood there: iskron_stand by name stands beside, not registering over its hearing", async (t) => {
+  const { fake, cwd, up } = await setup(t);
+  const b1 = await up();
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  assert.ok(!(await channel(b1, { realm: "nks-dev", action: "leave" })).result?.isError);
+  await until(() => fake.state.places.get("931:proba")?.listening === false, "left");
+  const b2 = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  assert.equal(
+    placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.places.get("931:proba")?.listening === true, "b2 hears proba");
+  await fake.control({ ws_refuse: 4001 }); // connect b2 повернул адрес
+  const before = placeArgs(fake, "register").length;
+  const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  const regs = placeArgs(fake, "register").slice(before);
+  assert.ok(!regs.includes("proba"), `b1 signed with proba: ${regs}\n${textOf(s1)}`);
+  assert.equal(placeOf(s1), "proba.2", textOf(s1));
+});
+
+test("an eviction, then the network drops the seat beside's register once: the bridge registers proba.2 and says the outcome", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  assert.equal(placeOf(await stand(b, { realm: "nks-dev", karta: 931, name: "proba" })), "proba");
+  await until(() => fake.state.ws.size === 1, "socket");
+  await fake.control({ mcpDrop: 1, mcpDropAction: "iskron_channel:register" });
+  await fake.control({ ws_close: 4000 });
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  await until(() => saidKind(b, "resumed"), `the outcome word:\n${b.stderr}`);
+  assert.ok(placeArgs(fake, "register").includes("proba.2"), `${placeArgs(fake, "register")}`);
+  assert.match(saidKind(b, "resumed").params.data.text, /встал рядом/);
 });
