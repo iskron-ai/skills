@@ -93,11 +93,16 @@ export function adoptSeenPath(
  * дела того же события — счёт его не повторит (#5842, #6563). Группы забираются.
  */
 export function heldHeads(groups: Frame[][], carrier?: Frame | null): string[] {
-  if (carrier) for (const g of groups) takeRoomCopies(g, carrier, (f) => f);
+  dropHeldCopies(groups, [carrier]);
   return groups
     .splice(0)
     .filter((g) => g.length)
     .map(batchHead);
+}
+
+/** Копии дела событий, которые кадры несут текстом в ход, — вон из ждущих пачек (#5842, #6563). */
+export function dropHeldCopies(groups: Frame[][], carriers: (Frame | null | undefined)[]): void {
+  for (const c of carriers) if (c) for (const g of groups) takeRoomCopies(g, c, (f) => f);
 }
 
 /** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831). */

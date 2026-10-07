@@ -14,7 +14,14 @@ import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
 import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, heldHeads, resolveStanding, staleBatchKeys } from "./client.ts";
+import {
+  adoptSeenPath,
+  attach,
+  dropHeldCopies,
+  heldHeads,
+  resolveStanding,
+  staleBatchKeys,
+} from "./client.ts";
 import { doer, wd } from "./words.ts";
 
 // Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
@@ -196,6 +203,7 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "stale":
           // Одна пачка — одно событие. Напечатана — отдана, и названное числом сверх показанного тоже.
+          dropHeldCopies(riders, ev.frames ?? []); // её события ждущий счёт не повторит
           out(wrapLines(ev.text ?? ""), false, () => {
             for (const k of staleBatchKeys(ev)) noteSeen(seenPath, k, seen);
           });

@@ -3606,6 +3606,79 @@ test("a count the Codex watchdog holds loses the case copy whose inbox frame goe
   await wd.done;
 });
 
+// Лежалая копия инбокса входит в ход текстом пачки лежалых — у Monitor и Codex, как у
+// плагинов: ждущий счёт копии дела её события не повторяет (#5842, #6563).
+test("a count the Monitor watchdog holds loses the case copy whose stale inbox frame it prints", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 96), event_id: 82 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт непечатным
+  await fake.control({
+    ws_send: graphEvent("inbox-6", 82, "событие восемьдесят два", { stale: true }),
+  });
+  await waitFor(() => wd.out.includes("событие восемьдесят два"), "the stale batch");
+  await fake.control({ ws_send: JSON.stringify({ id: "live-6", type: "message", body: "живое" }) });
+  await waitFor(() => wd.out.includes("живое"), "the live frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the held count of the case copy rode after its stale inbox frame:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a live case copy dies before the stale inbox copy of its event waiting in the bridge's burst", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: graphEvent("inbox-8", 84, "событие восемьдесят четыре", { stale: true }),
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 98), event_id: 84 });
+  await waitFor(() => wd.out.includes("событие восемьдесят четыре"), "the stale batch");
+  await new Promise((r) => setTimeout(r, 1500)); // окно дела моста ушло бы
+  await fake.control({ ws_send: JSON.stringify({ id: "live-8", type: "message", body: "живое" }) });
+  await waitFor(() => wd.out.includes("живое"), "the live frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the case copy was counted beside its stale inbox frame:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a count the Codex watchdog holds loses the case copy whose stale inbox frame goes into the thread", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t);
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 15_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 97), event_id: 83 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт ближайшего хода
+  await fake.control({
+    ws_send: graphEvent("inbox-7", 83, "событие восемьдесят три", { stale: true }),
+  });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await waitFor(() => existsSync(log) && turns().length === 1, "the stale batch in the thread");
+  await fake.control({ ws_send: JSON.stringify({ id: "live-7", type: "message", body: "живое" }) });
+  await waitFor(() => turns().length === 2, "the live frame in the thread");
+  assert.match(turns()[0], /событие восемьдесят три/);
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // Строки работы одного ключа (room.id, line.key) в пачке сворачиваются в последнюю
 // (#6718): счёт называет записи после свёртки и сменённые числом; строка bad и
 // адресованное месту слово не сворачиваются; отданными метятся все кадры пачки.

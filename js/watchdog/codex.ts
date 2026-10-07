@@ -168,9 +168,14 @@ export function runWatchdogCodex(argv: string[]): void {
           withPend(frameToText(ev.frame, ev.raw ?? ""), keys); // накопленное — шапкой впереди
           break;
         }
-        case "stale":
-          void deliver(ev.text ?? wd.codexStale(), staleBatchKeys(ev)); // одна пачка — один ход
+        case "stale": {
+          // Одна пачка — один ход; копии дела её событий ждущий счёт не повторит — метятся с ней.
+          const copies = (ev.frames ?? []).flatMap((f) =>
+            takeRoomCopies(pend, f, (g) => g.frame).flatMap((g) => g.ids),
+          );
+          void deliver(ev.text ?? wd.codexStale(), [...staleBatchKeys(ev), ...copies]);
           break;
+        }
         case "dead":
         case "evicted":
           note(ev.text ?? wd.seatLost());
