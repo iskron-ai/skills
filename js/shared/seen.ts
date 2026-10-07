@@ -47,6 +47,26 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
 export const isRoomCopy = (frame: Frame | null | undefined): boolean =>
   frame?.provenance?.via === "room" && !!eventKeyOf(frame);
 
+/**
+ * Копии дела того события, что несёт этот кадр инбокса, — вынуть из ждущей пачки:
+ * копия гаснет, пока другая ждёт (#5842), событие войдёт текстом кадра инбокса, и
+ * счёт пачки его не повторит (#6563). Возвращает вынутые; кадр без события или
+ * сама копия дела не вынимает ничего.
+ */
+export function takeRoomCopies<T>(
+  pile: T[],
+  frame: Frame | null | undefined,
+  frameOf: (x: T) => Frame | null | undefined,
+): T[] {
+  const ev = isRoomCopy(frame) ? "" : eventKeyOf(frame);
+  const out: T[] = [];
+  for (let i = pile.length - 1; ev && i >= 0; i--) {
+    const f = frameOf(pile[i]);
+    if (isRoomCopy(f) && eventKeyOf(f) === ev) out.unshift(...pile.splice(i, 1));
+  }
+  return out;
+}
+
 /** Метка события, которую пишет доставка кадра: "" — у копии дела и у кадра без события. */
 export const eventMarkOf = (frame: Frame | null | undefined): string =>
   isRoomCopy(frame) ? "" : eventKeyOf(frame);

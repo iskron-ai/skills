@@ -351,7 +351,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
-  if (redundantCopy(full, d.ring, d.seen, seenPath, d.stale)) return;
+  if (redundantCopy(full, d)) return;
   if (full?.type === "message") markAddressed(full, seenPath, d.seen); // до повтора и лежалых
   // Повтор уже отданного кадра (тот же id — платформа отдала его снова после возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);

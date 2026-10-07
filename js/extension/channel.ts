@@ -14,6 +14,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { takeRoomCopies } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
@@ -89,6 +90,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
           (asideTimer as { unref?: () => void }).unref?.();
           return;
         }
+        takeRoomCopies(aside, frame, (f) => f); // копии дела события, которое кадр несёт текстом (#6563)
         flushAsides(); // накопленное — прежде следующего кадра: порядок цел
         // Кадр комнаты с event_kind рода «в пачку» (словарь родов, #5851) ход не
         // режет — ждёт его конца; кадр без event_kind — прежним путём, вставкой.

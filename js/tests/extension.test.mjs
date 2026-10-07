@@ -872,6 +872,18 @@ test("progress lines of one key fold into the last: the count names the supersed
   assert.match(got[1].text, /тайное слово 48$/, "the word to me whole");
 });
 
+// Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
+// ждущая в свёртке, вынимается кадром инбокса — событие входит один раз (#5842).
+test("a case copy of an event waiting in the aside is taken out by its inbox frame: no count", async () => {
+  const got = await asideMessages(
+    "event-copy",
+    [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)],
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.doesNotMatch(got[0].text, /записей/, got[0].text);
+});
+
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
   const got = await asideMessages(
     "aside-run",

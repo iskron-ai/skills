@@ -399,16 +399,20 @@ export async function startFakeNks(opts = {}) {
         for (const pl of chan?.places.values() ?? [])
           if (!standing_id || pl.standing_id === standing_id)
             st.placeStatus.set(pl.standing_id, kept);
+        // statusTrim "bare": живая форма полей предупреждения не наблюдена — только code.
+        const bare = st.statusTrim === "bare";
         return json(res, 200, {
           ok: true,
-          doing: kept,
+          ...(bare ? {} : { doing: kept }),
           warnings: [
-            {
-              code: "trimmed_to_limit",
-              message: "переназови: обрезано до 64",
-              doing: kept,
-              max: 64,
-            },
+            bare
+              ? { code: "trimmed_to_limit" }
+              : {
+                  code: "trimmed_to_limit",
+                  message: "переназови: обрезано до 64",
+                  doing: kept,
+                  max: 64,
+                },
           ],
         });
       }

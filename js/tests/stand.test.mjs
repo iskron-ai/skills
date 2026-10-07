@@ -3470,6 +3470,11 @@ test("a busy line the server trims: every status move names the accepted line an
     }),
     "action status",
   );
+  // Предупреждение с одним code: отправленная строка за принятую не выдаётся.
+  await fake.control({ statusTrim: "bare" });
+  const bare = textOf(await stand({ realm: "nks-dev", status: long }));
+  assert.ok(!bare.includes(long), `the sent line named as accepted:\n${bare}`);
+  assert.match(bare, /обрезана; легла — на доске[^\n]*; сервер обрезал строку до 64 знаков/, bare);
   // Прежний сервер: отказ 422 приходит целиком, как прежде.
   await fake.control({ statusTrim: false });
   const refused = await stand({ realm: "nks-dev", status: long });

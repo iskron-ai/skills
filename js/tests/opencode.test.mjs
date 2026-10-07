@@ -5586,6 +5586,16 @@ test("progress lines of one key fold into the last: the count names the supersed
   assert.match(prompts.rode, /^ход\n\n№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
 });
 
+// Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
+// ждущая в пачке, вынимается кадром инбокса — событие входит один раз (#5842).
+test("a case copy of an event waiting in the pile is taken out by its inbox frame: no count rides on", async () => {
+  const frames = [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)];
+  const prompts = await asidePrompts("event-copy", frames, 1);
+  assert.equal(prompts.length, 1, "the inbox frame prompts");
+  assert.doesNotMatch(prompts[0].text, /записей/, prompts[0].text);
+  assert.equal(prompts.rode, "ход", "no count of the case copy rides the next prompt");
+});
+
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
   const prompts = await asidePrompts(
     "aside-run",

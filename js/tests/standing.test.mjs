@@ -3574,13 +3574,17 @@ test("a case record carrying the event_id of a delivered inbox frame is dropped;
     !wd.out.includes("записей"),
     `the case copy of a delivered event was counted:\n${wd.out}`,
   );
-  // Копия дела первой: счёт, затем кадр инбокса — текстом; и после отданного счёта — тоже.
+  // Копия дела первой, ещё в пачке: кадр инбокса — текстом и вынимает её — счёта нет (#5842).
   await sendRoom(fake, { ...nodeOp("updated", 92), event_id: 78 });
   await fake.control({ ws_send: graphEvent("inbox-2", 78, "событие семьдесят восемь") });
   await waitFor(
     () => wd.out.includes("событие семьдесят восемь"),
     "the inbox frame after its case copy",
   );
+  await waitSeen(standings, "room-msg-92");
+  await quietThenNudge(fake, wd, 1500, 992);
+  assert.ok(!wd.out.includes("записей"), `the waiting case copy was counted too:\n${wd.out}`);
+  // Копия дела, уже отданная счётом, события не держит: кадр инбокса — текстом.
   await sendRoom(fake, { ...nodeOp("updated", 93), event_id: 79 });
   await new Promise((r) => setTimeout(r, 1500));
   await nudge(fake, 991);

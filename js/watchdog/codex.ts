@@ -17,7 +17,7 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { batchHead, frameToText } from "../shared/frame-text.ts";
-import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, seenIds, takeRoomCopies } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
   adoptSeenPath,
@@ -162,7 +162,10 @@ export function runWatchdogCodex(argv: string[]): void {
             pend.splice(0, Math.max(0, pend.length - 500)); // старшие уходят: счёт ждёт, не копится без меры
             return;
           }
-          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame)); // накопленное — шапкой впереди
+          // Копии дела события, которое кадр несёт текстом, счёт не повторяет — метятся с ним (#6563).
+          const copies = takeRoomCopies(pend, ev.frame, (g) => g.frame).flatMap((g) => g.ids);
+          const keys = [...deliveredKeys(ev.frame), ...copies];
+          withPend(frameToText(ev.frame, ev.raw ?? ""), keys); // накопленное — шапкой впереди
           break;
         }
         case "stale":

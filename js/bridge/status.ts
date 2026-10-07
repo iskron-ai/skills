@@ -68,9 +68,13 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
  */
 export function busyLine(text: string, realm: string): string {
   const t = S.trims.get(statusAddress(realm)?.key ?? "");
-  const kept = t?.sent === text ? (t.doing ?? text) : text;
-  const line = `${L("занятость", "busyness")} ${placeLabel(realm)}: ${kept || L("(снята)", "(cleared)")}`;
-  return t?.sent === text ? `${line}; ${trimNudge(t)}` : line;
+  if (t?.sent !== text)
+    return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
+  // Сервер не назвал принятую строку — отправленную за неё не выдаём: она обрезана, легла — на доске.
+  const kept =
+    t.doing ??
+    L(`(обрезана; легла — на доске iskron_channel list)`, `(trimmed; what landed is on the board)`);
+  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${kept}; ${trimNudge(t)}`;
 }
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */

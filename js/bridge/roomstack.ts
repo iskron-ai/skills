@@ -12,7 +12,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveredKeys, noteSeen } from "../shared/seen.ts";
+import { deliveredKeys, noteSeen, takeRoomCopies } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { HumanWords, idOf, isWordOf } from "./humanwords.ts";
 import { log } from "./streams.ts";
@@ -47,6 +47,15 @@ export class RoomBatch {
       dropped(this.held[i].frame);
       this.held.splice(i, 1);
     }
+    if (!this.held.length && this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Вынуть из копящейся пачки копии дела события, которое несёт кадр инбокса (seen.ts). */
+  dropEvent(frame: Frame, dropped: (frame: Frame) => void): void {
+    takeRoomCopies(this.held, frame, (h) => h.frame).forEach((h) => dropped(h.frame));
     if (!this.held.length && this.timer) {
       clearTimeout(this.timer);
       this.timer = null;

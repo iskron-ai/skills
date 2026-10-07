@@ -33,6 +33,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
+import { takeRoomCopies } from "../shared/seen.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
@@ -249,6 +250,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           // Путь кадра (#5851): с event_kind — правило рода, без него — своя стопка
           // кадра, как прежде (#4957); пачка — одним промптом очередью, прочее — вставкой.
           if (frame && toPile(frame)) return pile(session, child, frame);
+          // Копии дела события, которое кадр несёт текстом, счёт не повторяет (#5842, #6563).
+          for (const p of piles.values())
+            for (const fs of [p.held, p.riders]) takeRoomCopies(fs, frame, (f) => f);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
           void deliver(
             session,

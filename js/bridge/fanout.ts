@@ -4,7 +4,8 @@
 import { statSync } from "node:fs";
 
 import { type Frame } from "../shared/channel.ts";
-import { eventKeyOf, isRoomCopy, seenIds } from "../shared/seen.ts";
+import { deliveredKeys, eventKeyOf, isRoomCopy, noteSeen, seenIds } from "../shared/seen.ts";
+import { type Door } from "./door.ts";
 import { type StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 
@@ -67,11 +68,22 @@ function redundantEvent(
   return "";
 }
 
-/** Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. */
-export function redundantCopy(...args: Parameters<typeof redundantEvent>): boolean {
-  const ev = redundantEvent(...args);
-  const id = args[0]?.id;
+/**
+ * Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. Кадр,
+ * который предлагается, вынимает копии дела своего события из копящейся пачки
+ * сторожам: они отданы им, счёт их не повторит (#5842, #6563).
+ */
+export function redundantCopy(frame: Frame | null, d: Door): boolean {
+  const ev = redundantEvent(frame, d.ring, d.seen, d.seenPath, d.stale);
+  const id = frame?.id;
   if (ev)
     log(`frame ${typeof id === "string" ? id : "?"} carries ${ev} already offered — not raised`);
+  else if (frame?.type === "message")
+    d.roomBatch.dropEvent(frame, (f) => {
+      for (const k of deliveredKeys(f)) noteSeen(d.seenPath, k, d.seen);
+      log(
+        `frame ${String(f.id ?? "?")}: its event comes by the inbox frame — taken from the batch`,
+      );
+    });
   return !!ev;
 }
