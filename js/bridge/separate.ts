@@ -67,17 +67,31 @@ async function holderOf(
     const me = sessionOfBridge();
     return me && readHoldRecord(key, true)?.session === me ? "session" : "taken";
   }
+  // Запись другой названной сессии — её место, хоть доска и не читает его слушающим:
+  // её мост вернёт его сам (перезапуск сервиса харнесса), возврат с диска не наш.
+  if (theirsByRecord(key)) return "taken";
   // Доска «слушает», а живого локального держателя нет: своё доказывает только
   // запись этой сессии (возврат по ней); иначе слушающий — не наш, встаём рядом.
   return listensOnBoard(name) && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
+}
+
+/**
+ * На месте по записи держания стояла другая названная сессия (запись свежая и не
+ * отпущена словом): место её, и мост этой сессии с диска его не возвращает (#6706, #6702 В).
+ */
+export function theirsByRecord(key: string): boolean {
+  const rec = readHoldRecord(key);
+  return !!rec?.session && !rec.left && rec.session !== sessionOfBridge();
 }
 
 export type PlaceChoice = { name: string; own: boolean; note: string | null } | { refusal: string };
 
 /**
  * Куда встать под именем base: на него самого (своё, свободное либо прежнего
- * моста этой сессии — `own`, его мост возвращает сам), иначе на первое `base.N`,
- * которое свободно или своё. Все сто заняты — отказ: подписи без слуха нет.
+ * моста этой сессии — `own`, его мост возвращает сам), иначе на первое `root.N`,
+ * которое свободно или своё. `root` — основа, от которой выбрано base (место
+ * рядом, названное своим именем, — его основа, не proba.2.2); у основного — оно
+ * само. Все сто заняты — отказ: подписи без слуха нет.
  * `taken` — имена, занятые наверняка (возврат по записи не дал слуха).
  */
 export async function placeFor(
@@ -87,6 +101,7 @@ export async function placeFor(
   listensOnBoard: (name: string) => boolean,
   cwd: string,
   taken: ReadonlySet<string> = new Set(),
+  root = base,
 ): Promise<PlaceChoice> {
   const holder = async (name: string): Promise<Holder> =>
     taken.has(name) ? "taken" : await holderOf(realm, karta, name, listensOnBoard, cwd);
@@ -96,7 +111,8 @@ export async function placeFor(
     return { name: base, own, note: own ? SEP.ownSession(base) : null };
   }
   for (let n = 2; n <= 99; n++) {
-    const cand = suffixed(base, n);
+    const cand = suffixed(root, n);
+    if (cand === base) continue;
     const h = await holder(cand);
     if (h === "taken") continue;
     const own = h === "session";
@@ -122,10 +138,11 @@ export async function seatFor(
   listensOnBoard: (name: string) => boolean,
   besideRealm: boolean,
   cwd: string,
+  root = base,
 ): Promise<{ choice: PlaceChoice; resumed: Resumed | null }> {
   const taken = new Set<string>();
   for (;;) {
-    const choice = await placeFor(realm, karta, base, listensOnBoard, cwd, taken);
+    const choice = await placeFor(realm, karta, base, listensOnBoard, cwd, taken, root);
     if ("refusal" in choice || choice.own || besideRealm) return { choice, resumed: null };
     const at = choice.name;
     if (!listensOnBoard(at) || !(await ownByRecord(realm, karta, at, cwd)))

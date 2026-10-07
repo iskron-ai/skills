@@ -41,6 +41,17 @@ export const holdWords = {
       `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said} Ход — iskron_stand с name=${base} без take: мост встанет рядом на ${base}.N со слухом.`,
       `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said} The move — iskron_stand with name=${base} without take: the bridge stands beside as ${base}.N with hearing.`,
     ),
+  /** Место другого графа на отнятом канале — встало ли снова на новом. */
+  besideOther: (place: string, ok: boolean, said: string) =>
+    ok
+      ? L(
+          `Место другого графа ${place} было на отнятом канале — встало снова на новом. ${said}`,
+          `The seat of another graph ${place} was on the taken channel — it stands again on the new one. ${said}`,
+        )
+      : L(
+          `Место другого графа ${place} было на отнятом канале и снова не встало — слуха там нет: ${said} Ход — iskron_stand в том графе тем же именем.`,
+          `The seat of another graph ${place} was on the taken channel and did not stand again — no hearing there: ${said} The move — iskron_stand in that graph with the same name.`,
+        ),
   /** Место взял новый мост этой же сессии (перезапуск, компакшн): уступка без тревоги. */
   takenBySession: () =>
     L(

@@ -2,6 +2,7 @@ import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { errorMessage } from "./errors.ts";
+import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
@@ -68,7 +69,13 @@ const R = scoped(() => ({ inFlight: null as Promise<void> | null }));
 // Put the remembered standing back on the current session — before the call
 // that would otherwise land unattributed. Silent by contract: register releases
 // nothing and evicts nobody, so replaying it costs one call and no state.
-export function ensureStanding(): Promise<void> {
+export async function ensureStanding(): Promise<void> {
+  // Место отнято (4000), рядом встать не вышло: ещё попытка; отнятым не подписываться (#6706).
+  if (state.standing && (await standBesideAgain())) return;
+  return replayStanding();
+}
+
+function replayStanding(): Promise<void> {
   if (!state.standing || !state.sessionId) return Promise.resolve();
   if (state.standingSession === state.sessionId) return Promise.resolve();
   if (R.inFlight) return R.inFlight; // wait for the replay already running

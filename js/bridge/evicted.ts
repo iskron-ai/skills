@@ -3,6 +3,7 @@
 // сессии харнесса (перезапуск, компакшн: его запись держания несёт её) — этот
 // экземпляр уступает тихо, место своё. Отняла другая сессия — держатель встаёт
 // рядом на имя.N со слухом тем же ходом, что iskron_stand, и говорит это в сессию.
+import { scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
 import { broadcast, ledKey, notify, releaseStanding, wasEvicted } from "./hold.ts";
@@ -55,8 +56,9 @@ async function standBeside(
   s: Standing,
   name: string,
   beside: StandBeside,
+  once = false,
 ): Promise<{ ok: boolean; text: string } | null> {
-  for (let retry = false; ; retry = true) {
+  for (let retry = once; ; retry = true) {
     if (!wasEvicted(s.realm, s.karta, name)) return null;
     try {
       return await beside(s, H.standCwd);
@@ -84,15 +86,83 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
     return announceEvicted(code, holdWords.evicted(code));
   const base = baseOf(s.realm, s.karta, name); // место рядом отняли — следующее рядом с его основой, не proba.2.2
   announceEvicted(code, holdWords.evictedBeside(code, name, base));
-  const r = await standBeside(key, s, name, beside);
+  F.failed = null;
+  await besideAndSay(key, s, name, base, beside, [...state.places]);
+}
+
+/**
+ * Встать рядом и сказать исход в сессию. Места других графов на отнятом канале
+ * connect места рядом роняет — они встают снова на новом канале тем же ходом и
+ * называются в слове. Не вышло — место помнится: следующий вызов харнеса
+ * повторит попытку прежде, чем подписаться отнятым (standing.ts).
+ */
+async function besideAndSay(
+  key: string,
+  s: Standing,
+  name: string,
+  base: string,
+  beside: StandBeside,
+  extras: Standing[],
+  once = false,
+): Promise<void> {
+  const r = await standBeside(key, s, name, beside, once);
   if (!r) return;
-  const text = r.ok
-    ? holdWords.besideDone(name, r.text)
-    : holdWords.besideFailed(name, base, r.text);
+  const others: string[] = [];
+  if (r.ok)
+    for (const x of extras) {
+      const again = await beside(x, H.standCwd).catch((e: unknown) => ({
+        ok: false,
+        text: e instanceof Error ? e.message : String(e),
+      }));
+      others.push(
+        holdWords.besideOther(`${x.name ?? ""} (${x.realm})`, !!again?.ok, again?.text ?? ""),
+      );
+    }
+  F.failed = r.ok ? null : { key, s, name, base, extras };
+  const text = [
+    r.ok ? holdWords.besideDone(name, r.text) : holdWords.besideFailed(name, base, r.text),
+    ...others,
+  ].join("\n");
   log(text);
   standingLog(`evicted ${key}: ${r.ok ? "stood beside" : "could not stand beside"}`);
   // В сессию — словом, как возврат места без её хода (#5366): плагин вкладывает его промптом.
   notify("warning", { kind: "resumed", text });
+}
+
+/** Встать рядом не вышло (сеть) — что повторить; попытка в полёте одна. */
+const F = scoped(() => ({
+  failed: null as {
+    key: string;
+    s: Standing;
+    name: string;
+    base: string;
+    extras: Standing[];
+  } | null,
+  again: null as Promise<void> | null,
+}));
+
+/**
+ * Место отнято, а встать рядом мост не смог: перед вызовом харнеса — ещё одна
+ * попытка, без отложенного повтора. true — отнятое место всё ещё ведомо:
+ * подписываться им нельзя (#6706).
+ */
+export async function standBesideAgain(): Promise<boolean> {
+  const s = state.standing;
+  if (!s || !wasEvicted(s.realm, s.karta, s.name ?? "")) {
+    F.failed = null;
+    return false;
+  }
+  const f = F.failed;
+  const beside = B.beside;
+  if (f && beside && !F.again)
+    F.again = besideAndSay(f.key, f.s, f.name, f.base, beside, f.extras, true).finally(() => {
+      F.again = null;
+    });
+  if (F.again) await F.again;
+  return (
+    !!state.standing &&
+    wasEvicted(state.standing.realm, state.standing.karta, state.standing.name ?? "")
+  );
 }
 
 /** Чем встать рядом — iskron_stand (stand.ts), переданный сюда, чтобы не замкнуть импорты. */

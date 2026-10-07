@@ -69,8 +69,18 @@ const B = scoped(() => new Map<string, string>());
 export function noteSeatBase(key: string, base: string): void {
   B.set(key, base);
 }
-/** Основа места, запомненная этим мостом (выбор места, возврат по записи); null — неизвестна. */
-export const seatBaseOf = (key: string): string | null => B.get(key) ?? null;
+/**
+ * Основа места: запомненная этим мостом (выбор места, возврат по записи), иначе
+ * записанная тем, кто выбрал место прежде (запись держания любой давности —
+ * основа не стареет) — тогда и запоминается: отъём сотрёт запись; null — неизвестна.
+ */
+export function seatBaseOf(key: string): string | null {
+  const known = B.get(key);
+  if (known) return known;
+  const base = readHoldRecord(key, true)?.base;
+  if (base) B.set(key, base);
+  return base ?? null;
+}
 
 /**
  * Сессия в записи — только названная ЭТОМУ процессу моста (или переданная явно):

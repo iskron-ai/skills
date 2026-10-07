@@ -2676,8 +2676,10 @@ test("iskron/resume of the session's own place whose socket a live bridge holds 
   assert.equal(fake.state.ws.size, 1, "the live holder keeps its socket");
 });
 
-// A bridge no session was named to must not inherit the session of the record
-// it rewrites: the id belongs to the process that was told it, not to the file.
+// A bridge no session was named to must not inherit the session of the record:
+// the id belongs to the process that was told it, not to the file. The seat a
+// named session stood on is that session's (#6706): the bridge stands beside and
+// leaves the record as it was.
 test("a bridge with no named session does not carry the previous holder's session into the record", async (t) => {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -2699,11 +2701,17 @@ test("a bridge with no named session does not carry the previous holder's sessio
     arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(said, /возврат места с диска/, said);
+  assert.doesNotMatch(said, /возврат места с диска/, said);
+  assert.match(said, /стояние (?:@tester:)?proba\.2 — /, said);
   assert.equal(
     holdOf(standings, "proba--931--nks-dev")?.session,
+    "ses-prezhnyaya",
+    "the named session's record is left as it was",
+  );
+  assert.equal(
+    holdOf(standings, "proba.2--931--nks-dev")?.session,
     undefined,
-    "the new process was told no session — the record carries none",
+    "the new process was told no session — its record carries none",
   );
 });
 

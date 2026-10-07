@@ -26,6 +26,7 @@ import {
 import { CFG } from "./config.ts";
 import { wireEviction } from "./evicted.ts";
 import { seatField } from "./fields.ts";
+import { askedHearing, ledHere } from "./hearing.ts";
 import {
   awaitHello,
   doors,
@@ -34,12 +35,11 @@ import {
   holdsStanding,
   isParked,
   ledKey,
-  localSocketPathOf,
   noteStandCwd,
   standingIdIn,
   wasEvicted,
 } from "./hold.ts";
-import { keyOf, noteSeatBase, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
+import { keyOf, noteSeatBase, seatBaseOf } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { returnToStanding } from "./leave.ts";
@@ -61,10 +61,9 @@ import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { baseOf, type Resumed, seatFor } from "./separate.ts";
+import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
-import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -200,21 +199,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (led && a.take !== true) {
     // Просимое место слушает другая сессия — take=true не советуется: вытеснить её — словом человека (#6706).
     // Доска не прочлась — мост не знает, кто слушает, и take=true не советует тоже.
-    const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
-    const bd = b && !b.isError ? readBoard(b) : null;
-    // Живой локальный держатель другой сессии слушает место, даже когда доска его так не читает (как holderOf).
-    const askedKey = keyOf(realm, karta, name);
-    const me = sessionOfBridge();
-    const localOther =
-      (await localSocketAlive(localSocketPathOf(askedKey))) &&
-      !(me && readHoldRecord(askedKey, true)?.session === me);
-    const hearing = localOther
-      ? "other"
-      : !bd?.recognized
-        ? "unknown"
-        : bd.entries.some((e) => e.karta === karta && nameOf(e.address) === name && listens(e))
-          ? "other"
-          : "free";
+    const hearing = await askedHearing(realm, karta, name);
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }
@@ -265,7 +250,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (base && a.take !== true && name === base) {
     const listensOnBoard = (n: string): boolean =>
       entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
-    const seat = await seatFor(realm, karta, base, listensOnBoard, beside, cwd);
+    // Место рядом, названное своим именем, занято — следующее от его основы, не base.N.N (#6706).
+    const root = baseOf(realm, karta, base);
+    const seat = await seatFor(realm, karta, base, listensOnBoard, beside, cwd, root);
     const choice = seat.choice;
     byRecord = seat.resumed;
     if ("refusal" in choice) {
@@ -316,15 +303,24 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // цикл входа, счёт стуков сброшен.
   let how: string;
   let heardHere: boolean;
-  const listensElsewhere = !!mine && listens(mine) && !holdsStanding(realm, karta, name);
+  // Своё место, чей сокет мост сейчас переоткрывает сам (не отъём): доска ещё читает его слушающим — это он.
+  const reopening = !sat && !holdsStanding(realm, karta, name) && ledHere(realm, karta, name);
+  const listensElsewhere =
+    !!mine && listens(mine) && !holdsStanding(realm, karta, name) && !reopening;
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
   // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
   // «слушает» (окно платформы после смерти прежнего моста) — возврат уже выше,
   // только по записи, со слухом (seatFor); подписи без слуха нет (#6706).
   // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
+  // Запись другой названной сессии — её место: с диска его возвращает только её мост (#6706).
   const fresh =
-    !sat && !take && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
+    !sat &&
+    !take &&
+    !reopening &&
+    !holdsStanding(realm, karta, name) &&
+    !isParked(realm, karta, name) &&
+    !theirsByRecord(keyOf(realm, karta, name));
   const resumed =
     byRecord ?? (fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null);
   const extra: string[] = []; // строки после шапки ответа
@@ -363,7 +359,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     heardHere = true;
     how = SW.howReturned();
-  } else if (!take && holdsStanding(realm, karta, name)) {
+  } else if (!take && (holdsStanding(realm, karta, name) || reopening)) {
     const r = await register();
     if (r.isError) {
       lines.push(SW.refused("register", short(r.text)));

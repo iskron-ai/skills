@@ -21,6 +21,7 @@ import {
   UpstreamError,
 } from "./errors.ts";
 import { structuredOf } from "./fields.ts";
+import { rawSeatRefusal } from "./hearing.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
 import { narrowToolList, outsideSetRefusal } from "./narrow.ts";
@@ -317,7 +318,10 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.method === "tools/call" &&
         msg.params?.name === "iskron_channel" &&
         ["connect", "mint", "register"].includes(String(ch.action));
-      const notOwner = takes ? await ownerRefusal(ch.realm, ch.karta) : null;
+      // Место, которое слушает другая сессия, сырым ходом не берётся и им не подписываются (#6706).
+      const notOwner = takes
+        ? ((await ownerRefusal(ch.realm, ch.karta)) ?? (await rawSeatRefusal(msg)))
+        : null;
       if (notOwner) {
         emit({
           jsonrpc: "2.0",
