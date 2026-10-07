@@ -3530,6 +3530,48 @@ test("a bound node rides in the batch by count as well", async (t) => {
   assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
+// Одно событие графа приходит месту двумя кадрами: инбоксом роли (via=graph,
+// event_id в теле) и записью дела (via=room, event_id на верхнем уровне конверта,
+// дело №248, #6563). Метка одна — ev:<N>: копия дела после отданного события гаснет;
+// копия дела, пришедшая первой, — только счёт и кадр инбокса не глушит.
+test("a case record carrying the event_id of a delivered inbox frame is dropped; one that came first does not swallow the inbox frame", async (t) => {
+  const { fake, dir, key, bridge, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-1", 77, "событие семьдесят семь") });
+  await waitFor(() => wd.out.includes("событие семьдесят семь"), "the inbox frame");
+  await waitSeen(standings, "ev:77");
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await waitFor(() => bridge.stderr.includes("carries ev:77 already offered"), "the copy dropped");
+  await quietThenNudge(fake, wd, 1500, 990);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the case copy of a delivered event was counted:\n${wd.out}`,
+  );
+  // Копия дела первой: счёт, затем кадр инбокса — текстом; и после отданного счёта — тоже.
+  await sendRoom(fake, { ...nodeOp("updated", 92), event_id: 78 });
+  await fake.control({ ws_send: graphEvent("inbox-2", 78, "событие семьдесят восемь") });
+  await waitFor(
+    () => wd.out.includes("событие семьдесят восемь"),
+    "the inbox frame after its case copy",
+  );
+  await sendRoom(fake, { ...nodeOp("updated", 93), event_id: 79 });
+  await new Promise((r) => setTimeout(r, 1500));
+  await nudge(fake, 991);
+  await waitFor(() => wd.out.includes("[991]"), "the word to me");
+  await waitSeen(standings, "room-msg-93");
+  await fake.control({ ws_send: graphEvent("inbox-3", 79, "событие семьдесят девять") });
+  await waitFor(
+    () => wd.out.includes("событие семьдесят девять"),
+    "the inbox frame after a counted case copy",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // A word in two phases (#5893 §4.5b): the batch carries them by count (#6574);
 // a body to me still reaches the Monitor watchdog at once, whole.
 test("a said in flight, deferred bodies and aborts ride in the batch by count, printing nothing alone; a body of my word reaches the watchdog at once, the count before it", async (t) => {

@@ -8,7 +8,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
+import { deliveredKeys, eventKeyOf, isRoomCopy } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -76,9 +76,9 @@ export class StaleBurst {
     }, STALE_BURST_MS).unref();
   }
 
-  /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
-  hasEvent(evKey: string): boolean {
-    return this.burst.some((f) => eventKeyOf(f) === evKey);
+  /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts); notRoom — не считая копий дела. */
+  hasEvent(evKey: string, notRoom = false): boolean {
+    return this.burst.some((f) => eventKeyOf(f) === evKey && !(notRoom && isRoomCopy(f)));
   }
 
   /** Вынуть из копящейся пачки копии события — живая копия будит, пачка нет (fanout.ts). */

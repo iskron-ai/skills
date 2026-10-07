@@ -19,19 +19,37 @@ import { type Frame } from "./channel.ts";
 export const SEEN_KEEP = 5000;
 export const SEEN_SLACK = 1000;
 
+const evOf = (v: unknown): string =>
+  typeof v === "number" || (typeof v === "string" && v) ? `ev:${v}` : "";
+
 /**
  * Метка события графа в памяти доставленного: `ev:<event_id>`; "" — кадр не несёт
- * события. Событие — только кадр via=graph с телом-объектом и event_id в нём: слово
+ * события. Событие несут два кадра: via=graph с телом-объектом и event_id в нём
+ * (инбокс роли) и via=room с event_id на верхнем уровне конверта, рядом с entry_id
+ * (запись дела, написанная тем же событием, — граф nks-dev: #6563, дело №248). Слово
  * делателя, где встретился такой JSON, событием не бывает. Платформа раздаёт одно
- * событие каждому месту роли, у каждой копии свой id кадра (граф nks-dev: #5829).
+ * событие каждому месту роли, у каждой копии свой id кадра (#5829).
  */
 export function eventKeyOf(frame: Frame | null | undefined): string {
-  if (frame?.provenance?.via !== "graph") return "";
-  const body = frame.body;
+  const via = frame?.provenance?.via;
+  if (via === "room") return evOf(frame?.event_id);
+  if (via !== "graph") return "";
+  const body = frame?.body;
   if (!body || typeof body !== "object" || Array.isArray(body)) return "";
-  const ev = (body as Record<string, unknown>).event_id;
-  return typeof ev === "number" || (typeof ev === "string" && ev) ? `ev:${ev}` : "";
+  return evOf((body as Record<string, unknown>).event_id);
 }
+
+/**
+ * Копия события в деле: запись дела отдаётся счётом, не текстом события (#6574),
+ * поэтому её доставка события не метит — кадр инбокса того же события будить
+ * вправе; сама она гаснет перед отданной или ждущей копией (fanout.ts).
+ */
+export const isRoomCopy = (frame: Frame | null | undefined): boolean =>
+  frame?.provenance?.via === "room" && !!eventKeyOf(frame);
+
+/** Метка события, которую пишет доставка кадра: "" — у копии дела и у кадра без события. */
+export const eventMarkOf = (frame: Frame | null | undefined): string =>
+  isRoomCopy(frame) ? "" : eventKeyOf(frame);
 
 /**
  * Метки доставленного кадра: его id и событие графа. Лежалая копия метит событие
@@ -39,7 +57,7 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
  */
 export function deliveredKeys(frame: Frame | null | undefined): string[] {
   const id = typeof frame?.id === "string" ? frame.id : "";
-  const ev = eventKeyOf(frame);
+  const ev = eventMarkOf(frame);
   return [id, ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev].filter(Boolean);
 }
 

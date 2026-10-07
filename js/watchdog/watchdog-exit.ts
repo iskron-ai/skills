@@ -12,7 +12,7 @@ import { writeSync } from "node:fs";
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
-import { eventKeyOf, noteSeen, seenIds } from "../shared/seen.ts";
+import { eventMarkOf, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, resolveStanding, staleBatchKeys } from "./client.ts";
 import { doer, wd } from "./words.ts";
@@ -118,7 +118,7 @@ export function runWatchdogExit(argv: string[]): void {
           );
           for (const k of [...riderIds.splice(0), ...folded.splice(0)]) noteSeen(seenPath, k, seen);
           noteSeen(seenPath, id, seen);
-          const evKey = eventKeyOf(ev.frame);
+          const evKey = eventMarkOf(ev.frame);
           if (evKey) noteSeen(seenPath, evKey, seen); // событие графа отдано — другие копии веера тоже
           woke = true;
           if (last) process.exit(0); // конец процесса И ЕСТЬ доставка

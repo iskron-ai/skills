@@ -4,7 +4,7 @@
 import { statSync } from "node:fs";
 
 import { type Frame } from "../shared/channel.ts";
-import { eventKeyOf, seenIds } from "../shared/seen.ts";
+import { eventKeyOf, isRoomCopy, seenIds } from "../shared/seen.ts";
 import { type StaleBurst } from "./stale.ts";
 
 /**
@@ -55,9 +55,13 @@ export function redundantCopy(
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
   if (!ev) return "";
   const stale = frame?.stale === true;
+  // Копия дела (#6563) — счётом: она гаснет перед всякой копией события, а копию
+  // инбокса не держит — та несёт событие текстом и вынимает её из лежалой пачки.
+  const room = isRoomCopy(frame);
+  const holds = (f: Frame | null): boolean => eventKeyOf(f) === ev && (room || !isRoomCopy(f));
   const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
-  if (isDelivered(keys, seen, seenPath) || ring.some((r) => eventKeyOf(r.frame) === ev)) return ev;
-  if (stale) return burst.hasEvent(ev) ? ev : "";
-  burst.dropEvent(ev);
+  if (isDelivered(keys, seen, seenPath) || ring.some((r) => holds(r.frame))) return ev;
+  if (stale && burst.hasEvent(ev, !room)) return ev;
+  if (!room) burst.dropEvent(ev);
   return "";
 }
