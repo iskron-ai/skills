@@ -81,35 +81,45 @@ export default {
     const once = (key) => key == null || (!said.has(key) && !!said.add(key));
     // тул оболочки на 2.0.24 — shell; bash — для прежних версий
     const isShell = (tool) => ["shell", "bash"].includes(tool);
-    // memory-guard: бросок из execute.before блокирует вызов; путь памяти — тот же, что у guard'а Claude Code
-    // сравнивается путь, а не строка: относительный — от каталога сессии, `//`, `/./`, `..` схлопнуты
-    // (resolve), ссылки раскрыты до конца, висячие тоже: ссылка на ещё не созданный файл судится по
-    // раскрытому пути цели; память узнаётся и по ~/.claude/projects за ссылкой. Цикл или больше
-    // 8 переходов — путь не решён, guard отказывает (закрыто на отказ, как хук Claude Code)
-    const { existsSync, lstatSync, readlinkSync, realpathSync } = await import("node:fs");
-    const { basename, dirname, join, resolve } = await import("node:path");
+    // memory-guard: бросок из execute.before блокирует вызов; правило пути — то же, что у guard'а Claude Code:
+    // относительный — от каталога сессии; путь раскрывается по компонентам слева направо, как realpath -m:
+    // существующая ссылка заменяется своей целью, и та раскрывается дальше, «..» применяется к уже
+    // раскрытому префиксу, несуществующий хвост — текстом. Больше 40 переходов, цикл или ссылка, лежащая
+    // в памяти, — отказ (закрыто на отказ); память узнаётся и по ~/.claude/projects за ссылкой
+    const { lstatSync, readlinkSync } = await import("node:fs");
+    const { dirname, isAbsolute, join, parse } = await import("node:path");
     const { homedir } = await import("node:os");
-    const real = (p, hops = { n: 0 }) => {
-      for (;;) {
-        let link = false;
-        try { link = lstatSync(p).isSymbolicLink(); } catch { /* нет такого — судит предок */ }
-        if (!link) break;
-        if (++hops.n > 8) throw new Error(`link chain not resolved: ${p}`);
-        p = resolve(dirname(p), readlinkSync(p));
-      }
-      if (existsSync(p)) return realpathSync(p);
-      return dirname(p) === p ? p : join(real(dirname(p), hops), basename(p));
-    };
     const slash = (p) => p.replaceAll("\\", "/");
-    let projects = resolve(homedir(), ".claude", "projects");
-    try { projects = real(projects); } catch { /* не решён — сравнение по строке */ }
-    projects = slash(projects);
+    const parts = (p) => p.slice(parse(p).root.length).split(/[\\/]+/);
+    // раскрытый путь; null — не раскрыт (предел, цикл, ссылка не читается) или ссылка лежит в памяти
+    const real = (p, inMemory = () => false) => {
+      let r = parse(p).root, rest = parts(p), hops = 0;
+      while (rest.length) {
+        const c = rest.shift();
+        if (!c || c === ".") continue;
+        if (c === "..") { r = dirname(r); continue; }
+        const q = join(r, c);
+        let link = false;
+        try { link = lstatSync(q).isSymbolicLink(); } catch { /* нет такого — хвост текстом */ }
+        if (!link) { r = q; continue; }
+        let l = "";
+        try { l = readlinkSync(q); } catch { /* не читается — не раскрыт */ }
+        if (++hops > 40 || !l || inMemory(q)) return null;
+        if (isAbsolute(l)) r = parse(l).root;
+        rest = [...parts(l), ...rest];
+      }
+      return r;
+    };
+    const home = join(homedir(), ".claude", "projects");
+    const projects = slash(real(home) ?? home);
+    const inMemory = (p) => {
+      const x = `${slash(p)}/`;
+      return /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length)));
+    };
     const isLocalMemoryPath = (p, base) => {
-      const abs = resolve(base || process.cwd(), String(p));
-      let r;
-      try { r = real(abs); } catch { return true; }
-      return [slash(abs), slash(r)].some((x) =>
-        /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length))));
+      const abs = isAbsolute(String(p)) ? String(p) : `${base || process.cwd()}/${p}`;
+      const r = real(abs, inMemory);
+      return r === null || inMemory(abs) || inMemory(r);
     };
     // пути вызова: write и edit — поле path (filePath прежних версий); patch (apply_patch) — заголовки
     // patchText «*** Add File: », «*** Update File: », «*** Delete File: » и цель «*** Move to: »

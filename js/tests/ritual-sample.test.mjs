@@ -9,7 +9,7 @@
 // copy (a past revision) so it can be shown red before a fix.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
@@ -192,31 +192,54 @@ for (const md of sources) {
     await s.stop();
   });
 
-  // A link to a file not yet written is judged by its target; a chain past 8
-  // hops or a cycle is not resolved — the guard refuses (closed on failure).
-  test(name("guard follows a dangling link; a long chain or a cycle is refused"), async () => {
+  // The path is resolved component by component, as realpath -m: a dangling
+  // link by its target, `..` in a link's target after the link before it;
+  // past 40 hops or a cycle the guard refuses (closed on failure).
+  test(name("guard resolves the path by components, as realpath -m"), async () => {
     const s = await standServer(source);
     const p = await s.instance(s.own);
     s.sessions.set("mine", { dir: s.own });
-    const mem = join(s.own, ".claude", "projects", "x", "memory");
-    mkdirSync(mem, { recursive: true });
-    const at = (...names) => join(s.own, "links", ...names);
+    const own = realpathSync(s.own); // a hop is a hop of the chain, not of /var
+    const mem = join(own, ".claude", "projects", "x", "memory");
+    mkdirSync(join(mem, "sub"), { recursive: true });
+    mkdirSync(join(own, "safe", "sub"), { recursive: true });
+    const at = (...names) => join(own, "links", ...names);
     mkdirSync(at(), { recursive: true });
-    symlinkSync(join(mem, "new.md"), at("dangling"));
-    symlinkSync(join(mem, "sub"), at("dangling-dir"));
-    for (let i = 0; i < 9; i++)
-      symlinkSync(i === 8 ? join(mem, "new.md") : at(`l${i + 1}`), at(`l${i}`));
+    const chain = (name, n, target) => {
+      for (let i = 0; i < n; i++)
+        symlinkSync(i === n - 1 ? target : at(`${name}${i + 1}`), at(`${name}${i}`));
+      return at(`${name}0`);
+    };
+    // alias → jump/../note.md, jump → <dir>/sub: the target is <dir>/note.md
+    const dotdot = (name, dir) => {
+      symlinkSync(join(dir, "sub"), at(`${name}-jump`));
+      symlinkSync(`${name}-jump/../note.md`, at(`${name}-alias.md`));
+      return at(`${name}-alias.md`);
+    };
     symlinkSync(at("b"), at("a"));
     symlinkSync(at("a"), at("b"));
-    symlinkSync(join(s.own, "safe", "new.md"), at("safe"));
-    const passed = [];
-    for (const path of [at("dangling"), at("dangling-dir", "f.md"), at("l0"), at("a")])
+    const cases = [
+      [chain("dangling", 1, join(mem, "new.md")), true],
+      [`${chain("into-dir", 1, join(mem, "new"))}/f.md`, true],
+      [chain("nine", 9, join(mem, "new.md")), true],
+      [at("a"), true],
+      [dotdot("memory", mem), true],
+      [chain("forty-one", 41, join(own, "safe", "f")), true],
+      [chain("safe", 1, join(own, "safe", "new.md")), false],
+      [dotdot("safe", join(own, "safe")), false],
+      [`${join(own, "safe", "a")}/../b.md`, false],
+      [chain("forty", 40, join(own, "safe", "f")), false],
+    ];
+    const wrong = [];
+    for (const [path, refused] of cases)
       await p.call("execute.before", toolCall("write", "mine", { path, content: "x" })).then(
-        () => passed.push(path),
-        (e) => assert.ok(!["ReferenceError", "TypeError"].includes(e?.name), e),
+        () => refused && wrong.push(`passed: ${path}`),
+        (e) => {
+          assert.ok(!["ReferenceError", "TypeError"].includes(e?.name), e);
+          if (!refused) wrong.push(`refused: ${path}`);
+        },
       );
-    assert.deepEqual(passed, [], "each is refused");
-    await p.call("execute.before", toolCall("write", "mine", { path: at("safe"), content: "x" }));
+    assert.deepEqual(wrong, []);
     await s.stop();
   });
 
