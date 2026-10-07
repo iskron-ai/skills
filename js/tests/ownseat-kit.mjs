@@ -64,12 +64,14 @@ function startBridge(serverUrl, authDir) {
       return p;
     },
     stop: () =>
-      proc.exitCode !== null
+      proc.exitCode !== null || proc.signalCode !== null
         ? Promise.resolve()
         : new Promise((r) => {
             proc.once("exit", r);
             proc.stdin.end();
-            setTimeout(() => proc.kill("SIGKILL"), 3000).unref();
+            // Не unref: мост, не вышедший по концу stdin, иначе оставил бы пробу без цикла событий.
+            const kill = setTimeout(() => proc.kill("SIGKILL"), 3000);
+            proc.once("exit", () => clearTimeout(kill));
           }),
   };
 }
@@ -111,8 +113,8 @@ export async function setup(t) {
   const dir = scratch(t, "iskron-ownseat-");
   const cwd = scratch(t, "iskron-ownseat-cwd-");
   t.after(async () => {
+    await fake.stop(); // сервер первым: так мосты выходят по концу stdin, не ждут его
     await Promise.all(bridges.map((b) => b.stop()));
-    await fake.stop();
     for (const d of scratches.get(t) ?? []) rmSync(d, { recursive: true, force: true });
   });
   const up = async (authDir = dir) => {
