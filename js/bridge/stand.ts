@@ -27,7 +27,14 @@ import {
 import { CFG } from "./config.ts";
 import { wireEviction } from "./evicted.ts";
 import { seatField } from "./fields.ts";
-import { askedHearing, boardHearing, ledHere, ofSeat, seatKarta } from "./hearing.ts";
+import {
+  askedHearing,
+  boardHearing,
+  ledHere,
+  ofSeat,
+  seatKarta,
+  unresolvedAgent,
+} from "./hearing.ts";
 import {
   awaitHello,
   doors,
@@ -40,7 +47,7 @@ import {
   standingIdIn,
   wasEvicted,
 } from "./hold.ts";
-import { keyOf, noteSeatBase, seatBaseOf } from "./holdrecord.ts";
+import { keyOf, noteSeatBase } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { returnToStanding } from "./leave.ts";
@@ -173,7 +180,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   let name = asked || sat?.name || derived;
   const base = sat ? "" : name; // основа места рядом: выведенное или явное имя (#6706)
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
-  karta = seatKarta(realm, karta); // «agent» — роль места этого графа, до любой проверки места (hearing.ts)
+  karta = seatKarta(realm, karta, name); // «agent» — роль своего места, до любой проверки (hearing.ts)
   // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   // Основу места рядом мост помнит сам (#6706); по виду имени её не угадать — glm-5.3 не место рядом glm-5.
@@ -194,8 +201,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   // Стояние одно на мост (#5154): другое место при ведомом своём — только по
   // явному take=true; иначе отказ вслух, и ничего не тронуто.
-  // Имя графа, не разрешённое в @owner/slug, против графов своих мест — отказ, не догадка (#5838).
-  const unresolved = unresolvedRefusal(realm);
+  // Имя графа, не разрешённое в @owner/slug, против графов своих мест — отказ, не догадка (#5838);
+  // так же роль-сентинел, не разрешённая в число (hearing.ts).
+  const unresolved = unresolvedRefusal(realm) ?? unresolvedAgent(karta, "connect");
   if (unresolved) {
     lines.push(unresolved);
     return done(true);
@@ -235,9 +243,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const bd = readBoard(board);
   const { entries, recognized, declared } = bd;
   let own = entries.filter((e) => ofSeat(e, karta, name));
-  // Счёт в заголовке не сошёлся с разобранным — где-то строка, которой парсер не
-  // понял; она могла быть твоим живым местом или чужим. Кто слушает, мост не
-  // знает (hearing.ts): вслепую не ротирует, а явный take=true — слово делателя.
+  // Счёт в шапке не сошёлся с разобранным — кто слушает, мост не знает (hearing.ts):
+  // вслепую не ротирует, а явный take=true — слово делателя.
   const unread = declared != null && declared !== entries.length;
   const hearing = (n: string): AskedHearing => boardHearing(bd, karta, n);
   if (!recognized || own.length > 1 || (hearing(name) === "unknown" && a.take !== true)) {
@@ -254,8 +261,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // встаём рядом на имя.N со слухом; чужим местом не подписываемся (#6706).
   let ownSession = false;
   let byRecord: Resumed | null = null; // своё место, возвращённое по записи держания (seatFor)
-  // Основа, от которой выбирается место рядом: место рядом, названное своим именем, — его основа, не base.N.N (#6706).
-  const root = base ? baseOf(realm, karta, base) : "";
+  // Основа места рядом: явное имя места рядом — его основа, не base.N.N; выведенное — само себе основа (#6706).
+  const root = !base ? "" : asked ? baseOf(realm, karta, base) : base;
   // Место другого графа встаёт register, а он слуха не отнимает: take=true там не берёт чужого — место выбирается так же.
   if (base && (a.take !== true || beside) && name === base) {
     const seat = await seatFor(realm, karta, base, hearing, beside, cwd, root);
@@ -274,8 +281,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     if (choice.note) nameNotes.push(choice.note);
   }
-  // До connect: запись держания несёт основу; известную мосту не перезаписывать — явный proba.2 остаётся рядом с proba (#6706).
-  if (base && !seatBaseOf(keyOf(realm, karta, name))) noteSeatBase(keyOf(realm, karta, name), root);
+  // До connect: основа этого выбора — в запись и файл основы; прежняя основа имени его не переживает (#6706).
+  if (base) noteSeatBase(keyOf(realm, karta, name), root);
   const take = a.take === true || ownSession;
   const sub = !!sat || baseOf(realm, karta, name) !== name; // место рядом и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —

@@ -8,8 +8,9 @@ import { dirname } from "node:path";
 
 import { takingFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
+import { seatKarta } from "./hearing.ts";
 import { keyOf, sessionOfBridge } from "./holdrecord.ts";
-import { normKarta, normName } from "./names.ts";
+import { normName } from "./names.ts";
 
 interface Taking {
   session: string;
@@ -47,7 +48,8 @@ export function beginTaking(args: Record<string, unknown>): () => void {
   const realm = typeof args.realm === "string" ? args.realm.trim() : "";
   if (!session || CFG.satellite || !realm || (action !== "connect" && action !== "mint"))
     return () => {};
-  const path = pathOf(keyOf(realm, normKarta(args.karta), normName(args.name)));
+  const name = normName(args.name);
+  const path = pathOf(keyOf(realm, seatKarta(realm, args.karta, name), name));
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify({ session, pid: process.pid }) + "\n", { mode: 0o600 });

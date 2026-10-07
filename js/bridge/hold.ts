@@ -156,6 +156,10 @@ export const heldPlaces = (): { key: string; realm: string; primary: boolean }[]
 /** Место другого графа, если вызов его называет: уход и занятость — места своего графа (#5838). */
 export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.door.key ?? null;
 
+/** Отпустил ли мост сокет ИМЕННО этого места мёртвым токеном и не взял снова. */
+export const diedOn = (realm: string, karta: string | number, name: string): boolean =>
+  !!H.deadKey && H.deadKey === keyOf(realm, karta, name);
+
 /** Ушёл ли мост с ИМЕННО этого места (leave.ts): адрес помнит, сокет закрыт — вернуться можно без connect. */
 export const isParked = (realm: string, karta: string | number, name: string): boolean =>
   H.parked && isOwn(realm, karta, name);
@@ -288,6 +292,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   const same = !!H.currentKey && H.currentKey === key;
   releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
   H.currentKey = key;
+  H.deadKey = null;
   H.currentUrl = url;
   H.currentStatusUrl = statusUrl || deriveStatusUrl(url);
   H.door = new Door(key, doorHooks);
@@ -471,6 +476,7 @@ function openHolder(url: string, key: string): void {
         broadcast(ev);
         notify("error", ev);
         releaseStanding(holdWords.tokenDead(), true);
+        H.deadKey = key; // привязка помнится, слуха нет (deaf.ts)
       },
       onServiceAlive: (version) => {
         const text = holdWords.alive(version);

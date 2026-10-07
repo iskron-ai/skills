@@ -12,6 +12,7 @@ import { ensureAuth } from "./auth.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import { noteCaseEntry } from "./caseexit.ts";
+import { deafRefusal } from "./deaf.ts";
 import {
   AuthPending,
   errorMessage,
@@ -274,8 +275,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
-      // Место отнято, рядом встать не вышло — записью в его граф не подписываться (#6706).
-      const taken = hasId ? evictedRefusal(msg) : null;
+      // Место отнято, рядом встать не вышло, либо без слуха и, может быть, взято другой
+      // сессией — записью в его граф не подписываться (#6706).
+      const taken = hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null;
       if (taken) {
         emit({
           jsonrpc: "2.0",

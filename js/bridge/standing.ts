@@ -1,6 +1,7 @@
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
+import { deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
@@ -81,6 +82,9 @@ function replayStanding(): Promise<void> {
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
     try {
+      // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+      const deaf = await deafSeatTaken();
+      if (deaf) return log(`standing not re-registered: ${deaf}`);
       const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
         // Места других графов — тем же ходом: иначе их записи легли бы без автора (#5838).

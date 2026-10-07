@@ -155,3 +155,47 @@ test("the former bridge of this session yields on the outcome of the new bridge'
   assert.deepEqual(placeArgs(fake, "connect"), ["proba", "proba"], `one seat:\n${b1.stderr}`);
   assert.ok(!saidKind(b1, "resumed"), "the former bridge did not stand beside");
 });
+
+test("a name once a primary seat, now chosen beside another base: its base is the new one — no role-inbox hook, the eviction stands on base.3", async (t) => {
+  const { fake, up } = await setup(t);
+  const a0 = await up();
+  assert.equal(
+    placeOf(await stand(a0, { realm: "nks-dev", karta: 931, name: "proba.2" })),
+    "proba.2",
+  );
+  await channel(a0, { realm: "nks-dev", action: "revoke", karta: 931, standing: "proba.2" });
+  await a0.stop();
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
+  const a1 = await up();
+  const hooks = fake.state.counts.webhooks_added;
+  const s = await stand(a1, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.equal(placeOf(s), "proba.2", textOf(s));
+  assert.equal(fake.state.counts.webhooks_added, hooks, `no role-inbox hook:\n${textOf(s)}`);
+  await until(() => fake.state.ws.size === 1, "socket");
+  await fake.control({ ws_close: 4000 });
+  await until(() => fake.state.places.get("931:proba.2")?.listening === false, "closed");
+  await fake.control({
+    places: [
+      { karta: "931", name: "proba", listening: true },
+      { karta: "931", name: "proba.2", listening: true },
+    ],
+  });
+  await until(() => saidKind(a1, "resumed"), `the word beside:\n${a1.stderr}`);
+  assert.equal(placeArgs(fake, "connect").at(-1), "proba.3", `${placeArgs(fake, "connect")}`);
+});
+
+test("a new bridge of the same session standing as karta=agent takes back its own seat under the numeric role — no seat beside", async (t) => {
+  const { fake, cwd, up } = await setup(t);
+  const b1 = await up();
+  await b1.call("iskron/resume", { cwd, session: "ses-1" });
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  const b2 = await up();
+  await b2.call("iskron/resume", { cwd, session: "ses-1" });
+  const s2 = await stand(b2, { realm: "nks-dev", karta: "agent", name: "proba", cwd });
+  assert.equal(placeOf(s2), "proba", textOf(s2));
+  assert.deepEqual(placeArgs(fake, "connect"), ["proba", "proba"], textOf(s2));
+});

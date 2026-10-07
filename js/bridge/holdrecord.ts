@@ -3,8 +3,8 @@
 // ротирует его connect-ом: адрес, хуки и очередь остаются теми же. Секрет
 // лежит 0600 рядом с ключом стояния, как грант; стирается снятием и мёртвым
 // токеном (hold.ts).
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { scoped } from "../shared/scope.ts";
 import { baseFilePathOf, holdFilePathOf } from "../shared/standings.ts";
@@ -165,6 +165,24 @@ export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
     return r;
   } catch {
     return null;
+  }
+}
+/** Записи держания под этим именем у любой роли — какого графа, судит вызывающий. */
+export function holdRecordsNamed(name: string): HoldRecord[] {
+  const dir = dirname(holdFilePathFor("_"));
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".hold"))
+      .map((f) => {
+        try {
+          return JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
+        } catch {
+          return null;
+        }
+      })
+      .filter((r): r is HoldRecord => !!r && r.name === name && r.karta != null);
+  } catch {
+    return [];
   }
 }
 /** Стереть запись, только если она этого держателя (тот же адрес): запись нового держателя, отнявшего место, цела. */

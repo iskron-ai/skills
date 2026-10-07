@@ -24,6 +24,8 @@ export const H = scoped(() => ({
   evictedEvent: null as ChannelEvent | null,
   /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
   parked: false,
+  /** ключ места, чей сокет отпущен мёртвым токеном (4001), пока мост не взял сокет снова (deaf.ts) */
+  deadKey: null as string | null,
   attachHooks: [] as (() => void)[],
   helloWaiters: new Set<(f: Frame | null) => void>(),
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */

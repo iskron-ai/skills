@@ -16,7 +16,7 @@ import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board
 import { type AskedHearing, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
-import { keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import { holdRecordsNamed, keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { normKarta, normName } from "./names.ts";
 import { sameRealm } from "./realms.ts";
 import { localSocketAlive } from "./sweep.ts";
@@ -26,16 +26,32 @@ import { type JsonRpcMessage } from "./types.ts";
 /** Роль не числом — сентинел: доска печатает роли числами, сличить его с ней нельзя. */
 export const isSentinel = (karta: string): boolean => !/^\d+$/.test(karta);
 
-/** Роль вызова в форме доски: «agent» — роль места, которое мост ведёт в этом графе. */
-export function seatKarta(realm: unknown, karta: unknown): string {
+/**
+ * Роль вызова в форме доски: «agent» — роль места, которое мост ведёт в этом
+ * графе, иначе роль, под которой это имя держала эта же сессия (запись держания
+ * прежнего моста): своё место узнаётся и под сентинелом.
+ */
+export function seatKarta(realm: unknown, karta: unknown, name = ""): string {
   const k = normKarta(karta);
   if (k !== "agent") return k;
   const r = String(realm ?? "").trim();
-  const led = [state.standing, ...state.places].find(
-    (p) => p && (p.realm === r || sameRealm(r, p.realm)),
-  );
-  return led ? String(led.karta) : k;
+  const here = (x: string): boolean => x === r || sameRealm(r, x);
+  const led = [state.standing, ...state.places].find((p) => p && here(p.realm));
+  if (led) return String(led.karta);
+  const me = sessionOfBridge();
+  const rec =
+    me && name ? holdRecordsNamed(name).find((x) => x.session === me && here(x.realm)) : null;
+  return rec ? normKarta(rec.karta) : k;
 }
+
+/** «agent», которого мост не разрешил в число: место не сличить ни с доской, ни с прежним держанием — отказ. */
+export const unresolvedAgent = (karta: string, what: string): string | null =>
+  karta !== "agent"
+    ? null
+    : L(
+        `Отказано (мост): karta="agent" — мост не ведёт места в этом графе и не знает, какой роли это имя у этой сессии, а место под сентинелом не сличить ни с доской, ни с прежним держанием (${what} мог бы встать вторым местом или взять чужое). Назови роль числом — роль агента из AGENTS.md.`,
+        `Refused (bridge): karta="agent" — the bridge leads no seat in this graph and does not know which role this session held the name under, and a seat under the sentinel matches neither the board nor a former hold (${what} could make a second seat or take another's). Name the role by number — the agent's role from AGENTS.md.`,
+      );
 
 /** Строка доски — это место: то же имя и та же роль (сентинел — любая). */
 export const ofSeat = (e: BoardEntry, karta: string, name: string): boolean =>
@@ -101,9 +117,12 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   const action = String(a.action);
   if (!["connect", "mint", "register"].includes(action)) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const karta = seatKarta(realm, a.karta ?? state.standing?.karta ?? "");
   const name = normName(a.name);
-  if (!realm || !karta || ledHere(realm, karta, name)) return null;
+  const karta = seatKarta(realm, a.karta ?? state.standing?.karta ?? "", name);
+  if (!realm || !karta) return null;
+  const agent = unresolvedAgent(karta, action);
+  if (agent) return agent;
+  if (ledHere(realm, karta, name)) return null;
   const hearing = await askedHearing(realm, karta, name);
   if (hearing === "free") return null;
   const seat = keyOf(realm, karta, name);
@@ -120,8 +139,16 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   );
 }
 
-/** Место ведёт сам этот мост — держит, запарковал или переоткрывает свой сокет; отнятое — не его. */
+/**
+ * Место слушает сам этот мост — держит или переоткрывает свой сокет. Отнятое — не
+ * его; оставленное словом (leave) — без слуха: его за это время могла взять
+ * другая сессия, вернуть его — iskron_stand (deaf.ts).
+ */
 export function ledHere(realm: string, karta: string, name: string): boolean {
-  if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return true;
-  return ledKey() === keyOf(realm, karta, name) && !wasEvicted(realm, karta, name);
+  if (holdsStanding(realm, karta, name)) return true;
+  return (
+    ledKey() === keyOf(realm, karta, name) &&
+    !wasEvicted(realm, karta, name) &&
+    !isParked(realm, karta, name)
+  );
 }
