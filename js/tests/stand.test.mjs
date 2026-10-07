@@ -34,6 +34,8 @@ const INIT = {
   clientInfo: { name: "stand-probe", version: "0" },
 };
 const PAT = "nks_pat_stand";
+/** Харнес, объявивший поля ответа (#6731), — как плагин OpenCode и расширение pi. */
+const ASKS_FIELDS = { ...INIT, capabilities: { experimental: { "iskron/structured": {} } } };
 
 function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [], file = FILE) {
   const notifications = [];
@@ -3926,6 +3928,79 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
   assert.equal(now.connect, before.connect, "a held seat is not rotated");
 });
 
+// Строка длиннее 64 ложится обрезанной по слову, ответ — 200 с warnings[]
+// trimmed_to_limit (#6729, нудж #6730, дело №234): мост называет агенту принятую
+// строку и нудж, а не отправленную.
+test("a busy line the server trims: every status move names the accepted line and the nudge", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  await fake.control({ statusTrim: true });
+  const long = "пишу пробу обрезки строки занятости, которая намеренно длиннее шестидесяти знаков";
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const seat = { realm: "nks-dev", karta: 931, name: "proba" };
+  const check = (reply, what) => {
+    const text = textOf(reply);
+    assert.ok(!reply.result?.isError, `${what}: ${text}`);
+    assert.ok(fake.state.status.endsWith("…") && fake.state.status !== long, fake.state.status);
+    assert.ok(
+      text.includes(`: ${fake.state.status}; строка обрезана сервером: переназови: обрезано до 64`),
+      `${what}: ${text}`,
+    );
+    assert.ok(
+      !text.includes(long),
+      `${what}: the sent line is named, not the accepted one:\n${text}`,
+    );
+  };
+  check(await stand({ ...seat, status: long }), "taking the seat");
+  check(await stand({ realm: "nks-dev", status: long }), "status only");
+  check(
+    await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "status", text: long },
+    }),
+    "action status",
+  );
+  // Принятая строка — doing верхнего уровня ответа; поля внутри предупреждения мост не читает.
+  await fake.control({ statusTrim: "stray" });
+  const stray = textOf(await stand({ realm: "nks-dev", status: long }));
+  assert.ok(
+    stray.includes(`: ${fake.state.status}; строка обрезана сервером: переназови`),
+    `the accepted line is the answer's top-level doing:\n${stray}`,
+  );
+  assert.ok(!stray.includes("не эта строка"), `a field inside the warning was read:\n${stray}`);
+  // Ответ без doing (прежний сервер): отправленная строка за принятую не выдаётся.
+  await fake.control({ statusTrim: "old" });
+  const old = textOf(await stand({ realm: "nks-dev", status: long }));
+  assert.ok(!old.includes(long), `the sent line named as accepted:\n${old}`);
+  assert.ok(
+    old.includes(`: ${fake.state.status}; строка обрезана сервером: переназови`),
+    `the accepted line, by the server's trimming rule:\n${old}`,
+  );
+  // Слово, кончающееся ровно на пределе, остаётся целым.
+  const edge = `${"а".repeat(30)} ${"б".repeat(32)} вввв`;
+  const atEdge = textOf(await stand({ realm: "nks-dev", status: edge }));
+  assert.equal(fake.state.status, `${"а".repeat(30)} ${"б".repeat(32)}…`);
+  assert.ok(atEdge.includes(`: ${fake.state.status};`), `a word at the limit was cut:\n${atEdge}`);
+  // В держание ложится принятая строка: возврат места не опубликует отправленную.
+  const held = readdirSync(join(dir, "standings"))
+    .filter((f) => f.endsWith(".hold"))
+    .map((f) => JSON.parse(readFileSync(join(dir, "standings", f), "utf8")).status);
+  assert.ok(held.length && !held.includes(long), `the hold record: ${JSON.stringify(held)}`);
+  assert.ok(held.includes(fake.state.status), `the hold record: ${JSON.stringify(held)}`);
+  // Строка, которую сервер принял иной без предупреждения, — та же: слово называет doing ответа.
+  await fake.control({ statusTrim: true, statusNormalize: true });
+  const loose = "занят   пробой";
+  const norm = textOf(await stand({ realm: "nks-dev", status: loose }));
+  assert.equal(fake.state.status, "занят пробой");
+  assert.ok(norm.includes(": занят пробой"), `the accepted line is named:\n${norm}`);
+  assert.ok(!norm.includes(loose), `the sent line named as accepted:\n${norm}`);
+  await fake.control({ statusNormalize: false });
+  // Прежний сервер: отказ 422 приходит целиком, как прежде.
+  await fake.control({ statusTrim: false });
+  const refused = await stand({ realm: "nks-dev", status: long });
+  assert.ok(refused.result?.isError, textOf(refused));
+  assert.match(textOf(refused), /Отказано \(422\)/);
+});
+
 // realm + status без karta, когда занятость не ставится, — отказ называет почему (#6509).
 test("iskron_stand with realm and status only says why it is no busy line: no seat in the graph, or the seat was left by word", async (t) => {
   const { fake, bridge } = await ready(t);
@@ -4224,9 +4299,9 @@ for (const [how, env] of [
     },
   ],
 ])
-  test(`structuredContent reaches the harness untouched (${how}) — no socket or status address is added to it`, async (t) => {
-    const { fake, bridge } = await ready(t, INIT, env);
-    await fake.control({ structured: true });
+  test(`structuredContent reaches a harness that asked for it untouched (${how}) — no socket or status address is added to it`, async (t) => {
+    const { fake, bridge } = await ready(t, ASKS_FIELDS, env);
+    await fake.control({ structured: true, structuredGate: true });
     const channel = (a) =>
       bridge.call("tools/call", { name: "iskron_channel", arguments: { realm: "nks-dev", ...a } });
     const taken = await channel({ action: "connect", karta: 931, name: "proba" });
@@ -4246,7 +4321,50 @@ for (const [how, env] of [
       assert.match(bridge.stderr, /through the machine's bridge daemon/, bridge.stderr);
   });
 
-test("outputSchema rides tools/list to the harness through the narrowing and the moment line", async (t) => {
+// Поля по запросу (#6637, решение #6731): мост объявляет iskron/structured серверу
+// всегда — в рукопожатии харнеса и в повторном, — и читает поля сам; харнесу, не
+// объявившему ключ (Claude Code), structuredContent и outputSchema не отдаются:
+// при полях он отдал бы модели одни поля без текста (#6707).
+test("the bridge asks the server for fields on every handshake; a harness that did not ask gets the full text without structuredContent or outputSchema", async (t) => {
+  const tools = SERVER_TOOLS.map((x) =>
+    x.name === "iskron_channel" ? { ...x, outputSchema: { type: "object" } } : x,
+  );
+  const fake = await startFakeNks({ pat: PAT, tools });
+  const bridge = startBridge(fake.mcpUrl, mkdtempSync(join(tmpdir(), "iskron-fields-")));
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
+  const list = await bridge.call("tools/list");
+  const channelTool = (list.result?.tools ?? []).find((x) => x.name === "iskron_channel");
+  assert.ok(channelTool && !("outputSchema" in channelTool), JSON.stringify(channelTool));
+  await fake.control({ structured: true, structuredGate: true, garble: true });
+  const stand = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  // Проза — формой, которой мост не знает: место и хук он нашёл по полям, которые просил сам.
+  assert.match(textOf(stand), /Хук инбокса роли: взведён на входящий адрес места/, textOf(stand));
+  const board = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.ok(fake.state.lastStructured, "the server sent fields to the bridge");
+  assert.ok(!("structuredContent" in board.result), JSON.stringify(board.result));
+  assert.ok(textOf(board).length > 0, "the full text stays");
+  // Повторное рукопожатие после потери сессии — тоже с ключом.
+  await fake.control({ kill_session: true });
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.ok(fake.state.initCaps.length >= 2, JSON.stringify(fake.state.initCaps));
+  assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
+});
+
+test("outputSchema rides tools/list to a harness that asked for fields through the narrowing and the moment line", async (t) => {
   const schema = (key) => ({
     type: "object",
     properties: { [key]: { type: "array", items: { type: "object" } } },
@@ -4264,7 +4382,7 @@ test("outputSchema rides tools/list to the harness through the narrowing and the
     await bridge.stop();
     await fake.stop();
   });
-  assert.ok((await bridge.call("initialize", INIT)).result);
+  assert.ok((await bridge.call("initialize", ASKS_FIELDS)).result);
   const list = await bridge.call("tools/list");
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");

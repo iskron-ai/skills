@@ -167,6 +167,7 @@ const ENV_KEYS = [
   "FB_TOOLS_FILE",
   "FB_CHANGED",
   "FB_REPLY",
+  "FB_INIT_CAPS",
   "FB_CALLS",
   "FB_STAND_HELD",
   "FB_ENV",
@@ -443,6 +444,20 @@ test("bridge raised: every server tool stands in the session under its own name"
     assert.deepEqual(channel.parameters.required, ["action"]);
     // The prompt line is one sentence of the description, not the whole of it.
     assert.equal(channel.promptSnippet, "Живой канал делателя.");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Поля ответа по запросу (#6637, #6731): расширение их читает (details.structuredContent)
+// и объявляет iskron/structured мосту — иначе мост их срезает, как харнесу без ключа.
+test("the extension asks the bridge for response fields in its handshake", async () => {
+  const caps = join(SANDBOX, "fields.caps");
+  const { env } = bridgeEnv("fields", { FB_INIT_CAPS: caps });
+  const rec = await session(env);
+  try {
+    const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
   } finally {
     await rec.stop();
   }
@@ -841,6 +856,32 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].text, countOf(1, 88));
   assert.doesNotMatch(got[0].text, /явное слово 89/);
+});
+
+// Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.
+test("progress lines of one key fold into the last: the count names the superseded; bad and the word to me stay", async () => {
+  const bad = roomFrame("progress", {
+    entry_id: 47,
+    key: "tests",
+    line: { done: "упало", verdict: "bad" },
+  });
+  const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
+  const got = await asideMessages("fold", frames, 2);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.match(got[0].text, /^№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
+  assert.match(got[1].text, /тайное слово 48$/, "the word to me whole");
+});
+
+// Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
+// ждущая в свёртке, вынимается кадром инбокса — событие входит один раз (#5842).
+test("a case copy of an event waiting in the aside is taken out by its inbox frame: no count", async () => {
+  const got = await asideMessages(
+    "event-copy",
+    [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)],
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.doesNotMatch(got[0].text, /записей/, got[0].text);
 });
 
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {

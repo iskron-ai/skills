@@ -43,6 +43,7 @@
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
+//   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
@@ -183,6 +184,12 @@ process.stdin.on("data", (chunk) => {
     // FB_INITS: a line per initialize received — how often a client re-handshakes.
     if (msg.method === "initialize" && process.env.FB_INITS)
       appendFileSync(process.env.FB_INITS, `${process.pid} ${Date.now()}\n`);
+    // FB_INIT_CAPS: capabilities каждого initialize — что клиент объявил мосту (#6637).
+    if (msg.method === "initialize" && process.env.FB_INIT_CAPS)
+      appendFileSync(
+        process.env.FB_INIT_CAPS,
+        JSON.stringify(msg.params?.capabilities ?? null) + "\n",
+      );
     if (MODE === "mute") continue; // ...and neither does anything, in this mode
     if (MODE === "net" && !existsSync(process.env.FB_NET_UP || "")) {
       send({

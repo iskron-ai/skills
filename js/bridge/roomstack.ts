@@ -12,7 +12,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveredKeys, noteSeen } from "../shared/seen.ts";
+import { deliveryKeys, type Marks, noteSeen, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
 import { HumanWords, idOf, isWordOf } from "./humanwords.ts";
 import { log } from "./streams.ts";
@@ -58,14 +58,26 @@ export class RoomBatch {
     return !!frame && this.held.some((h) => h.frame === frame);
   }
 
-  /** Отдать накопленное сейчас: по окну, по полной пачке, перед прерывающим, при отпускании. */
-  flushNow(): void {
+  /**
+   * Отдать накопленное сейчас: по окну, по полной пачке, перед прерывающим (`carrier` —
+   * он идёт следом текстом), при отпускании. Событие — один раз (seen.ts splitBatch).
+   */
+  flushNow(carrier?: Frame | null): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     const got = this.held.splice(0);
     const emit = this.emit;
     if (!got.length || !emit) return;
-    emitBatch(got, emit);
+    const unit = [...got.map((h) => h.frame), ...(carrier ? [carrier] : [])];
+    const kept = new Set(splitBatch(unit, Infinity, this.has).kept);
+    const out = got.filter((h) => kept.has(h.frame));
+    if (out.length) emitBatch(out, emit);
+  }
+
+  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  private readonly has: Marks;
+  constructor(has: Marks) {
+    this.has = has;
   }
 }
 
@@ -129,7 +141,7 @@ export function batchForWatchdogs(
       human = true;
       frame.origin = "human"; // шапка кадра называет человека, а не место его моста
       d.roomBatch.dropWord(frame, word, (said) => {
-        for (const k of deliveredKeys(said)) noteSeen(d.seenPath, k, d.seen);
+        for (const k of deliveryKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
   }
@@ -146,6 +158,6 @@ export function batchForWatchdogs(
     d.roomBatch.add(raw, frame, emit);
     return true;
   }
-  d.roomBatch.flushNow();
+  d.roomBatch.flushNow(frame);
   return false;
 }

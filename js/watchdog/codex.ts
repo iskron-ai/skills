@@ -16,15 +16,17 @@ import { join } from "node:path";
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
-import { batchHead, frameToText } from "../shared/frame-text.ts";
-import { deliveredKeys, noteSeen, seenIds } from "../shared/seen.ts";
+import { type Frame } from "../shared/channel.ts";
+import { frameToText } from "../shared/frame-text.ts";
+import { deliveryKeys, eventIn, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
   adoptSeenPath,
   attach,
+  heldHeads,
   parseWatchdogArgs,
   resolveStanding,
-  staleBatchKeys,
+  staleOf,
 } from "./client.ts";
 import { doer, wd } from "./words.ts";
 
@@ -74,16 +76,20 @@ export function runWatchdogCodex(argv: string[]): void {
         const ids = !m?.method && typeof m?.id === "number" ? waiting.get(m.id) : undefined;
         if (!ids) return;
         waiting.delete(m.id);
+        settle(m.id, !m.error);
         if (m.error) return note(wd.threadRefused(m.error.message ?? wd.refusal()));
         note(wd.framePut(threadId));
         for (const id of ids) noteSeen(seenPath, id, seen);
       },
       (why) => {
-        const lost = [...waiting.values()].flat();
-        waiting.clear();
-        note(wd.doorClosed(why, lost));
+        // Сначала дверь закрыта для всех, потом возврат: вернувшееся в неё не уходит.
         door = null;
         ready = null;
+        const lost = [...waiting.values()].flat();
+        const gone = [...waiting.keys()];
+        waiting.clear();
+        for (const r of gone) settle(r, false);
+        note(wd.doorClosed(why, lost));
       },
     ).then((d) => {
       door = d;
@@ -93,6 +99,8 @@ export function runWatchdogCodex(argv: string[]): void {
         params: { clientInfo: { name: "iskron-watchdog", title: "iskron", version: "1" } },
       });
       d.send({ method: "initialized" });
+      const back = again.splice(0);
+      if (back.length) putStale(back);
       return d;
     });
     ready.catch((e: Error) => {
@@ -105,15 +113,17 @@ export function runWatchdogCodex(argv: string[]): void {
   // Вложения в полёте: своё отпускание ждёт их, прежде чем выйти (#6638).
   const inFlight = new Set<Promise<void>>();
   function deliver(text: string, ids: string[] = []): Promise<void> {
-    const p = put(text, ids).finally(() => inFlight.delete(p));
+    // Ушёл в тред с мига постановки, не с открытия двери: пачки, судимые до её открытия,
+    // видят его метки в waiting (seen.ts eventIn); отказ двери метки снимает.
+    const reqId = nextId++;
+    waiting.set(reqId, ids);
+    const p = put(reqId, text).finally(() => inFlight.delete(p));
     inFlight.add(p);
     return p;
   }
-  async function put(text: string, ids: string[]): Promise<void> {
+  async function put(reqId: number, text: string): Promise<void> {
     try {
       const d = door ?? (await open());
-      const reqId = nextId++;
-      waiting.set(reqId, ids);
       d.send({
         method: "turn/start",
         id: reqId,
@@ -121,8 +131,48 @@ export function runWatchdogCodex(argv: string[]): void {
       });
       note(wd.frameSent(threadId));
     } catch (e) {
+      if (waiting.delete(reqId)) settle(reqId, false); // дверь не открылась — в тред не ушёл
       note(wd.frameNotPut((e as Error).message));
     }
+  }
+
+  // Копии, чьё событие несёт лишь ход, ещё ждущий ответа треда, не считаются, но и не
+  // теряются: они ждут при нём. Принят — их метки пишутся; отказан или дверь закрылась —
+  // счёт возвращается в ожидание, пачка лежалых судится заново: при открытой двери сразу,
+  // иначе — в миг открытия следующей (again; seen.ts eventIn).
+  type Held = { frame: Frame; ids: string[]; stale: boolean };
+  const heldBy = new Map<number, Held[]>();
+  const again: Frame[] = [];
+  function holdOut(items: Held[]): Held[] {
+    return items.filter((h) => {
+      if (eventIn(h.frame, (k) => seen.has(k))) return true;
+      const r = [...waiting].find(([, ids]) => eventIn(h.frame, (k) => ids.includes(k)))?.[0];
+      if (r === undefined) return true;
+      heldBy.set(r, [...(heldBy.get(r) ?? []), h]);
+      return false;
+    });
+  }
+  function settle(reqId: number, ok: boolean): void {
+    const held = heldBy.get(reqId) ?? [];
+    heldBy.delete(reqId);
+    if (ok) return held.forEach((h) => h.ids.forEach((k) => noteSeen(seenPath, k, seen)));
+    pend.unshift(...held.filter((h) => !h.stale).map(({ frame, ids }) => ({ frame, ids })));
+    const stale = held.filter((h) => h.stale).map((h) => h.frame);
+    if (!stale.length) return;
+    if (door) putStale(stale);
+    else again.push(...stale);
+  }
+  /** Пачка лежалых — один ход, судится в миг вложения (shared/stalebatch.ts); метки — по принятию. */
+  function putStale(frames: Frame[], ev?: ChannelEvent): void {
+    // Пачка моста прежней формы идёт его текстом — судить её нечем (client.ts staleOf).
+    const rest = ev?.unshown
+      ? frames
+      : holdOut(frames.map((f) => ({ frame: f, ids: deliveryKeys(f), stale: true }))).map(
+          (h) => h.frame,
+        );
+    const b = staleOf({ ...(ev ?? { kind: "stale" }), frames: rest }, (k) => seen.has(k));
+    if (b.text) void deliver(b.text, b.keys);
+    else for (const k of b.keys) noteSeen(seenPath, k, seen);
   }
 
   // Мост отдаёт из кольца задним числом только то, что никто не доставил (#5428),
@@ -132,14 +182,19 @@ export function runWatchdogCodex(argv: string[]): void {
   // Неадресованные месту записи дел (#6574) копятся и хода не начинают: счётом
   // по делам они едут шапкой с ближайшим кадром в тред; текст их в тред не идёт.
   let pend: { frame: NonNullable<ChannelEvent["frame"]>; ids: string[] }[] = [];
-  const withPend = (text: string, ids: string[]): void => {
-    const got = pend;
+  /**
+   * Ждущий счёт — шапкой впереди `text`, составленной в миг вложения: по памяти сторожа;
+   * копии события хода, ждущего ответа треда, ждут при нём (holdOut, client.ts heldHeads).
+   */
+  const withPend = (text: string, ids: string[], carrier?: ChannelEvent["frame"]): void => {
+    const got = holdOut(pend.map((p) => ({ ...p, stale: false })));
     pend = [];
-    const head = got.length ? [batchHead(got.map((g) => g.frame))] : [];
-    void deliver([...head, ...(text ? [text] : [])].join("\n"), [
-      ...got.flatMap((g) => g.ids),
-      ...ids,
-    ]);
+    const head = heldHeads([got.map((g) => g.frame)], (k) => seen.has(k), carrier ? [carrier] : []);
+    const keys = [...got.flatMap((g) => g.ids), ...ids];
+    const lines = [...head, ...(text ? [text] : [])];
+    // Нечего вкладывать — ждавшее уже в ходе: метки пишутся, пустого хода в тред нет.
+    if (!lines.length) return void keys.forEach((k) => noteSeen(seenPath, k, seen));
+    void deliver(lines.join("\n"), keys);
   };
   attach(target.path, {
     onEvent: (ev) => {
@@ -155,18 +210,16 @@ export function runWatchdogCodex(argv: string[]): void {
             return note(wd.alreadyPut(ev.frame.id));
           // Неадресованное месту — числом: копится, строка не кладётся (#6574).
           if (ev.batch && ev.frame && !addressedToMine(ev.frame)) {
-            pend.push({
-              frame: ev.frame,
-              ids: [...deliveredKeys(ev.frame), ...(ev.frame.id ? [ev.frame.id] : [])],
-            });
+            pend.push({ frame: ev.frame, ids: deliveryKeys(ev.frame) });
             pend.splice(0, Math.max(0, pend.length - 500)); // старшие уходят: счёт ждёт, не копится без меры
             return;
           }
-          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveredKeys(ev.frame)); // накопленное — шапкой впереди
+          // Накопленное — шапкой впереди; кадр идёт текстом — метки по принятию тредом.
+          withPend(frameToText(ev.frame, ev.raw ?? ""), deliveryKeys(ev.frame), ev.frame);
           break;
         }
         case "stale":
-          void deliver(ev.text ?? wd.codexStale(), staleBatchKeys(ev)); // одна пачка — один ход
+          putStale(ev.frames ?? [], ev);
           break;
         case "dead":
         case "evicted":
@@ -187,6 +240,7 @@ export function runWatchdogCodex(argv: string[]): void {
           // Своё close/revoke/leave — не уход моста: последние кадры и ждавший счёт — в тред, затем выход (#6638).
           if (!ev.own) break;
           if (pend.length) withPend("", []);
+          if (again.length) putStale(again.splice(0)); // пачка, ждавшая двери, — открывает её
           // Дверь, не ответившая на upgrade, держала бы сторожа вечно: предел и громкий выход.
           setTimeout(() => {
             note(wd.flushNotPut(FLUSH_WAIT_MS / 1000));

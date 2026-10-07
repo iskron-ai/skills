@@ -106,8 +106,9 @@ export async function resumeFromDisk(
       if (rec.status && me && rec.session === me) {
         // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
         const st = await publishStatus(rec.status);
+        const kept = st.doing ?? rec.status; // легла строка из ответа, не из записи (дело №234 [139])
         busy = st.ok
-          ? L(`; занятость возвращена: ${rec.status}`, `; busy line restored: ${rec.status}`)
+          ? L(`; занятость возвращена: ${kept}`, `; busy line restored: ${kept}`)
           : L(
               `; занятость не возвращена: ${short(st.body)}`,
               `; busy line not restored: ${short(st.body)}`,

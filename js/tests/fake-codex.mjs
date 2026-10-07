@@ -52,18 +52,28 @@ function unframe(buf) {
 }
 
 // mute: the socket is accepted, the upgrade is never answered — a hung daemon.
-export function startFakeCodex(socketPath, logFile, { mute = false } = {}) {
+// upgradeDelayMs: the upgrade is answered this late — a daemon slow to open the door.
+// refuseTurns: the first this many turns are refused (after turnDelayMs, like an answer).
+// closeTurns: on the first this many turns the socket is destroyed instead of an answer.
+export function startFakeCodex(
+  socketPath,
+  logFile,
+  { mute = false, turnDelayMs = 0, upgradeDelayMs = 0, refuseTurns = 0, closeTurns = 0 } = {},
+) {
+  let refuse = refuseTurns;
+  let close = closeTurns;
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
     res.end();
   });
   const sockets = new Set();
-  server.on("upgrade", (req, socket) => {
+  server.on("upgrade", async (req, socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
     if (mute) return;
+    if (upgradeDelayMs) await new Promise((r) => setTimeout(r, upgradeDelayMs));
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
     );
@@ -92,14 +102,29 @@ export function startFakeCodex(socketPath, logFile, { mute = false } = {}) {
             ),
           );
         } else if (msg.method === "turn/start") {
-          socket.write(
-            frame(
-              JSON.stringify({
-                id: msg.id,
-                result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } },
-              }),
-            ),
-          );
+          // turnDelayMs: ход принят не сразу — сторож метит отданное только по ответу.
+          if (close > 0 && close--) {
+            setTimeout(() => socket.destroy(), turnDelayMs).unref();
+            continue;
+          }
+          const refused = refuse > 0 && refuse--;
+          const answer = () =>
+            socket.write(
+              frame(
+                JSON.stringify(
+                  refused
+                    ? { id: msg.id, error: { code: -32600, message: "turn refused" } }
+                    : {
+                        id: msg.id,
+                        result: {
+                          turn: { id: "turn-1", status: "inProgress", items: [], error: null },
+                        },
+                      },
+                ),
+              ),
+            );
+          if (turnDelayMs) setTimeout(answer, turnDelayMs).unref();
+          else answer();
         } else {
           socket.write(
             frame(JSON.stringify({ id: msg.id, error: { code: -32601, message: "unknown" } })),

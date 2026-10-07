@@ -24,6 +24,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { HARNESS_VERSION_ENV, PI_CLIENT, SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
 import { findBridge, type Notify, packagedBridgePath, refreshHomeBridge } from "./home-copy.ts";
 import { setupUsage } from "./usage.ts";
@@ -179,7 +180,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
         "initialize",
         {
           protocolVersion: PROTOCOL,
-          capabilities: {},
+          capabilities: FIELDS_CAPABILITIES, // поля ответа — и этому клиенту (#6637)
           clientInfo: { name: PI_CLIENT, version: "1" },
         },
         { timeoutMs: HANDSHAKE_MS },

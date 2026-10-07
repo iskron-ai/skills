@@ -22,7 +22,7 @@ import {
   UpstreamError,
 } from "./errors.ts";
 import { evictedRefusal } from "./evicted.ts";
-import { structuredOf } from "./fields.ts";
+import { forHarness, structuredOf } from "./fields.ts";
 import { rawSeatRefusal, seatRealm } from "./hearing.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
@@ -388,9 +388,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
         // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
-        emit(
-          withNotice(absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)))),
-        );
+        const reply = absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)));
+        emit(forHarness(withNotice(reply)));
       }
       endTaking?.();
       return;

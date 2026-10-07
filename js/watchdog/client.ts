@@ -6,8 +6,11 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { type Frame } from "../shared/channel.ts";
+import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
-import { deliveredKeys, seenIds } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, type Marks, seenIds } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
@@ -85,11 +88,32 @@ export function adoptSeenPath(
   return named;
 }
 
-/** Метки лежалой пачки: показанные кадры и названные числом сверх них (#5831). */
-export const staleBatchKeys = (ev: ChannelEvent): string[] => [
-  ...(ev.frames ?? []).flatMap((f) => deliveredKeys(f)),
-  ...(ev.unshown ?? []),
-];
+/**
+ * Пачка лежалых в миг отдачи — по памяти сторожа `has` (shared/stalebatch.ts). Кадр
+ * старого моста несёт лишь показанные кадры и метки сверх них (unshown): тогда — его
+ * текст со счётом «не вошло» и его метки, показанные — метками доставки (#5831). Сверх
+ * показанных событие вошло лишь числом: его `ev:`/`evs:` метятся `cev:`/`cevs:` (seen.ts).
+ */
+export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: string[] } {
+  if (!ev.unshown) return staleBatch(ev.frames ?? [], has);
+  const shown = (ev.frames ?? []).flatMap((f) => deliveryKeys(f));
+  const named = ev.unshown.map((k) => (/^evs?:/.test(k) ? `c${k}` : k));
+  return { text: ev.text ?? "", keys: [...shown, ...named] };
+}
+
+/**
+ * Шапки пачек — строками в момент печати (#6574): пачка ждёт кадрами, и копия, чьё
+ * событие уже в ходе по памяти сторожа или входит текстом этого же вывода — кадрами
+ * `carriers`, — не считается (seen.ts eventIn). Сами они в своей шапке остаются.
+ */
+export function heldHeads(groups: Frame[][], marks: Marks, carriers: Frame[] = []): string[] {
+  const own = new Set(carriers.flatMap((f) => deliveryKeys(f)));
+  const has: Marks = (k) => marks(k) || own.has(k);
+  return groups
+    .map((g) => g.filter((f) => carriers.includes(f) || !eventIn(f, has)))
+    .filter((g) => g.length)
+    .map(batchHead);
+}
 
 export interface AttachOptions {
   onEvent: (ev: ChannelEvent) => void;

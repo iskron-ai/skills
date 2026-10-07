@@ -4,27 +4,29 @@
 // событием — под Monitor одним залпом, в pi и OpenCode одним промптом, сторожу
 // выхода в лог и .seen. Пачка у каждого места своя (door.ts, #5838): лежалое
 // одного графа не уходит сторожу другого.
-import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
-import { caseCountLines, frameToText } from "../shared/frame-text.ts";
-import { L } from "../shared/lang.ts";
-import { deliveredKeys, eventKeyOf } from "../shared/seen.ts";
+import { type Marks, sameCopy } from "../shared/seen.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { type ChannelEvent } from "./door.ts";
 
-const STALE_BURST_KEEP = 20;
 const STALE_BURST_MS = 1500;
-const BODY_CAP = 800;
 
 export class StaleBurst {
   /** Все кадры полосы — пачка показывает первые STALE_BURST_KEEP, отданными метятся все (#5831). */
   private readonly burst: Frame[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
 
+  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  private readonly has: Marks;
+  constructor(has: Marks) {
+    this.has = has;
+  }
+
   /**
-   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие
-   * и все кадры полосы, показанные и нет. Повтор id, уже лежащего в пачке, — не второй кадр.
+   * Положить лежалый кадр в пачку; по истечении полосы `flush` получает одно событие.
+   * Повтор id, уже лежащего в пачке, — не второй кадр.
    */
-  note(frame: Frame, flush: (ev: ChannelEvent, all: Frame[]) => void): void {
+  note(frame: Frame, flush: (ev: ChannelEvent) => void): void {
     const id = typeof frame.id === "string" ? frame.id : "";
     if (!id || !this.burst.some((f) => f.id === id)) this.burst.push(frame);
     if (this.timer) return;
@@ -32,59 +34,23 @@ export class StaleBurst {
       this.timer = null;
       const all = this.burst.splice(0);
       if (!all.length) return; // все копии вынула живая копия того же события
-      const frames = all.slice(0, STALE_BURST_KEEP);
-      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом.
-      const bodies = [
-        ...caseCountLines(frames),
-        ...frames
-          .filter((f) => addressedToMine(f))
-          .map((f) => {
-            const t = frameToText(f, JSON.stringify(f));
-            return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-          }),
-      ];
-      flush(
-        {
-          kind: "stale",
-          frames,
-          // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831).
-          ...(all.length > frames.length
-            ? { unshown: all.slice(frames.length).flatMap((f) => deliveredKeys(f)) }
-            : {}),
-          text:
-            L(
-              `Лежалых кадров: ${all.length}` +
-                (all.length > frames.length
-                  ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
-                  : "") +
-                " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
-                "адресованные месту — текстом, прочие — счётом; " +
-                'полностью и не вошедшее — iskron_channel(action="history").',
-              `Stale frames: ${all.length}` +
-                (all.length > frames.length
-                  ? `, the first ${frames.length} here, ${all.length - frames.length} left out`
-                  : "") +
-                " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
-                "those addressed to the seat as text, the rest by count; " +
-                'in full and the rest — iskron_channel(action="history").',
-            ) +
-            "\n\n" +
-            bodies.join("\n\n"),
-        },
-        all,
-      );
+      // Текст и метки — по памяти места сейчас: так пачку отдаёт мост (pi, OpenCode). Сторожа
+      // судят её сами в миг печати или вложения — по кадрам полосы (shared/stalebatch.ts).
+      const { text, keys } = staleBatch(all, this.has);
+      if (!text) return; // всё уже в ходе: метки места только растут, сторож решит так же
+      flush({ kind: "stale", frames: all, marks: keys, text });
     }, STALE_BURST_MS).unref();
   }
 
-  /** Лежит ли в копящейся пачке копия этого события графа (fanout.ts). */
-  hasEvent(evKey: string): boolean {
-    return this.burst.some((f) => eventKeyOf(f) === evKey);
+  /** Лежит ли в копящейся пачке копия этого события того же рода (fanout.ts). */
+  holdsCopy(frame: Frame): boolean {
+    return this.burst.some((f) => sameCopy(f, frame));
   }
 
-  /** Вынуть из копящейся пачки копии события — живая копия будит, пачка нет (fanout.ts). */
-  dropEvent(evKey: string): void {
+  /** Вынуть из копящейся пачки лежалые копии того же рода — живая будит, пачка нет (fanout.ts). */
+  dropCopies(frame: Frame): void {
     for (let i = this.burst.length - 1; i >= 0; i--)
-      if (eventKeyOf(this.burst[i]) === evKey) this.burst.splice(i, 1);
+      if (sameCopy(this.burst[i], frame)) this.burst.splice(i, 1);
   }
 
   /** Забыть накопленное — при отпускании стояния. */

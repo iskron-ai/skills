@@ -14,7 +14,7 @@
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
 import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
-import { deliveredKeys, noteSeen } from "../shared/seen.ts";
+import { deliveryKeys, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
 import { markAddressed } from "./addressmark.ts";
 import { harnessName, notifiedClient } from "./client.ts";
@@ -352,8 +352,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
-  const evKey = redundantCopy(full, d.ring, d.seen, seenPath, d.stale);
-  if (evKey) return log(`frame ${id || "?"} carries ${evKey} already offered — not raised`);
+  if (redundantCopy(full, d)) return;
   if (full?.type === "message") markAddressed(full, seenPath, d.seen); // до повтора и лежалых
   // Повтор уже отданного кадра (тот же id — платформа отдала его снова после возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
@@ -366,9 +365,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
-      : d.stale.note(full, (ev, all) => {
-          if (notifiedClient())
-            for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+      : d.stale.note(full, (ev) => {
+          if (notifiedClient()) for (const k of ev.marks ?? []) noteSeen(seenPath, k, d.seen);
           d.broadcast(ev);
           notify("info", keyed(d, ev));
         });
@@ -392,8 +390,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
     // уведомления — кадр в окне пачки (backlog.ts, #5140) ещё не отдан, и
     // умерший в окне мост его не потеряет: платформа отдаст снова. Метятся все
     // кадры окна, и не показанные пачкой: она называет их числом и адресом history.
-    const flushBacklog = (b: ChannelEvent, all: Frame[]): void => {
-      for (const f of all) for (const k of deliveredKeys(f)) noteSeen(seenPath, k, d.seen);
+    const flushBacklog = (b: ChannelEvent): void => {
+      for (const k of b.marks ?? []) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
@@ -401,7 +399,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
       if (full.origin === "platform") d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
     }
-    for (const k of deliveredKeys(full)) noteSeen(seenPath, k, d.seen);
+    for (const k of deliveryKeys(full)) noteSeen(seenPath, k, d.seen);
   }
   notify("info", keyed(d, ev));
 }
