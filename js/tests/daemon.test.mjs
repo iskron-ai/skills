@@ -157,13 +157,23 @@ async function withFake(fn) {
     await fn({ fake, dir, bridge, procs });
   } finally {
     await Promise.all(procs.map((b) => b.stop()));
-    for (const pid of daemonPids(dir)) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
-    }
-    // Сигнал доходит не сразу: живой ещё демон пишет в каталог, пока его сносят (ENOTEMPTY).
-    await waitFor("the daemons gone", () => !daemonPids(dir).some(alive), 10_000);
+    // Сигнал доходит не сразу: живой ещё демон пишет в каталог, пока его сносят (ENOTEMPTY);
+    // а преемник, поднятый передачей, встаёт в журнал и после первого залпа — бьём каждого.
+    let quiet = 0;
+    await waitFor(
+      "the daemons gone",
+      () => {
+        const live = daemonPids(dir).filter(alive);
+        for (const pid of live) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }
+        quiet = live.length ? 0 : quiet + 1;
+        return quiet >= 4; // тихо несколько опросов подряд: и поздний преемник не встал
+      },
+      10_000,
+    ).catch(() => {});
     await fake.stop();
     rmSync(dir, { recursive: true, force: true });
   }
