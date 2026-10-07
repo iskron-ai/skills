@@ -34,6 +34,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -157,10 +159,25 @@ function fakeCtx({
   const queue = [];
   let wake = null;
   const stderr = [];
+  let calls = 0;
   const ctx = {
     app,
     ...(location ? { location } : {}),
-    tool: { transform: tools.transform, reload: tools.reload },
+    tool: {
+      transform: tools.transform,
+      reload: tools.reload,
+      hook: async (name, cb) => {
+        (hooks[`tool.${name}`] ??= []).push(cb);
+        return { dispose: async () => {} };
+      },
+    },
+    // Permission hooks: "evaluate" gets a mutable evaluation, as in OpenCode 2.0.24.
+    permission: {
+      hook: async (name, cb) => {
+        (hooks[`permission.${name}`] ??= []).push(cb);
+        return { dispose: async () => {} };
+      },
+    },
     command: { transform: commands.transform, reload: commands.reload },
     session: {
       // A deleted session is a thrown NotFound in OpenCode; an unlisted one is
@@ -235,6 +252,24 @@ function fakeCtx({
     tools: () => tools.get(),
     commands: () => commands.get(),
     hooks,
+    /**
+     * A tool call that meets a permission check, the order OpenCode 2.0.24 runs them in:
+     * tool "execute.before", then permission "evaluate" with the call's id; returns the effect.
+     */
+    ask: async (tool, input, action, resources, effect = "ask") => {
+      const id = `call-${++calls}`;
+      for (const cb of hooks["tool.execute.before"] ?? [])
+        await cb({ tool, sessionID: "s", agent: "build", messageID: "m", id, input });
+      const e = {
+        sessionID: "s",
+        action,
+        resources,
+        effect,
+        source: { type: "tool", messageID: "m", id },
+      };
+      for (const cb of hooks["permission.evaluate"] ?? []) await cb(e);
+      return e.effect;
+    },
     /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
     prompt: async (sessionID, text) => {
       const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
@@ -384,6 +419,24 @@ async function until(check, what, ms = 5000) {
   assert.fail(`timed out waiting for ${what}`);
 }
 
+/** The FB_ENV lines a raised bridge has finished writing — the file exists before its line does. */
+const envLines = (log) => {
+  try {
+    return readFileSync(log, "utf8")
+      .split("\n")
+      .slice(0, -1)
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+};
+
+/** A file a live bridge may read at any moment, replaced whole: a rewrite in place is read empty now and then. */
+const rewrite = (path, text) => {
+  writeFileSync(`${path}.next`, text);
+  renameSync(`${path}.next`, path);
+};
+
 const BRIDGE_TOOLS = ["iskron_bridge", "iskron_channel", "iskron_orient"];
 const names = (rec) => [...rec.tools().keys()].sort();
 const serverTools = (rec) => until(() => names(rec).length === 3, "the server's tools", 8000);
@@ -427,8 +480,8 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
   try {
     // The tools may already stand from the previous list (cache), before the
     // bridge has written its first line — wait for the bridge, not the tools.
-    await until(() => existsSync(envLog), "the raised bridge");
-    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(envLog).length, "the raised bridge");
+    const seen = envLines(envLog);
     assert.equal(seen[0]?.harness_version, "2.0.18", JSON.stringify(seen));
   } finally {
     await rec.stop();
@@ -438,8 +491,8 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
     app: null,
   });
   try {
-    await until(() => existsSync(bareLog), "the raised bridge");
-    const seen = readFileSync(bareLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(bareLog).length, "the raised bridge");
+    const seen = envLines(bareLog);
     assert.equal(seen[0]?.harness_version, null, "no app — the plugin claims no version");
     assert.equal(seen[0]?.skills_root, null, "no establish-mcp among the skills — no set is named");
   } finally {
@@ -449,12 +502,14 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
 
 // The plugin's bridge is the home copy, outside any set (#6226): the set it
 // names in attrs.skills is the one OpenCode loaded establish-mcp from —
-// ctx.skill.list(), as the commands read it.
+// ctx.skill.list(), as the commands read it — and carries the bridge in its scripts/,
+// the same mark the skill reads go by (skillread.ts bridgeRoot).
 test("the plugin hands the bridge the root of the skill set that carries establish-mcp", async () => {
   const root = join(SANDBOX, "set-root", "skills");
   const path = join(root, "establish-mcp", "SKILL.md");
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(join(dirname(path), "scripts"), { recursive: true });
   writeFileSync(path, "---\nname: establish-mcp\n---\n");
+  writeFileSync(join(dirname(path), "scripts", "iskron.mjs"), "");
   const skills = [
     { id: "builtin", name: "builtin", description: "x", path: "/builtin/x.md", content: "" },
     { id: "establish-mcp", name: "establish-mcp", description: "x", path, content: "" },
@@ -462,8 +517,8 @@ test("the plugin hands the bridge the root of the skill set that carries establi
   const envLog = join(SANDBOX, "skills-root.env");
   const rec = await plugin(bridgeEnv("skills-root", { FB_ENV: envLog }).env, { skills });
   try {
-    await until(() => existsSync(envLog), "the raised bridge");
-    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(envLog).length, "the raised bridge");
+    const seen = envLines(envLog);
     assert.equal(seen[0]?.skills_root, root, JSON.stringify(seen));
   } finally {
     await rec.stop();
@@ -2752,6 +2807,36 @@ test("a session moved into a folder whose instance loads after the event: the pl
   }
 });
 
+// A live instance of the new folder takes the move's marker a moment after the event
+// (moves.ts). Stopped within that moment, it takes nothing: the next marker of its
+// folder belongs to the instance that comes after it, not to a stopped keeper.
+test("an instance stopped right after a move into its folder takes no later marker of that folder", async () => {
+  const calls = join(SANDBOX, "move-stopped.calls");
+  const resume = join(SANDBOX, "move-stopped.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move-stopped", { FB_CALLS: calls, FB_RESUME: resume });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    const ADOPT_MS = 3000;
+    const C = await plugin({ ...b.env, ISKRON_MOVE_ADOPT_MS: ADOPT_MS }, inLoc(LOC_B, "s9"));
+    C.emit({ type: "session.moved", data: { sessionID: "s9", location: LOC_B } });
+    const moment = Date.now() + ADOPT_MS;
+    await delay(0);
+    await C.stop();
+    A.emit({ type: "session.moved", data: { sessionID: "s1", location: LOC_B } });
+    await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    assert.ok(Date.now() < moment, "the marker lay before the stopped instance's moment");
+    await delay(moment + 300 - Date.now());
+    assert.equal(lostMarkers().length, 1, "the marker waits for the next instance of B");
+  } finally {
+    await A.stop();
+  }
+});
+
 // Without the event at the old instance, a take from the new folder evicts the old
 // bridge — that is the session's own bridge taking its place: no «taken away» word.
 test("an eviction of a session that moved to another folder is not said into it as «taken away»", async () => {
@@ -3004,6 +3089,447 @@ test("every installed skill with `slash: true` becomes a «/» command that load
     rec.emit({ type: "skill.updated", data: {} });
     await until(() => rec.commands().has("design"), "the new command");
   } finally {
+    await rec.stop();
+  }
+});
+
+// ── reading the delivery's skill files (graph nks-dev: #6847) ────────────────
+
+test("a delivery skill's files outside the working copy are read without an ask — reading only, only inside that skill", async () => {
+  // As installed by `npx skills add --global`: the set in .agents/skills, a harness
+  // directory of symlinks to it; OpenCode lists the skills by their canonical paths
+  // and names the ask by the path as the tool got it.
+  const home = mkdtempSync(join(SANDBOX, "skill-reads-"));
+  const set = join(home, ".agents", "skills");
+  const skill = (id, head, root = set) => {
+    mkdirSync(join(root, id, "references"), { recursive: true });
+    const path = join(root, id, "SKILL.md");
+    writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
+    writeFileSync(join(root, id, "references", "phrasebook.md"), "# phrasebook\n");
+    return { id, name: id, description: id, path: realpathSync(path), content: "" };
+  };
+  /** The skill that carries the delivery's bridge; bridge=false — the skill without it. */
+  const carrier = (root, bridge = true) => {
+    const s = skill("establish-mcp", 'name: establish-mcp\nslash: true\ndescription: "x"', root);
+    mkdirSync(join(root, "establish-mcp", "scripts"));
+    if (bridge) writeFileSync(join(root, "establish-mcp", "scripts", "iskron.mjs"), "");
+    return s;
+  };
+  // A flat root is shared by every set installed into it; the lock beside it names the sources.
+  mkdirSync(set, { recursive: true });
+  writeFileSync(
+    join(home, ".agents", ".skill-lock.json"),
+    JSON.stringify({
+      skills: {
+        "establish-mcp": { source: "iskron-ai/skills" },
+        iskron: { source: "iskron-ai/skills" },
+        design: { source: "iskron-ai/skills" },
+        foreign: { source: "someone/else" },
+      },
+    }),
+  );
+  // Another root: a foreign set whose own establish-mcp carries no bridge.
+  const elsewhere = join(home, "elsewhere", "skills");
+  // A root with no lock (a hand-filled directory): nothing proves what set a skill is of.
+  const plugged = join(home, "plugged", "skills");
+  // A root whose lock is there but does not parse: a refusal, not a lockless root.
+  const broken = join(home, "broken", "skills");
+  mkdirSync(broken, { recursive: true });
+  writeFileSync(join(home, "broken", ".skill-lock.json"), '{"version":3,"skills":{');
+  // A root whose lock does not name the bridge's source: the bridge was laid there by hand.
+  const partial = join(home, "partial", "skills");
+  mkdirSync(partial, { recursive: true });
+  writeFileSync(
+    join(home, "partial", ".skill-lock.json"),
+    JSON.stringify({ skills: { stray: { source: "someone/else" } } }),
+  );
+  const skills = [
+    carrier(set),
+    skill("iskron", 'name: iskron\nslash: true\ndescription: "door"'),
+    skill("design", 'name: design\nslash: true\ndescription: "a delivery skill with a link out"'),
+    skill("foreign", 'name: foreign\nslash: true\ndescription: "of another source"'),
+    carrier(elsewhere, false),
+    skill("alien", 'name: alien\nslash: true\ndescription: "of another root"', elsewhere),
+    carrier(plugged),
+    skill("kin", 'name: kin\nslash: true\ndescription: "of a lockless set"', plugged),
+    carrier(partial),
+    skill("stray", 'name: stray\nslash: true\ndescription: "of a lock without"', partial),
+    carrier(broken),
+    skill("torn", 'name: torn\nslash: true\ndescription: "of a broken lock"', broken),
+    {
+      id: "opencode",
+      name: "opencode",
+      description: "builtin",
+      path: "/builtin/opencode.md",
+      content: "",
+    },
+  ];
+  // A SKILL.md with `slash: true` at a repository's root: the root is not the skill's directory.
+  const repo = join(home, "repo");
+  mkdirSync(repo);
+  writeFileSync(join(repo, "SKILL.md"), '---\nname: wide\nslash: true\ndescription: "x"\n---\n');
+  writeFileSync(join(repo, "notes.md"), "x");
+  skills.push({
+    id: "wide",
+    name: "wide",
+    description: "x",
+    path: join(repo, "SKILL.md"),
+    content: "",
+  });
+  mkdirSync(join(home, ".claude", "skills"), { recursive: true });
+  symlinkSync(join(set, "iskron"), join(home, ".claude", "skills", "iskron"));
+  const outside = join(home, "secrets");
+  mkdirSync(outside);
+  writeFileSync(join(outside, "key"), "x");
+  const linked = join(set, "design", "references");
+  symlinkSync(join(outside, "key"), join(linked, "leak.md"));
+  symlinkSync(outside, join(linked, "out"));
+  symlinkSync(join(outside, "gone"), join(linked, "dangling.md"));
+
+  const refs = join(set, "iskron", "references");
+  // The session's directory — a relative path of a tool is resolved from it.
+  const work = join(home, "work");
+  mkdirSync(work);
+  const rec = await plugin(
+    { ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") },
+    { skills, location: { directory: work } },
+  );
+  try {
+    const ext = "external_directory";
+    const read = (path) => rec.ask("read", { path }, ext, [`${dirname(path)}/*`]);
+    // OpenCode resolves "~/…" and a relative path itself and names the ask by the result.
+    const named = (path, abs) => rec.ask("read", { path }, ext, [`${dirname(abs)}/*`]);
+    const viaHome = `~/${basename(home)}/.agents/skills/iskron/references/phrasebook.md`;
+    assert.equal(
+      await named(viaHome, join(refs, "phrasebook.md")),
+      "allow",
+      "a path through ~ is read",
+    );
+    assert.equal(
+      await named("../.agents/skills/iskron/references/phrasebook.md", join(refs, "phrasebook.md")),
+      "allow",
+      "and a path relative to the session's directory",
+    );
+    assert.equal(
+      await named("../secrets/key", join(outside, "key")),
+      "ask",
+      "a relative path out of the skills keeps its ask",
+    );
+    assert.equal(
+      await read(join(refs, "phrasebook.md")),
+      "allow",
+      "a reference of a delivery skill is read",
+    );
+    assert.equal(await read(join(set, "iskron", "SKILL.md")), "allow", "and its own SKILL.md");
+    assert.equal(
+      await read(join(home, ".claude", "skills", "iskron", "references", "phrasebook.md")),
+      "allow",
+      "and the same file through the harness's symlink",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "*.md", path: refs }, ext, [`${refs}/*`]),
+      "allow",
+      "a glob inside the skill",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "phrase", path: refs }, ext, [`${refs}/*`]),
+      "allow",
+      "a grep inside the skill",
+    );
+
+    assert.equal(
+      await rec.ask("write", { path: join(refs, "x.md"), content: "x" }, ext, [`${refs}/*`]),
+      "ask",
+      "a write into the skill keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("bash", { command: `cat ${refs}/phrasebook.md` }, ext, [`${refs}/*`]),
+      "ask",
+      "so does the shell",
+    );
+    assert.equal(
+      await read(join(outside, "key")),
+      "ask",
+      "a path outside the skills keeps its ask",
+    );
+    assert.equal(
+      await read(join(linked, "leak.md")),
+      "ask",
+      "and so does a symlink out of a skill",
+    );
+    assert.equal(
+      await read(join(linked, "out", "key")),
+      "ask",
+      "and a path through a directory symlink out of it",
+    );
+    assert.equal(
+      await read(join(linked, "phrasebook.md")),
+      "allow",
+      "the rest of that skill is read",
+    );
+    // A path not there is judged by its nearest existing part: the read then answers
+    // «not found», not a refused ask.
+    assert.equal(await read(join(refs, "missing.md")), "allow", "a missing file inside a skill");
+    const methods = join(set, "iskron", "methods");
+    assert.equal(
+      await rec.ask("glob", { pattern: "*.md", path: methods }, ext, [`${methods}/*`]),
+      "allow",
+      "a glob in a missing directory inside a skill",
+    );
+    assert.equal(
+      await read(join(linked, "out", "missing")),
+      "ask",
+      "a missing file behind a symlink out keeps its ask",
+    );
+    assert.equal(
+      await read(join(linked, "dangling.md")),
+      "ask",
+      "so does a dangling symlink — it is there, its target is not",
+    );
+    assert.equal(
+      await read(`${refs}/nope/../phrasebook.md`),
+      "ask",
+      "a missing part that climbs keeps its ask",
+    );
+    assert.equal(
+      await read(`${linked}/out/../phrasebook.md`),
+      "ask",
+      "so does a climb after a symlink out — the file system climbs from its target",
+    );
+    assert.equal(
+      await read(join(home, "nowhere", "missing.md")),
+      "ask",
+      "a missing path outside the skills keeps its ask",
+    );
+    assert.equal(
+      await read(join(set, "foreign", "references", "phrasebook.md")),
+      "ask",
+      "a skill of another source in the shared root keeps its ask, `slash: true` or not",
+    );
+    assert.equal(
+      await read(join(elsewhere, "alien", "references", "phrasebook.md")),
+      "ask",
+      "so does a `slash: true` skill of a root without the delivery's bridge",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "**/*", path: linked }, ext, [`${linked}/*`]),
+      "ask",
+      "a glob in a skill with a symlink out keeps its ask — it would follow the link",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "x", path: join(set, "design") }, ext, [
+        `${join(set, "design")}/*`,
+      ]),
+      "ask",
+      "and so does a grep",
+    );
+    assert.equal(
+      await read(join(plugged, "kin", "references", "phrasebook.md")),
+      "ask",
+      "a lockless root opens nothing, though it carries the bridge — no source is proven",
+    );
+    assert.equal(
+      await read(join(plugged, "establish-mcp", "SKILL.md")),
+      "ask",
+      "not even its bridge skill",
+    );
+    assert.equal(
+      await read(join(broken, "torn", "references", "phrasebook.md")),
+      "ask",
+      "a lock that does not parse opens nothing",
+    );
+    assert.equal(
+      await read(join(broken, "establish-mcp", "SKILL.md")),
+      "ask",
+      "not even the bridge skill beside it",
+    );
+    assert.equal(
+      await read(join(set, "establish-mcp", "scripts", "iskron.mjs")),
+      "allow",
+      "and so is the bridge skill itself",
+    );
+    assert.equal(
+      await read(join(partial, "stray", "references", "phrasebook.md")),
+      "ask",
+      "a root whose lock does not name the bridge's source opens nothing",
+    );
+    // One call id for two calls (two sessions of one instance): the ask cannot tell them apart.
+    const before = (sessionID, tool, input) =>
+      Promise.all(
+        (rec.hooks["tool.execute.before"] ?? []).map((cb) =>
+          cb({ tool, sessionID, agent: "build", messageID: "m", id: "twice", input }),
+        ),
+      );
+    await before("b", "write", { filePath: join(refs, "x.md"), content: "x" });
+    await before("a", "read", { filePath: join(refs, "phrasebook.md") });
+    const twice = {
+      sessionID: "b",
+      action: ext,
+      resources: [`${refs}/*`],
+      effect: "ask",
+      source: { type: "tool", messageID: "m", id: "twice" },
+    };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(twice);
+    assert.equal(twice.effect, "ask", "a call id met twice opens nothing");
+    // A call id this instance met once, asked for by another session (whose tool hooks fired
+    // in another instance): the call is not that session's.
+    const once = (sessionID, tool, input) =>
+      Promise.all(
+        (rec.hooks["tool.execute.before"] ?? []).map((cb) =>
+          cb({ tool, sessionID, agent: "build", messageID: "m", id: "once", input }),
+        ),
+      );
+    await once("a", "read", { filePath: join(refs, "phrasebook.md") });
+    const stranger = {
+      sessionID: "b",
+      action: ext,
+      resources: [`${refs}/*`],
+      effect: "ask",
+      source: { type: "tool", messageID: "m", id: "once" },
+    };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(stranger);
+    assert.equal(stranger.effect, "ask", "an ask of another session than the call's opens nothing");
+    const own = { ...stranger, sessionID: "a", effect: "ask" };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(own);
+    assert.equal(own.effect, "allow", "the same ask of the call's own session is lifted");
+    assert.equal(
+      await rec.ask("read", { path: join(set, "phrasebook.md") }, ext, [`${set}/*`]),
+      "ask",
+      "the set's directory itself is wider than a skill",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "../../*", path: refs }, ext, [`${refs}/*`]),
+      "ask",
+      "a glob climbing out of the skill keeps its ask",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "{..,x}/*", path: refs }, ext, [`${refs}/*`]),
+      "ask",
+      "so does a climb spelled in braces",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "x", path: refs, include: "../../*" }, ext, [`${refs}/*`]),
+      "ask",
+      "and a grep whose include climbs out",
+    );
+    assert.equal(
+      await read(join(repo, "notes.md")),
+      "ask",
+      "a SKILL.md with `slash: true` in a wider directory opens nothing",
+    );
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, ext, [`${refs}/*`], "deny"),
+      "deny",
+      "an explicit deny stays a deny",
+    );
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, "read", [
+        join(refs, "phrasebook.md"),
+      ]),
+      "ask",
+      "only the external_directory check is touched",
+    );
+    // The skill list fails at the ask: the hook throws nothing, the ask stays.
+    rec.ctx.skill.list = async () => {
+      throw new Error("list down");
+    };
+    assert.equal(
+      await rec.ask("read", { path: join(refs, "phrasebook.md") }, ext, [`${refs}/*`]),
+      "ask",
+      "a skill list that fails keeps the ask, and the hook does not throw",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Where npx skills 1.7.1 keeps its lock (getSkillLockPath, getLocalLockPath): the global
+// root ~/.agents/skills — in $XDG_STATE_HOME/skills/.skill-lock.json when that is set,
+// else beside the root; a project's <dir>/.agents/skills — in <dir>/skills-lock.json.
+test("a delivery skill is told by the lock where npx skills lays it — the XDG state lock, the project lock", async () => {
+  const h = mkdtempSync(join(SANDBOX, "lock-places-"));
+  const SET = "iskron-ai/skills";
+  const skill = (root, id) => {
+    mkdirSync(join(root, id, "references"), { recursive: true });
+    const path = join(root, id, "SKILL.md");
+    writeFileSync(path, `---\nname: ${id}\ndescription: "x"\n---\n`);
+    writeFileSync(join(root, id, "references", "a.md"), "a\n");
+    if (id === "establish-mcp") {
+      mkdirSync(join(root, id, "scripts"));
+      writeFileSync(join(root, id, "scripts", "iskron.mjs"), "");
+    }
+    return { id, name: id, description: "x", path: realpathSync(path), content: "" };
+  };
+  const global = join(h, ".agents", "skills");
+  const project = join(h, "proj", ".agents", "skills");
+  const other = join(h, "other", "skills");
+  const lock = (skills) => JSON.stringify({ version: 3, skills });
+  mkdirSync(join(h, "state", "skills"), { recursive: true });
+  writeFileSync(
+    join(h, "state", "skills", ".skill-lock.json"),
+    lock({
+      "establish-mcp": { source: SET },
+      iskron: { source: SET },
+      odd: { source: SET },
+      foreign: { source: "someone/else" },
+    }),
+  );
+  const skills = [
+    skill(global, "establish-mcp"),
+    skill(global, "iskron"),
+    skill(global, "foreign"),
+    skill(project, "establish-mcp"),
+    skill(project, "kin"),
+    skill(project, "stray"),
+    skill(other, "establish-mcp"),
+    skill(other, "odd"),
+  ];
+  writeFileSync(
+    join(h, "proj", "skills-lock.json"),
+    JSON.stringify({
+      version: 1,
+      skills: {
+        "establish-mcp": { source: SET, sourceType: "github" },
+        kin: { source: SET, sourceType: "github" },
+        stray: { source: "someone/else", sourceType: "github" },
+      },
+    }),
+  );
+  const saved = { HOME: process.env.HOME, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
+  const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
+  try {
+    process.env.HOME = h;
+    process.env.XDG_STATE_HOME = join(h, "state");
+    const read = (path) =>
+      rec.ask("read", { filePath: path }, "external_directory", [`${dirname(path)}/*`]);
+    const ref = (root, id) => join(root, id, "references", "a.md");
+    assert.equal(
+      await read(ref(global, "iskron")),
+      "allow",
+      "the global root by the XDG state lock",
+    );
+    assert.equal(await read(ref(global, "foreign")), "ask", "another source in it keeps its ask");
+    assert.equal(
+      await read(ref(project, "kin")),
+      "allow",
+      "a project's root by its skills-lock.json",
+    );
+    assert.equal(await read(ref(project, "stray")), "ask", "another source there keeps its ask");
+    assert.equal(
+      await read(ref(other, "odd")),
+      "ask",
+      "the XDG state lock speaks only for the global root",
+    );
+    delete process.env.XDG_STATE_HOME;
+    assert.equal(
+      await read(ref(global, "iskron")),
+      "ask",
+      "without XDG_STATE_HOME the lock is beside the root — and there is none",
+    );
+  } finally {
+    for (const [k, v] of Object.entries(saved))
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
     await rec.stop();
   }
 });
@@ -4337,11 +4863,13 @@ test("marker-child: while the previous bridge still holds the child's socket, th
   try {
     await delay(1500); // more than every attempt by count
     const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
-    writeFileSync(answers, JSON.stringify({ bySession: { child: answer } }));
-    const resumes = () =>
-      all().filter((c) => c.name === "iskron/resume" && c.arguments.session === "child");
-    const n = resumes().length;
-    await until(() => resumes().length > n, "the return after the socket went", 3000);
+    // An attempt already logged may read this answer: wait for the return, not one more attempt.
+    rewrite(answers, JSON.stringify({ bySession: { child: answer } }));
+    await until(
+      () => /сессия child — место возвращено/.test(second.said()),
+      "the return after the socket went",
+      8000,
+    );
     await delay(300);
     const toChild = [...second.prompts, ...second.synthetics].filter(
       (p) => p.sessionID === "child",
