@@ -1570,6 +1570,31 @@ test("iskron_stand: the board reads a stopped holder of THIS session listening �
   assert.match(text, /Слушать: .*watchdog proba--931--nks-dev/, text);
 });
 
+// Встать рядом после отъёма не вышло по сети: сессия узнаёт это словом с ходом,
+// мост жив, отказ не теряется необработанным (#6706).
+test("iskron_stand after an eviction: a network failure of standing beside is said into the session with the move, the bridge lives on", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!first.result?.isError, standText(first));
+  await until(() => fake.state.ws.size === 1, "the socket");
+  // Каждое чтение доски рвётся под запросом — и с повтором транспорта, и с отложенным повтором.
+  await fake.control({ mcpDrop: 8, mcpDropAction: "iskron_channel:list" });
+  await fake.control({ ws_close: 4000 });
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  const word = () =>
+    bridge.notifications
+      .map((n) => n.params?.data)
+      .find((d) => d?.kind === "resumed" && /встать рядом мост не смог/.test(d.text ?? ""));
+  await until(word, `the word about the failure:\n${bridge.stderr}`);
+  assert.match(word().text, /iskron_stand/, word().text);
+  assert.equal(bridge.proc.exitCode, null, bridge.stderr);
+  assert.doesNotMatch(bridge.stderr, /unhandled/i, bridge.stderr);
+  await fake.control({ mcpDrop: 0, mcpDropAction: null });
+  const alive = await bridge.call("tools/list");
+  assert.ok(alive.result, JSON.stringify(alive));
+});
+
 // Возврат с диска по ключу не поднимает место соседа той же роли и каталога: на
 // записи стояла другая названная сессия — место её, не этой (#5366, #6706).
 test("iskron/resume by key never takes a neighbour's seat: a record another session stood on is named, not resumed", async (t) => {

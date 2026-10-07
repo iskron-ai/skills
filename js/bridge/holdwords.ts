@@ -38,8 +38,8 @@ export const holdWords = {
     ),
   besideFailed: (name: string, said: string) =>
     L(
-      `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said}`,
-      `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said}`,
+      `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said} Ход — iskron_stand с name=${name} без take: мост встанет рядом на ${name}.N со слухом.`,
+      `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said} The move — iskron_stand with name=${name} without take: the bridge stands beside as ${name}.N with hearing.`,
     ),
   /** Место взял новый мост этой же сессии (перезапуск, компакшн): уступка без тревоги. */
   takenBySession: () =>

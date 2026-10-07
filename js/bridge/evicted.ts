@@ -15,6 +15,8 @@ import { type Standing, state } from "./transport.ts";
 
 /** Сколько ждать записи нового держателя: она ложится сразу за его connect, 4000 может её обогнать. */
 const WAIT_MS = 1500;
+/** Через сколько повторить место рядом, когда первую попытку оборвала сеть. */
+const RETRY_MS = 2000;
 
 export type StandBeside = (
   place: Standing,
@@ -42,6 +44,30 @@ async function takenBySession(key: string, url: string): Promise<boolean> {
   }
 }
 
+/**
+ * Встать рядом; отказ транспорта (сеть) не теряется необработанным: один
+ * отложенный повтор, затем исход — неудачей со словом. Место перестало быть
+ * отнятым за ожидание (сессия встала сама) — null, говорить нечего.
+ */
+async function standBeside(
+  key: string,
+  s: Standing,
+  name: string,
+  beside: StandBeside,
+): Promise<{ ok: boolean; text: string } | null> {
+  for (let retry = false; ; retry = true) {
+    if (!wasEvicted(s.realm, s.karta, name)) return null;
+    try {
+      return await beside(s, H.standCwd);
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      standingLog(`evicted ${key}: standing beside failed (${why})${retry ? "" : " — one retry"}`);
+      if (retry) return { ok: false, text: why };
+      await new Promise((res) => setTimeout(res, RETRY_MS));
+    }
+  }
+}
+
 async function yieldPlace(key: string, url: string, code: number): Promise<void> {
   const s = state.standing;
   const beside = B.beside;
@@ -56,7 +82,7 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
   if (CFG.satellite || !s || !name || !beside)
     return announceEvicted(code, holdWords.evicted(code));
   announceEvicted(code, holdWords.evictedBeside(code, name));
-  const r = wasEvicted(s.realm, s.karta, name) ? await beside(s, H.standCwd) : null;
+  const r = await standBeside(key, s, name, beside);
   if (!r) return;
   const text = r.ok ? holdWords.besideDone(name, r.text) : holdWords.besideFailed(name, r.text);
   log(text);
