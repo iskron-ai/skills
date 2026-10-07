@@ -144,11 +144,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   try {
     if (!(await setupSkillReads(ctx)))
       say(
-        "skill-reads: this OpenCode has no permission hooks — skill files outside the working copy stay behind an ask",
+        "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
         "warning",
       );
   } catch (e) {
-    say(`skill-reads: ${(e as Error).message}`, "error");
+    say(`Искрон: чтение файлов скиллов поставки не открылось — ${(e as Error).message}`, "error");
   }
 
   // Расход сессии — в attrs её собственного места (usage.ts, #6401): корня — месту

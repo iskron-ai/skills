@@ -3004,6 +3004,13 @@ test("a delivery skill's files outside the working copy are read without an ask 
   const elsewhere = join(home, "elsewhere", "skills");
   // A root with no lock (a plugin's own directory): the root is the set.
   const plugged = join(home, "plugged", "skills");
+  // A root whose lock does not name the bridge's source: the bridge was laid there by hand.
+  const partial = join(home, "partial", "skills");
+  mkdirSync(partial, { recursive: true });
+  writeFileSync(
+    join(home, "partial", ".skill-lock.json"),
+    JSON.stringify({ skills: { stray: { source: "someone/else" } } }),
+  );
   const skills = [
     carrier(set),
     skill("iskron", 'name: iskron\nslash: true\ndescription: "door"'),
@@ -3013,6 +3020,8 @@ test("a delivery skill's files outside the working copy are read without an ask 
     skill("alien", 'name: alien\nslash: true\ndescription: "of another root"', elsewhere),
     carrier(plugged),
     skill("kin", 'name: kin\nslash: true\ndescription: "of a lockless set"', plugged),
+    carrier(partial),
+    skill("stray", 'name: stray\nslash: true\ndescription: "of a lock without"', partial),
     {
       id: "opencode",
       name: "opencode",
@@ -3155,6 +3164,29 @@ test("a delivery skill's files outside the working copy are read without an ask 
       "allow",
       "and so is the bridge skill itself",
     );
+    assert.equal(
+      await read(join(partial, "stray", "references", "phrasebook.md")),
+      "ask",
+      "a root whose lock does not name the bridge's source opens nothing",
+    );
+    // One call id for two calls (two sessions of one instance): the ask cannot tell them apart.
+    const before = (sessionID, tool, input) =>
+      Promise.all(
+        (rec.hooks["tool.execute.before"] ?? []).map((cb) =>
+          cb({ tool, sessionID, agent: "build", messageID: "m", id: "twice", input }),
+        ),
+      );
+    await before("b", "write", { filePath: join(refs, "x.md"), content: "x" });
+    await before("a", "read", { filePath: join(refs, "phrasebook.md") });
+    const twice = {
+      sessionID: "b",
+      action: ext,
+      resources: [`${refs}/*`],
+      effect: "ask",
+      source: { type: "tool", messageID: "m", id: "twice" },
+    };
+    for (const cb of rec.hooks["permission.evaluate"] ?? []) await cb(twice);
+    assert.equal(twice.effect, "ask", "a call id met twice opens nothing");
     assert.equal(
       await rec.ask("read", { path: join(set, "phrasebook.md") }, ext, [`${set}/*`]),
       "ask",

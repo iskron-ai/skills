@@ -34,6 +34,7 @@ const WALK = 4096;
 interface Call {
   tool: string;
   input: any;
+  session: unknown;
 }
 
 const canon = (p: string): string | null => {
@@ -71,18 +72,20 @@ async function skillDirs(ctx: Context): Promise<string[]> {
     if (dir && basename(dir) === id) listed.push({ id, dir });
   }
   // The delivery's sets: roots whose bridge skill carries the bridge. In a flat root that
-  // other sets share, the lock names the delivery's source; no lock — the root is the set.
-  const sets = new Map<string, { source: unknown; lock: ReturnType<typeof skillLock> }>();
-  for (const { id, dir } of listed) {
-    if (id !== BRIDGE_SKILL || !existsSync(join(dir, "scripts", BRIDGE_FILE))) continue;
-    const lock = skillLock(dirname(dir));
-    sets.set(dirname(dir), { source: lock?.[BRIDGE_SKILL]?.source, lock });
-  }
+  // other sets share, the lock names the delivery's source — a lock that does not name it
+  // opens nothing; no lock — the root is the set.
+  const sets = new Map<string, ReturnType<typeof skillLock>>();
+  for (const { id, dir } of listed)
+    if (id === BRIDGE_SKILL && existsSync(join(dir, "scripts", BRIDGE_FILE)))
+      sets.set(dirname(dir), skillLock(dirname(dir)));
   return listed
     .filter(({ id, dir }) => {
-      const set = sets.get(dirname(dir));
-      if (!set) return false;
-      return typeof set.source !== "string" || set.lock?.[id]?.source === set.source;
+      const root = dirname(dir);
+      if (!sets.has(root)) return false;
+      const lock = sets.get(root);
+      if (!lock) return true;
+      const source = lock[BRIDGE_SKILL]?.source;
+      return typeof source === "string" && lock[id]?.source === source;
     })
     .map(({ dir }) => dir);
 }
@@ -157,7 +160,10 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
   const calls = new Map<string, Call>();
   await tool.hook("execute.before", (t) => {
     if (typeof t?.id !== "string" || typeof t?.tool !== "string") return;
-    calls.set(t.id, { tool: t.tool, input: t.input });
+    // One id met for two calls — the ask cannot tell which it is for: it opens nothing.
+    const was = calls.get(t.id);
+    const clash = was && (was.tool !== t.tool || was.session !== t.sessionID);
+    calls.set(t.id, { tool: clash ? "" : t.tool, input: t.input, session: t.sessionID });
     while (calls.size > CALLS) calls.delete(calls.keys().next().value as string);
   });
 
