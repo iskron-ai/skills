@@ -85,7 +85,8 @@ export default {
     // относительный — от каталога сессии; путь раскрывается по компонентам слева направо, как realpath -m:
     // существующая ссылка заменяется своей целью, и та раскрывается дальше, «..» применяется к уже
     // раскрытому префиксу, несуществующий хвост — текстом. Больше 40 переходов, цикл или ссылка, лежащая
-    // в памяти, — отказ (закрыто на отказ); память узнаётся и по ~/.claude/projects за ссылкой
+    // в памяти, — отказ (закрыто на отказ); память узнаётся и по ~/.claude/projects за ссылкой, и без учёта
+    // регистра (на APFS и Windows MEMORY и .Claude — та же папка)
     const { lstatSync, readlinkSync } = await import("node:fs");
     const { dirname, isAbsolute, join, parse } = await import("node:path");
     const { homedir } = await import("node:os");
@@ -111,9 +112,9 @@ export default {
       return r;
     };
     const home = join(homedir(), ".claude", "projects");
-    const projects = slash(real(home) ?? home);
+    const projects = slash(real(home) ?? home).toLowerCase();
     const inMemory = (p) => {
-      const x = `${slash(p)}/`;
+      const x = `${slash(p)}/`.toLowerCase();
       return /\/\.claude\/projects\/.*\/memory\//.test(x) || (x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length)));
     };
     const isLocalMemoryPath = (p, base) => {

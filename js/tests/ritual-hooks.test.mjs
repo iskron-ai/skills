@@ -247,6 +247,11 @@ const guardCases = [
   ["Write", { file_path: `${join(home, "safe", "a")}/../b.md` }, 0, home],
   ["Write", { file_path: chain("forty", 40, join(home, "safe", "f")) }, 0, home],
   ["Write", { file_path: chain("forty-one", 41, join(home, "safe", "f")) }, 2, home],
+  // a case-insensitive disk (APFS, Windows) takes any spelling for the same folder
+  ["Write", { file_path: join(home, ".claude", "projects", "x", "MEMORY", "f") }, 2, home],
+  ["Write", { file_path: join(home, ".Claude", "projects", "x", "memory", "f") }, 2, home],
+  ["Write", { file_path: join(home, ".claude", "PROJECTS", "x", "memory", "f") }, 2, home],
+  ["Write", { file_path: join(home, "notes", "Memory", "f") }, 0, home],
 ];
 for (const [where, groups] of [
   ["settings", () => settings.hooks.PreToolUse ?? []],

@@ -225,6 +225,11 @@ for (const md of sources) {
       [at("a"), true],
       [dotdot("memory", mem), true],
       [chain("forty-one", 41, join(own, "safe", "f")), true],
+      // a case-insensitive disk (APFS, Windows) takes any spelling for the same folder
+      [join(own, ".claude", "projects", "x", "MEMORY", "f"), true],
+      [join(own, ".Claude", "projects", "x", "memory", "f"), true],
+      [join(own, ".claude", "PROJECTS", "x", "memory", "f"), true],
+      [join(own, "notes", "Memory", "f"), false],
       [chain("safe", 1, join(own, "safe", "new.md")), false],
       [dotdot("safe", join(own, "safe")), false],
       [`${join(own, "safe", "a")}/../b.md`, false],
