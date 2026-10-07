@@ -395,7 +395,9 @@ export async function startFakeNks(opts = {}) {
       if (!trim && (typeof text !== "string" || [...text].length > 70)) {
         return json(res, 422, { error: "busy line too long" });
       }
-      const kept = trim ? trimToWord(text, 64) : text;
+      // statusNormalize: сервер кладёт строку со сжатыми пробелами, без предупреждения.
+      const said = st.statusNormalize ? text.replace(/\s+/g, " ").trim() : text;
+      const kept = trim ? trimToWord(said, 64) : said;
       st.status = kept;
       st.counts.status_posts++;
       // Строка держится у места: со standing_id — у одного места канала, без него — у всех (#5838).
@@ -483,6 +485,7 @@ export async function startFakeNks(opts = {}) {
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
         "statusTrim", // a line over 64 is trimmed by word and answered 200 with warnings[] (api 0.108.0)
+        "statusNormalize", // the server squeezes whitespace and names the line in doing, without a warning
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
         "mcpDropAction",
         "kartaTypes",

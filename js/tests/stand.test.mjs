@@ -3495,6 +3495,14 @@ test("a busy line the server trims: every status move names the accepted line an
     .map((f) => JSON.parse(readFileSync(join(dir, "standings", f), "utf8")).status);
   assert.ok(held.length && !held.includes(long), `the hold record: ${JSON.stringify(held)}`);
   assert.ok(held.includes(fake.state.status), `the hold record: ${JSON.stringify(held)}`);
+  // Строка, которую сервер принял иной без предупреждения, — та же: слово называет doing ответа.
+  await fake.control({ statusTrim: true, statusNormalize: true });
+  const loose = "занят   пробой";
+  const norm = textOf(await stand({ realm: "nks-dev", status: loose }));
+  assert.equal(fake.state.status, "занят пробой");
+  assert.ok(norm.includes(": занят пробой"), `the accepted line is named:\n${norm}`);
+  assert.ok(!norm.includes(loose), `the sent line named as accepted:\n${norm}`);
+  await fake.control({ statusNormalize: false });
   // Прежний сервер: отказ 422 приходит целиком, как прежде.
   await fake.control({ statusTrim: false });
   const refused = await stand({ realm: "nks-dev", status: long });

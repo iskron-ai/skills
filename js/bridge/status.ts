@@ -67,10 +67,10 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
  * называет принятой, не отправленной, и несёт нудж (#6730).
  */
 export function busyLine(text: string, realm: string): string {
-  const t = S.trims.get(statusAddress(realm)?.key ?? "");
-  if (t?.sent !== text)
-    return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${text || L("(снята)", "(cleared)")}`;
-  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${t.doing}; ${trimNudge(t)}`;
+  const a = S.accepted.get(statusAddress(realm)?.key ?? "");
+  const line = a?.sent === text ? a.doing : text;
+  const nudge = a?.sent === text && a.trimmed ? `; ${trimNudge(a.trimmed)}` : "";
+  return `${L("занятость", "busyness")} ${placeLabel(realm)}: ${line || L("(снята)", "(cleared)")}${nudge}`;
 }
 
 /** Место так, как его зовёт доска; адрес, не названный hello, — помечен, а не выдан за названный. */
@@ -194,8 +194,8 @@ function ledIn(realm: string): Standing | undefined {
 
 const S = scoped(() => ({
   lastPublished: "",
-  /** Последняя обрезка сервером по месту (ключ адреса): отправленная строка и что легло. */
-  trims: new Map<string, StatusTrim & { sent: string }>(),
+  /** Последняя принятая строка по месту (ключ адреса): отправленная, легшая (doing ответа) и обрезка. */
+  accepted: new Map<string, { sent: string; doing: string; trimmed?: StatusTrim }>(),
 }));
 /** Последняя строка занятости, которую доска приняла от этого моста; пустая — снята. */
 export const publishedStatus = (): string => S.lastPublished;
@@ -228,8 +228,7 @@ export async function publishStatus(
   if (st.ok) {
     // Легла принятая строка: обрезанная сервером возвращается после перезапуска такой, какой легла.
     const kept = st.doing ?? text;
-    if (st.trimmed) S.trims.set(addr.key, { ...st.trimmed, sent: text });
-    else S.trims.delete(addr.key);
+    S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed });
     if (addr.key === statusAddress()?.key) S.lastPublished = kept;
     rememberStatus(kept, realm);
   }
