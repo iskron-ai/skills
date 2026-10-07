@@ -3530,6 +3530,29 @@ test("a bound node rides in the batch by count as well", async (t) => {
   assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
+// Строки работы одного ключа (room.id, line.key) в пачке сворачиваются в последнюю
+// (#6718): счёт называет записи после свёртки и сменённые числом; строка bad и
+// адресованное месту слово не сворачиваются; отданными метятся все кадры пачки.
+test("progress lines of one key fold into the last in a watchdog batch: the count says how many were superseded; bad and the word to me stay", async (t) => {
+  const { fake, dir, key, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (const id of [44, 45, 46]) await sendRoom(fake, progress(id));
+  await sendRoom(
+    fake,
+    roomFrame("progress", { entry_id: 47, key: "tests", line: { done: "упало", verdict: "bad" } }),
+  );
+  await sendRoom(fake, { ...said("defer", 48), addressee: ME });
+  await waitFor(() => wd.out.includes("[48]"), "the batch with the word to me");
+  assert.match(wd.out, /№7 «Стенд»: записей 3, тебе 1, сменённых строк ключа 2/, wd.out);
+  for (const id of [44, 45, 46, 47, 48]) await waitSeen(standings, `room-msg-${id}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // Одно событие графа приходит месту двумя кадрами: инбоксом роли (via=graph,
 // event_id в теле) и записью дела (via=room, event_id на верхнем уровне конверта,
 // дело №248, #6563). Метка одна — ev:<N>: копия дела после отданного события гаснет;

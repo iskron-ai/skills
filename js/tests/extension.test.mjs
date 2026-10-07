@@ -858,6 +858,20 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
   assert.doesNotMatch(got[0].text, /явное слово 89/);
 });
 
+// Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.
+test("progress lines of one key fold into the last: the count names the superseded; bad and the word to me stay", async () => {
+  const bad = roomFrame("progress", {
+    entry_id: 47,
+    key: "tests",
+    line: { done: "упало", verdict: "bad" },
+  });
+  const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
+  const got = await asideMessages("fold", frames, 2);
+  assert.equal(got.length, 2, JSON.stringify(got));
+  assert.match(got[0].text, /^№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
+  assert.match(got[1].text, /тайное слово 48$/, "the word to me whole");
+});
+
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
   const got = await asideMessages(
     "aside-run",
