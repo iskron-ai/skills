@@ -11,7 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { scoped, sessionCwd } from "../shared/scope.ts";
+import { sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
   besideRefusal,
@@ -39,6 +39,7 @@ import {
 } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
+import { knock, resetKnocks } from "./knock.ts";
 import { returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
 import {
@@ -58,7 +59,7 @@ import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { deadPredecessor, placeFor, suffixOf } from "./separate.ts";
+import { ownByRecord, placeFor, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -102,17 +103,6 @@ wireEviction(async (place, cwd) => {
   const text = ((r.result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? "");
   return { ok: !r.result?.isError, text: text.join("\n") };
 });
-
-/**
- * Стуки в места людей — когда и сколько, ключ (граф, роль, имя, адрес места). Правило
- * ожидания — #4342. Запись живёт в процессе моста и умирает с ним; новый цикл
- * входа (connect — свежий сокет) сбрасывает счёт по этому месту: предел повторов
- * — на один заход, не пожизненный запрет.
- */
-const knocks = scoped(() => new Map<string, { at: number; count: number }>());
-// Окно повтора — 2 минуты по #4342; переменная — шов для проб, не ручка человека.
-const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
-const KNOCK_LIMIT = 2;
 
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Занятость на месте, которое мост уже держит, — только строка (#6509).
@@ -298,13 +288,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
   // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
-  // «слушает» (окно платформы после смерти прежнего моста) — только register,
-  // как велит канон, и ответ говорит, что слушающий — мёртвый предшественник.
+  // «слушает» (окно платформы после смерти прежнего моста) — возврат только по
+  // записи этой сессии, со слухом; подписи без слуха нет (#6706).
   // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
   const fresh =
     !sat && !take && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
-  const predecessorDead = fresh && listensElsewhere && (await deadPredecessor(realm, karta, name));
-  const resumed = fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null;
+  const ownRecord = fresh && listensElsewhere && (await ownByRecord(realm, karta, name));
+  const resumed =
+    fresh && (!listensElsewhere || ownRecord) ? await resumeFromDisk(realm, karta, name) : null;
   const extra: string[] = []; // строки после шапки ответа
   // Сокет держал этот мост и до вызова (свой register, возврат с диска): hello не ждать.
   let socketBefore = false;
@@ -341,16 +332,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     heardHere = true;
     how = SW.howReturned();
-  } else if (!take && (holdsStanding(realm, karta, name) || predecessorDead)) {
+  } else if (!take && holdsStanding(realm, karta, name)) {
     const r = await register();
     if (r.isError) {
       lines.push(SW.refused("register", short(r.text)));
       return done(true);
     }
-    heardHere = !predecessorDead;
-    socketBefore = !predecessorDead;
-    how = predecessorDead ? SW.howDeadPredecessor() : SW.howRegister();
-  } else if (!take && listensElsewhere) {
+    heardHere = true;
+    socketBefore = true;
+    how = SW.howRegister();
+  } else if (!take && listensElsewhere && !ownRecord) {
     // Слушает другой держатель, а места рядом выбрано не было: подписи без слуха нет (#6706).
     lines.push(SW.otherHolder(mine?.address ?? name));
     return done(true);
@@ -379,12 +370,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       lines.push(SW.takenButRegister(short(r.text)));
       return done(true);
     }
-    for (const k of [...knocks.keys()])
-      if (k.startsWith(`${realm}|${karta}|${name}|`)) knocks.delete(k);
+    resetKnocks(realm, karta, name);
     heardHere = true;
-    how = ownSession
-      ? SW.howOwnSession()
-      : SW.howConnect(!!mine, listensElsewhere, a.take === true);
+    how =
+      ownSession || ownRecord
+        ? SW.howOwnSession()
+        : SW.howConnect(!!mine, listensElsewhere, a.take === true);
     // Место занято заново после возврата, не нашедшего записи: дела могли пропасть (#6649).
     if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
   }
@@ -398,7 +389,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   else lines.push(heardHere ? SW.noSocket() : SW.noWatchdog());
 
   // 3. hello — доказательство держания; свежий он только за connect этого вызова.
-  if (!heardHere) lines.push(beside ? SW.besideNoDoor() : SW.hearingElsewhere());
+  if (!heardHere) lines.push(SW.besideNoDoor());
   else if (beside) lines.push(SW.besideHeard());
   else if (socketBefore) lines.push(SW.heldAlready());
   else {
@@ -426,8 +417,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }),
   );
 
-  // 5. Стук в место человека — по полному адресу с провода. Правило #4342: один стук,
-  // повтор один раз не раньше чем через две минуты, дальше — слово человеку.
+  // 5. Стук в место человека — по полному адресу с провода (knock.ts, #4342).
   if (room && !heardHere) {
     lines.push(SW.knockNotHere(room));
   } else if (room) {
@@ -437,35 +427,15 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       (typeof a.room_karta === "string" && a.room_karta.trim()
         ? a.room_karta.trim().replace(/^#/, "")
         : null);
-    const key = `${realm}|${karta}|${name}|${room}`;
-    const prior = knocks.get(key);
-    const waited = prior ? Date.now() - prior.at : Infinity;
-    const again = a.repeat_knock === true;
-    if (prior && prior.count >= KNOCK_LIMIT) lines.push(SW.knockTwice(room));
-    else if (prior && !again) lines.push(SW.knockSent(room, waited, KNOCK_REPEAT_AFTER_MS));
-    else if (prior && waited < KNOCK_REPEAT_AFTER_MS)
-      lines.push(SW.knockEarly(room, waited, KNOCK_REPEAT_AFTER_MS));
-    else if (!roomKarta) lines.push(SW.knockNoRole(room, realm));
-    else {
-      const s = await call("iskron_channel", {
-        action: "send",
-        realm,
-        karta: roomKarta,
-        standing: room,
-        text: "join",
-      });
-      if (s.isError) lines.push(SW.knockRefused(room, short(s.text)));
-      else {
-        knocks.set(key, { at: Date.now(), count: (prior?.count ?? 0) + 1 });
-        lines.push(SW.knockDone(room, !!prior, short(s.text, 200)));
-      }
-    }
+    lines.push(
+      await knock({ realm, karta, name, room, roomKarta, again: a.repeat_knock === true }),
+    );
   }
 
   // 6. Занятость — от стояния, которое ведёт мост, не от живого сокета (#5033):
-  // и при «только register», и после вытеснения, пока статусный адрес у моста.
+  // и после вытеснения, пока статусный адрес у моста.
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
-    lines.push(predecessorDead ? SW.statusAfterDead() : SW.statusElsewhere(TAKE_PATH()));
+    lines.push(SW.statusElsewhere(TAKE_PATH()));
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(

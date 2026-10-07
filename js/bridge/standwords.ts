@@ -124,11 +124,6 @@ export const SW = {
       "возврат на место, с которого мост уходил, — сокет открыт заново тем же адресом, register",
       "back to the seat the bridge had left — the socket reopened at the same address, register",
     ),
-  howDeadPredecessor: (): string =>
-    L(
-      "слушающим доска ещё читает прежний мост этого каталога, а он мёртв (его сокет не отвечает, запись держания цела) — только register; как только доска его отпустит (закрытый сокет прежние серверы держали «слушающим» около минуты; с честной живостью, по слову контура, — почти сразу), тот же вызов вернёт место с диска тем же адресом — повтори",
-      "the board still reads this directory's former bridge as listening, and it is dead (its socket does not answer, the holding record is intact) — register only; once the board lets it go (older servers kept a closed socket «listening» about a minute; with honest liveness, by the contour's word, almost at once) the same call returns the seat from disk at the same address — repeat it",
-    ),
   /** Место прежнего моста этой же сессии харнесса (#6706): своё — мост вернул его сам, без take от агента. */
   howOwnSession: (): string =>
     L(
@@ -190,11 +185,6 @@ export const SW = {
       "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут.",
       "The seat is recorded, but it has no door — the bridge's channel socket is not alive; this graph's frames will not come here.",
     ),
-  hearingElsewhere: (): string =>
-    L(
-      "Слуха здесь ещё нет — повтори тот же вызов, место вернётся с диска.",
-      "No hearing here yet — repeat the same call, the seat returns from disk.",
-    ),
   besideHeard: (): string =>
     L(
       "Сокет канала держит этот мост — кадры места этого графа идут его сторожу.",
@@ -254,11 +244,6 @@ export const SW = {
     L(
       `Место человека ${room}: ${again ? "повторный " : ""}стук отправлен — ${text} Жди первого слова из места человека с шапкой; до него туда не пиши — встанешь рядом с человеком, когда оно придёт.`,
       `The human's seat ${room}: ${again ? "repeated " : ""}knock sent — ${text} Wait for the first message from the human's seat with its header; do not write there before it — you will stand beside the human when it comes.`,
-    ),
-  statusAfterDead: (): string =>
-    L(
-      "Занятость не публикуется: статусного адреса у моста пока нет — повтори тот же вызов, когда доска отпустит мёртвый прежний мост: место вернётся с диска вместе с ним.",
-      "The busy line is not published: the bridge has no status address yet — repeat the same call when the board lets the dead former bridge go: the seat returns from disk together with it.",
     ),
   statusElsewhere: (takePath: string): string =>
     L(

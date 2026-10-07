@@ -170,7 +170,7 @@ export function returnToStanding(how: string): boolean {
 }
 
 export function startDeafnessWatch(): void {
-  // Проба живости соседнего моста (sweepStale, deadPredecessor) цепляется к
+  // Проба живости соседнего моста (sweepStale, ownByRecord) цепляется к
   // локальному сокету и тут же отпадает — вернуть с места она не должна:
   // сторож остаётся прицепленным, проба — нет (#5140).
   onListenerAttached(() =>

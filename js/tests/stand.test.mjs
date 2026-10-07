@@ -1527,6 +1527,49 @@ test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is n
   assert.equal(fake.state.counts.webhooks_added, 1, "no role-inbox hook for the seat beside");
 });
 
+// Доска читает место слушающим, а локального держателя нет (прежний мост этого
+// каталога остановлен, запись держания цела): исхода «только register» без слуха
+// не бывает (#6706). Своё не доказано — место рядом со слухом; запись той же
+// сессии доказывает своё — место возвращается по ней со слухом.
+async function stoppedHolder(t, session) {
+  const { fake, dir, bridge } = await ready(t);
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-stopped-"));
+  const args = { realm: "nks-dev", karta: 931, name: "proba", cwd };
+  if (session) await bridge.call("iskron/resume", { cwd, session });
+  const stood = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!stood.result?.isError, standText(stood));
+  await bridge.stop();
+  await until(() => fake.state.ws.size === 0, "the stopped bridge's socket to close");
+  const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+  assert.equal(holds.length, 1, "the stopped bridge's record is kept");
+  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", INIT)).result);
+  // Сессию называет плагин; без ключа и каталога iskron/resume сам места не возвращает.
+  if (session) await next.call("iskron/resume", { session });
+  const r = await next.call("tools/call", { name: "iskron_stand", arguments: args });
+  return { fake, dir, r };
+}
+
+test("iskron_stand: the board reads a stopped holder listening, no session proves the seat own — the bridge stands beside with hearing, never «register only»", async (t) => {
+  const { r } = await stoppedHolder(t, null);
+  const text = standText(r);
+  assert.ok(!r.result?.isError, text);
+  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет/, text);
+  assert.equal(placeOf(r), "proba.2", text);
+  assert.match(text, /Слушать: .*watchdog proba\.2--931--nks-dev/, text);
+});
+
+test("iskron_stand: the board reads a stopped holder of THIS session listening — the seat is taken back by its record with hearing", async (t) => {
+  const { r } = await stoppedHolder(t, "ses-1");
+  const text = standText(r);
+  assert.ok(!r.result?.isError, text);
+  assert.doesNotMatch(text, /только register|Слуха здесь ещё нет|встаю рядом/, text);
+  assert.equal(placeOf(r), "proba", text);
+  assert.match(text, /Слушать: .*watchdog proba--931--nks-dev/, text);
+});
+
 // Возврат с диска по ключу не поднимает место соседа той же роли и каталога: на
 // записи стояла другая названная сессия — место её, не этой (#5366, #6706).
 test("iskron/resume by key never takes a neighbour's seat: a record another session stood on is named, not resumed", async (t) => {

@@ -4,8 +4,9 @@
 // компакшн), — своё: мост возвращает его сам. Место, которое держит другая
 // сессия, — её: встают рядом на `имя.N` со слухом. «Держит» читается
 // положительно — живой локальный сокет места, который держит не этот мост,
-// либо доска «слушает» без своей записи держания (держатель вне этого каталога
-// гранта); чья сессия — по записи держания, которую пишет живой держатель.
+// либо доска «слушает», а запись держания этой сессии этого не опровергает
+// (держатель вне каталога гранта или своё не доказано); чья сессия — по записи
+// держания, которую пишет держатель.
 import { L } from "../shared/lang.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
@@ -23,14 +24,19 @@ export function suffixOf(base: string, name: string): number | null {
 export const suffixed = (base: string, n: number): string =>
   base.slice(0, NAME_MAX - `.${n}`.length).replace(/[-._]+$/, "") + `.${n}`;
 
-/** Слушающим доска читает прежний мост этого каталога, а он мёртв: запись держания цела, локальный сокет не отвечает. */
-export async function deadPredecessor(
+/**
+ * Своё по записи держания: на ней стояла эта сессия харнесса, а локальный сокет
+ * места не отвечает (прежний мост этой сессии мёртв). Доска может ещё читать его
+ * слушающим — место возвращается по записи со слухом, не подписью без него (#6706).
+ */
+export async function ownByRecord(
   realm: string,
   karta: string | number,
   name: string,
 ): Promise<boolean> {
   const key = keyOf(realm, karta, name);
-  if (!readHoldRecord(key)) return false;
+  const me = sessionOfBridge();
+  if (!me || readHoldRecord(key)?.session !== me) return false;
   return !(await localSocketAlive(localSocketPathOf(key)));
 }
 
@@ -51,9 +57,9 @@ async function holderOf(
     const me = sessionOfBridge();
     return me && readHoldRecord(key, true)?.session === me ? "session" : "taken";
   }
-  // Доска «слушает», а живого локального держателя нет: запись цела — мёртвый
-  // предшественник этого каталога (возврат с диска); записи нет — держатель вне его.
-  return listensOnBoard(name) && !readHoldRecord(key) ? "taken" : "free";
+  // Доска «слушает», а живого локального держателя нет: своё доказывает только
+  // запись этой сессии (возврат по ней); иначе слушающий — не наш, встаём рядом.
+  return listensOnBoard(name) && !(await ownByRecord(realm, karta, name)) ? "taken" : "free";
 }
 
 export type PlaceChoice = { name: string; own: boolean; note: string | null } | { refusal: string };
