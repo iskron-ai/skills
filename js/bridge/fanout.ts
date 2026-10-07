@@ -8,6 +8,7 @@ import {
   countedKeys,
   deliveredKeys,
   eventKeyOf,
+  eventMarkOf,
   isRoomCopy,
   noteSeen,
   seenIds,
@@ -48,7 +49,13 @@ export function isDelivered(keys: string[], seen: Set<string>, seenPath: string)
 }
 
 /** Что веер читает у двери: кольцо, память отданного и пачки места. */
-type FanDoor = Pick<Door, "ring" | "seen" | "seenPath" | "stale" | "backlog" | "roomBatch">;
+type FanDoor = Pick<
+  Door,
+  "ring" | "seen" | "seenPath" | "stale" | "backlog" | "roomBatch" | "textEvents" | "clients"
+>;
+
+/** Сколько событий, отданных текстом, держит память двери. */
+const TEXT_EVENTS_KEEP = 2000;
 
 /**
  * Метка события, если эту копию предлагать незачем: событие уже отдано (живой копией;
@@ -57,22 +64,20 @@ type FanDoor = Pick<Door, "ring" | "seen" | "seenPath" | "stale" | "backlog" | "
  * следующая копия предлагается. Живая копия вынимает лежалую из копящейся пачки.
  *
  * Копия дела (#6563) — счётом: она гаснет только перед копией инбокса, вошедшей в ход
- * ТЕКСТОМ, — отданной (метки `ev:`/`evs:`) либо ждущей в кольце текстом сторожу. Копия
- * инбокса, названная пачкой лишь числом (метки `cev:`/`cevs:`), её не гасит, а ждущая в
- * окне побудки или в пачке лежалых — ещё не решена: копия дела идёт своим путём, и её
- * вынет показ копии инбокса текстом (takeShownCopies; решение стюарда #931).
+ * ТЕКСТОМ, — отданной (метки `ev:`/`evs:`) либо отданной мостом текстом, чью метку сторож
+ * ещё не поставил (textEvents). Копия инбокса, названная пачкой лишь числом (метки
+ * `cev:`/`cevs:`), её не гасит, а ждущая в окне побудки или в пачке лежалых — ещё не
+ * решена: копия дела идёт своим путём, и её вынет показ копии инбокса текстом
+ * (takeShownCopies; решение стюарда #931).
  */
 function redundantEvent(frame: Frame | null, d: FanDoor): string {
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
   if (!ev) return "";
   const stale = frame?.stale === true;
   const room = isRoomCopy(frame);
-  const idOnly = (f: Frame): string[] => (typeof f.id === "string" && f.id ? [f.id] : []);
-  // Копия инбокса в кольце ждёт текстом, пока не отдана и не лежит в окне побудки.
-  const pendingText = (f: Frame): boolean =>
-    !isDelivered(idOnly(f), d.seen, d.seenPath) && !d.backlog.holds(f);
-  const holds = (f: Frame | null): boolean =>
-    !!f && eventKeyOf(f) === ev && (isRoomCopy(f) ? room : !room || pendingText(f));
+  if (room && d.textEvents.has(ev)) return ev;
+  // Копия в кольце держит событие для копии того же рода; копию дела держит только текст.
+  const holds = (f: Frame | null): boolean => !!f && eventKeyOf(f) === ev && isRoomCopy(f) === room;
   // Отданная пачка лежалых гасит и копию дела: та не будит и текста не несёт; живую
   // копию инбокса — нет, она будит (#5842).
   const text = stale || room ? [ev, `evs:${ev.slice(3)}`] : [ev];
@@ -96,7 +101,8 @@ export function redundantCopy(frame: Frame | null, d: FanDoor): boolean {
  * Пачка (лежалых, побудки) отдана с показанными кадрами `shown`: копии дела их событий —
  * вон (takeShownCopies). `all` — пачка отдана клиенту уведомлений, и отданными метятся все
  * её кадры (#5831): показанные — метками отданного, названные лишь числом — метками счёта
- * (seen.ts countedKeys); null — метят сторожа сами.
+ * (seen.ts countedKeys); null — метят сторожа сами, и пачка, ушедшая при пустом локальном
+ * сокете, текстом не дошла ни до кого: она копий дела не гасит.
  */
 export function batchHandedOut(
   d: FanDoor,
@@ -106,16 +112,25 @@ export function batchHandedOut(
   const on = new Set(shown);
   for (const f of all ?? [])
     for (const k of on.has(f) ? deliveredKeys(f) : countedKeys(f)) noteSeen(d.seenPath, k, d.seen);
-  takeShownCopies(d, shown);
+  if (all || d.clients.size) takeShownCopies(d, shown);
 }
 
 /**
- * Кадры `shown` вошли в ход текстом — живой кадр или показанные кадры пачки: копии дела
- * их событий вон из пачек места, ждущих счётом (комнаты сторожам, окно побудки, лежалые),
+ * Кадры `shown` вошли в ход текстом — живой кадр или показанные кадры пачки: их события
+ * запоминаются (копия дела, пришедшая позже, гаснет — redundantEvent), копии дела этих
+ * событий вон из пачек места, ждущих счётом (комнаты сторожам, окно побудки, лежалые),
  * и метятся отданными — счёт их не повторит (#5842, #6563). Пачки клиентов вынимают
  * свои сами по тем же показанным кадрам (seen.ts takeRoomCopies).
  */
 export function takeShownCopies(d: FanDoor, shown: readonly (Frame | null)[]): void {
+  for (const ev of shown.map(eventMarkOf).filter(Boolean)) {
+    d.textEvents.delete(ev);
+    d.textEvents.add(ev);
+  }
+  for (const old of d.textEvents) {
+    if (d.textEvents.size <= TEXT_EVENTS_KEEP) break;
+    d.textEvents.delete(old);
+  }
   const taken = [
     ...d.roomBatch.takeCopies(shown),
     ...d.backlog.takeCopies(shown),

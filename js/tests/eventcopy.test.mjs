@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { Backlog } from "../bridge/backlog.ts";
-import { redundantCopy, takeShownCopies } from "../bridge/fanout.ts";
+import { batchHandedOut, redundantCopy, takeShownCopies } from "../bridge/fanout.ts";
 import { RoomBatch } from "../bridge/roomstack.ts";
 import { StaleBurst } from "../bridge/stale.ts";
 import { countedKeys, deliveredKeys } from "../shared/seen.ts";
@@ -33,6 +33,8 @@ const door = () => ({
   stale: new StaleBurst(),
   backlog: new Backlog(),
   roomBatch: new RoomBatch(),
+  textEvents: new Set(),
+  clients: new Set(),
 });
 
 // Копия инбокса, ждущая в пачке лежалых, ещё не вошла текстом: копия дела идёт своим
@@ -90,6 +92,47 @@ for (const kind of ["backlog", "stale"])
     await pause(300);
     assert.equal(ch.ride("A"), null);
   });
+
+// Пачка лежалых ушла сторожам: метку ставит сторож после печати, а мост уже помнит, что
+// событие отдано текстом. При пустом локальном сокете текст не дошёл ни до кого.
+test("a stale burst handed to listening watchdogs kills a later case copy; one handed to nobody does not", () => {
+  const heard = door();
+  heard.clients.add({});
+  batchHandedOut(heard, [{ ...inbox(), stale: true }], null);
+  assert.equal(redundantCopy(caseCopy(), heard), true);
+  const deaf = door();
+  batchHandedOut(deaf, [{ ...inbox(), stale: true }], null);
+  assert.equal(redundantCopy(caseCopy(), deaf), false);
+});
+
+// Копия дела за пределом показанных, чья копия инбокса показана пачкой текстом, — не в
+// «не вошло»: событие делатель уже прочёл, а шапка послала бы его в history за ним.
+const pastCut = (extra = {}) => [
+  { ...inbox(), ...extra },
+  ...Array.from({ length: 19 }, (_, i) => ({ ...graphPosed(`o-${i}`, 100 + i), ...extra })),
+  { ...caseCopy(), ...extra },
+];
+
+test("a wake-up batch does not count past its cut a case copy whose inbox copy it shows", () => {
+  const b = new Backlog();
+  let text = "";
+  b.open(0, (ev) => (text = ev.text));
+  for (const f of pastCut()) b.note(f);
+  b.flushNow();
+  assert.match(text, /Побудка: кадров 20/, text);
+  assert.doesNotMatch(text, /не вошло/, text);
+});
+
+test("a stale burst does not count past its cut a case copy whose inbox copy it shows", async () => {
+  const s = new StaleBurst();
+  let got = null;
+  for (const f of pastCut({ stale: true })) s.note(f, (ev) => (got = ev));
+  await pause(1700);
+  assert.ok(got, "the burst went out");
+  assert.match(got.text, /Лежалых кадров: 20/, got.text);
+  assert.doesNotMatch(got.text, /не вошло/, got.text);
+  assert.ok(got.unshown?.includes("room-msg-60"), "the absorbed copy is still marked handed out");
+});
 
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];

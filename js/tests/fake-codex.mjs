@@ -52,7 +52,7 @@ function unframe(buf) {
 }
 
 // mute: the socket is accepted, the upgrade is never answered — a hung daemon.
-export function startFakeCodex(socketPath, logFile, { mute = false } = {}) {
+export function startFakeCodex(socketPath, logFile, { mute = false, turnDelayMs = 0 } = {}) {
   mkdirSync(dirname(socketPath), { recursive: true });
   const server = createServer((_req, res) => {
     res.writeHead(404);
@@ -92,14 +92,18 @@ export function startFakeCodex(socketPath, logFile, { mute = false } = {}) {
             ),
           );
         } else if (msg.method === "turn/start") {
-          socket.write(
-            frame(
-              JSON.stringify({
-                id: msg.id,
-                result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } },
-              }),
-            ),
-          );
+          // turnDelayMs: ход принят не сразу — сторож метит отданное только по ответу.
+          const answer = () =>
+            socket.write(
+              frame(
+                JSON.stringify({
+                  id: msg.id,
+                  result: { turn: { id: "turn-1", status: "inProgress", items: [], error: null } },
+                }),
+              ),
+            );
+          if (turnDelayMs) setTimeout(answer, turnDelayMs).unref();
+          else answer();
         } else {
           socket.write(
             frame(JSON.stringify({ id: msg.id, error: { code: -32601, message: "unknown" } })),

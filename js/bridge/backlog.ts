@@ -61,11 +61,6 @@ export class Backlog {
     return true;
   }
 
-  /** Лежит ли кадр в открытом окне — его судьба (текстом или числом) решится пачкой (fanout.ts). */
-  holds(frame: Frame | null): boolean {
-    return !!frame && this.all.includes(frame);
-  }
-
   /** Вынуть из окна копии дела событий, вошедших в ход текстом кадров `shown` (seen.ts takeRoomCopies). */
   takeCopies(shown: readonly (Frame | null)[]): Frame[] {
     return takeRoomCopies(this.all, shown, (f) => f);
@@ -77,7 +72,8 @@ export class Backlog {
     const got = all
       .slice(0, BACKLOG_KEEP)
       .sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
-    const count = all.length;
+    // Копия дела сверх показанных, чьё событие показано здесь текстом, — не в «не вошло».
+    const count = all.length - takeRoomCopies(all.slice(BACKLOG_KEEP), got, (f) => f).length;
     const expected = this.pending;
     const direct = this.direct;
     this.direct = 0;

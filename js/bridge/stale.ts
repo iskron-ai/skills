@@ -37,6 +37,9 @@ export class StaleBurst {
       // дела события, чья копия инбокса показана здесь текстом, счётом не повторяется.
       const counted = [...frames];
       takeRoomCopies(counted, frames, (f) => f);
+      // И сверх показанных такая копия — не в «не вошло»; отданной метится со всеми (unshown).
+      const left = all.slice(frames.length);
+      const count = all.length - takeRoomCopies([...left], frames, (f) => f).length;
       const bodies = [
         ...caseCountLines(counted),
         ...frames
@@ -52,21 +55,19 @@ export class StaleBurst {
           frames,
           // Сторож метит отданным и то, что пачка назвала числом: иначе оно вернётся с повтором (#5831);
           // метками счёта — текстом его событие не вошло (seen.ts countedKeys).
-          ...(all.length > frames.length
-            ? { unshown: all.slice(frames.length).flatMap((f) => countedKeys(f)) }
-            : {}),
+          ...(left.length ? { unshown: left.flatMap((f) => countedKeys(f)) } : {}),
           text:
             L(
-              `Лежалых кадров: ${all.length}` +
-                (all.length > frames.length
-                  ? `, здесь первые ${frames.length}, не вошло ${all.length - frames.length}`
+              `Лежалых кадров: ${count}` +
+                (count > frames.length
+                  ? `, здесь первые ${frames.length}, не вошло ${count - frames.length}`
                   : "") +
                 " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
                 "адресованные месту — текстом, прочие — счётом; " +
                 'полностью и не вошедшее — iskron_channel(action="history").',
-              `Stale frames: ${all.length}` +
-                (all.length > frames.length
-                  ? `, the first ${frames.length} here, ${all.length - frames.length} left out`
+              `Stale frames: ${count}` +
+                (count > frames.length
+                  ? `, the first ${frames.length} here, ${count - frames.length} left out`
                   : "") +
                 " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
                 "those addressed to the seat as text, the rest by count; " +

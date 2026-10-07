@@ -85,6 +85,11 @@ export class Door {
   readonly backlog = new Backlog();
   /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
   readonly roomBatch = new RoomBatch();
+  /**
+   * События, которые мост отдал текстом (живой кадр, показанный кадр пачки), — у сторожа
+   * метка ляжет лишь после печати, а копия дела гаснет уже сейчас (fanout.ts takeShownCopies).
+   */
+  readonly textEvents = new Set<string>();
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
   /**
