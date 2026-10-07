@@ -39,6 +39,8 @@ export interface HoldRecord {
   at?: number;
   /** дела, в которые вошёл спутник, — пишет только его пауза на перезагрузку плагина (suspend.ts) */
   cases?: { realm?: string; room: string }[];
+  /** основа места: имя, от которого мост выбрал это место рядом (`имя.N`), у основного — само имя (#6706) */
+  base?: string;
 }
 
 /** Срок записи — время простоя, которое платформа даёт месту без сокета. */
@@ -51,14 +53,24 @@ export function noteHarnessSession(id: string | undefined): void {
 }
 export const sessionOfBridge = (): string | null => H.session;
 
-/** Отпущено ли место словом держателя по прежней записи ключа — переписывание записи этого не снимает. */
-function leftOnDisk(key: string): boolean {
+function onDisk(key: string): HoldRecord | null {
   try {
-    return (JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord)?.left === true;
+    return JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
   } catch {
-    return false;
+    return null;
   }
 }
+
+/**
+ * Основа места знает только выбравший его мост: по виду имени её не угадать —
+ * модель в выведенном имени несёт точки (`glm-5.3`), явное имя тоже (#6706).
+ */
+const B = scoped(() => new Map<string, string>());
+export function noteSeatBase(key: string, base: string): void {
+  B.set(key, base);
+}
+/** Основа места, запомненная этим мостом (выбор места, возврат по записи); null — неизвестна. */
+export const seatBaseOf = (key: string): string | null => B.get(key) ?? null;
 
 /**
  * Сессия в записи — только названная ЭТОМУ процессу моста (или переданная явно):
@@ -75,13 +87,15 @@ export function writeHoldRecord(
   if (CFG.satellite && !paused) return;
   try {
     const session = H.session ?? rec.session;
-    const left = rec.left ?? leftOnDisk(key);
+    const was = rec.left == null || (rec.base ?? B.get(key)) == null ? onDisk(key) : null;
+    const left = rec.left ?? was?.left === true;
     writeFileSync(
       holdFilePathFor(key),
       JSON.stringify({
         ...rec,
         session: session ?? undefined,
         left: left || undefined,
+        base: B.get(key) ?? rec.base ?? was?.base,
         at,
       }) + "\n",
       { mode: 0o600 },

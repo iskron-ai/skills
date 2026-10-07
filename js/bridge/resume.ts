@@ -43,6 +43,7 @@ import {
   type HoldRecord,
   keyOf,
   noteHarnessSession,
+  noteSeatBase,
   readHoldRecord,
   restoreHoldRecord,
   sessionOfBridge,
@@ -93,6 +94,7 @@ export async function resumeFromDisk(
   const prev = state.standing;
   state.standing = { realm, karta, name };
   const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
+  if (rec.base) noteSeatBase(key, rec.base); // запись нового держателя после отъёма её уже не скажет
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);

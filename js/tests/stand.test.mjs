@@ -786,6 +786,41 @@ test("iskron_stand after the seat beside is taken and the network kept it from s
   assert.equal(fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name, "proba.3");
 });
 
+// The base of a seat is what the bridge chose it from, never guessed from the
+// name's shape (#6706): a model carries dots (glm-5.3), an explicit name too.
+// The primary seat taken (4000) — the bridge stands beside on <name>.2 without
+// a role-inbox hook, and a repeated stand by the same name registers there.
+async function primaryWithDotTaken(t, args) {
+  const { fake, bridge } = await ready(t);
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  const seat = placeOf(first);
+  assert.ok(seat && !first.result?.isError, textOf(first));
+  await until(() => fake.state.ws.size === 1, "the socket");
+  const hooks = fake.state.counts.webhooks_added;
+  await fake.control({ ws_close: 4000 });
+  await until(() => fake.state.places.get(`931:${seat}`)?.listening === false, "the closed socket");
+  await fake.control({ places: [{ karta: "931", name: seat, listening: true }] });
+  const word = besideWord(bridge, /мост встал рядом/);
+  await until(word, `the word about the seat beside:\n${bridge.stderr}`);
+  const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  assert.deepEqual(connects, [seat, `${seat}.2`], word().text);
+  assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for the seat beside");
+  const count = fake.state.counts.connect;
+  const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(placeOf(again), `${seat}.2`, textOf(again));
+  assert.match(textOf(again), /сокет уже держит этот мост — register/, textOf(again));
+  assert.equal(fake.state.counts.connect, count, "no new connect");
+}
+
+test("iskron_stand: a derived name whose model carries a dot (x-5.3), taken by 4000 — the bridge stands beside on x-5.3.2, no role hook; a repeat registers there", async (t) => {
+  await primaryWithDotTaken(t, { realm: "nks-dev", karta: 931, model: "glm-5.3" });
+});
+
+test("iskron_stand: an explicit name x.3 taken by 4000 — the bridge stands beside on x.3.2, not on x", async (t) => {
+  await primaryWithDotTaken(t, { realm: "nks-dev", karta: 931, name: "proba.3" });
+});
+
 // One seat per bridge: asked for a seat another live session listens on, the
 // refusal does not advise take=true — that would evict it without the human's word.
 test("iskron_stand refusal «already leads another seat»: no take=true advice when another session listens on the asked seat", async (t) => {
@@ -798,6 +833,27 @@ test("iskron_stand refusal «already leads another seat»: no take=true advice w
   const r = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { ...own, name: "proba" },
+  });
+  const text = textOf(r);
+  assert.ok(r.result?.isError, text);
+  assert.match(text, /уже ведёт место/, text);
+  assert.match(text, /слушает другая сессия/, text);
+  assert.doesNotMatch(text, /iskron_stand с take=true/, text);
+});
+
+// The board may not read the asked seat listening while a live local holder of
+// another session hears it: no take=true advice then either (as in seat choice).
+test("iskron_stand refusal «already leads another seat»: no take=true advice when a live local holder of another session hears the asked seat", async (t) => {
+  const { fake, second, args, base } = await twoSessions(t);
+  const own = await second.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, name: "zond" },
+  });
+  assert.equal(placeOf(own), "zond", textOf(own));
+  await fake.control({ places: [{ karta: "931", name: base, listening: false }] });
+  const r = await second.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, name: base },
   });
   const text = textOf(r);
   assert.ok(r.result?.isError, text);

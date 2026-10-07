@@ -82,7 +82,7 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
   const name = s?.name ?? "";
   if (CFG.satellite || !s || !name || !beside)
     return announceEvicted(code, holdWords.evicted(code));
-  const base = baseOf(name); // место рядом отняли — следующее рядом с основой, не proba.2.2
+  const base = baseOf(s.realm, s.karta, name); // место рядом отняли — следующее рядом с его основой, не proba.2.2
   announceEvicted(code, holdWords.evictedBeside(code, name, base));
   const r = await standBeside(key, s, name, beside);
   if (!r) return;

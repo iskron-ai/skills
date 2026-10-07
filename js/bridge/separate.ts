@@ -10,24 +10,18 @@
 import { sameDir } from "../shared/canon.ts";
 import { harnessName } from "./client.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
-import { keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
 import { NAME_MAX } from "./names.ts";
 import { resumeFromDisk } from "./resume.ts";
 import { SEP } from "./separatewords.ts";
 import { localSocketAlive } from "./sweep.ts";
 
-/** Номер отдельного места `база.N` (N ≥ 2) либо null, если имя не из этого ряда. */
-export function suffixOf(base: string, name: string): number | null {
-  if (!name.startsWith(`${base}.`)) return null;
-  const tail = name.slice(base.length + 1);
-  return /^[1-9]\d*$/.test(tail) && Number(tail) >= 2 ? Number(tail) : null;
-}
-
-/** Основа имени места рядом: `база.N` (N ≥ 2) → `база`; иное имя — само. */
-export function baseOf(name: string): string {
-  const m = /^(.+)\.([1-9]\d*)$/.exec(name);
-  return m && Number(m[2]) >= 2 ? m[1] : name;
-}
+/**
+ * Основа места: та, от которой его выбрал мост (запись держания, #6706); не
+ * знает — место считается основным: по виду имени основу не угадать.
+ */
+export const baseOf = (realm: string, karta: string | number, name: string): string =>
+  seatBaseOf(keyOf(realm, karta, name)) ?? name;
 
 /** Имя отдельного места номер n; не укладывается в предел — база укорачивается с конца. */
 export const suffixed = (base: string, n: number): string =>

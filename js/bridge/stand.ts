@@ -34,11 +34,12 @@ import {
   holdsStanding,
   isParked,
   ledKey,
+  localSocketPathOf,
   noteStandCwd,
   standingIdIn,
   wasEvicted,
 } from "./hold.ts";
-import { keyOf } from "./holdrecord.ts";
+import { keyOf, noteSeatBase, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { armRoleHook } from "./hook.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { returnToStanding } from "./leave.ts";
@@ -60,9 +61,10 @@ import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { baseOf, type Resumed, seatFor, suffixOf } from "./separate.ts";
+import { baseOf, type Resumed, seatFor } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
+import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -95,7 +97,7 @@ wireEviction(async (place, cwd) => {
         arguments: {
           realm: place.realm,
           karta: String(place.karta),
-          name: baseOf(place.name ?? ""), // отнятое место рядом proba.2 — основа proba, не proba.2
+          name: baseOf(place.realm, place.karta, place.name ?? ""), // основа, от которой место выбрано (#6706)
           ...(cwd && isDirectory(cwd) ? { cwd } : {}),
         },
       },
@@ -170,8 +172,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
   // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
+  // Основу места рядом мост помнит сам (#6706); по виду имени её не угадать — glm-5.3 не место рядом glm-5.
   const ledSuffix =
-    !!base && !!led0 && String(led0.karta) === String(karta) && !!suffixOf(base, led0.name ?? "");
+    !!base &&
+    !!led0 &&
+    String(led0.karta) === String(karta) &&
+    led0.name !== base &&
+    baseOf(led0.realm, led0.karta, led0.name ?? "") === base;
   // Отнятое место рядом — не возврат: следующее место рядом выбирает seatFor (#6706).
   const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
   if (ledSuffix && !besideTaken && a.take !== true) name = led0?.name ?? name;
@@ -195,11 +202,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // Доска не прочлась — мост не знает, кто слушает, и take=true не советует тоже.
     const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
     const bd = b && !b.isError ? readBoard(b) : null;
-    const hearing = !bd?.recognized
-      ? "unknown"
-      : bd.entries.some((e) => e.karta === karta && nameOf(e.address) === name && listens(e))
-        ? "other"
-        : "free";
+    // Живой локальный держатель другой сессии слушает место, даже когда доска его так не читает (как holderOf).
+    const askedKey = keyOf(realm, karta, name);
+    const me = sessionOfBridge();
+    const localOther =
+      (await localSocketAlive(localSocketPathOf(askedKey))) &&
+      !(me && readHoldRecord(askedKey, true)?.session === me);
+    const hearing = localOther
+      ? "other"
+      : !bd?.recognized
+        ? "unknown"
+        : bd.entries.some((e) => e.karta === karta && nameOf(e.address) === name && listens(e))
+          ? "other"
+          : "free";
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }
@@ -266,6 +281,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     if (choice.note) nameNotes.push(choice.note);
   }
+  if (base) noteSeatBase(keyOf(realm, karta, name), base); // до connect: запись держания несёт основу
   const take = a.take === true || ownSession;
   const sub = !!sat || (!!base && name !== base); // отдельное место и спутник: хук инбокса роли не взводится
   // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
