@@ -17,7 +17,7 @@
 // call id. ctx.skill.list() holds only the built-in skills during setup; the installed
 // ones come with skill.updated, with realpath'd paths — so the list is read at the ask.
 /* eslint-disable @typescript-eslint/no-explicit-any -- hook payloads without a schema */
-import { type Dirent, existsSync, readdirSync, realpathSync } from "node:fs";
+import { type Dirent, existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -45,6 +45,34 @@ const canon = (p: string): string | null => {
     return null;
   }
 };
+
+const absent = (p: string): boolean => {
+  try {
+    return lstatSync(p, { throwIfNoEntry: false }) === undefined;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * A path's canonical form through its nearest existing part: a file not there yet is
+ * judged where it would lie, so the read answers «not found» rather than a refused ask.
+ * A missing part that names "." or ".." would climb past what realpath saw — null.
+ */
+function canonReach(p: string): string | null {
+  const tail: string[] = [];
+  let at = p;
+  for (;;) {
+    const c = canon(at);
+    if (c) return tail.length ? join(c, ...tail.reverse()) : c;
+    if (!absent(at)) return null; // a dangling symlink or an unreadable part — not "not there"
+    const name = basename(at);
+    const up = dirname(at);
+    if (up === at || name === "." || name === "..") return null;
+    tail.push(name);
+    at = up;
+  }
+}
 
 /** The directory an external_directory resource names ("<dir>/*"); a wider pattern — null. */
 export function resourceDir(resource: string): string | null {
@@ -124,19 +152,26 @@ export function absolute(p: string, base: string | null): string | null {
   return base ? resolve(base, p) : null;
 }
 
+/**
+ * A "." or ".." segment: realpath resolves it by the letter before it walks, while the
+ * file system resolves it after a symlink — "skill/link/../x" would be judged as skill/x.
+ */
+const dotted = (p: string): boolean => p.split(/[\\/]/).some((s) => s === "." || s === "..");
+
 /** Paths a reading call reaches; null — a call that names more than paths. */
 function reached(call: Call, resources: readonly string[], base: string | null): string[] | null {
   const out: string[] = [];
   for (const r of resources) {
     const dir = resourceDir(String(r));
-    if (!dir) return null;
+    if (!dir || dotted(dir)) return null;
     out.push(dir);
   }
   const input = call.input ?? {};
   for (const key of ["path", "filePath"]) {
     const p = input[key];
     if (p === undefined) continue;
-    const abs = typeof p === "string" ? absolute(p, base) : null;
+    // A relative path is resolved by the letter by OpenCode too, and the ask names the result.
+    const abs = typeof p === "string" && !(isAbsolute(p) && dotted(p)) ? absolute(p, base) : null;
     if (!abs) return null;
     out.push(abs);
   }
@@ -163,7 +198,9 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
     // One id met for two calls — the ask cannot tell which it is for: it opens nothing.
     const was = calls.get(t.id);
     const clash = was && (was.tool !== t.tool || was.session !== t.sessionID);
-    calls.set(t.id, { tool: clash ? "" : t.tool, input: t.input, session: t.sessionID });
+    // Only a reader's input is kept: a write's content is not the ask's business.
+    const input = READERS.has(t.tool) ? t.input : undefined;
+    calls.set(t.id, { tool: clash ? "" : t.tool, input, session: t.sessionID });
     while (calls.size > CALLS) calls.delete(calls.keys().next().value as string);
   });
 
@@ -186,7 +223,7 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
     const roots = await skillDirs(ctx);
     const walked = new Set<string>();
     for (const p of paths) {
-      const c = canon(p);
+      const c = canonReach(p);
       const root = c ? roots.find((r) => within(c, r)) : undefined;
       if (!root) return;
       walked.add(root);

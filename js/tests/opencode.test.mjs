@@ -3105,6 +3105,7 @@ test("a delivery skill's files outside the working copy are read without an ask 
   const linked = join(set, "design", "references");
   symlinkSync(join(outside, "key"), join(linked, "leak.md"));
   symlinkSync(outside, join(linked, "out"));
+  symlinkSync(join(outside, "gone"), join(linked, "dangling.md"));
 
   const refs = join(set, "iskron", "references");
   // The session's directory — a relative path of a tool is resolved from it.
@@ -3186,6 +3187,40 @@ test("a delivery skill's files outside the working copy are read without an ask 
       await read(join(linked, "phrasebook.md")),
       "allow",
       "the rest of that skill is read",
+    );
+    // A path not there is judged by its nearest existing part: the read then answers
+    // «not found», not a refused ask.
+    assert.equal(await read(join(refs, "missing.md")), "allow", "a missing file inside a skill");
+    const methods = join(set, "iskron", "methods");
+    assert.equal(
+      await rec.ask("glob", { pattern: "*.md", path: methods }, ext, [`${methods}/*`]),
+      "allow",
+      "a glob in a missing directory inside a skill",
+    );
+    assert.equal(
+      await read(join(linked, "out", "missing")),
+      "ask",
+      "a missing file behind a symlink out keeps its ask",
+    );
+    assert.equal(
+      await read(join(linked, "dangling.md")),
+      "ask",
+      "so does a dangling symlink — it is there, its target is not",
+    );
+    assert.equal(
+      await read(`${refs}/nope/../phrasebook.md`),
+      "ask",
+      "a missing part that climbs keeps its ask",
+    );
+    assert.equal(
+      await read(`${linked}/out/../phrasebook.md`),
+      "ask",
+      "so does a climb after a symlink out — the file system climbs from its target",
+    );
+    assert.equal(
+      await read(join(home, "nowhere", "missing.md")),
+      "ask",
+      "a missing path outside the skills keeps its ask",
     );
     assert.equal(
       await read(join(set, "foreign", "references", "phrasebook.md")),
