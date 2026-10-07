@@ -109,11 +109,11 @@ export const withdraw = (entry_id) =>
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 
-/** Отчёт о ходе — в пачку. */
-export const progress = (entry_id = 44) =>
+/** Отчёт о ходе — в пачку; строки одного ключа в пачке сворачиваются в последнюю (#6718). */
+export const progress = (entry_id = 44, key = "tests") =>
   roomFrame("progress", {
     entry_id,
-    key: "tests",
+    key,
     line: { done: "пробы зелёные", verdict: "ok", note: "без сети" },
     body: "",
   });

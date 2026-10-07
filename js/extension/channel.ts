@@ -14,6 +14,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
+import { deliveryKeys, eventIn } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
@@ -48,10 +49,16 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   // счёт по делам с адресованными строками, без текста прочего.
   const aside: Frame[] = [];
   let asideTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Метки внесённого в ход текстом (seen.ts deliveryKeys): счёт свёртки их не повторит. */
+  const marks = new Set<string>();
+  function noteText(keys: string[] | undefined): void {
+    for (const k of keys ?? []) marks.add(k);
+    for (const old of marks) if (marks.size > 500) marks.delete(old);
+  }
   function flushAsides(): void {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
-    const got = aside.splice(0);
+    const got = aside.splice(0).filter((f) => !eventIn(f, (k) => marks.has(k)));
     if (!got.length) return;
     pi.sendMessage(
       {
@@ -89,6 +96,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
           (asideTimer as { unref?: () => void }).unref?.();
           return;
         }
+        noteText(deliveryKeys(frame)); // кадр входит текстом — свёртка его событие не повторит
         flushAsides(); // накопленное — прежде следующего кадра: порядок цел
         // Кадр комнаты с event_kind рода «в пачку» (словарь родов, #5851) ход не
         // режет — ждёт его конца; кадр без event_kind — прежним путём, вставкой.
@@ -114,6 +122,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         return;
       case "stale":
       case "backlog":
+        noteText(ev.marks); // метки пачки — внесённое ею в ход
         // Одна пачка — одно слово в ход: лежалые кадры или побудка с накопленным.
         if (ev.text)
           pi.sendMessage(

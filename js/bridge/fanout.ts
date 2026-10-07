@@ -4,8 +4,9 @@
 import { statSync } from "node:fs";
 
 import { type Frame } from "../shared/channel.ts";
-import { eventKeyOf, seenIds } from "../shared/seen.ts";
-import { type StaleBurst } from "./stale.ts";
+import { eventIn, eventKeyOf, type Marks, sameCopy, seenIds } from "../shared/seen.ts";
+import { type Door } from "./door.ts";
+import { log } from "./streams.ts";
 
 /**
  * Последнее прочтение каждого файла .seen и его отпечаток (inode, размер, mtime).
@@ -39,25 +40,44 @@ export function isDelivered(keys: string[], seen: Set<string>, seenPath: string)
   return keys.some((k) => given.has(k));
 }
 
+/** Метки места — память моста и файл .seen, который пишут внёсшие кадр в ход (seen.ts eventIn). */
+export const marksOf =
+  (seen: Set<string>, seenPath: string): Marks =>
+  (k) =>
+    isDelivered([k], seen, seenPath);
+
 /**
- * Метка события, если эту копию предлагать незачем: событие уже отдано (живой копией;
- * лежалой — только для лежалой же) или другая его копия ещё ждёт в кольце либо в пачке
- * и будет предложена и так. Кадр, вытесненный из кольца неотданным, не держит событие:
- * следующая копия предлагается. Живая копия вынимает лежалую из копящейся пачки.
+ * Метка события, если эту копию предлагать незачем: событие уже в ходе (seen.ts eventIn)
+ * или копия того же рода будет предложена не позже этой. Кадр, вытесненный из кольца
+ * неотданным, не держит событие: следующая копия предлагается.
  */
-export function redundantCopy(
+function redundantEvent(
   frame: Frame | null,
-  ring: readonly { frame: Frame | null }[],
-  seen: Set<string>,
-  seenPath: string,
-  burst: StaleBurst,
+  d: Pick<Door, "ring" | "seen" | "seenPath" | "stale">,
 ): string {
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
-  if (!ev) return "";
-  const stale = frame?.stale === true;
-  const keys = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
-  if (isDelivered(keys, seen, seenPath) || ring.some((r) => eventKeyOf(r.frame) === ev)) return ev;
-  if (stale) return burst.hasEvent(ev) ? ev : "";
-  burst.dropEvent(ev);
+  if (!ev || !frame) return "";
+  if (eventIn(frame, marksOf(d.seen, d.seenPath))) return ev;
+  // Неотданная копия того же рода в кольце старше этой: прицепившемуся она будет предложена
+  // раньше, поэтому эту не кладём. Вытесняется она тоже раньше (кольцо — очередь на RING
+  // кадров, door.ts): придёт до прицепления больше RING кадров — событие с ней и уйдёт.
+  if (d.ring.some((r) => sameCopy(r.frame, frame))) return ev;
+  // Лежалую держит копия в той же копящейся пачке — у них одна отдача. Живую пачка не держит:
+  // она ещё не отдана и в кольцо не входит; живая идёт сама и вынимает из пачки лежалые копии
+  // своего рода — событие дойдёт ею (живая будит, #5842).
+  if (frame.stale === true) return d.stale.holdsCopy(frame) ? ev : "";
+  d.stale.dropCopies(frame);
   return "";
+}
+
+/** Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. */
+export function redundantCopy(
+  frame: Frame | null,
+  d: Pick<Door, "ring" | "seen" | "seenPath" | "stale">,
+): boolean {
+  const ev = redundantEvent(frame, d);
+  const id = frame?.id;
+  if (ev)
+    log(`frame ${typeof id === "string" ? id : "?"} carries ${ev} already offered — not raised`);
+  return !!ev;
 }

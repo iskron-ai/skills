@@ -11,6 +11,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
+import { type Marks, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -21,18 +22,22 @@ const BODY_CAP = 800;
 const at = (f: Frame): string => (typeof f.received_at === "string" ? f.received_at : "");
 
 export class Backlog {
-  private readonly frames: Frame[] = [];
   /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
   private readonly all: Frame[] = [];
-  private total = 0;
   /** Прямые слова окна — ушли отдельно; шапка называет их числом. */
   private direct = 0;
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private flush: ((ev: ChannelEvent, all: Frame[]) => void) | null = null;
+  private flush: ((ev: ChannelEvent) => void) | null = null;
+
+  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  private readonly has: Marks;
+  constructor(has: Marks) {
+    this.has = has;
+  }
 
   /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
-  open(expected: number, emit: (ev: ChannelEvent, all: Frame[]) => void): void {
+  open(expected: number, emit: (ev: ChannelEvent) => void): void {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit;
     if (this.timer) return;
@@ -58,20 +63,19 @@ export class Backlog {
     }
     const id = typeof frame.id === "string" ? frame.id : "";
     if (id && this.all.some((f) => f.id === id)) return true;
-    this.total++;
     this.all.push(frame);
-    if (this.frames.length < BACKLOG_KEEP) this.frames.push(frame);
     return true;
   }
 
   private close(): void {
     this.timer = null;
-    const got = this.frames.splice(0).sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
     const all = this.all.splice(0);
-    const count = this.total;
+    // Событие — один раз, текстом или числом (seen.ts splitBatch); метки пачки — marks.
+    const { shown, kept, keys } = splitBatch(all, BACKLOG_KEEP, this.has);
+    const got = shown.sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
+    const count = kept.length;
     const expected = this.pending;
     const direct = this.direct;
-    this.total = 0;
     this.direct = 0;
     this.pending = 0;
     const emit = this.flush;
@@ -103,14 +107,12 @@ export class Backlog {
         'in full and the rest — iskron_channel(action="history", view="log").' +
         (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
     );
-    emit(
-      {
-        kind: "backlog",
-        frames: got,
-        pending: expected,
-        text: `${head}\n\n${bodies.join("\n\n")}`,
-      },
-      all,
-    );
+    emit({
+      kind: "backlog",
+      frames: got,
+      marks: keys,
+      pending: expected,
+      text: `${head}\n\n${bodies.join("\n\n")}`,
+    });
   }
 }

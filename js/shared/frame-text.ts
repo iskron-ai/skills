@@ -1,5 +1,6 @@
 import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
+import { superseded } from "./keyfold.ts";
 import { L } from "./lang.ts";
 import { phrase, roomKind } from "./room-kinds.ts";
 
@@ -181,21 +182,22 @@ export function batchLines(frames: Frame[]): string[] {
 /**
  * Строка счёта дела — закон #6574: сколько записей пришло, сколько из них
  * месту, где читать целиком. Без текста и без поручений. frames — записи
- * одного дела; указатель — от первой записи списка.
+ * одного дела; указатель — от первой записи списка. Записи считаются после
+ * свёртки строк ключа, сменённые — числом (keyfold.ts, #6718).
  */
 export function caseCountLine(frames: Frame[]): string {
   const c = frames.length ? caseOf(frames[0]) : null;
   if (!c) return "";
   const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
   const yours = mineN
     ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `)
     : L(` — адресованных месту нет; `, ` — none of them yours; `);
+  const n = frames.length - gone;
   return (
-    L(
-      `${head}: записей ${frames.length}, тебе ${mineN}`,
-      `${head}: ${frames.length} records, yours ${mineN}`,
-    ) +
+    L(`${head}: записей ${n}, тебе ${mineN}`, `${head}: ${n} records, yours ${mineN}`) +
+    (gone ? L(`, сменённых строк ключа ${gone}`, `, ${gone} superseded lines of a key`) : "") +
     yours +
     batchPointer(frames) +
     "."

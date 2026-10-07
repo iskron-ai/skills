@@ -311,6 +311,7 @@ const ENV_KEYS = [
   "FB_RESUME",
   "FB_STAND_HELD",
   "FB_INITS",
+  "FB_INIT_CAPS",
   "FB_NET_UP",
   "FB_DIE_ONCE",
   "FB_ENV",
@@ -716,6 +717,22 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
     );
     await delay(300);
     assert.equal(settled, false, "a call over a mute bridge must keep waiting, not answer");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Поля ответа по запросу (#6637, #6731): плагин объявляет iskron/structured мосту —
+// иначе мост их срезает, как харнесу без ключа.
+test("the plugin asks the bridge for response fields in its handshake", async () => {
+  const caps = join(SANDBOX, "fields.caps");
+  writeFileSync(caps, "");
+  const b = bridgeEnv("fields", { FB_INIT_CAPS: caps });
+  const rec = await plugin(b.env);
+  try {
+    await until(() => readFileSync(caps, "utf8").trim(), "the handshake", 8000);
+    const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
   } finally {
     await rec.stop();
   }
@@ -6214,7 +6231,9 @@ test("room kinds: a said in flight, bodies and aborts not to me prompt nothing a
 // A case burst was one queue prompt per frame, and OpenCode hands the queue out one
 // prompt per turn: on a live case the lag reached an hour and a half, and direct
 // words stood in the same queue behind it.
-const caseBurst = (from, n) => Array.from({ length: n }, (_, i) => progress(from + i));
+// Ключи разные: строки одного ключа свернулись бы в последнюю (#6718).
+const caseBurst = (from, n) =>
+  Array.from({ length: n }, (_, i) => progress(from + i, `key-${from + i}`));
 const lines = (frames) =>
   frames.map((frame) => event("frame", { frame, raw: JSON.stringify(frame) })).join("");
 
@@ -6270,6 +6289,30 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
   const prompts = await asidePrompts("aside-left", [addressedLeft(89)], 0);
   assert.equal(prompts.length, 0);
   assert.equal(prompts.rode, `ход\n\n${countOf(1, 88)}`);
+});
+
+// Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.
+test("progress lines of one key fold into the last: the count names the superseded; bad and the word to me stay", async () => {
+  const bad = roomFrame("progress", {
+    entry_id: 47,
+    key: "tests",
+    line: { done: "упало", verdict: "bad" },
+  });
+  const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
+  const prompts = await asidePrompts("fold", frames, 1);
+  assert.equal(prompts.length, 1, "only the word to me prompts");
+  assert.match(prompts[0].text, /тайное слово 48$/, "the word to me whole");
+  assert.match(prompts.rode, /^ход\n\n№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
+});
+
+// Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
+// ждущая в пачке, вынимается кадром инбокса — событие входит один раз (#5842).
+test("a case copy of an event waiting in the pile is taken out by its inbox frame: no count rides on", async () => {
+  const frames = [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)];
+  const prompts = await asidePrompts("event-copy", frames, 1);
+  assert.equal(prompts.length, 1, "the inbox frame prompts");
+  assert.doesNotMatch(prompts[0].text, /записей/, prompts[0].text);
+  assert.equal(prompts.rode, "ход", "no count of the case copy rides the next prompt");
 });
 
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {

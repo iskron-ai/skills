@@ -1,0 +1,352 @@
+{
+  "kind": "stale",
+  "frames": [
+    {
+      "type": "message",
+      "id": "s-0",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 200,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-1",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 201,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-2",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 202,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-3",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 203,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-4",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 204,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-5",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 205,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-6",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 206,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-7",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 207,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-8",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 208,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-9",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 209,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-10",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 210,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-11",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 211,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-12",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 212,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-13",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 213,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-14",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 214,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-15",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 215,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-16",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 216,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-17",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 217,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-18",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 218,
+        "reason": "posed_to"
+      },
+      "stale": true
+    },
+    {
+      "type": "message",
+      "id": "s-19",
+      "content_type": "application/json",
+      "provenance": {
+        "via": "graph"
+      },
+      "body": {
+        "realm_slug": "nks-dev",
+        "event_kind": "posed_to",
+        "vimarsha_seq": 5829,
+        "vimarsha_version": 1,
+        "event_id": 219,
+        "reason": "posed_to"
+      },
+      "stale": true
+    }
+  ],
+  "unshown": [
+    "s-20",
+    "evs:300",
+    "s-21",
+    "evs:301"
+  ],
+  "text": "Лежалых кадров: 22, здесь первые 20, не вошло 2 — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; полностью и не вошедшее — iskron_channel(action=\"history\").\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":200,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":201,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":202,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":203,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":204,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":205,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":206,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":207,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":208,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":209,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":210,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":211,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":212,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":213,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":214,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":215,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":216,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":217,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":218,\"reason\":\"posed_to\"}\n\nсобытие графа, лежалый\n{\"realm_slug\":\"nks-dev\",\"event_kind\":\"posed_to\",\"vimarsha_seq\":5829,\"vimarsha_version\":1,\"event_id\":219,\"reason\":\"posed_to\"}"
+}

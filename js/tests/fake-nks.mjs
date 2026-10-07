@@ -72,6 +72,18 @@ const registeredTextEn = (name, id) =>
   "\n  Attribution holds on the session; …";
 
 // Один ws-кадр сервера клиенту (без маски): FIN + opcode, длина в одной из трёх форм.
+/** Обрезка прозы по слову до max знаков с «…» — как api 0.108.0 (#6729). */
+// Своя запись правила, не код моста: слова набираются, пока влезают в max-1 знаков.
+function trimToWord(text, max) {
+  let kept = "";
+  for (const w of text.split(" ")) {
+    const next = kept ? `${kept} ${w}` : w;
+    if ([...next].length > max - 1) break;
+    kept = next;
+  }
+  return (kept || [...text].slice(0, max - 1).join("")) + "…";
+}
+
 function wsFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
   let head;
@@ -209,6 +221,9 @@ export async function startFakeNks(opts = {}) {
     structured: false, // /control {structured:true}: доска, register, connect и list_webhooks несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
     lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
+    structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
+    initAsked: false, // последнее initialize объявило iskron/structured
+    initCaps: [], // capabilities каждого initialize, как пришли
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -308,7 +323,7 @@ export async function startFakeNks(opts = {}) {
     return { ...fields, [key]: fields[key].slice(1), dropped: 1 };
   };
   const fielded = (result, whole, garbled) => {
-    if (!st.structured) return result;
+    if (!st.structured || (st.structuredGate && !st.initAsked)) return result;
     const fields = damaged(whole);
     st.lastStructured = structuredClone(fields);
     return {
@@ -376,17 +391,40 @@ export async function startFakeNks(opts = {}) {
         return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
-      if (typeof text !== "string" || [...text].length > 70) {
+      // api 0.108.0 (#6729, дело №234): длиннее 64 — режется по слову с «…», 200 с warnings[];
+      // statusTrim: false — прежний сервер, отказ 422.
+      const trim = st.statusTrim && typeof text === "string" && [...text].length > 64;
+      if (!trim && (typeof text !== "string" || [...text].length > 70)) {
         return json(res, 422, { error: "busy line too long" });
       }
-      st.status = text;
+      // statusNormalize: сервер кладёт строку со сжатыми пробелами, без предупреждения.
+      const said = st.statusNormalize ? text.replace(/\s+/g, " ").trim() : text;
+      const kept = trim ? trimToWord(said, 64) : said;
+      st.status = kept;
       st.counts.status_posts++;
       // Строка держится у места: со standing_id — у одного места канала, без него — у всех (#5838).
       const chan = st.channels.get(st.wsChannel.get(p.slice("/channel/status/".length)));
       for (const pl of chan?.places.values() ?? [])
         if (!standing_id || pl.standing_id === standing_id)
-          st.placeStatus.set(pl.standing_id, text);
-      return json(res, 200, { ok: true });
+          st.placeStatus.set(pl.standing_id, kept);
+      // Форма ответа api 0.108.0 (дело №234 [139]): 200 {doing, doing_at, warnings?};
+      // принятая строка — doing верхнего уровня, элемент warnings — {code, message}.
+      // statusTrim "old" — сервер без doing в ответе; "stray" — в элементе предупреждения
+      // лишние doing и max, которых сервер не шлёт: мост их не читает.
+      const old = st.statusTrim === "old";
+      const warning = { code: "trimmed_to_limit", message: "переназови: обрезано до 64" };
+      return json(res, 200, {
+        ...(old ? { ok: true } : { doing: kept || null, doing_at: new Date().toISOString() }),
+        ...(trim
+          ? {
+              warnings: [
+                st.statusTrim === "stray"
+                  ? { ...warning, doing: "не эта строка", max: 10 }
+                  : warning,
+              ],
+            }
+          : {}),
+      });
     }
 
     if (p === "/control") {
@@ -427,6 +465,7 @@ export async function startFakeNks(opts = {}) {
       for (const k of [
         "richTools",
         "structured",
+        "structuredGate",
         "garble",
         "fieldsDamage", // "dropped" | "incomplete" | null — неполные поля (под structured)
         "versionUp",
@@ -457,6 +496,8 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
+        "statusTrim", // a line over 64 is trimmed by word and answered 200 with warnings[] (api 0.108.0)
+        "statusNormalize", // the server squeezes whitespace and names the line in doing, without a warning
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
         "mcpDropAction",
         "kartaTypes",
@@ -804,6 +845,9 @@ export async function startFakeNks(opts = {}) {
       }
 
       if (msg.method === "initialize") {
+        // Поля ответа — только сессии, объявившей capability (#6731); structuredGate включает правило.
+        st.initCaps.push(msg.params?.capabilities ?? null);
+        st.initAsked = "iskron/structured" in (msg.params?.capabilities?.experimental ?? {});
         const fresh = token("session");
         st.sessions.add(fresh);
         st.sessionTokens.set(fresh, bearer);

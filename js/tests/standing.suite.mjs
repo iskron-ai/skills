@@ -8,6 +8,10 @@
 // ISKRON_BRIDGE_PATH points the same probe at any copy: against the previous
 // bridge the connect answer carries no listener block and no local socket
 // appears — the red this probe exists to show.
+//
+// The suite runs as one file per subject (standing-*.test.mjs): each sets
+// ISKRON_STANDING_PART before importing this module, and only the tests under
+// its `part(...)` mark register — every subject within the per-file time limit.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
@@ -16,6 +20,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -23,7 +29,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { BUILT_BRIDGE } from "./built.mjs";
@@ -63,6 +69,12 @@ import {
   withdraw,
   withheld,
 } from "./room-frames.mjs";
+
+// Часть свода, которую регистрирует этот файл-предмет (шапка выше); без неё — весь свод.
+const ONLY = process.env.ISKRON_STANDING_PART ?? "";
+let current = "core";
+const part = (name) => void (current = name);
+const test = (...args) => (!ONLY || ONLY === current ? nodeTest(...args) : undefined);
 
 // Чем запускать поставку: node по умолчанию; ISKRON_NODE подставляет другой рантайм
 // (например, `opencode` под BUN_BE_BUN=1 — Bun, встроенный в OpenCode).
@@ -541,13 +553,24 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
 // Своё close или revoke отпускает место словом моста (released), не уходом:
 // сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
 // «мост отпустил стояние или ушёл» и без ненулевого кода (#6638).
-async function codexDoor(t) {
-  const home = mkdtempSync("/tmp/cxd-");
+/**
+ * Дом подставного Codex — под TMPDIR пробы, убирается после неё. Имя короткое: путь
+ * сокета app-server-control под ним должен влезть в предел unix-сокета (104 у macOS).
+ */
+function codexHome(t) {
+  const home = mkdtempSync(join(tmpdir(), "cxd-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  return home;
+}
+
+async function codexDoor(t, opts = {}) {
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
     join(home, "app-server-control", "app-server-control.sock"),
     log,
+    opts,
   );
   t.after(() => door.stop());
   return { CODEX_HOME: home, CODEX_THREAD_ID: "thread-own" };
@@ -654,7 +677,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   // The door lives under a short home: a unix socket path is limited to ~104 bytes.
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -706,7 +729,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
 test("a frame put into the Codex thread is marked delivered — the fallback exit watchdog does not repeat it", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -735,7 +758,7 @@ test("a frame put into the Codex thread is marked delivered — the fallback exi
 test("a frame the Codex thread refused is not marked — the fallback exit watchdog gets it", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -770,7 +793,7 @@ test("a frame that waited in the ring reaches the Codex thread on the next arm",
     ws_send: JSON.stringify({ type: "message", id: "cx-gap", body: "между взводами" }),
   });
   await new Promise((r) => setTimeout(r, 300));
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -1981,6 +2004,7 @@ test("a seat gone at the platform releases the hold too: socket closed aloud, re
   );
 });
 
+part("hearing");
 // ── keeping the hearing (graph nks-dev: #5140) ───────────────────────────────
 
 // The OpenCode plugin has no local socket client, so «attached» never reached
@@ -2321,7 +2345,7 @@ test("the Monitor watchdog does not print again an id it printed, even when the 
 test("the Codex watchdog does not put into the thread again an id it put there, even when the bridge hands it over again", async (t) => {
   const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -2377,7 +2401,7 @@ test("the Monitor watchdog marks the frames a stale batch named but did not show
 test("the Codex watchdog marks the frames a stale batch named but did not show once the thread takes it", async (t) => {
   const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -2463,6 +2487,35 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
     readFileSync(join(dir, "standings.log"), "utf8"),
     /resumed-from-disk proba--931--nks-dev: pending 2/,
   );
+});
+
+// Запись держания прежнего моста несёт отправленную строку; сервер кладёт её иной —
+// слово возврата называет doing ответа, не строку записи (дело №234 [139]).
+test("iskron/resume names the busy line the server accepted, not the one in the hold record", async (t) => {
+  const { fake, dir, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-session-dir-"));
+  await bridge.call("iskron/resume", 4, { cwd, session: "ses-norm" });
+  await bridge.call("tools/call", 5, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
+  });
+  const hold = join(
+    standings,
+    readdirSync(standings).find((f) => f.endsWith(".hold")),
+  );
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  const rec = JSON.parse(readFileSync(hold, "utf8"));
+  writeFileSync(hold, JSON.stringify({ ...rec, status: "на   вахте" })); // запись прежнего моста
+  await fake.control({ statusNormalize: true });
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const back = await second.call("iskron/resume", 2, { cwd, session: "ses-norm" });
+  assert.equal(back.result?.resumed, true, JSON.stringify(back));
+  assert.equal(fake.state.status, "на вахте");
+  assert.match(back.result.word, /занятость возвращена: на вахте/, back.result.word);
 });
 
 // OpenCode moves a session between folders (graph nks-dev: #6550, rule 3): the
@@ -3511,6 +3564,7 @@ test("two bridges on two places: the board reads both listening, and revoking on
   assert.ok(!/@tester:vtoraya/.test(after), "the revoked place is off the board");
 });
 
+part("rooms");
 // ── room kinds for watchdogs (#5851): the bridge batches, an interrupt flushes first ──
 
 const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
@@ -3649,6 +3703,897 @@ test("a bound node rides in the batch by count as well", async (t) => {
   assert.ok(!out.includes("в деле узел"), `node words leaked:\n${out}`);
 });
 
+// ── one event, once into the turn: as text or by count (#5842, #6563) ──
+part("events");
+// Копия дела, ждущая счётом где бы то ни было — в окне побудки, в удержанной шапке
+// сторожа, — гаснет перед кадром инбокса своего события (#5842, #6563).
+test("a wake-up window does not count a case copy whose inbox frame is in the same window", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "800" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const backlogs = () => bridge.notifications.filter((n) => n.params?.data?.kind === "backlog");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await fake.control({ ws_send: graphEvent("inbox-1", 77, "событие семьдесят семь") });
+  await waitFor(() => backlogs().length === 1, "the backlog notification");
+  const text = backlogs()[0].params.data.text;
+  assert.ok(
+    !/записей/.test(text),
+    `the case copy of the inbox event is counted in the wake batch:\n${text}`,
+  );
+});
+
+// Копия дела гаснет только перед копией инбокса, вошедшей в ход ТЕКСТОМ: копия инбокса
+// за пределом показанных пачкой (её назвало лишь число) копии дела не гасит — ни в
+// пачке, ни меткой отданного после неё (граф @nks/nks-dev, узел #5842).
+const others = (n, from, extra) =>
+  Array.from({ length: n }, (_, i) => graphEvent(`other-${from + i}`, from + i, "другое", extra));
+
+test("an inbox frame past the shown part of a wake-up window leaves its case copy counted, and a later case copy offered", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "800" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const backlogs = () => bridge.notifications.filter((n) => n.params?.data?.kind === "backlog");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 23 }) });
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 1001),
+      graphEvent("inbox-1", 77, "событие семьдесят семь"),
+      graphEvent("inbox-2", 78, "событие семьдесят восемь"),
+    ],
+  });
+  await waitFor(() => backlogs().length === 1, "the backlog notification");
+  const text = backlogs()[0].params.data.text;
+  assert.ok(!text.includes("событие семьдесят"), `an inbox frame past the cut was shown:\n${text}`);
+  assert.match(text, /записей 1/, `the case copy of a counted-only inbox frame vanished:\n${text}`);
+  await sendRoom(fake, { ...nodeOp("updated", 92), event_id: 78 });
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.frame?.id === "room-msg-92"),
+    "the later case copy offered",
+  );
+});
+
+test("a stale inbox frame past the shown part of its burst leaves a held case copy counted under the Monitor watchdog", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "4000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 98), event_id: 84 });
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 2001, { stale: true }),
+      graphEvent("inbox-8", 84, "событие восемьдесят четыре", { stale: true }),
+    ],
+  });
+  await waitFor(() => wd.out.includes("Лежалых кадров: 21"), "the stale batch");
+  assert.ok(
+    !wd.out.includes("событие восемьдесят четыре"),
+    `the inbox frame was shown:\n${wd.out}`,
+  );
+  await quietThenNudge(fake, wd, 4500, 993);
+  assert.match(
+    wd.out,
+    /записей 1/,
+    `the case copy of a counted-only inbox frame vanished:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a stale inbox frame past the shown part of its burst neither swallows a live case copy nor marks its event shown", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const offered = (id) => bridge.notifications.some((n) => n.params?.data?.frame?.id === id);
+  await fake.control({
+    ws_send_many: [
+      ...others(20, 3001, { stale: true }),
+      graphEvent("inbox-9", 85, "событие восемьдесят пять", { stale: true }),
+      graphEvent("inbox-10", 86, "событие восемьдесят шесть", { stale: true }),
+    ],
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 101), event_id: 85 });
+  await waitFor(() => offered("room-msg-101"), "the case copy beside the waiting burst");
+  await waitFor(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stale"),
+    "the stale batch",
+  );
+  await sendRoom(fake, { ...nodeOp("updated", 102), event_id: 86 });
+  await waitFor(() => offered("room-msg-102"), "the case copy after the burst");
+});
+
+test("a count the Monitor watchdog holds unprinted loses the case copy whose inbox frame comes next", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 93), event_id: 79 });
+  await new Promise((r) => setTimeout(r, 1500)); // bridge window flushed; watchdog holds the count unprinted
+  assert.ok(!wd.out.includes("записей"), "count alone is not printed");
+  await fake.control({ ws_send: graphEvent("inbox-3", 79, "событие семьдесят девять") });
+  await waitFor(() => wd.out.includes("событие семьдесят девять"), "the inbox frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the held count of the case copy rode with the inbox frame of the same event:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a count the exit watchdog holds loses the case copy whose inbox frame wakes it", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, { ...nodeOp("updated", 94), event_id: 80 });
+  await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
+  await fake.control({ ws_send: graphEvent("inbox-4", 80, "событие восемьдесят") });
+  await wd.done;
+  assert.ok(
+    !wd.out.includes("записей"),
+    `exit watchdog: case copy counted beside its inbox frame:\n${wd.out}`,
+  );
+});
+
+test("a count the exit watchdog holds loses the case copy whose stale inbox frame its burst shows", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, { ...nodeOp("updated", 99), event_id: 87 });
+  await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
+  await fake.control({
+    ws_send: graphEvent("inbox-11", 87, "событие восемьдесят семь", { stale: true }),
+  });
+  await waitFor(() => wd.err.includes("событие восемьдесят семь"), "the stale batch in the log");
+  await nudge(fake, 994);
+  await wd.done;
+  assert.ok(wd.out.includes("[994]"), `the word to me:\n${wd.out}`);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `exit watchdog: case copy counted after its stale inbox frame was shown:\n${wd.out}`,
+  );
+});
+
+test("a count the Codex watchdog holds loses the case copy whose inbox frame goes into the thread", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t);
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 15_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 95), event_id: 81 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт ближайшего хода
+  await fake.control({ ws_send: graphEvent("inbox-5", 81, "событие восемьдесят один") });
+  await waitFor(() => readFileSync(log, "utf8").includes("turn/start"), "the frame in the thread");
+  const turns = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.method === "turn/start");
+  assert.equal(turns.length, 1, JSON.stringify(turns));
+  assert.match(turns[0].params.input[0].text, /событие восемьдесят один/);
+  assert.doesNotMatch(turns[0].params.input[0].text, /записей/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Лежалая копия инбокса входит в ход текстом пачки лежалых — у Monitor и Codex, как у
+// плагинов: ждущий счёт копии дела её события не повторяет (#5842, #6563).
+test("a count the Monitor watchdog holds loses the case copy whose stale inbox frame it prints", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 96), event_id: 82 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт непечатным
+  await fake.control({
+    ws_send: graphEvent("inbox-6", 82, "событие восемьдесят два", { stale: true }),
+  });
+  await waitFor(() => wd.out.includes("событие восемьдесят два"), "the stale batch");
+  await fake.control({ ws_send: JSON.stringify({ id: "live-6", type: "message", body: "живое" }) });
+  await waitFor(() => wd.out.includes("живое"), "the live frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the held count of the case copy rode after its stale inbox frame:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a live case copy dies before the stale inbox copy of its event waiting in the bridge's burst", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: graphEvent("inbox-8", 84, "событие восемьдесят четыре", { stale: true }),
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 98), event_id: 84 });
+  await waitFor(() => wd.out.includes("событие восемьдесят четыре"), "the stale batch");
+  await new Promise((r) => setTimeout(r, 1500)); // окно дела моста ушло бы
+  await fake.control({ ws_send: JSON.stringify({ id: "live-8", type: "message", body: "живое" }) });
+  await waitFor(() => wd.out.includes("живое"), "the live frame");
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the case copy was counted beside its stale inbox frame:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Пачка лежалых ушла сторожу, а метку отданного он ставит лишь после печати: копия дела,
+// пришедшая в этот промежуток, гаснет у моста — событие уже показано текстом.
+test("a case copy coming while the Monitor watchdog still prints the stale burst that shows its inbox copy is not counted", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000, { ISKRON_WATCHDOG_ALONE_MS: "4000" });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-ra", type: "message", body: "живое-а" }),
+  });
+  await waitFor(() => wd.out.includes("живое-а"), "the first live frame");
+  await fake.control({
+    ws_send: graphEvent("inbox-r", 91, "событие девяносто один", { stale: true }),
+  });
+  await new Promise((r) => setTimeout(r, 1800)); // пачка ушла сторожу, он ещё ждёт паузы
+  await sendRoom(fake, { ...nodeOp("updated", 99), event_id: 91 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно дела моста ушло бы
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-rb", type: "message", body: "живое-б" }),
+  });
+  await waitFor(() => wd.out.includes("живое-б"), "the second live frame", 20_000);
+  assert.ok(wd.out.includes("событие девяносто один"), wd.out);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the case copy was counted beside the text of its event:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Живой кадр инбокса, пока сторож не прицеплен, текстом не вошёл: вытесненный из кольца
+// неотданным, он не гасит копию дела своего события — та доходит счётом (#5842).
+// Находки второго круга (класс «одно событие — один раз в ход»).
+// №1: запись дела от человека входит текстом — и её событие тоже; копия инбокса того же
+// события второй раз текстом не входит.
+test("a human case record delivered as text marks its event: the inbox copy of it is not delivered again", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const offered = (id) => bridge.notifications.some((n) => n.params?.data?.frame?.id === id);
+  const rec = nodeOp("updated", 120);
+  await sendRoom(fake, {
+    ...rec,
+    event_id: 401,
+    provenance: { ...rec.provenance, as_person: true },
+  });
+  await waitFor(() => offered("room-msg-120"), "the human record as text");
+  await fake.control({ ws_send: graphEvent("inbox-h", 401, "событие четыреста один") });
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-h", type: "message", body: "живое-ч" }),
+  });
+  await waitFor(() => offered("live-h"), "the live frame after it");
+  assert.equal(offered("inbox-h"), false, "the event went in as text twice");
+});
+
+// №2: сторож выхода помечает только кадр, который напечатал, — не весь повтор кольца:
+// событие, чей кадр инбокса он не напечатал, потом доходит хотя бы счётом.
+test("the exit watchdog marks only the frame it printed, not the whole replay: an unprinted event still reaches the doer", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-x1", 311, "событие триста одиннадцать"),
+      graphEvent("inbox-x2", 312, "событие триста двенадцать"),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  const w1 = runClient("watchdog-exit", dir, key, 20_000);
+  await w1.done;
+  assert.ok(w1.out.includes("событие триста одиннадцать"), w1.out);
+  await fake.control({
+    ws_send_many: Array.from({ length: 21 }, (_, i) =>
+      JSON.stringify({ id: `fx-${i}`, type: "message", body: `fx ${i}` }),
+    ),
+  });
+  await sendRoom(fake, { ...nodeOp("updated", 312), event_id: 312 });
+  await new Promise((r) => setTimeout(r, 1000));
+  const w2 = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => w2.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-x", type: "message", body: "живое-х" }),
+  });
+  await waitFor(() => w2.out.includes("живое-х"), "the live frame");
+  assert.ok(
+    w2.out.includes("событие триста двенадцать") || w2.out.includes("записей 1"),
+    `the event the exit watchdog never printed reached the doer neither as text nor by count:\n${w2.out}`,
+  );
+  w2.proc.kill("SIGKILL");
+  await w2.done;
+});
+
+// №3: «задним числом N» — после отсечения: копия дела, чьё событие повтор отдаёт текстом,
+// не кадр повтора.
+test("the back-dated count a watchdog is told on attach is the frames it gets, after the cut", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("inbox-b", 321, "событие триста двадцать один") });
+  await sendRoom(fake, { ...nodeOp("updated", 321), event_id: 321 });
+  await new Promise((r) => setTimeout(r, 1000)); // окно дела ушло в пустой сокет; оба в кольце
+  const wd = runClient("watchdog", dir, key, 20_000);
+  // Живой кадр сразу за прицеплением: названный мостом лишний кадр повтора засчитал бы его.
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-b", type: "message", body: "живое-б2" }),
+  });
+  await waitFor(() => wd.out.includes("живое-б2"), "the live frame");
+  assert.ok(wd.out.includes("событие триста двадцать один"), wd.out);
+  // Повтор — кадр инбокса; копия дела его события отсечена и не названа.
+  assert.match(wd.out, /слушаю стояние \S+ \(1 кадр задним числом\)/, wd.out);
+  assert.ok(!wd.out.includes("записей"), wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("an inbox frame no watchdog heard and the ring dropped leaves its case copy counted", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-p", 301, "событие триста один"),
+      ...Array.from({ length: 21 }, (_, i) =>
+        JSON.stringify({ id: `fill-${i}`, type: "message", body: `fill ${i}` }),
+      ),
+      JSON.stringify({ ...nodeOp("updated", 301), event_id: 301 }),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p", type: "message", body: "живое-п" }),
+  });
+  await waitFor(() => wd.out.includes("живое-п"), "the live frame");
+  assert.ok(
+    wd.out.includes("событие триста один") || wd.out.includes("записей 1"),
+    `the event reached the doer neither as text nor by count:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Кольцо, повторяя прицепившемуся кадр инбокса текстом, не отдаёт рядом счётом копию дела
+// того же события.
+test("the ring replays an inbox frame as text and not the case copy of its event beside it", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: graphEvent("inbox-q", 302, "событие триста два") });
+  await sendRoom(fake, { ...nodeOp("updated", 302), event_id: 302 });
+  await new Promise((r) => setTimeout(r, 1000)); // окно дела ушло в пустой сокет; оба в кольце
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("событие триста два"), "the replayed inbox frame");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-q", type: "message", body: "живое-к" }),
+  });
+  await waitFor(() => wd.out.includes("живое-к"), "the live frame");
+  assert.ok(!wd.out.includes("записей"), `counted beside its text on replay:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дом подставного Codex — под TMPDIR пробы и убирается вместе с ней.
+test("the fake Codex home lives under the probe's TMPDIR and is gone after its test", async (t) => {
+  let home = "";
+  await t.test("a door", async (st) => {
+    home = (await codexDoor(st)).CODEX_HOME;
+  });
+  assert.ok(home.startsWith(realpathSync(tmpdir())) || home.startsWith(tmpdir()), home);
+  assert.equal(existsSync(home), false, `${home} is left behind`);
+});
+
+// Сторож вынул ждущую копию дела, когда пачка лежалых показала её событие текстом, но
+// отданной её не пометил; перевзведённому сторожу кольцо её не повторяет — событие уже
+// отдано текстом (повтор кольца, door.ts).
+test("a re-armed watchdog is not handed again from the ring a case copy whose event a stale burst already showed as text", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const arm = async () => {
+    const w = runClient("watchdog", dir, key, 20_000);
+    await waitFor(() => w.out.includes("слушаю стояние"), "the watchdog to attach");
+    return w;
+  };
+  const w1 = await arm();
+  await sendRoom(fake, { ...nodeOp("updated", 99), event_id: 91 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно дела ушло; счёт ждёт непечатным
+  w1.proc.kill("SIGKILL");
+  await w1.done;
+  const w2 = await arm();
+  await fake.control({
+    ws_send: graphEvent("inbox-rr", 91, "событие девяносто один", { stale: true }),
+  });
+  await waitFor(() => w2.out.includes("событие девяносто один"), "the stale burst");
+  w2.proc.kill("SIGKILL");
+  await w2.done;
+  const w3 = await arm();
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-rr", type: "message", body: "живое-з" }),
+  });
+  await waitFor(() => w3.out.includes("живое-з"), "the live frame");
+  assert.ok(
+    !w3.out.includes("записей"),
+    `the ring handed the case copy again after its event was shown as text:\n${w3.out}`,
+  );
+  w3.proc.kill("SIGKILL");
+  await w3.done;
+});
+
+// Пачка лежалых судится в миг отдачи, не составления: лежалая копия дела, чьё событие
+// живая копия инбокса внесла текстом раньше, пачкой не считается — и когда сторож ещё
+// не пометил этот текст (тред не принял ход, очередь печати занята).
+test("a stale case copy whose event a live inbox frame already took into the Codex thread is not counted by the stale burst", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 3000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 101), event_id: 93, stale: true });
+  await fake.control({ ws_send: graphEvent("inbox-p1", 93, "событие девяносто три") });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await new Promise((r) => setTimeout(r, 2500)); // пачка лежалых ушла бы сторожу
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p1", type: "message", body: "живое" }),
+  });
+  await waitFor(
+    () => turns().some((x) => x.includes("живое")),
+    "the live frame in the thread",
+    20_000,
+  );
+  assert.ok(
+    turns().some((x) => x.includes("событие девяносто три")),
+    JSON.stringify(turns()),
+  );
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Гасит только вошедшее в ход: лежалая копия в ещё не отданной пачке живую копию той же
+// записи не гасит — пачка ушла в пустой сокет (сторож выхода между выходом и перевзводом),
+// а живая копия в кольце доходит перевзведённому сторожу — один раз.
+test("a live case copy is not swallowed by a stale copy waiting in an unsent burst: with the socket empty the event reaches the exit watchdog once", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await sendRoom(fake, { ...nodeOp("updated", 110), event_id: 501, stale: true });
+  await sendRoom(fake, { ...nodeOp("updated", 111), event_id: 501 });
+  await new Promise((r) => setTimeout(r, 2000)); // пачка лежалых и окно дела ушли в пустой сокет
+  const wd = runClient("watchdog-exit", dir, key, 20_000);
+  await waitFor(() => wd.err.includes("hello"), "hello to be noted");
+  await nudge(fake, 996);
+  await wd.done;
+  assert.ok(wd.out.includes("[996]"), `the word to me:\n${wd.out}`);
+  const counted = wd.out.match(/записей 1/g) ?? [];
+  assert.equal(counted.length, 1, `the event reached the doer ${counted.length} times:\n${wd.out}`);
+});
+
+// Копия, удержанная старшей копией того же рода в кольце, доходит ею — один раз; кольцо
+// здесь полно, но не вытесняет (страж удержания кольцом, fanout.ts redundantEvent).
+test("a copy held back by an unprinted ring copy reaches the watchdog once through that copy", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-ra", 503, "событие пятьсот три"),
+      graphEvent("inbox-rb", 503, "событие пятьсот три"),
+      ...Array.from({ length: 19 }, (_, i) =>
+        JSON.stringify({ id: `fr-${i}`, type: "message", body: `fr ${i}` }),
+      ),
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 500));
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("fr 18"), "the replayed ring");
+  const got = wd.out.match(/событие пятьсот три/g) ?? [];
+  assert.equal(got.length, 1, `the event reached the watchdog ${got.length} times:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("two live copies of one event reach an attached Monitor watchdog once", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send_many: [
+      graphEvent("inbox-ma", 504, "событие пятьсот четыре"),
+      graphEvent("inbox-mb", 504, "событие пятьсот четыре"),
+      JSON.stringify({ id: "live-m", type: "message", body: "живое-м" }),
+    ],
+  });
+  await waitFor(() => wd.out.includes("живое-м"), "the live frame");
+  const got = wd.out.match(/событие пятьсот четыре/g) ?? [];
+  assert.equal(got.length, 1, `the event reached the watchdog ${got.length} times:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Тред отказал ходу с текстом события: его текст не вошёл — копия дела того события,
+// ждавшая счётом, не гаснет перед ним и входит в следующий ход.
+test("a turn the Codex thread refused does not swallow the waiting count of a case copy of its event", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "300" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 2000, refuseTurns: 1 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-x", 505, "событие пятьсот пять") });
+  await new Promise((r) => setTimeout(r, 100));
+  await sendRoom(fake, { ...nodeOp("updated", 113), event_id: 505 });
+  await new Promise((r) => setTimeout(r, 700)); // копия ждёт счётом, ход с текстом ещё без ответа
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-x1", type: "message", body: "живое-1" }),
+  });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await waitFor(
+    () => turns().some((x) => x.includes("живое-1")),
+    "the live frame in the thread",
+    20_000,
+  );
+  await waitFor(() => wd.err.includes("turn refused"), "the refusal");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-x2", type: "message", body: "живое-2" }),
+  });
+  await waitFor(() => turns().some((x) => x.includes("живое-2")), "the next live frame", 20_000);
+  assert.ok(
+    turns().some((x) => /записей 1/.test(x)),
+    `the case copy's count was swallowed by a refused turn: ${JSON.stringify(turns())}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дверь закрылась под ходом с текстом события: лежалая копия дела, ждавшая при нём, в
+// закрытую дверь не уходит — входит счётом в следующую открытую, ровно раз.
+test("a stale burst held by a turn whose Codex door closed goes into the next opened door once", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 3000, closeTurns: 1 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-c", 607, "событие шестьсот семь") });
+  await new Promise((r) => setTimeout(r, 100));
+  await sendRoom(fake, { ...nodeOp("updated", 121), event_id: 607, stale: true });
+  await waitFor(() => /дверь закрылась|door closed/.test(wd.err), "the door to close", 20_000);
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-c1", type: "message", body: "живое-c1" }),
+  });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await waitFor(
+    () => turns().some((x) => x.includes("живое-c1")),
+    "the live frame in the thread",
+    20_000,
+  );
+  await new Promise((r) => setTimeout(r, 300));
+  const counted = turns().filter((x) => /записей 1/.test(x));
+  assert.equal(
+    counted.length,
+    1,
+    `the event went in ${counted.length} times: ${JSON.stringify(turns())}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Пустая шапка — ход в тред не начинается: метки ждавших пишутся, turn/start с пустым текстом нет.
+test("on its own close the Codex watchdog starts no empty turn when the waiting count holds only a copy of an event already in the thread", async (t) => {
+  const { fake, dir, bridge, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "500" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 4000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-e", 502, "событие пятьсот два") });
+  await new Promise((r) => setTimeout(r, 200));
+  await sendRoom(fake, { ...nodeOp("updated", 112), event_id: 502 });
+  await new Promise((r) => setTimeout(r, 1200)); // окно дела ушло: копия ждёт счётом у сторожа
+  const reply = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { action: "close", realm: "nks-dev" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  await wd.done;
+  const turns = readFileSync(log, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.method === "turn/start")
+    .map((c) => c.params.input[0].text);
+  assert.ok(
+    turns.some((x) => x.includes("событие пятьсот два")),
+    JSON.stringify(turns),
+  );
+  assert.ok(!turns.includes(""), `an empty turn went into the thread: ${JSON.stringify(turns)}`);
+});
+
+// Ход уходит в тред Codex с мига постановки во вложение, не с открытия двери: пачка
+// лежалых, судимая, пока дверь открывается, не считает событие, уже отданное текстом.
+test("a stale case copy whose event went into the Codex thread while the door was still opening is not counted", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { upgradeDelayMs: 4000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-d", 95, "событие девяносто пять") });
+  await new Promise((r) => setTimeout(r, 200));
+  await sendRoom(fake, { ...nodeOp("updated", 103), event_id: 95, stale: true });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await new Promise((r) => setTimeout(r, 2000)); // пачка лежалых разобрана, дверь ещё открывается
+  await fake.control({ ws_send: JSON.stringify({ id: "live-d", type: "message", body: "живое" }) });
+  await waitFor(
+    () => turns().some((x) => x.includes("живое")),
+    "the live frame in the thread",
+    20_000,
+  );
+  assert.ok(
+    turns().some((x) => x.includes("событие девяносто пять")),
+    JSON.stringify(turns()),
+  );
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Сторож новый, мост старый: пачка лежалых прежней формы — первые 20 кадров и метки
+// сверх них (unshown, у копий инбокса — `evs:`) — отдаётся её текстом со счётом
+// «не вошло»; сверх показанных событие вошло лишь числом и метится `cevs:`: копия дела
+// того события потом доходит счётом. Кадр снят кодом моста origin/main 5e620dae
+// (его StaleBurst, 22 лежалых кадра инбокса) — old-bridge-stale.json.
+test("a stale burst of the old bridge's form keeps its left-out count and marks the unshown as named by number, not as text", async (t) => {
+  const { socketPathOf } = await import("../shared/standings.ts");
+  const old = JSON.parse(readFileSync(join(HERE, "old-bridge-stale.json"), "utf8"));
+  assert.ok(old.unshown.includes("evs:300"), "the fixture is the old bridge's form");
+  const dir = mkdtempSync(join(tmpdir(), "iskron-oldstale-"));
+  const key = "old--931--nks-dev";
+  const path = socketPathOf(dir, key);
+  const seenPath = join(dir, "old.seen");
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const copy = { ...nodeOp("updated", 120), event_id: 300 };
+  const live = { id: "live-o", type: "message", body: "живое-о" };
+  const put = (sock, ev) => sock.write(JSON.stringify(ev) + "\n");
+  const door = createServer((sock) => {
+    put(sock, { kind: "attached", key, buffered: 0, seen: seenPath });
+    put(sock, old);
+    put(sock, { kind: "note", text: "шапка", batch: { at: 0, of: 1 } });
+    put(sock, { kind: "frame", raw: JSON.stringify(copy), frame: copy, batch: { at: 1, of: 1 } });
+    put(sock, { kind: "frame", raw: JSON.stringify(live), frame: live });
+  });
+  await new Promise((r) => door.listen(path, r));
+  t.after(() => door.close());
+  const wd = runClient("watchdog", dir, key, 8000);
+  await waitFor(() => wd.out.includes("живое-о"), "the live frame");
+  assert.match(wd.out, /не вошло 2/, `the left-out count was lost:\n${wd.out}`);
+  assert.match(
+    wd.out,
+    /записей 1/,
+    `the case copy of an event named only by number vanished:\n${wd.out}`,
+  );
+  await waitFor(
+    () => existsSync(seenPath) && readFileSync(seenPath, "utf8").includes("s-21"),
+    "the unshown marked",
+  );
+  const seen = readFileSync(seenPath, "utf8").split("\n");
+  assert.ok(seen.includes("cevs:300") && !seen.includes("evs:300"), seen.join(" "));
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a stale case copy whose event a live inbox frame already took into the Monitor queue is not counted by the stale burst", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 30_000, { ISKRON_WATCHDOG_ALONE_MS: "4000" });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p0", type: "message", body: "живое-0" }),
+  });
+  await waitFor(() => wd.out.includes("живое-0"), "the first live frame");
+  await sendRoom(fake, { ...nodeOp("updated", 102), event_id: 94, stale: true });
+  await fake.control({ ws_send: graphEvent("inbox-p2", 94, "событие девяносто четыре") });
+  await new Promise((r) => setTimeout(r, 2500)); // пачка лежалых ушла бы сторожу
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-p2", type: "message", body: "живое-2" }),
+  });
+  await waitFor(() => wd.out.includes("живое-2"), "the last live frame", 25_000);
+  assert.ok(wd.out.includes("событие девяносто четыре"), wd.out);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the stale burst counted the event shown as text:\n${wd.out}`,
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a case copy coming while the Codex watchdog still hands the stale burst into the thread is not counted", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t, { turnDelayMs: 3000 });
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 30_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await fake.control({
+    ws_send: graphEvent("inbox-rc", 92, "событие девяносто два", { stale: true }),
+  });
+  await new Promise((r) => setTimeout(r, 1800)); // пачка ушла сторожу, ход в тред ещё не ответил
+  await sendRoom(fake, { ...nodeOp("updated", 100), event_id: 92 });
+  await new Promise((r) => setTimeout(r, 1500));
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-rc", type: "message", body: "живое" }),
+  });
+  const turns = () =>
+    existsSync(log)
+      ? readFileSync(log, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l))
+          .filter((c) => c.method === "turn/start")
+          .map((c) => c.params.input[0].text)
+      : [];
+  await waitFor(
+    () => turns().some((x) => x.includes("живое")),
+    "the live frame in the thread",
+    20_000,
+  );
+  assert.ok(
+    turns().some((x) => x.includes("событие девяносто два")),
+    JSON.stringify(turns()),
+  );
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("a count the Codex watchdog holds loses the case copy whose stale inbox frame goes into the thread", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const extra = await codexDoor(t);
+  const log = join(extra.CODEX_HOME, "door.log");
+  const wd = runClient("watchdog-codex", dir, key, 15_000, extra);
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the codex watchdog to attach");
+  await sendRoom(fake, { ...nodeOp("updated", 97), event_id: 83 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно моста ушло; счёт ждёт ближайшего хода
+  await fake.control({
+    ws_send: graphEvent("inbox-7", 83, "событие восемьдесят три", { stale: true }),
+  });
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await waitFor(() => existsSync(log) && turns().length === 1, "the stale batch in the thread");
+  await fake.control({ ws_send: JSON.stringify({ id: "live-7", type: "message", body: "живое" }) });
+  await waitFor(() => turns().length === 2, "the live frame in the thread");
+  assert.match(turns()[0], /событие восемьдесят три/);
+  for (const text of turns()) assert.doesNotMatch(text, /записей/, text);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Строки работы одного ключа (room.id, line.key) в пачке сворачиваются в последнюю
+// (#6718): счёт называет записи после свёртки и сменённые числом; строка bad и
+// адресованное месту слово не сворачиваются; отданными метятся все кадры пачки.
+test("progress lines of one key fold into the last in a watchdog batch: the count says how many were superseded; bad and the word to me stay", async (t) => {
+  const { fake, dir, key, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  for (const id of [44, 45, 46]) await sendRoom(fake, progress(id));
+  await sendRoom(
+    fake,
+    roomFrame("progress", { entry_id: 47, key: "tests", line: { done: "упало", verdict: "bad" } }),
+  );
+  await sendRoom(fake, { ...said("defer", 48), addressee: ME });
+  await waitFor(() => wd.out.includes("[48]"), "the batch with the word to me");
+  assert.match(wd.out, /№7 «Стенд»: записей 3, тебе 1, сменённых строк ключа 2/, wd.out);
+  for (const id of [44, 45, 46, 47, 48]) await waitSeen(standings, `room-msg-${id}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Одно событие графа приходит месту двумя кадрами: инбоксом роли (via=graph,
+// event_id в теле) и записью дела (via=room, event_id на верхнем уровне конверта,
+// дело №248, #6563). Метка одна — ev:<N>: копия дела после отданного события гаснет;
+// копия дела, пришедшая первой, — только счёт и кадр инбокса не глушит.
+test("a case record carrying the event_id of a delivered inbox frame is dropped; one that came first does not swallow the inbox frame", async (t) => {
+  const { fake, dir, key, bridge, standings } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: graphEvent("inbox-1", 77, "событие семьдесят семь") });
+  await waitFor(() => wd.out.includes("событие семьдесят семь"), "the inbox frame");
+  await waitSeen(standings, "ev:77");
+  await sendRoom(fake, { ...nodeOp("updated", 91), event_id: 77 });
+  await waitFor(() => bridge.stderr.includes("carries ev:77 already offered"), "the copy dropped");
+  await quietThenNudge(fake, wd, 1500, 990);
+  assert.ok(
+    !wd.out.includes("записей"),
+    `the case copy of a delivered event was counted:\n${wd.out}`,
+  );
+  // Копия дела первой, ещё в пачке: кадр инбокса — текстом и вынимает её — счёта нет (#5842).
+  await sendRoom(fake, { ...nodeOp("updated", 92), event_id: 78 });
+  await fake.control({ ws_send: graphEvent("inbox-2", 78, "событие семьдесят восемь") });
+  await waitFor(
+    () => wd.out.includes("событие семьдесят восемь"),
+    "the inbox frame after its case copy",
+  );
+  await waitSeen(standings, "ev:78"); // текст события помечен — копию дела не считает никто
+  await quietThenNudge(fake, wd, 1500, 992);
+  assert.ok(!wd.out.includes("записей"), `the waiting case copy was counted too:\n${wd.out}`);
+  // Копия дела, уже отданная счётом, события не держит: кадр инбокса — текстом.
+  await sendRoom(fake, { ...nodeOp("updated", 93), event_id: 79 });
+  await new Promise((r) => setTimeout(r, 1500));
+  await nudge(fake, 991);
+  await waitFor(() => wd.out.includes("[991]"), "the word to me");
+  await waitSeen(standings, "room-msg-93");
+  await fake.control({ ws_send: graphEvent("inbox-3", 79, "событие семьдесят девять") });
+  await waitFor(
+    () => wd.out.includes("событие семьдесят девять"),
+    "the inbox frame after a counted case copy",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+part("rooms");
 // A word in two phases (#5893 §4.5b): the batch carries them by count (#6574);
 // a body to me still reaches the Monitor watchdog at once, whole.
 test("a said in flight, deferred bodies and aborts ride in the batch by count, printing nothing alone; a body of my word reaches the watchdog at once, the count before it", async (t) => {
@@ -3748,8 +4693,8 @@ test("the exit watchdog does not leave on a batch of counts alone: the count hea
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog-exit", dir, key, 15_000);
   await waitFor(() => wd.err.includes("hello"), "hello to be noted");
-  await sendRoom(fake, progress(46));
-  await sendRoom(fake, progress(48));
+  await sendRoom(fake, progress(46, "a"));
+  await sendRoom(fake, progress(48, "b"));
   await waitFor(() => wd.err.includes("счёт ждёт ближайшей побудки"), "the batch held", 6000);
   assert.equal(wd.proc.exitCode, null, `the exit watchdog left on counts alone: ${wd.out}`);
   assert.equal(wd.out, "", `counts alone printed:\n${wd.out}`);
@@ -3793,7 +4738,7 @@ test("watchdog-codex on one's own close puts the batch the bridge flushed into t
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
@@ -3830,7 +4775,7 @@ test("watchdog-codex on one's own close behind a door that never answers the upg
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
@@ -3864,7 +4809,7 @@ test("a full room batch of counts and the rest past it are not dropped: both cou
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key, 20_000);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i));
+  for (let i = 0; i < 21; i++) await sendRoom(fake, progress(200 + i, `key-${i}`));
   await quietThenNudge(fake, wd, 1500);
   assert.ok(wd.out.includes("записей 20, тебе 0"), `the full batch's count:\n${wd.out}`);
   assert.ok(wd.out.includes("записей 1, тебе 0"), `the rest flushed before the word:\n${wd.out}`);
@@ -3874,6 +4819,7 @@ test("a full room batch of counts and the rest past it are not dropped: both cou
   await wd.done;
 });
 
+part("words");
 // ── An addressed word not to me (#6081): no body, no wake; #6574: words not to
 // the seat are one count of the case in the batch. To me — whole and by its stack. ──
 
@@ -4518,7 +5464,7 @@ test("watchdog-codex: progress starts no turn; closing carries the batch count i
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -4613,7 +5559,7 @@ test("watchdog-codex re-armed after a batch of counts alone starts no turn on th
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -4706,7 +5652,7 @@ test("room kinds leave the Codex thread's other frames and the old room shape as
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");

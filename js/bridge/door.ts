@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 import { type Frame } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
-import { deliveredKeys, seenIds } from "../shared/seen.ts";
+import { type Marks, seenIds, splitBatch } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   privateDirProblem,
@@ -21,7 +21,7 @@ import {
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
 import { closeServerKeeping, stampOf, unlinkOwned, writeOwned } from "./doorfiles.ts";
-import { isDelivered } from "./fanout.ts";
+import { marksOf } from "./fanout.ts";
 import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
@@ -46,9 +46,11 @@ export interface ChannelEvent {
   buffered?: number;
   /** kind="attached": файл памяти отданного этого места — сторож метит и читает его, а не выводит путь сам (сервер ему не известен). */
   seen?: string;
-  /** kind="stale": лежалые кадры полосы — принятое, пока место не слушали, или повтор службы; kind="backlog": кадры пачки по received_at. */
+  /** kind="stale": все кадры полосы — принятое, пока место не слушали, или повтор службы; сторож судит их сам в миг отдачи (shared/stalebatch.ts); kind="backlog": показанные кадры пачки по received_at. */
   frames?: Frame[];
-  /** kind="stale": метки кадров полосы сверх показанных — названы числом и адресом history, отдаются вместе с пачкой. */
+  /** kind="stale" и "backlog": метки доставки пачки (seen.ts splitBatch) — пишет внёсший её в ход. */
+  marks?: string[];
+  /** kind="stale" моста прежней сборки: показаны не все кадры, это — метки сверх показанных (watchdog/client.ts staleOf). */
   unshown?: string[];
   /** kind="held": место, которое мост держит, — по нему плагин OpenCode ставит спутником дочернюю сессию (#6002). */
   place?: { realm: string; karta: string; name: string };
@@ -81,11 +83,13 @@ export class Door {
   seen: Set<string>;
   /** С какого мига ни один локальный клиент не слушает; null — слушают. */
   idleAt: number | null = Date.now();
+  /** Метки места: память моста и файл .seen, который пишут внёсшие кадр в ход (seen.ts eventIn). */
+  readonly marks: Marks = (k) => marksOf(this.seen, this.seenPath)(k);
   /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
-  readonly stale = new StaleBurst();
-  readonly backlog = new Backlog();
+  readonly stale = new StaleBurst(this.marks);
+  readonly backlog = new Backlog(this.marks);
   /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
-  readonly roomBatch = new RoomBatch();
+  readonly roomBatch = new RoomBatch(this.marks);
   /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
   standingId: string | null = null;
   /**
@@ -196,13 +200,16 @@ export class Door {
         // местный клиент ещё не получал: перевзведённый сторож не должен нести
         // делателю то же кольцо второй раз — память доставленного у моста есть.
         // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно.
-        const backlog = this.ring.filter(
+        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Событие —
+        // один раз, текстом или числом, и внутри повтора (seen.ts splitBatch).
+        const waiting = this.ring.filter(
           ({ frame }) =>
             frame?.type !== "message" ||
-            (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
-              !this.roomBatch.holds(frame)),
+            (!this.marks(String(frame.id ?? "")) && !this.roomBatch.holds(frame)),
         );
+        const msgs = waiting.flatMap(({ frame }) => (frame?.type === "message" ? [frame] : []));
+        const kept = new Set<Frame | null>(splitBatch(msgs, Infinity, this.marks).kept);
+        const backlog = waiting.filter(({ frame }) => frame?.type !== "message" || kept.has(frame));
         sock.write(
           JSON.stringify({
             kind: "attached",

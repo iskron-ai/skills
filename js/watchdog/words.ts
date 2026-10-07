@@ -55,7 +55,6 @@ export const wd = {
       "пачка без адресованных месту — счёт ждёт ближайшей побудки",
       "a batch with nothing addressed to the seat — the count waits for the next wake-up",
     ),
-  staleFrames: () => L("лежалые кадры", "stale frames"),
   seatLost: () => doer(L("стояние потеряно", "the standing is lost")),
   aliveNote: () =>
     doer(
@@ -64,7 +63,6 @@ export const wd = {
         "the socket keeps being cut while the service answers — the bridge holds the seat",
       ),
     ),
-  codexStale: () => L("Искрон: лежалые кадры", "Iskron: stale frames"),
   codexLost: () =>
     L(
       "Искрон: стояние потеряно — назовись заново: iskron_stand",
