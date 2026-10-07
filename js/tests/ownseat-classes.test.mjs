@@ -6,14 +6,12 @@
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   boardLine,
   channel,
+  otherDir,
   placeArgs,
   placeOf,
   saidKind,
@@ -119,7 +117,7 @@ test("К4: an eviction the network kept from standing beside — a write in the 
 
 test("К4: iskron_stand in another graph with take=true on a name another session holds does not register it", async (t) => {
   const { fake, up } = await setup(t);
-  const b1 = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  const b1 = await up(otherDir(t));
   assert.ok(
     !(await stand(b1, { realm: "@nks/drugoy", karta: 48, name: "proba-b" })).result?.isError,
   );

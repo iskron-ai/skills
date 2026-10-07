@@ -6,8 +6,7 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -15,6 +14,7 @@ import {
   channel,
   FILE,
   NODE,
+  otherDir,
   placeArgs,
   placeOf,
   saidKind,
@@ -73,7 +73,7 @@ const besideDeaf = async (t, deafen) => {
   await until(() => fake.state.places.get("931:proba")?.listening === false, "a deaf");
   // Подставной сервер гасит слух только места сокета; место рядом на том же канале глохнет так же.
   await fake.control({ places: [{ karta: "48", name: "proba-b", listening: false }] });
-  const b = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  const b = await up(otherDir(t));
   assert.equal(
     placeOf(await stand(b, { realm: "@nks/drugoy", karta: 48, name: "proba-b" })),
     "proba-b",
@@ -150,7 +150,7 @@ const leftThenTurned = async (t) => {
   await until(() => fake.state.ws.size === 1, "b1 socket");
   assert.ok(!(await channel(b1, { realm: "nks-dev", action: "leave" })).result?.isError);
   await until(() => fake.state.places.get("931:proba")?.listening === false, "left");
-  const b2 = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  const b2 = await up(otherDir(t));
   assert.equal(
     placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
     "proba",
@@ -180,4 +180,32 @@ test("left by word, another session turned the address (404), then a watchdog at
   const w = await write(b1);
   assert.ok(w.result?.isError, textOf(w));
   assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
+});
+
+test("the socket dropped and another session turned the address meanwhile (404 on reopen): a write is refused and iskron_stand stands beside", async (t) => {
+  const { fake, cwd, up } = await setup(t);
+  await fake.control({ turned_404: true });
+  const b1 = await up();
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  await fake.control({ ws_close: 1012 });
+  await until(() => fake.state.places.get("931:proba")?.listening === false, "dropped");
+  const b2 = await up(otherDir(t));
+  assert.equal(
+    placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.places.get("931:proba")?.listening === true, "b2 hears proba");
+  await sleep(3000);
+  const before = fake.state.writes.length;
+  const w = await write(b1);
+  assert.ok(w.result?.isError, textOf(w));
+  assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
+  const regs = placeArgs(fake, "register").length;
+  const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  assert.ok(!placeArgs(fake, "register").slice(regs).includes("proba"), textOf(s1));
+  assert.equal(placeOf(s1), "proba.2", textOf(s1));
 });

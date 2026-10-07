@@ -4,13 +4,11 @@
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   channel,
+  otherDir,
   placeArgs,
   placeOf,
   saidKind,
@@ -28,7 +26,7 @@ const deafThenTaken = async (t, deafen) => {
   await until(() => fake.state.ws.size === 1, "a's socket");
   await deafen(fake, a);
   await until(() => fake.state.places.get("931:proba")?.listening === false, "a deaf");
-  const b = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  const b = await up(otherDir(t));
   assert.equal(placeOf(await stand(b, { realm: "nks-dev", karta: 931, name: "proba" })), "proba");
   await until(() => fake.state.places.get("931:proba")?.listening === true, "b hears proba");
   return { fake, a };

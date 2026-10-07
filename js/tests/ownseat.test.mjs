@@ -7,15 +7,13 @@
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   boardLine,
   channel,
   holdRecord,
+  otherDir,
   placeArgs,
   placeOf,
   saidKind,
@@ -249,7 +247,7 @@ test("left by word, then another machine's session stood there: iskron_stand by 
   await until(() => fake.state.ws.size === 1, "b1 socket");
   assert.ok(!(await channel(b1, { realm: "nks-dev", action: "leave" })).result?.isError);
   await until(() => fake.state.places.get("931:proba")?.listening === false, "left");
-  const b2 = await up(mkdtempSync(join(tmpdir(), "iskron-ownseat-m2-")));
+  const b2 = await up(otherDir(t));
   assert.equal(
     placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
     "proba",

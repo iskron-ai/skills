@@ -1,5 +1,5 @@
 // Место без слуха (граф nks-dev: решение #6706): мост ведёт место, а его сокета
-// не держит — ушёл словом (leave), вернулся тем же адресом без hello (адрес мог
+// не держит — ушёл словом (leave), открывает сокет тем же адресом без hello (адрес мог
 // повернуть другой: контур отвечает на него 404) или токен мёртв (4001). Сокет
 // у мест канала общий: глохнут разом основное и места других графов. За это
 // время любое из них могла взять другая сессия; запись, сырой register и
@@ -10,7 +10,7 @@
 // iskron_stand. Отнятое (4000) — evicted.ts.
 import { L } from "../shared/lang.ts";
 import { askedHearing } from "./hearing.ts";
-import { isParked, ledKey } from "./hold.ts";
+import { awaitHello, isParked, ledKey } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { otherRealm } from "./realms.ts";
@@ -68,6 +68,7 @@ export async function deafRefusal(msg: JsonRpcMessage): Promise<string | null> {
   const a = msg.params?.arguments ?? {};
   if (tool === "iskron_stand") return null;
   if (tool === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
+  if (H.unheard && deafPlaceIn(a.realm)) await awaitHello(4000); // своё переоткрытие — дождаться его hello
   const p = deafPlaceIn(a.realm);
   const why = p ? await deafSeatTaken(p) : null;
   return why

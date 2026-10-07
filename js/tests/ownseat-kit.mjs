@@ -4,7 +4,7 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,14 +94,30 @@ export const placeArgs = (fake, action) =>
   fake.state.placeArgs.filter((p) => p.action === action).map((p) => p.name);
 export const saidKind = (b, kind) => b.notifications.find((n) => n.params?.data?.kind === kind);
 
+/** Каталоги пробы — её же: убираются, когда мосты пробы остановлены. */
+const scratches = new WeakMap();
+const scratch = (t, prefix) => {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  scratches.get(t)?.push(d);
+  return d;
+};
+/** Каталог гранта другой машины — убирается вместе с пробой. */
+export const otherDir = (t) => scratch(t, "iskron-ownseat-m2-");
+
 export async function setup(t) {
   const fake = await startFakeNks({ pat: PAT });
-  const dir = mkdtempSync(join(tmpdir(), "iskron-ownseat-"));
-  const cwd = mkdtempSync(join(tmpdir(), "iskron-ownseat-cwd-"));
-  t.after(() => fake.stop());
+  const bridges = [];
+  scratches.set(t, []);
+  const dir = scratch(t, "iskron-ownseat-");
+  const cwd = scratch(t, "iskron-ownseat-cwd-");
+  t.after(async () => {
+    await Promise.all(bridges.map((b) => b.stop()));
+    await fake.stop();
+    for (const d of scratches.get(t) ?? []) rmSync(d, { recursive: true, force: true });
+  });
   const up = async (authDir = dir) => {
     const b = startBridge(fake.mcpUrl, authDir);
-    t.after(() => b.stop());
+    bridges.push(b);
     assert.ok((await b.call("initialize", INIT)).result);
     return b;
   };

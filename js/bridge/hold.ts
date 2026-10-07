@@ -287,10 +287,8 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   // То же место заново — места рядом остаются на канале (#5838).
   const same = !!H.currentKey && H.currentKey === key;
   releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
-  H.currentKey = key;
-  H.deadKey = null;
-  H.currentUrl = url;
-  H.currentStatusUrl = statusUrl || deriveStatusUrl(url);
+  const status = statusUrl || deriveStatusUrl(url);
+  Object.assign(H, { currentKey: key, deadKey: null, currentUrl: url, currentStatusUrl: status });
   H.door = new Door(key, doorHooks);
   H.door.open();
   const s = state.standing;
@@ -332,14 +330,18 @@ export function parkStanding(reason: string): string | null {
   return H.currentKey;
 }
 
+/** Сокет открыт заново тем же адресом: слух — с hello этого открытия, не прежним из кольца (#5036 §4, deaf.ts). */
+function expectHello(): void {
+  H.unheard = true;
+  for (const d of doors())
+    d.ring.splice(0, d.ring.length, ...d.ring.filter((r) => r.frame?.type !== "hello"));
+}
+
 /** Вернуться на место, с которого ушёл: тот же адрес, сокет открыт заново. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
-  Object.assign(H, { parked: false, unheard: true }); // слух вернётся с hello этого открытия
-  // Доказательство слуха — свежий hello за этим открытием, не прежний из кольца (#5036 §4).
-  for (const d of doors())
-    for (let i = d.ring.length - 1; i >= 0; i--)
-      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
+  H.parked = false;
+  expectHello();
   openHolder(H.currentUrl, H.currentKey);
   standingLog(`resumed ${H.currentKey}: socket reopened on the same address`);
   return true;
@@ -414,6 +416,7 @@ function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
       url,
+      onReopen: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();

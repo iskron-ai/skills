@@ -172,15 +172,15 @@ export function returnToStanding(how: string): boolean {
 }
 
 /**
- * Возврат тем же адресом слышит, только когда пришёл hello этого открытия; нет
+ * Сокет, открытый заново тем же адресом (возврат, обрыв), слышит, только когда пришёл hello этого открытия; нет
  * его за срок — адрес мог повернуть другой (контур отвечает на него 404, не
  * кодом закрытия): сокет отпущен, место выбирается заново (#6706).
  */
 export async function heardOnReturn(): Promise<void> {
   if (!H.unheard || (await awaitHello(4000))) return;
   const why = L(
-    "возврат на место не дал hello — адрес мог повернуть другой",
-    "the return to the seat gave no hello — another may have turned the address",
+    "сокет, открытый заново тем же адресом, не дал hello — адрес мог повернуть другой",
+    "the socket reopened at the same address gave no hello — another may have turned the address",
   );
   log(why);
   releaseStanding(why, false, false, true);
