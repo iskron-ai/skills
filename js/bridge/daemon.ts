@@ -53,7 +53,7 @@ import { pauseForHandover } from "./pauserecord.ts";
 import { endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { log, setProcessLog } from "./streams.ts";
-import { localSuspend } from "./suspend.ts";
+import { localSuspend, pauseSettled } from "./suspend.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -185,6 +185,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
     for (const so of sockets) so.end(); // связь оборвалась — вердикты, переотправка, переподхват
     // Сокеты мест — до вытеснения преемником или до предела (handoff.ts, #6586).
     await handoffsSettled();
+    await Promise.allSettled([...answering]); // паузы, спрошенные после обрыва связи, — тоже
     // Мост ушёл в окне передачи, не вернув места, — прогон на паузе передачи кончается (runend.ts).
     await Promise.allSettled(
       paused.map(([scope, pid]) => runIn(scope, () => endUnreturnedPause(pid, RETURN_WAIT_MS))),
@@ -238,9 +239,11 @@ export async function daemonMain(argv: string[]): Promise<void> {
     answerDraining(id, msg) {
       const scope = handed.get(id);
       const p = scope ? runIn(scope, () => localSuspend(msg)) : null;
-      if (p) {
-        answering.add(p);
-        void p.finally(() => answering.delete(p)).catch(() => {});
+      if (scope && p) {
+        // Перевзвод, проигравший потолок ответа, — до выхода демона: запись идёт за адресом.
+        const settled = p.then(() => runIn(scope, pauseSettled));
+        answering.add(settled);
+        void settled.finally(() => answering.delete(settled)).catch(() => {});
       }
       return p;
     },

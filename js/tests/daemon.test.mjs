@@ -639,6 +639,58 @@ test("a pause asked while the daemon hands over is taken: the place, case, idle 
   });
 });
 
+// Перепроверка #355: перевзвод паузы в окне передачи, проигравший потолок ответа, сервер
+// всё равно исполнит — уходящий демон ждёт его, и запись паузы идёт за повёрнутым адресом.
+test("a pause asked in the handover window whose re-arm loses the cap still lands its turned address in the pause record", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    // Предел передачи короче ответа connect: ничто, кроме самого перевзвода, демона не держит.
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_HANDOFF_MS: "500" });
+    try {
+      await fake.control({ places: [{ karta: "931", name: SAT_CALLER, listening: true }] });
+      const s = bridge({}, ["--satellite"]);
+      await handshake(s);
+      const r = await stand(s, satStand);
+      assert.ok(!r.result?.isError, textOf(r));
+      // Вызов в полёте другой сессии держит уходящий демон на связи после конца сессии
+      // спутника, но отпускает его раньше ответа connect.
+      const other = bridge({});
+      await handshake(other);
+      await fake.control({ listDelayMs: 1500 });
+      const lists = fake.state.counts.list;
+      other
+        .request("tools/call", {
+          name: "iskron_channel",
+          arguments: { action: "list", realm: "nks-dev" },
+        })
+        .catch(() => {});
+      await waitFor("the slow call at the server", () => fake.state.counts.list > lists);
+      d.bump();
+      await waitFor("the handover", () => /handing over to/.test(journalOf(dir)), 10_000);
+      await fake.control({ listDelayMs: 0, connect_delay_ms: 3000 });
+      const connects = fake.state.counts.connect;
+      const paused = (await s.request("iskron/suspend", {})).result;
+      assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${journalOf(dir)}`);
+      await waitFor(
+        "the outgoing daemon gone",
+        () => /handed over — leaving/.test(journalOf(dir)),
+        30_000,
+      );
+      await endBridge(s);
+      await waitFor("the re-arm at the server", () => fake.state.counts.connect > connects);
+      await new Promise((res) => setTimeout(res, 300)); // запись за ответом — если демон её дождался
+      const holds = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".hold"));
+      assert.equal(holds.length, 1, "a pause record keeps the place");
+      const rec = JSON.parse(readFileSync(join(dir, "standings", holds[0]), "utf8"));
+      assert.ok(
+        rec.url.includes(fake.state.wsToken),
+        `the record follows the turned address: ${rec.url} vs ${fake.state.wsToken}\n${journalOf(dir)}`,
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 test("a satellite whose bridge is gone when the daemon hands over ends as before: case left, place revoked", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DAEMON_GRACE_MS: "60000" });
