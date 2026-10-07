@@ -35,6 +35,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -418,6 +419,24 @@ async function until(check, what, ms = 5000) {
   assert.fail(`timed out waiting for ${what}`);
 }
 
+/** The FB_ENV lines a raised bridge has finished writing — the file exists before its line does. */
+const envLines = (log) => {
+  try {
+    return readFileSync(log, "utf8")
+      .split("\n")
+      .slice(0, -1)
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+};
+
+/** A file a live bridge may read at any moment, replaced whole: a rewrite in place is read empty now and then. */
+const rewrite = (path, text) => {
+  writeFileSync(`${path}.next`, text);
+  renameSync(`${path}.next`, path);
+};
+
 const BRIDGE_TOOLS = ["iskron_bridge", "iskron_channel", "iskron_orient"];
 const names = (rec) => [...rec.tools().keys()].sort();
 const serverTools = (rec) => until(() => names(rec).length === 3, "the server's tools", 8000);
@@ -461,8 +480,8 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
   try {
     // The tools may already stand from the previous list (cache), before the
     // bridge has written its first line — wait for the bridge, not the tools.
-    await until(() => existsSync(envLog), "the raised bridge");
-    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(envLog).length, "the raised bridge");
+    const seen = envLines(envLog);
     assert.equal(seen[0]?.harness_version, "2.0.18", JSON.stringify(seen));
   } finally {
     await rec.stop();
@@ -472,8 +491,8 @@ test("the plugin hands OpenCode's own version to the bridge it raises", async ()
     app: null,
   });
   try {
-    await until(() => existsSync(bareLog), "the raised bridge");
-    const seen = readFileSync(bareLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(bareLog).length, "the raised bridge");
+    const seen = envLines(bareLog);
     assert.equal(seen[0]?.harness_version, null, "no app — the plugin claims no version");
     assert.equal(seen[0]?.skills_root, null, "no establish-mcp among the skills — no set is named");
   } finally {
@@ -496,8 +515,8 @@ test("the plugin hands the bridge the root of the skill set that carries establi
   const envLog = join(SANDBOX, "skills-root.env");
   const rec = await plugin(bridgeEnv("skills-root", { FB_ENV: envLog }).env, { skills });
   try {
-    await until(() => existsSync(envLog), "the raised bridge");
-    const seen = readFileSync(envLog, "utf8").trim().split("\n").map(JSON.parse);
+    await until(() => envLines(envLog).length, "the raised bridge");
+    const seen = envLines(envLog);
     assert.equal(seen[0]?.skills_root, root, JSON.stringify(seen));
   } finally {
     await rec.stop();
@@ -2709,6 +2728,36 @@ test("a session moved into a folder whose instance loads after the event: the pl
   }
 });
 
+// A live instance of the new folder takes the move's marker a moment after the event
+// (moves.ts). Stopped within that moment, it takes nothing: the next marker of its
+// folder belongs to the instance that comes after it, not to a stopped keeper.
+test("an instance stopped right after a move into its folder takes no later marker of that folder", async () => {
+  const calls = join(SANDBOX, "move-stopped.calls");
+  const resume = join(SANDBOX, "move-stopped.resume");
+  writeFileSync(calls, "");
+  writeFileSync(resume, JSON.stringify({ bySession: { s1: backAnswer("k-s1") } }));
+  const b = bridgeEnv("move-stopped", { FB_CALLS: calls, FB_RESUME: resume });
+  const A = await plugin(b.env, inLoc(LOC_A, "s1"));
+  try {
+    await serverTools(A);
+    await standsHeld(A, b, calls, "s1", "k-s1");
+    A.ctx.session.get = async ({ sessionID }) => ({ id: sessionID, location: LOC_B });
+    const ADOPT_MS = 3000;
+    const C = await plugin({ ...b.env, ISKRON_MOVE_ADOPT_MS: ADOPT_MS }, inLoc(LOC_B, "s9"));
+    C.emit({ type: "session.moved", data: { sessionID: "s9", location: LOC_B } });
+    const moment = Date.now() + ADOPT_MS;
+    await delay(0);
+    await C.stop();
+    A.emit({ type: "session.moved", data: { sessionID: "s1", location: LOC_B } });
+    await until(() => lostMarkers().length === 1, "the marker for the new folder");
+    assert.ok(Date.now() < moment, "the marker lay before the stopped instance's moment");
+    await delay(moment + 300 - Date.now());
+    assert.equal(lostMarkers().length, 1, "the marker waits for the next instance of B");
+  } finally {
+    await A.stop();
+  }
+});
+
 // Without the event at the old instance, a take from the new folder evicts the old
 // bridge — that is the session's own bridge taking its place: no «taken away» word.
 test("an eviction of a session that moved to another folder is not said into it as «taken away»", async () => {
@@ -4600,11 +4649,13 @@ test("marker-child: while the previous bridge still holds the child's socket, th
   try {
     await delay(1500); // more than every attempt by count
     const answer = { resumed: true, holding: true, key: "k-sub", word: "место возвращено" };
-    writeFileSync(answers, JSON.stringify({ bySession: { child: answer } }));
-    const resumes = () =>
-      all().filter((c) => c.name === "iskron/resume" && c.arguments.session === "child");
-    const n = resumes().length;
-    await until(() => resumes().length > n, "the return after the socket went", 3000);
+    // An attempt already logged may read this answer: wait for the return, not one more attempt.
+    rewrite(answers, JSON.stringify({ bySession: { child: answer } }));
+    await until(
+      () => /сессия child — место возвращено/.test(second.said()),
+      "the return after the socket went",
+      8000,
+    );
     await delay(300);
     const toChild = [...second.prompts, ...second.synthetics].filter(
       (p) => p.sessionID === "child",
