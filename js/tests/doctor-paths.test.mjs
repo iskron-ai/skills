@@ -7,7 +7,15 @@
 // этих строк не печатает.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -72,33 +80,60 @@ test("doctor names the grant directory and a session on the fallback path, by pi
     mkdirSync(join(authDir, "run"), { recursive: true });
     chmodSync(join(authDir, "run"), 0o755);
     const env = { HOME: home, ISKRON_BRIDGE_TOKEN: PAT, ISKRON_BRIDGE_DAEMON: "" };
-    const b = spawn(NODE, [FILE, fake.mcpUrl, "--no-browser", "--auth-dir", authDir], {
-      env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ...env },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let err = "";
-    b.stderr.on("data", (c) => (err += c));
-    try {
+    const bridge = (extra) => {
+      const p = spawn(NODE, [FILE, fake.mcpUrl, "--no-browser", "--auth-dir", authDir], {
+        env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ...env, ...extra },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      p.err = "";
+      p.stderr.on("data", (c) => (p.err += c));
+      return p;
+    };
+    const marks = () => {
+      try {
+        return readdirSync(join(authDir, "fallback")).sort();
+      } catch {
+        return [];
+      }
+    };
+    const until = async (what, ok) => {
       const deadline = Date.now() + 15_000;
-      while (!/going as the full bridge/.test(err) && Date.now() < deadline)
-        await new Promise((r) => setTimeout(r, 100));
-      assert.match(err, /going as the full bridge/, err);
+      while (!ok() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+      assert.ok(ok(), what);
+    };
+    const kill = async (p) => {
+      p.kill("SIGKILL");
+      if (p.exitCode === null && p.signalCode === null) await new Promise((r) => p.once("exit", r));
+    };
+    const fallback = bridge({});
+    const switched = bridge({ ISKRON_BRIDGE_DAEMON: "0" }); // мимо демона по выбору
+    try {
+      await until("the thin bridge went full", () => /going as the full bridge/.test(fallback.err));
+      await until("both sessions marked", () => marks().length === 2);
       const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], env, home);
       assert.ok(r.out.includes(`каталог гранта: ${authDir}`), r.out);
-      assert.match(r.out, /запасным путём \(полным мостом мимо демона\) идут сессий: 1/, r.out);
+      assert.match(r.out, /мимо демона \(.*\) идут сессий: 2/, r.out);
       assert.match(
         r.out,
         new RegExp(
-          `pid ${b.pid}, сборка v\\S+, с \\S+, каталог .*: the daemon's entrance is not private`,
+          `pid ${fallback.pid}, сборка v\\S+, с \\S+, каталог .*: the daemon's entrance is not private`,
         ),
         r.out,
       );
+      assert.match(r.out, new RegExp(`pid ${switched.pid}, .*: the daemon switch is off`), r.out);
     } finally {
-      b.kill("SIGKILL");
-      await new Promise((r) => b.once("exit", r));
+      await kill(fallback);
+      await kill(switched);
     }
     const after = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], env, home);
-    assert.match(after.out, /запасным путём .* не идёт ни одна сессия/, after.out);
+    assert.match(after.out, /мимо демона .* не идёт ни одна сессия/, after.out);
+    // Отметки убитых снимает следующий мост мимо демона: pid, доставшийся другому, сессией не читается.
+    const next = bridge({ ISKRON_BRIDGE_DAEMON: "0" });
+    try {
+      await until("only the live mark stays", () => marks().join() === `${next.pid}.json`);
+    } finally {
+      await kill(next);
+    }
   });
 });
 
@@ -220,6 +255,31 @@ test("doctor: a skill set below the bridge is a finding with its path and the up
       r.out.includes(`НАДО: скиллы: ${join(install, "skills")} — v0.0.1, НИЖЕ моста v`),
       r.out,
     );
-    assert.match(r.out, /\/plugin marketplace update iskron и \/reload-plugins/, r.out);
+    assert.match(
+      r.out,
+      /Claude Code — \/plugin marketplace update iskron, затем \/reload-plugins/,
+      r.out,
+    );
+  });
+});
+
+// Набор вровень с мостом, а релиз свежее — отстала поставка целиком, а не метод от моста.
+test("doctor: a skill set level with the bridge but below the known release names the whole delivery behind", async () => {
+  await withHome(async ({ fake, home, authDir }) => {
+    const v = /^v(\S+)\+/.exec((await run(["--version"], { HOME: home }, home)).out.trim())[1];
+    const install = claudePlugin(home, process.execPath, v);
+    mkdirSync(authDir, { recursive: true });
+    writeFileSync(
+      join(authDir, "latest.json"),
+      JSON.stringify({ version: "999.0.0", checked_at: Date.now(), downloaded: [] }),
+    );
+    const r = await run(["doctor", fake.mcpUrl, "--auth-dir", authDir], { HOME: home }, home);
+    assert.ok(
+      r.out.includes(
+        `НАДО: скиллы: ${join(install, "skills")} — v${v}, НИЖЕ релиза v999.0.0, вровень с мостом`,
+      ),
+      r.out,
+    );
+    assert.doesNotMatch(r.out, /старше моста/, r.out);
   });
 });

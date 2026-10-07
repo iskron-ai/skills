@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 
 import { CFG } from "../bridge/config.ts";
 import { skillsRoot } from "../bridge/skillset.ts";
-import { readLatest } from "../bridge/update.ts";
+import { readLatest, skillMoves } from "../bridge/update.ts";
 import { BRIDGE_FILE, BRIDGE_SKILL } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
@@ -57,22 +57,18 @@ function sets(codexHomes: string[]): [string, Kind][] {
   });
 }
 
-const how = (kind: Kind): string =>
-  ({
-    claude: L(
-      "/plugin marketplace update iskron и /reload-plugins в Claude Code",
-      "/plugin marketplace update iskron and /reload-plugins in Claude Code",
-    ),
-    codex: L(
-      "codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron",
-      "codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron",
-    ),
-    flat: "npx skills add iskron-ai/skills --all --global",
-    other: L(
-      "тем каналом, которым набор ставили (SETUP.md, раздел «Обновление»)",
-      "by the channel the set was installed with (SETUP.md, section «Update»)",
-    ),
-  })[kind];
+// Ходы — те же, что у строки отставания моста (update.ts); набор вне трёх каналов
+// (pi, ручная копия) — каналом, которым его ставили.
+const how = (kind: Kind): string => {
+  const m = skillMoves();
+  if (kind === "claude") return `Claude Code — ${m.claude}`;
+  if (kind === "codex") return `Codex — ${m.codex}`;
+  if (kind === "flat") return m.flat;
+  return L(
+    `тем каналом, которым набор ставили (pi — ${m.pi}; порядок — SETUP.md, раздел «Обновление»)`,
+    `by the channel the set was installed with (pi — ${m.pi}; the order — SETUP.md, section «Update»)`,
+  );
+};
 
 /** Каждый набор поставки на машине против сборки моста и известного релиза. */
 export function skillsReport(out: Out, codexHomes: string[]): void {
@@ -106,14 +102,21 @@ export function skillsReport(out: Out, codexHomes: string[]): void {
         ),
       );
     else {
-      const of =
-        target === VERSION
-          ? L(`моста v${VERSION}`, `the bridge v${VERSION}`)
-          : L(`релиза v${target}`, `the release v${target}`);
+      // Ниже моста — метод старше моста; вровень с мостом, но ниже релиза — отстали оба.
+      const below = compareVersions(v, VERSION) < 0;
+      const why = below
+        ? L(
+            `НИЖЕ моста v${VERSION}: метод в контексте агента старше моста`,
+            `BEHIND the bridge v${VERSION}: the method in the agent's context is older than the bridge`,
+          )
+        : L(
+            `НИЖЕ релиза v${target}, вровень с мостом: отстала поставка целиком (мост — подкоманда update)`,
+            `BEHIND the release v${target}, level with the bridge: the whole delivery is behind (the bridge — the update subcommand)`,
+          );
       out(
         L(
-          `${todo()} скиллы: ${root} — v${v}, НИЖЕ ${of}: метод в контексте агента старше моста → обнови: ${how(kind)}; затем новая сессия`,
-          `${todo()} skills: ${root} — v${v}, BEHIND ${of}: the method in the agent's context is older than the bridge → update: ${how(kind)}; then a new session`,
+          `${todo()} скиллы: ${root} — v${v}, ${why} → обнови набор: ${how(kind)}; затем новая сессия`,
+          `${todo()} skills: ${root} — v${v}, ${why} → update the set: ${how(kind)}; then a new session`,
         ),
       );
     }

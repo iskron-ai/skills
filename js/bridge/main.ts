@@ -32,8 +32,10 @@
 //                  тонкий мост к демону машины, thin.ts), ISKRON_BRIDGE_NO_DAEMON=1 (то же)
 //
 // No dependencies. Node >= 22.
+import { BUILD } from "./build.ts";
 import { parseArgs } from "./config.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
+import { markFallback } from "./fallback.ts";
 import { openSession } from "./session.ts";
 import { guardStream } from "./streams.ts";
 import { daemonWanted, thinMain } from "./thin.ts";
@@ -45,7 +47,14 @@ export function bridgeMain(argv: string[]): void {
     thinMain(argv);
     return;
   }
-  startEngine(parseArgs(argv));
+  const cfg = parseArgs(argv);
+  // Мимо демона по выбору — та же отметка, что у запасного пути: doctor называет каждую такую сессию.
+  markFallback(cfg.authDir, {
+    build: BUILD,
+    cwd: process.cwd(),
+    why: "the daemon switch is off (ISKRON_BRIDGE_DAEMON=0 or ISKRON_BRIDGE_NO_DAEMON)",
+  });
+  startEngine(cfg);
   const session = openSession({ input: process.stdin, output: process.stdout });
   void session.ended.then(() => process.exit(0));
   process.on("SIGTERM", () => void session.leave("SIGTERM"));

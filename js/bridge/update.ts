@@ -300,17 +300,35 @@ export function staleNotice(latest: Latest | null, authDir: string): string | nu
               `Свежий мост в дом не положен; повтори: node "${self}" update (мост, который отвечает, — тот и обновляет дом; в пакетной поставке OpenCode мост живёт в пакете и обновляется с ним).`,
               `The fresh bridge is not put home; repeat: node "${self}" update (the bridge that answers is the one that updates home; in OpenCode's packaged delivery the bridge lives in the package and updates with it).`,
             );
+  const m = skillMoves();
   return L(
     `[iskron-bridge] ПОСТАВКА ОТСТАЛА: этот мост v${VERSION}, свежий релиз v${latest.version}. ${bridgeWord} ` +
-      `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — /plugin marketplace update iskron, затем /reload-plugins; ` +
-      `плоская установка — повторный npx skills add iskron-ai/skills --all --global (приносит новые скиллы и освежает стоящие: npx skills update --global ходит только по lock-файлу и новых не приносит, снятое убирается руками — npx skills remove <имя> --global); pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron. ` +
+      `Скиллы обновляет канал харнеса, и об этом надо СКАЗАТЬ ЧЕЛОВЕКУ: Claude Code — ${m.claude}; ` +
+      `плоская установка — ${m.flat}; pi — ${m.pi}; Codex — ${m.codex}. ` +
       `Полный порядок — свежий установщик ${setupPathOf(authDir)} (кладёт update); по слову человека «обнови» исполни его.`,
     `[iskron-bridge] DELIVERY BEHIND: this bridge is v${VERSION}, the fresh release is v${latest.version}. ${bridgeWord} ` +
-      `The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — /plugin marketplace update iskron, then /reload-plugins; ` +
-      `flat install — repeat npx skills add iskron-ai/skills --all --global (it brings new skills and refreshes standing ones: npx skills update --global walks only the lock file and brings none, a dropped skill is removed by hand — npx skills remove <name> --global); pi — pi update git:github.com/iskron-ai/skills; Codex — codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron. ` +
+      `The harness channel updates the skills, and this must be TOLD TO THE HUMAN: Claude Code — ${m.claude}; ` +
+      `flat install — ${m.flat}; pi — ${m.pi}; Codex — ${m.codex}. ` +
       `The full order — the fresh installer ${setupPathOf(authDir)} (update puts it); on the human's word "update" run it.`,
   );
 }
+
+/** Ходы обновления набора скиллов по каналу харнеса — одна копия на строку отставания и doctor. */
+export const skillMoves = () => ({
+  claude: L(
+    "/plugin marketplace update iskron, затем /reload-plugins",
+    "/plugin marketplace update iskron, then /reload-plugins",
+  ),
+  flat: L(
+    "повторный npx skills add iskron-ai/skills --all --global (приносит новые скиллы и освежает стоящие: npx skills update --global ходит только по lock-файлу и новых не приносит, снятое убирается руками — npx skills remove <имя> --global)",
+    "repeat npx skills add iskron-ai/skills --all --global (it brings new skills and refreshes standing ones: npx skills update --global walks only the lock file and brings none, a dropped skill is removed by hand — npx skills remove <name> --global)",
+  ),
+  pi: "pi update git:github.com/iskron-ai/skills",
+  codex: L(
+    "codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron",
+    "codex plugin marketplace upgrade iskron, then codex plugin remove iskron@iskron and codex plugin add iskron@iskron",
+  ),
+});
 
 const N = scoped(() => ({ pending: null as string | null })); // у каждой сессии — своя строка
 

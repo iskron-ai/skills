@@ -230,13 +230,13 @@ export const dw = {
   daemonSocket: (s: string) => L(`  вход, сокет: ${s}`, `  entrance, socket: ${s}`),
   fallbackNone: () =>
     L(
-      "  запасным путём (полным мостом мимо демона) не идёт ни одна сессия",
-      "  no session runs the fallback path (the full bridge around the daemon)",
+      "  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) не идёт ни одна сессия",
+      "  no session goes around the daemon (the full bridge in its own process — the fallback path or the switch)",
     ),
   fallbackCount: (n: number) =>
     L(
-      `  запасным путём (полным мостом мимо демона) идут сессий: ${n} — демон их не видит и в «сессий» не считает`,
-      `  sessions on the fallback path (the full bridge around the daemon): ${n} — the daemon does not see them nor count them in "sessions"`,
+      `  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) идут сессий: ${n} — демон их не видит и в «сессий» не считает`,
+      `  sessions around the daemon (the full bridge in its own process — the fallback path or the switch): ${n} — the daemon does not see them nor count them in "sessions"`,
     ),
   fallbackOne: (pid: number, build: string, since: string, cwd: string, why: string) =>
     L(
