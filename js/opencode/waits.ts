@@ -12,6 +12,7 @@
 // модуля и пережил бы выгрузку своего экземпляра. Слово — одно, от экземпляра написания.
 // Цена: у не фонового ребёнка слово ляжет после ответа человека; shutdown до ответа session.get его теряет.
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+import { L } from "../shared/lang.ts";
 import { sleep } from "./bridge-io.ts";
 import { homeOf } from "./host.ts";
 import type { Context } from "./plugin.ts";
@@ -34,9 +35,19 @@ export const askWord = (who: string, action: string, resources: string[]): strin
     const one = r.replace(/\s+/g, " ").trim();
     return one.length > RESOURCE_MAX ? `${one.slice(0, RESOURCE_MAX)}…` : one;
   });
-  const more = resources.length > RESOURCES ? ` и ещё ${resources.length - RESOURCES}` : "";
+  const n = resources.length - RESOURCES;
+  const more = n > 0 ? L(` и ещё ${n}`, ` and ${n} more`) : "";
   const what = cut.length ? `${action}: ${cut.join("; ")}${more}` : action;
-  return `Искрон: субагент ${who} ждёт разрешения: ${what} — ответь в его сессии или отмени его ход.`;
+  // Слово «ответь в его сессии» модель родителя поняла как «напиши ребёнку» (живой прогон 7.4.0):
+  // ответ на запрос разрешения из сессии родителя невозможен, его даёт только человек в окне ребёнка.
+  return L(
+    `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. ` +
+      "Ты ответить не можешь, и никакое слово субагенту его не разблокирует. " +
+      "Скажи человеку, что и где ждёт; не ждёшь — отмени ход субагента.",
+    `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. ` +
+      "You cannot answer it, and no message to the subagent unblocks it. " +
+      "Tell the human what is waiting and where; if you will not wait, cancel the subagent's turn.",
+  );
 };
 
 export const interruptWord = (who: string, reason: string): string =>
@@ -79,7 +90,11 @@ export function createWaits(ctx: Context, d: WaitDoors) {
     const kid = await childOf(sessionID, ev);
     if (!kid || answered.has(id) || !once(id)) return;
     const list = Array.isArray(resources) ? resources.map(String) : [];
-    await d.tell(kid.parent, askWord(kid.who, String(action ?? "действие"), list), true);
+    await d.tell(
+      kid.parent,
+      askWord(kid.who, String(action ?? L("действие", "action")), list),
+      true,
+    );
   }
 
   async function interrupted(ev: any): Promise<void> {
