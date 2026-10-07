@@ -15,6 +15,8 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -535,8 +537,18 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
 // Своё close или revoke отпускает место словом моста (released), не уходом:
 // сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
 // «мост отпустил стояние или ушёл» и без ненулевого кода (#6638).
+/**
+ * Дом подставного Codex — под TMPDIR пробы, убирается после неё. Имя короткое: путь
+ * сокета app-server-control под ним должен влезть в предел unix-сокета (104 у macOS).
+ */
+function codexHome(t) {
+  const home = mkdtempSync(join(tmpdir(), "cxd-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  return home;
+}
+
 async function codexDoor(t, opts = {}) {
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
@@ -649,7 +661,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   // The door lives under a short home: a unix socket path is limited to ~104 bytes.
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -701,7 +713,7 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
 test("a frame put into the Codex thread is marked delivered — the fallback exit watchdog does not repeat it", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -730,7 +742,7 @@ test("a frame put into the Codex thread is marked delivered — the fallback exi
 test("a frame the Codex thread refused is not marked — the fallback exit watchdog gets it", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -765,7 +777,7 @@ test("a frame that waited in the ring reaches the Codex thread on the next arm",
     ws_send: JSON.stringify({ type: "message", id: "cx-gap", body: "между взводами" }),
   });
   await new Promise((r) => setTimeout(r, 300));
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -2211,7 +2223,7 @@ test("the Monitor watchdog does not print again an id it printed, even when the 
 test("the Codex watchdog does not put into the thread again an id it put there, even when the bridge hands it over again", async (t) => {
   const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -2267,7 +2279,7 @@ test("the Monitor watchdog marks the frames a stale batch named but did not show
 test("the Codex watchdog marks the frames a stale batch named but did not show once the thread takes it", async (t) => {
   const { fake, dir, key, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -3813,6 +3825,52 @@ test("a case copy coming while the Monitor watchdog still prints the stale burst
   await wd.done;
 });
 
+// Дом подставного Codex — под TMPDIR пробы и убирается вместе с ней.
+test("the fake Codex home lives under the probe's TMPDIR and is gone after its test", async (t) => {
+  let home = "";
+  await t.test("a door", async (st) => {
+    home = (await codexDoor(st)).CODEX_HOME;
+  });
+  assert.ok(home.startsWith(realpathSync(tmpdir())) || home.startsWith(tmpdir()), home);
+  assert.equal(existsSync(home), false, `${home} is left behind`);
+});
+
+// Сторож вынул ждущую копию дела, когда пачка лежалых показала её событие текстом, но
+// отданной её не пометил; перевзведённому сторожу кольцо её не повторяет — событие уже
+// отдано текстом (повтор кольца, door.ts).
+test("a re-armed watchdog is not handed again from the ring a case copy whose event a stale burst already showed as text", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const arm = async () => {
+    const w = runClient("watchdog", dir, key, 20_000);
+    await waitFor(() => w.out.includes("слушаю стояние"), "the watchdog to attach");
+    return w;
+  };
+  const w1 = await arm();
+  await sendRoom(fake, { ...nodeOp("updated", 99), event_id: 91 });
+  await new Promise((r) => setTimeout(r, 1500)); // окно дела ушло; счёт ждёт непечатным
+  w1.proc.kill("SIGKILL");
+  await w1.done;
+  const w2 = await arm();
+  await fake.control({
+    ws_send: graphEvent("inbox-rr", 91, "событие девяносто один", { stale: true }),
+  });
+  await waitFor(() => w2.out.includes("событие девяносто один"), "the stale burst");
+  w2.proc.kill("SIGKILL");
+  await w2.done;
+  const w3 = await arm();
+  await fake.control({
+    ws_send: JSON.stringify({ id: "live-rr", type: "message", body: "живое-з" }),
+  });
+  await waitFor(() => w3.out.includes("живое-з"), "the live frame");
+  assert.ok(
+    !w3.out.includes("записей"),
+    `the ring handed the case copy again after its event was shown as text:\n${w3.out}`,
+  );
+  w3.proc.kill("SIGKILL");
+  await w3.done;
+});
+
 test("a case copy coming while the Codex watchdog still hands the stale burst into the thread is not counted", async (t) => {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1000" } });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -4095,7 +4153,7 @@ test("watchdog-codex on one's own close puts the batch the bridge flushed into t
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
@@ -4132,7 +4190,7 @@ test("watchdog-codex on one's own close behind a door that never answers the upg
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "30000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const log = join(home, "door.log");
   writeFileSync(log, "");
   const door = await startFakeCodex(
@@ -4732,7 +4790,7 @@ test("watchdog-codex: progress starts no turn; closing carries the batch count i
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -4827,7 +4885,7 @@ test("watchdog-codex re-armed after a batch of counts alone starts no turn on th
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");
@@ -4920,7 +4978,7 @@ test("room kinds leave the Codex thread's other frames and the old room shape as
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const home = mkdtempSync("/tmp/cxd-");
+  const home = codexHome(t);
   const sock = join(home, "app-server-control", "app-server-control.sock");
   const log = join(home, "door.log");
   writeFileSync(log, "");

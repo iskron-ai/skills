@@ -11,7 +11,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { takeRoomCopies } from "../shared/seen.ts";
+import { splitBatch, takeRoomCopies } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
@@ -69,11 +69,10 @@ export class Backlog {
   private close(): void {
     this.timer = null;
     const all = this.all.splice(0);
-    const got = all
-      .slice(0, BACKLOG_KEEP)
-      .sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
-    // Копия дела сверх показанных, чьё событие показано здесь текстом, — не в «не вошло».
-    const count = all.length - takeRoomCopies(all.slice(BACKLOG_KEEP), got, (f) => f).length;
+    // Копия дела события, показанного здесь текстом, — ни строкой счёта, ни кадром (seen.ts splitBatch).
+    const { shown, kept } = splitBatch(all, BACKLOG_KEEP);
+    const got = shown.sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
+    const count = kept.length;
     const expected = this.pending;
     const direct = this.direct;
     this.direct = 0;
@@ -83,12 +82,8 @@ export class Backlog {
     if (!got.length || !emit) return;
     // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
     // по одному на дело; поручений отвечать конверт не несёт.
-    // Копия дела события, чей кадр инбокса показан здесь текстом, счётом не повторяется;
-    // кадр инбокса сверх показанных копию дела не гасит (seen.ts takeRoomCopies).
-    const counted = [...got];
-    takeRoomCopies(counted, got, (f) => f);
     const bodies = [
-      ...caseCountLines(counted),
+      ...caseCountLines(got),
       ...got
         .filter((f) => addressedToMine(f))
         .map((f) => {

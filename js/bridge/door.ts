@@ -20,7 +20,7 @@ import {
 } from "../shared/standings.ts";
 import { Backlog } from "./backlog.ts";
 import { CFG } from "./config.ts";
-import { isDelivered } from "./fanout.ts";
+import { caseCopyShown, isDelivered } from "./fanout.ts";
 import { countOnly, emitBatch, RoomBatch } from "./roomstack.ts";
 import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
@@ -193,12 +193,14 @@ export class Door {
         // местный клиент ещё не получал: перевзведённый сторож не должен нести
         // делателю то же кольцо второй раз — память доставленного у моста есть.
         // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно.
+        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Копия дела,
+        // чьё событие уже вошло текстом, не повторяется (fanout.ts caseCopyShown).
         const backlog = this.ring.filter(
           ({ frame }) =>
             frame?.type !== "message" ||
             (!isDelivered(deliveredKeys(frame), this.seen, this.seenPath) &&
-              !this.roomBatch.holds(frame)),
+              !this.roomBatch.holds(frame) &&
+              !caseCopyShown(frame, this)),
         );
         sock.write(
           JSON.stringify({

@@ -134,6 +134,45 @@ test("a stale burst does not count past its cut a case copy whose inbox copy it 
   assert.ok(got.unshown?.includes("room-msg-60"), "the absorbed copy is still marked handed out");
 });
 
+// «кадров N» — событий, дошедших текстом или числом, каждое один раз: копия дела, чьё
+// событие пачка показала текстом, кадром не считается и внутри показанных.
+test("a wake-up batch with an inbox frame and its case copy says one frame", () => {
+  const b = new Backlog();
+  let text = "";
+  b.open(0, (ev) => (text = ev.text));
+  b.note(inbox());
+  b.note(caseCopy());
+  b.flushNow();
+  assert.match(text, /Побудка: кадров 1 /, text);
+});
+
+test("a stale burst with an inbox frame and its case copy says one frame", async () => {
+  const s = new StaleBurst();
+  let got = null;
+  for (const f of [
+    { ...inbox(), stale: true },
+    { ...caseCopy(), stale: true },
+  ])
+    s.note(f, (ev) => (got = ev));
+  await pause(1700);
+  assert.match(got?.text ?? "", /Лежалых кадров: 1 /, got?.text);
+  assert.ok(got.unshown?.includes("room-msg-60"), "the absorbed copy is marked handed out");
+});
+
+// Поглощённая копия освобождает место показанного: двадцатым входит следующий кадр.
+test("a wake-up batch shows twenty frames past the case copies it absorbs", () => {
+  const b = new Backlog();
+  let ev = null;
+  b.open(0, (e) => (ev = e));
+  b.note(inbox());
+  b.note(caseCopy());
+  for (let i = 0; i < 19; i++) b.note(graphPosed(`o-${i}`, 100 + i));
+  b.flushNow();
+  assert.equal(ev.frames.length, 20);
+  assert.match(ev.text, /Побудка: кадров 20 /, ev.text);
+  assert.doesNotMatch(ev.text, /не вошло/, ev.text);
+});
+
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];
   const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(m.content) });

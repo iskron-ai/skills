@@ -75,17 +75,31 @@ function redundantEvent(frame: Frame | null, d: FanDoor): string {
   if (!ev) return "";
   const stale = frame?.stale === true;
   const room = isRoomCopy(frame);
-  if (room && d.textEvents.has(ev)) return ev;
+  if (room && caseCopyShown(frame, d)) return ev;
   // Копия в кольце держит событие для копии того же рода; копию дела держит только текст.
   const holds = (f: Frame | null): boolean => !!f && eventKeyOf(f) === ev && isRoomCopy(f) === room;
-  // Отданная пачка лежалых гасит и копию дела: та не будит и текста не несёт; живую
-  // копию инбокса — нет, она будит (#5842).
-  const text = stale || room ? [ev, `evs:${ev.slice(3)}`] : [ev];
-  const keys = room ? text : [...text, ...text.map((k) => `c${k}`)];
+  // Копию инбокса гасит отданная копия инбокса — текстом или числом; лежалая отданная
+  // живую не гасит: та будит (#5842). Копию дела — только текст (caseCopyShown выше).
+  const text = stale ? [ev, `evs:${ev.slice(3)}`] : [ev];
+  const keys = room ? [] : [...text, ...text.map((k) => `c${k}`)];
   if (isDelivered(keys, d.seen, d.seenPath) || d.ring.some((r) => holds(r.frame))) return ev;
   if ((stale || room) && d.stale.hasEvent(ev, room)) return ev;
   if (!room) d.stale.dropEvent(ev);
   return "";
+}
+
+/**
+ * Копия дела, чьё событие уже вошло в ход текстом: отдано копией инбокса (метки `ev:`/`evs:`)
+ * или отдано мостом текстом, а метку сторож ещё не поставил (textEvents). Одно правило для
+ * веера и для повтора кольца прицепившемуся (door.ts): такую копию не предлагать вовсе.
+ */
+export function caseCopyShown(
+  frame: Frame | null,
+  d: Pick<FanDoor, "seen" | "seenPath" | "textEvents">,
+): boolean {
+  if (!isRoomCopy(frame)) return false;
+  const ev = eventKeyOf(frame);
+  return d.textEvents.has(ev) || isDelivered([ev, `evs:${ev.slice(3)}`], d.seen, d.seenPath);
 }
 
 /** Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. */

@@ -69,6 +69,27 @@ export function takeRoomCopies<T>(
   return out;
 }
 
+/**
+ * Пачка, которая показывает первые `keep` кадров: копии дела событий, показанных ею
+ * текстом, — вон из пачки целиком, внутри показанных и за пределом (#5842, #6563). Место
+ * поглощённой занимает следующий кадр — и его событие, показанное текстом, поглощает
+ * свои копии тоже. `kept` — кадры пачки, дошедшие текстом или числом, каждый один раз:
+ * первые `keep` из них показаны (`shown`); `absorbed` — поглощённые, они отданы с пачкой.
+ */
+export function splitBatch(
+  all: readonly Frame[],
+  keep: number,
+): { shown: Frame[]; kept: Frame[]; absorbed: Frame[] } {
+  const kept = [...all];
+  const absorbed: Frame[] = [];
+  for (let got = 1; got;) {
+    const taken = takeRoomCopies(kept, kept.slice(0, keep), (f) => f);
+    absorbed.push(...taken);
+    got = taken.length;
+  }
+  return { shown: kept.slice(0, keep), kept, absorbed };
+}
+
 /** Метка события, которую пишет доставка кадра: "" — у копии дела и у кадра без события. */
 export const eventMarkOf = (frame: Frame | null | undefined): string =>
   isRoomCopy(frame) ? "" : eventKeyOf(frame);

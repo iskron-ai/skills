@@ -8,7 +8,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { L } from "../shared/lang.ts";
-import { countedKeys, eventKeyOf, isRoomCopy, takeRoomCopies } from "../shared/seen.ts";
+import { countedKeys, eventKeyOf, isRoomCopy, splitBatch, takeRoomCopies } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 const STALE_BURST_KEEP = 20;
@@ -32,16 +32,15 @@ export class StaleBurst {
       this.timer = null;
       const all = this.burst.splice(0);
       if (!all.length) return; // все копии вынула живая копия того же события
-      const frames = all.slice(0, STALE_BURST_KEEP);
-      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом; копия
-      // дела события, чья копия инбокса показана здесь текстом, счётом не повторяется.
-      const counted = [...frames];
-      takeRoomCopies(counted, frames, (f) => f);
-      // И сверх показанных такая копия — не в «не вошло»; отданной метится со всеми (unshown).
-      const left = all.slice(frames.length);
-      const count = all.length - takeRoomCopies([...left], frames, (f) => f).length;
+      // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом; копия дела
+      // события, показанного здесь текстом, — ни строкой счёта, ни кадром (seen.ts splitBatch).
+      const { shown: frames, kept } = splitBatch(all, STALE_BURST_KEEP);
+      const count = kept.length;
+      // Не показанные и поглощённые отдаются с пачкой — метятся с ней (unshown).
+      const on = new Set(frames);
+      const left = all.filter((f) => !on.has(f));
       const bodies = [
-        ...caseCountLines(counted),
+        ...caseCountLines(frames),
         ...frames
           .filter((f) => addressedToMine(f))
           .map((f) => {
