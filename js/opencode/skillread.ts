@@ -3,7 +3,9 @@
 // session's directory with the external_directory rule, and the installed skill
 // set lies outside it: SKILL.md comes through the skill tool, its references/*.md
 // do not. The plugin lifts that ask for reading only, and only inside the
-// directory of a delivery skill — one carrying `slash: true`, as commands.ts reads it.
+// directory of a delivery skill — one of the installed set that carries the delivery's
+// bridge, told by its root (and, in a shared flat root, by the install lock's source);
+// a glob or grep, only in a skill no symlink of which leads out.
 //
 // Observed on OpenCode 2.0.24 (isolated --standalone): the permission "evaluate" hook
 // sees {action: "external_directory", resources: ["<dir of the path>/*"], effect: "ask",
@@ -14,17 +16,20 @@
 // call id. ctx.skill.list() holds only the built-in skills during setup; the installed
 // ones come with skill.updated, with realpath'd paths — so the list is read at the ask.
 /* eslint-disable @typescript-eslint/no-explicit-any -- hook payloads without a schema */
-import { readFileSync, realpathSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { slashOf } from "./commands.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL } from "../shared/clients.ts";
+import { skillLock } from "../shared/skilllock.ts";
 import type { Context } from "./plugin.ts";
 
 /** Tools that only read; any other tool keeps OpenCode's own ask. */
 const READERS = new Set(["read", "glob", "grep"]);
 /** Calls remembered between execute.before and the ask — the oldest drop first. */
 const CALLS = 256;
+/** Entries a skill directory is walked for symlinks; a bigger one is not opened to glob or grep. */
+const WALK = 4096;
 
 interface Call {
   tool: string;
@@ -55,23 +60,55 @@ export function within(p: string, root: string): boolean {
 async function skillDirs(ctx: Context): Promise<string[]> {
   const res: any = await ctx.skill.list();
   const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-  const out: string[] = [];
+  // A skill's own directory bears its id, as an install lays it out: a SKILL.md that
+  // lies in a wider directory (a repository root) opens nothing.
+  const listed: { id: string; dir: string }[] = [];
   for (const s of list) {
     const path = typeof s?.path === "string" ? s.path : null;
     if (!path || !isAbsolute(path)) continue;
-    let text: string;
-    try {
-      text = readFileSync(path, "utf8");
-    } catch {
-      continue;
-    }
-    if (!slashOf(text)) continue;
-    // A skill's own directory bears its id, as an install lays it out: a SKILL.md that
-    // lies in a wider directory (a repository root) opens nothing.
     const dir = canon(dirname(path));
-    if (dir && basename(dir) === String(s?.id ?? "")) out.push(dir);
+    const id = String(s?.id ?? "");
+    if (dir && basename(dir) === id) listed.push({ id, dir });
   }
-  return out;
+  // The delivery's sets: roots whose bridge skill carries the bridge. In a flat root that
+  // other sets share, the lock names the delivery's source; no lock — the root is the set.
+  const sets = new Map<string, { source: unknown; lock: ReturnType<typeof skillLock> }>();
+  for (const { id, dir } of listed) {
+    if (id !== BRIDGE_SKILL || !existsSync(join(dir, "scripts", BRIDGE_FILE))) continue;
+    const lock = skillLock(dirname(dir));
+    sets.set(dirname(dir), { source: lock?.[BRIDGE_SKILL]?.source, lock });
+  }
+  return listed
+    .filter(({ id, dir }) => {
+      const set = sets.get(dirname(dir));
+      if (!set) return false;
+      return typeof set.source !== "string" || set.lock?.[id]?.source === set.source;
+    })
+    .map(({ dir }) => dir);
+}
+
+/** A symlink under dir (canonical) whose target leaves it or is gone; too big to walk — true. */
+function leadsOut(dir: string): boolean {
+  const stack = [dir];
+  let seen = 0;
+  while (stack.length) {
+    const d = stack.pop() as string;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return true;
+    }
+    for (const e of entries) {
+      if (++seen > WALK) return true;
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) {
+        const c = canon(p);
+        if (!c || !within(c, dir)) return true;
+      } else if (e.isDirectory()) stack.push(p);
+    }
+  }
+  return false;
 }
 
 /**
@@ -139,10 +176,15 @@ export async function setupSkillReads(ctx: Context): Promise<boolean> {
     const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
     if (!paths) return;
     const roots = await skillDirs(ctx);
+    const walked = new Set<string>();
     for (const p of paths) {
       const c = canon(p);
-      if (!c || !roots.some((r) => within(c, r))) return;
+      const root = c ? roots.find((r) => within(c, r)) : undefined;
+      if (!root) return;
+      walked.add(root);
     }
+    // A read is judged by its realpath above; a glob or grep descends and follows what it meets.
+    if (call.tool !== "read" && [...walked].some(leadsOut)) return;
     e.effect = "allow";
   });
   return true;

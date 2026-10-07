@@ -9,14 +9,15 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { currentScope, envOf } from "../shared/scope.ts";
+import { skillLock } from "../shared/skilllock.ts";
 import { versionIn } from "../shared/version.ts";
 
 /** Корень набора окружением: домашняя копия лежит вне набора и узнаёт его только так. */
 export { SKILLS_ROOT_ENV };
 const SET = "iskron-ai/skills";
-const BRIDGE_IN_SET = join("establish-mcp", "scripts", "iskron.mjs");
+const BRIDGE_IN_SET = join(BRIDGE_SKILL, "scripts", BRIDGE_FILE);
 
 // Окружение и файл — моста харнеса (shared/scope.ts): у сессии демона машины
 // набор узнаётся по тонкому мосту, которым запустил харнес, а не по демону.
@@ -49,21 +50,15 @@ const sha8 = (h: ReturnType<typeof createHash>): string => h.digest("hex").slice
  * неё — SET; stamp — свёртка skillFolderHash записей этого источника.
  */
 function lockSet(root: string): { name: string; stamp: string | null } {
-  try {
-    const lock = JSON.parse(readFileSync(join(dirname(root), ".skill-lock.json"), "utf8")) as {
-      skills?: Record<string, { source?: unknown; skillFolderHash?: unknown }>;
-    };
-    const skills = lock.skills ?? {};
-    const own = skills["establish-mcp"]?.source;
-    const name = typeof own === "string" && own.trim() ? own.trim() : SET;
-    const lines = Object.entries(skills)
-      .filter(([, s]) => s?.source === name && typeof s.skillFolderHash === "string")
-      .map(([n, s]) => `${n}:${String(s.skillFolderHash)}\n`)
-      .sort();
-    return { name, stamp: lines.length ? sha8(createHash("sha256").update(lines.join(""))) : null };
-  } catch {
-    return { name: SET, stamp: null };
-  }
+  const skills = skillLock(root);
+  if (!skills) return { name: SET, stamp: null };
+  const own = skills[BRIDGE_SKILL]?.source;
+  const name = typeof own === "string" && own.trim() ? own.trim() : SET;
+  const lines = Object.entries(skills)
+    .filter(([, s]) => s?.source === name && typeof s.skillFolderHash === "string")
+    .map(([n, s]) => `${n}:${String(s?.skillFolderHash)}\n`)
+    .sort();
+  return { name, stamp: lines.length ? sha8(createHash("sha256").update(lines.join(""))) : null };
 }
 
 /** Плагин и всякий другой корень: хеш SKILL.md каждого скилла корня, по порядку имён. */

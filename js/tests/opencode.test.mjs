@@ -2973,16 +2973,46 @@ test("a delivery skill's files outside the working copy are read without an ask 
   // and names the ask by the path as the tool got it.
   const home = mkdtempSync(join(SANDBOX, "skill-reads-"));
   const set = join(home, ".agents", "skills");
-  const skill = (id, head) => {
-    mkdirSync(join(set, id, "references"), { recursive: true });
-    const path = join(set, id, "SKILL.md");
+  const skill = (id, head, root = set) => {
+    mkdirSync(join(root, id, "references"), { recursive: true });
+    const path = join(root, id, "SKILL.md");
     writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
-    writeFileSync(join(set, id, "references", "phrasebook.md"), "# phrasebook\n");
+    writeFileSync(join(root, id, "references", "phrasebook.md"), "# phrasebook\n");
     return { id, name: id, description: id, path: realpathSync(path), content: "" };
   };
+  /** The skill that carries the delivery's bridge; bridge=false — the skill without it. */
+  const carrier = (root, bridge = true) => {
+    const s = skill("establish-mcp", 'name: establish-mcp\nslash: true\ndescription: "x"', root);
+    mkdirSync(join(root, "establish-mcp", "scripts"));
+    if (bridge) writeFileSync(join(root, "establish-mcp", "scripts", "iskron.mjs"), "");
+    return s;
+  };
+  // A flat root is shared by every set installed into it; the lock beside it names the sources.
+  mkdirSync(set, { recursive: true });
+  writeFileSync(
+    join(home, ".agents", ".skill-lock.json"),
+    JSON.stringify({
+      skills: {
+        "establish-mcp": { source: "iskron-ai/skills" },
+        iskron: { source: "iskron-ai/skills" },
+        design: { source: "iskron-ai/skills" },
+        foreign: { source: "someone/else" },
+      },
+    }),
+  );
+  // Another root: a foreign set whose own establish-mcp carries no bridge.
+  const elsewhere = join(home, "elsewhere", "skills");
+  // A root with no lock (a plugin's own directory): the root is the set.
+  const plugged = join(home, "plugged", "skills");
   const skills = [
+    carrier(set),
     skill("iskron", 'name: iskron\nslash: true\ndescription: "door"'),
-    skill("foreign", 'name: foreign\ndescription: "not of the delivery"'),
+    skill("design", 'name: design\nslash: true\ndescription: "a delivery skill with a link out"'),
+    skill("foreign", 'name: foreign\nslash: true\ndescription: "of another source"'),
+    carrier(elsewhere, false),
+    skill("alien", 'name: alien\nslash: true\ndescription: "of another root"', elsewhere),
+    carrier(plugged),
+    skill("kin", 'name: kin\nslash: true\ndescription: "of a lockless set"', plugged),
     {
       id: "opencode",
       name: "opencode",
@@ -3008,7 +3038,9 @@ test("a delivery skill's files outside the working copy are read without an ask 
   const outside = join(home, "secrets");
   mkdirSync(outside);
   writeFileSync(join(outside, "key"), "x");
-  symlinkSync(join(outside, "key"), join(set, "iskron", "references", "leak.md"));
+  const linked = join(set, "design", "references");
+  symlinkSync(join(outside, "key"), join(linked, "leak.md"));
+  symlinkSync(outside, join(linked, "out"));
 
   const refs = join(set, "iskron", "references");
   // The session's directory — a relative path of a tool is resolved from it.
@@ -3076,11 +3108,52 @@ test("a delivery skill's files outside the working copy are read without an ask 
       "ask",
       "a path outside the skills keeps its ask",
     );
-    assert.equal(await read(join(refs, "leak.md")), "ask", "and so does a symlink out of a skill");
+    assert.equal(
+      await read(join(linked, "leak.md")),
+      "ask",
+      "and so does a symlink out of a skill",
+    );
+    assert.equal(
+      await read(join(linked, "out", "key")),
+      "ask",
+      "and a path through a directory symlink out of it",
+    );
+    assert.equal(
+      await read(join(linked, "phrasebook.md")),
+      "allow",
+      "the rest of that skill is read",
+    );
     assert.equal(
       await read(join(set, "foreign", "references", "phrasebook.md")),
       "ask",
-      "a skill not of the delivery keeps its ask",
+      "a skill of another source in the shared root keeps its ask, `slash: true` or not",
+    );
+    assert.equal(
+      await read(join(elsewhere, "alien", "references", "phrasebook.md")),
+      "ask",
+      "so does a `slash: true` skill of a root without the delivery's bridge",
+    );
+    assert.equal(
+      await rec.ask("glob", { pattern: "**/*", path: linked }, ext, [`${linked}/*`]),
+      "ask",
+      "a glob in a skill with a symlink out keeps its ask — it would follow the link",
+    );
+    assert.equal(
+      await rec.ask("grep", { pattern: "x", path: join(set, "design") }, ext, [
+        `${join(set, "design")}/*`,
+      ]),
+      "ask",
+      "and so does a grep",
+    );
+    assert.equal(
+      await read(join(plugged, "kin", "references", "phrasebook.md")),
+      "allow",
+      "a skill of a lockless root that carries the bridge is read",
+    );
+    assert.equal(
+      await read(join(set, "establish-mcp", "scripts", "iskron.mjs")),
+      "allow",
+      "and so is the bridge skill itself",
     );
     assert.equal(
       await rec.ask("read", { path: join(set, "phrasebook.md") }, ext, [`${set}/*`]),
