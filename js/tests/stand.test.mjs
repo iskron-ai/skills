@@ -1442,6 +1442,24 @@ test("iskron_stand: a separate place that left and stands again does not stack n
   assert.equal(placeOf(back), `${base}.2`, standText(back));
 });
 
+/** Сторож места цепляется к локальной двери и получает hello. */
+async function watchdogHears(t, dir, key) {
+  const wd = spawn(NODE, [FILE, "watchdog", key], {
+    env: { ...process.env, ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => wd.kill("SIGKILL"));
+  let out = "";
+  return new Promise((res) => {
+    wd.stdout.on("data", (c) => {
+      out += c;
+      if (/"type":"hello"/.test(out)) res(true);
+    });
+    wd.once("exit", () => res(false));
+    setTimeout(() => res(false), 10_000).unref();
+  });
+}
+
 // «Своё или чужое» знает мост, не память агента (#6702, решение #6706): плагин
 // называет сессию харнесса в iskron/resume, запись держания живого держателя её
 // несёт. Две сессии над одним каталогом гранта, имя — явное.
@@ -1487,6 +1505,13 @@ test("iskron_stand: a name a former bridge of THIS session holds is taken back b
   assert.equal(holds.length, 1, holds.join(", "));
   const rec = JSON.parse(readFileSync(join(dir, "standings", holds[0]), "utf8"));
   assert.equal(rec.session, "ses-1", "the new holder's record is not dropped by the former one");
+  // Дверь нового держателя цела: уступивший закрывает свою дверь, не общие файлы места.
+  const keys = readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".key"));
+  assert.equal(keys.length, 1, `the new holder's .key stays: ${keys.join(", ")}`);
+  assert.ok(
+    await watchdogHears(t, dir, "proba--931--nks-dev"),
+    "the watchdog attaches to the new holder's door",
+  );
 });
 
 test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is not signed with — the bridge stands beside on name.2 with hearing", async (t) => {
