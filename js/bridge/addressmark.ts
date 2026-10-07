@@ -9,8 +9,8 @@
 // первый помнит в памяти отданного места (.seen), чтобы узнать второй и после
 // своего перезапуска и в лежалых.
 import { addressedToMine, wordKeyOf } from "../shared/addressed.ts";
-import { askKeyOf, closedKeyOf } from "../shared/asks.ts";
-import { type Frame } from "../shared/channel.ts";
+import { ASK_KINDS, askKeyOf, closedKeyOf } from "../shared/asks.ts";
+import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { roomKind } from "../shared/room-kinds.ts";
 import { noteSeen } from "../shared/seen.ts";
 
@@ -19,6 +19,9 @@ const markOf = (frame: Frame): string => `word:${wordKeyOf(frame)}`;
 /** Слово в полёте и вопрос, адресованные месту, — в память; тело и снятие — пометкой addressed. */
 export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>): void {
   const rk = roomKind(frame);
+  // Строку вопроса от места человека (окно, бот) раскладывает адресованность, не
+  // правило слова человека «всегда целиком» (#6867): пачка сторожей читает origin.
+  if (rk && ASK_KINDS.has(rk.kind) && classifyOrigin(frame) === "human") frame.origin = "peer";
   if (rk?.kind === "said" && rk.phase === "pending") {
     if (addressedToMine(frame)) noteSeen(seenPath, markOf(frame), seen);
   } else if (rk?.kind === "body" && !rk.aside) {

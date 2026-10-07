@@ -413,25 +413,33 @@ export const ask = (entry_id, seq = MY_KARTA, fields = {}) =>
 /** Место строкой-адресом — формой места провода {id, standing, name?}. */
 const placeOf = (standing) => ({ id: standing === ME ? ME_ID : `id-${standing}`, standing });
 
+/** Строку кладёт место человека (окно, бот): провенанс — роль самого человека (#6867). */
+const asPerson = (f) => ({
+  ...f,
+  provenance: { ...f.provenance, user_karta_seq: HUMAN.karta.seq },
+});
+
 /**
  * Ответ человека на вопрос refers_to: fields.to и addressee конверта — место
  * спросившего; номер вопроса — line.refers_to и in_reply_to конверта.
  */
 export const answer = (entry_id, refers_to, addressee = ME, fields = { choice: "yes" }) =>
-  roomFrame("answer", {
-    entry_id,
-    key: ASK_KEY,
-    author: HUMAN,
-    line: { done: "после обеда", verdict: "partial", refers_to },
-    fields: { to: placeOf(addressee), ...fields },
-    envelope: {
-      realm: MY_REALM,
-      karta_seq: MY_KARTA,
-      addressee,
-      in_reply_to: refers_to,
-      in_reply_to_from: placeOf(addressee),
-    },
-  });
+  asPerson(
+    roomFrame("answer", {
+      entry_id,
+      key: ASK_KEY,
+      author: HUMAN,
+      line: { done: "после обеда", verdict: "partial", refers_to },
+      fields: { to: placeOf(addressee), ...fields },
+      envelope: {
+        realm: MY_REALM,
+        karta_seq: MY_KARTA,
+        addressee,
+        in_reply_to: refers_to,
+        in_reply_to_from: placeOf(addressee),
+      },
+    }),
+  );
 
 /** «Принята» на ответ refers_to; кадр адресован месту ответившего. */
 export const ack = (entry_id, refers_to, addressee = HUMAN.standing) =>
@@ -464,6 +472,6 @@ export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
   const f = roleInvite(entry_id, seq);
   f.line.author = PLATFORM;
   f.provenance = { auth: "platform", via: "room" };
-  f.line.fields = { ...f.line.fields, cause, standing: "@aleksei:gone" };
+  f.line.fields = { ...f.line.fields, cause, gone_standing: "@aleksei:gone" };
   return f;
 };

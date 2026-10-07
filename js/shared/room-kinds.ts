@@ -299,22 +299,18 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
     // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
-    // Ответ и приём (#6867) — in_reply_to строки или конверта.
-    refers_to:
-      str(line.refers_to) ||
-      str(line.in_reply_to) ||
-      str(f.in_reply_to) ||
-      str(obj(f.word).entry_id),
+    // Ответ и приём (#6867) — так же: refers_to строки, in_reply_to конверта.
+    refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
     // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
-    // Зов роли (#6870) — роль по имени; fields.standing там — погасшее место.
+    // Зов роли (#6870) — роль по имени из fields.karta, погасшее место — fields.gone_standing.
     who:
       kind === "joined" || kind === "left"
         ? whoOf({ standing: fields.standing }) || byWhom
         : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
-    standing: str(fields.standing) || addresseeOf(fields.standing)?.label,
+    standing: str(fields.gone_standing) || addresseeOf(fields.gone_standing)?.label,
     ...(ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {}),
     room: roomOf(fields.room) || after(key, "link:"),
     rel: relWords()[str(fields.rel)] ?? fields.rel,

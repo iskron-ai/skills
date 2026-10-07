@@ -1,6 +1,6 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
-import { askedMine, closesMine, rememberAsk } from "./asks.ts";
+import { ASK_KINDS, askedMine, closesMine, rememberAsk } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
@@ -103,6 +103,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   }
   // Роды закрытия и возражения важны сами по себе; слово человека — всегда целиком.
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  // Роды вопроса — записи с адресатом (#6867): ответ человека чужому — не слово мне.
+  if (rk && ASK_KINDS.has(rk.kind)) return false;
   // Тело слова человека мост метит origin (roomstack.ts, #5953): провенанс тела его не несёт.
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
 }

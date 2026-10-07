@@ -30,6 +30,7 @@
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
+import { ASK_KINDS } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -72,7 +73,14 @@ const WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 3_6
 function toPile(frame: Frame | null): boolean {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  // Роды вопроса — записи с адресатом (#6867): ответ человека раскладывается адресованностью.
+  if (
+    (frame.origin ?? classifyOrigin(frame)) === "human" &&
+    !rk?.phase &&
+    !rk?.aside &&
+    !ASK_KINDS.has(rk?.kind ?? "")
+  )
+    return false;
   return !addressedToMine(frame) || stackOf(frame) === "batch"; // адресованность — до стопки: слово в полёте запоминается
 }
 

@@ -98,7 +98,7 @@ export const askKeyOf = (frame: Rec): string =>
   askKey(frame, obj(frame.line).entry_id ?? frame.entry_id);
 /**
  * Ключ памяти вопроса, который гасит этот кадр: у снятия — fields.withdraws,
- * у ответа — line.refers_to; иного — пусто.
+ * у ответа — line.refers_to, иначе in_reply_to конверта; иного — пусто.
  */
 export const closedKeyOf = (frame: Rec): string => {
   const line = obj(frame.line);
@@ -107,7 +107,7 @@ export const closedKeyOf = (frame: Rec): string => {
     kind === "progress"
       ? str(obj(line.fields).withdraws)
       : kind === "answer"
-        ? str(line.refers_to)
+        ? str(line.refers_to) || str(frame.in_reply_to)
         : "";
   return n ? askKey(frame, n) : "";
 };
