@@ -9,7 +9,7 @@
 // первый помнит в памяти отданного места (.seen), чтобы узнать второй и после
 // своего перезапуска и в лежалых.
 import { addressedToMine, wordKeyOf } from "../shared/addressed.ts";
-import { answerAliasOf, askedMine, askFromPerson, askKeyOf, closedKeyOf } from "../shared/asks.ts";
+import { answerAliasOf, askedMine, askKeyOf, closedKeyOf } from "../shared/asks.ts";
 import { type Frame } from "../shared/channel.ts";
 import { roomKind } from "../shared/room-kinds.ts";
 import { noteSeen } from "../shared/seen.ts";
@@ -22,8 +22,6 @@ const fieldsOf = (frame: Frame): Record<string, unknown> => rec(rec(rec(frame).l
 /** Слово в полёте и вопрос, адресованные месту, — в память; тело и снятие — пометкой addressed. */
 export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>): void {
   const rk = roomKind(frame);
-  // Пачка сторожей узнаёт слово человека по origin (#6867, askFromPerson).
-  if (askFromPerson(frame)) frame.origin = "peer";
   if (rk?.kind === "said" && rk.phase === "pending") {
     if (addressedToMine(frame)) noteSeen(seenPath, markOf(frame), seen);
   } else if (rk?.kind === "body" && !rk.aside) {

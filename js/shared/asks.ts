@@ -64,8 +64,8 @@ const byMe = (frame: Rec): boolean => {
 
 /**
  * Строка вопроса от места человека (окно, бот): её раскладывает адресованность,
- * не правило слова человека «всегда целиком» (#6867). Одно определение — мосту
- * (пометка origin для пачки сторожей) и плагинам.
+ * не правило слова человека «всегда целиком» (#6867). Одно определение — пачке
+ * сторожей моста (roomstack.ts) и плагину OpenCode.
  */
 export const askFromPerson = (frame: Rec): boolean =>
   ASK_KINDS.has(str(obj(frame.line).kind)) && classifyOrigin(frame as Frame) === "human";
