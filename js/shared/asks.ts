@@ -14,8 +14,7 @@ export const ASK_WORDS: Readonly<Record<string, string>> = {
   ask_advice: "рекомендация: {option}{ — why}",
   answer: "{author} отвечает на [{refers_to}]: {reply}",
   ack: "ответ [{refers_to}] принят{: reply} · {author}",
-  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
-  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
+  // Снятие вопроса — обычная строка progress на его ключе: своего слова у неё нет.
   // Зов роли платформой по погасшему месту: cause — почему зовут.
   invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
   invite_answer_waiting:
@@ -30,7 +29,6 @@ export const ASK_WORDS_EN: Readonly<Record<string, string>> = {
   ask_advice: "recommended: {option}{ — why}",
   answer: "{author} answers [{refers_to}]: {reply}",
   ack: "answer [{refers_to}] accepted{: reply} · {author}",
-  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
   invite_ownerless:
     "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
   invite_answer_waiting:
@@ -46,23 +44,29 @@ export const askWord = (key: string): string | undefined =>
 
 const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "", values);
 
-/** Роль из to_karta: объект {seq, name, realm} или голый seq. */
-const kartaOf = (to: unknown): Rec => (typeof to === "object" ? obj(to) : { seq: to });
+/**
+ * Адресат записи — fields.to (провод api, наблюдено по коду PR-A): у ask —
+ * {karta {seq, name, realm}, standing? — место}; у answer и ack — само место
+ * ждавшего {id, standing, name?, karta?}.
+ */
+const toOf = (fields: Rec): Rec => obj(fields.to);
 
-/** Вопрос мне: to_karta — моя роль (сверка как у приглашения роли) либо to_standing_id — моё место. */
+/** Вопрос мне: to.karta — моя роль (сверка как у приглашения роли) либо to.standing — моё место. */
 export function askedMine(frame: Rec, fields: Rec): boolean {
   const mine = mineOf(frame);
   // Эхо своего вопроса — не вопрос мне, даже если спрошена моя же роль.
   const author = obj(obj(frame.line).author);
   if ([str(author.id), str(author.standing)].some((a) => a && mine.includes(a))) return false;
-  if (mine.includes(str(fields.to_standing_id))) return true;
-  return myRole(frame, { karta: kartaOf(fields.to_karta) });
+  const to = toOf(fields);
+  const place = addresseeOf(to.standing);
+  if (place?.addr.some((a) => mine.includes(a))) return true;
+  return myRole(frame, { karta: to.karta });
 }
 
-/** Адресат кадра (addressee) — моё место, и он из дела не вышел. */
+/** Ответ или приём мне: адресат кадра (addressee, иначе fields.to) — моё место, и он из дела не вышел. */
 export function addressedMine(frame: Rec): boolean {
   if (frame.addressee_left === true) return false;
-  const to = addresseeOf(frame.addressee);
+  const to = addresseeOf(frame.addressee) ?? addresseeOf(toOf(obj(obj(frame.line).fields)));
   const mine = mineOf(frame);
   return !!to && to.addr.some((a) => mine.includes(a));
 }
@@ -88,8 +92,9 @@ function formOf(fields: Rec): string {
 export function askValues(kind: string, line: Rec, fields: Rec): Rec {
   if (kind !== "ask")
     return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
-  const k = kartaOf(fields.to_karta);
-  const place = str(fields.to_standing) || str(fields.to_standing_id);
+  const to = toOf(fields);
+  const k = obj(to.karta);
+  const place = addresseeOf(to.standing)?.label ?? "";
   const rec = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),

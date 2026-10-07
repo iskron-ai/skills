@@ -5510,12 +5510,18 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     assert.doesNotMatch(q.text, /рекомендация/, "no recommendation — no words for it");
     await quiet(ask(95, MY_KARTA + 1));
     await quiet(answer(96, 95, BORIS));
-    await quiet(askWithdrawn(98, 95));
+    await quiet(askWithdrawn(98));
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
     assert.equal(a.delivery, "steer", "the answer to my question wakes me now");
     assert.match(a.text, /^№7 «Стенд»: записей 3, тебе 0 — /, "the others ride as a count");
     assert.match(a.text, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: later; «после обеда»/);
     assert.doesNotMatch(a.text, /снят|@boris/);
+    // A question to my seat (fields.to.standing) wakes me even when its role is not mine.
+    const toSeat = ask(97, MY_KARTA + 1);
+    toSeat.line.fields.to.standing = { id: ME_ID, standing: ME, name: "proba" };
+    const s = await send(toSeat, 3);
+    assert.equal(s.delivery, "steer", "a question to my seat interrupts");
+    assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
   } finally {
     await rec.stop();
   }

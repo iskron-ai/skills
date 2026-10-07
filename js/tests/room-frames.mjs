@@ -402,7 +402,7 @@ export const ask = (entry_id, seq = MY_KARTA, fields = {}) =>
     key: ASK_KEY,
     line: { done: "Выкатывать сегодня?", verdict: "partial" },
     fields: {
-      to_karta: { seq, name: "🚚 Поставщик плитки", realm: MY_REALM },
+      to: { karta: { id: "k-tile", seq, name: "🚚 Поставщик плитки", realm: MY_REALM } },
       form: "yes_no",
       recommendation: { option: "yes", why: "гейт зелёный" },
       ...fields,
@@ -410,15 +410,27 @@ export const ask = (entry_id, seq = MY_KARTA, fields = {}) =>
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 
-/** Ответ человека на вопрос refers_to; кадр адресован месту спросившего. */
+/** Место строкой-адресом — формой места провода {id, standing, name?}. */
+const placeOf = (standing) => ({ id: standing === ME ? ME_ID : `id-${standing}`, standing });
+
+/**
+ * Ответ человека на вопрос refers_to: fields.to и addressee конверта — место
+ * спросившего; номер вопроса — line.refers_to и in_reply_to конверта.
+ */
 export const answer = (entry_id, refers_to, addressee = ME, fields = { choice: "yes" }) =>
   roomFrame("answer", {
     entry_id,
     key: ASK_KEY,
     author: HUMAN,
-    line: { done: "после обеда", verdict: "partial", in_reply_to: refers_to },
-    fields,
-    envelope: { realm: MY_REALM, karta_seq: MY_KARTA, addressee, in_reply_to: refers_to },
+    line: { done: "после обеда", verdict: "partial", refers_to },
+    fields: { to: placeOf(addressee), ...fields },
+    envelope: {
+      realm: MY_REALM,
+      karta_seq: MY_KARTA,
+      addressee,
+      in_reply_to: refers_to,
+      in_reply_to_from: placeOf(addressee),
+    },
   });
 
 /** «Принята» на ответ refers_to; кадр адресован месту ответившего. */
@@ -426,17 +438,23 @@ export const ack = (entry_id, refers_to, addressee = HUMAN.standing) =>
   roomFrame("ack", {
     entry_id,
     key: ASK_KEY,
-    line: { done: "выкатываю после обеда", verdict: "ok", in_reply_to: refers_to },
-    envelope: { realm: MY_REALM, karta_seq: MY_KARTA, addressee, in_reply_to: refers_to },
+    line: { done: "выкатываю после обеда", verdict: "ok", refers_to },
+    fields: { to: placeOf(addressee) },
+    envelope: {
+      realm: MY_REALM,
+      karta_seq: MY_KARTA,
+      addressee,
+      in_reply_to: refers_to,
+      in_reply_to_from: placeOf(addressee),
+    },
   });
 
-/** Снятие вопроса: progress роли спросившего на ключе вопроса, fields.withdraws — номер ask. */
-export const askWithdrawn = (entry_id, withdraws) =>
+/** Снятие вопроса: обычная строка progress роли спросившего на ключе вопроса, поля пусты. */
+export const askWithdrawn = (entry_id) =>
   roomFrame("progress", {
     entry_id,
     key: ASK_KEY,
     line: { done: "снят: выкатили иначе", verdict: "bad" },
-    fields: { withdraws },
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
 
