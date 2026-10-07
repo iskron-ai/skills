@@ -3,8 +3,8 @@
 // место по записи держания, а не ротирует его connect-ом. Две двери:
 //   • по имени — iskron_stand (stand.ts) зовёт resumeFromDisk;
 //   • по ключу или каталогу сессии — запрос плагина `iskron/resume {key?, cwd?, session?}`:
-//     мост находит СВОЮ запись (тот же харнесс; тот же ключ — либо тот же
-//     каталог И та же сессия, что на месте стояла), открывает сокет,
+//     мост находит СВОЮ запись (тот же харнесс; тот же ключ без другой сессии
+//     на нём — либо тот же каталог И та же сессия, что на месте стояла), открывает сокет,
 //     регистрируется и отвечает, сколько кадров ожидало. Чужого харнесса запись
 //     не трогается: Claude Code, вставший в той же копии, не теряет места от
 //     плагина OpenCode. Сессия, не стоявшая на месте, по одному каталогу его не
@@ -43,6 +43,7 @@ import {
   type HoldRecord,
   keyOf,
   noteHarnessSession,
+  noteSeatBase,
   readHoldRecord,
   restoreHoldRecord,
   sessionOfBridge,
@@ -65,17 +66,6 @@ export function takeLapsed(): boolean {
   const was = RJ.lapsed;
   RJ.lapsed = false;
   return was;
-}
-
-/** Слушающим доска читает прежний мост этого каталога, а он мёртв: запись держания цела, локальный сокет не отвечает. */
-export async function deadPredecessor(
-  realm: string,
-  karta: string | number,
-  name: string,
-): Promise<boolean> {
-  const key = keyOf(realm, karta, name);
-  if (!readHoldRecord(key)) return false;
-  return !(await localSocketAlive(localSocketPathOf(key)));
 }
 
 /**
@@ -104,6 +94,7 @@ export async function resumeFromDisk(
   const prev = state.standing;
   state.standing = { realm, karta, name };
   const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
+  if (rec.base) noteSeatBase(key, rec.base); // запись нового держателя после отъёма её уже не скажет
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
@@ -193,9 +184,10 @@ function recordsFor(sel: ResumeSelector): {
   sameDir: string[];
   legacy: HoldRecord[];
   left: string[];
+  neighbour: string[];
 } {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync(dir)) return { own: [], sameDir: [], legacy: [], left: [] };
+  if (!existsSync(dir)) return { own: [], sameDir: [], legacy: [], left: [], neighbour: [] };
   const mine = harnessName();
   const led = ledKey();
   const byKey: HoldRecord[] = [];
@@ -203,6 +195,7 @@ function recordsFor(sel: ResumeSelector): {
   const sameDir: string[] = [];
   const legacy: HoldRecord[] = [];
   const left: string[] = [];
+  const neighbour: string[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
       const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
@@ -222,7 +215,10 @@ function recordsFor(sel: ResumeSelector): {
         continue;
       }
       const stoodHere = key === led || (!!sel.session && fresh.session === sel.session);
-      if (keyed) byKey.push(fresh);
+      // По ключу — тоже не место соседа: на записи стояла другая названная сессия (#6706).
+      const theirs = !!sel.session && !!fresh.session && fresh.session !== sel.session;
+      if (keyed && theirs) neighbour.push(key);
+      else if (keyed) byKey.push(fresh);
       else if (stoodHere) byCwd.push(fresh);
       else if (!fresh.session) legacy.push(fresh);
     } catch {
@@ -234,6 +230,7 @@ function recordsFor(sel: ResumeSelector): {
     sameDir,
     legacy,
     left,
+    neighbour,
   };
 }
 
@@ -291,11 +288,12 @@ async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
  * «держу»; запарковано — обратно на место; чужое или ведём другое — не трогаем.
  */
 export async function resumeBy(sel: ResumeSelector, register = true): Promise<ResumeOutcome> {
-  const { own: recs, sameDir, legacy: legacyRecs, left } = recordsFor(sel);
+  const { own: recs, sameDir, legacy: legacyRecs, left, neighbour } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
     const said = [resumeWords.noRecord(sel.key, sel.cwd)];
-    if (sel.key) {
+    if (neighbour.length) said.push(resumeWords.neighbourKey(neighbour));
+    else if (sel.key) {
       // Ключ назван — место держалось; записи нет — она ушла по сроку (#6649).
       said.push(resumeWords.rejoin());
       RJ.lapsed = true;

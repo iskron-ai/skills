@@ -23,8 +23,8 @@ import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
-import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
-import { type Frame, H, handoverReason } from "./holdstate.ts";
+import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
+import { E, type Frame, H, handoverReason } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import {
   addExtra,
@@ -133,7 +133,7 @@ function isOwn(realm: string, karta: string | number, name: string): boolean {
 
 /** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
 export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
-  return !!H.holder?.alive && isOwn(realm, karta, name);
+  return !!H.holder?.alive && !H.unheard && isOwn(realm, karta, name); // возврат без hello — не держание
 }
 
 /** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка цела, слух — у другого; статусный адрес — пока его не повернул чужой connect. */
@@ -194,11 +194,11 @@ export const heldKey = (realm?: string): string | null =>
   (realm ? besideKeyIn(realm) : null) ?? H.currentKey;
 
 /** Событие канала — всем дверям: сокет у мест общий. */
-function broadcast(ev: ChannelEvent): void {
+export function broadcast(ev: ChannelEvent): void {
   for (const d of doors()) d.broadcast(ev);
 }
 
-function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
+export function notify(level: "info" | "warning" | "error", data: ChannelEvent): void {
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
@@ -247,7 +247,7 @@ export function releaseStanding(
   own = false,
   keepBusy = false,
 ): void {
-  if (forget && H.currentKey) dropHoldRecord(H.currentKey);
+  if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
   if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H.holder && !H.door) return;
   // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
@@ -271,7 +271,7 @@ export function releaseStanding(
   for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
   H.door?.close();
   H.door = null;
-  H.parked = false;
+  Object.assign(H, { parked: false, unheard: false });
   H.currentKey = null;
   H.currentUrl = null;
   H.currentStatusUrl = null;
@@ -287,9 +287,8 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   // То же место заново — места рядом остаются на канале (#5838).
   const same = !!H.currentKey && H.currentKey === key;
   releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
-  H.currentKey = key;
-  H.currentUrl = url;
-  H.currentStatusUrl = statusUrl || deriveStatusUrl(url);
+  const status = statusUrl || deriveStatusUrl(url);
+  Object.assign(H, { currentKey: key, currentUrl: url, currentStatusUrl: status });
   H.door = new Door(key, doorHooks);
   H.door.open();
   const s = state.standing;
@@ -331,14 +330,18 @@ export function parkStanding(reason: string): string | null {
   return H.currentKey;
 }
 
+/** Сокет открывается заново тем же адресом: слух — с hello нового открытия, не прежним из кольца (#5036 §4, deaf.ts). */
+function expectHello(): void {
+  H.unheard = true;
+  for (const d of doors())
+    d.ring.splice(0, d.ring.length, ...d.ring.filter((r) => r.frame?.type !== "hello"));
+}
+
 /** Вернуться на место, с которого ушёл: тот же адрес, сокет открыт заново. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
   H.parked = false;
-  // Доказательство слуха — свежий hello за этим открытием, не прежний из кольца (#5036 §4).
-  for (const d of doors())
-    for (let i = d.ring.length - 1; i >= 0; i--)
-      if (d.ring[i]?.frame?.type === "hello") d.ring.splice(i, 1);
+  expectHello();
   openHolder(H.currentUrl, H.currentKey);
   standingLog(`resumed ${H.currentKey}: socket reopened on the same address`);
   return true;
@@ -373,6 +376,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
+  if (hello) Object.assign(H, { unheard: false, deafKey: null }); // слух доказан
   if (hello) for (const w of [...H.helloWaiters]) w(full);
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
@@ -412,6 +416,7 @@ function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
       url,
+      onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();
@@ -429,15 +434,10 @@ function openHolder(url: string, key: string): void {
         });
       },
       onEvicted: (code) => {
-        const text = holdWords.evicted(code);
-        log(text);
         standingLog(`evicted ${key}: close ${code}`);
         H.evictedKey = key;
-        dropHoldRecord(key); // адрес повернули — запись мертва
-        const ev: ChannelEvent = { kind: "evicted", code, text };
-        H.evictedEvent = ev;
-        broadcast(ev);
-        notify("warning", ev);
+        dropOwnHoldRecord(key, url); // адрес повернули — своя запись мертва, запись отнявшего цела
+        E.next?.(key, url, code); // слово об отъёме и ход дальше — evicted.ts
       },
       onDeadToken: (code) => {
         if (H.revokingOwn) {
@@ -475,6 +475,7 @@ function openHolder(url: string, key: string): void {
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
+        Object.assign(H, { deafKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
         releaseStanding(holdWords.tokenDead(), true);
       },
       onServiceAlive: (version) => {
