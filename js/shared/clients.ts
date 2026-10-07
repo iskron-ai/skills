@@ -29,4 +29,9 @@ export const HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
 // Корень набора скиллов для attrs.skills (#6226): мост вне набора (домашняя копия)
 // узнаёт набор только этой переменной — её ставят плагин OpenCode и расширение pi.
 export const SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+// Набор узнаётся по мосту поставки в нём: `<корень>/<BRIDGE_SKILL>/scripts/<BRIDGE_FILE>` —
+// так его ищет мост (bridge/skillset.ts) и так плагин OpenCode открывает чтение скиллов набора
+// (opencode/skillread.ts, #6847).
+export const BRIDGE_SKILL = "establish-mcp";
+export const BRIDGE_FILE = "iskron.mjs";
 export const HOSTED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);

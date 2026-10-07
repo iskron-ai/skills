@@ -28,6 +28,7 @@ import { homeOf } from "./host.ts";
 import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
 import { teller } from "./leadwords.ts";
 import { annotate } from "./notice.ts";
+import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createTwins } from "./twins.ts";
 import { createUsageFeed } from "./usage.ts";
@@ -137,6 +138,17 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     commands = await setupCommands(ctx, say);
   } catch (e) {
     say(`Искрон: команды скиллов не встали — ${(e as Error).message}`, "error");
+  }
+
+  // Files of a delivery skill outside the working copy are read without an ask (skillread.ts, #6847).
+  try {
+    if (!(await setupSkillReads(ctx)))
+      say(
+        "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
+        "warning",
+      );
+  } catch (e) {
+    say(`Искрон: чтение файлов скиллов поставки не открылось — ${(e as Error).message}`, "error");
   }
 
   // Расход сессии — в attrs её собственного места (usage.ts, #6401): корня — месту

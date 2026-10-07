@@ -59,7 +59,7 @@ claude plugin install iskron@iskron
 npx skills add iskron-ai/skills --all --global
 ```
 
-`--all` уже значит «все скиллы всем харнессам» (`--skill '*' --agent '*' -y`), так что сужать его через `--agent` не нужно — этим его только отменяют. `--global` обязателен: без него скиллы ставятся **в текущий репозиторий**, а не пользователю. Содержимое ляжет однажды в `~/.agents/skills/`, каталоги харнессов получат симлинки на него; обновление — повторный `npx skills add iskron-ai/skills --all --global`: он приносит скиллы, появившиеся в поставке, и освежает стоящие (`npx skills update --global` ходит только по lock-файлу `~/.agents/.skill-lock.json` и новых не приносит; снятый из поставки скилл удаляй руками — `npx skills remove <имя> --global`).
+`--all` уже значит «все скиллы всем харнессам» (`--skill '*' --agent '*' -y`), так что сужать его через `--agent` не нужно — этим его только отменяют. `--global` обязателен: без него скиллы ставятся **в текущий репозиторий**, а не пользователю. Содержимое ляжет однажды в `~/.agents/skills/`, каталоги харнессов получат симлинки на него; обновление — повторный `npx skills add iskron-ai/skills --all --global`: он приносит скиллы, появившиеся в поставке, и освежает стоящие (`npx skills update --global` ходит только по lock-файлу `~/.agents/.skill-lock.json` (при заданном `XDG_STATE_HOME` — `$XDG_STATE_HOME/skills/.skill-lock.json`) и новых не приносит; снятый из поставки скилл удаляй руками — `npx skills remove <имя> --global`).
 
 **Pi — своя одна команда, и она же ставит расширение:**
 
@@ -369,7 +369,7 @@ OpenCode мост живёт в пакете и обновляется вмес�
 своей ветки заново (`/plugin marketplace update iskron` и `/reload-plugins` в Claude
 Code; повторный `npx skills add iskron-ai/skills --all --global` — приносит появившиеся
 в поставке скиллы и освежает стоящие, а `npx skills update --global` ходит только по
-lock-файлу `~/.agents/.skill-lock.json` и новых не приносит, снятый из поставки скилл
+lock-файлу `~/.agents/.skill-lock.json` (или `$XDG_STATE_HOME/skills/.skill-lock.json`) и новых не приносит, снятый из поставки скилл
 удаляй руками — `npx skills remove <имя> --global`; `pi update git:github.com/iskron-ai/skills`;
 `codex plugin marketplace upgrade iskron`, затем `codex plugin remove iskron@iskron` и
 `codex plugin add iskron@iskron`), затем перезапусти сессию: мост прежней сборки живёт
