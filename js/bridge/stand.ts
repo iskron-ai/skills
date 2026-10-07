@@ -59,7 +59,7 @@ import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
-import { ownByRecord, placeFor, suffixOf } from "./separate.ts";
+import { type Resumed, seatFor, suffixOf } from "./separate.ts";
 import { SW } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -234,10 +234,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Имя держит прежний мост этой сессии — своё, возвращается сам; другая сессия —
   // встаём рядом на имя.N со слухом; чужим местом не подписываемся (#6706).
   let ownSession = false;
+  let byRecord: Resumed | null = null; // своё место, возвращённое по записи держания (seatFor)
   if (base && a.take !== true && name === base) {
     const listensOnBoard = (n: string): boolean =>
       entries.some((e) => e.karta === karta && nameOf(e.address) === n && listens(e));
-    const choice = await placeFor(realm, karta, base, listensOnBoard);
+    const seat = await seatFor(realm, karta, base, listensOnBoard, beside);
+    const choice = seat.choice;
+    byRecord = seat.resumed;
     if ("refusal" in choice) {
       lines.push(choice.refusal);
       return done(true);
@@ -288,14 +291,13 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Мост поднят заново под местом, которое держал прежний мост этого каталога
   // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
   // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
-  // «слушает» (окно платформы после смерти прежнего моста) — возврат только по
-  // записи этой сессии, со слухом; подписи без слуха нет (#6706).
+  // «слушает» (окно платформы после смерти прежнего моста) — возврат уже выше,
+  // только по записи, со слухом (seatFor); подписи без слуха нет (#6706).
   // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
   const fresh =
     !sat && !take && !holdsStanding(realm, karta, name) && !isParked(realm, karta, name);
-  const ownRecord = fresh && listensElsewhere && (await ownByRecord(realm, karta, name));
   const resumed =
-    fresh && (!listensElsewhere || ownRecord) ? await resumeFromDisk(realm, karta, name) : null;
+    byRecord ?? (fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null);
   const extra: string[] = []; // строки после шапки ответа
   // Сокет держал этот мост и до вызова (свой register, возврат с диска): hello не ждать.
   let socketBefore = false;
@@ -341,7 +343,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     heardHere = true;
     socketBefore = true;
     how = SW.howRegister();
-  } else if (!take && listensElsewhere && !ownRecord) {
+  } else if (!take && listensElsewhere) {
     // Слушает другой держатель, а места рядом выбрано не было: подписи без слуха нет (#6706).
     lines.push(SW.otherHolder(mine?.address ?? name));
     return done(true);
@@ -372,10 +374,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     resetKnocks(realm, karta, name);
     heardHere = true;
-    how =
-      ownSession || ownRecord
-        ? SW.howOwnSession()
-        : SW.howConnect(!!mine, listensElsewhere, a.take === true);
+    how = ownSession
+      ? SW.howOwnSession()
+      : SW.howConnect(!!mine, listensElsewhere, a.take === true);
     // Место занято заново после возврата, не нашедшего записи: дела могли пропасть (#6649).
     if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
   }

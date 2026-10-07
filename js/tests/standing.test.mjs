@@ -1591,7 +1591,7 @@ test("a re-armed watchdog gets hello and only the frames no local client has see
 // A bridge raised anew under a place a previous bridge of this auth dir held
 // (plugin restart, /mcp reconnect) takes the place back from disk — the same
 // address, no connect; a revoke or a dead token forgets the record (#5061).
-test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew; while the board still reads «слушает» — only register", async (t) => {
+test("a bridge restarted under a held place resumes it from disk: same address, no connect, the old busy line not published anew", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const st0 = await bridge.call("tools/call", 4, {
@@ -1616,18 +1616,8 @@ test("a bridge restarted under a held place resumes it from disk: same address, 
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
-  // The platform's grace window: the board still reads «слушает» for a while after the
-  // predecessor died — the canon says only register then; the record waits.
-  await fake.control({ places: [{ karta: "931", name: "proba", listening: true }] });
-  const early = await second.call("tools/call", 2, {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  const saidEarly = (early.result?.content ?? []).map((c) => c.text ?? "").join("\n");
-  assert.match(saidEarly, /прежний мост этого каталога, а он мёртв/, saidEarly);
-  assert.match(saidEarly, /вернёт место с диска/, "the answer names the way back");
-  assert.equal(fresh().length, 0, "no socket is opened while the board reads «слушает»");
-  assert.equal(fake.state.counts.connect, 1);
+  // Окно платформы, пока доска ещё читает мёртвого «слушающим», — без «только
+  // register» (#6706): stand.test.mjs, «a stopped holder listening».
   await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
 
   const posts = fake.state.counts.status_posts;
