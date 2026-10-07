@@ -198,8 +198,8 @@ export interface HoldOptions {
   onNote?: (text: string) => void;
   /** Соединение подвисло и переоткрывается: кадры могли пропасть — слово громче служебного. Без него — как onNote. */
   onHung?: (text: string) => void;
-  /** Сокет открывается заново тем же адресом: до его hello слуха нет — адрес мог повернуть другой (контур отвечает 404). */
-  onReopen?: () => void;
+  /** Сокет оборвался и откроется заново тем же адресом: до hello нового открытия слуха нет — адрес мог повернуть другой (контур отвечает 404). */
+  onDropped?: () => void;
 }
 
 export interface Holder {
@@ -230,7 +230,6 @@ export function holdSocket(o: HoldOptions): Holder {
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
-  let opened = false;
   let handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null = null;
   // Живость соединения: последний знак от службы (пинг или кадр), интервал из
   // hello; таймер взводит первый увиденный пинг.
@@ -261,8 +260,6 @@ export function holdSocket(o: HoldOptions): Holder {
 
   function open(): void {
     if (stopped) return;
-    if (opened) o.onReopen?.();
-    opened = true;
     const startedAt = Date.now(); // от конструкции, НЕ в onopen — см. channel.md
     const sock = new WebSocket(o.url);
     ws = sock;
@@ -365,6 +362,7 @@ export function holdSocket(o: HoldOptions): Holder {
       if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
       gone = true;
+      o.onDropped?.();
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;
       if (!fast) slowdown = 0; // сокет прожил — полоса обрывов кончилась

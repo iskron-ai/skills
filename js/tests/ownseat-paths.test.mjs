@@ -240,3 +240,28 @@ test("a reopen onto a turned address released by iskron_stand, the stand then re
   assert.ok(w.result?.isError, `${textOf(w)}\n${b1.stderr}`);
   assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
 });
+
+test("a write right after the socket dropped, before the reopen, onto an address another session turned: refused, and iskron_stand does not register over it", async (t) => {
+  const { fake, cwd, up } = await setup(t);
+  await fake.control({ turned_404: true });
+  const b1 = await up();
+  const b2 = await up(otherDir(t));
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  await fake.control({ ws_close: 1012 });
+  await until(() => fake.state.places.get("931:proba")?.listening === false, "dropped");
+  assert.equal(
+    placeOf(await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  const before = fake.state.writes.length;
+  const w = await write(b1);
+  assert.ok(w.result?.isError, `${textOf(w)}\n${b1.stderr}`);
+  assert.equal(fake.state.writes.length, before, JSON.stringify(fake.state.writes));
+  const regs = placeArgs(fake, "register").length;
+  const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  assert.ok(!placeArgs(fake, "register").slice(regs).includes("proba"), textOf(s1));
+});

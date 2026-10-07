@@ -330,7 +330,7 @@ export function parkStanding(reason: string): string | null {
   return H.currentKey;
 }
 
-/** Сокет открыт заново тем же адресом: слух — с hello этого открытия, не прежним из кольца (#5036 §4, deaf.ts). */
+/** Сокет открывается заново тем же адресом: слух — с hello нового открытия, не прежним из кольца (#5036 §4, deaf.ts). */
 function expectHello(): void {
   H.unheard = true;
   for (const d of doors())
@@ -416,7 +416,7 @@ function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
       url,
-      onReopen: expectHello,
+      onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();
