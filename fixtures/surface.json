@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.97.1"
+    "version": "0.111.0"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -33,6 +33,7 @@
   "enums": {
     "lens": [
       "bianhua",
+      "board",
       "path",
       "tensions",
       "topology",
@@ -142,8 +143,6 @@
       "arrow_reconnect",
       "arrow_update",
       "delete_node",
-      "restore_edge",
-      "restore_node",
       "update_node"
     ],
     "role": [
@@ -319,6 +318,7 @@
       "action",
       "as_of",
       "attrs",
+      "client_id",
       "done",
       "evidence",
       "from_standing",
@@ -333,6 +333,7 @@
       "node",
       "note",
       "offset",
+      "payload",
       "realm",
       "reason",
       "relation",
@@ -353,6 +354,8 @@
       "attrs",
       "channel",
       "cursor",
+      "fold",
+      "from_standing_id",
       "group_by",
       "in_reply_to",
       "karta",
@@ -366,7 +369,9 @@
       "realm",
       "satellite_of",
       "since",
+      "spawned_for",
       "standing",
+      "standing_secret",
       "text",
       "ttl_seconds",
       "until",
@@ -424,6 +429,7 @@
       "user_id"
     ],
     "iskron_orient": [
+      "action",
       "arrow_types",
       "depth",
       "direction",
@@ -432,9 +438,13 @@
       "include_closed",
       "include_schema",
       "lens",
+      "limit",
       "max_depth",
+      "offset",
       "realm",
+      "scope",
       "since",
+      "standing",
       "to",
       "verbose"
     ],
@@ -453,6 +463,7 @@
       "action",
       "as_of",
       "attrs",
+      "client_id",
       "done",
       "evidence",
       "from_standing",
@@ -467,6 +478,7 @@
       "node",
       "note",
       "offset",
+      "payload",
       "realm",
       "reason",
       "relation",
