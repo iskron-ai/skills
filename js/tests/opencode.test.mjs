@@ -225,7 +225,8 @@ function fakeCtx({
       },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
-        synthetics.push(o);
+        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
+        synthetics.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
         return { id: `synthetic-${synthetics.length}`, type: "synthetic" };
       },
       // Session hooks: the probe runs "prompt" the way OpenCode does — awaited,
@@ -1205,7 +1206,7 @@ test("the root's counts ride the root's next prompt, never a subagent's", async 
     const child = await rec.prompt("child", "бриф");
     assert.equal(child, "бриф", `the root's count rode into the subagent's prompt:\n${child}`);
     const root = await rec.prompt("root", "go");
-    assert.match(root, /^go\n\n№7 «Стенд»: записей 1, тебе 0/, root);
+    assert.match(root, /^go\n\n\[iskron\] №7 «Стенд»: записей 1, тебе 0/, root);
   } finally {
     await rec.stop();
   }
@@ -2990,6 +2991,7 @@ test("a parent moved with a satellite child: the old instance ends the child wit
     await until(() => A.synthetics.some((s) => s.sessionID === "root"), "the word in the parent");
     const toParent = A.synthetics.filter((s) => s.sessionID === "root");
     assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
+    assert.equal(toParent[0].marked, true, "the word to the parent carries the delivery's mark");
     assert.equal(toParent[0].resume, false, "it does not wake the parent");
     // queue в занятого родителя после его хода запускал ещё один ход (e2e: 14.217→14.229).
     assert.equal(toParent[0].delivery, "steer", "into the going turn, not one more after it");
