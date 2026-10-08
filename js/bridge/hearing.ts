@@ -10,13 +10,21 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { sameDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.ts";
+import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { doors, holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
-import { holdRecordsNamed, keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import {
+  type HoldRecord,
+  holdRecordsNamed,
+  keyOf,
+  readHoldRecord,
+  sessionOfBridge,
+} from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { resolveRealms, sameRealm } from "./realms.ts";
@@ -105,14 +113,30 @@ function keysNamed(realm: string, name: string): string[] {
 }
 
 /**
- * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
- * этой сессии (её запись держания), другой — или никто (сокета нет).
+ * Запись без сессии этого харнесса из этого каталога: её держатель сессии не назвал
+ * (возврат с диска до слова плагина, запись прежней сборки) — для названной сессии
+ * харнесса место своё, а не другой живой сессии (#6702). Живой мост названной сессии
+ * подписывает запись, как только сессию ему назовут (resume.ts).
  */
-export async function localHolder(key: string): Promise<"self" | "session" | "other" | null> {
+export const unsignedHere = (rec: HoldRecord, cwd: string): boolean =>
+  !rec.session && !rec.left && rec.client === harnessName() && sameDir(rec.cwd, cwd);
+
+/**
+ * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
+ * этой сессии (её запись держания, либо запись без сессии харнесса и каталога `cwd`
+ * у названной сессии), другой — или никто (сокета нет). Харнесс без имён сессий
+ * своим считает только сокет этого моста: живой прежний мост той же папки — чужой.
+ */
+export async function localHolder(
+  key: string,
+  cwd?: string,
+): Promise<"self" | "session" | "other" | null> {
   if (!(await localSocketAlive(localSocketPathOf(key)))) return null;
   if (doors().some((d) => d.key === key && d.ownsSocket)) return "self";
   const me = sessionOfBridge();
-  return me && readHoldRecord(key, true)?.session === me ? "session" : "other";
+  const rec = me ? readHoldRecord(key, true) : null;
+  if (!rec) return "other";
+  return rec.session === me || (cwd != null && unsignedHere(rec, cwd)) ? "session" : "other";
 }
 
 /** Живой локальный сокет места держит мост другой сессии. */

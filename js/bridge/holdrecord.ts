@@ -102,8 +102,10 @@ export function seatBaseOf(key: string): string | null {
 }
 
 /**
- * Сессия в записи — только названная ЭТОМУ процессу моста (или переданная явно):
- * мост, чья сессия не названа, чужую с диска не наследует (#6017).
+ * Сессия в записи — названная ЭТОМУ процессу моста (или переданная явно); мост,
+ * чья сессия не названа, чужую с диска не наследует (#6017) — кроме записи того же
+ * адреса: место продолжается (возврат с диска, занятость, отметка), и стоявшая на
+ * нём сессия из записи не стирается (#6702).
  * `left` держится с диска, пока новое держание не скажет `left: false`.
  */
 export function writeHoldRecord(
@@ -115,8 +117,8 @@ export function writeHoldRecord(
   // Место спутника живёт прогоном (satellite.ts): с диска его возвращает только пауза на перезагрузку плагина (suspend.ts).
   if (CFG.satellite && !paused) return;
   try {
-    const session = H.session ?? rec.session;
-    const was = rec.left == null || (rec.base ?? B.get(key)) == null ? onDisk(key) : null;
+    const was = onDisk(key);
+    const session = H.session ?? rec.session ?? (was?.url === rec.url ? was.session : undefined);
     const left = rec.left ?? was?.left === true;
     writeFileSync(
       holdFilePathFor(key),
