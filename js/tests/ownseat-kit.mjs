@@ -54,6 +54,8 @@ function startBridge(serverUrl, authDir) {
     get stderr() {
       return stderr;
     },
+    /** Смерть без ухода (плагин убит): место не отпущено, запись держания цела. */
+    kill: () => proc.kill("SIGKILL"),
     call(method, params = {}) {
       const myId = ++id;
       const p = new Promise((res, rej) => {

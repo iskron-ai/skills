@@ -1480,6 +1480,33 @@ test("SIGTERM of the daemon is not the agent leaving: the seat comes back and wr
   });
 });
 
+// #6702, обновление 7.4.1 → 7.5.0 на 16-m3: новый демон вернул место по записи держания
+// без сессии харнеса — запись легла без session, и та же сессия OpenCode, вставая
+// заново, сочла своё место чужим и встала рядом на .2.
+test("the daemon's successor brings the seat back and the hold record still names the harness session", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({});
+    await handshake(a);
+    await a.request("iskron/resume", { session: "ses-d" }); // плагин называет сессию мосту
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-s" });
+    assert.ok(!r.result?.isError, textOf(r));
+    const standings = join(dir, "standings");
+    const record = () => {
+      const f = readdirSync(standings).find((x) => x.endsWith(".hold"));
+      return f ? JSON.parse(readFileSync(join(standings, f), "utf8")) : null;
+    };
+    assert.equal(record()?.session, "ses-d", "the record names the session that stood");
+    const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
+    process.kill(first, "SIGTERM");
+    await waitFor("the old daemon gone", () => !alive(first), 30_000);
+    const w = await write(a, "after-term"); // ворота: ждёт возврата места в новой сессии
+    assert.ok(w.result && !w.result.isError, JSON.stringify(w));
+    assert.match(a.stderr, /bringing its place .* back from the hold record/);
+    assert.equal(fake.state.counts.unattributed, 0, a.stderr);
+    assert.equal(record()?.session, "ses-d", `the session survives the handover:\n${a.stderr}`);
+  });
+});
+
 // Сторож места под Monitor харнеса: вывод копится, код выхода — у proc.
 function startWatchdog(dir, key, env = {}) {
   const proc = spawn(NODE, [BRIDGE, "watchdog", key, "--auth-dir", dir], {

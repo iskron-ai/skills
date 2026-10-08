@@ -746,7 +746,7 @@ test("a frame put into the Codex thread is marked delivered — the fallback exi
     ws_send: JSON.stringify({ type: "message", id: "cx-1", body: "в тред Codex" }),
   });
   await waitFor(() => readFileSync(log, "utf8").includes("turn/start"), "the frame in the thread");
-  await new Promise((r) => setTimeout(r, 200));
+  await waitSeen(join(dir, "standings"), "cx-1"); // тред принял ход — сторож пометил
   wd.proc.kill("SIGKILL");
   await wd.done;
   const fallback = runClient("watchdog-exit", dir, key, 2500);
@@ -4123,6 +4123,7 @@ test("a re-armed watchdog is not handed again from the ring a case copy whose ev
     ws_send: graphEvent("inbox-rr", 91, "событие девяносто один", { stale: true }),
   });
   await waitFor(() => w2.out.includes("событие девяносто один"), "the stale burst");
+  await waitSeen(join(dir, "standings"), "evs:91"); // напечатано, но ещё не помечено — не то, что здесь проверяют
   w2.proc.kill("SIGKILL");
   await w2.done;
   const w3 = await arm();

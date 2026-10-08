@@ -3,13 +3,15 @@
 // сессии харнесса (перезапуск, компакшн: его запись держания несёт её) — этот
 // экземпляр уступает тихо, место своё. Отняла другая сессия — держатель встаёт
 // рядом на имя.N со слухом тем же ходом, что iskron_stand, и говорит это в сессию.
+import { sameDir } from "../shared/canon.ts";
 import { scoped } from "../shared/scope.ts";
+import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { signedRealm } from "./deaf.ts";
 import { type ChannelEvent } from "./door.ts";
 import { UpstreamError } from "./errors.ts";
 import { broadcast, ledKey, notify, releaseStanding, wasEvicted } from "./hold.ts";
-import { readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import { type HoldRecord, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { H, whenEvicted } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { otherRealm } from "./realms.ts";
@@ -44,18 +46,26 @@ function announceEvicted(code: number, text: string): void {
  * другим адресом. Её connect ещё в полёте (его намерение лежит, taking.ts; 4000
  * обгоняет ответ) — ждём его исхода, а не срока: намерение пишется до connect,
  * так что без него отнявший — не мост этой сессии на этой машине.
+ * Мост, чьей сессии не назвали, уступает тихо названной сессии того же харнесса
+ * из того же каталога: она сочла место своим по записи без сессии (hearing.ts),
+ * и держатель без сессии был её сиротой — встав рядом, он занял бы второе место
+ * без слушателя (#6702). Без сессии с обеих сторон — отъём, как прежде.
  */
 async function takenBySession(key: string, url: string): Promise<boolean> {
   const me = sessionOfBridge();
-  if (!me) return false;
+  const ours = (r: HoldRecord): boolean =>
+    me
+      ? r.session === me
+      : !!r.session && r.client === harnessName() && sameDir(r.cwd, H.standCwd ?? undefined);
   const changed = (): boolean | null => {
     const r = readHoldRecord(key, true);
-    return r && r.url !== url ? r.session === me : null;
+    return r && r.url !== url ? ours(r) : null;
   };
   for (;;) {
     const got = changed();
     if (got !== null) return got;
-    if (takerOf(key) !== me) return changed() ?? false; // запись могла лечь за миг до стирания намерения
+    const taker = takerOf(key);
+    if (me ? taker !== me : !taker) return changed() ?? false; // запись могла лечь за миг до стирания намерения
     await new Promise((res) => setTimeout(res, LOOK_MS));
   }
 }
