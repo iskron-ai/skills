@@ -167,8 +167,42 @@ export default {
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
       // тихий пуш (-q/--quiet) не печатает «To <remote>» и по выводу неотличим от отказа: судит состояние git —
       // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master
+      // видимый отказ git (fatal:, error:, ! [rejected]) — вето на всё решение пуша: код выхода (и неизвестный), строку
+      // подтверждения, равенство ссылок; вето читает весь вывод вызова — fatal:/error: соседней команды глушит и принятый пуш
+      const refused = /^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m.test(out);
+      // пуш только меток (метка выпуска — не ветка на ревью) судит форма команды: после remote каждый refspec —
+      // tag <имя>, refs/tags/…, +refs/tags/…, либо refspec'ов нет и стоит --tags; один голый refspec (без tag, :, +, refs/)
+      // судит вывод — все обновлённые ссылки [new tag]; удаление (:refs/tags/…, --delete, -d), --all, --mirror,
+      // --follow-tags, кавычка, $ или ` в слове, непризнанный refspec — не меточный, будит
+      const tagOnly = (args) => {
+        let skip = false, tags = false, broad = false;
+        const pos = [];
+        for (const t of args.match(/(?:\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^ '"\\])+/g) ?? []) {
+          if (skip) skip = false;
+          else if (/^[0-9]*(?:>>?|<|>&)$/.test(t)) skip = true;
+          else if (/^[0-9]*(?:>>?|<|>&)/.test(t)) continue;
+          else if (/['"\\$`]/.test(t)) broad = true;
+          else if (t === "--tags") tags = true;
+          else if (/^(?:--(?:all|mirror|follow-tags|delete)(?:=|$)|-d$)/.test(t)) broad = true;
+          else if (/^(?:-o|--push-option|--receive-pack|--exec)$/.test(t)) skip = true;
+          else if (!t.startsWith("-")) pos.push(t);
+        }
+        const refs = pos.slice(1);
+        let name = false, ok = true;
+        for (const r of refs) {
+          if (name) name = false;
+          else if (r === "tag") name = true;
+          else if (!/^\+?refs\/tags\/[^:]+(?::refs\/tags\/[^:]+)?$/.test(r)) ok = false;
+        }
+        if (broad) return "no";
+        if (ok && !name && (refs.length > 0 || tags)) return "tag";
+        return refs.length === 1 && !tags && /^(?!refs\/|tag$)[^:+]+$/.test(refs[0]) ? "bare" : "no";
+      };
+      const tagsOut = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/;
+      const kinds = [...cmd.matchAll(new RegExp(String.raw`(?:^|[;&|(\n] *)${push}(?=[ ;&|)\n]|$)(${arg})`, "g"))].map((m) => tagOnly(m[1]));
+      const tagCmd = kinds.length > 0 && !kinds.includes("no") && (!kinds.includes("bare") || tagsOut.test(`\n${out}`));
       let quiet = false;
-      if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<")) {
+      if (!refused && !tagCmd && new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<")) {
         // каталог сессии, не процесса сервера; нет его — хук молчит
         const cwd = await dirOf(input.sessionID);
         if (typeof cwd === "string" && cwd) {
@@ -178,11 +212,12 @@ export default {
           quiet = head !== "" && head === git("rev-parse", "@{push}") && !["main", "master"].includes(git("rev-parse", "--abbrev-ref", "HEAD"));
         }
       }
-      const tagsOnly = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/; // метка выпуска — не ветка на ревью
-      const note = (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet
+      // видимый отказ мержа — вето на побудку мержа; маркера успеха не требует: gh вне терминала успех не печатает
+      const held = !/^(?:error:|fatal:|GraphQL:|X )|not mergeable|merge failed/m.test(out);
+      const note = !refused && !tagCmd && (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
-        : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
-            ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd))
+        : held && (ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
+            ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd)))
           ? "[iskron] мерж — акты после мержа AGENTS.md: протки, карта, модусы по свидетельству, закрыть по оси, reconcile, фидбэк, словарь; работа по ссылке от агента — только семя и модусы поставки."
           : "";
       if (!note || !(await mine(input.sessionID)) || !once(input.id)) return;
