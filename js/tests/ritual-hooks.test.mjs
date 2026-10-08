@@ -54,6 +54,26 @@ const cases = [
     true,
   ],
   ["gh pr merge 12 --squash\necho done", "done", false, false],
+  // a refusal the forge printed vetoes the merge: no success marker is asked for
+  ["gh pr merge 123", "error: Pull request o/r#123 merge failed: conflicts", false, false],
+  [
+    "gh pr merge 123 --squash",
+    "X Pull request o/r#123 is not mergeable: the base branch policy prohibits the merge.",
+    false,
+    false,
+  ],
+  [
+    "gh pr merge 123 --squash 2>&1 && git checkout main && git pull",
+    "GraphQL: Pull Request is not mergeable (mergePullRequest)",
+    false,
+    false,
+  ],
+  [
+    "gh pr merge 123 --squash 2>&1 | tail -3",
+    "✓ Squashed and merged pull request o/r#123 (t)\nfatal: unable to access 'https://github.com/o/r/'",
+    false,
+    false,
+  ],
   ["git checkout main && git pull", "", false, true],
   ["echo gh pr merge", "gh pr merge", false, false],
   // push: the same rule
@@ -127,30 +147,51 @@ const cases = [
     true,
     false,
   ],
-  // a push that moved only tags ships a release mark, not a branch to review
+  // a push of tags only ships a release mark, not a branch to review — and a quiet
+  // one says nothing at all: the form of the command speaks, not the output —
+  // every refspec a tag (`tag <name>`, `refs/tags/…`), or `--tags` alone
   [
-    "git push origin iskron-0.21.1",
+    "git push origin tag iskron-0.21.1",
     "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
     false,
     false,
   ],
+  // a bare tag name is a branch name by form: it wakes, the ceiling
   [
     "git push origin iskron-0.21.1 2>&1 | tail -3",
     "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
-    false,
+    true,
     false,
   ],
-  // a forced tag looks like a forced branch in push output (short names): it wakes, a known gap
+  // a branch beside a tag wakes, though the output names only the new tag
+  [
+    "git push origin main tag v-probe",
+    "To github.com:o/r.git\n * [new tag]         v-probe -> v-probe",
+    true,
+    false,
+  ],
+  ["git push -q origin tag v-x", "", false, false],
+  ["git push --quiet origin --tags", "", false, false],
+  ["git push -q origin +refs/tags/v1 :refs/tags/v0 2>&1 | tail -1", "", false, false],
+  ["git push -q origin tag v1 && git push -q origin tag v2", "", false, false],
+  // a branch beside the tags, or a form the parse does not take whole, wakes as before
+  ["git push -q origin feat/x tag v-x", "", true, false],
+  ["git push --follow-tags", "", true, false],
+  ["git push -q --tags --all origin", "", true, false],
+  ["git push -q origin tag v1 && git push -q origin feat/x", "", true, false],
+  ["git push -q origin v1", "", true, false],
+  // a forced tag by its short name is a forced branch by form: it wakes, a known gap
   [
     "git push --force origin v1 2>&1 | tail -3",
     "To github.com:o/r.git\n + 61ff2af...930b18f v1 -> v1 (forced update)",
     true,
     false,
   ],
+  // …a tag deleted by its full name is a tag by form
   [
     "git push origin :refs/tags/v1 2>&1 | tail -3",
     "To github.com:o/r.git\n - [deleted]         v1",
-    true,
+    false,
     false,
   ],
   // …but a branch riding along with the tag still wakes
@@ -424,6 +465,7 @@ const callID = () => `call-${++calls}`;
 
 test("opencode rituals template: wakes by outcome", async () => {
   const after = await loadPlugin();
+  const wrong = [];
   for (const [command, output, push, merge] of cases) {
     const input = {
       tool: "bash",
@@ -434,12 +476,9 @@ test("opencode rituals template: wakes by outcome", async () => {
     };
     await after(input);
     const text = String(input.result.content);
-    assert.deepEqual(
-      { push: text.includes("пуш"), merge: text.includes("мерж") },
-      { push, merge },
-      command,
-    );
+    if (text.includes("пуш") !== push || text.includes("мерж") !== merge) wrong.push(command);
   }
+  assert.deepEqual(wrong, []);
 });
 
 // OpenCode may hand no exit status: a push last in the chain then wakes by its
@@ -465,22 +504,23 @@ test("opencode rituals template: a refused push with an unknown exit does not wa
 });
 
 // A trunk pull that failed brought nothing in: the exit status speaks for it,
-// so a refused pull does not wake the merge ritual.
+// so a refused pull does not wake the merge ritual; nor does a refusal it printed.
 test("opencode rituals template: a failed trunk pull does not wake", async () => {
   const after = await loadPlugin();
-  for (const [exit, merge] of [
-    [1, false],
-    [0, true],
+  for (const [exit, content, merge] of [
+    [1, "Already on 'main'", false],
+    [0, "fatal: unable to access 'https://github.com/o/r/'", false],
+    [0, "Already up to date.", true],
   ]) {
     const input = {
       tool: "bash",
       id: callID(),
       status: "completed",
       input: { command: "git checkout main && git pull" },
-      result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
+      result: { content, metadata: { exit } },
     };
     await after(input);
-    assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
+    assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}: ${content}`);
   }
 });
 
@@ -797,14 +837,18 @@ const fj = [
   ["fj pr merge --help", "", false],
   ['fj pr merge 12 -m "x" -h', "", false],
   ['fj pr merge 12 -m "x" --help', "", false],
+  ["fj pr merge 12", "Error: merge failed: not mergeable", false],
+  ["fj pr merge 12 --method squash", "error: 405 Method Not Allowed", false],
 ];
 
 test("iskronify template defs judge another forge's merge by outcome", () => {
   const skill = readFileSync(templatePath, "utf8");
-  const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
-  assert.ok(push, "push filter line present in hooks.md");
-  const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
-  const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
+  const merge = skill
+    .split("\n")
+    .find((l) => l.startsWith("def a:") && l.includes('"gh pr merge"'));
+  assert.ok(merge, "merge filter line present in hooks.md");
+  const defs = merge.slice(0, merge.indexOf("; held and (") + 2);
+  const filter = defs + 'held and ran("fj pr merge"; "-h|--help"; "Merged PR #")';
   for (const [command, output, wakes] of fj) {
     const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
     let ran = true;
