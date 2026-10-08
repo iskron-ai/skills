@@ -1,7 +1,7 @@
 // Чтение хуков роли для iskron_stand (hook.ts ставит, здесь — читается): список
 // хуков роли — полями webhooks[] (hookfields.ts), без них прозой сервера, — и
 // схема iskron_admin, объявляет ли она параметр channel.
-import { BRIDGE_NAME, tool } from "../delivery/index.ts";
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { FORM } from "./board.ts";
 import { callTool as call } from "./call.ts";
 import { hooksField, reachesYou } from "./hookfields.ts";
@@ -14,7 +14,7 @@ import { type JsonRpcMessage } from "./types.ts";
  * схему прочесть не удалось (tools/list отказал, пуст или тул на другой странице).
  */
 export async function adminParamNames(): Promise<Set<string> | null> {
-  const id = `${BRIDGE_NAME}-admin-schema-${++state.reinitCounter}`;
+  const id = `${ID_PREFIX}bridge-admin-schema-${++state.reinitCounter}`;
   let got: JsonRpcMessage | null = null;
   try {
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {

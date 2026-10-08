@@ -4,11 +4,11 @@
 // второй раз ничего не применит. Записи харнеса (iskron_case, iskron_add_*, update,
 // revoke, leave…) не повторяются: исход их — «неизвестен», как прежде (deliver.ts).
 // connect тоже: прочитанный сервером, он уже выдал место-адрес, и второй повернул бы его.
-import { BRIDGE_NAME, tool } from "../delivery/index.ts";
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** id собственных вызовов моста (call.ts) — не харнеса. */
-export const OWN_CALL_PREFIX = `${BRIDGE_NAME}-call-`;
+export const OWN_CALL_PREFIX = `${ID_PREFIX}bridge-call-`;
 
 /** Тулы, которые только читают: повтор вызова ничего не меняет. */
 export const READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));

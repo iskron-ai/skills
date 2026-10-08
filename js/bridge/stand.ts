@@ -11,7 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { BRIDGE_NAME, tool } from "../delivery/index.ts";
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
@@ -99,7 +99,7 @@ wireEviction(async (place, cwd) => {
   const r = await serialized(() =>
     runStand({
       jsonrpc: "2.0",
-      id: `${BRIDGE_NAME}-evicted`,
+      id: `${ID_PREFIX}bridge-evicted`,
       method: "tools/call",
       params: {
         name: tool("stand"),

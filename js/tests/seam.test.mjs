@@ -400,16 +400,13 @@ test("a seam closed without bye ends the session after the grace; a reattach wit
   );
 });
 
-test("the hello names its product: another delivery's thin bridge is refused, an older one without the name is not", () => {
+test("the hello names its product: a thin bridge of another delivery, or without the name, is refused", () => {
   const own = helloFrame({ build: "b", path: "/f", argv: [] });
   assert.equal(own.product, "iskron", "the hello carries this delivery's product");
   assert.equal(checkHello(own), null, "a hello of this product is accepted");
-  const { product: _, ...older } = own;
-  assert.equal(
-    checkHello(older),
-    null,
-    "a hello without product (an older thin bridge) is accepted",
-  );
+  const { product: _, ...unnamed } = own;
+  assert.ok(checkHello(unnamed), "a hello without product is refused");
+  assert.ok(checkHello({ ...own, seam: 1 }), "a hello of seam protocol 1 is refused");
   const other = checkHello({ ...own, product: "other" });
   assert.ok(other, "a hello of another product is refused");
   assert.match(other, /other/);

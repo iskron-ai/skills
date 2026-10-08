@@ -1,4 +1,4 @@
-import { BRIDGE_NAME, envName, tool } from "../delivery/index.ts";
+import { envName, ID_PREFIX, tool } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { scoped } from "../shared/scope.ts";
 import {
@@ -127,7 +127,7 @@ const H = scoped(() => ({ listing: 0 })); // своих tools/list харнес�
 onReinitialized(() => {
   if (H.listing > 0) return;
   return recheckTools(async () => {
-    const id = `${BRIDGE_NAME}-tools-${++state.reinitCounter}`;
+    const id = `${ID_PREFIX}bridge-tools-${++state.reinitCounter}`;
     let got: JsonRpcMessage | null = null;
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;

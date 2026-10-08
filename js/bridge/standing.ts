@@ -1,4 +1,4 @@
-import { BRIDGE_NAME, tool } from "../delivery/index.ts";
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
@@ -125,7 +125,7 @@ export async function replayRegister(place: Standing | null): Promise<JsonRpcMes
 }
 
 async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | null> {
-  const id = `${BRIDGE_NAME}-restanding-${++state.reinitCounter}`;
+  const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   await post(
     {
