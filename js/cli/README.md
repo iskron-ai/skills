@@ -1,6 +1,6 @@
 # js/cli — подкоманды одного исполняемого файла поставки
 
-Вход — `iskron.ts` (сборка: `skills/establish-mcp/scripts/iskron.mjs`, дом — `~/.iskron-bridge/iskron-bridge.mjs`); список подкоманд — `node iskron.mjs --help`.
+Вход — `main.ts` (сборка: `skills/establish-mcp/scripts/iskron.mjs`, дом — `~/.iskron-bridge/iskron-bridge.mjs`); список подкоманд — `node iskron.mjs --help`.
 
 - `doctor.ts`, `doctorwords.ts`, `doctornode.ts`, `doctorpaths.ts`, `doctorskills.ts`, `codexcache.ts`, `opencode-config.ts`, `subagents.ts`, `subwords.ts`, `satform.ts`, `satprobe.ts`, `frontmatter.ts` — `doctor`: какая сборка стоит и работает ли она.
 - `update.ts` — `update`: свежий релиз в дом.

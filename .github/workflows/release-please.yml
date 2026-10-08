@@ -23,7 +23,7 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # release-please stamps VERSION in js/shared/version.ts (extra-files generic)
+  # release-please stamps VERSION in js/delivery/version.ts (extra-files generic)
   # inside the release PR, but it cannot rebuild the derived artifacts — the
   # shipped JS outputs built from that source and the committed .skill bundles
   # that carry them — and a derived file that lags its source is exactly what

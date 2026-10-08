@@ -1,30 +1,25 @@
-// Версия поставки — ОДНО число на всё: скиллы, мост, сторожа, расширение.
-// Штампует release-please при мерже релизного PR (аннотация ниже); руками не
-// трогать. Между релизами сборку различает хеш собственных байт файла, из
-// которого её спрашивают, — он называет байты, которые реально бежали, включая
-// правленные копии и забытые пересборки.
+// Between releases a build is told apart by the hash of the bytes of the file
+// asking, so edited copies and stale rebuilds name what actually ran.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "7.4.1"; // x-release-please-version
+import { CHANNEL_MARK, VERSION } from "../delivery/index.ts";
 
-/**
- * Метка канала сборки (#6650): ":release" вшивает только сборка выпуска (js/build.mjs под
- * ISKRON_BUILD_CHANNEL=release — джоб bundle-sync релизного PR); всякая иная сборка — ":dev".
- * Строка, не флаг: сборка заменяет её в выходе буквально.
- */
-const CHANNEL_MARK: string = "iskron-build:dev";
-/** Эта сборка — выпуск: только ей дом машины верит как новому мосту. */
+export { VERSION };
+
+const MARK_NAME = CHANNEL_MARK.slice(0, CHANNEL_MARK.lastIndexOf(":"));
+
+/** This build is a release: the only kind the machine's home trusts as a newer bridge (graph @nks/nks-dev, node #6650). */
 export const releaseBuild = (): boolean => CHANNEL_MARK.endsWith(":release");
-/** Текст другой копии — сборка выпуска. Метка собрана по частям: в выходе её буквы стоят только у выпуска. */
+/** Another copy's text is a release build. The mark is assembled at runtime so its letters appear in an output only when the release build stamped them. */
 export const releaseBuildIn = (text: string): boolean =>
-  text.includes(`"${["iskron-build", "release"].join(":")}"`);
-/** Текст другой копии — явно dev-сборка. Копия без метки (выпуски до 7.2.8) — ни то ни другое. */
+  text.includes(`"${[MARK_NAME, "release"].join(":")}"`);
+/** Another copy's text is an explicit dev build. A copy without a mark (releases before 7.2.8) is neither. */
 export const devBuildIn = (text: string): boolean =>
-  text.includes(`"${["iskron-build", "dev"].join(":")}"`);
+  text.includes(`"${[MARK_NAME, "dev"].join(":")}"`);
 
-/** Строка сборки `vX.Y.Z+хеш` для файла, чей `import.meta.url` передан. */
+/** Build string `vX.Y.Z+hash` for the file whose `import.meta.url` is passed. */
 export function buildOf(selfUrl: string): string {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -34,7 +29,7 @@ export function buildOf(selfUrl: string): string {
   }
 }
 
-/** Строка сборки другой копии по её файлу: версия из её текста, хеш по её байтам; null — файл не читается. */
+/** Build string of another copy by its file: version from its text, hash of its bytes; null when unreadable. */
 export function buildOfFile(path: string): string | null {
   try {
     const src = readFileSync(path);
@@ -45,7 +40,7 @@ export function buildOfFile(path: string): string | null {
   }
 }
 
-/** Версия, объявленная в тексте другой копии, — читается строкой, без запуска. */
+/** Version declared in another copy's text, read as a string without running it. */
 export function versionIn(text: string): string | null {
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
   return m ? m[1] : null;
