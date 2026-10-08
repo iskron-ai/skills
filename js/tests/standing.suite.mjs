@@ -2512,7 +2512,9 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   assert.match(back.result.word, /register/);
   // The same session returns: the busy line is its own word, and it comes back (#6017).
   assert.match(back.result.word, /занятость возвращена: на вахте/);
-  assert.match(back.result.word, /iskron_channel\(action="leave"\)/, "the way to let go is named");
+  // Место этой же сессии — своё: слова «место не твоё» нет, плагин показывает его человеку.
+  assert.doesNotMatch(back.result.word, /не твоё|action="leave"/, back.result.word);
+  assert.equal(back.result.own, true, "the answer says the place is proven own");
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.equal(
@@ -2586,6 +2588,7 @@ test("iskron/resume of a session moved to another folder takes back the place it
   const back = await second.call("iskron/resume", 2, { cwd: after, session: "ses-moved" });
   assert.equal(back.result?.resumed, true, JSON.stringify(back));
   assert.equal(back.result.key, "proba--931--nks-dev");
+  assert.doesNotMatch(back.result.word, /не твоё|action="leave"/, back.result.word);
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
 });
 
@@ -2753,7 +2756,11 @@ test("iskron/resume by the session that stood returns its own place, not the fre
   assert.deepEqual(back.result.others, ["brat--931--nks-dev"], "the neighbour is named");
   // Its own line — the same session said it — comes back with the place.
   assert.match(back.result.word, /занятость возвращена: свод двух фаз/);
-  assert.match(back.result.word, /iskron_channel\(action="leave"\)/);
+  assert.doesNotMatch(
+    back.result.word,
+    /не твоё|action="leave"/,
+    "its own seat is not called another's",
+  );
   await waitFor(() => fresh().length === 1, "the socket reopened on the saved address");
   assert.equal(fake.state.counts.status_posts, posts + 1, "only the session's own line");
   assert.equal(fake.state.status, "свод двух фаз");

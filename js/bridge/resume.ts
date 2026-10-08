@@ -191,6 +191,8 @@ export interface ResumeOutcome {
   key?: string;
   pending?: number;
   word: string;
+  /** Место доказано своим (стояла эта сессия, мост его держит или ведёт): слова о чужом месте не нужно. */
+  own?: boolean;
   /**
    * Другие записи держания того же каталога (ключи): каталог не различает
    * стояний одной роли в одной рабочей копии, возврат берёт запись этой сессии —
@@ -212,6 +214,7 @@ async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
     key,
     pending: Number(hello?.pending) || 0,
     word: resumeWords.returnedParked(hello ? Number(hello.pending) || 0 : null),
+    own: true,
   };
 }
 
@@ -254,7 +257,7 @@ export async function resumeBy(
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
     if (holdsKey(key))
-      return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding() };
+      return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding(), own: true };
     if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, resumeWords.byRecord());
     if (led && led !== key) {
       skipped.push(resumeWords.otherSeat(key, led));
@@ -276,6 +279,7 @@ export async function resumeBy(
           key: now,
           pending: Number(hello?.pending) || 0,
           word: busy ? said.replace(/\.$/, "") + busy : said,
+          own: true,
         };
       }
       skipped.push(resumeWords.ownNotTaken(key, short(said)));
@@ -286,6 +290,10 @@ export async function resumeBy(
       elsewhere.push(key);
       continue;
     }
+    // Своё доказано до возврата: на записи стояла эта сессия либо место ведёт сам мост,
+    // и другая названная сессия на записи не стояла.
+    const me = sel.session ?? sessionOfBridge();
+    const proven = (!!me && rec.session === me) || (key === led && !rec.session);
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
       const kept = readHoldRecord(key);
@@ -312,9 +320,16 @@ export async function resumeBy(
       ...new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir]),
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(resumeWords.othersInDir(others));
-    // Взятое не своё — отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
-    lines.push(resumeWords.notYours());
-    return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
+    // Своё не доказано — путь отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
+    if (!proven) lines.push(resumeWords.notYours());
+    return {
+      resumed: true,
+      key,
+      pending: back.pending,
+      word: lines.join("; "),
+      others,
+      own: proven,
+    };
   }
   return {
     resumed: false,
