@@ -114,6 +114,13 @@ export async function startFakeNks(opts = {}) {
     pat: opts.pat ?? null,
     sessions: new Set(),
     dead: new Set(),
+    // Смена каталога посреди сессии, как у mcp 0.111.0 (#6819): /control {list_changed:true}
+    // помечает живые сессии; ответ на запрос с id, кроме initialize, идёт SSE с
+    // notifications/tools/list_changed впереди, пока сессия не спросит tools/list.
+    // listChangedOn: "tools/list" — уведомление едет только в tools/list (смена легла прямо перед ним).
+    listMarked: new Set(),
+    listChangedOn: null,
+    listChangedSent: [], // метод каждого запроса, в чьём ответе ушло уведомление
     initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
     // faults the test switches on through /control
     refreshStatus: null, // e.g. 503 (transient) or 400 (definitive)
@@ -462,6 +469,7 @@ export async function startFakeNks(opts = {}) {
         for (const s of st.sessions) st.dead.add(s);
         st.sessions.clear();
       }
+      if (patch.list_changed) for (const s of st.sessions) st.listMarked.add(s);
       for (const k of [
         "richTools",
         "structured",
@@ -505,6 +513,7 @@ export async function startFakeNks(opts = {}) {
         "listDelayMs", // hold every board read (iskron_channel list) open this long
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
+        "listChangedOn",
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -842,6 +851,30 @@ export async function startFakeNks(opts = {}) {
       if (!sid && msg.method !== "initialize") {
         // Как настоящая поверхность: вызов вне рукопожатия без сессии — 400.
         return json(res, 400, { error: "no Mcp-Session-Id on this request" });
+      }
+      if (
+        st.listMarked.has(sid) &&
+        msg.method !== "initialize" &&
+        msg.id != null &&
+        (!st.listChangedOn || st.listChangedOn === msg.method)
+      ) {
+        if (msg.method === "tools/list") st.listMarked.delete(sid);
+        st.listChangedSent.push(msg.method);
+        // Ответ JSON становится SSE: уведомление с relatedRequestId — до ответа.
+        const head = res.writeHead.bind(res);
+        const end = res.end.bind(res);
+        let sse = false;
+        res.writeHead = (code, headers = {}) => {
+          sse = code === 200 && /json/.test(headers["content-type"] ?? "");
+          return head(code, sse ? { ...headers, "content-type": "text/event-stream" } : headers);
+        };
+        res.end = (text) => {
+          if (!sse) return end(text);
+          const note = { jsonrpc: "2.0", method: "notifications/tools/list_changed" };
+          return end(
+            `event: message\ndata: ${JSON.stringify(note)}\n\nevent: message\ndata: ${text}\n\n`,
+          );
+        };
       }
 
       if (msg.method === "initialize") {

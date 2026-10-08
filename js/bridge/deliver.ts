@@ -40,7 +40,7 @@ import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
 import { beginTaking } from "./taking.ts";
-import { noteServedTools, recheckTools } from "./toolsync.ts";
+import { noteHarnessListing, noteServedTools, recheckTools } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
@@ -192,6 +192,7 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
   const listing = msg?.method === "tools/list";
   if (listing) H.listing++;
+  if (listing && !msg.params?.cursor) noteHarnessListing(msg);
   try {
     await deliverOne(msg);
   } finally {
