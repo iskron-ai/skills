@@ -6,6 +6,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { HOME_BRIDGE_FILE, HOME_DIR, SATELLITE_CODE } from "../delivery/product.ts";
 import { versionIn } from "../shared/version.ts";
 import { BUILT_BRIDGE, REPO } from "./built.mjs";
 
@@ -57,4 +58,11 @@ test("versionIn does not read another delivery's bridge: its channel mark names 
   assert.equal(versionIn(text("iskron-build:release")), "9.9.9", "this product's release");
   assert.equal(versionIn(text("iskron-build:dev")), "9.9.9", "this product's dev build");
   assert.equal(versionIn(text("")), "9.9.9", "an old release without a mark");
+});
+
+test("the satellite entry code launches this delivery's home bridge", () => {
+  assert.ok(
+    SATELLITE_CODE.includes(`homedir(),'${HOME_DIR}','${HOME_BRIDGE_FILE}')`),
+    `SATELLITE_CODE must join ${HOME_DIR}/${HOME_BRIDGE_FILE}: ${SATELLITE_CODE}`,
+  );
 });
