@@ -7,7 +7,7 @@ import { sameDir } from "../shared/canon.ts";
 import { words } from "../shared/lang.ts";
 import { type AskedHearing } from "./call.ts";
 import { harnessName } from "./client.ts";
-import { localHolder } from "./hearing.ts";
+import { localHolder, unsignedHere } from "./hearing.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
 import { heardOnReturn } from "./leave.ts";
@@ -29,10 +29,12 @@ export const suffixed = (base: string, n: number): string =>
   base.slice(0, NAME_MAX - `.${n}`.length).replace(/[-._]+$/, "") + `.${n}`;
 
 /**
- * Own by the hold record: the same harness session stood there (a harness naming
- * no sessions — same client and cwd) and the seat's local socket does not answer
- * (graph @nks/nks-dev, node #6706). The bridge home is shared by all dirs and harnesses,
- * hence the cwd check. The board may still read the seat listening: it returns with hearing.
+ * Own by the hold record: the same harness session stood there, or the record is an
+ * unsigned one of this harness and `cwd` (a harness naming no sessions — none on either side;
+ * for a named session — a seat whose holder named none, #6702), and the seat's local socket
+ * does not answer (graph @nks/nks-dev, node #6706). The bridge home is shared by all dirs and
+ * harnesses, hence the cwd check. The board may still read the seat listening: it returns
+ * with hearing.
  */
 export async function ownByRecord(
   realm: string,
@@ -43,9 +45,11 @@ export async function ownByRecord(
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
   const me = sessionOfBridge();
-  if (!rec || (rec.session ?? null) !== me) return false;
-  if (!me && (rec.client !== harnessName() || !sameDir(rec.cwd, cwd))) return false;
-  return !(await localSocketAlive(localSocketPathOf(key)));
+  if (!rec) return false;
+  const mine = me
+    ? rec.session === me || unsignedHere(rec, cwd)
+    : !rec.session && rec.client === harnessName() && sameDir(rec.cwd, cwd);
+  return mine && !(await localSocketAlive(localSocketPathOf(key)));
 }
 
 type Holder = "mine" | "session" | "taken" | "free" | "unknown";
@@ -67,7 +71,7 @@ async function holderOf(
   if (wasEvicted(realm, karta, name)) return "taken"; // another holder took it (close 4000)
   const key = keyOf(realm, karta, name);
   if (ledKey() === key) return "mine"; // own seat in the socket reopen window
-  const local = await localHolder(key);
+  const local = await localHolder(key, cwd);
   if (local) return local === "self" ? "mine" : local === "session" ? "session" : "taken";
   // Another named session's record: its bridge returns the seat itself.
   if (theirsByRecord(key)) return "taken";

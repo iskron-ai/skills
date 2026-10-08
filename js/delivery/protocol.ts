@@ -1,6 +1,6 @@
 // Имена протокола, которыми мост говорит с сервером, харнесом и своими плагинами
 // (граф @nks/nks-dev, узлы #6809, #6815): выводятся из имени продукта, кроме ключей,
-// которые подтверждает поверхность своего сервера (SERVER_PROTOCOL).
+// которые подтверждает поверхность своего сервера (serverProtocol).
 import { BRIDGE_NAME, PRODUCT } from "./product.ts";
 
 /** Префикс тулов сервера поставки. */
@@ -18,13 +18,17 @@ export const LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME } as
 export const ID_PREFIX = `${PRODUCT}-`;
 
 /**
- * Ключи протокола сервера. Не выводятся из имени продукта: их значение называет
- * поверхность своего сервера (отказ api — `_meta[refusal]`, поля ответа —
- * `capabilities.experimental[fields]`).
+ * Ключ полей ответа, который мост объявляет серверу в `capabilities.experimental` —
+ * из имени продукта, как прочие ключи протокола.
  */
-export const SERVER_PROTOCOL = {
+export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+
+/**
+ * Ключи протокола сервера, которые из имени продукта не выводятся: их значение
+ * называет поверхность своего сервера (отказ api — `_meta[refusal]`).
+ */
+export const serverProtocol = {
   refusal: "iskron/refusal",
-  fields: "iskron/structured",
 } as const;
 
 // part 5b

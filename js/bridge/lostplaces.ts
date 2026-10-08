@@ -4,7 +4,7 @@
 // is refused asking for the full address (#5838). Another owner of the same slug is
 // another graph. Seats are key → graph as the agent named it: the main one by `held`,
 // others by `beside` (`beside-gone` drops one); a lost seat also gets a `lost` notice.
-import { LOGGERS, LOST, tool } from "../delivery/index.ts";
+import { LOGGERS, LOST, method, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -21,6 +21,24 @@ export function placeWord(
     ? { kind: data.kind, key: typeof data.key === "string" ? data.key : undefined, realm }
     : null;
 }
+
+/**
+ * The harness session the plugin names to the bridge (resume, check methods): the thin
+ * bridge keeps it and carries it into the seat's return in a new daemon session — without
+ * it the hold record would land unsigned and the session would take its own seat for
+ * another's (graph @nks/nks-dev, node #6702).
+ */
+let harnessSession: string | null = null;
+/** Remember the harness session from its call; the call passes as is. */
+export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
+  const s = msg.params?.session;
+  if ((msg.method === method("resume") || msg.method === method("check")) && typeof s === "string")
+    harnessSession = s.trim() || harnessSession;
+  return msg;
+}
+/** The return params in a new daemon session: the key and the named harness session. */
+export const resumeParams = (key: string): { key: string; session?: string } =>
+  harnessSession ? { key, session: harnessSession } : { key };
 
 export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) => void) {
   const live = new Map<string, string>();

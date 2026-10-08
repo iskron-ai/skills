@@ -1,7 +1,7 @@
 // Seat return from disk (graph @nks/nks-dev, nodes #5061, #5140, #6017): a restarted
 // bridge takes its seat by the hold record instead of rotating it with connect.
 // Doors: by name (stand.ts calls resumeFromDisk); by key or session directory (the
-// plugin's `resume` request); the plugin's `check` request is the hearing watchdog.
+// plugin's `resume` request, which may name the harness session); the plugin's `check` request is the hearing watchdog.
 // A bridge leading another seat never takes a foreign record: holdStanding of another
 // key would kill the led one.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -29,6 +29,7 @@ import {
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
+import { signHeldRecord } from "./holdkeep.ts";
 import {
   type HoldRecord,
   keyOf,
@@ -348,6 +349,7 @@ const selectorOf = (msg: JsonRpcMessage): ResumeSelector => ({
 function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   const sel = selectorOf(msg);
   noteHarnessSession(sel.session);
+  signHeldRecord();
   return sel;
 }
 

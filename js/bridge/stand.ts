@@ -209,7 +209,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (led && a.take !== true) {
     // Another session listens on the asked seat — take=true is not advised: evicting it is the human's word (#6706).
     // An unread board gives no take=true advice either: the bridge does not know who listens.
-    const hearing = await askedHearing(realm, karta, name);
+    const hearing = await askedHearing(realm, karta, name, cwd);
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }

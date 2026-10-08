@@ -99,8 +99,10 @@ export function seatBaseOf(key: string): string | null {
 }
 
 /**
- * The session in the record is only one named to THIS bridge process (or passed explicitly):
- * a bridge without a named session does not inherit one from disk (#6017).
+ * The session in the record is one named to THIS bridge process (or passed explicitly):
+ * a bridge without a named session does not inherit one from disk (#6017) — except a record
+ * of the same url: the seat goes on (return from disk, busyness, mark) and the session that
+ * stood on it is not erased (#6702).
  * `left` persists from disk until a new hold says `left: false`.
  */
 export function writeHoldRecord(
@@ -112,8 +114,8 @@ export function writeHoldRecord(
   // A satellite's place lives for the run (satellite.ts); only a plugin-reload pause restores it from disk (suspend.ts).
   if (CFG.satellite && !paused) return;
   try {
-    const session = H.session ?? rec.session;
-    const was = rec.left == null || (rec.base ?? B.get(key)) == null ? onDisk(key) : null;
+    const was = onDisk(key);
+    const session = H.session ?? rec.session ?? (was?.url === rec.url ? was.session : undefined);
     const left = rec.left ?? was?.left === true;
     writeFileSync(
       holdFilePathFor(key),

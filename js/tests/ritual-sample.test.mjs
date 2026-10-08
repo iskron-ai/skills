@@ -132,6 +132,22 @@ for (const md of sources) {
     },
   );
 
+  // The refusal routes, as the Claude Code guard does: iskronify fills the
+  // project graph and the persistence section from the repo's AGENTS.md.
+  test(name("the guard's refusal routes through the slots"), async () => {
+    const s = await standServer(source);
+    const p = await s.instance(s.own);
+    s.sessions.set("mine", { dir: s.own });
+    await assert.rejects(
+      p.call("execute.before", toolCall("write", "mine", { path: memoryPath, content: "x" })),
+      (e) =>
+        ["<Граф>", "<Раздел персистентности>", "@handle/mind"].every((slot) =>
+          String(e?.message).includes(slot),
+        ),
+    );
+    await s.stop();
+  });
+
   // patch (2.0.24) carries its paths inside patchText, one header per file.
   test(
     name("guard reads patch: own memory refused, own file passes, a foreign session untouched"),
