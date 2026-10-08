@@ -1513,6 +1513,33 @@ test("a tact waiting untaken in the session's queue holds back the next ones; id
   }
 });
 
+// A taken tact prompt starts a turn: the session is busy till idle even when no
+// session.status reached the plugin, and the next tact waits for that idle.
+test("a tact taken from the queue makes the session busy without session.status; the next one waits for idle", async () => {
+  const b = bridgeEnv("tact-taken");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact-t");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(1));
+    await until(() => rec.prompts.length === 1, "the first tact prompt");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-tact-t", inboxID: "inbox-1" },
+    });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(2));
+    await delay(400);
+    assert.equal(rec.prompts.length, 1, "a tact queued into the turn the first one started");
+    rec.emit({ type: "session.idle", data: { sessionID: "s-tact-t" } });
+    await until(() => rec.prompts.length === 2, "the tact at idle");
+    assert.match(rec.prompts[1].text, /вахта 2/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // The end of a turn is a signal OpenCode may never give: a held tact waits for it no
 // longer than its own bound, counted from the first held — a newer tact does not
 // restart it. The bound is longer than the case piles' one.

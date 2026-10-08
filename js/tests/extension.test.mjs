@@ -788,6 +788,15 @@ test("attention tacts while the turn is busy: none enters it, its end brings one
     push(events, { kind: "backlog", frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nслово" });
     await delay(250);
     assert.equal(rec.messages.length, 3, "a burst that is not a tact is not held");
+
+    // A tact that came while agent_end handlers still ran waits no next end: the turn is free.
+    push(events, tact(5));
+    await delay(250);
+    assert.equal(rec.messages.length, 3, "the tact waits the busy turn");
+    rec.busy(false);
+    await delay(1300);
+    assert.equal(rec.messages.length, 4, "a turn freed without agent_end still gets the tact");
+    assert.match(rec.messages[3].msg.content, /вахта 5/);
   } finally {
     await rec.stop();
   }

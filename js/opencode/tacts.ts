@@ -100,7 +100,8 @@ export function setupTacts(
       for (const s of busy) if (busy.size > 100) busy.delete(s);
     },
     taken(session, inbox) {
-      if (inbox) return void queued.delete(inbox);
+      // Взятый промпт такта начинает ход: сессия занята до idle, и без session.status.
+      if (inbox) return void (queued.delete(inbox) && this.busy(session));
       busy.delete(session);
       for (const [k, q] of queued) if (q.session === session) queued.delete(k);
       release(session);

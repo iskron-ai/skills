@@ -18,6 +18,8 @@ import { deliveryKeys, eventIn, isTact, onlyTacts } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
+/** Как часто ждущий такт спрашивает, свободен ли ход. */
+const TACT_POLL_MS = 1_000;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- контекст pi здесь читается по двум полям */
 
@@ -85,12 +87,24 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   }
 
   // Такт внимания, ждущий конца занятого хода (#6569): освободившись, агент видит последний.
+  // Конец хода — agent_end, а такт, пришедший, пока его обработчики идут, ждущий ловит опросом.
   let tact: ChannelEvent | null = null;
-  pi.on("agent_end", async () => {
+  let tactPoll: ReturnType<typeof setInterval> | null = null;
+  function releaseTact(): void {
+    if (tactPoll) clearInterval(tactPoll);
+    tactPoll = null;
     const t = tact;
     tact = null;
     if (t) sendBatch(t);
-  });
+  }
+  function holdTact(ev: ChannelEvent): void {
+    tact = ev;
+    tactPoll ??= setInterval(() => {
+      if (ctxRef?.isIdle?.() !== false) releaseTact();
+    }, TACT_POLL_MS);
+    (tactPoll as { unref?: () => void }).unref?.();
+  }
+  pi.on("agent_end", async () => releaseTact());
 
   return (params: any) => {
     const ev = params?.data as ChannelEvent | undefined;
@@ -146,10 +160,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         noteText(ev.marks); // метки пачки — внесённое ею в ход
         if (!ev.text) return;
         // Такт внимания в занятый ход не входит: ждёт его конца, новый вытесняет ждущий (seen.ts foldedTacts).
-        if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) {
-          tact = ev;
-          return;
-        }
+        if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) return holdTact(ev);
         if (ev.frames?.some(isTact)) tact = null;
         sendBatch(ev);
         return;
