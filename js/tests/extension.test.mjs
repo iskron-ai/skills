@@ -896,6 +896,24 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
   }
 });
 
+// One open question per key (#6867): a re-ask of me puts my earlier one out, so
+// after its withdrawal a fresh question to another role on the key is not mine.
+test("question kinds: a re-ask of me replaces my question on its key; after its withdrawal a fresh question to another is a count", async () => {
+  const { events, env } = eventsEnv("question-reask");
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    for (const f of [ask(90), ask(92), askWithdrawn(93, 92), ask(94, MY_KARTA + 1)])
+      push(events, frame(f));
+    await delay(1000);
+    const words = rec.messages.map((m) => m.msg.content);
+    assert.equal(words.length, 4, JSON.stringify(words));
+    assert.match(words[2], /вопрос \[92\] снят/);
+    assert.match(words[3], /^№7 «Стенд»: записей 1, тебе 0/, "the fresh question is a count");
+  } finally {
+    await rec.stop();
+  }
+});
+
 // An addressed word not to me (#6081): a fact without its body and without a
 // wake (nextTurn); #6574: the words not to the seat come as one count of the case.
 /** Дело проб в начале строки — номер и зачин (#6081). */

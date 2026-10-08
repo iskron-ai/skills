@@ -6143,12 +6143,13 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const foreign = ask(101, MY_KARTA, {}, OTHER_KEY);
     foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
     await quiet(foreign);
-    // The withdrawal of a question to me (fields.withdraws) is mine, in words, without a wake.
-    const w = await send(askWithdrawn(99, 90), 5);
+    // The withdrawal of the question to me open on the key (the last re-ask, 100) is mine,
+    // in words, without a wake.
+    const w = await send(askWithdrawn(99, 100), 5);
     assert.equal(w.delivery, "queue", "a withdrawn question to me batches");
     assert.match(
       w.text,
-      /вопрос \[90\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
+      /вопрос \[100\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
     );
     // «Accepted» on my answer is mine, in words, without a wake.
     const k = await send(ack(102, 91, ME), 6);

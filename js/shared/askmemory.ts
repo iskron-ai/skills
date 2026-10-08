@@ -63,11 +63,13 @@ export function noteAsk(store: AskStore, frame: Rec): void {
   if (!str(lineOf(frame).key)) return;
   const kind = kindOf(frame);
   const fields = obj(lineOf(frame).fields);
+  const base = `${baseOf(frame)}#`;
   if (kind === "ask" && askedMine(frame, fields)) {
-    store.add(`${baseOf(frame)}#${numOf(frame)}`);
+    // Один открытый вопрос на ключ: новый вопрос мне гасит прежний.
+    for (const n of openOn(store, frame)) store.add(`off:${base}${n}`);
+    store.add(`${base}${numOf(frame)}`);
     return;
   }
-  const base = `${baseOf(frame)}#`;
   if (kind === "progress" && str(fields.withdraws))
     store.add(`off:${base}${str(fields.withdraws)}`);
   else if ((kind === "ack" || kind === "ask") && !byMe(frame))
