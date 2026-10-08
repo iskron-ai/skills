@@ -160,7 +160,8 @@ export async function post(
     });
   let res: Response;
   try {
-    // The connection closed under the request before the reply (#6630): one repeat,
+    // The connection closed under the request before the reply (a pooled keep-alive
+    // connection the server had closed, #6630): one repeat,
     // only for a request whose repeat applies nothing twice (repeat.ts).
     res = await send().catch((e: unknown) => {
       if (!closedUnder(e) || !repeatable(msg)) throw e;

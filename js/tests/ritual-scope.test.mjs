@@ -67,13 +67,13 @@ function repoWith(source) {
   return repo;
 }
 
-function check(repo, json = true) {
+function check(repo, json = true, lang = "ru") {
   const r = spawnSync(
     process.execPath,
     [BRIDGE, "check-rituals", ...(json ? ["--json"] : []), repo],
     {
       encoding: "utf8",
-      env: { ...process.env, ISKRON_BRIDGE_LANG: "ru" },
+      env: { ...process.env, ISKRON_BRIDGE_LANG: lang },
     },
   );
   return {
@@ -133,6 +133,13 @@ test("check-rituals: a greeting without a directory check is a hole, with the fi
   assert.match(out, /ДЫРА .*rituals\.js/);
   assert.match(out, /пишет в сессию чужого каталога: 1/);
   assert.match(out, /realpath.*iskronify, Шаг 4/);
+});
+
+test("check-rituals in English: the hole and its fix carry no Russian, the hooks section included", () => {
+  const { status, out } = check(repoWith(greet("none")), false, "en");
+  assert.equal(status, 1);
+  assert.match(out, /iskronify, Step 4 «Hooks»/);
+  assert.doesNotMatch(out, /\p{Script=Cyrillic}/u, out);
 });
 
 test("check-rituals: a raw string compare losing its own session under another spelling is a hole", () => {

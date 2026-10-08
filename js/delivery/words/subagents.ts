@@ -42,9 +42,12 @@ export interface SubagentWords {
   trustNone: (here: string) => string;
 }
 
+/** Метка строки к исполнению: doctor гоняют, пока в разделе такой нет; одна на язык. */
+const TODO = { ru: "НАДО:", en: "TODO:" } as const;
+
 export const SUBAGENT: Readonly<Record<Lang, SubagentWords>> = {
   ru: {
-    todo: () => "НАДО:",
+    todo: () => TODO.ru,
     form: (form) => {
       switch (form) {
         case "eval-no-sep":
@@ -96,7 +99,7 @@ export const SUBAGENT: Readonly<Record<Lang, SubagentWords>> = {
     named: (...names) => `запись «${names.join("», «")}»`,
     unnamed: () => "без записи моста-спутника",
     fine: () => " — в порядке",
-    ocKeys: (keys) => `; НАДО: ключ ${keys} OpenCode в файле агента не читает → убери его`,
+    ocKeys: (keys) => `; ${TODO.ru} ключ ${keys} OpenCode в файле агента не читает → убери его`,
     ocAgent: (path, keyNote) =>
       `  ${path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
     trustNear: (near, here) =>
@@ -105,7 +108,7 @@ export const SUBAGENT: Readonly<Record<Lang, SubagentWords>> = {
       `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`,
   },
   en: {
-    todo: () => "TODO:",
+    todo: () => TODO.en,
     form: (form) => {
       switch (form) {
         case "eval-no-sep":
@@ -161,7 +164,7 @@ export const SUBAGENT: Readonly<Record<Lang, SubagentWords>> = {
     unnamed: () => "no satellite bridge entry",
     fine: () => " — fine",
     ocKeys: (keys) =>
-      `; TODO: the key ${keys} is not read by OpenCode in an agent file → remove it`,
+      `; ${TODO.en} the key ${keys} is not read by OpenCode in an agent file → remove it`,
     ocAgent: (path, keyNote) =>
       `  ${path}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`,
     trustNear: (near, here) =>

@@ -61,7 +61,8 @@ export function writeServerChoice(authDir: string, url: string): string {
   return path;
 }
 
-// One config per session scope; CFG proxies to the current scope's config.
+// One config per session scope; CFG proxies to the current scope's config. The full bridge
+// keeps it in the process scope; the daemon sets one per session from that session's argv/env.
 const cfgSlot = scoped(() => ({ cfg: null as Config | null }));
 export const CFG: Config = new Proxy({} as Config, {
   get: (_, k) => (cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : undefined),
@@ -114,7 +115,8 @@ export function readArgs(argv: string[]): Config {
     pat: null,
     patSource: null,
     serverSource: "argument",
-    // Flag only: an older bridge fails loudly on an unknown flag but would ignore a variable.
+    // Flag only: an older bridge fails loudly on an unknown flag but would ignore a variable
+    // and stand as a full seat with a hold record.
     satellite: false,
     tools: null,
   };
@@ -160,6 +162,7 @@ export function readArgs(argv: string[]): Config {
 /**
  * Personal access token, bypassing OAuth (graph @nks/nks-dev, node #4267): the
  * BRIDGE_TOKEN variable, then the `token` file beside the grant (never argv: ps shows it).
+ * With a PAT there is no discovery, browser or refresh: a 401 means the token was rejected.
  */
 function readPat(cfg: Config): void {
   const fromEnv = envOf(envName("BRIDGE_TOKEN"))?.trim();
