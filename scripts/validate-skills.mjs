@@ -555,7 +555,7 @@ try {
       const text = readFileSync(join(root, rel), "utf8");
       const found = [...text.matchAll(/"-e",\s*("(?:[^"\\]|\\.)*")/g)].map((x) => JSON.parse(x[1]));
       if (!found.length)
-        fail(rel, "нет записи моста-спутника формы `node -e` — единая форма (js/cli/satform.ts) не спроецирована");
+        fail(rel, "нет записи моста-спутника формы `node -e` — единая форма (SATELLITE_CODE в js/delivery/product.ts) не спроецирована");
       for (const code of found)
         if (code !== canonical)
           fail(rel, "код `node -e` записи моста-спутника расходится с эталоном SATELLITE_CODE в js/delivery/product.ts — скопируй его побайтово");
