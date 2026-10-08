@@ -19,12 +19,10 @@ import {
   callTool as call,
   leadsOtherPlace,
   otherPlaceWord,
-  serialized,
   short,
   unresolvedRefusal,
 } from "./call.ts";
 import { CFG } from "./config.ts";
-import { wireEviction } from "./evicted.ts";
 import { seatField } from "./fields.ts";
 import {
   askedHearing,
@@ -84,7 +82,7 @@ const ledName = (): string => state.standing?.name ?? "";
 
 export { STAND_TOOL_NAME, standTool } from "./standtool.ts";
 
-const isDirectory = (p: string): boolean => {
+export const isDirectory = (p: string): boolean => {
   try {
     return isAbsolute(p) && statSync(p).isDirectory();
   } catch {
@@ -94,28 +92,6 @@ const isDirectory = (p: string): boolean => {
 
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
-
-/** Место отняли (evicted.ts, #6706): встать рядом на имя.N тем же ходом, что iskron_stand с этим именем. */
-wireEviction(async (place, cwd) => {
-  const r = await serialized(() =>
-    runStand({
-      jsonrpc: "2.0",
-      id: "iskron-bridge-evicted",
-      method: "tools/call",
-      params: {
-        name: "iskron_stand",
-        arguments: {
-          realm: place.realm,
-          karta: String(place.karta),
-          name: baseOf(place.realm, place.karta, place.name ?? ""), // основа, от которой место выбрано (#6706)
-          ...(cwd && isDirectory(cwd) ? { cwd } : {}),
-        },
-      },
-    }),
-  );
-  const text = ((r.result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? "");
-  return { ok: !r.result?.isError, text: text.join("\n") };
-});
 
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Занятость на месте, которое мост уже держит, — только строка (#6509).

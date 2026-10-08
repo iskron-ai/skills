@@ -8,6 +8,8 @@
 // процесса. Сессия чужого моста (демон машины, daemon.ts) — в своей области
 // (shared/scope.ts): её конфиг, транспорт, место, поток вывода, pid, cwd и
 // окружение — моста харнеса, и сессий в одном процессе сколько угодно.
+import "./standwire.ts"; // отъём места и возврат своего встают тем же iskron_stand
+
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
