@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 
+import { envName } from "../../delivery/index.ts";
 import { noteServerDate, now } from "../clock.ts";
 import { CFG } from "../config.ts";
 import { errorMessage } from "../errors.ts";
@@ -136,7 +137,9 @@ export async function ensureClient(meta: Meta, redirectUri: string): Promise<Cli
     );
   }
   if (!meta.as.registration_endpoint) {
-    throw new Error("server offers no dynamic client registration; pass ISKRON_BRIDGE_CLIENT_ID");
+    throw new Error(
+      `server offers no dynamic client registration; pass ${envName("BRIDGE_CLIENT_ID")}`,
+    );
   }
   const reg = await fetchJson<{ client_id: string }>(meta.as.registration_endpoint, {
     method: "POST",

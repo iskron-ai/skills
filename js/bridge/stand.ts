@@ -1,17 +1,16 @@
-// iskron_stand — тул моста, занимающий стояние одним вызовом (граф nks-dev:
-// феномен #4511, вопрошание #4508, превращение #4504). На сервер он не
-// уходит: мост исполняет его сам теми же вызовами, которыми агент прежде шёл
-// по скиллу standing, — доска, выведенное имя, connect и register (либо один
-// register, когда сокет уже держит этот мост: живое стояние не ротируется без
-// причины), хук инбокса роли, стук в место человека по полному адресу с провода
-// (один раз за сессию: второй join — повтор, не разговор), занятость. Ответ
-// один: имя, команда сторожа, ожидавшие кадры, хук, расписка стука. Вызов со
-// status на месте, которое мост уже держит, — только занятость (status.ts, #6509).
-// Отсутствие тула в сессии — тулы идут мимо моста либо мост старой сборки.
+// The stand tool — the bridge's tool that takes a standing in one call (graph
+// @nks/nks-dev: phenomenon #4511, inquiry #4508, transformation #4504). It never
+// reaches the server: the bridge runs it with the same calls an agent used to make by
+// the standing skill — the board, the derived name, connect and register (or register
+// alone when this bridge already holds the socket: a live standing is not rotated
+// without cause), the role's inbox hook, a knock into the human's seat by the full
+// address from the wire (once per session), busyness. One answer: name, watchdog
+// command, waiting frames, hook, knock receipt. A call with status on a seat the bridge
+// already holds is busyness only (status.ts, #6509).
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { ID_PREFIX, tool } from "../delivery/index.ts";
+import { BOARD_HEADER, ID_PREFIX, tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
@@ -71,16 +70,16 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
-import { SW } from "./standwords.ts";
+import { needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
 
-/** Повтор вызова после отказанного возврата на оставленное место — один. */
+/** One repeat of the call after a refused return to a left seat. */
 const R = scoped(() => ({ again: false }));
 
-/** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
+/** The name of the seat the bridge leads — for the one-standing-per-bridge refusal. */
 const ledName = (): string => state.standing?.name ?? "";
 
 const isDirectory = (p: string): boolean => {
@@ -94,7 +93,7 @@ const isDirectory = (p: string): boolean => {
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === tool("stand");
 
-/** Место отняли (evicted.ts, #6706): встать рядом на имя.N тем же ходом, что iskron_stand с этим именем. */
+/** Seat taken (evicted.ts, #6706): stand beside on name.N the same way as the stand tool with that name. */
 wireEviction(async (place, cwd) => {
   const r = await serialized(() =>
     runStand({
@@ -106,7 +105,7 @@ wireEviction(async (place, cwd) => {
         arguments: {
           realm: place.realm,
           karta: String(place.karta),
-          name: baseOf(place.realm, place.karta, place.name ?? ""), // основа, от которой место выбрано (#6706)
+          name: baseOf(place.realm, place.karta, place.name ?? ""), // the base the seat was chosen from (#6706)
           ...(cwd && isDirectory(cwd) ? { cwd } : {}),
         },
       },
@@ -117,7 +116,7 @@ wireEviction(async (place, cwd) => {
 });
 
 export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
-  // Занятость на месте, которое мост уже держит, — только строка (#6509).
+  // Busyness on a seat the bridge already holds — the line only (#6509).
   const statusOnly = await standStatusOnly(msg);
   if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
@@ -133,39 +132,37 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     },
   });
   if (!realm || !karta) {
-    lines.push(SW.needRealmKarta(statusOnly.miss, statusOnly.of));
+    lines.push(needRealmKarta(statusOnly.miss, statusOnly.of));
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
   rememberModel(model);
-  // Каталог по умолчанию — моста харнеса: у сессии демона это cwd тонкого моста, не демона.
+  // Default directory is the harness bridge's: for a daemon session, the thin bridge's cwd.
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
-  // Кривой cwd адресовал бы другое место (репо из несуществующего или чужого
-  // каталога) — отказ вслух, как у явного имени (#5068).
+  // A bad cwd would address another seat — a refusal aloud, as for an explicit name (#5068).
   if (cwd !== sessionCwd() && !isDirectory(cwd)) {
-    lines.push(SW.badCwd(cwd, !isAbsolute(cwd)));
+    lines.push(sw().badCwd(cwd, !isAbsolute(cwd)));
     return done(true);
   }
   const nameNotes: string[] = [];
-  // Имя — адрес места: явное имя либо принимается ровно таким, либо отвергается
-  // вслух с названной причиной; молча укороченное имя адресует ДРУГОЕ место
-  // (граф nks-dev: #5068). Выведенное имя укорачивается до предела сервера с
-  // пометкой сразу после шапки ответа.
+  // The name is the seat's address: an explicit name is taken as is or refused aloud; a
+  // silently shortened one addresses ANOTHER seat (#5068). A derived name is cut to the
+  // server's limit with a note right after the header.
   const asked = normName(a.name);
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
-      lines.push(SW.badName(asked, fault, NAME_MAX));
+      lines.push(sw().badName(asked, fault, NAME_MAX));
       return done(true);
     }
   }
-  // Роль владельца (主) — только словом человека (owner.ts, #6550 п.2).
+  // The owner's role — only on the human's word (owner.ts, #6550 p.2).
   const notOwner = await ownerRefusal(realm, karta);
   if (notOwner) {
     lines.push(notOwner);
     return done(true);
   }
-  // Место-спутник субагента (satellite.ts, #6002): только у моста-спутника и только оно у него.
+  // A subagent's satellite seat (satellite.ts, #6002): only on a satellite bridge, and only it there.
   const gate = await satelliteGate(a, realm, karta, asked);
   if (gate && !gate.ok) {
     lines.push(gate.refusal);
@@ -177,31 +174,30 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const fitted = parts ? fitName(parts) : null;
   const derived = asked || sat ? "" : (fitted?.name ?? "");
   let name = asked || sat?.name || derived;
-  const base = sat ? "" : name; // основа места рядом: выведенное или явное имя (#6706)
-  realm = await seatRealm(realm, name); // одна форма графа (#5838), своё место — под своим написанием (hearing.ts)
-  karta = seatKarta(realm, karta, name); // «agent» — роль своего места, до любой проверки (hearing.ts)
-  // Мост уже стоит на отдельном месте этого имени — туда же (#5407); take=true зовёт само имя.
+  const base = sat ? "" : name; // base of a seat beside: the derived or explicit name (#6706)
+  realm = await seatRealm(realm, name); // one graph form (#5838) (hearing.ts)
+  karta = seatKarta(realm, karta, name); // "agent" — the own seat's role, before any check (hearing.ts)
+  // The bridge already stands on a separate seat of this name — go there (#5407); take=true calls the name itself.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
-  // Основу места рядом мост помнит сам (#6706); по виду имени её не угадать — glm-5.3 не место рядом glm-5.
+  // The bridge remembers the base of a seat beside (#6706); it cannot be guessed from the name's shape.
   const ledSuffix =
     !!base &&
     !!led0 &&
     String(led0.karta) === String(karta) &&
     led0.name !== base &&
     baseOf(led0.realm, led0.karta, led0.name ?? "") === base;
-  // Отнятое место рядом — не возврат: следующее место рядом выбирает seatFor (#6706).
+  // A taken seat beside is no return: seatFor picks the next seat beside (#6706).
   const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
   if (ledSuffix && !besideTaken && a.take !== true) name = led0?.name ?? name;
   if (parts && fitted && fitted.cut.length) {
-    const what = fitted.cut.map(SW.cutPart).join(", ");
-    nameNotes.push(SW.nameCut(joinName(parts), NAME_MAX, name, what));
+    const what = fitted.cut.map((k) => sw().cutPart(k)).join(", ");
+    nameNotes.push(sw().nameCut(joinName(parts), NAME_MAX, name, what));
   }
-  if (!asked && !sat && !model) nameNotes.push(SW.noModel());
+  if (!asked && !sat && !model) nameNotes.push(sw().noModel());
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
-  // Стояние одно на мост (#5154): другое место при ведомом своём — только по
-  // явному take=true; иначе отказ вслух, и ничего не тронуто.
-  // Имя графа, не разрешённое в @owner/slug, против графов своих мест — отказ, не догадка (#5838);
-  // так же роль-сентинел, не разрешённая в число (hearing.ts).
+  // One standing per bridge (#5154): another seat while leading one only on explicit
+  // take=true. A graph name unresolved to @owner/slug is refused, not guessed (#5838);
+  // so is an unresolved role sentinel (hearing.ts).
   const unresolved = unresolvedRefusal(realm) ?? unresolvedAgent(karta, "connect");
   if (unresolved) {
     lines.push(unresolved);
@@ -209,13 +205,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const led = besideTaken ? null : leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
-    // Просимое место слушает другая сессия — take=true не советуется: вытеснить её — словом человека (#6706).
-    // Доска не прочлась — мост не знает, кто слушает, и take=true не советует тоже.
+    // Another session listens on the asked seat — take=true is not advised: evicting it is the human's word (#6706).
     const hearing = await askedHearing(realm, karta, name);
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }
-  // Место другого графа встаёт рядом на канале, который держит мост (#5838).
+  // A seat of another graph stands beside on the channel the bridge holds (#5838).
   const noChannel = besideRefusal(realm, "stand");
   if (noChannel) {
     lines.push(noChannel);
@@ -223,46 +218,45 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const prim = state.standing;
   const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
-  // Каталог сессии — в запись держания: мост, поднятый заново (вытеснение
-  // каталога OpenCode, перезапуск плагина), вернёт место по нему сам (#5140).
+  // The session directory goes into the hold record: a re-raised bridge returns the seat by it (#5140).
   noteStandCwd(cwd);
 
-  const here = () => placeFields({ realm, karta, name }); // поля места — каждой регистрации (#5174)
+  const here = () => placeFields({ realm, karta, name }); // seat fields on every registration (#5174)
   const register = () =>
     call(tool("channel"), { action: "register", realm, karta, name, ...here() });
 
-  // 1. Доска — до любой перемены.
+  // 1. The board — before any change.
   const board = await call(tool("channel"), { action: "list", realm });
   if (board.isError) {
-    lines.push(SW.boardUnread(short(board.text)));
+    lines.push(sw().boardUnread(short(board.text)));
     return done(true);
   }
-  // Доска — поля или проза сервера (board.ts, #4514). Управляющие действия — ротация,
-  // стук, хук — идут только по распознанной однозначной форме; иначе честный отказ.
+  // Fields or server prose (board.ts, #4514). Controlling moves — rotation, knock,
+  // hook — only on a recognized unambiguous form; otherwise an honest refusal.
   const bd = readBoard(board);
   const { entries, recognized, declared } = bd;
   let own = entries.filter((e) => ofSeat(e, karta, name));
-  // Счёт в шапке не сошёлся с разобранным — кто слушает, мост не знает (hearing.ts):
-  // вслепую не ротирует, а явный take=true — слово делателя.
+  // The header count disagrees with the parsed lines — who listens is unknown (hearing.ts):
+  // no blind rotation; an explicit take=true is the doer's word.
   const unread = declared != null && declared !== entries.length;
   const hearing = (n: string): AskedHearing => boardHearing(bd, karta, n);
   if (!recognized || own.length > 1 || (hearing(name) === "unknown" && a.take !== true)) {
     lines.push(
       !recognized
-        ? SW.boardUnknown(short(board.text, 160))
+        ? sw().boardUnknown(short(board.text, 160), BOARD_HEADER.ru, BOARD_HEADER.en)
         : own.length > 1
-          ? SW.boardAmbiguous(own.length, name, karta)
-          : SW.boardCount(declared ?? 0, entries.length),
+          ? sw().boardAmbiguous(own.length, name, karta)
+          : sw().boardCount(declared ?? 0, entries.length),
     );
     return done(true);
   }
-  // Имя держит прежний мост этой сессии — своё, возвращается сам; другая сессия —
-  // встаём рядом на имя.N со слухом; чужим местом не подписываемся (#6706).
+  // A former bridge of this session holds the name — ours, taken back; another session —
+  // stand beside on name.N with hearing; never sign with someone else's seat (#6706).
   let ownSession = false;
-  let byRecord: Resumed | null = null; // своё место, возвращённое по записи держания (seatFor)
-  // Основа места рядом: явное имя места рядом — его основа, не base.N.N; выведенное — само себе основа (#6706).
+  let byRecord: Resumed | null = null; // own seat returned by the hold record (seatFor)
+  // Base of a seat beside: an explicit seat-beside name — its base, not base.N.N; a derived one is its own base (#6706).
   const root = !base ? "" : asked ? baseOf(realm, karta, base) : base;
-  // Место другого графа встаёт register, а он слуха не отнимает: take=true там не берёт чужого — место выбирается так же.
+  // A seat of another graph stands by register, which takes no hearing: the seat is chosen the same way.
   if (base && (a.take !== true || beside) && name === base) {
     const seat = await seatFor(realm, karta, base, hearing, beside, cwd, root);
     const choice = seat.choice;
@@ -275,20 +269,19 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     ownSession = choice.own;
     own = entries.filter((e) => ofSeat(e, karta, name));
     if (own.length > 1) {
-      lines.push(SW.boardAmbiguous(own.length, name, karta));
+      lines.push(sw().boardAmbiguous(own.length, name, karta));
       return done(true);
     }
     if (choice.note) nameNotes.push(choice.note);
   }
-  // До connect: основа этого выбора — в запись и файл основы; прежняя основа имени его не переживает (#6706).
+  // Before connect: this choice's base into the record and the base file (#6706).
   if (base) noteSeatBase(keyOf(realm, karta, name), root);
   const take = a.take === true || ownSession;
-  const sub = !!sat || baseOf(realm, karta, name) !== name; // место рядом и спутник: хук инбокса роли не взводится
-  // Места прежнего стандарта имени (машина.репо.ветка) той же машины и репо —
-  // сироты после перехода на машина.репо.модель: их адрес держат ростеры дел
-  // и хуки инбокса, а слушает их никто. Прежнее имя узнаётся по третьей части,
-  // равной имени локальной ветки, — иначе это сосед на другой модели, и его
-  // место трогать нельзя.
+  const sub = !!sat || baseOf(realm, karta, name) !== name; // seat beside and satellite: no role inbox hook
+  // Seats of the former name standard (host.repo.branch) of the same host and repo are
+  // orphans: cases and inbox hooks hold their address, nobody listens. The former name is
+  // told by a third part equal to a local branch — otherwise it is a neighbour on another
+  // model, and its seat must not be touched.
   const stem = name.split(".").slice(0, 2).join(".");
   const branches = new Set(
     git(["branch", "--format=%(refname:short)"], cwd)
@@ -297,35 +290,32 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       .filter(Boolean),
   );
   const legacy = entries.filter((e) => {
-    if (sat) return false; // спутнику прежние места позвавшего не его забота
+    if (sat) return false; // the caller's former seats are not the satellite's business
     if (e.karta !== karta || nameOf(e.address) === name) return false;
     const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
     const third = own.slice(stem.length + 1);
     return branches.has(third) && alive(e);
   });
-  for (const e of legacy) nameNotes.push(SW.legacy(e.address, realm, karta));
-  if (unread) lines.push(SW.boardCountFound(declared ?? 0, entries.length));
+  for (const e of legacy) nameNotes.push(sw().legacy(e.address, realm, karta));
+  if (unread) lines.push(sw().boardCountFound(declared ?? 0, entries.length));
   const mine = own[0];
   let incoming = mine?.incoming ?? null;
 
-  // 2. Место. Свой сокет держит этот мост — register. Место другой сессии сюда
-  // не доходит — выше выбрано место рядом (#6706); своё место прежнего моста этой
-  // сессии — connect, как по take. Иначе connect и register; новый сокет — новый
-  // цикл входа, счёт стуков сброшен.
+  // 2. The seat. This bridge holds the socket — register. Another session's seat does not
+  // get here — a seat beside was chosen above (#6706); a former bridge of this session —
+  // connect, as by take. Otherwise connect and register; a new socket resets the knock count.
   let how: string;
   let heardHere: boolean;
-  // Своё место, чей сокет мост сейчас переоткрывает сам (не отъём): доска ещё читает его слушающим — это он.
+  // Own seat whose socket the bridge is reopening itself: the board still reads it listening — it is us.
   const reopening = !sat && !holdsStanding(realm, karta, name) && ledHere(realm, karta, name);
   const listensElsewhere =
     !!mine && listens(mine) && !holdsStanding(realm, karta, name) && !reopening;
-  // Мост поднят заново под местом, которое держал прежний мост этого каталога
-  // (перезапуск плагина, /mcp reconnect): место возвращается с диска, не
-  // ротируется — адрес, хуки и очередь те же (#5061). Доска ещё читает
-  // «слушает» (окно платформы после смерти прежнего моста) — возврат уже выше,
-  // только по записи, со слухом (seatFor); подписи без слуха нет (#6706).
-  // Спутник с диска не возвращается: его место живёт прогоном (satellite.ts).
-  // Запись другой названной сессии — её место: с диска его возвращает только её мост (#6706).
+  // A bridge raised again under a seat the former bridge of this directory held: the seat
+  // returns from disk, not rotated — same address, hooks and queue (#5061). A board still
+  // reading "listening" was handled above by record, with hearing (seatFor; #6706). A
+  // satellite never returns from disk (satellite.ts); another named session's record is
+  // its seat — only its bridge returns it (#6706).
   const fresh =
     !sat &&
     !take &&
@@ -335,38 +325,37 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     !theirsByRecord(keyOf(realm, karta, name));
   const resumed =
     byRecord ?? (fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null);
-  const extra: string[] = []; // строки после шапки ответа
-  // Сокет держал этот мост и до вызова (свой register, возврат с диска): hello не ждать.
+  const extra: string[] = []; // lines after the answer's header
+  // This bridge held the socket before the call (own register, return from disk): no hello wait.
   let socketBefore = false;
-  // take=true — явный новый цикл входа: connect и тогда, когда сокет уже наш.
+  // take=true is an explicit new entry cycle: connect even when the socket is already ours.
   if (beside) {
-    // Канал держит места в нескольких графах: register на нём в этом графе
-    // добавляет место, сокет тот же — connect открыл бы второй канал (#5838).
+    // A channel holds seats in several graphs: register adds the seat on the same socket;
+    // connect would open a second channel (#5838).
     const r = await register();
     if (r.isError) {
-      lines.push(SW.refused("register", short(r.text)));
+      lines.push(sw().refused("register", short(r.text)));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
-    // id места — из ответа register (standing.ts); без него кадры места найдут его по графу и адресу.
-    if (heardHere && !standingIdIn(realm)) extra.push(SW.noIdInRegister());
-    how = SW.howBeside(ledKey() ?? "");
+    // The seat id comes from the register answer (standing.ts); without it frames find the seat by graph and address.
+    if (heardHere && !standingIdIn(realm)) extra.push(sw().noIdInRegister());
+    how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
     const r = await register();
     if (r.isError) {
-      lines.push(SW.refused("register", short(r.text)));
+      lines.push(sw().refused("register", short(r.text)));
       return done(true);
     }
     heardHere = true;
     socketBefore = true;
-    // Строку занятости из записи возврат не публикует заново (#6017): свежая
-    // отметка выдала бы прежнее слово о работе за сказанное сейчас.
+    // A return does not republish the record's busy line (#6017): a fresh mark would pass old words as current.
     how = `${resumed.word}, register`;
-  } else if (!take && isParked(realm, karta, name) && returnToStanding("iskron_stand")) {
-    // Ушёл с места и вернулся: тот же адрес, сокет открыт заново, register — атрибуция.
-    // Адрес за это время повернула другая сессия — сокет отказан и отпущен: место её,
-    // подписи им нет — тот же вызов заново выберет место рядом (#6706).
-    await heardOnReturn(); // нет hello — адрес мог повернуть другой: сокет отпущен (leave.ts)
+  } else if (!take && isParked(realm, karta, name) && returnToStanding(tool("stand"))) {
+    // Left the seat and came back: same address, socket reopened, register attributes. If
+    // another session turned the address meanwhile, the socket is refused and released —
+    // the same call again picks a seat beside (#6706).
+    await heardOnReturn(); // no hello — the address may have turned: socket released (leave.ts)
     if (!holdsStanding(realm, karta, name) && !R.again) {
       R.again = true;
       try {
@@ -377,38 +366,38 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(SW.refused("register", short(r.text)));
+      lines.push(sw().refused("register", short(r.text)));
       return done(true);
     }
     heardHere = true;
-    how = SW.howReturned();
+    how = sw().howReturned();
   } else if (!take && (holdsStanding(realm, karta, name) || reopening)) {
     const r = await register();
     if (r.isError) {
-      lines.push(SW.refused("register", short(r.text)));
+      lines.push(sw().refused("register", short(r.text)));
       return done(true);
     }
     heardHere = true;
     socketBefore = true;
-    how = SW.howRegister();
+    how = sw().howRegister();
   } else if (!take && listensElsewhere) {
-    // Слушает другой держатель, а места рядом выбрано не было: подписи без слуха нет (#6706).
-    lines.push(SW.otherHolder(mine?.address ?? name));
+    // Another holder listens and no seat beside was chosen: no signing without hearing (#6706).
+    lines.push(sw().otherHolder(mine?.address ?? name));
     return done(true);
   } else {
     const args: Record<string, unknown> = { action: "connect", realm, karta, name };
     Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
-    if (sat) args.ttl_seconds = SATELLITE_TTL_S; // приглашения спутнику не переживают прогон (#6001, условие а)
-    let c = await call(tool("channel"), args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
+    if (sat) args.ttl_seconds = SATELLITE_TTL_S; // a satellite's invitations do not outlive the run (#6001, condition a)
+    let c = await call(tool("channel"), args); // the holder takes the new socket itself: a clean frame ring
     if (sat && c.isError && ttlRefused(c)) {
-      // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
-      extra.push(SW.ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
+      // The contour holds the window range; outside it the run still needs the seat, with the default window.
+      extra.push(sw().ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
       delete args.ttl_seconds;
       c = await call(tool("channel"), args);
     }
     if (c.isError) {
-      lines.push(SW.refused("connect", short(c.text)));
+      lines.push(sw().refused("connect", short(c.text)));
       return done(true);
     }
     incoming =
@@ -417,41 +406,41 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       incoming;
     const r = await register();
     if (r.isError) {
-      lines.push(SW.takenButRegister(short(r.text)));
+      lines.push(sw().takenButRegister(short(r.text)));
       return done(true);
     }
     resetKnocks(realm, karta, name);
     heardHere = true;
     how = ownSession
-      ? SW.howOwnSession()
-      : SW.howConnect(!!mine, listensElsewhere, a.take === true);
-    // Место занято заново после возврата, не нашедшего записи: дела могли пропасть (#6649).
-    if (takeLapsed()) extra.push(`[iskron_stand] ${resumeWords.rejoin()}`);
+      ? sw().howOwnSession()
+      : sw().howConnect(!!mine, listensElsewhere, a.take === true);
+    // The seat retaken after a return that found no record: cases may have been lost (#6649).
+    if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
   }
   lines.push(
-    SW.head(mine?.address ?? name, karta, realm, how),
-    ...nameNotes.map((n) => `[iskron_stand] ${n}`),
+    sw().head(mine?.address ?? name, karta, realm, how),
+    ...nameNotes.map((n) => sw().note(n)),
     ...extra,
   );
   const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);
-  else lines.push(heardHere ? SW.noSocket() : SW.noWatchdog());
+  else lines.push(heardHere ? sw().noSocket() : sw().noWatchdog());
 
-  // 3. hello — доказательство держания; свежий он только за connect этого вызова.
-  if (!heardHere) lines.push(SW.besideNoDoor());
-  else if (beside) lines.push(SW.besideHeard());
-  else if (socketBefore) lines.push(SW.heldAlready());
+  // 3. hello — proof of holding; fresh only for this call's connect.
+  if (!heardHere) lines.push(sw().besideNoDoor());
+  else if (beside) lines.push(sw().besideHeard());
+  else if (socketBefore) lines.push(sw().heldAlready());
   else {
     const hello = await awaitHello(4000);
-    lines.push(hello ? SW.hello(String(hello.pending ?? 0)) : SW.noHello());
+    lines.push(hello ? sw().hello(String(hello.pending ?? 0)) : sw().noHello());
   }
-  // Сокет службы есть, а локальный для сторожа не поднялся — слуха нет, скажи это.
+  // The service socket is up but the local one for the watchdog is not — no hearing; say so.
   const localFault = heardHere
     ? (doors().find((d) => d.key === heldKey(realm))?.listenError ?? null)
     : null;
-  if (localFault) lines.push(SW.noLocalSocket(localFault));
+  if (localFault) lines.push(sw().noLocalSocket(localFault));
 
-  // 4. Хук инбокса роли — чтобы вимарша posed_to приходила тем же сокетом.
+  // 4. The role's inbox hook — so a vimarsha posed_to arrives by the same socket.
   const main = state.standing;
   lines.push(
     await armRoleHook({
@@ -461,14 +450,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       incoming,
       heardHere,
       sub,
-      beside: !!main && otherRealm(realm, main.realm), // место на канале, открытом в другом графе
+      beside: !!main && otherRealm(realm, main.realm), // a seat on a channel opened in another graph
       channelRealm: main?.realm ?? realm,
     }),
   );
 
-  // 5. Стук в место человека — по полному адресу с провода (knock.ts, #4342).
+  // 5. Knock into the human's seat — by the full address from the wire (knock.ts, #4342).
   if (room && !heardHere) {
-    lines.push(SW.knockNotHere(room));
+    lines.push(sw().knockNotHere(room));
   } else if (room) {
     const onBoard = entries.find((e) => e.address === room);
     const roomKarta =
@@ -481,16 +470,16 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     );
   }
 
-  // 6. Занятость — от стояния, которое ведёт мост, не от живого сокета (#5033):
-  // и после вытеснения, пока статусный адрес у моста.
+  // 6. Busyness follows the standing the bridge leads, not the live socket (#5033):
+  // also after eviction, while the bridge has the status address.
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name)) {
-    lines.push(SW.statusElsewhere(TAKE_PATH()));
+    lines.push(sw().statusElsewhere(TAKE_PATH()));
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(
       st.ok
         ? busyLine(a.status.trim(), realm)
-        : SW.statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : ""),
+        : sw().statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : ""),
     );
   }
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);

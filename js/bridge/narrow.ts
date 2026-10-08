@@ -1,31 +1,20 @@
-// Что из списка тулов видит харнес. Список тулов — вес каждого запроса агента:
-// Claude Code шлёт схемы целиком, и полный список сервера стоит десятки тысяч
-// токенов на запрос даже субагенту с задачей в одно слово. Сужает мост только копию для
-// харнеса: общий кэш ответов сервера хранит полный список (его читают другие
-// мосты), и сам мост зовёт на сервер любые ходы.
-//
-// Два сужения:
-//  - набор тулов — только по флагу `--tools a,b,c`; без флага харнес видит все
-//    тулы, и мост с ролевыми файлами прежнего вида работает как прежде;
-//  - схема iskron_channel у всех мостов: занятие места (mint, connect) и сессии
-//    (sessions) мост делает сам — iskron_stand, — и их поля агенту только вес.
-//    register и revoke остаются: корпус велит агенту без вахты назвать себя
-//    register'ом и отзывать место revoke'ом, и их поля — тоже.
-//
-// Выгрузка снимка поверхности (`make surface`, клиент export-surface) получает
-// сырой список: снимок — поверхность сервера, по нему фейк NKS режет аргументы.
-import { ID_PREFIX, tool } from "../delivery/index.ts";
+// What the harness sees of the tool list: the list weighs on every agent request,
+// so the bridge narrows only the harness's copy — the shared reply cache keeps the
+// full list. Two narrowings: the tool set, only by `--tools a,b,c`; the channel
+// tool's schema for every bridge, without the seat moves the bridge makes itself.
+// The surface export client gets the raw list.
+import { ACTION_LIST_RE, ID_PREFIX, NARROW, tool } from "../delivery/index.ts";
 import { SURFACE_CLIENT } from "../shared/clients.ts";
-import { L } from "../shared/lang.ts";
+import { words } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
 import { harnessAsksFields } from "./fields.ts";
 import { STAND_TOOL_NAME } from "./standtool.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Ходы iskron_channel, которые мост делает сам; из перечня action в описании они убраны. */
+/** Channel moves the bridge makes itself; removed from the action list. */
 const PLACE_MOVES = new Set(["mint", "connect", "sessions"]);
-/** Поля схемы iskron_channel, которые берут только эти ходы (по описаниям полей сервера 0.97.1). */
+/** Channel schema fields only those moves take (per the server's field descriptions, 0.97.1). */
 const PLACE_FIELDS = ["ttl_seconds", "mute_siblings"];
 
 function clientName(): string {
@@ -33,28 +22,22 @@ function clientName(): string {
   return typeof info?.name === "string" ? info.name : "";
 }
 
-/** Имена тулов, которые видит харнес; null — все. iskron_stand в наборе всегда. */
+/** Tool names the harness sees; null — all. The stand tool is always in the set. */
 export function toolSet(): Set<string> | null {
   return CFG.tools ? new Set([...CFG.tools, STAND_TOOL_NAME]) : null;
 }
 
 /**
- * Вызов самого моста, не харнеса, — единственный свой tools/call, идущий через
- * вход сессии: служебный список графов после потери места (lostplaces.ts — id
- * `iskron-thin-realms-*`, тул iskron_realm, ход list), которым тонкий мост
- * разрешает rN и слаг вызовов против потерянных мест. Признак — вызов целиком,
- * а не префикс id: префикс `iskron-*` выбрал бы и харнес, и его вызов вне
- * набора --tools шёл бы к серверу. Сужение --tools — про вес запросов харнеса,
- * свою машину моста оно не режет; прочие свои ходы (replay, resume тонкого,
- * iskron-bridge-* полного — на post напрямую, минуя вход сессии) — не tools/call
- * через вход, этого сужения они не встречают.
+ * The bridge's own realm list after a lost seat (lostplaces.ts) passes the session
+ * input; matched by the whole call, not the id prefix, so a harness call outside
+ * --tools is not let through.
  */
 const ownRealmList = (msg: JsonRpcMessage): boolean =>
   String(msg.id ?? "").startsWith(`${ID_PREFIX}thin-realms-`) &&
   msg.params?.name === tool("realm") &&
   String(msg.params?.arguments?.action ?? "") === "list";
 
-/** Отказ вслух на вызов тула вне набора: харнес его не видел, но имя пришло. */
+/** Refusal aloud for a call outside the set: the harness did not see the tool, yet the name came. */
 export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (msg?.method !== "tools/call" || msg.id === undefined || msg.id === null) return null;
   if (ownRealmList(msg)) return null;
@@ -62,10 +45,7 @@ export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   const name = String(msg.params?.name ?? "");
   if (!set || set.has(name)) return null;
   const list = [...set].sort().join(", ");
-  const text = L(
-    `Отказано (мост): тула ${name} нет в наборе этого моста (${list}) — набор задаёт --tools в записи моста.`,
-    `Refused (bridge): the tool ${name} is not in this bridge's set (${list}) — the set comes from --tools in the bridge entry.`,
-  );
+  const text = words(NARROW).outsideSet(name, list);
   return {
     jsonrpc: "2.0",
     id: msg.id,
@@ -73,10 +53,7 @@ export function outsideSetRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   };
 }
 
-/**
- * outputSchema харнес получает, только если просил поля ответа (fields.ts, #6731):
- * по ней он сверяет structuredContent, а без полей схема лишь обещает их.
- */
+/** outputSchema reaches only a harness that asked for answer fields (fields.ts, graph @nks/nks-dev, node #6731). */
 type Tool = {
   name?: string;
   description?: string;
@@ -84,10 +61,9 @@ type Tool = {
   outputSchema?: Record<string, unknown>;
 };
 
-/** Перечень action без ходов моста: «одно из: a | b | c» (или «one of:»). */
 function withoutPlaceMoves(text: string): string {
   return text.replace(
-    /((?:одно из|one of):\s*)([a-z_]+(?:\s*\|\s*[a-z_]+)*)/i,
+    ACTION_LIST_RE,
     (_, head: string, list: string) =>
       head +
       list
@@ -122,11 +98,7 @@ function channelForHarness(t: Tool): Tool {
   return { ...t, inputSchema: next };
 }
 
-/**
- * Копия ответа tools/list для харнеса: тулы вне набора убраны, схема iskron_channel
- * без полей ходов над местом, outputSchema — только харнесу, просившему поля.
- * Исходный ответ не трогается — он идёт в общий кэш.
- */
+/** The harness's copy of tools/list; the original reply goes to the shared cache untouched. */
 export function narrowToolList(reply: JsonRpcMessage): JsonRpcMessage {
   const tools = reply?.result?.tools;
   if (!Array.isArray(tools) || clientName() === SURFACE_CLIENT) return reply;

@@ -1,5 +1,5 @@
-import { ID_PREFIX, tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { ID_PREFIX, SEAT_GONE_RE, STANDING, tool, UNATTRIBUTED_RE } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
@@ -16,11 +16,7 @@ import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-const SEAT_EXPIRED = (): string =>
-  L(
-    "место у платформы истекло — register: места нет",
-    "the seat expired at the platform — register: no such seat",
-  );
+const SEAT_EXPIRED = (): string => words(STANDING).seatExpired();
 
 // Remember a registration the harness made, so it can be replayed into the next
 // session. Only a call the server ACCEPTED is remembered: a refused one names no
@@ -32,20 +28,19 @@ export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const place = rememberedPlace(a.realm, a.karta, a.name);
   const prim = state.standing;
   if (prim && otherRealm(prim.realm, place.realm)) {
-    // Другой граф — место рядом на том же канале, не подмена основного (#5838).
+    // Another graph — a seat beside on the same channel, not a replacement of the main one (#5838).
     rememberPlace(place);
     addPlace(place);
   } else state.standing = place;
-  noteStandingId(place.realm, standingIdOf(reply)); // id места — для кадров и занятости (#5838)
+  noteStandingId(place.realm, standingIdOf(reply)); // for frames and busyness (#5838)
   state.standingSession = state.sessionId;
   debug(`standing remembered: ${a.name ?? "(unnamed)"} at karta ${a.karta} in ${a.realm}`);
 }
 
 /**
- * Привязка записывается НОРМАЛИЗОВАННОЙ — той же формой, которой её сравнивают
- * ключ, доска и правило «стояние одно на мост» (#5140 B2, #5154 N1): роль без
- * «#» и полей, имя без полей. Сентинел «agent» — своя роль по слову поверхности:
- * число, которое мост уже помнит, он не подменяет; без памяти остаётся сентинел.
+ * The binding is stored NORMALIZED — the form the key, the board and the one-standing
+ * rule compare (#5140 B2, #5154 N1). The "agent" sentinel takes the role number the
+ * bridge already remembers; without one the sentinel stays.
  */
 export function rememberedPlace(
   realm: unknown,
@@ -53,7 +48,7 @@ export function rememberedPlace(
   name: unknown,
 ): { realm: string; karta: string; name?: string } {
   const k = normKarta(karta);
-  // Роль — число графа: «agent» в другом графе не берёт числа основного места.
+  // A role number is per graph: "agent" in another graph does not take the main seat's number.
   const prev = [state.standing, ...state.places].find((p) => p && !otherRealm(p.realm, realm));
   const n = typeof name === "string" ? normName(name) : undefined;
   return {
@@ -72,7 +67,7 @@ const R = scoped(() => ({ inFlight: null as Promise<void> | null }));
 // that would otherwise land unattributed. Silent by contract: register releases
 // nothing and evicts nobody, so replaying it costs one call and no state.
 export async function ensureStanding(): Promise<void> {
-  // Место отнято (4000), рядом встать не вышло: ещё попытка; отнятым не подписываться (#6706).
+  // Seat taken (4000) and standing beside failed: try again; never sign with a taken seat (#6706).
   if (state.standing && (await standBesideAgain())) return;
   return replayStanding();
 }
@@ -83,12 +78,12 @@ function replayStanding(): Promise<void> {
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
     try {
-      // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+      // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
       const deaf = await deafSeatTaken();
       if (deaf) return log(`standing not re-registered: ${deaf}`);
       const got = await replayRegister(state.standing);
       if (got && !got.error && !got.result?.isError) {
-        // Места других графов — тем же ходом: иначе их записи легли бы без автора (#5838).
+        // Seats of other graphs in the same move, or their writes would land unattributed (#5838).
         if (await replayBeside()) state.standingSession = state.sessionId;
         log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
       } else if (seatIsGone(got)) {
@@ -144,11 +139,11 @@ async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | nu
   return reply as JsonRpcMessage | null;
 }
 
-/** Повторная регистрация мест других графов; true — все на месте (истёкшее забыто). */
+/** Re-register seats of other graphs; true — all in place (an expired one is forgotten). */
 async function replayBeside(): Promise<boolean> {
   let whole = true;
   for (const place of [...state.places]) {
-    // Место без слуха, которое может слушать другая сессия, привязкой не повторяется (deaf.ts, #6706).
+    // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
     const deaf = deafPlaceIn(place.realm) ? await deafSeatTaken(place) : null;
     if (deaf) {
       log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
@@ -172,10 +167,8 @@ async function replayBeside(): Promise<boolean> {
 }
 
 /**
- * id места из ответа тула iskron_channel(action="register"): seats[0].seat_id
- * structuredContent (fields.ts), без него — проза: строка «🪪 id этого места — …»,
- * id на следующей строке (наблюдено на сервере 0.74.0; английская форма —
- * предположена, FORM.seatId). Ни того ни другого — null: id не угадывается.
+ * The seat id from the channel tool's register answer: seats[0].seat_id of
+ * structuredContent (fields.ts), else the prose form (FORM.seatId). Neither — null.
  */
 export function standingIdOf(reply: JsonRpcMessage | null): string | null {
   return (
@@ -196,15 +189,13 @@ export const replyText = (reply: JsonRpcMessage | null): string => {
 
 // "No seat to bind to" — the one refusal that means the remembered standing is
 // no longer takeable by register. The API says it by rule (422, errors[0].rule =
-// standing_not_held, carried in _meta["iskron/refusal"], refusal.ts); another
-// rule is another refusal; with no rule (a 404 or 409 of register, or no _meta
-// at all) — the surface's own words, as before.
+// standing_not_held, carried in the refusal _meta, refusal.ts); another rule is
+// another refusal; with no rule (a 404 or 409 of register, or no _meta at all) —
+// the surface's own words, as before.
 export const seatIsGone = (reply: JsonRpcMessage | null): boolean => {
   const rule = refusalOf(reply)?.rule;
   if (rule) return rule === "standing_not_held";
-  return /no such standing|take it with connect|такого стояния|занять.*connect/i.test(
-    replyText(reply),
-  );
+  return SEAT_GONE_RE.test(replyText(reply));
 };
 
 // The surface's marks for a call that ran WITHOUT its author: the channel
@@ -213,14 +204,12 @@ export const seatIsGone = (reply: JsonRpcMessage | null): boolean => {
 // CODES, never on prose: a node body read back may well contain the words
 // "session not registered", and a lookup must not buy a register for that.
 const UNATTRIBUTED_CODE = /write_unattributed\w*|session_not_registered/;
-// Голый 409 признаком не служит: им же отвечают повторная чеканка и конфликт
-// версии, и там перерегистрация с повтором — лишний вызов поверх отказа (#5380).
-const UNATTRIBUTED_REFUSAL =
-  /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+// A bare 409 is no mark: re-minting and version conflicts answer it too (#5380).
+const UNATTRIBUTED_REFUSAL = UNATTRIBUTED_RE;
 
 export const isUnattributed = (reply: JsonRpcMessage | null): boolean => {
   if (!reply) return false;
-  // A refusal's rule, where the API named one, decides alone (_meta["iskron/refusal"]).
+  // A refusal's rule, where the API named one, decides alone (refusal _meta).
   const rule = refusalOf(reply)?.rule;
   if (rule) return UNATTRIBUTED_CODE.test(rule);
   const text = replyText(reply);

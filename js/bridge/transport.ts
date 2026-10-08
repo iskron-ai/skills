@@ -20,7 +20,7 @@ export interface Standing {
   name?: string;
 }
 
-// Сессия к серверу — одна на сессию моста (shared/scope.ts): у демона машины их много.
+// One server session per bridge session (shared/scope.ts): the machine daemon has many.
 export const state = scoped(() => ({
   sessionId: null as string | null,
   protocolVersion: null as string | null,
@@ -122,9 +122,9 @@ export async function post(
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
-  // Язык прозы api — при английском мосте (shared/lang.ts); русский — умолчание сервера.
+  // The api's prose language follows an English bridge (shared/lang.ts); otherwise the server's default.
   if (lang() === "en") headers["accept-language"] = "en";
-  // PAT старше хранилища: с ним грант на диске не читается вовсе (#4267).
+  // A PAT outranks the store: with it the grant on disk is not read at all (#4267).
   const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
   if (token) headers.authorization = `Bearer ${token}`;
   // No grant and a login already out: the server can only answer 401 — say it here.
@@ -149,7 +149,7 @@ export async function post(
   const boundByHeader = isInit ? standingHeader() : null;
   if (boundByHeader) headers["x-nks-standing"] = boundByHeader;
 
-  // Поля ответа мост просит для себя при каждом открытии сессии, и при повторном (shared/fields.ts).
+  // The bridge asks for reply fields on every session open, re-opens too (shared/fields.ts).
   const sent = isInit ? { ...msg, params: withFieldsAsked(msg.params) } : msg;
   const send = (): Promise<Response> =>
     fetch(CFG.serverUrl, {
@@ -160,8 +160,8 @@ export async function post(
     });
   let res: Response;
   try {
-    // Соединение закрыто под запросом до ответа (keep-alive из пула, закрытый сервером, #6630):
-    // один повтор — только запросу, чей повтор ничего не применит дважды (repeat.ts).
+    // The connection closed under the request before the reply (#6630): one repeat,
+    // only for a request whose repeat applies nothing twice (repeat.ts).
     res = await send().catch((e: unknown) => {
       if (!closedUnder(e) || !repeatable(msg)) throw e;
       log(
@@ -292,7 +292,7 @@ export async function post(
 // initialize params under a bridge-internal id, swallow the response.
 const reinit = scoped(() => ({ inFlight: null as Promise<void> | null }));
 const reinitHooks: (() => void | Promise<void>)[] = [];
-/** Что сделать после прозрачного переоткрытия сессии (сверка списка тулов, #5405). */
+/** What to do after a transparent session re-open (tool list recheck, #5405). */
 export const onReinitialized = (hook: () => void | Promise<void>): void => {
   reinitHooks.push(hook);
 };

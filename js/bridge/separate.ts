@@ -1,13 +1,7 @@
-// Чьё место под именем и куда встать (граф nks-dev: #5402, #5407, решение
-// владельца #6706): чужим местом не подписываются и его не перехватывают.
-// Место, которое держит прежний мост ЭТОЙ ЖЕ сессии харнесса (перезапуск,
-// компакшн), — своё: мост возвращает его сам. Место, которое держит другая
-// сессия, — её: встают рядом на `имя.N` со слухом. «Держит» читается
-// положительно — живой локальный сокет места, который держит не этот мост,
-// либо доска «слушает», а запись держания этой сессии этого не опровергает
-// (держатель вне каталога гранта или своё не доказано); чья сессия — по записи
-// держания, которую пишет держатель.
+// Whose seat is under a name and where to stand (graph @nks/nks-dev, nodes #5402, #5407, #6706).
+import { SEPARATE, type SeparateWords } from "../delivery/index.ts";
 import { sameDir } from "../shared/canon.ts";
+import { words } from "../shared/lang.ts";
 import { type AskedHearing } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { localHolder } from "./hearing.ts";
@@ -16,27 +10,22 @@ import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord
 import { heardOnReturn } from "./leave.ts";
 import { NAME_MAX } from "./names.ts";
 import { resumeFromDisk } from "./resume.ts";
-import { SEP } from "./separatewords.ts";
 import { localSocketAlive } from "./sweep.ts";
 
-/**
- * Основа места: та, от которой его выбрал мост (запись держания, #6706); не
- * знает — место считается основным: по виду имени основу не угадать.
- */
+const sep = (): SeparateWords => words(SEPARATE);
+
+/** The base the bridge chose the seat from (graph @nks/nks-dev, node #6706); unknown — the name itself. */
 export const baseOf = (realm: string, karta: string | number, name: string): string =>
   seatBaseOf(keyOf(realm, karta, name)) ?? name;
 
-/** Имя отдельного места номер n; не укладывается в предел — база укорачивается с конца. */
+/** Seat name number n; over the limit, the base is cut from the end. */
 export const suffixed = (base: string, n: number): string =>
   base.slice(0, NAME_MAX - `.${n}`.length).replace(/[-._]+$/, "") + `.${n}`;
 
 /**
- * Своё по записи держания: на ней стояла та же сессия харнесса, что у этого
- * моста (харнесс, не называющий сессий, — без сессии с обеих сторон, и запись
- * этого харнесса из этого каталога `cwd`: мёртвый предшественник здесь — всё,
- * что о нём известно; дом моста общий у всех каталогов и харнессов), а
- * локальный сокет места не отвечает. Доска может ещё читать его слушающим —
- * место возвращается по записи со слухом, не подписью без него (#6706).
+ * Own by the hold record: the same harness session stood there (a harness naming
+ * no sessions — same client and cwd) and the seat's local socket does not answer
+ * (graph @nks/nks-dev, node #6706).
  */
 export async function ownByRecord(
   realm: string,
@@ -52,10 +41,9 @@ export async function ownByRecord(
   return !(await localSocketAlive(localSocketPathOf(key)));
 }
 
-/** Кто держит место: этот мост, прежний мост этой сессии, кто-то другой, никто — или мост не знает. */
 type Holder = "mine" | "session" | "taken" | "free" | "unknown";
 
-/** Что доска знает о месте под именем (hearing.ts): слушает другой, никто — или мост не знает. */
+/** What the board knows of the seat under a name (hearing.ts). */
 export type BoardHearing = (name: string) => AskedHearing;
 
 async function holderOf(
@@ -65,30 +53,23 @@ async function holderOf(
   hearing: BoardHearing,
   cwd: string,
 ): Promise<Holder> {
-  // Ушёл с места словом — своё, пока адрес жив: взявшая его сессия повернула бы адрес,
-  // и возврат это докажет отказом сокета (stand.ts); доска в окне после ухода ещё читает «слушает».
-  await heardOnReturn(); // возврат без hello — не своё место со слухом: отпущен (leave.ts)
+  // A parked seat stays mine while its address lives; a return would prove it otherwise (stand.ts).
+  await heardOnReturn();
   if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return "mine";
-  if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
+  if (wasEvicted(realm, karta, name)) return "taken";
   const key = keyOf(realm, karta, name);
-  if (ledKey() === key) return "mine"; // своё место в окне переоткрытия сокета
+  if (ledKey() === key) return "mine"; // own seat in the socket reopen window
   const local = await localHolder(key);
   if (local) return local === "self" ? "mine" : local === "session" ? "session" : "taken";
-  // Запись другой названной сессии — её место, хоть доска и не читает его слушающим:
-  // её мост вернёт его сам (перезапуск сервиса харнесса), возврат с диска не наш.
+  // Another named session's record: its bridge returns the seat itself.
   if (theirsByRecord(key)) return "taken";
-  // Доска «слушает», а живого локального держателя нет: своё доказывает только
-  // запись этой сессии (возврат по ней); иначе слушающий — не наш, встаём рядом.
-  // Доска разобрана не целиком и места среди разобранных нет — мост не знает.
+  // Board says listening and no live local holder: only this session's record proves it own.
   const h = hearing(name);
   if (h === "unknown") return "unknown";
   return h === "other" && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
 }
 
-/**
- * На месте по записи держания стояла другая названная сессия (запись свежая и не
- * отпущена словом): место её, и мост этой сессии с диска его не возвращает (#6706, #6702 В).
- */
+/** A fresh, unreleased record of another named session (graph @nks/nks-dev, nodes #6706, #6702). */
 export function theirsByRecord(key: string): boolean {
   const rec = readHoldRecord(key);
   return !!rec?.session && !rec.left && rec.session !== sessionOfBridge();
@@ -97,13 +78,8 @@ export function theirsByRecord(key: string): boolean {
 export type PlaceChoice = { name: string; own: boolean; note: string | null } | { refusal: string };
 
 /**
- * Куда встать под именем base: на него самого (своё, свободное либо прежнего
- * моста этой сессии — `own`, его мост возвращает сам), иначе на первое `root.N`,
- * которое свободно или своё. `root` — основа, от которой выбрано base (место
- * рядом, названное своим именем, — его основа, не proba.2.2); у основного — оно
- * само. Все сто заняты — отказ: подписи без слуха нет. Кто держит выбранное,
- * мост не знает (доска разобрана не целиком) — отказ: вслепую не встаёт.
- * `taken` — имена, занятые наверняка (возврат по записи не дал слуха).
+ * Where to stand under base: base itself if free or own, otherwise the first free
+ * or own `root.N`; all taken or unknown — a refusal. `taken` — names known taken.
  */
 export async function placeFor(
   realm: string,
@@ -117,32 +93,29 @@ export async function placeFor(
   const holder = async (name: string): Promise<Holder> =>
     taken.has(name) ? "taken" : await holderOf(realm, karta, name, hearing, cwd);
   const first = await holder(base);
-  if (first === "unknown") return { refusal: SEP.unknown(base) };
+  if (first === "unknown") return { refusal: sep().unknown(base) };
   if (first !== "taken") {
     const own = first === "session";
-    return { name: base, own, note: own ? SEP.ownSession(base) : null };
+    return { name: base, own, note: own ? sep().ownSession(base) : null };
   }
   for (let n = 2; n <= 99; n++) {
     const cand = suffixed(root, n);
     if (cand === base) continue;
     const h = await holder(cand);
     if (h === "taken") continue;
-    if (h === "unknown") return { refusal: SEP.unknown(cand) };
+    if (h === "unknown") return { refusal: sep().unknown(cand) };
     const own = h === "session";
-    return { name: cand, own, note: SEP.beside(base, cand, own) };
+    return { name: cand, own, note: sep().beside(base, cand, own) };
   }
-  return { refusal: SEP.noFree(base) };
+  return { refusal: sep().noFree(base) };
 }
 
 export type Resumed = { word: string; pending: number };
 
 /**
- * Выбор места с возвратом по записи (#6706): доска читает выбранное место —
- * само имя или своё место рядом `имя.N` — слушающим, а своё доказывает запись
- * держания — место возвращается с диска со слухом сразу; возврат не дал слуха —
- * место считается занятым, встаём на следующее.
- * Место другого графа рядом (`besideRealm`) с диска не возвращается — его
- * слух даёт register на канале этого моста.
+ * Seat choice with return by record (graph @nks/nks-dev, node #6706): a seat the
+ * record proves own is resumed from disk with hearing; no hearing — it counts as
+ * taken. A seat of another graph beside (`besideRealm`) is not resumed from disk.
  */
 export async function seatFor(
   realm: string,
@@ -163,7 +136,7 @@ export async function seatFor(
     const resumed = await resumeFromDisk(realm, karta, at);
     if (resumed)
       return {
-        choice: at === base ? choice : { ...choice, note: SEP.beside(base, at, true) },
+        choice: at === base ? choice : { ...choice, note: sep().beside(base, at, true) },
         resumed,
       };
     taken.add(at);

@@ -39,7 +39,7 @@ export interface Store {
   updated_at?: string;
 }
 
-/** Память машины о гранте, которому отказали: с каких пор, чьими словами, когда стучать снова. */
+/** The machine's memory of a refused grant: since when, in whose words, when to knock again. */
 export interface GrantState {
   refused_since?: number;
   refused_at?: number;
@@ -47,7 +47,7 @@ export interface GrantState {
   early_refused_until?: number;
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- JSON-RPC-полезная нагрузка приходит без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- JSON-RPC payloads come without a schema */
 export interface JsonRpcMessage {
   jsonrpc?: string;
   id?: string | number | null;
@@ -68,18 +68,18 @@ export interface Config {
   scope: string | null;
   resource: string | null;
   staticClientId: string | null;
-  /** Клиент входа по коду устройства (oauth/devicecode.ts); null — заведённый по умолчанию. */
+  /** The device-code sign-in client (oauth/devicecode.ts); null — the default one. */
   deviceClientId: string | null;
-  /** Вход по коду без клиента на сервере — динамической регистрацией (oauth/devicecode.ts); только явно. */
+  /** Device-code sign-in with no server client, by dynamic registration (oauth/devicecode.ts); explicit only. */
   deviceRegister: boolean;
-  /** Личный токен доступа (PAT): с ним мост не ходит в OAuth вовсе. */
+  /** A personal access token: with it the bridge never goes to OAuth. */
   pat: string | null;
-  /** Откуда взят PAT — имя переменной или путь файла; для человека в отказе и в doctor. */
+  /** Where the PAT came from — variable name or file path; for the human in refusals and doctor. */
   patSource: string | null;
-  /** Откуда взят адрес сервера: аргумент, окружение, файл выбора рядом с грантом или умолчание. */
+  /** Where the server address came from: argument, env, the choice file beside the grant, or default. */
   serverSource: "argument" | "env" | "file" | "default";
-  /** Мост-спутник (satellite.ts): место на прогон субагента — без записи держания, без хука, с коротким ttl. */
+  /** A satellite bridge (satellite.ts): a seat for a subagent run — no hold record, no hook, short ttl. */
   satellite: boolean;
-  /** `--tools`: набор тулов, который видит харнес (narrow.ts); null — набор по умолчанию. */
+  /** `--tools`: the tool set the harness sees (narrow.ts); null — the default set. */
   tools: Set<string> | null;
 }

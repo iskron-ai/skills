@@ -1,17 +1,14 @@
-// Последняя работа агента — точка для хартбита места (граф nks-dev: #6510; сам
-// хартбит — отдельным шагом): миг последнего вызова тула агентом (tools/call от
-// харнеса); служебные ходы плагина и моста — iskron/check, iskron/usage,
-// переигранное рукопожатие — работой агента не считаются. На сессию
-// (shared/scope.ts): у демона машины — своя у каждой сессии, и публиковать её он
-// будет за каждое место.
+// The agent's last work — the point for the seat's heartbeat (graph @nks/nks-dev,
+// node #6510): the moment of the agent's last tools/call from the harness; service
+// moves of the plugin and the bridge do not count. Per session (shared/scope.ts).
 import { scoped } from "../shared/scope.ts";
 
 const W = scoped(() => ({ at: 0 }));
 
-/** Агент позвал тул (session.ts, на tools/call харнеса). */
+/** The agent called a tool (session.ts, on the harness's tools/call). */
 export function noteAgentWork(at = Date.now()): void {
   W.at = at;
 }
 
-/** Миг последней работы агента этой сессии (мс эпохи); 0 — харнес ещё не говорил. */
+/** This session's last agent work (epoch ms); 0 — the harness has not spoken yet. */
 export const lastAgentWork = (): number => W.at;
