@@ -682,7 +682,7 @@ var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.5.0";
+var VERSION = "7.6.0";
 var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 function buildOf(selfUrl) {
