@@ -281,10 +281,14 @@ function fakeCtx({
       return e.effect;
     },
     /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
-    prompt: async (sessionID, text) => {
+    promptRaw: async (sessionID, text) => {
       const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
       return p.prompt.text;
+    },
+    /** The same, the delivery's mark on riding counts (#6815 item 3) taken off. */
+    async prompt(sessionID, text) {
+      return (await this.promptRaw(sessionID, text)).replace(`\n\n${FRAME_MARK} `, "\n\n");
     },
     emit: (ev) => {
       queue.push(ev);
@@ -1205,7 +1209,7 @@ test("the root's counts ride the root's next prompt, never a subagent's", async 
     assert.equal(rec.prompts.length, 0, "a count wakes no turn");
     const child = await rec.prompt("child", "бриф");
     assert.equal(child, "бриф", `the root's count rode into the subagent's prompt:\n${child}`);
-    const root = await rec.prompt("root", "go");
+    const root = await rec.promptRaw("root", "go");
     assert.match(root, /^go\n\n\[iskron\] №7 «Стенд»: записей 1, тебе 0/, root);
   } finally {
     await rec.stop();
