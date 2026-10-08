@@ -58,9 +58,12 @@ export interface KeptSlot {
  * ждёт возврата и уходит раньше слова: запись, сделанную им, слово не упреждает —
  * оно зовёт проверить её автора.
  */
-export function resumedWord(key: string): string {
+export function resumedWord(key: string, own = false): string {
   // Чужие места того же каталога не называются: возврат берёт запись, на которой стояла
   // эта сессия (мост сверяет сессию), и чужой ключ в её слове звал бы её к чужому.
+  // Место, которое мост доказал своим, чужим не подозревается.
+  if (own)
+    return `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`;
   return (
     `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` +
     'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; ' +
@@ -70,7 +73,7 @@ export function resumedWord(key: string): string {
 
 /** Слово сессии, чьё место держит не её мост: возврат не удался, и чем вернуть. */
 const elsewhereWord = (keys: string[]): string =>
-  `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не мост этой сессии: ` +
+  `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: ` +
   "слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии " +
   "мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.";
 
@@ -210,7 +213,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // различает стояний одной роли в одной рабочей копии, а слово под чужим
       // именем ляжет брату при успешном ответе (#5366). Занятое имя — в сессию;
       // ребёнку, чьё место вернулось по его же ключу после перезагрузки, — молча: он ждёт (#6625).
-      if (typeof r.key === "string" && !quiet) doors.tell(root, resumedWord(r.key), slot.child);
+      if (typeof r.key === "string" && !quiet)
+        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -252,7 +256,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
       // Тот же возврат без хода агента, тем же выбором свежайшей записи (#5366).
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key), slot.child);
+      if (typeof r.key === "string")
+        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
     } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error"); // слово в сессию мост шлёт сам (kind=lost), один раз
