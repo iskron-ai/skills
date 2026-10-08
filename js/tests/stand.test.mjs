@@ -1,6 +1,6 @@
 // Проба тула моста iskron_stand (граф nks-dev: #4508, #4511 под #4504): один
-// вызов — доска, выведенное имя, connect и register, хук инбокса роли, стук в
-// место человека по полному адресу; повторный вызов не ротирует живое место и не
+// вызов — доска, выведенное имя, connect и register, стук в место человека по
+// полному адресу (хука инбокса роли нет, #6973); повторный вызов не ротирует живое место и не
 // шлёт второго join; повтор стука — только осознанный и не раньше двух минут.
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию: против моста без тула
@@ -134,7 +134,7 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
   );
 });
 
-test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a second call neither rotates nor knocks again", async (t) => {
+test("iskron_stand: one call takes the place and knocks; a second call neither rotates nor knocks again", async (t) => {
   // «Повтор рано» — внутри окна: окно шва в 300 мс под нагрузкой истекает между вызовами.
   const { fake, bridge } = await ready(t, INIT, { ISKRON_STAND_KNOCK_REPEAT_MS: "120000" });
   await fake.control({
@@ -160,7 +160,6 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
     "the answer must carry the watchdog command",
   );
   assert.match(text, /hello получен: ожидало кадров — 0/, text);
-  assert.match(text, /Хук инбокса роли: взведён/, text);
   assert.match(text, /Место человека @tester:thread-k2: стук отправлен/, text);
   assert.match(text, /встанешь рядом с человеком/, text);
   assert.doesNotMatch(text, /[Кк]омнат/, text);
@@ -168,7 +167,6 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   assert.match(text, /^занятость @tester:proba: на вахте$/m, text);
   let counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 1);
-  assert.equal(counts.webhooks_added, 1);
   assert.equal(counts.status_posts, 1);
   assert.deepEqual(
     fake.state.sends.map((s) => [s.karta, s.standing, s.text]),
@@ -179,11 +177,9 @@ test("iskron_stand: one call takes the place, arms the inbox hook and knocks; a 
   const second = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const again = textOf(second);
   assert.match(again, /сокет уже держит этот мост — register/, again);
-  assert.match(again, /Хук инбокса роли: стоит и будит это стояние/, again);
   assert.match(again, /стук уже отправлен .* — жди приглашения/, again);
   counts = (await fake.control({})).counts;
   assert.equal(counts.connect, 1, "a live place held by this bridge is not rotated");
-  assert.equal(counts.webhooks_added, 1, "no second hook");
   assert.equal(fake.state.sends.length, 1, "no second join without a deliberate repeat");
 
   const early = await bridge.call("tools/call", {
@@ -1178,7 +1174,7 @@ test("iskron_stand refuses control actions on a board it does not recognize", as
   assert.equal(fake.state.sends.length, 0, "no join on an unrecognized board");
 });
 
-test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list it does not recognize alone", async (t) => {
+test("iskron_stand refuses a truncated or ambiguous board", async (t) => {
   const { fake, bridge } = await ready(t);
   const line = (name) =>
     `  #931 👨‍💻 Роль 能 · @tester:${name} — живой · простой 6h · слушает · сокет был сейчас · открыл @tester\n     📥 http://x/api/channel/in/${name}`;
@@ -1201,57 +1197,20 @@ test("iskron_stand refuses a truncated or ambiguous board and leaves a hook list
     0,
     "no connect on a truncated or ambiguous board",
   );
-  await fake.control({ boardText: null, hooksText: "Хуков тут не бывает" });
-  const hooks = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.match(textOf(hooks), /список хуков не распознан — не трогаю/, textOf(hooks));
-  assert.equal(
-    (await fake.control({})).counts.webhooks_added,
-    0,
-    "no hook on an unrecognized list",
-  );
 });
 
 // The English bridge asks accept-language: en (#6632 п.2); a server that honours
-// it prints the board and the hook list in English. mcp.iskron.ru ignores the
-// header (observed 2026-10-03), so the English forms here are assumed, not seen.
-test("English surface: iskron_stand reads an English board and hook list — an empty list arms the hook, a hook that wakes the place is left as it is", async (t) => {
+// it prints the board in English. mcp.iskron.ru ignores the header (observed
+// 2026-10-03), so the English forms here are assumed, not seen.
+test("English surface: iskron_stand reads an English board — the held place is not rotated", async (t) => {
   const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
   await fake.control({ english: true });
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
   const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.ok(!first.result?.isError, `${textOf(first)}\n${bridge.stderr}`);
-  assert.match(
-    textOf(first),
-    /Role inbox hook: armed on the seat's incoming address/,
-    textOf(first),
-  );
-  assert.equal(fake.state.counts.webhooks_added, 1, "the empty English list reads as empty");
   const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
-  assert.match(textOf(again), /Role inbox hook: in place and wakes this standing/, textOf(again));
-  assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
+  assert.ok(!again.result?.isError, textOf(again));
   assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
-});
-
-test("English surface: a recognized hook list header with a hook state word the bridge does not know is refused loudly — no second hook", async (t) => {
-  const { fake, bridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
-  await fake.control({
-    english: true,
-    hooksText:
-      "Webhooks for #931 (1):\n  #7 → doer:#931 — enabled [minimal]\n     wakes now (1): @tester:proba",
-  });
-  const got = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.match(textOf(got), /the hook list is not recognized — left alone/, textOf(got));
-  assert.equal(
-    fake.state.counts.webhooks_added,
-    0,
-    "no new hook beside one the bridge cannot read",
-  );
 });
 
 test("English surface: the place id comes from the English register reply — the place beside gets its busy line", async (t) => {
@@ -1876,7 +1835,7 @@ test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is n
   assert.match(text, /Слушать: .*watchdog proba\.2--931--nks-dev/, text);
   assert.deepEqual(connects(), ["proba", "proba.2"], "the other session's seat is not rotated");
   assert.equal(fake.state.ws.size, 2, "the other session keeps its socket");
-  assert.equal(fake.state.counts.webhooks_added, 1, "no role-inbox hook for the seat beside");
+  assert.equal(fake.state.counts.webhooks_added, 0, "no role-inbox hook for the seat beside");
 });
 
 // Доска читает место слушающим, а локального держателя нет (прежний мост этого
@@ -2261,22 +2220,6 @@ test("iskron_stand: a header count that does not match the parsed lines blocks a
   assert.equal((await fake.control({})).counts.connect, 1, "take=true is the doer's word to go on");
 });
 
-test("iskron_stand: a hook waking a longer-named sibling does not count as one's own", async (t) => {
-  const { fake, bridge } = await ready(t);
-  await fake.control({ places: [{ karta: "931", name: "proba2", listening: false }] });
-  await fake.control({ webhooks: [{ karta: "931", wakes: "proba2" }] });
-  const reply = await bridge.call("tools/call", {
-    name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
-  });
-  assert.match(textOf(reply), /Хук инбокса роли: взведён/, textOf(reply));
-  assert.equal(
-    (await fake.control({})).counts.webhooks_added,
-    1,
-    "a hook for proba2 is not a hook for proba",
-  );
-});
-
 // The listener block names the doer's own harness — one line, not three: an
 // agent in pi launched the Claude Code watchdog from a block that offered all
 // of them (#5047). The bridge knows the harness from clientInfo.name.
@@ -2385,13 +2328,6 @@ test("two graphs: the second place stands beside the first on the same channel �
     textOf(b),
     /id места не назвал/,
     `the register id was not parsed:\n${textOf(b)}`,
-  );
-  // The default fake lists no iskron_admin: the schema is unread, the reply says so and nothing breaks.
-  assert.match(textOf(b), /схему тула iskron_admin прочесть не удалось/, textOf(b));
-  assert.match(
-    textOf(b),
-    /Хук инбокса роли: не взведён — у места этого графа своего входящего адреса нет/,
-    textOf(b),
   );
   assert.ok(keyA !== keyB, `two places, two watchdog keys: ${keyA} / ${keyB}`);
   assert.equal(fake.state.counts.connect, 1, "the second place rides the same channel");
@@ -2776,30 +2712,45 @@ test("status in a graph whose place id is unknown is refused while the bridge ho
   assert.match(textOf(s1), /занятость @\S+: один/, textOf(s1));
 });
 
-test("two graphs: graph B's role hook is armed on the channel (channel=self), and a posed_to question in B reaches watchdog B only", async (t) => {
-  const { fake, b, keyA, keyB, watch } = await twoGraphs(
+// Хука инбокса роли мост не взводит и не читает (решение владельца, граф nks-dev:
+// #6973, дело №348): событие роли, разосланное хуком каждому живому месту роли,
+// топило места в чужом. Очередь роли — ориентацией; кадр — адресату и делу.
+test("iskron_stand arms no role inbox hook on the karta: no add_webhook, no list_webhooks — on connect, on register, beside in another graph, in English", async (t) => {
+  const { fake, a, b, bridge } = await twoGraphs(
     t,
     { realm: NKS, karta: 931, name: "proba" },
     { realm: DRUGOY, karta: 48, name: "proba" },
-    INIT,
-    (f) => f.control({ adminChannelSelf: true }),
   );
-  assert.match(textOf(b), /Хук инбокса роли: взведён на канал \(channel=self\)/, textOf(b));
-  // UNVERIFIED: the fake's list_webhooks line for a channel hook and its channel:self
-  // delivery are modelled on the API steward's word, not observed — revisit once the
-  // server ships channel:self on the MCP tool.
-  assert.ok(
-    fake.state.webhooks.some((w) => w.channel === "self" && w.karta === "48" && w.realm === DRUGOY),
-    "the hook was registered on the channel for B's role in B",
+  const again = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: NKS, karta: 931, name: "proba" },
+  });
+  assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(
+    fake.state.counts.webhooks_added,
+    0,
+    "iskron_stand must not call add_webhook on the karta",
   );
-  const wa = watch(keyA);
-  const wb = watch(keyB);
-  await waitUntil(() => wa.out.includes("слушаю стояние"), "watchdog A to attach");
-  await waitUntil(() => wb.out.includes("слушаю стояние"), "watchdog B to attach");
-  await fake.control({ posed_to: { realm: DRUGOY, karta: 48, text: "вопрос роли в B" } });
-  await waitUntil(() => wb.out.includes("вопрос роли в B"), "the posed_to event at watchdog B");
-  await pause(300);
-  assert.ok(!wa.out.includes("вопрос роли в B"), `B's question leaked to A:\n${wa.out}`);
+  for (const r of [a, b, again])
+    assert.doesNotMatch(textOf(r), /[Хх]ук инбокса|inbox hook/, textOf(r));
+  const { fake: en, bridge: enBridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
+  await en.control({ english: true });
+  const e = await enBridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!e.result?.isError, textOf(e));
+  assert.doesNotMatch(textOf(e), /inbox hook/i, textOf(e));
+  for (const f of [fake, en]) {
+    assert.deepEqual(
+      f.state.calls.filter((c) => c.name === "iskron_admin" && /webhook/.test(c.arguments.action)),
+      [],
+      "no role webhook is added, inspected, updated or removed",
+    );
+    assert.deepEqual(f.state.webhookCalls, [], "the bridge touches no role hook");
+    assert.equal(f.state.counts.webhooks_added, 0);
+    assert.equal(f.state.counts.webhooks_listed, 0);
+  }
 });
 
 // mcp 0.111.0 (#6819): the server says list_changed in the SSE of whatever request
@@ -2826,26 +2777,6 @@ test("list_changed in the SSE of the bridge's own calls under iskron_stand reach
   });
   assert.equal(fake.state.listChangedSent.length, told + 1, "the server says it again");
   assert.equal(listChanged(bridge), 1, "one change, one word");
-});
-
-// The bridge's own tools/list (the iskron_admin schema under a beside place) is
-// the request that carries the notice and clears the server's mark: the harness
-// must not be left with the old list.
-test("list_changed carried by the bridge's own tools/list still reaches the harness", async (t) => {
-  const { fake, bridge, b } = await twoGraphs(
-    t,
-    { realm: NKS, karta: 931, name: "proba" },
-    { realm: DRUGOY, karta: 48, name: "proba" },
-    INIT,
-    (f) => f.control({ adminChannelSelf: true, list_changed: true, listChangedOn: "tools/list" }),
-  );
-  assert.match(textOf(b), /взведён на канал \(channel=self\)/, textOf(b));
-  assert.deepEqual(
-    fake.state.listChangedSent,
-    ["tools/list"],
-    "only the bridge's own list carried it",
-  );
-  assert.equal(listChanged(bridge), 1, `the harness heard it:\n${bridge.stderr}`);
 });
 
 test("two graphs: leave names every place it leaves — the socket is shared", async (t) => {
@@ -2912,7 +2843,6 @@ test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's ro
   assert.ok(connect, JSON.stringify(fake.state.placeArgs));
   assert.equal(connect.ttl_seconds, 300, "a short channel ttl: invitations do not outlive the run");
   assert.equal(connect.attrs?.satellite_of, `@tester:${CALLER}`, "the board names the caller");
-  assert.match(textOf(r1), /Хук инбокса роли: отдельному месту не взводится/, textOf(r1));
   assert.doesNotMatch(textOf(r1), /watchdog/, "a satellite is told no watchdog command");
   // The same run standing again comes back to its place, no new connect.
   const connects = fake.state.counts.connect;
@@ -4034,12 +3964,11 @@ test("iskron_stand with status on the seat this bridge holds only sets the busy 
   assert.equal(fake.state.status, "", "an empty status clears the line");
   await untouched("clearing");
 
-  // Старт двери несёт model — он сверяет место: register и хук, не одна занятость.
+  // Старт двери несёт model — он сверяет место: register, не одна занятость.
   const restart = await stand({ ...seat, model: "opus-5", status: "снова на вахте" });
   const said = textOf(restart);
   assert.ok(!restart.result?.isError, said);
   assert.match(said, /сокет уже держит этот мост — register/, said);
-  assert.match(said, /Хук инбокса роли: стоит и будит это стояние/, said);
   assert.match(said, /^занятость @\S+: снова на вахте$/m, said);
   const now = (await fake.control({})).counts;
   assert.equal(now.register_standing, before.register_standing + 1, "the start registers");
@@ -4179,26 +4108,19 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
 });
 
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
-// текстом ключами api ({action, seats[]}, {action, webhooks[]}, отказ —
-// _meta["iskron/refusal"]), и мост читает поле, когда оно есть и по форме, — проза
-// тогда хоть на другом языке. Без полей — прежний шаблон и строка в лог.
-test("structuredContent: board, register, connect and hook fields carry iskron_stand through prose of a form the bridge does not know", async (t) => {
+// текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
+// читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без
+// полей — прежний шаблон и строка в лог.
+test("structuredContent: board, register and connect fields carry iskron_stand through prose of a form the bridge does not know", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ structured: true, garble: true });
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const first = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
   assert.ok(!first.result?.isError, `${textOf(first)}\n${bridge.stderr}`);
-  // Входящий адрес — из seats[0].inbound connect: в прозе его нет.
-  assert.match(textOf(first), /Хук инбокса роли: взведён на входящий адрес места/, textOf(first));
-  assert.equal(
-    fake.state.webhooks.at(-1)?.url,
-    `${fake.mcpUrl.replace(/\/mcp$/, "")}/api/channel/in/mailbox-proba`,
-  );
-  // Своё место на доске полей — слушает этот мост: только register; хук будит его — reaches_you.
+  // Своё место на доске полей — слушает этот мост: только register.
   const again = await stand({ realm: "nks-dev", karta: 931, name: "proba" });
-  assert.match(textOf(again), /Хук инбокса роли: стоит и будит это стояние/, textOf(again));
+  assert.ok(!again.result?.isError, textOf(again));
   assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
-  assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
   // id места рядом — из seats[0].seat_id register: занятость доходит.
   const beside = await stand({ realm: "@nks/drugoy", karta: 48, name: "proba-b" });
   assert.ok(!beside.result?.isError, textOf(beside));
@@ -4215,8 +4137,8 @@ test("structuredContent: board, register, connect and hook fields carry iskron_s
 });
 
 // Неполные поля (nks-mcp 0.104.1, дело №186 [36]): выброшенный ряд (dropped) или
-// данные, не прошедшие целиком (incomplete), — не доска и не список хуков: проза.
-test("structuredContent: fields with dropped rows are not the board or the hook list — the prose finds the held place and its hook", async (t) => {
+// данные, не прошедшие целиком (incomplete), — не доска: проза.
+test("structuredContent: fields with dropped rows are not the board — the prose finds the held place", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ structured: true });
   const args = { realm: "nks-dev", karta: 931, name: "proba" };
@@ -4227,8 +4149,6 @@ test("structuredContent: fields with dropped rows are not the board or the hook 
   assert.ok(!again.result?.isError, textOf(again));
   assert.equal(fake.state.lastStructured?.dropped, 1, "the fake dropped a row");
   assert.equal(fake.state.counts.connect, 1, "the held place is not rotated");
-  assert.match(textOf(again), /Хук инбокса роли: стоит и будит это стояние/, textOf(again));
-  assert.equal(fake.state.counts.webhooks_added, 1, "no second hook");
   assert.match(
     bridge.stderr,
     /structuredContent iskron_channel list: fields incomplete — the prose template/,
@@ -4243,15 +4163,12 @@ test("structuredContent: incomplete fields — {action, incomplete} — send isk
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
   assert.ok(!r.result?.isError, textOf(r));
-  assert.deepEqual(fake.state.lastStructured, { action: "list_webhooks", incomplete: true });
-  for (const what of [
-    "iskron_channel list",
-    "iskron_channel connect",
-    "iskron_admin list_webhooks",
-  ])
-    assert.ok(
-      bridge.stderr.includes(`structuredContent ${what}: fields incomplete — the prose template`),
-      `${what}\n${bridge.stderr}`,
+  assert.equal(fake.state.lastStructured?.incomplete, true, "the fake cut the fields");
+  for (const what of ["iskron_channel list", "iskron_channel register"])
+    await waitUntil(
+      () =>
+        bridge.stderr.includes(`structuredContent ${what}: fields incomplete — the prose template`),
+      `the ${what} incomplete-fields line on stderr`,
     );
 });
 
@@ -4263,10 +4180,6 @@ test("structuredContent: without fields the prose path stands and the log says s
   assert.match(
     bridge.stderr,
     /structuredContent iskron_channel list: no field — the prose template/,
-  );
-  assert.match(
-    bridge.stderr,
-    /structuredContent iskron_admin list_webhooks: no field — the prose template/,
   );
   await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   assert.equal(
@@ -4464,8 +4377,8 @@ test("the bridge asks the server for fields on every handshake; a harness that d
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
-  // Проза — формой, которой мост не знает: место и хук он нашёл по полям, которые просил сам.
-  assert.match(textOf(stand), /Хук инбокса роли: взведён на входящий адрес места/, textOf(stand));
+  // Проза — формой, которой мост не знает: место он нашёл по полям, которые просил сам.
+  assert.ok(!stand.result?.isError, textOf(stand));
   const board = await bridge.call("tools/call", {
     name: "iskron_channel",
     arguments: { realm: "nks-dev", action: "list" },

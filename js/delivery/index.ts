@@ -66,7 +66,6 @@ export {
 export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
 export { HEARING, type HearingWords } from "./words/hearing.ts";
 export { HOLD, type HoldWords } from "./words/hold.ts";
-export { HOOK, type HookWords } from "./words/hook.ts";
 export { LAUNCH, type LaunchWords } from "./words/launch.ts";
 export { LEAD, type LeadWords } from "./words/leads.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
