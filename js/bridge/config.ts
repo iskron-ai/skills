@@ -7,6 +7,7 @@ import {
   DEFAULT_SERVER_URL,
   envName,
   HOME_DIR,
+  LANGS,
   SERVER_CHOICE,
   SERVER_URLS,
   tool,
@@ -19,19 +20,17 @@ import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
 
 export { DEFAULT_SERVER_URL };
-/** The English production address (graph @nks/nks-dev, node #5040). */
-export const ENGLISH_SERVER_URL = SERVER_URLS.en;
-/** Only behind production addresses does the bridge follow delivery releases. */
-const PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+/** Only behind production addresses (graph @nks/nks-dev, node #5040) does the bridge follow delivery releases. */
+const PRODUCTION_URLS = new Set(LANGS.map((l) => strip(SERVER_URLS[l])));
 function strip(url: string): string {
   return url.replace(/\/+$/, "");
 }
 export const isProductionServer = (url: string): boolean => PRODUCTION_URLS.has(strip(url));
-/** The human's word for the address: `ru` and `en` name the production ones, else a full URL. */
+/** The human's word for the address: a language's word names its production address, else a full URL. */
 export function resolveServerChoice(word: string): string | null {
   const w = word.trim();
-  if (SERVER_CHOICE.ru.test(w)) return DEFAULT_SERVER_URL;
-  if (SERVER_CHOICE.en.test(w)) return ENGLISH_SERVER_URL;
+  const chosen = LANGS.find((l) => SERVER_CHOICE[l].test(w));
+  if (chosen) return SERVER_URLS[chosen];
   try {
     return new URL(w).href;
   } catch {

@@ -1,6 +1,7 @@
 // Имена протокола, которыми мост говорит с сервером, харнесом и своими плагинами
 // (граф @nks/nks-dev, узлы #6809, #6815): выводятся из имени продукта, кроме ключей,
 // которые подтверждает поверхность своего сервера (serverProtocol).
+import type { Lang } from "./lang.ts";
 import { BRIDGE_NAME, PRODUCT } from "./product.ts";
 
 /** Префикс тулов сервера поставки. */
@@ -37,6 +38,12 @@ export const serverProtocol = {
  * группа 1 — голова, группа 2 — перечень. Двуязычно при любом языке сессии.
  */
 export const ACTION_LIST_RE = /((?:одно из|one of):\s*)([a-z_]+(?:\s*\|\s*[a-z_]+)*)/i;
+/**
+ * Язык прозы, который мост просит у сервера явно (`locale` места, `accept-language`), по
+ * языку сессии; языка нет в таблице — решает умолчание сервера.
+ */
+export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { en: "en" };
+
 /** Заголовок доски каналов на обоих языках сервера — для слова о нераспознанной доске. */
 export const BOARD_HEADER = { ru: "Каналы", en: "Channels" } as const;
 /**

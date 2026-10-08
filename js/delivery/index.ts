@@ -59,7 +59,13 @@ export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
 export { HEARING, type HearingWords } from "./words/hearing.ts";
 export { HOOK, type HookWords } from "./words/hook.ts";
 // part 5b
-export { ACTION_LIST_RE, BOARD_HEADER, SEAT_GONE_RE, UNATTRIBUTED_RE } from "./protocol.ts";
+export {
+  ACTION_LIST_RE,
+  BOARD_HEADER,
+  SEAT_GONE_RE,
+  SERVER_LOCALE,
+  UNATTRIBUTED_RE,
+} from "./protocol.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
 export { LISTEN, type ListenWords } from "./words/listen.ts";
 export { LOST, type LostWords } from "./words/lostplaces.ts";
