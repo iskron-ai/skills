@@ -1,6 +1,6 @@
 // Запись держания при уходе сессии с неснятого места (граф nks-dev: #5067, #6649).
 import { harnessName } from "./client.ts";
-import { readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
+import { readHoldRecord, sessionOfBridge, writeHoldRecord } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { extraPlaces, rememberExtraStatus } from "./places.ts";
 import { state } from "./transport.ts";
@@ -42,5 +42,19 @@ export function keepHoldRecord(): void {
   for (const p of extraPlaces()) {
     const r = readHoldRecord(p.door.key, true);
     if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
+  }
+}
+
+/**
+ * Сессия названа мосту, который уже держит место (возврат с диска раньше слова
+ * плагина): записи держимых мест, основного и рядом, несут её теперь же — запись без сессии при
+ * живом держателе читается местом без сессии, своим для названной сессии харнесса (#6702).
+ */
+export function signHeldRecord(): void {
+  const key = H.currentKey;
+  if (!key || !H.holder?.alive || !sessionOfBridge()) return;
+  for (const k of [key, ...extraPlaces().map((p) => p.door.key)]) {
+    const rec = readHoldRecord(k); // места рядом в других графах — на том же канале, тем же адресом
+    if (rec && !rec.session && rec.url === H.currentUrl) writeHoldRecord(k, rec);
   }
 }
