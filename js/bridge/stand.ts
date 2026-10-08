@@ -11,7 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { BOARD_HEADER, ID_PREFIX, tool } from "../delivery/index.ts";
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
@@ -71,7 +71,7 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
-import { needRealmKarta, sw } from "./standwords.ts";
+import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -246,7 +246,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (!recognized || own.length > 1 || (hearing(name) === "unknown" && a.take !== true)) {
     lines.push(
       !recognized
-        ? sw().boardUnknown(short(board.text, 160), BOARD_HEADER.ru, BOARD_HEADER.en)
+        ? sw().boardUnknown(short(board.text, 160), ...boardHeaders())
         : own.length > 1
           ? sw().boardAmbiguous(own.length, name, karta)
           : sw().boardCount(declared ?? 0, entries.length),

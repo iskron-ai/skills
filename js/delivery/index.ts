@@ -38,6 +38,7 @@ export {
   LOGGERS,
   method,
   serverProtocol,
+  SERVER_LOCALE,
   STRUCTURED_CAPABILITY,
   tool,
   TOOL_PREFIX,

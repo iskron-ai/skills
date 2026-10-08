@@ -1,6 +1,7 @@
 // Имена протокола, которыми мост говорит с сервером, харнесом и своими плагинами
 // (граф @nks/nks-dev, узлы #6809, #6815): выводятся из имени продукта, кроме ключей,
 // которые подтверждает поверхность своего сервера (serverProtocol).
+import type { Lang } from "./lang.ts";
 import { BRIDGE_NAME, PRODUCT } from "./product.ts";
 
 /** Префикс тулов сервера поставки. */
@@ -30,3 +31,9 @@ export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 export const serverProtocol = {
   refusal: "iskron/refusal",
 } as const;
+
+/**
+ * Язык прозы, который мост просит у сервера явно (`locale` места, `accept-language`), по
+ * языку сессии; языка нет в таблице — решает умолчание сервера.
+ */
+export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { en: "en" };

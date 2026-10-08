@@ -3407,12 +3407,13 @@ test("a delivery skill's files outside the working copy are read without an ask 
     assert.equal(
       await read(join(plugged, "kin", "references", "phrasebook.md")),
       "ask",
-      "a lockless root opens nothing, though it carries the bridge — no source is proven",
+      "a lockless root opens no other skill, though it carries the bridge — no source is proven",
     );
+    // A hand install (no lock): the bridge skill is told by the bridge it carries.
     assert.equal(
-      await read(join(plugged, "establish-mcp", "SKILL.md")),
-      "ask",
-      "not even its bridge skill",
+      await read(join(plugged, "establish-mcp", "references", "phrasebook.md")),
+      "allow",
+      "a lockless root opens its bridge skill — the one that carries the bridge",
     );
     assert.equal(
       await read(join(broken, "torn", "references", "phrasebook.md")),

@@ -1,7 +1,7 @@
 // Имя продукта и всё, что из него выводится (граф @nks/nks-dev, узлы #6809, #6815):
 // две поставки на одной машине не сталкиваются, пока каждое имя здесь выведено из
 // своего PRODUCT — дом и грант, переменные окружения, сокеты и pipes, файлы, клиенты.
-import type { Lang } from "./lang.ts";
+import { DEFAULT_LANG, type Lang } from "./lang.ts";
 
 /** Имя продукта — строчными, как в имени дома, файлов и клиентов. */
 export const PRODUCT = "iskron";
@@ -53,12 +53,12 @@ export const CLIENTS = {
   watchdog: `${PRODUCT}-watchdog`,
 } as const;
 
-/** Адреса сервера: русский — умолчание, английский — второй продовый (#5040). */
-export const SERVER_URLS = {
+/** Продовые адреса сервера по языку (#5040); умолчание — адрес языка по умолчанию. */
+export const SERVER_URLS: Readonly<Record<Lang, string>> = {
   ru: "https://mcp.iskron.ru/",
   en: "https://mcp.iskron.ai/",
-} as const;
-export const DEFAULT_SERVER_URL = SERVER_URLS.ru;
+};
+export const DEFAULT_SERVER_URL = SERVER_URLS[DEFAULT_LANG];
 
 /**
  * Код `node -e` единой формы записи моста-спутника: путь к дому из homedir, путь в
