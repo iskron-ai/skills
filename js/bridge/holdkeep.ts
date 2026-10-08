@@ -47,12 +47,14 @@ export function keepHoldRecord(): void {
 
 /**
  * Сессия названа мосту, который уже держит место (возврат с диска раньше слова
- * плагина): запись держимого места несёт её теперь же — запись без сессии при
+ * плагина): записи держимых мест, основного и рядом, несут её теперь же — запись без сессии при
  * живом держателе читается местом без сессии, своим для названной сессии харнесса (#6702).
  */
 export function signHeldRecord(): void {
   const key = H.currentKey;
   if (!key || !H.holder?.alive || !sessionOfBridge()) return;
-  const rec = readHoldRecord(key);
-  if (rec && !rec.session && rec.url === H.currentUrl) writeHoldRecord(key, rec);
+  for (const k of [key, ...extraPlaces().map((p) => p.door.key)]) {
+    const rec = readHoldRecord(k); // места рядом в других графах — на том же канале, тем же адресом
+    if (rec && !rec.session && rec.url === H.currentUrl) writeHoldRecord(k, rec);
+  }
 }

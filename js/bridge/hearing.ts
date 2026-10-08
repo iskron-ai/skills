@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 import { sameDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
+import { sessionCwd } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.ts";
@@ -141,20 +142,36 @@ export async function localHolder(
   return rec.session === me || (cwd != null && unsignedHere(rec, cwd)) ? "session" : "other";
 }
 
-/** Живой локальный сокет места держит мост другой сессии. */
-async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
-  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
-    if ((await localHolder(key)) === "other") return true;
-  return false;
+/** Живой локальный сокет места держит мост другой сессии, прежний мост этой — или никто. */
+async function heldLocally(
+  realm: string,
+  karta: string,
+  name: string,
+  cwd: string,
+): Promise<"other" | "session" | null> {
+  let own = false;
+  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)]) {
+    const h = await localHolder(key, cwd);
+    if (h === "other") return "other";
+    own ||= h === "session";
+  }
+  return own ? "session" : null;
 }
 
-/** Кто слушает место: другая сессия, никто или мост не знает. */
+/**
+ * Кто слушает место: другая сессия, никто или мост не знает. Суждение то же, что у
+ * iskron_stand (separate.ts): каталог — названный вызовом, иначе каталог стояния
+ * или сессии; сокет прежнего моста этой сессии — своё, доска читает слушающим его (#6702).
+ */
 export async function askedHearing(
   realm: string,
   karta: string,
   name: string,
+  cwd: string = H.standCwd ?? sessionCwd(),
 ): Promise<AskedHearing> {
-  if (await heldLocallyByOther(realm, karta, name)) return "other";
+  const local = await heldLocally(realm, karta, name, cwd);
+  if (local === "other") return "other";
+  if (local === "session") return "free";
   const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }

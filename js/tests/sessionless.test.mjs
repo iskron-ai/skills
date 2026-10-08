@@ -8,7 +8,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { holdRecord, placeArgs, placeOf, setup, stand, textOf, until } from "./ownseat-kit.mjs";
+import {
+  channel,
+  holdRecord,
+  placeArgs,
+  placeOf,
+  setup,
+  stand,
+  textOf,
+  until,
+} from "./ownseat-kit.mjs";
 
 const KEY = "proba--931--nks-dev";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -55,6 +64,18 @@ test("no session on either side (a harness without session names): the live form
   const s2 = await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd });
   assert.equal(placeOf(s2), "proba.2", textOf(s2));
   assert.deepEqual(placeArgs(fake, "connect"), ["proba", "proba.2"], textOf(s2));
+});
+
+test("a raw connect of a named session on an unsigned seat of its own folder is judged as iskron_stand judges it — not another session's", async (t) => {
+  const { fake, up } = await setup(t);
+  const b1 = await up();
+  assert.equal(placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba" })), "proba");
+  await until(() => fake.state.ws.size === 1, "b1 socket");
+  const b2 = await up(); // тот же каталог сессии, что у b1: каталог процесса пробы
+  await b2.call("iskron/resume", { session: "ses-1" });
+  const r = await channel(b2, { realm: "nks-dev", karta: 931, action: "connect", name: "proba" });
+  assert.doesNotMatch(textOf(r), /другая сессия|another session/, textOf(r));
+  assert.deepEqual(placeArgs(fake, "connect"), ["proba", "proba"], textOf(r));
 });
 
 test("resume from disk by key on a bridge whose session is not named keeps the session in the hold record", async (t) => {
