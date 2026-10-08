@@ -1,18 +1,17 @@
-// Клиент MCP по stdio к дочернему мосту и перевод его ответов в форму pi.
+// MCP client over stdio to a child bridge, and its answers in pi's form.
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
-import { envName, ID_PREFIX } from "../delivery/index.ts";
-import { L } from "./lang.ts";
+import { BRIDGE_CLIENT, envName, ID_PREFIX } from "../delivery/index.ts";
+import { words } from "./lang.ts";
+
+const W = () => words(BRIDGE_CLIENT);
 
 /**
- * Чем запускать мост. Под pi это сам node (`process.execPath`). Под OpenCode
- * процесс — Bun, встроенный в бинарь opencode; голый execPath запустил бы
- * opencode с путём моста как каталогом проекта (наблюдено: «Failed to change
- * directory to …/iskron.mjs»), но тот же бинарь под BUN_BE_BUN=1 ведёт себя как
- * обычный bun и гоняет мост целиком (все пробы моста зелёные под ним). Так у
- * OpenCode нет требования Node: мост бежит на рантайме самого харнеса.
- * ISKRON_NODE — рычаг человека и проб: явный рантайм старше вывода.
+ * What runs the bridge. Under pi — node itself. Under OpenCode the process is the Bun
+ * built into the opencode binary: a bare execPath would start opencode with the bridge
+ * path as a project directory (observed), but with BUN_BE_BUN=1 it runs as plain bun,
+ * so OpenCode needs no Node. The NODE variable is an explicit override for people and probes.
  */
 export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
   const own = process.env[envName("NODE")]?.trim();
@@ -23,16 +22,16 @@ export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
   return { bin: process.execPath, env: process.env };
 }
 
-/** Префикс id служебного хода клиента (строка запуска и т.п.): мост не считает его работой агента. */
+/** Id prefix of a client's service call (launch line etc.): the bridge does not count it as agent work. */
 export const SERVICE_ID = `${ID_PREFIX}service-`;
 
-/** Сколько мосту дают уйти самому после SIGTERM — дольше потолка публикации снятой занятости (3 с). */
+/** Grace after SIGTERM — longer than the 3 s ceiling on publishing a cleared busy status. */
 const STOP_GRACE_MS = 5000;
 
 export type Content =
   { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
-/** Клиент MCP по stdio. Кадрирование — NDJSON в обе стороны, как у моста. */
+/** MCP client over stdio; NDJSON framing both ways, as the bridge does. */
 export class Bridge {
   private proc: ChildProcess | null = null;
   private buf = "";
@@ -53,9 +52,9 @@ export class Bridge {
     bin: string,
     onLog: (line: string) => void,
     onNotification: (method: string, params: any) => void = () => {},
-    /** Мост умер или остановлен — один раз, с причиной; плагин OpenCode объявляет по нему потерю слуха. */
+    /** The bridge died or was stopped — once, with the reason; the OpenCode plugin announces lost hearing by it. */
     onDie: (e: Error) => void = () => {},
-    /** Флаги моста (плагин OpenCode: `--satellite` дочерней сессии, #6002). */
+    /** Bridge flags (OpenCode plugin: `--satellite` of a child session, #6002). */
     args: string[] = [],
   ) {
     this.bin = bin;
@@ -65,12 +64,12 @@ export class Bridge {
     this.args = args;
   }
 
-  /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
+  /** The bridge exited or failed to start — calls to it are refused with this. */
   get failure(): Error | null {
     return this.dead;
   }
 
-  /** env — поверх рантайма: версия хоста для attrs.harness_version (#6226). */
+  /** env — over the runtime's: host version for attrs.harness_version (#6226). */
   start(env: Record<string, string> = {}): void {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin, ...this.args], {
@@ -81,8 +80,7 @@ export class Bridge {
     proc.stdout?.setEncoding("utf8");
     proc.stdout?.on("data", (chunk: string) => this.feed(chunk));
     proc.stderr?.setEncoding("utf8");
-    // Слово моста — единственное окно в затянувшийся OAuth: его видно, значит
-    // это не зависание.
+    // The bridge's stderr is the only window into a long OAuth: seeing it means no hang.
     let errBuf = "";
     proc.stderr?.on("data", (chunk: string) => {
       errBuf += chunk;
@@ -95,32 +93,12 @@ export class Bridge {
         this.onLog(line);
       }
     });
-    proc.on("error", (e) =>
-      this.die(
-        new Error(
-          L(`мост не запустился: ${e.message}`, `the bridge failed to start: ${e.message}`),
-        ),
-      ),
-    );
-    proc.on("exit", (code, signal) =>
-      this.die(
-        new Error(
-          L(
-            `мост вышел (code=${code}, signal=${signal})${this.why()}`,
-            `the bridge exited (code=${code}, signal=${signal})${this.why()}`,
-          ),
-        ),
-      ),
-    );
+    proc.on("error", (e) => this.die(new Error(W().failedToStart(e.message))));
+    proc.on("exit", (code, signal) => this.die(new Error(W().exited(code, signal, this.why()))));
   }
 
   private why(): string {
-    return this.tail.length
-      ? L(
-          `; последнее от моста: ${this.tail.slice(-3).join(" | ")}`,
-          `; last from the bridge: ${this.tail.slice(-3).join(" | ")}`,
-        )
-      : "";
+    return this.tail.length ? W().lastFromBridge(this.tail.slice(-3).join(" | ")) : "";
   }
 
   private die(e: Error): void {
@@ -131,14 +109,13 @@ export class Bridge {
     try {
       this.onDie(e);
     } catch {
-      /* слово о смерти не должно уронить читателя */
+      /* the death notice must not crash the reader */
     }
   }
 
   private feed(chunk: string): void {
     this.buf += chunk;
-    // Только LF: делить обобщённым читателем строк нельзя, U+2028/U+2029 законны
-    // внутри JSON-строки.
+    // LF only: U+2028/U+2029 are legal inside a JSON string, so no generic line reader.
     const lines = this.buf.split("\n");
     this.buf = lines.pop() ?? "";
     for (const line of lines) {
@@ -148,11 +125,11 @@ export class Bridge {
       try {
         msg = JSON.parse(trimmed);
       } catch {
-        continue; // не наш кадр — мост говорит по stderr, а не сюда
+        continue; // not our frame — the bridge talks on stderr
       }
       const service = typeof msg?.id === "string" && msg.id.startsWith(SERVICE_ID);
       if (typeof msg?.id !== "number" && !service) {
-        // Уведомление без id — слово моста: кадры стояния приходят так.
+        // A notification without id — standing frames come this way.
         if (typeof msg?.method === "string") this.onNotification(msg.method, msg.params);
         continue;
       }
@@ -180,7 +157,7 @@ export class Bridge {
     opts: { timeoutMs?: number; signal?: AbortSignal; service?: boolean } = {},
   ): Promise<any> {
     if (this.dead) return Promise.reject(this.dead);
-    // Служебный ход плагина или расширения — не работа агента (#6510): мост узнаёт его по id.
+    // A plugin's or extension's service call is not agent work (#6510): the bridge knows it by id.
     const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
@@ -192,75 +169,64 @@ export class Bridge {
       const resolve = settle(res);
       const reject = settle(rej as (v: any) => void);
       function onAbort() {
-        reject(new Error(L("вызов отменён", "call aborted")));
+        reject(new Error(W().aborted()));
       }
       this.pending.set(id, { resolve, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
       }
-      if (opts.timeoutMs) {
+      const ms = opts.timeoutMs;
+      if (ms) {
         timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(
-            new Error(
-              L(
-                `${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`,
-                `${method}: no answer in ${opts.timeoutMs} ms${this.why()}`,
-              ),
-            ),
-          );
-        }, opts.timeoutMs);
+          reject(new Error(W().noAnswer(method, ms, this.why())));
+        }, ms);
         timer.unref?.();
       }
-      if (!this.proc?.stdin?.writable)
-        return reject(
-          new Error(L("мост не принимает запись", "the bridge does not accept writes")),
-        );
+      if (!this.proc?.stdin?.writable) return reject(new Error(W().noWrites()));
       this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
 
   stop(): void {
-    this.die(new Error(L("сессия закрыта", "session closed")));
+    this.die(new Error(W().sessionClosed()));
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.killed || proc.exitCode !== null) return;
     try {
       proc.stdin?.end();
       proc.kill("SIGTERM");
-      // Мост держится до конца висящего OAuth — не даём ему пережить сессию.
-      // Но и не раньше, чем он снимет занятость с доски: уход публикует пустой
-      // статус с потолком 3 с, и SIGKILL через 2 с оставлял занятого там, где
-      // никого нет (#5140).
+      // A pending OAuth would keep the bridge past the session, but leaving first clears
+      // the busy status (3 s ceiling); an earlier SIGKILL left a ghost busy seat (#5140).
       const hard = setTimeout(() => {
         try {
           proc.kill("SIGKILL");
         } catch {
-          /* уже умер */
+          /* already dead */
         }
       }, STOP_GRACE_MS);
       hard.unref?.();
       proc.on("exit", () => clearTimeout(hard));
     } catch {
-      /* закрывать нечего */
+      /* nothing to close */
     }
   }
 }
 
-/** Схема тула для pi. Конверсии нет — только отбрасывается мета-ключ. */
+/** Tool schema for pi: no conversion, only the meta key is dropped. */
 export function toParameters(inputSchema: any): any {
   const schema =
     inputSchema && typeof inputSchema === "object"
       ? { ...inputSchema }
       : { type: "object", properties: {} };
-  delete schema.$schema; // не часть контракта параметров, а паспорт диалекта
+  delete schema.$schema; // the dialect's passport, not part of the parameter contract
   if (!schema.type) schema.type = "object";
   if (schema.type === "object" && !schema.properties) schema.properties = {};
   return schema;
 }
 
-/** Одна строка для секции «Available tools» системного промпта. */
+/** One line for the system prompt's "Available tools" section. */
 export function snippet(description: string): string {
   const first = (description || "").split("\n").find((l) => l.trim()) ?? "";
   const cut = first.trim().split(/(?<=[.。!?])\s/)[0] ?? first.trim();
@@ -285,7 +251,7 @@ export function resultToContent(result: any): Content[] {
   return [
     {
       type: "text" as const,
-      text: structured ? JSON.stringify(structured) : L("(пустой ответ)", "(empty answer)"),
+      text: structured ? JSON.stringify(structured) : W().emptyAnswer(),
     },
   ];
 }

@@ -52,3 +52,11 @@
 - `words/statuspost.ts` — нудж обрезки строки занятости и отказы статусного адреса (`STATUS_POST`).
 - `words/unnamed.ts` — отказ занять место роли без имени (`UNNAMED`).
 - `words/usage.ts` — почему расход не лёг в attrs места (`USAGE`).
+- `patterns/launch.ts` — строка запуска с делом (`LAUNCH_LINE`), русская и английская форма при любом языке сессии.
+- `words/appserver.ts` — слова двери в тред Codex (`APPSERVER`).
+- `words/bridge-client.ts` — отказы клиента MCP к дочернему мосту и пустой ответ (`BRIDGE_CLIENT`).
+- `words/channel.ts` — слова держателя живого канала (`CHANNEL`): совет на мёртвом токене, подвисшее соединение, раскатка.
+- `words/frame-text.ts` — строки счёта дела и указатель history (`FRAME_TEXT`), автор-платформа и кавычки ответа (`CASE_LINE`).
+- `words/launch.ts` — слова входа в дело по строке запуска (`LAUNCH`).
+- `words/stalebatch.ts` — шапка пачки лежалых кадров (`STALE`).
+- `words/standings.ts` — отказы проверки личного каталога сокетов (`STANDINGS`).

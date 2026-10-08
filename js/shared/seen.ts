@@ -1,21 +1,16 @@
-// Память доставленных кадров стояния — id, на которых делателя уже будили.
-// Файл лежит рядом с ключом стояния (см. standings.ts). Пишет его тот, кто кадр
-// ОТДАЛ: сторож под Monitor — напечатав, сторож выхода — выходя на нём, мост —
-// уведомив pi или OpenCode; запись в локальный сокет ещё не доставка. Читают
-// все: мост — не отдать кольцо второй раз и узнать повтор платформы, сторож
-// выхода — не проснуться на отданном (граф nks-dev: #4469, #4881). Файл
-// переживает мост: место, возвращённое новым мостом, помнит отданное вчера
-// (#5831); лежалые файлы прибирает уборка по возрасту (sweep.ts).
+// Memory of delivered standing frames — ids the doer was already woken on, in a file
+// beside the standing key (standings.ts). Written by whoever HANDED the frame out (a
+// write to a local socket is not delivery); read by all (graph @nks/nks-dev, nodes
+// #4469, #4881). The file outlives the bridge (#5831); sweep.ts removes stale files.
 import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
 
 /**
- * Сколько меток держит память: день трафика места — id кадра и метка события на
- * каждый, и вся очередь, которую платформа отдаёт снова после переподключения
- * (#5831, #5828). Метка — одна строка дописью; файл переписывается хвостом раз
- * в SEEN_SLACK новых меток, не на каждой.
+ * How many marks the memory keeps: a day of a seat's traffic plus the whole queue the
+ * platform resends after reconnecting (#5831, #5828). A mark is one appended line; the
+ * file is rewritten to its tail once per SEEN_SLACK new marks.
  */
 export const SEEN_KEEP = 5000;
 export const SEEN_SLACK = 1000;
@@ -24,12 +19,10 @@ const evOf = (v: unknown): string =>
   typeof v === "number" || (typeof v === "string" && v) ? `ev:${v}` : "";
 
 /**
- * Метка события графа в памяти доставленного: `ev:<event_id>`; "" — кадр не несёт
- * события. Событие несут два кадра: via=graph с телом-объектом и event_id в нём
- * (инбокс роли) и via=room с event_id на верхнем уровне конверта, рядом с entry_id
- * (запись дела, написанная тем же событием, — граф nks-dev: #6563, дело №248). Слово
- * делателя, где встретился такой JSON, событием не бывает. Платформа раздаёт одно
- * событие каждому месту роли, у каждой копии свой id кадра (#5829).
+ * Graph event mark in the delivered memory: `ev:<event_id>`; "" — no event. Two frames
+ * carry an event: via=graph with event_id in an object body (role inbox) and via=room
+ * with event_id on the envelope (graph @nks/nks-dev, node #6563). One event goes to
+ * every seat of the role, each copy with its own frame id (#5829).
  */
 export function eventKeyOf(frame: Frame | null | undefined): string {
   const via = frame?.provenance?.via;
@@ -40,26 +33,24 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
   return evOf((body as Record<string, unknown>).event_id);
 }
 
-// Одно событие — один раз в ход: текстом или числом (граф @nks/nks-dev, узел #5842; #6563,
-// #6574). Правило — две функции ниже, и только они: deliveryKeys — что
-// метит доставка, eventIn — гасит ли копию уже помеченное. Метку пишет тот, кто внёс
-// кадр в ход (шапка файла), в миг внесения; составляющий счёт проверяет eventIn.
+// One event enters the turn once, as text or as a count (graph @nks/nks-dev, nodes
+// #5842, #6563, #6574). The rule is the two functions below and only they:
+// deliveryKeys — what delivery marks, eventIn — whether a mark already quenches a copy.
 
-/** Читатель меток: память доставленного, своя или с локальными метками пачки поверх. */
+/** Mark reader: the delivered memory, own or with a batch's local marks on top. */
 export type Marks = (key: string) => boolean;
 
 /**
- * Копия, которую доставка вносит в ход ТЕКСТОМ: всё, кроме записи дела, не адресованной
- * месту, — та входит числом (#6574). Копия инбокса и слово человека в деле — текст.
+ * A copy delivered AS TEXT: everything but a case record not addressed to the seat,
+ * which enters as a count (#6574).
  */
 const asText = (frame: Frame): boolean => addressedToMine(frame);
 
 /**
- * Метки доставки кадра: id и, если кадр несёт событие графа и вошёл текстом, — событие:
- * `ev:` живой копией, `evs:` лежалой (пачка не будит — живая будить вправе, #5842).
- * `named` — текстовая копия названа лишь числом сверх показанных (#5831): событие
- * метится `cev:`/`cevs:` — другие текстовые копии гаснут, запись дела нет. Копия, вошедшая
- * числом, метит только id: текстом событие не вошло.
+ * Delivery marks of a frame: the id and, for a graph event entered as text, the event:
+ * `ev:` live, `evs:` stale (a batch does not wake, a live copy may, #5842). `named` —
+ * a text copy only counted beyond those shown (#5831): `cev:`/`cevs:`. A copy entered
+ * as a count marks only its id.
  */
 export function deliveryKeys(frame: Frame | null | undefined, named = false): string[] {
   const id = typeof frame?.id === "string" ? frame.id : "";
@@ -69,11 +60,10 @@ export function deliveryKeys(frame: Frame | null | undefined, named = false): st
 }
 
 /**
- * Событие этой копии уже в ходе — копию не предлагать и не считать. Любую копию гасит
- * текст события (`ev:`); копию, входящую числом, и лежалую — ещё лежалый текст (`evs:`);
- * текстовую — и копия, названная числом (`cev:`, у лежалой и `cevs:`). Живую текстовую
- * копию лежалый текст не гасит: она будит (#5842); запись дела, текстом не вошедшую, —
- * только текст события (граф @nks/nks-dev, узел #5842).
+ * This copy's event is already in the turn — neither offer nor count it. Any copy is
+ * quenched by the event text (`ev:`); a counted or stale copy also by stale text
+ * (`evs:`); a text copy also by a counted copy (`cev:`, stale also `cevs:`). Stale text
+ * does not quench a live text copy: it wakes (graph @nks/nks-dev, node #5842).
  */
 export function eventIn(frame: Frame | null | undefined, has: Marks): boolean {
   const ev = frame ? eventKeyOf(frame) : "";
@@ -89,16 +79,16 @@ export function eventIn(frame: Frame | null | undefined, has: Marks): boolean {
 }
 
 /**
- * Кадр такта внимания (граф @nks/nks-dev, узел #6169): платформа метит его
- * provenance.wake="look_up" — слово стюарда api, на проводе не наблюдено.
+ * Attention tact frame (graph @nks/nks-dev, node #6169): provenance.wake="look_up" —
+ * the api steward's word, not observed on the wire.
  */
 export const isTact = (frame: Frame | null | undefined): boolean =>
   frame?.provenance?.wake === "look_up";
 
 /**
- * Свёртка тактов (#6569): из тактов `all` в ход входит последний; прежние — ни текстом, ни
- * счётом, метятся отданными вместе с ним. Пока ход занят, такт ждёт его конца, и новый
- * вытесняет ждущий — так доставку держат pi и OpenCode (`onlyTacts`).
+ * Tact folding (#6569): of the tacts in `all` only the last enters the turn; earlier ones
+ * are marked delivered with it. While the turn is busy a tact waits and a newer one
+ * replaces it (`onlyTacts`).
  */
 export function foldedTacts(all: readonly (Frame | null | undefined)[]): Set<Frame> {
   const tacts = all.filter((f): f is Frame => isTact(f));
@@ -107,8 +97,8 @@ export function foldedTacts(all: readonly (Frame | null | undefined)[]): Set<Fra
 }
 
 /**
- * Когда платформа приняла самый свежий такт среди `frames` (received_at; "" — не знаем):
- * последний — по нему, а не по приходу: лежалая пачка приходит позже живого такта.
+ * When the platform took the freshest tact among `frames` (received_at; "" — unknown):
+ * latest by this, not by arrival — a stale batch arrives after a live tact.
  */
 export const tactAt = (frames: readonly Frame[] | undefined): string =>
   (frames ?? [])
@@ -116,20 +106,19 @@ export const tactAt = (frames: readonly Frame[] | undefined): string =>
     .map((f) => (typeof f.received_at === "string" ? f.received_at : ""))
     .reduce((a, b) => (b > a ? b : a), "");
 
-/** Пачка из одних тактов — её занятый ход держит до своего конца последней (#6569). */
+/** A batch of tacts only — a busy turn holds it until its end (#6569). */
 export const onlyTacts = (frames: readonly Frame[] | undefined): boolean =>
   !!frames?.length && frames.every(isTact);
 
-/** Та же ли это копия события по роду доставки — текст или число (веер, fanout.ts). */
+/** Whether this is the same event copy by delivery kind — text or count (fanout.ts). */
 export const sameCopy = (a: Frame | null | undefined, b: Frame): boolean =>
   !!a && eventKeyOf(a) === eventKeyOf(b) && asText(a) === asText(b);
 
 /**
- * Пачка, показывающая первые `keep` кадров (`Infinity` — все): копия, чьё событие уже
- * в ходе (`has`) или входит текстом этой же пачки, — вон, где бы ни стояла, как и такт,
- * за которым в пачке идёт новее (`foldedTacts`); её место занимает следующий кадр.
- * `kept` — кадры, дошедшие текстом или числом, каждый один раз; `keys` — метки
- * доставки всей пачки, и вынутых: пишет их внёсший пачку.
+ * A batch showing the first `keep` frames (`Infinity` — all): a copy whose event is in
+ * the turn (`has`) or enters as text in this batch is dropped, as is a tact followed by
+ * a newer one (`foldedTacts`). `kept` — frames delivered as text or count, once each;
+ * `keys` — delivery marks of the whole batch, dropped included.
  */
 export function splitBatch(
   all: readonly Frame[],
@@ -144,7 +133,7 @@ export function splitBatch(
     const local: Marks = (k) => marks.has(k) || has(k);
     const texts = kept.filter((f) => {
       if (!asText(f)) return true;
-      if (eventIn(f, local)) return false; // текст события уже выше в этой пачке
+      if (eventIn(f, local)) return false; // the event's text is already above in this batch
       for (const k of deliveryKeys(f, !shown.has(f))) marks.add(k);
       return true;
     });
@@ -182,17 +171,15 @@ export function noteSeen(seenPath: string, id: string, seen: Set<string>): void 
 }
 
 /**
- * Обрезать память до хвоста в SEEN_KEEP меток, старые — прочь первыми. Хвост
- * сливается с файлом: там метки других писателей, которых нет в этой памяти, и
- * выбросить их — снова разбудить отданным. Порядок свежести — порядок дописи в
- * файле; своя метка, которой в файле уже нет (её обрезал другой писатель), —
- * старше всего в нём.
+ * Trim the memory to a tail of SEEN_KEEP marks, oldest first. The tail merges with the
+ * file, which holds other writers' marks; freshness is append order, and an own mark
+ * no longer in the file counts as older than everything in it.
  */
 function compact(seenPath: string, seen: Set<string>): void {
   const file = [...seenIds(seenPath)];
   const inFile = new Set(file);
   const tail = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
-  // Во временный файл и rename: читающий в миг обрезки не увидит пустого файла.
+  // Temp file and rename: a reader never sees an empty file mid-trim.
   const tmp = `${seenPath}.${process.pid}.tmp`;
   writeFileSync(tmp, tail.join("\n") + "\n");
   renameSync(tmp, seenPath);

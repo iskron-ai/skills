@@ -1,7 +1,6 @@
-// Свёртка строк ключа в пачке агенту (граф nks-dev: #6718, доля моста в #6715):
-// одна функция на все пачки — окно комнаты сторожам, побудку, лежалые, пачки
-// плагинов pi и OpenCode и сторожа Codex, — потому что все считают счёт дела
-// одной строкой (frame-text.ts caseCountLine).
+// Folding of key lines in a batch to the agent (graph @nks/nks-dev, nodes #6718, #6715):
+// one function for every batch, because all of them count a case in one line
+// (frame-text.ts caseCountLine).
 import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
 
@@ -11,12 +10,10 @@ const idOf = (v: unknown): string =>
   typeof v === "number" || (typeof v === "string" && v) ? String(v) : "";
 
 /**
- * Строки работы, сменённые в пачке: кадр line.kind progress, за которым в пачке
- * есть строка того же ключа (room.id, line.key) с большим entry_id, — читателю
- * нужна только последняя. Признака «сменяет» в кадре нет: сменяет любая следующая
- * строка ключа. Не сворачиваются и не гасят чужое: всё, что не progress (вход и
- * выход, приглашение, ведущий, слово, закрытие, возражение), адресованное месту
- * и строка с вердиктом bad. Доставленными метятся все кадры, и сменённые.
+ * Work lines superseded in the batch: a progress frame followed in the batch by a
+ * line of the same key (room.id, line.key) with a larger entry_id. Anything not
+ * progress, a line addressed to the seat and a bad verdict are never folded.
+ * Every frame, superseded ones too, is marked delivered.
  */
 export function superseded(frames: Frame[]): Set<Frame> {
   const last = new Map<string, { frame: Frame; at: number }>();

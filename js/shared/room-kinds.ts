@@ -1,10 +1,10 @@
 // Room kinds dictionary (graph @nks/nks-dev, nodes #5851, #5893): a technical room
 // frame — its word and stack. Only `event_kind: "room.<kind>"` is decided here;
 // rules are code (RULES, stackOf), words come from the delivery layer.
-import { ROOM, ROOM_AUTO, ROOM_REL, VERDICT } from "../delivery/index.ts";
+import { CASE_LINE, ROOM, ROOM_AUTO, ROOM_REL, VERDICT } from "../delivery/index.ts";
 import { addressedMine, ASK_KINDS, askText, askValues } from "./asks.ts";
 import { type Frame } from "./channel.ts";
-import { L, words } from "./lang.ts";
+import { words } from "./lang.ts";
 import {
   addresseeOf,
   after,
@@ -83,7 +83,7 @@ function authorOf(author: unknown): string {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? L("платформа", "platform") : "?";
+  return a.kind === "platform" ? words(CASE_LINE).platform() : "?";
 }
 
 /** Linked case in link and auto fields (graph @nks/nks-dev, node #5893): seq, else id, else a bare string. */

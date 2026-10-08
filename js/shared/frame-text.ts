@@ -1,22 +1,23 @@
-import { ROOM } from "../delivery/index.ts";
+import { FRAME_TEXT, ROOM } from "../delivery/index.ts";
 import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { superseded } from "./keyfold.ts";
-import { L, words as wordsOf } from "./lang.ts";
+import { words as wordsOf } from "./lang.ts";
 import { need, opt } from "./room-fields.ts";
 import { roomKind } from "./room-kinds.ts";
 
 const W = () => wordsOf(ROOM);
+const T = () => wordsOf(FRAME_TEXT);
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" ? (v as Rec) : {});
 const idOf = (v: unknown): string =>
   typeof v === "number" || (typeof v === "string" && v) ? String(v) : "";
 
-/** Зачин дела в строке — сколько знаков. */
+/** Case opening (zachin) in a line — how many characters. */
 const ZACHIN = 40;
 
-/** Дела кадра из пачки — по делу, в порядке первого появления. */
+/** Cases of the batch frames — by case, in order of first appearance. */
 function casesOf(frames: Frame[]): Frame[][] {
   const by = new Map<string, Frame[]>();
   for (const f of frames) {
@@ -28,7 +29,7 @@ function casesOf(frames: Frame[]): Frame[][] {
   return [...by.values()];
 }
 
-/** Дело кадра: номер (seq, иначе id), зачин, граф; null — кадр не из дела. */
+/** Case of the frame: number (seq, else id), opening, graph; null — not a case frame. */
 function caseOf(frame: Frame): { room: string; zachin: string; realm: string } | null {
   const f = frame as Rec;
   const room = rec(f.room);
@@ -40,10 +41,9 @@ function caseOf(frame: Frame): { room: string; zachin: string; realm: string } |
   return { room: n, zachin, realm };
 }
 
-/** Ключ дела кадра — по нему сторож знает, было ли дело в пачке (зачин — при первом). */
+/** Case key of the frame — the watchdog tells by it whether the case was in the batch. */
 export const caseKey = (frame: Frame): string => caseOf(frame)?.room ?? "";
 
-/** «№N «зачин»» — начало строки кадра дела; зачин — по слову withZachin. */
 function caseHead(frame: Frame, withZachin: boolean): string {
   const c = caseOf(frame);
   if (!c) return "";
@@ -51,7 +51,7 @@ function caseHead(frame: Frame, withZachin: boolean): string {
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
 
-/** Кто говорит — одно слово из провенанса: человек, роль с местом, брат, платформа. */
+/** Who speaks — one word from provenance: human, role with seat, sibling, platform. */
 function whoOf(frame: Frame, withPlace: boolean): string {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
@@ -64,14 +64,14 @@ function whoOf(frame: Frame, withPlace: boolean): string {
   return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 
-/** Текст кадра: строка как есть, JSON-тело (событие графа) — одной строкой. */
+/** Frame text: a line as is, a JSON body (graph event) in one line. */
 function textOf(frame: Frame): string {
-  if (roomKind(frame)?.aside) return ""; // адресное слово не мне (#6081) — без тела
+  if (roomKind(frame)?.aside) return ""; // an addressed word not to me (#6081) has no body
   const b = frame.body;
   return typeof b === "string" ? b : b === undefined ? "" : JSON.stringify(b);
 }
 
-/** Хвост первой строки: ответ на запись, лежалость, судьба тела. */
+/** Tail of the first line: reply to a record, staleness, fate of the body. */
 function tail(frame: Frame, withReply: boolean): string {
   const f = frame as Rec;
   const parts: string[] = [];
@@ -84,12 +84,10 @@ function tail(frame: Frame, withReply: boolean): string {
 }
 
 /**
- * Кадр стояния — коротко в ход агента, одинаково в pi, OpenCode и сторожах
- * (граф nks-dev: #6081, слово владельца — кадр уже проверен мостом): первая
- * строка — дело, запись, род словами и кто; следом текст один раз. Провенанс
- * и конверт сырым JSON не печатаются: целиком кадр читается history дела или
- * канала. Закон #6574: запись дела, не адресованная месту, текстом в ход не
- * идёт — числом и указанием (caseCountLine); доставка не велит отвечать.
+ * A standing frame, short, into the agent's turn — the same in pi, OpenCode and the
+ * watchdogs (graph @nks/nks-dev, node #6081): the first line is case, record, kind and
+ * who; then the text once. Rule #6574: a case record not addressed to the seat goes
+ * as a count (caseCountLine).
  */
 export function frameToText(frame: Frame | null | undefined, raw: string): string {
   if (!frame) return raw;
@@ -108,7 +106,7 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     const author = rk?.author && !words.includes(rk.author) ? rk.author : "";
     const who = origin === "platform" ? "" : whoOf(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
-    const withReply = rk?.kind !== "body"; // у тела in_reply_to — его слово, уже в словах
+    const withReply = rk?.kind !== "body"; // a body's in_reply_to is its word, already in the words
     const head =
       `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words}` +
       `${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
@@ -116,21 +114,20 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     if (text && !words.includes(text.trim())) lines.push(text);
     return lines.join("\n");
   }
-  // Прямое слово, побудка, событие графа — без поручения отвечать (#6574).
+  // Direct word, wake-up, graph event — no instruction to answer (#6574).
   const lines = [`${whoOf(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
   return lines.join("\n");
 }
 
-/** Начало текста кадра в строке пачки — сколько знаков. */
+/** Start of the frame text in a batch line — how many characters. */
 const BATCH_TEXT = 160;
 
 /**
- * Кадр пачки дела у сторожа — одной строкой: «№N [entry_id] род словами, автор,
- * начало текста»; зачин дела — при первом его появлении в пачке. Конверта нет:
- * целиком кадр читается по указателю batchPointer. Адресное слово не мне
- * (#6081) — «№N А → Б: слово [id]» без тела; run — число слов череды этой
- * пары, закрытой этим кадром (foldAsides); без него — сам кадр.
+ * A case batch frame for the watchdog in one line: case, [entry_id], kind, author,
+ * start of text; the case opening on its first appearance. An addressed word not to
+ * me (#6081) has no body; run — the number of words in the pair's run closed by this
+ * frame (foldAsides).
  */
 export function batchLine(frame: Frame, run?: number, withZachin = true): string {
   const f = frame as Rec;
@@ -141,7 +138,7 @@ export function batchLine(frame: Frame, run?: number, withZachin = true): string
   const line = rec(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const words = rk?.words ?? T().frame(typeof f.id === "string" ? f.id : "?");
   const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
   const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
@@ -150,10 +147,9 @@ export function batchLine(frame: Frame, run?: number, withZachin = true): string
 }
 
 /**
- * Свёртка пачки (#6081): подряд идущие адресные слова не мне одной пары и их
- * тела — одна строка. На кадр: null — свёрнут в строку следующего; n — строка
- * череды из n слов (тело слова не считается; 0 — одно тело без слова). У кадра
- * не из череды — 1.
+ * Batch folding (#6081): consecutive addressed words not to me of one pair and their
+ * bodies become one line. Per frame: null — folded into the next one's line; n — the
+ * line of a run of n words (a body is not counted; 0 — a lone body). Outside a run — 1.
  */
 export function foldAsides(frames: Frame[]): (number | null)[] {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
@@ -171,7 +167,7 @@ export function foldAsides(frames: Frame[]): (number | null)[] {
   return out;
 }
 
-/** Строки пачки — только адресованные месту (#6574), текстом; прочие — счётом в шапке. */
+/** Batch lines — only those addressed to the seat (#6574), as text; the rest counted in the head. */
 export function batchLines(frames: Frame[]): string[] {
   const seen = new Set<string>();
   return frames.flatMap((f) => {
@@ -184,10 +180,9 @@ export function batchLines(frames: Frame[]): string[] {
 }
 
 /**
- * Строка счёта дела — закон #6574: сколько записей пришло, сколько из них
- * месту, где читать целиком. Без текста и без поручений. frames — записи
- * одного дела; указатель — от первой записи списка. Записи считаются после
- * свёртки строк ключа, сменённые — числом (keyfold.ts, #6718).
+ * Case count line — rule #6574: how many records came, how many to the seat, where to
+ * read in full. frames are records of one case; superseded key lines are counted
+ * apart (keyfold.ts, #6718).
  */
 export function caseCountLine(frames: Frame[]): string {
   const c = frames.length ? caseOf(frames[0]) : null;
@@ -195,38 +190,33 @@ export function caseCountLine(frames: Frame[]): string {
   const mineN = frames.filter((f) => addressedToMine(f)).length;
   const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
-  const yours = mineN
-    ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `)
-    : L(` — адресованных месту нет; `, ` — none of them yours; `);
+  const yours = mineN ? T().yoursBelow() : T().noneYours();
   const n = frames.length - gone;
   return (
-    L(`${head}: записей ${n}, тебе ${mineN}`, `${head}: ${n} records, yours ${mineN}`) +
-    (gone ? L(`, сменённых строк ключа ${gone}`, `, ${gone} superseded lines of a key`) : "") +
+    T().count(head, n, mineN) +
+    (gone ? T().supersededLines(gone) : "") +
     yours +
     batchPointer(frames) +
     "."
   );
 }
 
-/**
- * Строки счёта пачки — по одной на дело (#6574), над всеми его записями: «тебе
- * N» считает адресованные, что идут строками ниже, — счёт им не противоречит.
- */
+/** Batch count lines — one per case (#6574), above all its records. */
 export function caseCountLines(frames: Frame[]): string[] {
   return casesOf(frames).map(caseCountLine).filter(Boolean);
 }
 
-/** Шапка пачки дела: счёт по делам и указание, где читать целиком (#6574), — в шапке, не в конце: обрезка режет хвост. */
+/** Case batch head: counts per case and where to read in full (#6574) — at the head, since cutting trims the tail. */
 export function batchHead(frames: Frame[]): string {
   return caseCountLines(frames).join("\n");
 }
 
 /**
- * Как прочесть пачку целиком: по делу — history с since перед первой записью
- * пачки. since есть у mcp с 0.84.2; старому — запасной ход keep_cursor.
+ * How to read the batch in full: per case, history with since before the batch's
+ * first record (since exists from mcp 0.84.2).
  */
 export function batchPointer(frames: Frame[]): string {
-  // Дело — граф плюс номер; realm iskron_case требует всегда.
+  // realm is always required by the case tool.
   const since = new Map<string, number>();
   for (const frame of frames) {
     const f = frame as Record<string, unknown>;
@@ -241,7 +231,5 @@ export function batchPointer(frames: Frame[]): string {
       `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
     since.set(args, Math.min(since.get(args) ?? e, e));
   }
-  const whole = L("целиком — ", "in full — ");
-  if (!since.size) return `${whole}iskron_channel(action="history")`;
-  return whole + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ");
+  return T().inFull([...since].map(([args, e]) => T().caseHistory(args, e - 1)).join("; "));
 }

@@ -83,3 +83,17 @@ export { THIN, type ThinWords } from "./words/thin.ts";
 export { UNNAMED, type UnnamedWords } from "./words/unnamed.ts";
 export { UPDATE, type UpdateWords } from "./words/update.ts";
 export { USAGE, type UsageWords } from "./words/usage.ts";
+// part 5c
+export { LAUNCH_LINE } from "./patterns/launch.ts";
+export { APPSERVER, type AppServerWords } from "./words/appserver.ts";
+export { BRIDGE_CLIENT, type BridgeClientWords } from "./words/bridge-client.ts";
+export { CHANNEL, type ChannelWords } from "./words/channel.ts";
+export {
+  CASE_LINE,
+  type CaseLineWords,
+  FRAME_TEXT,
+  type FrameTextWords,
+} from "./words/frame-text.ts";
+export { LAUNCH, type LaunchWords } from "./words/launch.ts";
+export { STALE, type StaleWords } from "./words/stalebatch.ts";
+export { STANDINGS, type StandingsWords } from "./words/standings.ts";

@@ -1,14 +1,13 @@
-// Вход шва «тонкий мост ↔ демон машины» (провод — seam.ts): где лежит сокет
-// демона, чей это каталог и кто поднимает демон. Одно на обе стороны: тонкий
-// мост ищет демон тем же путём, каким демон слушает.
+// Seam entrance (wire — seam.ts): where the daemon socket lies, whose directory it is
+// and who raises the daemon. Shared by both sides.
 //
-//   <каталог гранта>/run/          личный каталог шва: 0700, этого пользователя,
-//                                  не ссылка (privateDirProblem); иначе — отказ
-//   run/daemon.sock                сокет демона 0600; длинный путь — личный
-//                                  /tmp/iskron-<uid>/daemon-<ключ>.sock с той же проверкой
-//   run/daemon.lock                замок жизни демона: один демон на грант
-//   run/daemon.raising             замок выборов подъёма: поднимает один тонкий мост
-//   run/pipe                       Windows: случайная часть имени канала (0600)
+//   <grant dir>/run/       private seam directory: 0700, this user, not a link
+//                          (privateDirProblem); otherwise refused
+//   run/daemon.sock        daemon socket 0600; a long path — the short private
+//                          /tmp/<prefix>-<uid>/daemon-<key>.sock with the same check
+//   run/daemon.lock        daemon life lock: one daemon per grant
+//   run/daemon.raising     raise election lock: one thin bridge raises
+//   run/pipe               Windows: the random part of the pipe name (0600)
 import { createHash, randomBytes } from "node:crypto";
 import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -16,23 +15,20 @@ import { dirname, join, resolve } from "node:path";
 import { RUNTIME_PREFIX } from "../delivery/index.ts";
 import { privateDirProblem, shortSocketDir } from "./standings.ts";
 
-/** Ключ демона — каталог гранта: один демон на грант. */
+/** Daemon key — the grant directory: one daemon per grant. */
 export const seamKey = (authDir: string): string =>
   createHash("sha256").update(resolve(authDir)).digest("hex").slice(0, 16);
 
-/** Личный каталог шва: замки, случайная часть имени канала, сокет (если путь короток). */
+/** Private seam directory: locks, the random pipe-name part, the socket (if the path is short). */
 export const seamRunDir = (authDir: string): string => join(resolve(authDir), "run");
 
-// Путь unix-сокета без завершающего нуля: 104 байта на macOS и BSD, 108 на Linux.
+// Unix socket path without the trailing zero: 104 bytes on macOS and BSD, 108 on Linux.
 const SUN_PATH_MAX = 103;
 
-// Имя именованного канала Windows видно всем пользователям машины: его
-// непредсказуемая часть — случайное слово в личном каталоге шва, которого
-// чужой не прочтёт. ACL канала Node не задаёт — это предел, названный в REALITY.md.
-// Файл публикуется атомарно: пишется целиком во временный и ставится на место
-// link() — не rename, чтобы второй пишущий не подменил уже прочитанное первым
-// слово (демон и мост разошлись бы именами). Читатель, заставший файл пустым
-// (прежний неатомарный писатель), перечитывает.
+// A Windows pipe name is visible to every user: its unpredictable part is a random
+// word in the private seam directory (Node sets no pipe ACL — a limit in REALITY.md).
+// Published atomically via link(), not rename, so a second writer cannot replace a
+// word the first already read; a reader finding it empty rereads.
 function pipeNonce(authDir: string): string {
   const run = seamRunDir(authDir);
   const file = join(run, "pipe");
@@ -40,7 +36,7 @@ function pipeNonce(authDir: string): string {
   const tmp = `${file}.${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
     writeFileSync(tmp, randomBytes(16).toString("hex"), { mode: 0o600 });
-    linkSync(tmp, file); // EEXIST — слово уже есть
+    linkSync(tmp, file); // EEXIST — the word is already there
   } catch {
   } finally {
     try {
@@ -55,7 +51,7 @@ function pipeNonce(authDir: string): string {
   throw new Error(`${file} stays empty — the pipe name is unknown`);
 }
 
-/** Локальный вход демона этого каталога гранта. Под Windows создаёт случайную часть имени. */
+/** Local entrance of this grant directory's daemon. On Windows creates the random name part. */
 export function seamSocketPath(authDir: string): string {
   const key = seamKey(authDir);
   if (process.platform === "win32")
@@ -66,16 +62,15 @@ export function seamSocketPath(authDir: string): string {
 }
 
 /**
- * Годен ли вход: личный каталог шва и каталог сокета — каталоги этого
- * пользователя без прав группы и прочих (создаются 0700, если их нет). Иначе —
- * слово, почему нет: тонкий мост идёт полным, демон не слушает. Под Windows
- * права каталогов не проверяются (предел).
+ * Whether the entrance is fit: the seam and socket directories belong to this user
+ * with no group or other rights (created 0700). Otherwise why not: the thin bridge
+ * runs full, the daemon does not listen. Not checked on Windows (a limit).
  */
 export function seamEntranceProblem(authDir: string): string | null {
   if (process.platform === "win32") return null;
   const run = seamRunDir(authDir);
   try {
-    mkdirSync(dirname(run), { recursive: true, mode: 0o700 }); // каталог гранта; его права — не забота шва
+    mkdirSync(dirname(run), { recursive: true, mode: 0o700 }); // grant directory; its rights are not the seam's concern
   } catch (e) {
     return `${dirname(run)}: ${(e as Error).message}`;
   }
@@ -85,15 +80,15 @@ export function seamEntranceProblem(authDir: string): string | null {
   return sockDir === run ? null : privateDirProblem(sockDir);
 }
 
-/** Замок выборов подъёма демона: поднимает один. */
+/** Daemon raise election lock: one raises. */
 export const seamRaiseLockPath = (authDir: string): string =>
   join(seamRunDir(authDir), "daemon.raising");
 
-/** Замок жизни демона: один демон на каталог гранта. */
+/** Daemon life lock: one daemon per grant directory. */
 export const seamDaemonLockPath = (authDir: string): string =>
   join(seamRunDir(authDir), "daemon.lock");
 
-// --- замок файлом (по образцу refreshlock и заявок спутника) -------------------
+// --- file lock (after refreshlock and satellite claims) ------------------------
 
 interface LockBody {
   pid: number;
@@ -105,14 +100,14 @@ export type FileLock =
   | { held: true; release(): void }
   | {
       held: false;
-      /** занят живым — null; иначе причина, почему замка не взять */ fault: string | null;
-      /** кто держит, когда занят живым */
+      /** held by a live process — null; otherwise why the lock cannot be taken */ fault:
+        string | null;
+      /** who holds it, when held by a live process */
       holder?: { pid: number; started_at: number };
     };
 
-// Замки шва лежат в личном каталоге 0700: их хозяин — всегда этот пользователь.
-// EPERM от kill(pid, 0) значит, что pid занят процессом другого пользователя, —
-// номер переиспользован, прежний хозяин мёртв. Жив только свой процесс.
+// Seam locks lie in a 0700 private directory, so their owner is always this user:
+// EPERM from kill(pid, 0) means the pid was reused by another user — the owner is dead.
 export const ownPidAlive = (pid: unknown): boolean => {
   if (!Number.isInteger(pid) || (pid as number) <= 0) return false;
   try {
@@ -132,12 +127,10 @@ const readLock = (path: string): LockBody | null => {
 };
 
 /**
- * Взять замок: link() публикует уже записанный файл атомарно (EEXIST — занят).
- * Брошенный (хозяин не свой живой процесс или замок старше staleMs — потолок
- * давности) уносится rename в уникальное имя, и снимает его только унёсший,
- * сверив токен: из двух уносящих уносит один, а живой замок, унесённый по
- * ошибке, возвращается на место. Отказ файловой системы (EACCES, EROFS…) —
- * fault сразу, не ожидание.
+ * Take the lock: link() publishes an already written file atomically (EEXIST — taken).
+ * An abandoned one (owner not a live own process, or older than staleMs) is renamed
+ * away and removed only by whoever carried it, checking the token; a live lock carried
+ * by mistake is put back. A filesystem refusal (EACCES, EROFS…) is a fault at once.
  */
 export function takeFileLock(path: string, staleMs: number): FileLock {
   const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
@@ -178,9 +171,9 @@ export function takeFileLock(path: string, staleMs: number): FileLock {
 }
 
 /**
- * Унести брошенный замок с токеном staleToken: rename в уникальное имя, снять
- * только свой. null — унесён (или его унёс другой); иначе унесён живой по
- * ошибке: putBack — возвращён на место (замок держат), нет — оставлен в стороне.
+ * Carry away an abandoned lock with staleToken: rename to a unique name, remove only
+ * one's own. null — carried (or by another); otherwise a live one was carried by
+ * mistake: putBack — returned (the lock is held), else left aside.
  */
 export function carryAwayStale(
   path: string,
@@ -190,11 +183,11 @@ export function carryAwayStale(
   try {
     renameSync(path, away);
   } catch {
-    return null; // унёс другой — он и возьмёт
+    return null; // another carried it — it will take it
   }
   if (readLock(away)?.token !== staleToken) {
-    // Между прочтением и rename брошенный замок сменился живым: он возвращается
-    // на место link() — не поверх замка, взятого третьим тем временем.
+    // A live lock replaced the abandoned one before rename: link() it back — never
+    // over a lock a third party took meanwhile.
     try {
       linkSync(away, path);
     } catch {

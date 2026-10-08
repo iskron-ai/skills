@@ -1,14 +1,13 @@
-// Где лежат сокеты стояний — ОДНА конвенция на мост и его клиентов-сторожей.
-// Корень — каталог гранта моста (`--auth-dir`, ISKRON_BRIDGE_AUTH_DIR, иначе
-// ~/.iskron-bridge); сторож обязан вывести то же место, что и мост, иначе он
-// честно отвечает «мост не держит ни одного стояния» о мосте, который держит.
+// Where standing sockets lie — ONE convention for the bridge and its watchdogs. The
+// root is the bridge's grant directory (`--auth-dir`, the BRIDGE_AUTH_DIR variable,
+// else the home directory); a watchdog must derive the same place as the bridge.
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { envName, HOME_DIR, RUNTIME_PREFIX } from "../delivery/index.ts";
-import { L } from "./lang.ts";
+import { envName, HOME_DIR, RUNTIME_PREFIX, STANDINGS } from "../delivery/index.ts";
+import { words } from "./lang.ts";
 import { envOf } from "./scope.ts";
 
 export const defaultAuthDir = (): string => join(homedir(), HOME_DIR);
@@ -21,23 +20,22 @@ export const standingsDirOf = (authDir: string): string => join(authDir, "standi
 const hashOf = (key: string): string => createHash("sha256").update(key).digest("hex").slice(0, 16);
 
 /**
- * Путь сокета — по хешу ключа, не по самому ключу: у unix-сокета на macOS и BSD
- * предел пути 104 байта, и читаемое имя стояния его выбирает. Читаемое имя
- * лежит рядом файлом `<хеш>.key`, по нему сторож без аргумента находит стояние.
+ * Socket path by the key's hash, not the key: a unix socket path is limited to 104
+ * bytes on macOS and BSD. The readable name lies beside as `<hash>.key`, by which a
+ * watchdog without arguments finds the standing.
  */
 export function socketPathOf(authDir: string, key: string): string {
   if (process.platform === "win32") return `\\\\.\\pipe\\${RUNTIME_PREFIX}-${hashOf(key)}`;
   const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
-  // Каталог гранта длинный — сокет в коротком личном каталоге, под хешем
-  // каталога и ключа: два моста с разными каталогами не делят одного сокета.
+  // Long grant directory: hash directory and key, so two bridges never share a socket.
   return join(shortSocketDir(), `${hashOf(resolve(authDir) + "\0" + key)}.sock`);
 }
 
-/** Предел пути unix-сокета без завершающего нуля: 104 байта на macOS и BSD, 108 на Linux. */
+/** Unix socket path limit without the trailing zero: 104 bytes on macOS and BSD, 108 on Linux. */
 const SOCKET_PATH_MAX = 103;
 
-/** Короткий личный каталог сокетов — когда путь под каталогом гранта не влезает в предел. */
+/** Short private socket directory, for when the path under the grant directory does not fit. */
 export const shortSocketDir = (): string =>
   join(
     "/tmp",
@@ -45,11 +43,9 @@ export const shortSocketDir = (): string =>
   );
 
 /**
- * Личный каталог сокетов (короткий в общем /tmp, каталог шва демона) заводится
- * 0700 и берётся, только если он каталог (не ссылка) этого пользователя без
- * прав группы и прочих. Между проверкой и listen его не подменить: /tmp со
- * sticky-битом не даёт чужому переименовать наш каталог. Иначе — слово, почему
- * нет; null — годен. Двери мест (door.ts) и шов демона (seam.ts) — одна проверка.
+ * A private socket directory is created 0700 and used only if it is a directory (not
+ * a link) of this user with no group or other rights; the sticky /tmp keeps it from
+ * being swapped before listen. Returns why not, null when fit. Shared by door.ts and seam.ts.
  */
 export function privateDirProblem(dir: string): string | null {
   let st;
@@ -63,39 +59,36 @@ export function privateDirProblem(dir: string): string | null {
   } catch (e) {
     return `${dir}: ${(e as Error).message}`;
   }
-  if (!st.isDirectory()) return L(`${dir} — не каталог`, `${dir} is not a directory`);
-  if (typeof process.getuid === "function" && st.uid !== process.getuid())
-    return L(`${dir} принадлежит другому пользователю`, `${dir} belongs to another user`);
-  if (st.mode & 0o077)
-    return L(`${dir} открыт группе или прочим`, `${dir} is open to group or others`);
+  const W = words(STANDINGS);
+  if (!st.isDirectory()) return W.notDir(dir);
+  if (typeof process.getuid === "function" && st.uid !== process.getuid()) return W.otherUser(dir);
+  if (st.mode & 0o077) return W.openToOthers(dir);
   return null;
 }
 
 export const keyFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.key`);
 
-/** Запись держания — адреса сокета и занятости (0600): мост, поднятый заново, возвращает место с диска (граф nks-dev: #5061). */
+/** Hold record (0600): a restarted bridge returns the seat from disk (graph @nks/nks-dev, node #5061). */
 export const holdFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.hold`);
 
-/** Основа места (граф nks-dev: #6706): переживает запись держания, которую стирает мёртвый токен. */
+/** Seat base (graph @nks/nks-dev, node #6706): outlives the hold record a dead token erases. */
 export const baseFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.base`);
 
-/** Намерение занять место (0600): лежит, пока connect моста в полёте (граф nks-dev: #6706). */
+/** Intent to take the seat (0600): lies while the bridge's connect is in flight (graph @nks/nks-dev, node #6706). */
 export const takingFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.taking`);
 
-/** Спул передачи (0600): кадры, пришедшие уходящему демону после закрытия двери места, — преемнику (граф nks-dev: #6586). */
+/** Handover spool (0600): frames a leaving daemon got after closing the seat door, for its successor (graph @nks/nks-dev, node #6586). */
 export const spoolFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.spool`);
 
 /**
- * Память отданного — id уже отданных кадров; файл рядом с ключом, не с сокетом: на
- * Windows сокет — именованный канал, не путь. С `server` — память места на этом
- * сервере (`<хеш ключа>.<хеш origin>.seen`): она переживает мост, а ключ места
- * сервера не называет, и каталог гранта у `use en|ru|url` один (#5831). Без
- * `server` — прежнее имя: память живёт, пока жив мост.
+ * Memory of delivered frame ids, beside the key file (on Windows the socket is a pipe,
+ * not a path). With `server` — per server (`<key hash>.<origin hash>.seen`), since the
+ * grant directory is shared across servers (#5831); without — the old name.
  */
 export function seenFilePathOf(authDir: string, key: string, server = ""): string {
   if (!server) return join(standingsDirOf(authDir), `${hashOf(key)}.seen`);
@@ -103,7 +96,7 @@ export function seenFilePathOf(authDir: string, key: string, server = ""): strin
   try {
     origin = new URL(server).origin;
   } catch {
-    /* не URL — хешируется как есть */
+    /* not a URL — hashed as is */
   }
   return join(standingsDirOf(authDir), `${hashOf(key)}.${hashOf(origin).slice(0, 8)}.seen`);
 }
