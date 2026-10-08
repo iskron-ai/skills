@@ -1,5 +1,5 @@
-// Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
-// #6574): в ход текстом входит только адресованное, прочее — числом.
+// Whether a case record is addressed to the reader's seat — the delivery rule
+// (graph @nks/nks-dev, node #6574): only addressed records enter the turn as text.
 import { closesMine, noteAsk, processAsks } from "./askmemory.ts";
 import { ASK_KINDS, askedMine, askFromPerson } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
@@ -8,13 +8,13 @@ import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "
 
 type Rec = Record<string, unknown>;
 
-/** Роды, важные сами по себе: требуют действия читателя (окно возражения — #4928). */
+/** Kinds important by themselves: they require the reader's action (objection window — #4928). */
 const LOUD_KINDS = new Set(["closing", "closed", "objection", "late_objection"]);
 
-/** Слова в полёте, адресованные месту: ключ — место, дело, запись слова. */
+/** Words in flight addressed to the seat: key — seat, case, word record. */
 const addressedWords = new Set<string>();
 const WORDS_KEPT = 512;
-/** Ключ слова в две фазы: место, дело, запись слова — у said в полёте его запись, у body та, на которую оно. */
+/** Key of a two-phase word: a said in flight has its own record, a body the one it belongs to. */
 export function wordKeyOf(frame: Frame): string {
   const f = frame as Rec;
   const line = obj(f.line);
@@ -22,7 +22,7 @@ export function wordKeyOf(frame: Frame): string {
     roomKind(frame)?.kind === "body"
       ? str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id)
       : str(line.entry_id ?? f.entry_id);
-  // Номер записи свой в каждом деле: ключ — в счёте кадра, смена нумерации забывает прежние (#6576).
+  // Record numbers are per case: the key is in the frame's count (#6576).
   return numberedKey(
     frame,
     `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`,
@@ -36,16 +36,15 @@ function rememberWord(key: string): void {
   }
 }
 
-/** Роды, гасящие вопрос мне (askmemory.ts). */
+/** Kinds that close a question to me (askmemory.ts). */
 const ASK_CLOSERS = new Set(["ask", "answer", "ack", "progress"]);
 /**
- * Решение памяти вопросов о кадре — один раз на кадр: адресованность кадра
- * спрашивают много раз (пачка, счёт, свёртка), а память кадр же и меняет.
- * Первое решение помнится по id кадра.
+ * The question memory decides once per frame: addressing is asked many times
+ * (batch, count, folding), while the frame itself changes the memory.
  */
 const askDecided = new Map<string, boolean>();
 function askMemory(f: Rec): boolean {
-  // Решил мост (bridge/addressmark.ts, память места на диске) — его addressed и есть ответ.
+  // Decided by the bridge (bridge/addressmark.ts, seat memory on disk): its addressed is the answer.
   if (f.asks_decided === true) return false;
   const id = str(f.id) || wordKeyOf(f as Frame);
   const was = askDecided.get(id);
@@ -61,27 +60,25 @@ function askMemory(f: Rec): boolean {
 }
 
 /**
- * Адресовано ли кадр места читателя — закон #6574: в ход текстом входит только
- * адресованное месту — слово ему (addressee), ответ на его запись
- * (in_reply_to_from, #5954), приглашение или его отзыв мне — либо важное:
- * слово рода important (#4939: text | important | direct), роды закрытия и
- * возражения, слово человека; тело слова в две фазы — как его слово (#5953).
- * Адресное слово не мне (#6081) и прочие записи
- * дел текстом не доставляются — числом и указателем (frame-text.ts). Не кадр
- * дела (прямое слово, событие графа) — текстом: закон о записях дел. Кадр
- * дела прежней формы, без event_kind, словарь не трогает — путь прежний.
+ * Whether the frame is addressed to the reader's seat — rule #6574: a word to it
+ * (addressee), a reply to its record (in_reply_to_from, #5954), an invite or its
+ * withdrawal to me, or something important: an important word (#4939), closing and
+ * objection kinds, a person's word; a two-phase body counts as its word (#5953).
+ * An addressed word not to me (#6081) and other case records are counted
+ * (frame-text.ts). A frame not from a case goes as text; an old-form case frame
+ * without event_kind keeps the old path.
  */
 export function addressedToMine(frame: Frame | null | undefined): boolean {
   if (!frame) return false;
   const f = frame as Rec;
   const room = obj(f.room);
-  if (!str(room.seq) && !str(room.id)) return true; // не запись дела — закон о записях дел
-  if (!byKind(frame)) return true; // прежняя форма — прежний путь
+  if (!str(room.seq) && !str(room.id)) return true; // not a case record
+  if (!byKind(frame)) return true; // old form — old path
   const line = obj(f.line);
   const fields = obj(line.fields);
   const rk = roomKind(frame);
-  if (rk?.aside) return false; // слово не мне (#6081): факт без тела
-  // Память вопросов мне — до всякого решения: «принята» мне гасит ключ, хоть и адресована выше.
+  if (rk?.aside) return false; // a word not to me (#6081): a fact without a body
+  // Question memory before any decision: an accepted answer to me closes the key even if addressed above.
   const closesAsk = !!rk && ASK_CLOSERS.has(rk.kind) && askMemory(f);
   const mine = mineOf(f);
   const hit = (v: unknown): boolean => {
@@ -89,11 +86,10 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
   if (rk?.kind === "body") {
-    // У body in_reply_to_from — автор САМОГО слова (#5893 §4.6), а род слова — в
-    // его строке (word.line): тело адресовано, когда адресовано его слово —
-    // запомненное на фазе said в полёте; эхо своего слова месту не адресовано.
-    // Пометка addressed — мостом, видевшим обе фазы (bridge/addressmark.ts):
-    // сторож выхода получает тело новым процессом, память ниже его не помнит.
+    // A body's in_reply_to_from is the author of the word itself (#5893 §4.6) and the
+    // word's kind is in word.line: the body is addressed when its word was, as
+    // remembered at the said phase; the bridge, seeing both phases, marks addressed
+    // (bridge/addressmark.ts) for a watchdog that gets the body in a new process.
     const word = obj(f.word);
     if (
       f.addressed === true ||
@@ -103,9 +99,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     )
       return true;
   } else if (
-    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
-    // important на конверте или в полях строки. Слово в полёте запоминается —
-    // его тело придёт второй фазой без этих признаков.
+    // A word to me, a reply to my record (#5954), marked important; a word in flight
+    // is remembered, since its body comes as a second phase without these marks.
     hit(f.addressee) ||
     hit(f.in_reply_to_from) ||
     str(f.said) === "important" ||
@@ -114,19 +109,17 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
-  // Вопрос моей роли или моему месту (#6867); ответ и приём адресованы addressee — выше.
-  // Гасящее вопрос мне (снятие, ответ другого места, переспрос другому) — тоже.
+  // A question to my role or seat (#6867), or what closes a question to me.
   if (rk?.kind === "ask" && askedMine(f, fields)) return true;
   if (closesAsk || (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true)) return true;
-  // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
+  // An invite to me or its withdrawal: key invite:<my seat>; a role invite — to my role.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
     if (rk.kind === "invite" && myRole(f, fields)) return true;
   }
-  // Роды закрытия и возражения важны сами по себе; слово человека — всегда целиком.
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
-  // Роды вопроса — записи с адресатом (#6867): ответ человека чужому — не слово мне.
+  // Question kinds have an addressee (#6867): a person's answer to someone else is not a word to me.
   if ((rk && ASK_KINDS.has(rk.kind)) || askFromPerson(f)) return false;
-  // Тело слова человека мост метит origin (roomstack.ts, #5953): провенанс тела его не несёт.
+  // The bridge marks origin on a person's body (roomstack.ts, #5953): its provenance does not carry it.
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
 }

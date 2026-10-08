@@ -1,64 +1,57 @@
-// Протокол живого канала со стороны держателя сокета — один раз для всех, кто
-// его держит: двух сторожей и расширения pi. Прежде это было написано трижды и
-// расходилось молча; дисциплина здесь выведена полем, а не выдумана — боевые
-// заметки в skills/standing/references/channel.md.
+// Live channel protocol on the socket holder's side — once for every holder (both
+// watchdogs and the pi extension). Field notes: skills/standing/references/channel.md.
 //
-// Три правила, каждое — строчка кода ниже:
-//   попытка считается ОТ КОНСТРУКЦИИ, никогда от onopen: токен, который служба
-//     забыла, отвергается на апгрейде, и onopen не наступает вовсе;
-//   коды мёртвого токена проходят любую ограду и снимают назначенное
-//     переоткрытие: настоящий код приходит close-ом и может опоздать за
-//     догадкой 1006, которую даёт error;
-//   три быстрых обрыва спрашивают /version прежде, чем винить токен: служба
-//     жива, а нас рвёт — слово делателю и переоткрытие реже, место не бросаем;
-//     служба молчит — выкатка, держим токен; слово о ней — раз до hello.
-//   соединение, молчащее дольше трёх интервалов пинга из hello, переоткрывается
-//     тем же адресом вслух (граф nks-dev: #5397); пока ни одного пинга не видно,
-//     таймер не взведён — рантайм, не показывающий пингов, живое мёртвым не объявит.
+// Rules, each a line of code below:
+//   an attempt counts FROM CONSTRUCTION, never from onopen: a token the service forgot
+//     is refused at the upgrade and onopen never comes;
+//   dead-token codes pass any fence and cancel a scheduled reopen: the real code comes
+//     with close and may be late behind the 1006 guess from error;
+//   three fast drops ask /version before blaming the token: service up — a word to the
+//     doer and slower reopening; service silent — a rollout, keep the token;
+//   a connection silent for more than three hello ping intervals is reopened at the
+//     same address, aloud (graph @nks/nks-dev, node #5397); no ping seen — no timer.
 
-// Пространством имён, не именованным импортом: модуль линкуется и там, где этих
-// экспортов нет. Bun канал не наполняет — его пинги приходят событием сокета (ниже).
+// Namespace import: the module links where these exports are absent. Bun does not
+// fill the channel — its pings come as a socket event (below).
 import * as diagnostics from "node:diagnostics_channel";
 
-import { envName } from "../delivery/index.ts";
-import { L } from "./lang.ts";
+import { CHANNEL, envName } from "../delivery/index.ts";
+import { words } from "./lang.ts";
 
-/** Канал, в который undici (WebSocket Node) публикует каждый входящий протокольный пинг. */
+/** The channel where undici (Node's WebSocket) publishes every incoming protocol ping. */
 const PING_CHANNEL = "undici:websocket:ping";
-/** Сколько интервалов пинга соединение может молчать, прежде чем считаться подвисшим. */
+/** How many ping intervals a connection may stay silent before it counts as hung. */
 const SILENT_INTERVALS = 3;
 /**
- * Свой пол молчания: пинг контура — каденс ЕГО живости (три неотвеченных — его
- * терпение), и при пинге раз в 5 с три интервала короче паузы цикла событий у
- * харнеса; здоровое соединение не должно читаться подвисшим (граф nks-dev: #5380).
+ * Own silence floor: with a 5 s ping three intervals are shorter than a harness's
+ * event-loop pause (graph @nks/nks-dev, node #5380).
  */
 const SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 60_000;
 
-/** Закрытия, после которых тем же токеном не переоткрываются. */
+/** Closes after which the same token never reopens. */
 export const DEAD_TOKEN_CODES = [4001, 4002];
 /**
- * Вытеснение: каналом владеет другой держатель — новое подключение либо
- * переизданный секрет. Не смерть токена — и не повод открыться заново: тот
- * же адрес вытеснил бы нового держателя, а он — нас (наблюдено: пинг-понг
- * двух мостов одной сессии после смены демона). Держатель уступает вслух
- * сразу; отбить место (take=true) — только словом человека (граф nks-dev: #5033, #6550).
+ * Eviction: another holder owns the channel. Not a dead token and no reason to reopen —
+ * the same address would evict the new holder and it us (observed ping-pong). The
+ * holder yields aloud at once; retaking only on the human's word (graph @nks/nks-dev,
+ * nodes #5033, #6550).
  */
 export const EVICTED_CODE = 4000;
-/** Выкатка: инстанс уходит, вдох длиннее обычного. */
+/** Rollout: the instance goes away, a longer breath. */
 export const ROLLOUT_CODE = 4003;
 
 const FAST_DROP_MS = 5000;
 const ERROR_GUESS_DELAY_MS = 500;
 /**
- * Паузы переоткрытия, когда служба жива, а сокет рвут: растут до потолка и
- * сбрасываются сокетом, прожившим дольше быстрого обрыва (граф nks-dev: #4664).
+ * Reopen pauses while the service is up and the socket is cut: grow to the ceiling,
+ * reset by a socket living past a fast drop (graph @nks/nks-dev, node #4664).
  */
 const FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000")
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n > 0);
 
-/** Обе схемы: с одним `wss:` вопрос службе на ws-адресе не уходил вовсе. */
+/** Both schemes: with `wss:` alone a ws address never reached the service. */
 function httpOrigin(socketUrl: string): string {
   return new URL(socketUrl).origin.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 }
@@ -68,8 +61,8 @@ export function versionUrl(socketUrl: string): string {
 }
 
 /**
- * Статусный адрес выводится, а не хранится вторым секретом. Вывод — фолбэк:
- * выданная рядом с сокетом строка всегда права, задавай её первой.
+ * The status address is derived, not stored as a second secret. A fallback: a string
+ * issued beside the socket is always right.
  */
 export function statusUrl(socketUrl: string): string {
   return socketUrl
@@ -85,34 +78,26 @@ export async function serviceUp(socketUrl: string): Promise<{ version?: string }
 }
 
 /**
- * Слово делателю на мёртвом токене — одно на всех держателей и на всякий код:
- * connect открывает и то, чего нет, а mint на возникшем снова канале — 409
- * (справка iskron_channel action="?"; граф nks-dev: #5189).
+ * Advice to the doer on a dead token — one for every holder and code: connect opens
+ * even what is gone, while mint on a recreated channel gives 409 (graph @nks/nks-dev,
+ * node #5189).
  */
 export function deadTokenAdvice(code: number): string {
-  return L(
-    `закрытие ${code} — токен мёртв, зови connect`,
-    `close ${code} — the token is dead, call connect`,
-  );
+  return words(CHANNEL).deadTokenAdvice(code);
 }
 
 export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
 
 /**
- * Кто говорит — по провенансу, как платформа его наблюдала. Побудка платформы
- * идёт без удостоверения; человек говорит от собственной роли (стояние его роли
- * — бот, телеграм) либо от себя; брат — другое стояние ТОЙ ЖЕ роли, что у
- * читающего; остальное — делатель другой роли. myKarta — роль читающего.
- * Платформенность решает пара путь плюс удостоверение, а устойчивый признак —
- * ОТСУТСТВИЕ АВТОРА: запись, которую пишет сама платформа (побудка, left при
- * отзыве стояния в комнате), не несёт ни роли, ни стояния; литерал
- * удостоверения (none, platform) — второй признак того же, не первый.
+ * Who speaks — by provenance as the platform observed it. A person speaks from their
+ * own role or as themselves; a sibling is another standing of the reader's role; the
+ * rest is a doer of another role. myKarta — the reader's role. The stable platform
+ * sign is the ABSENCE OF AN AUTHOR; an auth literal (none, platform) is the second.
  */
 export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
   const p = frame.provenance ?? {};
-  // Запись комнаты без автора пишет сама платформа (left при отзыве стояния):
-  // только там отсутствие автора — её слово. Вне комнаты молчание from_standing —
-  // честное молчание, не заявка (граф nks-dev: #2287).
+  // Only in a room is a missing author the platform's word; elsewhere a missing
+  // from_standing is honest silence, not a claim (graph @nks/nks-dev, node #2287).
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
   if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
     return "platform";
@@ -125,9 +110,8 @@ export function classifyOrigin(frame: Frame, myKarta?: string | number | null): 
 }
 
 /**
- * Прямое слово — не кадр дела, не событие графа, не платформа: слово человека
- * или делателя с автором (via hook или напрямую). В пачку — побудки, лежалых,
- * дела у сторожей — оно не входит: приходит отдельно и целиком.
+ * A direct word — not a case frame, graph event or platform: a word of a person or a
+ * doer with an author. It never joins a batch: it comes separately and whole.
  */
 export function isDirectWord(frame: Frame | null | undefined): boolean {
   if (frame?.type !== "message") return false;
@@ -141,7 +125,7 @@ export function isDirectWord(frame: Frame | null | undefined): boolean {
   return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
 }
 
-/** Место канала в hello (наблюдено на живом сервере, мост 6.11.0). */
+/** A channel seat in hello (observed on the live server, bridge 6.11.0). */
 export interface HelloStanding {
   karta_seq?: number;
   pending?: number;
@@ -158,18 +142,18 @@ export interface Frame {
   stale?: boolean;
   content_type?: string;
   body_chars?: number;
-  /** Как получено тело: "history" — мост дочитал обрезанный кадр; "truncated: …" — не вышло. */
+  /** How the body was read: "history" — the bridge read a cut frame in full; "truncated: …" — it could not. */
   body_read?: string;
-  /** Адрес кадра — место канала, которому он (#5838): id места, его полный адрес, граф @owner/slug, роль. */
+  /** The frame's address — the channel seat it is for (#5838): seat id, full address, graph, role. */
   to_standing_id?: string;
   to_standing?: string;
   realm?: string;
   karta_seq?: number;
-  /** hello: все места канала — по одному на граф, где канал стоит. */
+  /** hello: all seats of the channel — one per graph. */
   standings?: HelloStanding[];
-  /** Кто говорит, по провенансу: платформа, человек, брат по роли, делатель другой роли. Ставит мост. */
+  /** Who speaks, by provenance. Set by the bridge. */
   origin?: FrameOrigin;
-  /** Тело слова в две фазы, адресованного месту (#6574). Ставит мост, видевший его слово в полёте. */
+  /** Body of a two-phase word addressed to the seat (#6574). Set by the bridge that saw its word in flight. */
   addressed?: boolean;
   provenance?: {
     from_standing?: string;
@@ -187,64 +171,60 @@ export interface Frame {
 
 export interface HoldOptions {
   url: string;
-  /** Каждый кадр: сырой текст и разобранный JSON, если разобрался. */
+  /** Every frame: raw text and parsed JSON, if it parsed. */
   onFrame: (raw: string, frame: Frame | null) => void;
-  /** Мёртвый токен: держание кончилось, тем же токеном не вернуться. Зовётся один раз. */
+  /** Dead token: holding is over, no return with the same token. Called once. */
   onDeadToken: (code: number) => void;
-  /** Вытеснение повторилось: место слушает другой держатель, держание кончилось, привязка цела. Зовётся один раз; без него — как мёртвый токен. */
+  /** Eviction: another holder listens on the seat, holding is over, the binding intact. Called once; absent — as a dead token. */
   onEvicted?: (code: number) => void;
-  /** Обрывы при живой службе: держание идёт реже, вопрос о токене — делателю. Раз на полосу обрывов. */
+  /** Drops while the service is up: holding goes slower, the token question to the doer. Once per run of drops. */
   onServiceAlive: (version: string) => void;
-  /** Служебные слова, которые будить не должны. */
+  /** Service notes that must not wake. */
   onNote?: (text: string) => void;
-  /** Соединение подвисло и переоткрывается: кадры могли пропасть — слово громче служебного. Без него — как onNote. */
+  /** The connection hung and reopens: frames may be lost — louder than a note. Absent — as onNote. */
   onHung?: (text: string) => void;
-  /** Сокет оборвался и откроется заново тем же адресом: до hello нового открытия слуха нет — адрес мог повернуть другой (контур отвечает 404). */
+  /** The socket dropped and reopens at the same address: no hearing until the new hello (the address may have been turned). */
   onDropped?: () => void;
 }
 
 export interface Holder {
-  /** Отпустить сокет: больше ни переоткрытий, ни кадров. Идемпотентно. */
+  /** Let the socket go: no more reopens or frames. Idempotent. */
   close(reason?: string): void;
   /**
-   * Держать сокет до вытеснения (смена демона, граф nks-dev: #6586): кадры — в
-   * onFrame, слова держателя молчат, любое закрытие — конец держания с его кодом,
-   * без переоткрытия. Сокета уже нет — onGone сразу.
+   * Hold the socket until evicted (daemon change, graph @nks/nks-dev, node #6586):
+   * frames to onFrame, holder words silent, any close ends holding with its code,
+   * no reopen. No socket — onGone at once.
    */
   handOff(onFrame: (raw: string) => void, onGone: (code: number) => void): void;
-  /** Живой ли сокет (открыт или открывается). */
+  /** Whether the socket is alive (open or opening). */
   readonly alive: boolean;
-  /** Последний знак службы (пинг или кадр), мс эпохи; 0 — не было. Попытка открыть — не знак. */
+  /** Last sign of the service (ping or frame), epoch ms; 0 — none. An open attempt is not a sign. */
   readonly heardAt: number;
 }
 
 /**
- * Держать сокет открытым, переоткрывая по обрыву, и доставлять кадры. Что
- * делать с кадром и как громко уходить — решает вызывающий: у сторожа под
- * Monitor это печать и выход процесса, у сторожа выхода-на-кадре — выход нулём
- * на первом сообщении, у расширения — кадр в идущий ход.
+ * Keep the socket open, reopening on drops, and deliver frames. What to do with a
+ * frame and how loudly to leave is the caller's choice.
  */
 export function holdSocket(o: HoldOptions): Holder {
   let fastDrops = 0;
-  let slowdown = 0; // сколько пауз подряд служба жива, а сокет рвут
-  let rolloutTold = false; // заметка о раскатке — раз на полосу недоступности; кончает её hello (#6726)
+  let slowdown = 0; // pauses in a row with the service up and the socket cut
+  let rolloutTold = false; // rollout note once per outage; hello ends it (#6726)
   let dead = false;
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
   let handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null = null;
-  // Живость соединения: последний знак от службы (пинг или кадр), интервал из
-  // hello; таймер взводит первый увиденный пинг.
+  // Liveness: last sign of the service, interval from hello; the first ping arms the timer.
   let lastLife = 0;
-  let heardAt = 0; // как lastLife, но без отметки открытия: время последней жизни для записи держания
+  let heardAt = 0; // like lastLife but without the open mark: last life for the hold record
   let pingMs = 0;
-  // Видит ли рантайм пинги вообще — держится на весь holder: соединение,
-  // подвисшее до своего первого пинга, иначе не поймалось бы никогда.
+  // Holder-wide: a connection hung before its own first ping would never be caught otherwise.
   let runtimeSeesPings = false;
   let lastTick = 0;
   let watch: ReturnType<typeof setInterval> | null = null;
-  // Node 22 не называет сокет пинга, Node 26 называет: чужой пинг может лишь
-  // продлить жизнь, но не объявить живое мёртвым — у моста сокет один.
+  // Node 22 does not name the ping's socket, Node 26 does: a foreign ping may only
+  // extend life, never declare the living dead — the bridge has one socket.
   const onPing = (m: unknown): void => {
     const from = (m as { websocket?: unknown } | null)?.websocket;
     if (!ws || (from !== undefined && from !== ws)) return;
@@ -262,14 +242,13 @@ export function holdSocket(o: HoldOptions): Holder {
 
   function open(): void {
     if (stopped) return;
-    const startedAt = Date.now(); // от конструкции, НЕ в onopen — см. channel.md
+    const startedAt = Date.now(); // from construction, NOT in onopen — see channel.md
     const sock = new WebSocket(o.url);
     ws = sock;
     stopWatch();
     lastLife = startedAt;
-    let gone = false; // обрыв разбирается один раз, чем бы он ни пришёл
-    // Bun (рантайм моста в OpenCode) канала диагностики не наполняет, но шлёт
-    // нестандартное событие ping самого сокета; Node его не шлёт вовсе.
+    let gone = false; // a drop is handled once, however it came
+    // Bun does not fill the diagnostics channel but sends a nonstandard socket ping event.
     sock.addEventListener("ping", () => {
       if (ws !== sock) return;
       lastLife = heardAt = Date.now();
@@ -279,14 +258,14 @@ export function holdSocket(o: HoldOptions): Holder {
     sock.addEventListener("message", (e: MessageEvent) => {
       if (stopped || ws !== sock) return;
       lastLife = heardAt = Date.now();
-      const raw = typeof e.data === "string" ? e.data : L("[двоичный кадр]", "[binary frame]");
+      const raw = typeof e.data === "string" ? e.data : words(CHANNEL).binaryFrame();
       if (handing) return handing.onFrame(raw);
       let frame: Frame | null = null;
       if (typeof e.data === "string") {
         try {
           frame = JSON.parse(raw) as Frame;
         } catch {
-          /* не JSON — донесём как есть */
+          /* not JSON — delivered as is */
         }
       }
       if (frame?.type === "hello") {
@@ -295,10 +274,8 @@ export function holdSocket(o: HoldOptions): Holder {
       }
       o.onFrame(raw, frame && typeof frame === "object" ? frame : null);
     });
-    // Обрыв на самом апгрейде даёт на части рантаймов ТОЛЬКО error: close не
-    // приходит вовсе, и держатель, ждущий одного close, тихо умирает вместе с
-    // пустым циклом событий (замерено на Node 22). Отсрочка оставляет close
-    // шанс назвать свой код — коды мёртвого токена приходят именно им.
+    // A drop at the upgrade gives ONLY error on some runtimes, no close (measured on
+    // Node 22); the delay leaves close a chance to name its code — dead-token codes come by it.
     sock.addEventListener("error", () =>
       setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS),
     );
@@ -312,26 +289,20 @@ export function holdSocket(o: HoldOptions): Holder {
       lastTick = Date.now();
       watch = setInterval(() => {
         const now = Date.now();
-        // Таймер опоздал на интервалы — спал процесс (крышка ноутбука), а не
-        // служба: молчание меряется заново, иначе живое назвали бы подвисшим.
+        // The timer is late by intervals — the process slept, not the service: restart the measure.
         if (now - lastTick > 2 * every + 1000) lastLife = now;
         lastTick = now;
         if (stopped || ws !== sock || !runtimeSeesPings) return;
         const silent = now - lastLife;
         if (silent <= Math.max(SILENT_INTERVALS * pingMs + 1000, SILENT_FLOOR_MS)) return;
         stopWatch();
-        // «Прочитано» у контура значит «записано в сокет», не «взято» (#5380):
-        // кадры, ушедшие в подвисшее соединение, в hello не вернутся.
-        (o.onHung ?? o.onNote)?.(
-          L(
-            `соединение молчит ${Math.round(silent / 1000)} с при пинге раз в ${pingMs / 1000} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь iskron_channel(action="history")`,
-            `the connection has been silent for ${Math.round(silent / 1000)} s with a ping every ${pingMs / 1000} s — hung without closing; reopening at the same address. Frames that arrived during the silence may be lost — check iskron_channel(action="history")`,
-          ),
-        );
+        // "Read" on the server means "written to the socket" (#5380): frames sent into
+        // a hung connection will not come back in hello.
+        (o.onHung ?? o.onNote)?.(words(CHANNEL).hung(Math.round(silent / 1000), pingMs / 1000));
         try {
           sock.close();
         } catch {
-          /* закрывать нечего */
+          /* nothing to close */
         }
         void dropped(1006);
       }, every);
@@ -359,41 +330,33 @@ export function holdSocket(o: HoldOptions): Holder {
         unsubscribePing();
         return h.onGone(code);
       }
-      // Мёртвый токен громче любого предположения об обрыве и старше вытеснения:
-      // он проходит ограду `gone` всегда и снимает уже назначенное переоткрытие.
+      // A dead token beats any drop guess and eviction: it always passes the `gone`
+      // fence and cancels a scheduled reopen.
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
-      // Вытеснение — уступить вслух сразу, не открываясь заново: проходит ограду `gone`,
-      // как мёртвый токен, и снимает уже назначенное догадкой переоткрытие.
+      // Eviction — yield aloud at once, never reopening; passes the fence likewise.
       if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
       gone = true;
       o.onDropped?.();
       const fast = Date.now() - startedAt < FAST_DROP_MS;
       fastDrops = fast ? fastDrops + 1 : 0;
-      if (!fast) slowdown = 0; // сокет прожил — полоса обрывов кончилась
+      if (!fast) slowdown = 0; // the socket lived — the run of drops is over
       if (fastDrops >= 3) {
         const up = await serviceUp(o.url);
         if (stopped || ws !== sock) return;
         if (up) {
-          // Служба жива, а нас рвёт. Бросить место нельзя — грант жив, и сеть
-          // может вернуться; молчать тоже — делатель остался бы с виду слышимым.
-          // Слово — один раз на полосу обрывов, переоткрытие — всё реже.
+          // Service up, yet we are cut: the grant is alive, so keep the seat, but say
+          // it once per run of drops and reopen less and less often.
           if (slowdown === 0) o.onServiceAlive(String(up.version ?? ""));
           const wait = FLAP_PAUSES_MS[Math.min(slowdown, FLAP_PAUSES_MS.length - 1)] ?? 60_000;
           slowdown++;
-          fastDrops = 2; // следующий быстрый обрыв снова спросит службу, но не делателя
+          fastDrops = 2; // the next fast drop asks the service again, not the doer
           retry = setTimeout(open, wait);
           return;
         }
-        if (!rolloutTold)
-          o.onNote?.(
-            L(
-              "служба не отвечает — идёт раскатка, держу тот же токен",
-              "the service is not answering — a rollout is under way, keeping the same token",
-            ),
-          );
+        if (!rolloutTold) o.onNote?.(words(CHANNEL).rollout());
         rolloutTold = true;
-        fastDrops = 1; // простой не должен перерасти в вопрос о токене
+        fastDrops = 1; // an outage must not grow into a token question
       }
       retry = setTimeout(open, code === ROLLOUT_CODE ? 3000 : 2000);
     }
@@ -413,12 +376,12 @@ export function holdSocket(o: HoldOptions): Holder {
       try {
         sock?.close(1000, reason);
       } catch {
-        /* закрывать нечего */
+        /* nothing to close */
       }
     },
     handOff(onFrame, onGone) {
-      // Обрыв уже был, ждём переоткрытия: вытеснять нечего. Сокет ещё открывается —
-      // тоже закрыть: открывшись после сокета преемника, он вытеснил бы его 4000.
+      // Already dropped and waiting to reopen, or still opening: close — an opening
+      // socket would evict the successor's with 4000.
       if (stopped || !ws || ws.readyState !== 1) {
         this.close("handed off without a socket");
         return onGone(0);
