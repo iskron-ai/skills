@@ -106,19 +106,22 @@ export function grantLog(msg: string): void {
   appendJournal(grantLogPath(), msg);
 }
 
-/** Строка в машинный журнал рядом с грантом: время, pid, сборка; журнал длиннее 128 КБ начинается заново. */
+/**
+ * Журнал длиннее предела начинается заново, а прежний уходит в `<журнал>.1`:
+ * переполнение приходится на шумный миг — смену демона, — и стёртый целиком журнал
+ * терял бы ровно то, что после неё разбирают.
+ */
+export function rotateJournal(path: string, max: number): void {
+  try {
+    if (statSync(path).size > max) renameSync(path, `${path}.1`);
+  } catch {}
+}
+
+/** Строка в машинный журнал рядом с грантом: время, pid, сборка; журнал длиннее 128 КБ — в `.1`. */
 export function appendJournal(path: string, msg: string): void {
   try {
     mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
-    let size = 0;
-    try {
-      size = statSync(path).size;
-    } catch {}
-    if (size > 128_000) {
-      try {
-        unlinkSync(path);
-      } catch {}
-    }
+    rotateJournal(path, 128_000);
     appendFileSync(path, `${new Date().toISOString()} pid=${process.pid} ${BUILD} ${msg}\n`, {
       mode: 0o600,
     });

@@ -56,6 +56,11 @@ export const resumeWords = {
     L(`${key}: мост ведёт другое место ${led}`, `${key}: the bridge leads another seat ${led}`),
   liveBridge: (key: string): string =>
     L(`${key}: держит живой мост`, `${key}: held by a live bridge`),
+  ownNotTaken: (key: string, why: string): string =>
+    L(
+      `${key}: держит прежний мост этой сессии, взять не вышло — ${why}`,
+      `${key}: a former bridge of this session holds it, taking it failed — ${why}`,
+    ),
   noHello: (key: string): string =>
     L(
       `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
