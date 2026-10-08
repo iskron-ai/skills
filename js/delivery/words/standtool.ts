@@ -39,7 +39,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
       "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
     muteSiblings: () => "Не слышать эхо других стояний той же роли.",
     take: () =>
-      "Сознательный переход: вытеснить живого держателя ДРУГОЙ сессии — только по слову человека (без take имя, выведенное или явное, которое держит другая сессия, встаёт рядом на имя.N со слухом; своё место, которое держит прежний мост этой же сессии харнесса, мост возвращает сам — take не нужен); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом.",
+      "Сознательный переход: вытеснить живого держателя ДРУГОЙ сессии — своего имени (та же роль, та же учётка) сам, когда он молчит 5 минут на пробу словом (iskron_channel send), чужого (другая роль или учётка) — только по слову человека (без take имя, выведенное или явное, которое держит другая сессия, встаёт рядом на имя.N со слухом; своё место, которое держит прежний мост этой же сессии харнесса, мост возвращает сам — take не нужен); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом.",
     roomKarta: () =>
       "Роль человека, чьё это место (#N), если места нет на доске; обычно роль человека, приславшего адрес места.",
     repeatKnock: () =>
@@ -72,7 +72,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
       "The model the agent runs on (id or name, for example claude-opus-5 or opus-5) — the third part of the derived name; without it the name is machine.repo.",
     muteSiblings: () => "Do not hear the echo of other standings of the same role.",
     take: () =>
-      "A deliberate move: to displace a live holder of ANOTHER session — only on the human's word (without take a name, derived or explicit, that another session holds stands beside on name.N with hearing; the bridge takes back by itself a seat a former bridge of this same harness session holds — no take needed); or to change this bridge's seat in a graph (one seat per bridge in a graph: another role or another name without take is a refusal aloud, the former seat stays on the board without hearing). A seat in another graph does not need take — it stands beside.",
+      "A deliberate move: to displace a live holder of ANOTHER session — of your own name (the same role, the same account) by yourself when it stays silent 5 minutes to a probe by word (iskron_channel send), of another's (another role or account) — only on the human's word (without take a name, derived or explicit, that another session holds stands beside on name.N with hearing; the bridge takes back by itself a seat a former bridge of this same harness session holds — no take needed); or to change this bridge's seat in a graph (one seat per bridge in a graph: another role or another name without take is a refusal aloud, the former seat stays on the board without hearing). A seat in another graph does not need take — it stands beside.",
     roomKarta: () =>
       "The role of the human whose seat it is (#N) if the seat is not on the board; usually the role of the human who sent the seat address.",
     repeatKnock: () =>
