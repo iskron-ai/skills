@@ -51,7 +51,23 @@ for (const file of FILES) {
         const fn = dict.en[k];
         const out = String(fn(...Array.from({ length: fn.length }, (_, i) => `x${i}`)));
         assert.doesNotMatch(out, /\p{Script=Cyrillic}/u, `${file} ${name}.en.${k}: ${out}`);
+        // No template syntax leaks into a word: a field placeholder is a leftover, not text.
+        assert.doesNotMatch(out, /\{[^}]*\}/, `${file} ${name}.en.${k}: ${out}`);
       }
     }
   });
 }
+
+test("the English case words name the closing's evidence and the leaver's reason", async () => {
+  const { ROOM } = await import(pathToFileURL(join(DIR, "rooms.ts")).href);
+  assert.equal(
+    ROOM.en.closing("@a", "12:00", "#1, #2"),
+    "the lead @a proposes to close the case by 12:00; evidence: #1, #2",
+  );
+  assert.equal(
+    ROOM.en.closing("@a", "12:00", ""),
+    "the lead @a proposes to close the case by 12:00",
+  );
+  assert.equal(ROOM.en.left("@w", "timeout"), "left @w; reason: timeout");
+  assert.equal(ROOM.en.left("@w", ""), "left @w");
+});
