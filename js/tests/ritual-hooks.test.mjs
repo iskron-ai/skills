@@ -54,6 +54,26 @@ const cases = [
     true,
   ],
   ["gh pr merge 12 --squash\necho done", "done", false, false],
+  // a refusal the forge printed vetoes the merge: no success marker is asked for
+  ["gh pr merge 123", "error: Pull request o/r#123 merge failed: conflicts", false, false],
+  [
+    "gh pr merge 123 --squash",
+    "X Pull request o/r#123 is not mergeable: the base branch policy prohibits the merge.",
+    false,
+    false,
+  ],
+  [
+    "gh pr merge 123 --squash 2>&1 && git checkout main && git pull",
+    "GraphQL: Pull Request is not mergeable (mergePullRequest)",
+    false,
+    false,
+  ],
+  [
+    "gh pr merge 123 --squash 2>&1 | tail -3",
+    "✓ Squashed and merged pull request o/r#123 (t)\nfatal: unable to access 'https://github.com/o/r/'",
+    false,
+    false,
+  ],
   ["git checkout main && git pull", "", false, true],
   ["echo gh pr merge", "gh pr merge", false, false],
   // push: the same rule
@@ -82,13 +102,61 @@ const cases = [
     true,
     false,
   ],
+  // a refusal git printed vetoes the whole push decision: the exit status, the
+  // confirmation line and the quiet fallback alike — a half-refused push too
   [
     "git push origin a b 2>&1 | tail -3",
-    "To github.com:o/r.git\n ! [rejected]        a -> a (fetch first)\n   1234567..89abcde  b -> b",
+    "To github.com:o/r.git\n ! [rejected]        a -> a (fetch first)\n   1234567..89abcde  b -> b\nerror: failed to push some refs to 'github.com:o/r.git'",
+    false,
+    false,
+  ],
+  [
+    "git push -q nonexistent-remote",
+    "fatal: 'nonexistent-remote' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x",
+    "error: src refspec feat/x does not match any\nerror: failed to push some refs to 'github.com:o/r.git'",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x && gh pr create --fill",
+    "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x 2>&1 && echo ok",
+    "To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (fetch first)\nerror: failed to push some refs to 'github.com:o/r.git'\nok",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x 2>&1 && echo ok",
+    "To github.com:o/r.git\n ! [remote rejected] feat/x -> feat/x (pre-receive hook declined)\nerror: failed to push some refs to 'github.com:o/r.git'\nok",
+    false,
+    false,
+  ],
+  // the remote's own chatter is not git's refusal
+  [
+    "git push origin feat/x && echo ok",
+    "remote: error: nothing wrong here\nTo github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x\nok",
     true,
     false,
   ],
-  // a push that moved only tags ships a release mark, not a branch to review
+  // a push of tags only ships a release mark, not a branch to review — and a quiet
+  // one says nothing at all: the form of the command speaks — every refspec a tag
+  // (`tag <name>`, `refs/tags/…`), or `--tags` alone
+  [
+    "git push origin tag iskron-0.21.1",
+    "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
+    false,
+    false,
+  ],
+  // one bare refspec is a branch or a tag by form: the output speaks for it
   [
     "git push origin iskron-0.21.1",
     "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
@@ -101,19 +169,47 @@ const cases = [
     false,
     false,
   ],
-  // a forced tag looks like a forced branch in push output (short names): it wakes, a known gap
+  [
+    "git push origin feat/x",
+    "To github.com:o/r.git\n * [new branch]      feat/x -> feat/x",
+    true,
+    false,
+  ],
+  // two refspecs or more — the form alone: a branch beside a tag wakes, though
+  // the output names only the new tag
+  [
+    "git push origin main tag v-probe",
+    "To github.com:o/r.git\n * [new tag]         v-probe -> v-probe",
+    true,
+    false,
+  ],
+  ["git push -q origin tag v-x", "", false, false],
+  ["git push --quiet origin --tags", "", false, false],
+  ["git push -q origin +refs/tags/v1 refs/tags/v2 2>&1 | tail -1", "", false, false],
+  ["git push -q origin tag v1 && git push -q origin tag v2", "", false, false],
+  // a branch beside the tags, or a form the parse does not take whole, wakes as before
+  ["git push -q origin feat/x tag v-x", "", true, false],
+  ["git push --follow-tags", "", true, false],
+  ["git push -q --tags --all origin", "", true, false],
+  ["git push -q origin tag v1 && git push -q origin feat/x", "", true, false],
+  ["git push -q origin v1", "", true, false],
+  // a forced tag by its short name is a forced branch by form: it wakes, a known gap
   [
     "git push --force origin v1 2>&1 | tail -3",
     "To github.com:o/r.git\n + 61ff2af...930b18f v1 -> v1 (forced update)",
     true,
     false,
   ],
+  // …and a deleted tag wakes too, a known gap
   [
     "git push origin :refs/tags/v1 2>&1 | tail -3",
     "To github.com:o/r.git\n - [deleted]         v1",
     true,
     false,
   ],
+  ["git push -q origin :refs/tags/v1", "", true, false],
+  ["git push -q origin --delete tag v1", "", true, false],
+  ["git push -q -d origin refs/tags/v1", "", true, false],
   // …but a branch riding along with the tag still wakes
   [
     "git push --follow-tags 2>&1 | tail -3",
@@ -385,6 +481,7 @@ const callID = () => `call-${++calls}`;
 
 test("opencode rituals template: wakes by outcome", async () => {
   const after = await loadPlugin();
+  const wrong = [];
   for (const [command, output, push, merge] of cases) {
     const input = {
       tool: "bash",
@@ -395,31 +492,51 @@ test("opencode rituals template: wakes by outcome", async () => {
     };
     await after(input);
     const text = String(input.result.content);
-    assert.deepEqual(
-      { push: text.includes("пуш"), merge: text.includes("мерж") },
-      { push, merge },
-      command,
-    );
+    if (text.includes("пуш") !== push || text.includes("мерж") !== merge) wrong.push(command);
+  }
+  assert.deepEqual(wrong, []);
+});
+
+// OpenCode may hand no exit status: a push last in the chain then wakes by its
+// form, unless the output carries git's refusal.
+test("opencode rituals template: a refused push with an unknown exit does not wake", async () => {
+  const after = await loadPlugin();
+  for (const [content, push] of [
+    ["fatal: 'nonexistent-remote' does not appear to be a git repository", false],
+    ["To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (fetch first)", false],
+    ["error: failed to push some refs to 'github.com:o/r.git'", false],
+    ["", true],
+  ]) {
+    const input = {
+      tool: "bash",
+      id: callID(),
+      status: "completed",
+      input: { command: "git push origin feat/x" },
+      result: { content, metadata: {} },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("пуш"), push, content);
   }
 });
 
 // A trunk pull that failed brought nothing in: the exit status speaks for it,
-// so a refused pull does not wake the merge ritual.
+// so a refused pull does not wake the merge ritual; nor does a refusal it printed.
 test("opencode rituals template: a failed trunk pull does not wake", async () => {
   const after = await loadPlugin();
-  for (const [exit, merge] of [
-    [1, false],
-    [0, true],
+  for (const [exit, content, merge] of [
+    [1, "Already on 'main'", false],
+    [0, "fatal: unable to access 'https://github.com/o/r/'", false],
+    [0, "Already up to date.", true],
   ]) {
     const input = {
       tool: "bash",
       id: callID(),
       status: "completed",
       input: { command: "git checkout main && git pull" },
-      result: { content: "fatal: unable to access 'https://github.com/o/r/'", metadata: { exit } },
+      result: { content, metadata: { exit } },
     };
     await after(input);
-    assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}`);
+    assert.equal(String(input.result.content).includes("мерж"), merge, `exit ${exit}: ${content}`);
   }
 });
 
@@ -585,6 +702,90 @@ for (const [name, command, wakes, lands] of quietCases) {
   });
 }
 
+// Equal refs are the state of the repository, not the outcome of this push: they
+// may hold before the call, and a refusal leaves them as they were. A refusal
+// git did print (`fatal:`, `error:`, ` ! [rejected]`, ` ! [remote rejected]` at
+// a line start) vetoes the fallback; a quiet success still wakes.
+// [name, command, output (null — run it for real), wakes]
+const quietVeto = [
+  [
+    "a refusal before `;` stays silent",
+    "git push -q nonexistent-remote; echo finished",
+    null,
+    false,
+  ],
+  [
+    "a fatal after progress lines stays silent",
+    "git push -q origin feat/x 2>&1 | tail -4",
+    "Enumerating objects: 3, done.\nCounting objects: 100% (3/3), done.\nWriting objects: 100% (2/2), 230 bytes | 230.00 KiB/s, done.\nfatal: the remote end hung up unexpectedly\n",
+    false,
+  ],
+  [
+    "a remote rejection stays silent",
+    "git push -q origin feat/x 2>&1 | tail -2",
+    " ! [remote rejected] feat/x -> feat/x (pre-receive hook declined)\nerror: failed to push some refs to 'origin'\n",
+    false,
+  ],
+  [
+    "a rejection stays silent",
+    "git push -q origin feat/x 2>&1 | head -1",
+    " ! [rejected]        feat/x -> feat/x (fetch first)\n",
+    false,
+  ],
+  [
+    "an error line alone stays silent",
+    "git push -q origin feat/x; echo done",
+    "error: src refspec feat/y does not match any\ndone\n",
+    false,
+  ],
+  [
+    "a quiet success with remote chatter wakes",
+    "git push -q origin feat/x 2>&1 | tail -3",
+    "remote: \nremote: Create a pull request for 'feat/x' on GitHub by visiting:\nremote:      https://example.org/pull/new/feat/x\n",
+    true,
+  ],
+  ["a quiet success without output wakes", "git push -q origin feat/x; echo done", "done\n", true],
+];
+
+for (const [name, cmd, given, wakes] of quietVeto) {
+  test(`quiet push, refs already equal: ${name}`, async () => {
+    const { a } = quietRepos(); // HEAD equals @{push} before the call
+    const output = given ?? sh(a, cmd);
+    assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
+    const after = await loadPlugin({ s1: a });
+    const input = {
+      tool: "bash",
+      id: callID(),
+      sessionID: "s1",
+      status: "completed",
+      input: { command: cmd },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("пуш"), wakes, `opencode: ${cmd}`);
+  });
+}
+
+// Claude Code hands the streams apart: the refusal arrives in stderr.
+test("quiet push, refs already equal: a refusal in stderr stays silent (claude)", () => {
+  const { a } = quietRepos();
+  const cmd = "git push -q nonexistent-remote; echo finished";
+  const r = spawnSync("bash", ["-c", cmd], { cwd: a, encoding: "utf8" });
+  assert.match(r.stderr, /^fatal:/);
+  const payload = JSON.stringify({
+    hook_event_name: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: { command: cmd },
+    tool_response: { stdout: r.stdout, stderr: r.stderr, exit_code: 0 },
+  });
+  const said = bashHooks
+    .map((h) =>
+      execFileSync("bash", ["-c", h.command], { input: payload, encoding: "utf8", cwd: a }),
+    )
+    .join("");
+  assert.equal(said.includes("Пуш"), false);
+});
+
 // text is not a command, whatever the state of git says
 for (const cmd of [
   'echo "note; git push -q origin x"',
@@ -652,14 +853,18 @@ const fj = [
   ["fj pr merge --help", "", false],
   ['fj pr merge 12 -m "x" -h', "", false],
   ['fj pr merge 12 -m "x" --help', "", false],
+  ["fj pr merge 12", "Error: merge failed: not mergeable", false],
+  ["fj pr merge 12 --method squash", "error: 405 Method Not Allowed", false],
 ];
 
 test("iskronify template defs judge another forge's merge by outcome", () => {
   const skill = readFileSync(templatePath, "utf8");
-  const push = skill.split("\n").find((l) => l.startsWith("def a:") && l.includes(' push"'));
-  assert.ok(push, "push filter line present in hooks.md");
-  const defs = push.slice(0, push.lastIndexOf("; ran(") + 2);
-  const filter = defs + 'ran("fj pr merge"; "-h|--help"; "Merged PR #")';
+  const merge = skill
+    .split("\n")
+    .find((l) => l.startsWith("def a:") && l.includes('"gh pr merge"'));
+  assert.ok(merge, "merge filter line present in hooks.md");
+  const defs = merge.slice(0, merge.indexOf("; held and (") + 2);
+  const filter = defs + 'held and ran("fj pr merge"; "-h|--help"; "Merged PR #")';
   for (const [command, output, wakes] of fj) {
     const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
     let ran = true;

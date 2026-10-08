@@ -5,6 +5,8 @@ import type { Lang } from "../lang.ts";
 
 export interface OpencodeKeepWords {
   resumed: (key: string) => string;
+  /** Место, которое мост доказал своим (на нём стояла эта сессия): чужим не подозревается. */
+  resumedOwn: (key: string) => string;
   /** keys — места через запятую. */
   elsewhere: (keys: string) => string;
   notBack: (place: string, why: string) => string;
@@ -56,8 +58,10 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
       `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. ` +
       'Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; ' +
       "запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.",
+    resumedOwn: (key) =>
+      `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`,
     elsewhere: (keys) =>
-      `Искрон: возврат места ${keys} с диска не удался — его сокет держит другой живой мост, не мост этой сессии: ` +
+      `Искрон: возврат места ${keys} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: ` +
       "слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии " +
       "мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.",
     notBack: (place, why) =>
@@ -134,8 +138,10 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
       `Iskron: the bridge came up and returned the seat ${key} itself — by its own holding record (the session's directory or the previous seat's key), without your move. ` +
       'Check the name against the one derived for this session: if it is someone else\'s, release it with iskron_channel(action="leave") (the channel stays; the platform rejects a revoke of the seat that founded the channel) and take your own with one iskron_stand; ' +
       "a write that already went out on this move — check it by its author in the node's history: a word under someone else's name lands on another seat, and the bridge answers with success.",
+    resumedOwn: (key) =>
+      `Iskron: the bridge came up and returned the seat ${key} itself — your own, this session stood on it; without your move.`,
     elsewhere: (keys) =>
-      `Iskron: returning the seat ${keys} from disk failed — its socket is held by another live bridge, not this session's bridge: ` +
+      `Iskron: returning the seat ${keys} from disk failed — its socket is held by another live bridge, not the one serving this session now: ` +
       "hearing and the busy line here hold no seat. Call iskron_stand with this name, no take needed: the seat of this same session's previous bridge " +
       "the bridge returns itself, it does not touch another session's seat and stands beside on name.N with hearing.",
     notBack: (place, why) =>
