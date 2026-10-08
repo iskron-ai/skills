@@ -6,7 +6,7 @@
 Каждый хук запускает shell-`command`, эхающий конверт в stdout. Вложенность `event → массив → {"hooks":[{"type":"command","command":…}]}` легко перепутать:
 ```json
 { "hooks": { "SessionStart": [ { "hooks": [ { "type": "command",
-  "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"<start reminder: read the iskron door's Start section first; realm, focus holon, agent karta, owner karta; standing only on watch, via iskron_stand; start ... case №N enters that case>\"}}'" } ] } ] } }
+  "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"<start reminder: read the iskron door's Start section first; realm, focus holon, agent karta, owner karta; standing only on watch, via iskron_stand; start ... case №N enters that case; a subagent stands on its own satellite bridge and does not write to the graph on its caller's bridge>\"}}'" } ] } ] } }
 ```
 
 ## Пуш и мерж — по исходу, не по форме

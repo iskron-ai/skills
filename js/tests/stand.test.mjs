@@ -2802,6 +2802,52 @@ test("two graphs: graph B's role hook is armed on the channel (channel=self), an
   assert.ok(!wa.out.includes("вопрос роли в B"), `B's question leaked to A:\n${wa.out}`);
 });
 
+// mcp 0.111.0 (#6819): the server says list_changed in the SSE of whatever request
+// comes next — here the bridge's own calls under iskron_stand. The harness hears
+// it all the same, and once: its next call, still marked, adds nothing.
+const listChanged = (b) =>
+  b.notifications.filter((n) => n.method === "notifications/tools/list_changed").length;
+
+test("list_changed in the SSE of the bridge's own calls under iskron_stand reaches the harness once", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await bridge.call("tools/list");
+  await fake.control({ richTools: true, list_changed: true });
+  const s = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!s.result?.isError, textOf(s));
+  assert.ok(fake.state.listChangedSent.length > 0, "the server said it to the bridge's own calls");
+  assert.equal(listChanged(bridge), 1, `the harness heard it:\n${bridge.stderr}`);
+  const told = fake.state.listChangedSent.length;
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "list" },
+  });
+  assert.equal(fake.state.listChangedSent.length, told + 1, "the server says it again");
+  assert.equal(listChanged(bridge), 1, "one change, one word");
+});
+
+// The bridge's own tools/list (the iskron_admin schema under a beside place) is
+// the request that carries the notice and clears the server's mark: the harness
+// must not be left with the old list.
+test("list_changed carried by the bridge's own tools/list still reaches the harness", async (t) => {
+  const { fake, bridge, b } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba" },
+    INIT,
+    (f) => f.control({ adminChannelSelf: true, list_changed: true, listChangedOn: "tools/list" }),
+  );
+  assert.match(textOf(b), /взведён на канал \(channel=self\)/, textOf(b));
+  assert.deepEqual(
+    fake.state.listChangedSent,
+    ["tools/list"],
+    "only the bridge's own list carried it",
+  );
+  assert.equal(listChanged(bridge), 1, `the harness heard it:\n${bridge.stderr}`);
+});
+
 test("two graphs: leave names every place it leaves — the socket is shared", async (t) => {
   const { bridge, keyA, keyB } = await twoGraphs(
     t,
