@@ -5271,7 +5271,7 @@ test("question kinds under the Monitor watchdog: a question to me, its withdrawa
 // the last line of the key is no longer my question (#6867, #6778).
 // The platform hands a frame again when the bridge died in its batch window: the
 // replayed withdrawal is still mine, though the first receipt put the question out.
-for (const [what, closer, words, answered, replayed] of [
+for (const [what, closer, words, answered, replayed, askAgain] of [
   ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят", false, false],
   [
     "a question re-asked of another role",
@@ -5294,6 +5294,15 @@ for (const [what, closer, words, answered, replayed] of [
     false,
     true,
   ],
+  // The question itself handed again does not put itself out.
+  [
+    "a withdrawal of a replayed question",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    false,
+    true,
+  ],
 ])
   test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
     const { fake, dir, key, bridge } = await connected(t, {
@@ -5307,6 +5316,7 @@ for (const [what, closer, words, answered, replayed] of [
     assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
     // my role's other seat answered the asker
     if (answered) await sendRoom(fake, answer(89, 90, BORIS));
+    if (askAgain) await sendRoom(fake, ask(90)); // the platform hands the question again
     if (replayed) await sendRoom(fake, closer()); // received, then the bridge dies in its window
     await new Promise((r) => setTimeout(r, 300));
     bridge.proc.kill("SIGKILL");
