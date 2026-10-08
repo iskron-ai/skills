@@ -122,6 +122,13 @@ export default {
       const r = real(abs, inMemory);
       return r === null || inMemory(abs) || inMemory(r);
     };
+    // отказ — маршрут, как у guard'а Claude Code: iskronify подставляет «Граф» фронтматтера AGENTS.md
+    // и заголовок его раздела о персистентности, как он стоит в файле, — угловых скобок в плагине репо не остаётся;
+    // текст — на языке AGENTS.md (английский — в hooks.md, «Memory-guard»)
+    const REFUSAL =
+      "BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, «<Раздел персистентности>»). " +
+      "Маршрутизируй факт: конвенции репо, код-факты → AGENTS.md; состояние проекта, серверы и датированные долги → граф <Граф>; " +
+      "факт пользователя вне проекта, включая факты машины → личный граф человека @handle/mind (minding).";
     // пути вызова: write и edit — поле path (filePath прежних версий); patch (apply_patch) — заголовки
     // patchText «*** Add File: », «*** Update File: », «*** Delete File: » и цель «*** Move to: »
     const pathsOf = (input) =>
@@ -134,7 +141,7 @@ export default {
       const base = (await dirOf(input.sessionID)) || own;
       if (!paths.some((p) => isLocalMemoryPath(p, base))) return;
       if (!(await mine(input.sessionID))) return;
-      throw new Error("local agent memory is forbidden for project state");
+      throw new Error(REFUSAL);
     });
     // пуш и мерж: после shell-вызова дописать одну строку в результат — пуш
     // не отгрузка (холодное ревью этапа), мерж — акты после мержа AGENTS.md.
@@ -176,7 +183,7 @@ export default {
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
             ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd))
-          ? "[iskron] мерж — акты после мержа AGENTS.md: проткать, карта, модусы, закрыть по оси, reconcile, фидбэк, словарь."
+          ? "[iskron] мерж — акты после мержа AGENTS.md: протки, карта, модусы по свидетельству, закрыть по оси, reconcile, фидбэк, словарь; работа по ссылке от агента — только семя и модусы поставки."
           : "";
       if (!note || !(await mine(input.sessionID)) || !once(input.id)) return;
       input.result = {
