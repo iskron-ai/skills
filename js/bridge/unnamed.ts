@@ -6,6 +6,7 @@
 // серверу (transport.ts). Исключение одно — место самого человека его словом, karta
 // «me» или «realm-owner»; номер 主-роли без имени отказывается и тогда (род роли здесь
 // не читается: проверка синхронна, owner.ts спрашивает сервер).
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf } from "../shared/scope.ts";
 import { normKarta, normName } from "./names.ts";
@@ -28,7 +29,7 @@ export function unnamedSeatRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (!SEAT_MOVES.has(action) || normName(a.name)) return null;
   // Безымянное место — место самого человека (#6053): его берёт мост только словом
   // человека — ISKRON_BRIDGE_OWNER_ROLE=1 (owner.ts; импорт оттуда замкнул бы transport.ts).
-  if (envOf("ISKRON_BRIDGE_OWNER_ROLE")?.trim() === "1" && HUMAN.has(normKarta(a.karta)))
+  if (envOf(envName("BRIDGE_OWNER_ROLE"))?.trim() === "1" && HUMAN.has(normKarta(a.karta)))
     return null;
   return {
     jsonrpc: "2.0",

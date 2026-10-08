@@ -20,6 +20,7 @@
 // сличает её с поставкой.
 import type { Plugin } from "@opencode/plugin";
 
+import { PRODUCT } from "../delivery/index.ts";
 import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
@@ -269,4 +270,4 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-export default { id: "iskron", setup };
+export default { id: PRODUCT, setup };

@@ -6,6 +6,7 @@ import { daemonMain } from "../bridge/daemon.ts";
 import { bridgeMain } from "../bridge/main.ts";
 import { versionLines } from "../bridge/probe.ts";
 import { reexec, syncHome, updatesDisabled } from "../bridge/update.ts";
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { runWatchdogCodex } from "../watchdog/codex.ts";
 import { runWatchdog } from "../watchdog/watchdog.ts";
@@ -46,7 +47,7 @@ const longLived =
   (first !== undefined &&
     !first.startsWith("--") &&
     !["doctor", "update", "use", "check-rituals", "daemon", "version", "-h"].includes(first));
-if (longLived && !updatesDisabled() && !process.env.ISKRON_BRIDGE_REEXEC) {
+if (longLived && !updatesDisabled() && !process.env[envName("BRIDGE_REEXEC")]) {
   const sync = syncHome();
   for (const p of sync.copied)
     process.stderr.write(

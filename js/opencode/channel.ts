@@ -29,6 +29,7 @@
 // нет); дочерняя сессия (субагент) — адресат только своего моста, поднятого её
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
@@ -58,11 +59,11 @@ export interface Channel {
 }
 
 /** Окно пачки дела; переменная — шов для проб, не ручка человека. */
-const CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5_000;
+const CASE_BATCH_MS = Number(process.env[envName("OPENCODE_BATCH_MS")]) || 5_000;
 /** Полная пачка уходит, не дожидаясь окна. */
 const CASE_BATCH_CAP = 20;
 /** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
-const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000;
+const PENDING_MAX_MS = Number(process.env[envName("OPENCODE_PENDING_MS")]) || 120_000;
 /**
  * Кадр дела в пачку: не прямое слово и не слово человека (его полёт и обрыв —
  * в пачку, как и его адресное слово не мне, #6081); запись дела, не

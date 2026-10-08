@@ -30,6 +30,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
@@ -43,7 +44,7 @@ import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 
 /** Окно простоя канала спутника, с; переменная — шов проб и ручка на случай, если контур сузит разброс. */
-export const SATELLITE_TTL_S = Number(process.env.ISKRON_BRIDGE_SATELLITE_TTL) || 300;
+export const SATELLITE_TTL_S = Number(process.env[envName("BRIDGE_SATELLITE_TTL")]) || 300;
 
 // Правило имени спутника — общее с плагином OpenCode (shared/satname.ts); повторный
 // iskron_stand того же прогона узнаёт своё имя по isSatelliteOf.

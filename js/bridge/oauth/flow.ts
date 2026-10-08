@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 
+import { envName } from "../../delivery/index.ts";
 import { CFG } from "../config.ts";
 import { AuthPending, errorCode, errorMessage } from "../errors.ts";
 import { b64url, grantLog, loadStore, sha256, sleep } from "../store.ts";
@@ -29,15 +30,15 @@ import {
 import { tokenRequest } from "./tokenrequest.ts";
 
 /** How long a bridge waits for a sibling that claimed a login to publish its link. */
-const CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15_000;
+const CLAIM_WAIT_MS = Number(process.env[envName("BRIDGE_CLAIM_WAIT_MS")]) || 15_000;
 /** How long a bound port with no claim yet is given to show one: the claim follows the bind at once. */
 const CLAIM_GLANCE_MS = 1_000;
 
 /** How often a waiting login checks whether the grant came back without it. */
-const LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2_000;
+const LANDED_POLL_MS = Number(process.env[envName("BRIDGE_LANDED_POLL_MS")]) || 2_000;
 
 /** A probe's handle only: holds a closing login's port open after its record is dropped. */
-const RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+const RELEASE_GAP_MS = Number(process.env[envName("BRIDGE_RELEASE_GAP_MS")]) || 0;
 
 // How long the answer that publishes a login waits for the device code (#6570)
 // before going out with the loopback link alone: a code is at most three POSTs

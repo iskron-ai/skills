@@ -7,13 +7,14 @@ import { lstatSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { envName, HOME_DIR, RUNTIME_PREFIX } from "../delivery/index.ts";
 import { L } from "./lang.ts";
 import { envOf } from "./scope.ts";
 
-export const defaultAuthDir = (): string => join(homedir(), ".iskron-bridge");
+export const defaultAuthDir = (): string => join(homedir(), HOME_DIR);
 
 export const authDirFromEnv = (): string =>
-  envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
+  envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
 
 export const standingsDirOf = (authDir: string): string => join(authDir, "standings");
 
@@ -25,7 +26,7 @@ const hashOf = (key: string): string => createHash("sha256").update(key).digest(
  * лежит рядом файлом `<хеш>.key`, по нему сторож без аргумента находит стояние.
  */
 export function socketPathOf(authDir: string, key: string): string {
-  if (process.platform === "win32") return `\\\\.\\pipe\\iskron-${hashOf(key)}`;
+  if (process.platform === "win32") return `\\\\.\\pipe\\${RUNTIME_PREFIX}-${hashOf(key)}`;
   const near = join(standingsDirOf(authDir), `${hashOf(key)}.sock`);
   if (Buffer.byteLength(near) <= SOCKET_PATH_MAX) return near;
   // Каталог гранта длинный — сокет в коротком личном каталоге, под хешем
@@ -38,7 +39,10 @@ const SOCKET_PATH_MAX = 103;
 
 /** Короткий личный каталог сокетов — когда путь под каталогом гранта не влезает в предел. */
 export const shortSocketDir = (): string =>
-  join("/tmp", `iskron-${typeof process.getuid === "function" ? process.getuid() : "u"}`);
+  join(
+    "/tmp",
+    `${RUNTIME_PREFIX}-${typeof process.getuid === "function" ? process.getuid() : "u"}`,
+  );
 
 /**
  * Личный каталог сокетов (короткий в общем /tmp, каталог шва демона) заводится

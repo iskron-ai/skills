@@ -28,6 +28,8 @@
 import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
 
+import { ENV_PREFIX, envName } from "../delivery/index.ts";
+
 /** Версия провода. Разные версии не говорят: демон отвечает refuse, тонкий мост идёт полным. */
 export const SEAM_PROTOCOL = 1;
 
@@ -35,9 +37,9 @@ export const SEAM_PROTOCOL = 1;
 export const SEAM_REATTACH_GRACE_MS = 5_000;
 
 /** Тонкий мост — умолчание; `0` — выключатель: полный мост в процессе (пробы, человек). */
-export const DAEMON_ENV = "ISKRON_BRIDGE_DAEMON";
+export const DAEMON_ENV = envName("BRIDGE_DAEMON");
 /** Выключатель прежнего имени: полный мост в процессе, что бы ни было. */
-export const NO_DAEMON_ENV = "ISKRON_BRIDGE_NO_DAEMON";
+export const NO_DAEMON_ENV = envName("BRIDGE_NO_DAEMON");
 
 /** Сообщение JSON-RPC — провод его не разбирает, только несёт. */
 export interface RpcMessage {
@@ -137,7 +139,7 @@ export type SeamFrame =
 // --- рукопожатие -------------------------------------------------------------
 
 /** Личный токен по шву не ездит: демон того же пользователя берёт его из своего окружения или файла гранта. */
-export const TOKEN_ENV = "ISKRON_BRIDGE_TOKEN";
+export const TOKEN_ENV = envName("BRIDGE_TOKEN");
 
 /** Отпечаток личного токена — сверить, что демон ходит тем же токеном; null — токена нет. */
 export const patShaOf = (pat: string | null | undefined): string | null =>
@@ -163,7 +165,7 @@ const PASS_ENV = new Set([
 
 /** Ключ окружения сессии: его значение — слово харнеса, а не демона. */
 export const isSessionEnvKey = (k: string): boolean =>
-  k !== TOKEN_ENV && (k.startsWith("ISKRON_") || PASS_ENV.has(k));
+  k !== TOKEN_ENV && (k.startsWith(ENV_PREFIX) || PASS_ENV.has(k));
 
 export function seamEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};

@@ -6,6 +6,7 @@
 // сдвиг вызова на сервер (bridge/usage.ts). Конец прогона и удаление сессии
 // сбрасывают ждущий снимок сразу (flush) — до того, как мост уйдёт с местом.
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { envName } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
 
 export interface UsagePayload {
@@ -19,7 +20,7 @@ export interface UsagePayload {
   window?: number;
 }
 
-const DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 10_000);
+const DEBOUNCE_MS = Number(process.env[envName("USAGE_DEBOUNCE_MS")] || 10_000);
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 

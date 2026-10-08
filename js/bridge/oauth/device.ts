@@ -1,3 +1,4 @@
+import { envName } from "../../delivery/index.ts";
 import { errorMessage, TokenError } from "../errors.ts";
 import { debug, log } from "../streams.ts";
 import { type Meta } from "../types.ts";
@@ -8,9 +9,9 @@ import { pauseUntil } from "./pacing.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 // RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
-const SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5_000;
+const SLOW_DOWN_MS = Number(process.env[envName("BRIDGE_DEVICE_SLOW_DOWN_MS")]) || 5_000;
 // A code the server would not issue is asked for again after this long.
-const REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 30_000;
+const REISSUE_PAUSE_MS = Number(process.env[envName("BRIDGE_DEVICE_REISSUE_MS")]) || 30_000;
 
 /** The device side of one published login. */
 export interface DeviceSide {

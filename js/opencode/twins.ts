@@ -13,6 +13,7 @@
 // экземпляров процесса; по нему же ребёнок, перенесённый в другой каталог, находит корень
 // родителя (moves.ts, #6695).
 /* eslint-disable @typescript-eslint/no-explicit-any -- вызов SDK без типа в @opencode/plugin 2.0.4 */
+import { envName, GLOBAL_PREFIX } from "../delivery/index.ts";
 import { canonDir } from "../shared/canon.ts";
 import { authDir } from "./bridge-io.ts";
 import { markerWaits } from "./marker.ts";
@@ -21,7 +22,7 @@ import type { Home, LostEntry } from "./records.ts";
 import type { Slot } from "./slot.ts";
 
 /** Сколько ждать, что поднятый экземпляр возьмёт маркер. */
-const WAKE_MS = Number(process.env.ISKRON_WAKE_MS) || 15_000;
+const WAKE_MS = Number(process.env[envName("WAKE_MS")]) || 15_000;
 /** Пауза до бужения: перезагрузка плагина останавливает близнецов следом — им будить нечего. */
 const PAUSE_MS = Math.min(1_000, WAKE_MS / 5);
 
@@ -34,10 +35,11 @@ interface Twin {
   adopt(): void;
 }
 
-const registry = (): Set<Twin> => ((globalThis as any).__iskronTwins ??= new Set<Twin>());
+const registry = (): Set<Twin> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}Twins`] ??= new Set<Twin>());
 /** Спутники детей, перенесённых в другую папку, чей маркер ещё не лёг (children.ts, #6695). */
 const handing = (): Map<string, Promise<unknown>> =>
-  ((globalThis as any).__iskronHanding ??= new Map<string, Promise<unknown>>());
+  ((globalThis as any)[`${GLOBAL_PREFIX}Handing`] ??= new Map<string, Promise<unknown>>());
 
 /** Передача спутника сессии экземпляру новой папки идёт — её вызовы там ждут маркера. */
 export function handOver(session: string, p: Promise<unknown>): void {

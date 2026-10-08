@@ -10,6 +10,7 @@
 // (handoff.ts); не вставший — экземпляр его новой папки находит корень в
 // экземпляре папки родителя (farRoot) и ставит спутника его места.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+import { envName } from "../delivery/index.ts";
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { writeLostMarker } from "./marker.ts";
@@ -20,7 +21,7 @@ import type { Say } from "./tools.ts";
 import { heldInProcess } from "./twins.ts";
 
 /** Сколько живой экземпляр новой папки ждёт маркера переноса от прежнего. */
-const ADOPT_MS = Number(process.env.ISKRON_MOVE_ADOPT_MS) || 1_000;
+const ADOPT_MS = Number(process.env[envName("MOVE_ADOPT_MS")]) || 1_000;
 
 export interface MoveDoors {
   say: Say;

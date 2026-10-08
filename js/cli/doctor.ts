@@ -26,7 +26,9 @@ import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/st
 import { daemonWanted } from "../bridge/thin.ts";
 import { refreshHours, tokenUsable } from "../bridge/tokens.ts";
 import { readLatest } from "../bridge/update.ts";
+import { CLIENTS, PLUGIN_COPY_FILE, PLUGIN_FILE, PLUGIN_NAME } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { escapeRe } from "../shared/regex.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
@@ -35,6 +37,7 @@ import { type Launch, launchReport, openCodeRuntimeWord } from "./doctornode.ts"
 import { secondPathReport } from "./doctorpaths.ts";
 import { skillsReport } from "./doctorskills.ts";
 import { dw } from "./doctorwords.ts";
+import { BRIDGE_FILE_RE, PLUGIN_KEY_RE, PRODUCT_RE } from "./installnames.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
 import { subagentsReport } from "./subagents.ts";
 
@@ -45,6 +48,13 @@ const out = (s: string): void => {
 const hashOf = (buf: Buffer): string => createHash("sha256").update(buf).digest("hex").slice(0, 8);
 
 const seconds = (ms: number): string => `${Math.round(ms / 1000)}s`;
+
+const ENTRY = escapeRe(PLUGIN_NAME);
+/** A hand-written bridge entry in the Codex config.toml, as a table or a dotted key. */
+const CODEX_ENTRY_RE = new RegExp(
+  `^\\s*\\[mcp_servers\\."?${ENTRY}"?\\]|^\\s*mcp_servers\\."?${ENTRY}"?\\s*=`,
+  "m",
+);
 
 function homeCopyReport(): void {
   const home = homeBridgePath();
@@ -70,7 +80,7 @@ export function serverSourceWord(): string {
   switch (CFG.serverSource) {
     case "argument":
       return dw.srcArgument();
-    case "ISKRON_BRIDGE_URL":
+    case "env":
       return dw.srcEnv();
     case "file":
       return dw.srcFile(serverChoicePath(CFG.authDir));
@@ -136,7 +146,7 @@ async function patReport(): Promise<void> {
         params: {
           protocolVersion: "2025-06-18",
           capabilities: {},
-          clientInfo: { name: "iskron-doctor", version: "1" },
+          clientInfo: { name: CLIENTS.doctor, version: "1" },
         },
       }),
       signal: AbortSignal.timeout(10_000),
@@ -226,7 +236,7 @@ function claudePluginReport(): void {
     const reg = JSON.parse(readFileSync(registry, "utf8")) as {
       plugins?: Record<string, { installPath?: string; version?: string; scope?: string }[]>;
     };
-    const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => /^iskron@/.test(k));
+    const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => PLUGIN_KEY_RE.test(k));
     if (!mine.length) {
       out(dw.pluginMissing(registry));
       return;
@@ -241,7 +251,7 @@ function claudePluginReport(): void {
               mcpServers?: Record<string, { command?: string; args?: string[] }>;
             };
             const hit = Object.entries(m.mcpServers ?? {}).find(([, v]) =>
-              (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+              (v.args ?? []).some((a) => BRIDGE_FILE_RE.test(a)),
             );
             if (hit) {
               entry = dw.entryFound(hit[0]);
@@ -290,7 +300,7 @@ function codexPluginReport(home: string): void {
           mcpServers?: Record<string, { command?: string; args?: string[] }>;
         };
         const hit = Object.values(m.mcpServers ?? {}).find((v) =>
-          (v.args ?? []).some((a) => /iskron\.mjs/.test(a)),
+          (v.args ?? []).some((a) => BRIDGE_FILE_RE.test(a)),
         );
         word = dw.codexManifest(m.version ?? "?", !!hit);
         if (hit)
@@ -322,7 +332,7 @@ export function harnessReport(): void {
         mcpServers?: Record<string, { command?: string; args?: string[] }>;
       };
       const entries = Object.entries(cfg.mcpServers ?? {}).filter(([, v]) =>
-        (v.args ?? []).some((a) => /iskron/.test(a)),
+        (v.args ?? []).some((a) => PRODUCT_RE.test(a)),
       );
       if (entries.length) {
         for (const [name, v] of entries) {
@@ -342,8 +352,8 @@ export function harnessReport(): void {
   // OpenCode: плагин из поставки лежит копией в каталоге плагинов; та же сверка, что и у моста.
   const opencodeDir = join(homedir(), ".config", "opencode");
   if (existsSync(opencodeDir)) {
-    const copy = join(opencodeDir, "plugins", "iskron.js");
-    const packaged = join(dirname(fileURLToPath(import.meta.url)), "opencode-plugin.js");
+    const copy = join(opencodeDir, "plugins", PLUGIN_COPY_FILE);
+    const packaged = join(dirname(fileURLToPath(import.meta.url)), PLUGIN_FILE);
     if (!existsSync(copy)) out(dw.ocNoPlugin(copy));
     else if (!existsSync(packaged)) out(dw.ocNoPackaged(copy));
     else if (readFileSync(copy).equals(readFileSync(packaged))) out(dw.ocSame(copy));
@@ -361,11 +371,7 @@ export function harnessReport(): void {
     const codex = join(codexHome, "config.toml");
     if (existsSync(codex)) {
       const text = readFileSync(codex, "utf8");
-      out(
-        dw.codexManual(
-          /^\s*\[mcp_servers\."?iskron"?\]|^\s*mcp_servers\."?iskron"?\s*=/m.test(text),
-        ),
-      );
+      out(dw.codexManual(CODEX_ENTRY_RE.test(text)));
     }
   }
   launchReport(out, launches);

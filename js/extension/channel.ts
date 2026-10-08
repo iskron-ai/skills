@@ -10,6 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
@@ -17,7 +18,7 @@ import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn, isTact, onlyTacts, tactAt } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
-const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
+const ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3_000;
 /** Как часто ждущий такт спрашивает, свободен ли ход. */
 const TACT_POLL_MS = 1_000;
 

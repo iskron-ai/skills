@@ -6,6 +6,7 @@
 // её join'ы; на конце прогона (session.ts, windDown) он выходит из них сам —
 // после отпуска сокета и .key, до revoke места, — тем же ходом iskron_case leave. Отказ не бьёт: дело
 // закроется сроком места и без нас, слово — в журнал моста.
+import { envName } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import { type Answer, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -17,7 +18,7 @@ import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** Все выходы конца прогона — под одним потолком: харнес гасит мост по короткой отсрочке. */
-const LEAVE_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1_500;
+const LEAVE_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1_500;
 
 /** Дела прогона — у сессии (демон держит многих): ключ — граф и номер без знака. */
 const joined = scoped(() => new Map<string, { realm?: string; room: string }>());

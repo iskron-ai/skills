@@ -14,6 +14,7 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (session.ts).
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
@@ -45,7 +46,7 @@ import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
 /** Порог глухоты; переменная — шов для проб, не ручка человека. */
-const DEAF_MS = Number(process.env.ISKRON_BRIDGE_DEAF_MS) || 15 * 60_000;
+const DEAF_MS = Number(process.env[envName("BRIDGE_DEAF_MS")]) || 15 * 60_000;
 const TICK_MS = Math.min(60_000, Math.max(200, Math.floor(DEAF_MS / 5)));
 
 const NOT_HOLDING = (): string =>

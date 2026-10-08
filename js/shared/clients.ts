@@ -1,3 +1,5 @@
+import { CLIENTS, envName } from "../delivery/index.ts";
+
 // Имена наших собственных клиентов моста, которые отказ рукопожатия со ссылкой
 // входа читают сами и ждут входа, повторяя рукопожатие: плагин OpenCode —
 // поднимает мост лениво и повторно после простоя, строку входа пишет в stderr
@@ -11,7 +13,7 @@
 // нарочно: при мёртвом гранте с сохранённым ответом ему, как харнесу, отдаётся
 // кэш — тулы стоят с первой секунды, ссылку входа несёт первый вызов; отказ оно
 // встречает только на пустом кэше, то есть на самом первом входе за адрес.
-export const OPENCODE_CLIENT = "opencode-iskron";
+export const OPENCODE_CLIENT = CLIENTS.opencode;
 export const SURFACE_CLIENT = "export-surface"; // scripts/export-surface.mjs, литералом: .mjs не берёт TS
 export const OWN_CLIENTS: ReadonlySet<string> = new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
 
@@ -19,19 +21,17 @@ export const OWN_CLIENTS: ReadonlySet<string> = new Set([OPENCODE_CLIENT, SURFAC
 // сторожем: расширение pi и плагин OpenCode. Остальным (Claude Code, Codex)
 // кадр доходит только через сторожа — без него мост глух, и уходит с места
 // сам (bridge/leave.ts, граф nks-dev: #4895).
-export const PI_CLIENT = "pi-iskron";
+export const PI_CLIENT = CLIENTS.pi;
 export const NOTIFIED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
 // Версия хоста для attrs.harness_version (граф nks-dev: #6226). Плагину OpenCode
 // и расширению pi клиент рукопожатия — они сами, и clientInfo.version — их версия,
 // не хоста: версию OpenCode и pi они передают мосту этой переменной при запуске.
-export const HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
+export const HARNESS_VERSION_ENV = envName("HARNESS_VERSION");
 // Корень набора скиллов для attrs.skills (#6226): мост вне набора (домашняя копия)
 // узнаёт набор только этой переменной — её ставят плагин OpenCode и расширение pi.
-export const SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+export const SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
 // Набор узнаётся по мосту поставки в нём: `<корень>/<BRIDGE_SKILL>/scripts/<BRIDGE_FILE>` —
 // так его ищет мост (bridge/skillset.ts) и так плагин OpenCode открывает чтение скиллов набора
-// (opencode/skillread.ts, #6847).
-export const BRIDGE_SKILL = "establish-mcp";
-export const BRIDGE_FILE = "iskron.mjs";
+// (opencode/skillread.ts, #6847). Both names come from the delivery layer.
 export const HOSTED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);

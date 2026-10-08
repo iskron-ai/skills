@@ -2,6 +2,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { L } from "./lang.ts";
 
 /**
@@ -14,7 +15,7 @@ import { L } from "./lang.ts";
  * ISKRON_NODE — рычаг человека и проб: явный рантайм старше вывода.
  */
 export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
-  const own = process.env.ISKRON_NODE?.trim();
+  const own = process.env[envName("NODE")]?.trim();
   if (own) return { bin: own, env: process.env };
   if (process.versions?.bun)
     return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };

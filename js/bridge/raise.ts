@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { envName } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { daemonEnv } from "../shared/seam.ts";
 import { seamRaiseLockPath, seamRunDir, takeFileLock } from "../shared/seam-entrance.ts";
@@ -29,7 +30,7 @@ export const SELF = (() => {
  * новой. Под ISKRON_BRIDGE_NO_UPDATE дом не читается (пробы).
  */
 function daemonEntry(): string {
-  const named = process.env.ISKRON_BRIDGE_DAEMON_ENTRY?.trim();
+  const named = process.env[envName("BRIDGE_DAEMON_ENTRY")]?.trim();
   if (named) return named;
   if (updatesDisabled()) return SELF;
   const home = homeBridgePath();

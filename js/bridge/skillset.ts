@@ -9,14 +9,15 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BRIDGE_FILE, BRIDGE_SKILL, SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL, SKILL_SET } from "../delivery/index.ts";
+import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { currentScope, envOf } from "../shared/scope.ts";
 import { skillLock } from "../shared/skilllock.ts";
 import { versionIn } from "../shared/version.ts";
 
 /** Корень набора окружением: домашняя копия лежит вне набора и узнаёт его только так. */
 export { SKILLS_ROOT_ENV };
-const SET = "iskron-ai/skills";
+const SET = SKILL_SET;
 const BRIDGE_IN_SET = join(BRIDGE_SKILL, "scripts", BRIDGE_FILE);
 
 // Окружение и файл — моста харнеса (shared/scope.ts): у сессии демона машины

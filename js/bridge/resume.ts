@@ -17,6 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { sameDir as oneDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
@@ -365,8 +366,8 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
 
 /** Старт моста: сокет из окружения без connect — отладочный путь. */
 export function holdFromEnv(): void {
-  const url = envOf("ISKRON_CHANNEL_SOCKET")?.trim();
-  if (url) holdStanding(url, envOf("ISKRON_CHANNEL_STATUS")?.trim() || null);
+  const url = envOf(envName("CHANNEL_SOCKET"))?.trim();
+  if (url) holdStanding(url, envOf(envName("CHANNEL_STATUS"))?.trim() || null);
 }
 
 const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => ({

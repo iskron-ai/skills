@@ -5,6 +5,7 @@
 // сказала busy и ещё не встала, либо промпт такта ждёт в её очереди невзятым (взятие
 // начинает ход — занят и дальше).
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { envName } from "../delivery/index.ts";
 import { isTact, onlyTacts, tactAt } from "../shared/seen.ts";
 import { type Say } from "./tools.ts";
 
@@ -13,7 +14,7 @@ import { type Say } from "./tools.ts";
  * конце хода OpenCode может молчать. Тот же предел снимает «занят» по промпту такта,
  * о взятии которого OpenCode молчит.
  */
-const WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 3_600_000;
+const WAKE_HOLD_MS = Number(process.env[envName("OPENCODE_WAKE_HOLD_MS")]) || 6 * 3_600_000;
 
 /** Промпт очередью в сессию; null — не вложился, inbox null — без id взятия. */
 type Send = (

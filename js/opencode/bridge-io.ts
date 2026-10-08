@@ -12,6 +12,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { envName, HOME_DIR } from "../delivery/index.ts";
 import { type Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
@@ -20,9 +21,9 @@ import { buildOf, buildOfFile } from "../shared/version.ts";
 import { codeWatch, deviceOf } from "./devicewait.ts";
 
 /** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
-export const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
+export const HANDSHAKE_MS = Number(process.env[envName("MCP_HANDSHAKE_MS")] || 600000);
 /** Как часто переспрашивать мост, пока человек входит в браузере. */
-export const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2000);
+export const AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 2000);
 /**
  * Пауза перед n-м повтором рукопожатия, упавшего не на входе человека (его
  * ждёт сам handshake): отказ, что повторится тем же, не долбится раз в
@@ -45,7 +46,7 @@ const PROTOCOL = "2025-06-18";
  */
 export function findBridge(): { path: string | null; tried: string[] } {
   const tried: string[] = [];
-  const env = process.env.ISKRON_BRIDGE_PATH?.trim();
+  const env = process.env[envName("BRIDGE_PATH")]?.trim();
   if (env) tried.push(resolve(env));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
@@ -70,7 +71,7 @@ export function buildsLine(bridgePath: string, pluginUrl: string): string {
 }
 
 export function authDir(): string {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join(homedir(), ".iskron-bridge");
+  return process.env[envName("BRIDGE_AUTH_DIR")] || join(homedir(), HOME_DIR);
 }
 
 function cachePath(): string {

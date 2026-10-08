@@ -13,6 +13,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { linkSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import { RUNTIME_PREFIX } from "../delivery/index.ts";
 import { privateDirProblem, shortSocketDir } from "./standings.ts";
 
 /** Ключ демона — каталог гранта: один демон на грант. */
@@ -58,7 +59,7 @@ function pipeNonce(authDir: string): string {
 export function seamSocketPath(authDir: string): string {
   const key = seamKey(authDir);
   if (process.platform === "win32")
-    return `\\\\.\\pipe\\iskron-daemon-${key}-${pipeNonce(authDir)}`;
+    return `\\\\.\\pipe\\${RUNTIME_PREFIX}-daemon-${key}-${pipeNonce(authDir)}`;
   const inRun = join(seamRunDir(authDir), "daemon.sock");
   if (Buffer.byteLength(inRun) <= SUN_PATH_MAX) return inRun;
   return join(shortSocketDir(), `daemon-${key}.sock`);

@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { CONNECTOR_PATTERN } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { graphServer, projectRoot } from "./subagents.ts";
 import { todo } from "./subwords.ts";
@@ -36,7 +37,7 @@ const say = (out: Out, where: string, name: string, url: string, remove: string)
 
 // Коннектор claude.ai Claude Code приносит в каждую сессию; его адреса на диске
 // нет — только имя, под которым он подключался. Имя Искрона — повод проверить.
-const CONNECTOR_RE = /iskron|искрон|\bnks\b/i;
+const CONNECTOR_RE = CONNECTOR_PATTERN;
 
 function claudeCode(out: Out): void {
   const file = join(homedir(), ".claude.json");

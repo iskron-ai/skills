@@ -77,7 +77,7 @@ export interface Config {
   /** Откуда взят PAT — имя переменной или путь файла; для человека в отказе и в doctor. */
   patSource: string | null;
   /** Откуда взят адрес сервера: аргумент, окружение, файл выбора рядом с грантом или умолчание. */
-  serverSource: "argument" | "ISKRON_BRIDGE_URL" | "file" | "default";
+  serverSource: "argument" | "env" | "file" | "default";
   /** Мост-спутник (satellite.ts): место на прогон субагента — без записи держания, без хука, с коротким ttl. */
   satellite: boolean;
   /** `--tools`: набор тулов, который видит харнес (narrow.ts); null — набор по умолчанию. */

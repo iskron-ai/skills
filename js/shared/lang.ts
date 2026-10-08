@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { envOf, scoped } from "./scope.ts";
 import { authDirFromEnv } from "./standings.ts";
 
@@ -22,7 +23,7 @@ export function langOfUrl(url: string): Lang {
 
 /** Язык, названный переменной ISKRON_BRIDGE_LANG; иначе null. */
 export function forcedLang(): Lang | null {
-  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
+  const v = envOf(envName("BRIDGE_LANG"))?.trim().toLowerCase();
   return v === "en" || v === "ru" ? v : null;
 }
 
@@ -34,7 +35,7 @@ export function forcedLang(): Lang | null {
 function resolve(): Lang {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
+  const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
   if (fromEnv) return langOfUrl(fromEnv);
   try {
     const text = readFileSync(join(authDirFromEnv(), "server"), "utf8").trim();

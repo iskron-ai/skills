@@ -5,9 +5,10 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+import { CLIENTS, envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 
-const PROBE_MS = Number(process.env.ISKRON_DOCTOR_PROBE_MS) || 30_000;
+const PROBE_MS = Number(process.env[envName("DOCTOR_PROBE_MS")]) || 30_000;
 /** Срок одного запроса пробного моста: столько он может ждать запрос в полёте, уходя. */
 const REQUEST_MS = 20_000;
 /** Windows: ожидание ухода по закрытому stdin — дольше срока запроса со сменой токена. */
@@ -54,13 +55,13 @@ export async function probeSatellite(
   const env: Record<string, string | undefined> = {
     ...process.env,
     ...e.env,
-    ISKRON_BRIDGE_NO_BROWSER: "1",
-    ISKRON_BRIDGE_NO_UPDATE: "1",
-    ISKRON_BRIDGE_ORPHAN_FLOW_MS: "1",
-    ISKRON_BRIDGE_TIMEOUT: e.env.ISKRON_BRIDGE_TIMEOUT ?? String(REQUEST_MS),
+    [envName("BRIDGE_NO_BROWSER")]: "1",
+    [envName("BRIDGE_NO_UPDATE")]: "1",
+    [envName("BRIDGE_ORPHAN_FLOW_MS")]: "1",
+    [envName("BRIDGE_TIMEOUT")]: e.env[envName("BRIDGE_TIMEOUT")] ?? String(REQUEST_MS),
   };
-  delete env.ISKRON_CHANNEL_SOCKET; // проба не держит чужого сокета
-  delete env.ISKRON_CHANNEL_STATUS;
+  delete env[envName("CHANNEL_SOCKET")]; // проба не держит чужого сокета
+  delete env[envName("CHANNEL_STATUS")];
   const child = spawn(e.command, e.args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.on("error", () => {}); // мост ушёл раньше записи — это его исход, не падение doctor
   let stderr = "";
@@ -104,7 +105,7 @@ export async function probeSatellite(
   const init = await ask(1, "initialize", {
     protocolVersion: "2025-06-18",
     capabilities: {},
-    clientInfo: { name: "iskron-doctor", version: "1" },
+    clientInfo: { name: CLIENTS.doctor, version: "1" },
   });
   // Отказ со ссылкой входа — мёртвый грант машины: ссылку проба унесёт с собой,
   // поэтому совет тот же, что без входа, а не «сделай, что велит отказ».

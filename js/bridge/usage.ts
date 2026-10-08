@@ -6,6 +6,7 @@
 // снимок уходит в обход порога перед уходом с места и перед его закрытием:
 // по закрытому месту запись — 404, и снимок после закрытия не ляжет.
 // Claude Code и Codex цифр не дают — их месту usage не пишется вовсе.
+import { envName } from "../delivery/index.ts";
 import { HOSTED_CLIENTS } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -18,9 +19,9 @@ import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { moved, type Usage, usageOf } from "./usagefields.ts";
 
-const MIN_GAP_MS = Number(process.env.ISKRON_USAGE_GAP_MS || 60_000);
+const MIN_GAP_MS = Number(process.env[envName("USAGE_GAP_MS")] || 60_000);
 /** Потолок последнего снимка: харнес гасит мост по короткой отсрочке. */
-const FLUSH_CAP_MS = Number(process.env.ISKRON_CASE_LEAVE_MS) || 1_500;
+const FLUSH_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1_500;
 
 const U = scoped(() => ({ published: null as Usage | null, latest: null as Usage | null, at: 0 }));
 

@@ -10,9 +10,12 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:pa
 
 import { CFG, isProductionServer } from "../bridge/config.ts";
 import { loadStore, storePath } from "../bridge/store.ts";
+import { BRIDGE_NAME, envName, PLUGIN_NAME, PRODUCT, SUB_ENTRY_PREFIX } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
+import { escapeRe } from "../shared/regex.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
+import { PRODUCT_PATTERN, PRODUCT_RE } from "./installnames.ts";
 import { bridgePathOf, formOf, readyEntry, SATELLITE_ARGS, toolsTail } from "./satform.ts";
 import { loginAdvice, probeSatellite } from "./satprobe.ts";
 import { formWord, todo } from "./subwords.ts";
@@ -20,11 +23,18 @@ import { formWord, todo } from "./subwords.ts";
 type Out = (s: string) => void;
 
 /** ОС, под которую судится команда записи; переменная — шов проб (Windows на любой машине). */
-const platform = (): string => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
+const PLATFORM_ENV = envName("DOCTOR_PLATFORM");
+const platform = (): string => process.env[PLATFORM_ENV] || process.platform;
 
-const BRIDGE_RE = /iskron-bridge|(^|[\\/"'\s])iskron[^\\/"'\s]*\.mjs/;
+const BRIDGE_RE = new RegExp(
+  `${escapeRe(BRIDGE_NAME)}|(^|[\\\\/"'\\s])${PRODUCT_PATTERN}[^\\\\/"'\\s]*\\.mjs`,
+);
 /** Префиксы серверов графа в шаблоне проекции — снимаются всегда, когда своих не нашлось. */
-const TEMPLATE_PARENTS = ["mcp__iskron-bridge", "mcp__plugin_iskron_iskron", "mcp__iskron"];
+const TEMPLATE_PARENTS = [
+  `mcp__${BRIDGE_NAME}`,
+  `mcp__plugin_${PLUGIN_NAME}_${PRODUCT}`,
+  `mcp__${PRODUCT}`,
+];
 
 interface Entry {
   name: string;
@@ -166,7 +176,7 @@ function parentBridges(root: string): string[] {
   const plugins = (registry?.plugins ?? {}) as Record<string, { installPath?: string }[]>;
   for (const [key, installs] of Object.entries(plugins)) {
     const plugin = key.split("@")[0];
-    if (!/iskron/.test(plugin)) continue;
+    if (!PRODUCT_RE.test(plugin)) continue;
     for (const inst of installs)
       if (inst.installPath)
         scan(
@@ -241,7 +251,7 @@ export async function subagentsReport(out: Out): Promise<void> {
     ...agentFiles(join(root, ".opencode", "agents"), "project"),
     ...agentFiles(join(root, ".opencode", "agent"), "project"),
   ];
-  const osNote = process.env.ISKRON_DOCTOR_PLATFORM
+  const osNote = process.env[PLATFORM_ENV]
     ? L(`ОС под суд: ${platform()}`, `OS under judgment: ${platform()}`)
     : platform();
   out(L(`субагенты: проект ${root} (${osNote})`, `subagents: project ${root} (${osNote})`));
@@ -269,7 +279,7 @@ export async function subagentsReport(out: Out): Promise<void> {
   const reports: Report[] = [];
   for (const f of claude) {
     const lines: string[] = [];
-    const expected = `iskron-sub-${f.agent}`;
+    const expected = `${SUB_ENTRY_PREFIX}-${f.agent}`;
     const entries = entriesOf(f.fm);
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
     const sat = ours.filter((e) => formOf(e) !== "session");
@@ -291,7 +301,7 @@ export async function subagentsReport(out: Out): Promise<void> {
       args: [...SATELLITE_ARGS, ...toolsTail(e)],
       env: e.env,
     });
-    const refs = entries.filter((e) => e.ref && /iskron/.test(e.name));
+    const refs = entries.filter((e) => e.ref && PRODUCT_RE.test(e.name));
     for (const r of refs)
       lines.push(
         L(
@@ -317,7 +327,7 @@ export async function subagentsReport(out: Out): Promise<void> {
     }
     for (const e of sat) {
       byName.set(e.name, [...(byName.get(e.name) ?? []), f.path]);
-      if (e.name === "iskron-sub")
+      if (e.name === SUB_ENTRY_PREFIX)
         lines.push(
           L(
             `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`,
@@ -325,7 +335,7 @@ export async function subagentsReport(out: Out): Promise<void> {
           ),
         );
       // Готовый блок несёт и своё имя: общее имя прежнего контракта в нём не повторяется.
-      const name = e.name === "iskron-sub" ? expected : e.name;
+      const name = e.name === SUB_ENTRY_PREFIX ? expected : e.name;
       const form = formOf(e);
       if (form !== "eval") {
         lines.push(

@@ -10,7 +10,10 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
+import { HOME_DIR } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { escapeRe } from "../shared/regex.ts";
+import { PRODUCT_PATTERN } from "./installnames.ts";
 
 /** Код `node -e` единой формы: путь к дому из homedir, путь в argv[1], импорт моста. */
 export const SATELLITE_CODE =
@@ -90,6 +93,14 @@ export function formOf(e: SatEntry): SatForm {
   return e.args.includes("--satellite") ? "path" : "session";
 }
 
+const P = PRODUCT_PATTERN;
+const HOME_DIR_RE = new RegExp(escapeRe(HOME_DIR));
+const EVAL_PATH_RE = new RegExp(`['"\`]([^'"\`]*${P}[^'"\`]*\\.mjs)['"\`]`);
+const SHELL_PATH_RE = new RegExp(
+  `"([^"]*${P}[^"]*\\.mjs)"|'([^']*${P}[^']*\\.mjs)'|(\\S*${P}\\S*\\.mjs)`,
+);
+const ARG_PATH_RE = new RegExp(`${P}[^\\\\/]*\\.mjs$`, "i");
+
 const expandHome = (p: string): string =>
   p
     .replace(/^~(?=[\\/])/, homedir())
@@ -100,17 +111,17 @@ export function bridgePathOf(e: SatEntry): string | null {
   const base = cmdBase(e.command);
   if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
     const code = e.args[1] ?? "";
-    if (/homedir\(\)/.test(code) && /\.iskron-bridge/.test(code)) return homeBridgePath();
-    const m = /['"`]([^'"`]*iskron[^'"`]*\.mjs)['"`]/.exec(code);
+    if (/homedir\(\)/.test(code) && HOME_DIR_RE.test(code)) return homeBridgePath();
+    const m = EVAL_PATH_RE.exec(code);
     return m ? expandHome(m[1]) : null;
   }
   if (SHELLS.has(base)) {
     const s = e.args[e.args.indexOf("-c") + 1] ?? "";
-    const m = /"([^"]*iskron[^"]*\.mjs)"|'([^']*iskron[^']*\.mjs)'|(\S*iskron\S*\.mjs)/.exec(s);
+    const m = SHELL_PATH_RE.exec(s);
     const raw = m?.[1] ?? m?.[2] ?? m?.[3];
     return raw ? expandHome(raw) : null;
   }
-  const arg = [e.command, ...e.args].find((a) => /iskron[^\\/]*\.mjs$/i.test(a));
+  const arg = [e.command, ...e.args].find((a) => ARG_PATH_RE.test(a));
   return arg ? expandHome(arg) : null;
 }
 
