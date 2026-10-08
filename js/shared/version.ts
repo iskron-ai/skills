@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "7.4.1"; // x-release-please-version
+export const VERSION = "7.5.0"; // x-release-please-version
 
 /**
  * Метка канала сборки (#6650): ":release" вшивает только сборка выпуска (js/build.mjs под
