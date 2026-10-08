@@ -148,22 +148,35 @@ const cases = [
     false,
   ],
   // a push of tags only ships a release mark, not a branch to review — and a quiet
-  // one says nothing at all: the form of the command speaks, not the output —
-  // every refspec a tag (`tag <name>`, `refs/tags/…`), or `--tags` alone
+  // one says nothing at all: the form of the command speaks — every refspec a tag
+  // (`tag <name>`, `refs/tags/…`), or `--tags` alone
   [
     "git push origin tag iskron-0.21.1",
     "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
     false,
     false,
   ],
-  // a bare tag name is a branch name by form: it wakes, the ceiling
+  // one bare refspec is a branch or a tag by form: the output speaks for it
+  [
+    "git push origin iskron-0.21.1",
+    "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
+    false,
+    false,
+  ],
   [
     "git push origin iskron-0.21.1 2>&1 | tail -3",
     "To github.com:o/r.git\n * [new tag]         iskron-0.21.1 -> iskron-0.21.1",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x",
+    "To github.com:o/r.git\n * [new branch]      feat/x -> feat/x",
     true,
     false,
   ],
-  // a branch beside a tag wakes, though the output names only the new tag
+  // two refspecs or more — the form alone: a branch beside a tag wakes, though
+  // the output names only the new tag
   [
     "git push origin main tag v-probe",
     "To github.com:o/r.git\n * [new tag]         v-probe -> v-probe",
@@ -172,7 +185,7 @@ const cases = [
   ],
   ["git push -q origin tag v-x", "", false, false],
   ["git push --quiet origin --tags", "", false, false],
-  ["git push -q origin +refs/tags/v1 :refs/tags/v0 2>&1 | tail -1", "", false, false],
+  ["git push -q origin +refs/tags/v1 refs/tags/v2 2>&1 | tail -1", "", false, false],
   ["git push -q origin tag v1 && git push -q origin tag v2", "", false, false],
   // a branch beside the tags, or a form the parse does not take whole, wakes as before
   ["git push -q origin feat/x tag v-x", "", true, false],
@@ -187,13 +200,16 @@ const cases = [
     true,
     false,
   ],
-  // …a tag deleted by its full name is a tag by form
+  // …and a deleted tag wakes too, a known gap
   [
     "git push origin :refs/tags/v1 2>&1 | tail -3",
     "To github.com:o/r.git\n - [deleted]         v1",
-    false,
+    true,
     false,
   ],
+  ["git push -q origin :refs/tags/v1", "", true, false],
+  ["git push -q origin --delete tag v1", "", true, false],
+  ["git push -q -d origin refs/tags/v1", "", true, false],
   // …but a branch riding along with the tag still wakes
   [
     "git push --follow-tags 2>&1 | tail -3",
