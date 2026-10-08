@@ -26,7 +26,7 @@ import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
 import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { E, type Frame, H, handoverReason } from "./holdstate.ts";
-import { holdWords } from "./holdwords.ts";
+import { deadWord, holdWords } from "./holdwords.ts";
 import {
   addExtra,
   type Channel,
@@ -287,7 +287,7 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
   // Иное имя — прежнее место мост бросает сам: его запись стирается, иначе возврат по каталогу поднимал бы брошенное (#5140).
   // То же место заново — места рядом остаются на канале (#5838).
   const same = !!H.currentKey && H.currentKey === key;
-  releaseStanding(holdWords.newSocket(), !!H.currentKey && H.currentKey !== key, same);
+  releaseStanding(holdWords().newSocket(), !!H.currentKey && H.currentKey !== key, same);
   const status = statusUrl || deriveStatusUrl(url);
   Object.assign(H, { currentKey: key, currentUrl: url, currentStatusUrl: status });
   H.door = new Door(key, doorHooks);
@@ -326,7 +326,7 @@ export function parkStanding(reason: string): string | null {
   H.holder = null;
   H.parked = true;
   standingLog(`parked ${H.currentKey}: ${reason}`);
-  const text = holdWords.parked(reason);
+  const text = holdWords().parked(reason);
   broadcast({ kind: "note", text });
   return H.currentKey;
 }
@@ -446,7 +446,7 @@ function openHolder(url: string, key: string): void {
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords.revokedOwn(), true, false, true);
+          releaseStanding(holdWords().revokedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -456,7 +456,7 @@ function openHolder(url: string, key: string): void {
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords.closedOwn(), true, false, true);
+          releaseStanding(holdWords().closedOwn(), true, false, true);
           state.standing = null;
           state.standingSession = null;
           return;
@@ -465,20 +465,20 @@ function openHolder(url: string, key: string): void {
           // Протухшая запись держания: место у платформы уже мертво — не тревога,
           // а тихий откат; iskron_stand займёт место заново connect-ом.
           log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
-          releaseStanding(holdWords.resumeFailed(), true);
+          releaseStanding(holdWords().resumeFailed(), true);
           return;
         }
-        const text = holdWords.dead(code);
+        const text = deadWord(code);
         log(text);
         standingLog(`dead ${key}: close ${code}`);
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
         Object.assign(H, { deafKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
-        releaseStanding(holdWords.tokenDead(), true);
+        releaseStanding(holdWords().tokenDead(), true);
       },
       onServiceAlive: (version) => {
-        const text = holdWords.alive(version);
+        const text = holdWords().alive(version);
         log(text);
         const ev: ChannelEvent = { kind: "alive", version, text };
         broadcast(ev);

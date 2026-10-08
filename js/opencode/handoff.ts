@@ -6,7 +6,7 @@
 import { method } from "../delivery/index.ts";
 import { authDir } from "./bridge-io.ts";
 import { PAUSE_MS } from "./children.ts";
-import type { Leads } from "./leadwords.ts";
+import type { Leads } from "./leaddoors.ts";
 import { writeLostMarker } from "./marker.ts";
 import type { Home } from "./records.ts";
 import type { Slot } from "./slot.ts";

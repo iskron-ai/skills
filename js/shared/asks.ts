@@ -1,60 +1,23 @@
-// Вопрос в деле — роды ask, answer, ack (граф nks-dev: контракт #6866, роды
-// #6867, зов роли #6870; доля моста — #6868): кому вопрос, кому ответ и приём,
-// и их слова. Правило стопки держит словарь родов (room-kinds.ts), слова — здесь.
+// Question kinds in a case — ask, answer, ack (graph @nks/nks-dev, nodes #6866,
+// #6867, #6870; the bridge's share — #6868): who is asked, who gets the answer
+// and the acceptance, and their words. The stacking rule stays in room-kinds.ts.
+import { ASK } from "../delivery/index.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
-import { L, lang } from "./lang.ts";
-import { addresseeOf, fill, mineOf, myRole, obj, type Rec, str } from "./room-fields.ts";
+import { L, words } from "./lang.ts";
+import { addresseeOf, mineOf, myRole, need, obj, opt, pick, type Rec, str } from "./room-fields.ts";
 
-// ru:dict — русская таблица слов; английская рядом, язык выбирает вызывающий.
-export const ASK_WORDS: Readonly<Record<string, string>> = {
-  ask: "{author} спрашивает роль {to}{ to_place} [{key}]: «{done}»{; form}{; advice}",
-  ask_place: "(место {place})",
-  ask_yes_no: "ответ: да или нет (yes | no)",
-  ask_free: "ответ своим текстом",
-  ask_choice: "варианты: {options}",
-  ask_advice: "рекомендация: {option}{ — why}",
-  answer: "{author} отвечает на [{refers_to}]: {reply}",
-  ack: "ответ [{refers_to}] принят{: reply} · {author}",
-  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
-  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
-  // Зов роли платформой по погасшему месту: cause — почему зовут.
-  invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
-  invite_answer_waiting:
-    "платформа зовёт роль {who} в дело: ответ ждёт приёма, спросившее место {standing} ушло",
-};
-export const ASK_WORDS_EN: Readonly<Record<string, string>> = {
-  ask: "{author} asks the role {to}{ to_place} [{key}]: “{done}”{; form}{; advice}",
-  ask_place: "(seat {place})",
-  ask_yes_no: "answer: yes or no (yes | no)",
-  ask_free: "answer in your own words",
-  ask_choice: "options: {options}",
-  ask_advice: "recommended: {option}{ — why}",
-  answer: "{author} answers [{refers_to}]: {reply}",
-  ack: "answer [{refers_to}] accepted{: reply} · {author}",
-  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
-  invite_ownerless:
-    "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
-  invite_answer_waiting:
-    "the platform calls the role {who} to the case: an answer awaits acceptance, the asking seat {standing} has left",
-};
-
-/** Роды вопроса — их слова и значения ведёт этот модуль. */
 export const ASK_KINDS = new Set(["ask", "answer", "ack"]);
 
-/** Слово таблицы вопроса по ключу; нет ключа — undefined. */
-export const askWord = (key: string): string | undefined =>
-  (lang() === "en" ? ASK_WORDS_EN : ASK_WORDS)[key];
+/** Cause of a platform invite of a role → its word. */
+const INVITE_CAUSES = {
+  ownerless: "inviteOwnerless",
+  answer_waiting: "inviteAnswerWaiting",
+} as const;
 
-const phrase = (key: string, values: Rec = {}): string => fill(askWord(key) ?? "", values);
-
-/**
- * Адресат записи — fields.to (#6867, абзац ЧТЕНИЕ): у ask —
- * {karta {seq, name, realm}, standing? — место}; у answer и ack — само место
- * ждавшего {id, standing, name?, karta?}.
- */
+/** fields.to (#6867): for ask {karta, standing?}; for answer and ack the waiting seat itself. */
 const toOf = (fields: Rec): Rec => obj(fields.to);
 
-/** Строку написало моё место — эхо своей записи. */
+/** The line was written by my own seat — an echo. */
 export const byMe = (frame: Rec): boolean => {
   const mine = mineOf(frame);
   const author = obj(obj(frame.line).author);
@@ -62,29 +25,24 @@ export const byMe = (frame: Rec): boolean => {
 };
 
 /**
- * Строка вопроса от места человека (окно, бот): её раскладывает адресованность,
- * не правило слова человека «всегда целиком» (#6867). Одно определение — пачке
- * сторожей моста (roomstack.ts) и плагину OpenCode.
+ * A question line from a person's seat is split by addressing, not by the
+ * "person's word always whole" rule (#6867).
  */
 export const askFromPerson = (frame: Rec): boolean => {
   const line = obj(frame.line);
   const kind = str(line.kind);
-  // Снятие вопроса — тоже строка вопроса: progress с fields.withdraws.
   const asking = ASK_KINDS.has(kind) || (kind === "progress" && !!str(obj(line.fields).withdraws));
   return asking && classifyOrigin(frame as Frame) === "human";
 };
 
-/** Аккаунт места по адресу @handle:name; без адреса — пусто. */
 const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ?? "";
 
 /**
- * Вопрос мне: to.standing — моё место; иначе to.karta — моя роль (сверка как у
- * приглашения роли), а названное место, если есть, — того же аккаунта: на вопрос
- * месту отвечают места его аккаунта в этой роли (#6867), чужим он не адресован.
+ * Asked to me: to.standing is my seat; otherwise to.karta is my role and a named
+ * seat, if any, belongs to my account (#6867).
  */
 export function askedMine(frame: Rec, fields: Rec): boolean {
   const mine = mineOf(frame);
-  // Эхо своего вопроса — не вопрос мне, даже если спрошена моя же роль.
   if (byMe(frame)) return false;
   const to = toOf(fields);
   const place = addresseeOf(to.standing);
@@ -95,7 +53,7 @@ export function askedMine(frame: Rec, fields: Rec): boolean {
   return !!theirs && theirs === handleOf(str(frame.to_standing));
 }
 
-/** Ответ или приём мне: адресат кадра (addressee, иначе fields.to) — моё место, и он из дела не вышел. */
+/** Answer or acceptance to me: the addressee (addressee, else fields.to) is my seat and has not left. */
 export function addressedMine(frame: Rec): boolean {
   if (frame.addressee_left === true) return false;
   const to = addresseeOf(frame.addressee) ?? addresseeOf(toOf(obj(obj(frame.line).fields)));
@@ -106,9 +64,10 @@ export function addressedMine(frame: Rec): boolean {
 const quote = (s: string): string => (s ? L(`«${s}»`, `“${s}”`) : "");
 
 function formOf(fields: Rec): string {
+  const W = words(ASK);
   const form = str(fields.form);
-  if (form === "yes_no") return phrase("ask_yes_no");
-  if (form === "free") return phrase("ask_free");
+  if (form === "yes_no") return W.yesNo();
+  if (form === "free") return W.free();
   if (form !== "choice" || !Array.isArray(fields.options)) return "";
   const options = fields.options
     .map((o) => {
@@ -117,24 +76,56 @@ function formOf(fields: Rec): string {
       return `${str(x.id)} ${quote(str(x.label))}${ctx ? ` (${ctx})` : ""}`;
     })
     .join(", ");
-  return phrase("ask_choice", { options });
+  return W.choice(need(options));
 }
 
-/** Значения слов рода вопроса: адресат, форма, рекомендация — у ask; ответ — у answer и ack. */
+/** Values of the question words: addressee, form, advice for ask; the reply for answer and ack. */
 export function askValues(kind: string, line: Rec, fields: Rec): Rec {
   if (kind !== "ask")
     return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
+  const W = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
   const place = addresseeOf(to.standing)?.label ?? "";
   const rec = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
-    to_place: place ? phrase("ask_place", { place }) : "",
+    to_place: place ? W.place(need(place)) : "",
     form: formOf(fields),
     advice:
       str(rec.option) || str(rec.why)
-        ? phrase("ask_advice", { option: str(rec.option) || "—", why: rec.why })
+        ? W.advice(need(str(rec.option) || "—"), opt(" — ", rec.why))
         : "",
   };
+}
+
+/**
+ * The word of a question line, if it is one: a platform invite of a role by
+ * cause, a withdrawal (progress with fields.withdraws), ask, answer, ack.
+ */
+export function askText(kind: string, cause: string, v: Rec): string | undefined {
+  const W = words(ASK);
+  const invite = cause ? pick(INVITE_CAUSES, cause) : undefined;
+  if (invite) return W[invite](need(v.who), need(v.standing));
+  if (kind === "progress" && str(v.withdraws))
+    return W.withdrawn(
+      need(v.withdraws),
+      need(v.key),
+      need(v.done),
+      need(v.verdict),
+      need(v.author),
+    );
+  if (kind === "ask")
+    return W.ask(
+      need(v.author),
+      need(v.to),
+      opt(" ", v.to_place),
+      need(v.key),
+      need(v.done),
+      opt("; ", v.form),
+      opt("; ", v.advice),
+    );
+  if (kind === "answer") return W.answer(need(v.author), need(v.refers_to), need(v.reply));
+  if (kind === "ack") return W.ack(need(v.refers_to), opt(": ", v.reply), need(v.author));
+  return undefined;
 }

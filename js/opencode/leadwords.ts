@@ -1,64 +1,5 @@
-// Договор ведущих субагентов (leads.ts, граф nks-dev: #6625), слова о них родителю
-// и двери к контексту OpenCode, которыми они доходят: синтетика в сессию.
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
-import { method } from "../delivery/index.ts";
-import type { Bridge } from "../shared/bridge-client.ts";
-import type { Context } from "./plugin.ts";
-import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
-import type { Say } from "./tools.ts";
-
-export interface Leads {
-  /** Успешный вызов ребёнка его мостом: встал — ведущий; первое дело, куда вошёл, — дело поручения; уход по исходу — конец. */
-  called(child: string, name: string, args: Record<string, unknown>, place?: Place | null): void;
-  /** revoke запустившего, называющий место его ведущего субагента; null — не этот случай. */
-  release(caller: string, name: string, args: Record<string, unknown>): Promise<string | null>;
-  /** Отпущен запустившим — встать снова ему нельзя. */
-  released(child: string): boolean;
-  /** Окончательно кончен не запустившим — причина для отказа ребёнку; запустившим или не кончен — undefined. */
-  goneWhy(child: string): string | undefined;
-  /** Слово моста ребёнка: «held» называет место, кадр — не простой. true — ребёнок кончен, слово ему не вкладывать. */
-  heard(child: string, kind: unknown, place?: Place | null): boolean;
-  /** Ребёнок прежнего экземпляра плагина возвращается ведущим — с делом поручения, сказанным ходом, последним текстом. */
-  back(child: string, was: Partial<Snapshot> & { name?: string; of?: Place | null }): void;
-  /** Место вернуть не удалось — мост гасится, родителю слово без пробуждения. */
-  fail(child: string, why: string): Promise<void>;
-  /** Родителя перенесли в другую папку: ребёнок кончен здесь — мост гасится, родителю «перенесён» без «КОНЧЕН». */
-  away(child: string): Promise<void>;
-  /** Что ведущего переживает перезагрузку — в маркер потери. */
-  snapshot(child: string): Snapshot;
-  /** Ребёнка перенесли в другую папку (#6695): ведущий уходит отсюда без конца — снимок в маркер. */
-  handoff(child: string): Snapshot;
-  /** Имя места живого ведущего субагента (без места — id сессии); не ведущий — null. */
-  nameOf(child: string): string | null;
-  onEvent(ev: any): void;
-}
-
-export interface Snapshot {
-  room: string | null;
-  noted: boolean;
-  last?: string;
-}
-
-export interface LeadDoors {
-  say: Say;
-  parentOf(child: string): Promise<string | null>;
-  /**
-   * Синтетика в сессию — steer: в идущий ход на ближайшей границе шага, не после него
-   * (queue в занятую сессию после хода запускал ещё один); wake — будить ли простаивающую.
-   */
-  tell(session: string, text: string, wake: boolean): Promise<void>;
-  /**
-   * Мост ребёнка кончает прогон (расход — прежде, затем `iskron/end`: дела, место), но жив.
-   * Ответ — места, которые снять не удалось; null — исход неизвестен.
-   */
-  close(child: string): Promise<string[] | null>;
-  /** Сессия помечена кончившейся, мост ещё жив: любая её запись, и встать тоже, — отказ, пока он кончает прогон. */
-  seal(child: string): void;
-  /** Мост ребёнка гасится, сессия помечена кончившейся. */
-  end(child: string): Promise<void>;
-  /** Имя места ребёнка, если это не его спутник (обычное место сессии); спутник или места нет — null. */
-  ownPlace(child: string): string | null;
-}
+// Words about lead subagents (leads.ts; graph @nks/nks-dev, node #6625); the contract
+// and the doors to the OpenCode context are in leaddoors.ts.
 
 /** Конец отменой — окончательный, как revoke запустившего. */
 export const CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
@@ -80,9 +21,6 @@ export const placeGoneRefusal = (kind: string): string =>
   kind === "evicted"
     ? "её место-спутник вытеснено другим держателем"
     : "её место-спутник отозвано или закрыто платформой (4001)";
-
-/** Конец прогона мостом ребёнка (выход из дел и revoke под своими потолками) — не дольше. */
-const END_MS = 5_000;
 
 /** Итог — последний текст ребёнка; длиннее — хвост обрезается. */
 const SUMMARY_MAX = 4000;
@@ -131,60 +69,8 @@ export const awayWord = (who: string, last: string): string =>
 export const lostWord = (who: string, why: string): string =>
   `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
 
-/**
- * Двери ведущих к OpenCode: родитель — parentID сессии (Session публичного API; им же
- * связка восстанавливается после перезагрузки), слово — синтетикой (нет её — промптом):
- * resume=false — по описанию API «schedule execution unless resume is false» — ходом не
- * будит, слово ждёт следующего хода; конец — снимок расхода мосту (#6401), затем end.
- */
-export function leadDoors(
-  ctx: Context,
-  say: Say,
-  flush: (session: string) => Promise<void>,
-  end: (child: string, out?: ((s: string) => void) | null) => void,
-  slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
-): LeadDoors {
-  return {
-    say,
-    ownPlace: (child) => ownPlace(slots.get(child)),
-    async close(child) {
-      await flush(child).catch(() => {});
-      // Конец прогона — после слова родителю: неудача снятия места — отдельным словом (№147).
-      const got: any = await slots
-        .get(child)
-        ?.bridge.request(method("end"), {}, { timeoutMs: END_MS, service: true })
-        .catch(() => null);
-      return got?.ended ? (got.failed ?? []) : null;
-    },
-    seal: (child) => end(child, null), // мост не гасится
-    async end(child) {
-      end(child);
-    },
-    async parentOf(child) {
-      const s: any = await ctx.session.get({ sessionID: child } as any);
-      return s?.parentID ?? s?.data?.parentID ?? null;
-    },
-    tell: teller(ctx, say),
-  };
-}
+export const tellDone = (sessionID: string): string =>
+  `Искрон: слово о субагенте вложено в сессию ${sessionID}`;
 
-/** Слово о субагенте в сессию — синтетикой (нет её — промптом), steer; wake — resume. */
-export function teller(ctx: Context, say: Say): LeadDoors["tell"] {
-  return async (sessionID, text, wake) => {
-    const s: any = ctx.session;
-    const delivery = "steer";
-    try {
-      if (typeof s.synthetic === "function")
-        await s.synthetic({ sessionID, text, delivery, resume: wake });
-      else await s.prompt({ sessionID, text, delivery, resume: wake });
-      say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
-    } catch (e) {
-      say(
-        `Искрон: слово о субагенте не вложилось в ${sessionID}: ${(e as Error).message}`,
-        "error",
-      );
-    }
-  };
-}
-
-/* eslint-enable @typescript-eslint/no-explicit-any */
+export const tellFailed = (sessionID: string, message: string): string =>
+  `Искрон: слово о субагенте не вложилось в ${sessionID}: ${message}`;

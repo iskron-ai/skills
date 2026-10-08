@@ -1,65 +1,52 @@
-// Язык поставки (граф nks-dev: #6080; имена — нормой #6075): то, что пишет сам
-// мост и его харнесы — ответ iskron_stand, шапки кадров, слово о входе в дело, —
-// говорит на языке сервера. Хост на .ai — английский Искрон, иначе русский;
-// ISKRON_BRIDGE_LANG=en|ru перебивает. Проза api и кадры, которые платформа
-// рождает сама, — на языке сервера и без нас.
+// Session language (graph @nks/nks-dev, nodes #6080, #6075): the set of languages,
+// the default and the server-address rule come from the delivery layer.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { envName } from "../delivery/index.ts";
+import { DEFAULT_LANG, envName, type Lang, langOfServer, LANGS } from "../delivery/index.ts";
 import { envOf, scoped } from "./scope.ts";
 import { authDirFromEnv } from "./standings.ts";
 
-export type Lang = "ru" | "en";
+export type { Lang };
 
-/** Язык по адресу сервера: хост на .ai — en, иначе ru. */
-export function langOfUrl(url: string): Lang {
-  try {
-    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
-  } catch {
-    return "ru";
-  }
-}
+const isLang = (v: string | undefined): v is Lang => (LANGS as readonly string[]).includes(v ?? "");
 
-/** Язык, названный переменной ISKRON_BRIDGE_LANG; иначе null. */
+/** The language named by the BRIDGE_LANG variable; otherwise null. */
 export function forcedLang(): Lang | null {
   const v = envOf(envName("BRIDGE_LANG"))?.trim().toLowerCase();
-  return v === "en" || v === "ru" ? v : null;
+  return isLang(v) ? v : null;
 }
 
-/**
- * Язык там, где адреса сервера в руках нет (плагин, расширение, сторож): тот же
- * порядок, каким мост выбирает адрес без аргумента — ISKRON_BRIDGE_URL, файл
- * `server` рядом с грантом, умолчание (русский).
- */
+/** Without a server address in hand: the variable, then BRIDGE_URL, then the `server` file by the grant. */
 function resolve(): Lang {
   const forced = forcedLang();
   if (forced) return forced;
   const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
-  if (fromEnv) return langOfUrl(fromEnv);
+  if (fromEnv) return langOfServer(fromEnv);
   try {
     const text = readFileSync(join(authDirFromEnv(), "server"), "utf8").trim();
-    if (text) return langOfUrl(text);
+    if (text) return langOfServer(text);
   } catch {
-    /* файла нет — умолчание */
+    /* no file */
   }
-  return "ru";
+  return DEFAULT_LANG;
 }
 
-// Язык — сессии (shared/scope.ts): демон держит сессии мостов с разными серверами.
+// Per session (shared/scope.ts): the daemon holds sessions of bridges to different servers.
 const S = scoped(() => ({ current: null as Lang | null }));
 
-/** Мост ставит язык по своему адресу сервера (аргумент мог назвать его сам); переменная всё равно старше. */
 export function setServerLang(serverUrl: string): void {
-  S.current = forcedLang() ?? langOfUrl(serverUrl);
+  S.current = forcedLang() ?? langOfServer(serverUrl);
 }
 
-/** Сторож получает язык от моста флагом `--lang` (listenLine) и не угадывает его сам. */
+/** The watchdog takes the language from the bridge's `--lang` flag. */
 export function setLang(l: string | undefined): void {
-  if (l === "en" || l === "ru") S.current = l;
+  if (isLang(l)) S.current = l;
 }
 
 export const lang = (): Lang => (S.current ??= resolve());
 
-/** Слово на языке поставки: русское или английское. */
+/** The entry of a layer dictionary in the session language. */
+export const words = <T>(dict: Readonly<Record<Lang, T>>): T => dict[lang()];
+
 export const L = (ru: string, en: string): string => (lang() === "en" ? en : ru);

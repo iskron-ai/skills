@@ -27,7 +27,7 @@ import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
 import { homeOf } from "./host.ts";
 import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
-import { teller } from "./leadwords.ts";
+import { teller } from "./leaddoors.ts";
 import { annotate } from "./notice.ts";
 import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";

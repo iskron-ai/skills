@@ -8,10 +8,11 @@
 // удаление сессии. Потолка простоя нет: ожидание человека — не забытость, забытого
 // снимает запустивший. Перезагрузка плагина — не конец: ребёнок возвращается (children.ts).
 // На конце мост ребёнка гасится (выход из дел и снятие места — его, bridge/session.ts),
-// итог — синтетикой родителю. Договор и слова — leadwords.ts.
+// итог — синтетикой родителю. Договор — leaddoors.ts, слова — leadwords.ts.
 
 import { tool } from "../delivery/index.ts";
 import { createCascade } from "./cascade.ts";
+import type { LeadDoors, Leads } from "./leaddoors.ts";
 import * as W from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
 
@@ -29,7 +30,7 @@ const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
 
-export function createLeads(d: W.LeadDoors): W.Leads {
+export function createLeads(d: LeadDoors): Leads {
   const leads = new Map<string, Lead>();
   // Кончённые окончательно: отпущенные запустившим (причины нет — слово отказа о нём),
   // отменённые, снятые платформой — с причиной, которую назовёт отказ ребёнку.
@@ -45,7 +46,7 @@ export function createLeads(d: W.LeadDoors): W.Leads {
    * легло бы лишь после его хода; steer ложится в идущий ход на ближайшей границе шага.
    * Порядок двух синтетик плагин не держит. Отмена, невозвращённое место (lost) и
    * перенос родителя (away — без «КОНЧЕН»: итог не по исходу поручения) не будят; все
-   * слова — steer (leadwords.ts): queue в занятого родителя запускал после хода ещё один (e2e).
+   * слова — steer (leaddoors.ts): queue в занятого родителя запускал после хода ещё один (e2e).
    */
   async function finish(
     child: string,

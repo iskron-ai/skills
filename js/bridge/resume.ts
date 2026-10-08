@@ -146,7 +146,7 @@ export async function resumeFromDisk(
       ? `hold record for ${key}: no hello in time — record kept as it was, the place is not taken`
       : `hold record for ${key} is stale — dropped, the place is taken anew`,
   );
-  releaseStanding(holdWords.resumeFailed());
+  releaseStanding(holdWords().resumeFailed());
   // Только та самая запись: иной адрес на диске значит, что место за это время
   // занял другой путь (connect этого моста, второй мост на том же каталоге), и
   // его свежую запись прежняя не перекрывает.
