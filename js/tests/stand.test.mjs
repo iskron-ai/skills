@@ -82,8 +82,8 @@ function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [
     get stderr() {
       return stderr;
     },
-    call(method, params = {}) {
-      const myId = ++id;
+    call(method, params = {}, as = undefined) {
+      const myId = as ?? ++id;
       const p = new Promise((res, rej) => {
         waiters.set(myId, res);
         setTimeout(() => rej(new Error(`no answer for ${method} (id ${myId})`)), 20_000).unref();
@@ -1753,7 +1753,9 @@ async function bySession(t, first, then) {
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", INIT)).result);
-  await second.call("iskron/resume", { cwd, session: then });
+  // Только сессия, без каталога и ключа: возврат по записи сам взял бы место своей
+  // сессии (daemon-restart.test.mjs) — здесь проба хода iskron_stand.
+  await second.call("iskron/resume", { session: then });
   const r = await second.call("tools/call", { name: "iskron_stand", arguments: args });
   const connects = () =>
     fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
@@ -1791,6 +1793,50 @@ test("iskron_stand: a name a former bridge of THIS session holds is taken back b
     await watchdogHears(t, dir, "proba--931--nks-dev"),
     "the watchdog attaches to the new holder's door",
   );
+});
+
+// Возврат плагина (iskron/resume) судит место тем же, что iskron_stand (#6702): живой
+// прежний мост ЭТОЙ сессии — место её, и возврат берёт его сам; другой сессии — не трогает.
+async function resumeOver(t, first, then, as = undefined) {
+  const { fake, dir, bridge } = await ready(t);
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-resume-over-"));
+  await bridge.call("iskron/resume", { cwd, session: first });
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  assert.ok(!stood.result?.isError, standText(stood));
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  const key = "proba--931--nks-dev";
+  const back = (await second.call("iskron/resume", { key, cwd, session: then }, as)).result;
+  return { fake, back, key };
+}
+
+// Возврат, который тонкий мост шлёт сам после смены демона, живого держателя не
+// отнимает и у своей сессии: держать может мост, чей харнес ещё жив.
+test("iskron/resume replayed by a thin bridge after a daemon change does not take the seat its session's live bridge holds", async (t) => {
+  const { fake, back } = await resumeOver(t, "ses-1", "ses-1", "iskron-thin-resume-1");
+  assert.equal(back?.resumed, false, JSON.stringify(back));
+  const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  assert.deepEqual(connects, ["proba"], "nothing connected over the live holder");
+});
+
+test("iskron/resume: the seat a live former bridge of THIS session holds comes back by itself — not «held by a live bridge»", async (t) => {
+  const { fake, back, key } = await resumeOver(t, "ses-1", "ses-1");
+  assert.equal(back?.resumed, true, JSON.stringify(back));
+  assert.equal(back?.key, key, JSON.stringify(back));
+  assert.match(back.word, /своё место этой сессии — вернул/, back.word);
+  const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  assert.deepEqual(connects, ["proba", "proba"], "taken back by connect, no seat beside");
+});
+
+test("iskron/resume: the seat a live bridge of ANOTHER session holds is not taken", async (t) => {
+  const { fake, back } = await resumeOver(t, "ses-1", "ses-2");
+  assert.equal(back?.resumed, false, JSON.stringify(back));
+  const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  assert.deepEqual(connects, ["proba"], "nothing connected over the neighbour");
 });
 
 test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is not signed with — the bridge stands beside on name.2 with hearing", async (t) => {
