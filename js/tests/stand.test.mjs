@@ -4165,9 +4165,10 @@ test("structuredContent: incomplete fields — {action, incomplete} — send isk
   assert.ok(!r.result?.isError, textOf(r));
   assert.equal(fake.state.lastStructured?.incomplete, true, "the fake cut the fields");
   for (const what of ["iskron_channel list", "iskron_channel register"])
-    assert.ok(
-      bridge.stderr.includes(`structuredContent ${what}: fields incomplete — the prose template`),
-      `${what}\n${bridge.stderr}`,
+    await waitUntil(
+      () =>
+        bridge.stderr.includes(`structuredContent ${what}: fields incomplete — the prose template`),
+      `the ${what} incomplete-fields line on stderr`,
     );
 });
 
