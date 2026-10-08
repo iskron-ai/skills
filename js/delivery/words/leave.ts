@@ -21,6 +21,8 @@ export interface LeaveWords {
   /** realm — граф основного места; нет его — слово о нём. */
   refusedBeside: (beside: string, led: string, realm: string | undefined) => string;
   refusedOther: (realm: string, led: string, ledRealm: string) => string;
+  /** led — место этого моста; нет его — слово о том, что места нет (#6975). */
+  refusedNamed: (standing: string, led: string | null) => string;
 }
 
 export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
@@ -48,6 +50,8 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
       `Отказано (мост): место ${beside} стоит на общем канале моста рядом с ${led} — уход закрыл бы сокет всем местам канала. Уйти со всех — leave в графе ${realm ?? "основного места"}; снять только это место — revoke.`,
     refusedOther: (realm, led, ledRealm) =>
       `Отказано (мост): в графе ${realm} этот мост места не держит — уходить неоткуда; его место ${led} в графе ${ledRealm} не тронуто.`,
+    refusedNamed: (standing, led) =>
+      `Отказано (мост): ${standing} — не место этого моста, вызов не отправлен; leave отпускает только место этого моста${led ? ` (${led}, не тронуто)` : " (сейчас он места не держит)"}; лишнее место своей учётки снимает revoke(karta, standing=${standing}) — только словом человека: revoke уничтожает входящий адрес и хуки места.`,
   },
   en: {
     notHolding: () => "the bridge holds no seat — nothing to leave",
@@ -73,5 +77,7 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
       `Refused (bridge): the seat ${beside} stands on the bridge's shared channel beside ${led} — leaving would close the socket for all seats of the channel. To leave all — leave in the graph ${realm ?? "of the main seat"}; to remove only this seat — revoke.`,
     refusedOther: (realm, led, ledRealm) =>
       `Refused (bridge): this bridge holds no seat in the graph ${realm} — nothing to leave; its seat ${led} in the graph ${ledRealm} is untouched.`,
+    refusedNamed: (standing, led) =>
+      `Refused (bridge): ${standing} is not this bridge's seat, the call was not sent; leave releases only this bridge's seat${led ? ` (${led}, untouched)` : " (it holds no seat now)"}; a spare seat of your own account is removed by revoke(karta, standing=${standing}) — only on the human's word: revoke destroys the seat's incoming address and hooks.`,
   },
 };
