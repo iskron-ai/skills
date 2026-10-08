@@ -19,7 +19,7 @@ export {
   RUNTIME_PREFIX,
   SERVER_URLS,
   SKILL_SET,
-  SKILL_STAMP_FILE,
+  SKILL_STAMP_MASK,
   SUB_ENTRY_PREFIX,
 } from "./product.ts";
 export {
