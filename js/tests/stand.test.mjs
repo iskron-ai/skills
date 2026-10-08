@@ -2726,6 +2726,11 @@ test("iskron_stand arms no role inbox hook on the karta: no add_webhook, no list
     arguments: { realm: NKS, karta: 931, name: "proba" },
   });
   assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(
+    fake.state.counts.webhooks_added,
+    0,
+    "iskron_stand must not call add_webhook on the karta",
+  );
   for (const r of [a, b, again])
     assert.doesNotMatch(textOf(r), /[Хх]ук инбокса|inbox hook/, textOf(r));
   const { fake: en, bridge: enBridge } = await ready(t, INIT, { ISKRON_BRIDGE_LANG: "en" });
@@ -2737,6 +2742,11 @@ test("iskron_stand arms no role inbox hook on the karta: no add_webhook, no list
   assert.ok(!e.result?.isError, textOf(e));
   assert.doesNotMatch(textOf(e), /inbox hook/i, textOf(e));
   for (const f of [fake, en]) {
+    assert.deepEqual(
+      f.state.calls.filter((c) => c.name === "iskron_admin" && /webhook/.test(c.arguments.action)),
+      [],
+      "no role webhook is added, inspected, updated or removed",
+    );
     assert.deepEqual(f.state.webhookCalls, [], "the bridge touches no role hook");
     assert.equal(f.state.counts.webhooks_added, 0);
     assert.equal(f.state.counts.webhooks_listed, 0);
