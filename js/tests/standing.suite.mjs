@@ -1100,6 +1100,51 @@ test("the re-check keeps the bridge's own tool in the cache and a cached list is
   );
 });
 
+// mcp 0.111.0 (#6819): a catalog changed under a LIVE session is said in the SSE
+// of every next answer until the session asks tools/list. The harness hears it
+// once per change, not once per call, and again after it re-read and the list moved again.
+test("list_changed in the SSE of the harness's calls reaches the harness once per change", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  const heard = () =>
+    bridge.notifications.filter((n) => n.method === "notifications/tools/list_changed").length;
+  await fake.control({ richTools: true, list_changed: true });
+  const board = { name: "iskron_channel", arguments: { realm: "nks-dev", action: "list" } };
+  await bridge.call("tools/call", 21, board);
+  await bridge.call("tools/call", 22, board);
+  assert.deepEqual(
+    fake.state.listChangedSent,
+    ["tools/call", "tools/call"],
+    "the server said it twice",
+  );
+  assert.equal(heard(), 1, "the harness hears one change once");
+  const again = await bridge.call("tools/list", 23, {});
+  assert.ok(
+    again.result.tools.some((x) => x.name === "iskron_batch"),
+    JSON.stringify(again),
+  );
+  assert.equal(heard(), 1, "the re-read's own notice is not one more change");
+  await fake.control({ richTools: false, list_changed: true });
+  await bridge.call("tools/call", 24, board);
+  assert.equal(heard(), 2, "the next change after the re-read is heard");
+});
+
+// The harness's own tools/list carries the notice and clears the server's mark
+// even when it fails (#6817): the notice is held back only for a list that reached
+// the harness, or the harness is left with the old one and nothing to say otherwise.
+test("list_changed carried by a failed tools/list of the harness still reaches it", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ richTools: true, list_changed: true, listError: true });
+  const failed = await bridge.call("tools/list", 21, {});
+  assert.ok(failed.error, JSON.stringify(failed));
+  assert.deepEqual(fake.state.listChangedSent, ["tools/list"]);
+  await waitFor(
+    () => bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "list_changed after the failed re-read",
+  );
+});
+
 test("a re-opened session with the same tool list says nothing", async (t) => {
   const { fake, bridge } = await connected(t);
   await bridge.call("tools/list", 20, {});

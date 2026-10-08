@@ -3128,6 +3128,34 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
   }
 });
 
+// mcp 0.111.0 (#6819): the server says list_changed in the SSE of the next
+// answer — here to the real bridge's own calls under iskron_stand. The bridge
+// passes it on, and the plugin re-reads and reloads the tools.
+test("list_changed in the SSE of the real bridge's answers reloads the plugin's tools", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  const rec = await plugin({
+    ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+    ISKRON_BRIDGE_URL: fake.mcpUrl,
+    ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the bridge's own tool", 15000);
+    assert.ok(!rec.tools().has("iskron_batch"));
+    await fake.control({ richTools: true, list_changed: true });
+    const out = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "proba" },
+      "s-lc-real",
+    );
+    assert.match(out.content, /стояние/, out.content);
+    await until(() => rec.tools().has("iskron_batch"), "the new list after list_changed", 8000);
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 test("every installed skill with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
