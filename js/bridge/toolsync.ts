@@ -21,6 +21,7 @@ const LIST_CHANGED = "notifications/tools/list_changed";
 const T = scoped(() => ({
   served: null as string | null, // у сессии харнеса — свой список
   told: false, // list_changed сказан, а харнес списка ещё не перечёл
+  inFlight: 0, // tools/list харнеса в полёте (любые страницы)
   listing: new WeakSet<JsonRpcMessage>(), // tools/list харнеса (первая страница) в полёте
   heldBack: new WeakSet<JsonRpcMessage>(), // …в чьём ответе сервер сказал list_changed
   live: new WeakSet<JsonRpcMessage>(), // …на который харнесу ушёл живой список сервера
@@ -36,21 +37,40 @@ export function toolsPrint(result: unknown): string | null {
   return createHash("sha256").update(JSON.stringify(shape)).digest("hex");
 }
 
-/** Харнесу отдан список (живой или из кэша): запомнить, что он теперь знает. */
-export function noteServedTools(result: unknown): void {
+/**
+ * Харнесу отдан список (живой или из кэша): запомнить, что он теперь знает.
+ * `liveFor` — tools/list харнеса, на который ушёл живой список сервера.
+ */
+export function noteServedTools(result: unknown, liveFor?: JsonRpcMessage): void {
   const print = toolsPrint(result);
   if (!print) return;
   T.served = print;
   T.told = false;
+  if (liveFor) T.live.add(liveFor);
 }
 
+/** Свои tools/list харнеса в полёте: он и так получит свежий список. */
+export const harnessListing = (): boolean => T.inFlight > 0;
+
 /**
- * Запрос — tools/list харнеса: смена, объявленная в его же ответе, придёт ему списком.
- * Харнес перечитывает — следующая смена снова его.
+ * tools/list харнеса уходит. Первая страница: смена, объявленная в её же ответе,
+ * придёт ему списком, и следующая смена снова его. Возвращает, что сделать по его концу:
+ * сервер снял пометку и этим ответом, даже ошибкой (#6817), — не дошёл живой список,
+ * придержанное слово уходит харнесу, иначе он остался бы со старым.
  */
-export function noteHarnessListing(msg: JsonRpcMessage): void {
-  T.listing.add(msg);
-  T.told = false;
+export function watchHarnessListing(
+  msg: JsonRpcMessage,
+  emit: (m: JsonRpcMessage) => void,
+): () => void {
+  T.inFlight++;
+  const first = !msg.params?.cursor;
+  if (first) T.listing.add(msg);
+  if (first) T.told = false;
+  return () => {
+    T.inFlight--;
+    if (T.heldBack.has(msg) && !T.live.has(msg))
+      tell(emit, "the server said its tool list changed, and no fresh list reached the harness");
+  };
 }
 
 export const isListChanged = (m: JsonRpcMessage): boolean =>
@@ -66,25 +86,11 @@ function tell(emit: (m: JsonRpcMessage) => void, why: string, again = false): vo
 /**
  * Сервер сказал list_changed в ответе на `sent` — запрос моста или харнеса:
  * харнесу, раз на смену. Свой tools/list харнеса принесёт новый список сам —
- * слово ждёт, дошёл ли он (settleHarnessListing).
+ * слово ждёт, дошёл ли он (watchHarnessListing).
  */
 export function heardListChanged(sent: JsonRpcMessage, emit: (m: JsonRpcMessage) => void): void {
   if (T.listing.has(sent)) return void T.heldBack.add(sent);
   tell(emit, `the server said its tool list changed (answering ${sent?.method})`);
-}
-
-/** Живой список сервера отдан харнесу в ответ на его tools/list. */
-export function noteLiveListing(msg: JsonRpcMessage): void {
-  T.live.add(msg);
-}
-
-/**
- * tools/list харнеса кончился. Сервер снял пометку и этим ответом, даже ошибкой (#6817):
- * не дошёл живой список — придержанное слово уходит харнесу, иначе он остался бы со старым.
- */
-export function settleHarnessListing(msg: JsonRpcMessage, emit: (m: JsonRpcMessage) => void): void {
-  if (T.heldBack.has(msg) && !T.live.has(msg))
-    tell(emit, "the server said its tool list changed, and no fresh list reached the harness");
 }
 
 /**
