@@ -1828,8 +1828,31 @@ test("iskron/resume: the seat a live former bridge of THIS session holds comes b
   assert.equal(back?.resumed, true, JSON.stringify(back));
   assert.equal(back?.key, key, JSON.stringify(back));
   assert.match(back.word, /своё место этой сессии — вернул/, back.word);
+  // Прежний мост, место потерявший, уступает своей сессии молча — рядом не встаёт.
+  await new Promise((res) => setTimeout(res, 1500));
   const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
   assert.deepEqual(connects, ["proba", "proba"], "taken back by connect, no seat beside");
+});
+
+// Возврат без каталога судит запись без сессии по каталогу сессии, как iskron_stand, —
+// не по каталогу самой записи: та всегда совпала бы сама с собой (#6702).
+test("iskron/resume without a folder does not take a sessionless seat of another folder that a live bridge holds", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const cwd = mkdtempSync(join(tmpdir(), "iskron-resume-elsewhere-"));
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+  });
+  assert.ok(!stood.result?.isError, standText(stood));
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", INIT)).result);
+  const back = (
+    await second.call("iskron/resume", { key: "proba--931--nks-dev", session: "ses-1" })
+  ).result;
+  assert.equal(back?.resumed, false, JSON.stringify(back));
+  const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);
+  assert.deepEqual(connects, ["proba"], "nothing connected over the other folder's holder");
 });
 
 test("iskron/resume: the seat a live bridge of ANOTHER session holds is not taken", async (t) => {

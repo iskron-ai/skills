@@ -15,7 +15,7 @@
 // Мост, ведущий другое место (держит или запарковал), чужой записью не
 // занимается: holdStanding иного ключа убил бы ведомое.
 import { L } from "../shared/lang.ts";
-import { envOf, scoped } from "../shared/scope.ts";
+import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -257,10 +257,11 @@ export async function resumeBy(
       continue;
     }
     // Чей живой сокет — суждение iskron_stand (hearing.ts): прежний мост этой же сессии —
-    // место её, и оно берётся тем же ходом, что iskron_stand, без take (#6702).
-    const holder = await localHolder(key, sel.cwd ?? rec.cwd);
+    // место её, и оно берётся тем же ходом, что iskron_stand, без take (#6702). Каталог —
+    // как у iskron_stand: названный, иначе каталог сессии, не каталог самой записи.
+    const holder = await localHolder(key, sel.cwd ?? sessionCwd());
     if (holder === "session" && takeOwn && !CFG.satellite && T.takeOwn) {
-      const said = await T.takeOwn(rec, sel.cwd ?? rec.cwd);
+      const said = await T.takeOwn(rec, sel.cwd);
       const now = ledKey();
       if (now && holdsKey(now)) {
         const hello = await awaitHello(4000);
