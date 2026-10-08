@@ -29,8 +29,11 @@ export const BRIDGE_FILE = `${PRODUCT}.mjs`;
 /** Файл плагина OpenCode в поставке (рядом с мостом) и имя его копии в `plugins/` OpenCode. */
 export const PLUGIN_FILE = "opencode-plugin.js";
 export const PLUGIN_COPY_FILE = `${PRODUCT}.js`;
-/** Маска stamp набора: файл в каталоге каждого скилла корня, чей хеш меряет набор. */
-export const SKILL_STAMP_FILE = "SKILL.md";
+/**
+ * Маска отпечатка набора от его корня: `*` — каталог скилла, затем путь файла внутри
+ * скилла или `**` — все файлы скилла. Здесь меряется SKILL.md каждого скилла.
+ */
+export const SKILL_STAMP_MASK = "*/SKILL.md";
 /** Набор скиллов поставки: источник `npx skills`, репозиторий выпусков. */
 export const SKILL_SET = "iskron-ai/skills";
 
