@@ -1,8 +1,8 @@
-// Передача спутника ребёнка, перенесённого одного в другую папку (граф nks-dev: #6695).
-// Его спутник — экземпляру той папки, как корень при переносе и как при перезагрузке
-// (children.ts): пауза моста, маркер с меткой новой папки (ключ, место корня, дело, ход),
-// мост здесь гаснет. Ведущий не кончается — ни «КОНЧЕН», ни снятия места: экземпляр новой
-// папки возвращает место по ключу тем же спутником.
+// Handing over the satellite of a child moved alone to another folder (graph @nks/nks-dev, node #6695).
+// Its satellite goes to that folder's instance, as a root on a move and as on a reload
+// (children.ts): the bridge pauses, a marker with the new folder's tag (key, root seat, case,
+// turn), the bridge here goes down. The lead does not end — no "ended", no seat release: the
+// new folder's instance returns the seat by key as the same satellite.
 import { method } from "../delivery/index.ts";
 import { authDir } from "./bridge-io.ts";
 import { PAUSE_MS } from "./children.ts";
@@ -15,11 +15,11 @@ import { adoptIn, handOver } from "./twins.ts";
 export interface HandoffDoors {
   slots: Map<string, Slot>;
   leads: Leads;
-  /** Мост сессии гасится здесь; место не снимается (ребёнок уехал в другую папку). */
+  /** The session's bridge goes down here; the seat is not released (the child moved to another folder). */
   forget(session: string): void;
 }
 
-/** Ребёнок-спутник перенесён из home в to — передать; не тот случай — false. */
+/** A satellite child moved from home to to — hand it over; not this case — false. */
 export const createHandoff =
   (d: HandoffDoors) =>
   (session: string, to: Home | null, home: Home | null): boolean => {
@@ -28,7 +28,7 @@ export const createHandoff =
     if (!home || !to?.directory || to.directory === home.directory) return false;
     const was = d.leads.handoff(session);
     [s.room, s.noted, s.last] = [was.room, was.noted, was.last];
-    // Вызовы ребёнка в новой папке ждут маркера (children.ts, settled), а не встают вторым спутником.
+    // The child's calls in the new folder wait for the marker (children.ts, settled), not stand a second satellite.
     handOver(
       session,
       s.bridge
@@ -37,7 +37,7 @@ export const createHandoff =
         .then(() => {
           writeLostMarker(authDir(), [s], to);
           d.forget(session);
-          adoptIn(to); // живой экземпляр новой папки берёт маркер сразу (twins.ts)
+          adoptIn(to); // a live instance of the new folder takes the marker at once (twins.ts)
         }),
     );
     return true;

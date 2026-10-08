@@ -1,7 +1,7 @@
-// Записи маркера потери (marker.ts): локация экземпляра плагина и запись о
-// месте, которое держал его мост (граф nks-dev: #5140, #6626, #6625).
+// Loss marker records (marker.ts): the plugin instance's location and a record of a seat its
+// bridge held (graph @nks/nks-dev: #5140, #6626, #6625).
 
-/** Локация экземпляра плагина (ctx.location): каталог и рабочее пространство. */
+/** The plugin instance's location (ctx.location): directory and workspace. */
 export interface Home {
   directory: string;
   workspace?: string | null;
@@ -12,17 +12,17 @@ export interface LostEntry {
   dir: string | null;
   key: string | null;
   child?: boolean;
-  /** Запись переноса сессии в другую папку (moves.ts), не остановки экземпляра. */
+  /** A record of the session's move to another folder (moves.ts), not of an instance stop. */
   moved?: boolean;
   of?: { realm: string; karta: string; name: string } | null;
   room?: string | null;
   noted?: boolean;
-  /** Имя места ребёнка и его последний текст — итог по концу после перезагрузки. */
+  /** The child's seat name and last text — the outcome at the end after a reload. */
   name?: string;
   last?: string;
 }
 
-/** Запись маркера: ребёнок несёт место корня, дело поручения, сказанный ход, имя места и последний текст. */
+/** A marker record: a child carries the root's seat, the errand case, the told turn, its seat name and last text. */
 export const entryOf = (e: LostEntry): LostEntry => ({
   session: e.session,
   dir: e.dir ?? null,

@@ -1,5 +1,5 @@
-// Чистые помощники половины «тулы» (tools.ts): где мост, кэш списка тулов
-// рядом с грантом, рукопожатие, ждущее вход человека, страничный tools/list.
+// Pure helpers of the "tools" half (tools.ts): where the bridge is, the tool list cache
+// next to the grant, the handshake that waits for the human's sign-in, paged tools/list.
 import {
   accessSync,
   constants,
@@ -12,38 +12,31 @@ import {
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { envName, HOME_DIR } from "../delivery/index.ts";
+import { envName, HOME_DIR, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { type Bridge, resultToContent } from "../shared/bridge-client.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { words } from "../shared/lang.ts";
 import { buildOf, buildOfFile } from "../shared/version.ts";
 import { codeWatch, deviceOf } from "./devicewait.ts";
 
-/** Потолок самого рукопожатия; истёк — рукопожатие повторяется, не сдаётся. */
+/** The handshake's own ceiling; when it runs out the handshake is repeated, not given up. */
 export const HANDSHAKE_MS = Number(process.env[envName("MCP_HANDSHAKE_MS")] || 600000);
-/** Как часто переспрашивать мост, пока человек входит в браузере. */
+/** How often to ask the bridge again while the human signs in. */
 export const AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 2000);
 /**
- * Пауза перед n-м повтором рукопожатия, упавшего не на входе человека (его
- * ждёт сам handshake): отказ, что повторится тем же, не долбится раз в
- * AUTH_POLL_MS — на бою так уходило до полутора тысяч рукопожатий за час.
+ * The pause before the n-th retry of a handshake that failed not on the sign-in: a refusal
+ * that repeats is not hammered every AUTH_POLL_MS (in the field that made ~1500 handshakes an hour).
  */
 export const retryPause = (n: number): number => Math.min(AUTH_POLL_MS * 2 ** n, 60_000);
-/**
- * Отказ моста без гранта. Это не поломка, а вход в процессе: мост открыл
- * браузер и слушает колбэк на loopback, погасить его — убить вход человека
- * (граф nks-dev: #4712).
- */
+/** The bridge's refusal without a grant is a sign-in in progress: killing the bridge kills the sign-in (#4712). */
 const AUTH_PENDING = /authorization required/i;
 const PROTOCOL = "2025-06-18";
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- bridge answers come without a schema */
 
-/**
- * Где мост: переменная, затем домашняя копия. Привезённой поставкой рядом нет —
- * плагин лежит копией в каталоге плагинов OpenCode, а не в пакете.
- */
+/** Where the bridge is: the variable, then the home copy (the plugin lies as a copy, not in a package). */
 export function findBridge(): { path: string | null; tried: string[] } {
   const tried: string[] = [];
   const env = process.env[envName("BRIDGE_PATH")]?.trim();
@@ -54,20 +47,19 @@ export function findBridge(): { path: string | null; tried: string[] } {
       accessSync(candidate, constants.R_OK);
       return { path: candidate, tried };
     } catch {
-      /* следующий */
+      /* next */
     }
   }
   return { path: null, tried };
 }
 
 /**
- * Строка обеих сборок для ответа iskron_bridge — моста по его файлу и плагина
- * по своему. Обе печатаются: домашние копии бывают из разных источников.
- * Снимается один раз при подъёме: самообновление переписывает оба файла на
- * месте, а бежит по-прежнему прежняя сборка.
+ * Both builds for the status tool — the bridge's by its file and the plugin's own. Taken
+ * once at start: a self-update rewrites both files while the old build keeps running.
  */
 export function buildsLine(bridgePath: string, pluginUrl: string): string {
-  return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
+  const W = words(OPENCODE);
+  return W.builds(buildOfFile(bridgePath) ?? W.unreadable(), buildOf(pluginUrl));
 }
 
 export function authDir(): string {
@@ -79,9 +71,9 @@ function cachePath(): string {
 }
 
 /**
- * Отпечаток гранта — хранилища моста рядом с кэшем тулов. Сменился — человек
- * вошёл, и рукопожатие стоит повторить. Раньше не повторяется: вопрос к мосту
- * без гранта после конца его входа открыл бы человеку браузер заново.
+ * The grant's fingerprint — the bridge's stores next to the tool cache. Changed — the human
+ * signed in and the handshake is worth repeating; not earlier: asking a bridge without a
+ * grant after its sign-in ended would open the browser again.
  */
 function grantStamp(): string {
   const dir = authDir();
@@ -112,22 +104,20 @@ export function writeCache(tools: any[]): void {
     mkdirSync(join(cachePath(), ".."), { recursive: true, mode: 0o700 });
     writeFileSync(cachePath(), JSON.stringify(tools), { mode: 0o600 });
   } catch {
-    /* кэш — удобство, не обязательство */
+    /* the cache is a convenience, not an obligation */
   }
 }
 
-/** Ссылка входа из отказа моста, если он её назвал. */
+/** The sign-in link from the bridge's refusal, if it named one. */
 function loginUrlOf(message: string): string | null {
   return /open in a browser: (\S+)/.exec(message)?.[1] ?? null;
 }
 
 /**
- * Рукопожатие. На отказ «нужен вход» мост отвечает сразу, а вход ждёт фоном;
- * рукопожатие повторяется, когда грант ляжет в хранилище. Потолок — HANDSHAKE_MS.
- * Код входа с другого устройства сменился или истёк (devicewait.ts) — тоже
- * повод повторить: человеку уходит живая страница, не мёртвая.
- * Успех снимает флаг входа всегда: грант мог лечь извне (токен в
- * ~/.iskron-bridge/token, вход из другого моста), не через этот слот.
+ * The handshake. To "sign-in needed" the bridge answers at once and waits for the sign-in in
+ * the background; the handshake repeats when the grant lands, ceiling HANDSHAKE_MS. A changed
+ * or expired device code (devicewait.ts) is a reason to repeat too. Success always clears the
+ * sign-in flag: the grant may have landed from outside (a token file, another bridge).
  */
 export async function handshake(
   b: Bridge,
@@ -142,7 +132,7 @@ export async function handshake(
         "initialize",
         {
           protocolVersion: PROTOCOL,
-          capabilities: FIELDS_CAPABILITIES, // поля ответа — и этому клиенту (#6637)
+          capabilities: FIELDS_CAPABILITIES, // answer fields — for this client too (#6637)
           clientInfo: { name: OPENCODE_CLIENT, version: "1" },
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) },
@@ -185,30 +175,24 @@ export function textOf(result: any): string {
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/**
- * Сервер сменил тулы под переоткрытой сессией моста, и мост сказал list_changed
- * (#5406): перечитать список тем же путём, каким приходит первый, и подменить.
- */
+/** The server changed its tools and the bridge said list_changed (#5406): reread and replace. */
 export async function refreshToolList(
   b: Bridge,
   state: { listed: any[]; source: string },
   reload: () => Promise<void>,
   say: (text: string, level: "info" | "warning") => void,
-  live: () => boolean, // плагин не остановлен: после остановки — ни подмены, ни слова
+  live: () => boolean, // the plugin is not stopped: after a stop — no replacement, no word
 ): Promise<void> {
   try {
     const list = await listTools(b);
     if (!live() || JSON.stringify(list) === JSON.stringify(state.listed)) return;
     state.listed = list;
-    state.source = "с сервера";
+    state.source = words(OPENCODE).fromServer();
     writeCache(list);
     await reload();
-    say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
+    say(words(OPENCODE).serverChanged(list.length), "info");
   } catch (e) {
     if (!live()) return;
-    say(
-      `Искрон: список тулов после смены на сервере не перечитан — ${(e as Error).message}`,
-      "warning",
-    );
+    say(words(PLUGIN).relistFailed((e as Error).message), "warning");
   }
 }

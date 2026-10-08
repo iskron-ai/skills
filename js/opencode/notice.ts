@@ -1,16 +1,14 @@
-// Родное уведомление OpenCode о субагенте (граф nks-dev: #6625) — синтетика
-// `<subagent sessionID="…" state="completed">` в родителя на конце ХОДА ребёнка,
-// а у задачи без фона — тот же текст результатом тула. Плагин его не перехватывает
-// (уведомление пишет ядро, не хук), но до чтения моделью доходит хук "context"
-// (SessionContext типов @opencode/plugin 2.0.x: system и messages — изменяемые):
-// на живого ведущего субагента, названного таким уведомлением, плагин кладёт в
-// system слово, что это ход, не поручение. Кончился — слова нет: итог уже лёг.
-/* eslint-disable @typescript-eslint/no-explicit-any -- части сообщений без схемы */
-import { noticeWord } from "./leadwords.ts";
+// OpenCode's own subagent notice (graph @nks/nks-dev, node #6625) — the synthetic
+// `<subagent sessionID="…" state="completed">` into the parent at the end of a child's TURN
+// (and the same text as a non-background task's tool result). The plugin cannot intercept it,
+// but the "context" hook sees it before the model reads it (system and messages are mutable):
+// for a live lead named by such a notice the plugin adds a word to system that it is a turn.
+/* eslint-disable @typescript-eslint/no-explicit-any -- message parts without a schema */
+import { W } from "./leadwords.ts";
 
 const COMPLETED = /<subagent sessionID=\\?"([^"\\]+)\\?" state=\\?"completed\\?"/g;
 
-/** Тексты частей сообщения, где может стоять уведомление: текст и результат тула. */
+/** Texts of the message parts that may carry the notice: text and tool result. */
 function* texts(messages: readonly any[]): Generator<string> {
   for (const m of messages)
     for (const part of Array.isArray(m?.content) ? m.content : []) {
@@ -19,7 +17,7 @@ function* texts(messages: readonly any[]): Generator<string> {
     }
 }
 
-/** Слово в system запроса на каждого живого ведущего, чей ход OpenCode назвал «completed». */
+/** A word in the request's system for every live lead whose turn OpenCode called "completed". */
 export function annotate(
   req: { system: any[]; messages: readonly any[] },
   nameOf: (child: string) => string | null,
@@ -30,7 +28,7 @@ export function annotate(
       if (!child || seen.has(child)) continue;
       seen.add(child);
       const name = nameOf(child);
-      if (name) req.system.push({ type: "text", text: noticeWord(child, name) });
+      if (name) req.system.push({ type: "text", text: W().notice(child, name) });
     }
 }
 

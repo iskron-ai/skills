@@ -1,34 +1,34 @@
-// Ребёнок, которого родитель не слышит (дело №147; граф nks-dev: поверхность OpenCode 2, #5048).
-// Фоновый субагент (background=true) на запросе разрешения висит без таймаута: ответить
-// в фоне некому, ход не кончается, и родитель не получает <subagent state=…> вовсе. Запрос
-// виден событием permission.asked (Permission.Request: id, sessionID, action, resources;
-// родителя в нём нет — он из session.get), снятие — permission.replied (requestID).
-// Прерванный не отменой ход ребёнка без места-спутника (shutdown, superseded, inactivity)
-// плагин не видел вовсе: leads.ts слышит только ведущих, у них своя логика (#6550 п.4).
-// Поток событий общий для сервиса: своё — сессия, чей каталог СТРОКОЙ равен каталогу
-// экземпляра, не после realpath. На каждое написание каталога (/tmp/W, /private/tmp/W)
-// свой экземпляр, и хуки, тулы и ведущие ребёнка живут только в экземпляре его написания —
-// только он знает, ведущий ли ребёнок; набор ведущих на модуль держался бы на общей копии
-// модуля и пережил бы выгрузку своего экземпляра. Слово — одно, от экземпляра написания.
-// Цена: у не фонового ребёнка слово ляжет после ответа человека; shutdown до ответа session.get его теряет.
-/* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+// A child its parent does not hear (case №147; graph @nks/nks-dev: OpenCode 2 surface, node #5048).
+// A background subagent hangs on a permission request with no timeout: nobody answers in the
+// background, and the parent gets no <subagent state=…> at all. The request is the event
+// permission.asked (id, sessionID, action, resources; the parent comes from session.get), its
+// removal — permission.replied (requestID). A child's turn interrupted not by a cancel, the child
+// without a satellite seat, was unheard too: leads.ts hears only leads (#6550 item 4).
+// The stream is the service's: ours is a session whose directory equals this instance's as a
+// STRING, not after realpath — each spelling has its own instance, and only it knows whether the
+// child is a lead. And ours is only a child this instance hosts — a bridge for it or its root, or
+// a lead (#6815 item 7): two plugins of two deliveries in one OpenCode do not wake the parent twice.
+// Cost: a non-background child's word lands after the human's answer; a shutdown before session.get loses it.
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 import { envName } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
 import { sleep } from "./bridge-io.ts";
 import { homeOf } from "./host.ts";
+import { W } from "./leadwords.ts";
 import type { Context } from "./plugin.ts";
 
-/** Запрос, снятый за это время (человек ответил в окне ребёнка), родителю не называется. */
+/** A request answered within this time (the human answered in the child's window) is not told. */
 const WAIT_MS = Number(process.env[envName("PERMISSION_WAIT_MS")]) || 20_000;
-/** Ресурсов в слове — не больше; каждый — не длиннее. */
+/** At most this many resources in the word; each no longer than this. */
 const RESOURCES = 3;
 const RESOURCE_MAX = 160;
 
 export interface WaitDoors {
-  /** Синтетика в сессию родителя — steer; wake — будить ли простаивающую. */
+  /** A synthetic into the parent's session — steer; wake — whether to wake an idle one. */
   tell(session: string, text: string, wake: boolean): Promise<void>;
-  /** Ведущий субагент (спутник) — его прерывания ведёт leads.ts. */
+  /** A lead subagent (satellite) — its interruptions are leads.ts's. */
   isLead(child: string): boolean;
+  /** This instance hosts the child: a bridge for it or its root, or it is a lead (#6815 item 7). */
+  hosts(child: string, parent: string): boolean;
 }
 
 export const askWord = (who: string, action: string, resources: string[]): string => {
@@ -37,26 +37,13 @@ export const askWord = (who: string, action: string, resources: string[]): strin
     return one.length > RESOURCE_MAX ? `${one.slice(0, RESOURCE_MAX)}…` : one;
   });
   const n = resources.length - RESOURCES;
-  const more = n > 0 ? L(` и ещё ${n}`, ` and ${n} more`) : "";
+  const more = n > 0 ? W().more(n) : "";
   const what = cut.length ? `${action}: ${cut.join("; ")}${more}` : action;
-  // Слово «ответь в его сессии» модель родителя поняла как «напиши ребёнку» (живой прогон 7.4.0):
-  // ответ на запрос разрешения из сессии родителя невозможен, его даёт только человек в окне ребёнка.
-  // Отмены хода ребёнка у родителя тоже нет — и её слово отдаёт человеку.
-  return L(
-    `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. ` +
-      "Ты ответить не можешь, и никакое слово субагенту его не разблокирует. " +
-      "Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.",
-    `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. ` +
-      "You cannot answer it, and no message to the subagent unblocks it. " +
-      "Tell the human what is waiting and where: only they can answer or cancel the subagent's turn.",
-  );
+  // The answer is only the human's, in the child's window; the parent cannot cancel the child's turn either.
+  return W().ask(who, what);
 };
 
-export const interruptWord = (who: string, reason: string): string =>
-  L(
-    `Искрон: ход субагента ${who} прерван (${reason}).`,
-    `Iskron: the turn of subagent ${who} was interrupted (${reason}).`,
-  );
+export const interruptWord = (who: string, reason: string): string => W().interrupt(who, reason);
 
 export function createWaits(ctx: Context, d: WaitDoors) {
   const home = homeOf(ctx);
@@ -70,7 +57,7 @@ export function createWaits(ctx: Context, d: WaitDoors) {
   };
   let stopped = false;
 
-  /** Ребёнок написания этого экземпляра: родитель и имя; корень, иное написание, нечитаемая сессия — null. */
+  /** A hosted child of this instance's spelling: parent and name; a root, another spelling, unreadable — null. */
   async function childOf(
     sessionID: string,
     ev: any,
@@ -83,6 +70,7 @@ export function createWaits(ctx: Context, d: WaitDoors) {
     if (typeof parent !== "string" || !parent) return null;
     const dir: unknown = s?.location?.directory ?? ev?.location?.directory;
     if (home && typeof dir === "string" && dir && dir !== home.directory) return null;
+    if (!d.hosts(sessionID, parent)) return null;
     const title = typeof s?.title === "string" ? s.title.trim() : "";
     return { parent, who: title ? `«${title}» (${sessionID})` : sessionID };
   }
@@ -95,11 +83,7 @@ export function createWaits(ctx: Context, d: WaitDoors) {
     const kid = await childOf(sessionID, ev);
     if (!kid || answered.has(id) || !once(id)) return;
     const list = Array.isArray(resources) ? resources.map(String) : [];
-    await d.tell(
-      kid.parent,
-      askWord(kid.who, String(action ?? L("действие", "action")), list),
-      true,
-    );
+    await d.tell(kid.parent, askWord(kid.who, String(action ?? W().action()), list), true);
   }
 
   async function interrupted(ev: any): Promise<void> {

@@ -37,3 +37,9 @@ export {
   VERDICT,
   type VerdictWords,
 } from "./words/rooms.ts";
+// part 7
+export { LEAD, type LeadWords } from "./words/leads.ts";
+export { OPENCODE, type OpencodeWords } from "./words/opencode.ts";
+export { OPENCODE_KEEP, type OpencodeKeepWords } from "./words/opencode-keep.ts";
+export { PI, type PiWords } from "./words/pi.ts";
+export { PLUGIN, type PluginWords } from "./words/plugin.ts";

@@ -11,6 +11,8 @@
 // The bridge and timers live from session_start to session_shutdown only.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { PI } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { setupChannel } from "./channel.ts";
 import { setupBridge } from "./tools.ts";
 
@@ -22,7 +24,7 @@ export default function (pi: ExtensionAPI) {
   // Reported in the session, not the log: in rpc mode stdout carries the protocol.
   pi.on("session_start", async (_event, ctx) => {
     if (!broken.length || !ctx.hasUI) return;
-    ctx.ui.notify(`Искрон: не встало — ${broken.join("; ")}`, "error");
+    ctx.ui.notify(words(PI).broken(broken.join("; ")), "error");
   });
 
   // The channel goes first: it hands out the door through which the tools half
@@ -31,11 +33,11 @@ export default function (pi: ExtensionAPI) {
   try {
     onChannel = setupChannel(pi);
   } catch (e) {
-    broken.push(`канал: ${e instanceof Error ? e.message : String(e)}`);
+    broken.push(words(PI).channelPart(e instanceof Error ? e.message : String(e)));
   }
   try {
     setupBridge(pi, (params) => onChannel(params));
   } catch (e) {
-    broken.push(`тулы: ${e instanceof Error ? e.message : String(e)}`);
+    broken.push(words(PI).toolsPart(e instanceof Error ? e.message : String(e)));
   }
 }

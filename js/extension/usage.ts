@@ -1,8 +1,8 @@
-// Расход сессии pi для attrs места (граф nks-dev: #6271, #6401): на конце каждого
-// хода — заполненность окна (ctx.getContextUsage), модель (ctx.model) и
-// потраченное сессией по видам токенов (сумма usage ответов модели в записях
-// сессии) уходят мосту запросом `iskron/usage`. Мост сам решает, стоит ли сдвиг
-// вызова на сервер, и сам сбрасывает последний снимок перед уходом (bridge/usage.ts).
+// A pi session's usage for the seat's attrs (graph @nks/nks-dev, nodes #6271, #6401): at the
+// end of each turn the window fill (ctx.getContextUsage), the model (ctx.model) and the
+// session's spend by token kind (the sum of the model answers' usage in the session's entries)
+// go to the bridge by the usage method. The bridge decides whether the shift is worth a server
+// call and flushes the last snapshot itself before leaving (bridge/usage.ts).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -11,7 +11,7 @@ import { type Bridge } from "../shared/bridge-client.ts";
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-/** Потрачено сессией по видам; tokens — новые токены, без чтения кеша (reasoning входит в output). */
+/** Spent by the session by kind; tokens — new tokens without cache reads (reasoning is in output). */
 function spent(entries: readonly any[]): Record<string, number> {
   const s = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
   for (const e of entries) {
@@ -28,7 +28,7 @@ function spent(entries: readonly any[]): Record<string, number> {
 export function setupUsage(pi: ExtensionAPI, live: () => Bridge | null): void {
   pi.on("turn_end", async (_event, ctx) => {
     const bridge = live();
-    if (!bridge) return; // места нет — отдавать некуда
+    if (!bridge) return; // no seat — nowhere to send
     const c: any = (ctx as any).getContextUsage?.();
     const p: Record<string, number | string> = spent(
       (ctx as any).sessionManager?.getEntries?.() ?? [],

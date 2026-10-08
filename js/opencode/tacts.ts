@@ -1,22 +1,20 @@
-// Такт внимания в сессии OpenCode (граф nks-dev: #6569; правило — shared/seen.ts foldedTacts).
-// Голове кадр в час, каждый со своим id, и ход в несколько часов копил их в очереди
-// OpenCode подряд. Пока ход сессии занят, такт в очередь не встаёт — ждёт конца хода,
-// новый вытесняет ждущий: освободившись, агент видит один, последний. Занят — сессия
-// сказала busy и ещё не встала, либо промпт такта ждёт в её очереди невзятым (взятие
-// начинает ход — занят и дальше).
+// The attention tact in an OpenCode session (graph @nks/nks-dev, node #6569; the rule — shared/seen.ts foldedTacts).
+// While the session's turn is busy a tact does not join the queue — it waits for the turn's
+// end, and a new one replaces the waiting one: once free, the agent sees one, the last. Busy —
+// the session said busy and did not go idle yet, or a tact prompt waits untaken in its queue.
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { envName } from "../delivery/index.ts";
+import { envName, OPENCODE } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { isTact, onlyTacts, tactAt } from "../shared/seen.ts";
 import { type Say } from "./tools.ts";
 
 /**
- * Такт ждёт конца занятого хода не дольше этого, считая от первого задержанного: о
- * конце хода OpenCode может молчать. Тот же предел снимает «занят» по промпту такта,
- * о взятии которого OpenCode молчит.
+ * A tact waits for a busy turn's end no longer than this, from the first one held: OpenCode
+ * may keep silent about the turn's end. The same limit lifts "busy" by an untaken tact prompt.
  */
 const WAKE_HOLD_MS = Number(process.env[envName("OPENCODE_WAKE_HOLD_MS")]) || 6 * 3_600_000;
 
-/** Промпт очередью в сессию; null — не вложился, inbox null — без id взятия. */
+/** A queued prompt into the session; null — not delivered, inbox null — no taking id. */
 type Send = (
   session: string | null,
   text: string,
@@ -25,27 +23,28 @@ type Send = (
 ) => Promise<{ session: string; inbox: string | null } | null>;
 
 export interface Tacts {
-  /** Пачка лежалых или побудки с тактом — взята здесь (true): вложена или ждёт конца хода. */
+  /** A stale or wake-up batch with a tact — taken here (true): delivered or waiting for the turn's end. */
   offer(session: string | null, child: boolean, ev: ChannelEvent, what: string): boolean;
-  /** Ход сессии занят (session.status busy). */
+  /** The session's turn is busy (session.status busy). */
   busy(session: string): void;
-  /** Промпт взят (`inbox`) или сессия встала (без id): вставшей — ждущий такт сейчас. */
+  /** A prompt was taken (`inbox`) or the session went idle (no id): the waiting tact goes now. */
   taken(session: string, inbox?: string): void;
-  /** Сессию удалили: она не занята, и её ждущему такту входить некуда. */
+  /** The session was deleted: it is not busy, and its waiting tact has nowhere to go. */
   gone(session: string): void;
-  /** Плагин останавливают: ждущие такты уходят сейчас. */
+  /** The plugin stops: waiting tacts go now. */
   stop(): void;
 }
 
-/** `takenEarly` — id взятых раньше ответа на prompt (общий с пачками дела channel.ts). */
+/** `takenEarly` — ids taken before the prompt's answer (shared with channel.ts case piles). */
 export function setupTacts(
   send: Send,
   takenEarly: Set<string>,
   freshestRoot: () => string | null,
   say: Say,
 ): Tacts {
+  const W = words(OPENCODE);
   const busy = new Set<string>();
-  const queued = new Map<string, { session: string; at: number }>(); // inbox → сессия
+  const queued = new Map<string, { session: string; at: number }>(); // inbox → session
   const held = new Map<
     string,
     {
@@ -63,7 +62,7 @@ export function setupTacts(
 
   function put(session: string | null, child: boolean, ev: ChannelEvent, what: string): void {
     void send(session, ev.text ?? "", what, child).then((got) => {
-      if (!got?.inbox || takenEarly.delete(got.inbox)) return; // без id взятия не увидеть
+      if (!got?.inbox || takenEarly.delete(got.inbox)) return; // no taking id — not seen
       queued.set(got.inbox, { session: got.session, at: Date.now() });
       for (const k of queued.keys()) if (queued.size > 100) queued.delete(k);
     });
@@ -74,7 +73,7 @@ export function setupTacts(
     if (!t) return;
     held.delete(id);
     clearTimeout(t.timer);
-    put(t.session, t.child, t.ev, "такт внимания");
+    put(t.session, t.child, t.ev, W.tact());
   }
 
   return {
@@ -84,32 +83,29 @@ export function setupTacts(
       const prev = held.get(id);
       const at = tactAt(ev.frames);
       const was = prev ? tactAt(prev.ev.frames) : "";
-      const older = !!at && !!was && at < was; // лежалая пачка старше ждущего живого
+      const older = !!at && !!was && at < was; // a stale batch older than the waiting live one
       if (!onlyTacts(ev.frames) || !occupied(id)) {
         if (prev && !older) {
           clearTimeout(prev.timer);
-          held.delete(id); // такт новее ждущего входит сейчас
+          held.delete(id); // a tact newer than the waiting one goes now
         }
         put(session, child, ev, what);
         return true;
       }
-      if (older) return true; // ждущий новее — этот свёрнут
+      if (older) return true; // the waiting one is newer — this one is folded
       const timer = prev?.timer ?? setTimeout(() => release(id), WAKE_HOLD_MS);
       (timer as { unref?: () => void }).unref?.();
       held.set(id, { session, child, ev, timer });
-      say(
-        `Искрон: такт внимания ждёт конца хода сессии${prev ? " — прежний ждущий свёрнут" : ""}`,
-        "info",
-      );
+      say(prev ? W.tactWaitsFolded() : W.tactWaits(), "info");
       return true;
     },
     busy(session) {
       busy.add(session);
-      // Сессия, удалённая без idle, занятой не висит без меры: старшие уходят.
+      // A session deleted without idle does not hang busy forever: older ones go.
       for (const s of busy) if (busy.size > 100) busy.delete(s);
     },
     taken(session, inbox) {
-      // Взятый промпт такта начинает ход: сессия занята до idle, и без session.status.
+      // A taken tact prompt starts a turn: the session is busy until idle, even without session.status.
       if (inbox) return void (queued.delete(inbox) && this.busy(session));
       busy.delete(session);
       for (const [k, q] of queued) if (q.session === session) queued.delete(k);

@@ -1,32 +1,24 @@
-// Дверь Искрона в сессию OpenCode 2 — ОДИН плагин, три половины
-// (граф nks-dev: #4266; устройство OpenCode — #4283: сервер держит много
-// сессий, и у каждой корневой сессии свой мост, а значит своё стояние).
+// The delivery's door into an OpenCode 2 session — ONE plugin, three halves
+// (graph @nks/nks-dev, node #4266; OpenCode's shape — node #4283: the server holds many
+// sessions, and each root session has its own bridge, hence its own standing).
 //
-//   • тулы    — плагин поднимает мост дочерним процессом на каждую корневую
-//               сессию (и на дочернюю, вставшую своим вызовом: в графе место
-//               одно на мост, #5154) и регистрирует каждый тул сервера под его
-//               собственным именем (tools.ts);
-//   • канал   — кадры стояния, которое держит мост сессии, входят в неё
-//               промптом (channel.ts);
-//   • команды — каждый установленный скилл поставки с `slash: true` становится
-//               командой палитры «/» (commands.ts): OpenCode 2 сам ключ не
-//               читает.
+//   • tools    — a bridge child process per root session (and per child session that
+//                stood by its own call, node #5154), each server tool under its own name (tools.ts);
+//   • channel  — frames of the standing the session's bridge holds enter it as a prompt (channel.ts);
+//   • commands — every installed delivery skill with `slash: true` becomes a «/» command (commands.ts).
 //
-// Плагинная поверхность OpenCode 2 (граф nks-dev: поверхность v2): модуль с
-// default-экспортом ОБЪЕКТА {id, setup(ctx)}; импортов ему не нужно — типы
-// @opencode/plugin стираются сборкой. Файл лежит копией в
-// ~/.config/opencode/plugins/iskron.js: оттуда OpenCode грузит файловые плагины,
-// по разу на каждую локацию сервиса. Копию кладёт establish-mcp; doctor
-// сличает её с поставкой.
+// Plugin surface of OpenCode 2: a module whose default export is an OBJECT {id, setup(ctx)};
+// it needs no imports — the @opencode/plugin types are erased by the build.
 import type { Plugin } from "@opencode/plugin";
 
-import { LOGGERS, PRODUCT } from "../delivery/index.ts";
+import { LOGGERS, OPENCODE, PLUGIN, PRODUCT } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
 import { homeOf } from "./host.ts";
-import { createKeepAlive, KEEPALIVE_TITLE } from "./keepalive.ts";
+import { createKeepAlive, keepaliveTitle } from "./keepalive.ts";
 import { teller } from "./leaddoors.ts";
 import { annotate } from "./notice.ts";
 import { setupSkillReads } from "./skillread.ts";
@@ -37,18 +29,17 @@ import { createWaits } from "./waits.ts";
 
 export type Context = Plugin.Context;
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 
 async function setup(ctx: Context): Promise<() => Promise<void>> {
-  // Тоста у серверного плагина OpenCode 2 нет: слово человеку — stderr сервиса,
-  // а то, что должно дойти до агента, идёт промптом в его сессию (channel.ts).
+  const W = words(OPENCODE);
+  // A server plugin has no toast: a word to the human is the service's stderr (channel.ts prompts the agent).
   const say: Say = (text, level) => {
     process.stderr.write(`[${PRODUCT}${level === "info" ? "" : "/" + level}] ${text}\n`);
   };
 
-  // Корневые сессии, которые плагин видел, и когда: субагент делит мост
-  // родителя (корень — по цепочке parentID), а кадр ничейного моста идёт в
-  // свежайшую из виденных — списка сессий у контекста v2 нет.
+  // Root sessions seen and when: a subagent shares its parent's bridge (root by the parentID chain),
+  // and an ownerless bridge's frame goes to the freshest one seen — the v2 context lists no sessions.
   const roots = new Map<string, string>();
   const seen = new Map<string, number>();
   async function rootOf(sessionID: string): Promise<string> {
@@ -68,9 +59,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         root = parent;
       }
     } catch {
-      // Сессия не читается (например, ещё не легла на диск в миг session.created):
-      // сейчас она сама себе корень, но не навсегда — иначе дочерняя сессия,
-      // чей get упал однажды, поднимала бы свой мост и своё стояние (#4283).
+      // Unreadable now (not on disk yet at session.created): its own root for now, not cached (#4283).
       seen.set(root, Date.now());
       return root;
     }
@@ -89,8 +78,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     return best;
   }
 
-  // Половины ставятся порознь и каждая под своим try: сорвавшаяся одна не
-  // должна унести другую — и не должна унести загрузку плагина.
+  // Each half under its own try: a failed one takes neither the other nor the plugin's load.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
   try {
@@ -98,77 +86,80 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
-    say(`Искрон: канал не встал — ${(e as Error).message}`, "error");
+    say(W.channelDown((e as Error).message), "error");
   }
 
   let half = idleHalf();
-  // Расход встаёт после тулов (ему нужен мост сессии), а конец субагента сбрасывает его прежде.
+  // Usage comes up after the tools (it needs the session's bridge); a subagent's end flushes it first.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   try {
     half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s));
   } catch (e) {
-    say(`Искрон: мост не поднялся — ${(e as Error).message}`, "error");
+    say(words(PLUGIN).notRaised((e as Error).message), "error");
   }
 
-  // Строка запуска с делом (launch.ts): хук промпта ждёт стояния и входа, и
-  // модель читает бриф уже со словом плагина за строкой запуска.
+  // The launch line with a case (launch.ts): the prompt hook waits for the standing and the entry.
   try {
     await ctx.session.hook("prompt", async (p) => {
       const word = await half.launch(String(p.sessionID), p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
-      // Счёт записей, не будивших хода (#6574), едет с промптом, который ход начнёт;
-      // счёт корня — только с промптом в корень: бриф субагента его не уносит.
+      // Counts of records that woke no turn ride the prompt that starts one (#6574); the root's only into the root.
       const sid = String(p.sessionID);
       const counts = (await rootOf(sid)) === sid ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}\n\n${counts}`;
     });
   } catch (e) {
-    say(`Искрон: строка запуска не встала — ${(e as Error).message}`, "error");
+    say(W.launchDown((e as Error).message), "error");
   }
 
-  // «completed» OpenCode на конце хода ведущего субагента — слово модели, что это ход (notice.ts).
+  // OpenCode's «completed» at the end of a lead subagent's turn — a word to the model that it is a turn (notice.ts).
   try {
     for (const hook of ["context", "compaction"] as const)
       await ctx.session.hook(hook, (req) => annotate(req, (s) => half.leadOf(s)));
   } catch (e) {
-    say(`Искрон: пометка хода субагента не встала — ${(e as Error).message}`, "error");
+    say(W.noticeDown((e as Error).message), "error");
   }
 
   let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };
   try {
     commands = await setupCommands(ctx, say);
   } catch (e) {
-    say(`Искрон: команды скиллов не встали — ${(e as Error).message}`, "error");
+    say(W.commandsDown((e as Error).message), "error");
   }
 
   // Files of a delivery skill outside the working copy are read without an ask (skillread.ts, #6847).
   try {
-    if (!(await setupSkillReads(ctx)))
-      say(
-        "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
-        "warning",
-      );
+    if (!(await setupSkillReads(ctx))) say(W.noPermissionHooks(), "warning");
   } catch (e) {
-    say(`Искрон: чтение файлов скиллов поставки не открылось — ${(e as Error).message}`, "error");
+    say(W.skillReadsDown((e as Error).message), "error");
   }
 
-  // Расход сессии — в attrs её собственного места (usage.ts, #6401): корня — месту
-  // корня, субагента — его месту-спутнику; субагент без своего места не пишет никуда.
+  // Usage goes into the attrs of the session's own seat (usage.ts, #6401).
   const usage = createUsageFeed({
     listModels: () => (ctx as any).model.list(),
     bridgeOf: (s) => half.bridgeOf(s),
   });
   flushUsage = (s) => usage.flush(s);
-  // Каталог выгружается через 60 мин без сохраняемых событий — место его держит (keepalive.ts).
+  // A directory unloads after 60 min without durable events — a held seat keeps it (keepalive.ts).
   const keepalive = createKeepAlive(ctx, {
     holders: () => half.holders(),
     owns: (s) => half.owns(s),
     say: (t, level) => say(t, level ?? "warning"),
   });
-  // Ребёнок ждёт разрешения или его ход прерван не отменой — слово родителю (waits.ts, №147).
+  // A child waiting on a permission or interrupted not by a cancel — a word to the parent (waits.ts),
+  // only about a child this instance hosts (#6815 item 7).
   const waits = createWaits(ctx, {
     tell: teller(ctx, say),
     isLead: (s) => half.leadOf(s) !== null,
+    hosts: (child, parent) => {
+      const root = roots.get(child);
+      return (
+        half.owns(child) ||
+        half.leadOf(child) !== null ||
+        half.owns(parent) ||
+        (root !== undefined && half.owns(root))
+      );
+    },
   });
   const controller = new AbortController();
   void (async () => {
@@ -176,7 +167,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
         const ev: any = event;
         const id: string | undefined = ev?.data?.sessionID;
-        half.onEvent(ev); // ход, текст и удаление ведущего субагента (leads.ts)
+        half.onEvent(ev); // a lead subagent's turn, text and deletion (leads.ts)
         keepalive.onEvent(ev);
         waits.onEvent(ev);
         switch (ev?.type) {
@@ -191,12 +182,9 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             });
             break;
           case "session.created": {
-            // data.parentID есть в самом событии, но это родитель, не корень:
-            // на вложенности два и глубже корень — корень родителя, иначе
-            // внук получил бы отдельный мост вместо родительского.
+            // data.parentID is the parent, not the root: a grandchild takes its parent's root.
             if (!id) break;
-            // Служебная сессия продления каталога (keepalive.ts) — не активность корня.
-            if (ev.data?.title === KEEPALIVE_TITLE) break;
+            if (ev.data?.title === keepaliveTitle()) break; // the keepalive service session is no activity
             const parent = ev.data?.parentID;
             if (typeof parent === "string")
               void rootOf(parent).then((root) => {
@@ -206,7 +194,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             else void rootOf(id);
             break;
           }
-          // Сессию перенесли в другую папку (#6550 п.3): место — экземпляру её новой локации.
+          // Moved to another folder (#6550 item 3): the seat goes to the instance of its new location.
           case "session.moved": {
             const loc = ev.data?.location;
             const to =
@@ -219,7 +207,6 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           case "skill.updated":
             void commands.refresh();
             break;
-          // Очередь сессии сдвинулась: ждущая пачка дела уходит одним промптом.
           case "session.inbox.delivered":
           case "session.inbox.cancelled":
             if (id && typeof ev.data?.inboxID === "string") ch?.taken(id, ev.data.inboxID);
@@ -227,13 +214,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           case "session.idle":
             if (id) ch?.taken(id);
             break;
-          // Занят ли ход — ждёт ли такт внимания его конца (channel.ts, #6569); retry — тоже ход.
+          // Whether a turn is busy — the attention tact waits for its end (channel.ts, #6569); retry is a turn too.
           case "session.status":
             if (id && typeof ev.data?.status?.type === "string")
               ch?.status(id, ev.data.status.type !== "idle");
             break;
-          // Конец хода — не конец субагента (#6625): ребёнок ждёт кадров своего дела,
-          // кончает его явный акт (leads.ts). Здесь — лишь ждущий снимок расхода.
+          // A turn's end is not a subagent's end (#6625): only a pending usage snapshot here.
           case "session.execution.succeeded":
           case "session.execution.failed":
             if (id) void usage.flush(id);
@@ -243,12 +229,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         }
       }
     } catch {
-      /* поток событий закрыт вместе с плагином */
+      /* the event stream closed with the plugin */
     }
   })();
 
-  // Экземпляр другого написания того же каталога поднимает этот, выгруженный с местом;
-  // ребёнок, перенесённый в другой каталог, находит здесь корень (twins.ts).
+  // An instance of another spelling of the same directory wakes this one unloaded with a seat (twins.ts).
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
     lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
@@ -256,7 +241,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     adopt: () => half.adopt(),
   });
 
-  // Остановка ждёт паузы мостов субагентов (children.ts): перезагрузка — не их конец.
+  // The stop waits for the subagents' bridges to pause (children.ts): a reload is not their end.
   return async () => {
     twins.leave();
     controller.abort();

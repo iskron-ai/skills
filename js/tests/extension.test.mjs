@@ -47,7 +47,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { BUILT_EXTENSION } from "./built.mjs";
+import { BUILT_BRIDGE, BUILT_EXTENSION } from "./built.mjs";
+import { startFakeNks } from "./fake-nks.mjs";
 import {
   ack,
   addressed,
@@ -188,6 +189,10 @@ const ENV_KEYS = [
   "ISKRON_SKILLS_ROOT",
   "ISKRON_SATELLITE_OF",
   "ISKRON_PI_ASIDE_MS",
+  "ISKRON_BRIDGE_LANG",
+  "ISKRON_BRIDGE_URL",
+  "ISKRON_BRIDGE_TOKEN",
+  "ISKRON_BRIDGE_NO_BROWSER",
 ];
 
 let seq = 0;
@@ -1712,4 +1717,89 @@ test("refreshHomeBridge: a failed write cleans up the temp file and warns", asyn
     ["iskron-bridge.mjs"],
     "временный файл остался после отказа",
   );
+});
+
+// ── the session language (graph @nks/nks-dev, node #6806 item 7) ─────────────
+// The extension speaks the session language of shared/lang.ts (ISKRON_BRIDGE_LANG,
+// ISKRON_BRIDGE_URL, the `server` file): Russian stays byte for byte, English has no Cyrillic.
+const CYRILLIC = /\p{Script=Cyrillic}/u;
+const SPEECH = {
+  en: {
+    missing: [
+      "Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: ",
+      ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
+    ],
+    listening: "Iskron: the channel is listening",
+    dead: (code) =>
+      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+  },
+  ru: {
+    missing: [
+      "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: ",
+      ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
+    ],
+    listening: "Искрон: канал слушает",
+    dead: (code) =>
+      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+  },
+};
+
+for (const [lang, chosen, label] of [
+  ["en", { ISKRON_BRIDGE_LANG: "en" }, "ISKRON_BRIDGE_LANG=en"],
+  ["en", { ISKRON_BRIDGE_URL: "https://mcp.iskron.ai/" }, "ISKRON_BRIDGE_URL on *.ai"],
+  ["ru", { ISKRON_BRIDGE_LANG: "ru" }, "ISKRON_BRIDGE_LANG=ru"],
+]) {
+  const say = SPEECH[lang];
+  test(`${label}: the missing bridge, the listening channel and a dead token are said in ${lang}`, async () => {
+    const none = await session({
+      ISKRON_BRIDGE_PATH: MISSING_BRIDGE,
+      ISKRON_MCP_READY_WAIT_MS: 15000,
+      ...chosen,
+    });
+    try {
+      const complaint = none.notices.find((n) => n.level === "error")?.text ?? "";
+      assert.ok(complaint.startsWith(say.missing[0]), complaint);
+      assert.ok(complaint.endsWith(say.missing[1]), complaint);
+      assert.ok(complaint.includes(MISSING_BRIDGE), complaint);
+      if (lang === "en") assert.doesNotMatch(none.said(), CYRILLIC, none.said());
+    } finally {
+      await none.stop();
+    }
+    const { events, env } = eventsEnv(`speech-${label.replace(/\W+/g, "-")}`, chosen);
+    const rec = await session(env);
+    try {
+      push(events, frame({ type: "hello", pending: 0 }));
+      await delay(250);
+      assert.deepEqual(rec.statuses.at(-1), { key: "iskron", text: say.listening });
+      push(events, { kind: "dead", code: 4001, text: "DOER: close 4001" });
+      await delay(250);
+      assert.equal(rec.notices.at(-1).text, say.dead(4001));
+      assert.equal(rec.messages.at(-1).msg.content, say.dead(4001));
+    } finally {
+      await rec.stop();
+    }
+  });
+}
+
+test("the bridge the extension raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, none under ru", async () => {
+  for (const lang of ["en", "ru"]) {
+    const fake = await startFakeNks({ pat: "nks_pat_ext" });
+    const rec = await session({
+      ISKRON_BRIDGE_PATH: BUILT_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_ext",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_MCP_READY_WAIT_MS: 15000,
+      ISKRON_BRIDGE_LANG: lang,
+    });
+    try {
+      assert.ok(rec.tools.has("iskron_stand"), [...rec.tools.keys()].join(","));
+      const asked = [...fake.state.acceptLanguage];
+      if (lang === "en") assert.ok(asked.includes("en"), asked.join(","));
+      else assert.ok(asked.length && !asked.includes("en"), asked.join(","));
+    } finally {
+      await rec.stop();
+      await fake.stop();
+    }
+  }
 });

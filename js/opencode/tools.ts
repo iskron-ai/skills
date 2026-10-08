@@ -1,25 +1,21 @@
-// Половина «тулы» — тулы Искрона через мост, каждый под своим именем,
-// и МОСТ НА КАЖДУЮ СЕССИЮ (граф nks-dev: #4283).
+// The "tools" half — the server's tools through the bridge, each under its own name,
+// and A BRIDGE PER SESSION (graph @nks/nks-dev, node #4283).
 //
-// Плагин сам говорит с мостом по MCP stdio и регистрирует КАЖДЫЙ тул сервера
-// через ctx.tool.transform под его собственным именем. Нативная запись `mcp`
-// в конфиге OpenCode для этого не годится: тулы чужого сервера OpenCode именует
-// <запись>.<тул> — наблюдено на 2.0.9, iskron.iskron_orient, — и каждая фраза
-// скилла, зовущая iskron_orient, стала бы ложной.
+// The plugin speaks MCP stdio to the bridge itself and registers EVERY server tool via
+// ctx.tool.transform under its own name: OpenCode's native `mcp` entry names a foreign
+// tool <entry>.<tool> (observed on 2.0.9), and every skill phrase calling a tool by name
+// would turn false.
 //
-// Сервер OpenCode держит много сессий, и каждая — отдельный агент со своим
-// стоянием; мост же держит одно стояние и одну MCP-сессию к графу. Поэтому
-// у каждой корневой сессии свой процесс моста: её connect держит её сокет, её
-// register привязывает её MCP-сессию, её кадры приходят ей. Дочерняя сессия
-// (субагент) читает мостом родителя, а встав своим вызовом — получает свой
-// мост: в графе место одно на мост, и её место иначе снимало бы родительское (#5154).
+// Each root session has its own bridge process: its connect holds its socket, its register
+// binds its MCP session, its frames come to it. A child session (subagent) reads through
+// its parent's bridge and gets its own bridge once it stands by its own call (#5154).
 //
-// Список тулов — состояние трансформа, а не карта, отданная раз при загрузке:
-// setup входа не ждёт (тулы из прошлого списка сразу, служебный iskron_bridge
-// всегда), а список с сервера приходит фоном и подменяется через
-// ctx.tool.reload() — сколько бы ни длился вход человека.
-import { LOGGERS } from "../delivery/index.ts";
+// The tool list is the transform's state: setup does not wait for the sign-in (the cached
+// list at once, the status tool always); the server's list arrives in the background and
+// replaces it through ctx.tool.reload().
+import { LOGGERS, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
+import { words } from "../shared/lang.ts";
 import { createAdopt } from "./adopt.ts";
 import {
   authDir,
@@ -54,7 +50,7 @@ import { statusLines, statusTool } from "./status.ts";
 
 export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы моста приходят без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- bridge answers come without a schema */
 
 export type { Slot } from "./slot.ts";
 
@@ -67,26 +63,23 @@ export async function setupTools(
   rootOf: (sessionID: string) => Promise<string>,
   flushUsage: (session: string) => Promise<void> = async () => {},
 ): Promise<ToolsHalf> {
+  const W = words(OPENCODE);
+  const P = words(PLUGIN);
   const found = findBridge();
   if (!found.path) {
-    say(
-      "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " +
-        found.tried.join(", ") +
-        ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
-      "error",
-    );
+    say(P.noBridge(found.tried.join(", ")), "error");
     return idleHalf();
   }
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
-  const hostEnv = await hostEnvOf(ctx); // версия OpenCode и корень набора — раз на плагин
+  const hostEnv = await hostEnvOf(ctx); // OpenCode's version and the set's root — once per plugin
 
   const slots = new Map<string, Slot>();
-  const unasked = new WeakSet<Slot>(); // слот корня, ещё не спросивший место с диска
+  const unasked = new WeakSet<Slot>(); // a root's slot that has not asked for its seat from disk yet
   let spare: Slot | null = null;
   let stopped = false;
 
-  // Человек в браузере — один вход на все мосты плагина (login.ts).
+  // The human in the browser — one sign-in for all the plugin's bridges (login.ts).
   const login = createLogin(say);
 
   function spawn(args: string[] = []): Slot {
@@ -105,37 +98,33 @@ export async function setupTools(
     };
     slot.bridge = new Bridge(
       path,
-      (line) => say(`Искрон/мост: ${line}`, "info"),
+      (line) => say(P.bridgeLine(line), "info"),
       (method, params) => {
         if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
         if (method !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
         const kind = params?.data?.kind;
-        // holding питается наблюдаемым событием — словом моста «держу» и hello,
-        // а не attached локального сокета, которого у плагина нет (#5140).
+        // holding follows an observed event — the bridge's "held" word and hello (#5140).
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
-          slot.key = params.data.key; // ключ места — точный адрес записи для возврата
+          slot.key = params.data.key; // the seat's key — the exact address of the record to return
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
         if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
-        // Ведущий — только ребёнок-спутник (#6550 п.4); ребёнок на обычном мосте — один прогон (children.ts).
+        // Only a satellite child is a lead (#6550 item 4); a child on a plain bridge is one run (children.ts).
         const over =
           !!slot.child &&
           !!slot.satelliteOf &&
           !!slot.session &&
           leads.heard(slot.session, kind, slot.place);
-        if (!over) relay(slot.session, params, !!slot.child); // кончившемуся ведущему слов о канале нет
+        if (!over) relay(slot.session, params, !!slot.child); // an ended lead gets no channel words
       },
       (e) => {
-        // Держащий мост вышел не по нашей воле — слух потерян, и это слово в
-        // сессию, а не строка в лог, которого никто не читает (#5140).
+        // A holding bridge exited against our will — a word into the session, not a log line (#5140).
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
-        const text =
-          `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). ` +
-          "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.";
+        const text = W.hearingLost(hhmm(), e.message);
         const lost = { logger: LOGGERS.channel, data: { kind: "lost", text } };
-        onChannel(slot.session, lost, !!slot.child); // слух ребёнка — слово только ему (#6625)
+        onChannel(slot.session, lost, !!slot.child); // a child's hearing — a word only to it (#6625)
       },
       args,
     );
@@ -144,12 +133,12 @@ export async function setupTools(
     return slot;
   }
 
-  // Локация экземпляра: перенесённая сессия зовёт тулы через экземпляр новой папки (moves.ts).
+  // The instance's location: a moved session calls its tools through its new folder's instance (moves.ts).
   const mv = createMoves(ctx);
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
-  const runEnds = createRunEnds(); // кончившиеся дети: запись с места — отказ вслух (#6361)
-  // Ведущие субагенты (#6625): конец — явный акт, итог — синтетикой родителю.
+  const runEnds = createRunEnds(); // ended children: a write through a seat is a refusal aloud (#6361)
+  // Lead subagents (#6625): the end is an explicit act, the outcome a synthetic message to the parent.
   const endChild = (c: string, out: ((s: string) => void) | null = forget) =>
     runEnds.end(c, slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
@@ -164,14 +153,14 @@ export async function setupTools(
     directoryOf,
     exists: ours,
   });
-  // Ребёнок прежнего экземпляра слота здесь не имеет: гасить нечего (и forget зовётся до конца setup).
+  // A child of a previous instance has no slot here: nothing to put down (forget is called before setup ends).
   const nothing = () => {};
   const endRun = (s: string, live = true) =>
     live
       ? void flushUsage(s).finally(() => runEnds.end(s, null, forget))
       : runEnds.end(s, null, nothing);
   const children = createChildren({ slots, spawn, keeper, leads, exists, endRun });
-  const handoff = createHandoff({ slots, leads, forget }); // ребёнок-спутник перенесён один (#6695)
+  const handoff = createHandoff({ slots, leads, forget }); // a satellite child moved alone (#6695)
   const adopt = createAdopt({
     keeper,
     authDir,
@@ -179,14 +168,12 @@ export async function setupTools(
     back: (e) => children.back(e),
     endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why),
   });
-  // Прежний экземпляр остановили с держащим мостом (или сессию перенесли сюда): ключи
-  // мест — сторожу, места — обратно сразу, каждой державшей сессии — слово о её местах
-  // (keeper.resumeLost); не державшей — ни слова о чужих. Только маркеры своей локации (#6626).
+  // A previous instance stopped with a holding bridge (or a session moved here): keys to the
+  // watchdog, seats back at once, each holding session a word about its own seats (#6626).
   const lost = takeLostMarker(authDir(), home);
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
-  // Остановленный экземпляр маркеров не берёт: отложенный приём переноса (moves.ts)
-  // пережил бы остановку и снял маркер следующего экземпляра папки.
+  // A stopped instance takes no markers: a deferred move adoption would take the next instance's marker.
   const adoptNow = () => void (stopped || adopt.now());
 
   function shake(slot: Slot): void {
@@ -194,7 +181,7 @@ export async function setupTools(
     slot.ready.catch(() => {});
   }
 
-  /** Рукопожатие слота; упавшее повторяется тут же, один раз. */
+  /** The slot's handshake; a failed one is repeated at once, once. */
   async function readyFor(slot: Slot): Promise<void> {
     try {
       await slot.ready;
@@ -205,29 +192,25 @@ export async function setupTools(
   }
 
   /**
-   * Мост корневой сессии: первый раз — запасной с загрузки, дальше свой; умерший
-   * — заменяется. touch=false — взгляд сторожа, не вызов: простой не освежается,
-   * иначе слот под сторожем не сжался бы никогда.
+   * A root session's bridge: the load's spare first, then its own; a dead one is replaced.
+   * touch=false — the watchdog's look, not a call: the idle time is not refreshed.
    */
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     const root = await rootOf(sessionID);
-    mv.guard(root, sessionID); // корень перенесён отсюда — ребёнку не поднимать его мост здесь
-    // Дочерняя сессия, вставшая своим спутником, ходит своим мостом (#5154); без
-    // него мост корня ей — только на чтение: запись отказывает execute (#6550 п.2).
+    mv.guard(root, sessionID); // the root moved away — a child does not raise its bridge here
+    // A child that stood as its own satellite goes by its own bridge (#5154); the root's is read-only to it (#6550 item 2).
     if (root !== sessionID && !slots.has(sessionID)) {
-      adopt.now(); // маркер прежнего экземпляра, положенный после нашей загрузки (adopt.ts)
+      adopt.now(); // a previous instance's marker laid after our load (adopt.ts)
       await children.settled(sessionID);
     }
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
     if (own) {
-      // Умерший детский мост заменяется своим же, не мостом корня: чтения и
-      // записи ребёнка не уходят под привязку корня, сторож возвращает его место.
+      // A dead child bridge is replaced by its own, not by the root's.
       const live = own.bridge.failure ? children.childSlot(sessionID) : own;
       if (touch) live.lastCall = Date.now();
       return live;
     }
-    // Ребёнок, перенесённый в другой каталог (#6695): корень держит экземпляр каталога родителя,
-    // либо он чужой — место корня отсюда не возвращается. Решается на каждом вызове, не слотом.
+    // A child moved to another directory (#6695): decided on every call, not by slot.
     const far = root !== sessionID && !slots.get(root)?.place ? await mv.farRoot(root) : null;
     if (far && far !== "foreign") return far;
     let slot = slots.get(root);
@@ -241,15 +224,13 @@ export async function setupTools(
       slot = spare && !spare.bridge.failure ? spare : spawn();
       spare = null;
       slot.session = root;
-      // Память умершего моста — каталог и ключ места — переходит к его замене:
-      // возврат идёт по ключу, а не по одному каталогу.
+      // The dead bridge's directory and seat key pass to its replacement: the return goes by key.
       slot.dir = dead?.dir ?? slot.dir;
       slot.key = dead?.key ?? slot.key;
       slots.set(root, slot);
       unasked.add(slot);
     }
-    // Место прежнего экземпляра плагина (вытеснение каталога, перезапуск) возвращается
-    // с диска по каталогу сессии — до первого вызова тула; корнем чужим — никогда.
+    // A previous instance's seat returns from disk by the session's directory before the first call; never for a foreign root.
     const s = slot;
     if (far !== "foreign" && unasked.delete(s))
       s.resume = keeper.resume(s, root).finally(() => (s.resume = null));
@@ -257,7 +238,7 @@ export async function setupTools(
     return slot;
   }
 
-  // Мост молчащей сессии без стояния не живёт вечно: opencode run плодит сессии, а запас без сессии — каждая локация сервиса.
+  // A silent session's bridge without a standing does not live forever: `opencode run` breeds sessions.
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [session, slot] of slots) {
@@ -276,7 +257,7 @@ export async function setupTools(
 
   const state = {
     listed: readCache() ?? ([] as any[]),
-    source: "из прошлого списка",
+    source: W.fromCache(),
     serverSeen: false,
   };
 
@@ -303,30 +284,27 @@ export async function setupTools(
     editor.add(statusTool(statusText));
     for (const t of state.listed) {
       const name = String(t.name);
-      const asks = declaresAction(t.inputSchema); // «?» — справка только у тула с action
+      const asks = declaresAction(t.inputSchema); // "?" is help only for a tool with action
       editor.add({
         name,
         description: String(t.description ?? ""),
-        // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          // revoke места своего ведущего субагента — слово запустившего: конец исполняет плагин (#6625).
-          // …и ребёнка, кончённого переносом родителя: снимать нечего (adopt.ts).
+          // The launcher's revoke of its lead's seat is ended by the plugin (#6625); so is a child ended by a move (adopt.ts).
           const word =
             (await leads.release(String(tool.sessionID), name, input ?? {})) ??
             adopt.revoked(name, input ?? {});
           if (word) return { content: word };
-          await children.settled(String(tool.sessionID)); // ребёнок маркера: слот ещё встаёт
-          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // не мостом корня (#6361)
+          await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
+          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // not through the root's bridge (#6361)
           const slot = await slotFor(String(tool.sessionID));
-          // Ребёнок мостом корня — только читает; встаёт — своим спутником в callThrough (#6550 п.2).
+          // A child through the root's bridge only reads; it stands by its own satellite in callThrough (#6550 item 2).
           const no =
             slot.session !== tool.sessionID && !standsBy(name, input ?? {})
               ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks)
               : null;
           if (no) throw new Error(no);
-          // Вызов в полёте — занятость: мост посреди вызова жнецу не отдаётся,
-          // а простой считается от конца вызова, не от его начала.
+          // A call in flight keeps the bridge from the reaper; idle time counts from the call's end.
           slot.busy++;
           try {
             return await callThrough(slot, name, input, String(tool.sessionID));
@@ -339,59 +317,54 @@ export async function setupTools(
     }
   });
 
-  /** Рукопожатие слота под гонкой со входом: человека внутри вызова не ждут, адрес входа уходит ответом. */
+  /** The slot's handshake raced against the sign-in: the call does not wait for the human, the address is the answer. */
   const awaitReady = (slot: Slot): Promise<void> => login.race(() => readyFor(slot));
 
-  /** Один вызов тула через мост слота. */
+  /** One tool call through the slot's bridge. */
   async function callThrough(
     slot: Slot,
     name: string,
     input: any,
     sessionID: string,
-    service = false, // строка запуска — служебный ход, не работа агента (#6510)
+    service = false, // the launch line is a service move, not the agent's work (#6510)
   ): Promise<{ content: string }> {
     await awaitReady(slot);
-    if (slot.resume) await slot.resume; // место возвращается с диска — не занимать его дважды
-    // Потолка нет: контекст execute в v2 сигнала отмены не несёт.
+    if (slot.resume) await slot.resume; // the seat is returning from disk — do not take it twice
+    // No ceiling: the v2 execute context carries no abort signal.
     const args: Record<string, unknown> = { ...(input ?? {}) };
-    // В графе место одно на мост: дочерняя сессия (субагент), встающая своим вызовом,
-    // получает свой мост, а не мост корня, — иначе её место снимало бы
-    // родительское с сокета, а её register переписывал бы привязку корня (#5154).
+    // One seat per bridge: a child standing by its own call gets its own bridge (#5154).
     if (standsBy(name, args) && slot.session !== sessionID) {
-      // Место родителя неизвестно — не обычное место и не место рядом, а отказ (#6550 п.2).
+      // The parent's seat is unknown — a refusal (#6550 item 2).
       if (!slot.place)
         throw new Error(
           (await mv.farRefusal(slot.session)) ?? childWriteRefusal(null, name, args, false) ?? "",
         );
       slot = children.childSlot(sessionID, slot);
-      await awaitReady(slot); // свежий детский мост может запросить вход — та же гонка, что у корня
+      await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
-    // Мост бежит из cwd сервера OpenCode, не из рабочей копии сессии:
-    // репо для имени стояния он выводит из директории сессии (r5 #5108) —
-    // той, чей это мост: корня для корня, дочерней для её собственного.
+    // The bridge runs in OpenCode's cwd: the standing's repo comes from the session's directory (#5108).
     if (name === STAND_TOOL && !args.cwd) {
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
       if (dir) args.cwd = dir;
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
-    // Отказ тула сигналится броском — так OpenCode показывает его отказом.
-    if (result?.isError) throw new Error(textOf(result) || `${name}: отказ без текста`);
-    // Ответ тула — наблюдаемое событие держания; ответ одной занятости — нет (#6509).
+    // A tool's refusal is a throw — so OpenCode shows it as a refusal.
+    if (result?.isError) throw new Error(textOf(result) || P.refusalNoText(name));
+    // The tool's answer is an observed holding event; an answer to a busy line alone is not (#6509).
     if (standsBy(name, args) && !busy) keeper.stood(slot);
-    if (standsBy(name, args)) runEnds.clear(sessionID); // встал заново — запись снова своим мостом
-    // Ребёнок, вставший своим мостом, — ведущий; его уход по исходу — конец (#6625).
+    if (standsBy(name, args)) runEnds.clear(sessionID); // stood again — writes go by its own bridge
+    // A child stood by its own bridge is a lead; leaving by the outcome is its end (#6625).
     if (slot.child && slot.satelliteOf && slot.session === sessionID)
       leads.called(sessionID, name, args, slot.place);
     return { content: textOf(result) };
   }
-  if (state.listed.length)
-    say(`Искрон: тулов из прошлого списка: ${state.listed.length}; сверю с сервером.`, "info");
+  if (state.listed.length) say(W.cached(state.listed.length), "info");
 
-  // Первый мост — ради списка тулов, фоном и без потолка: истёкшее ожидание входа или умерший мост — новое рукопожатие или новый мост, пока плагин жив.
+  // The first bridge is for the tool list, in the background with no ceiling: a new handshake or bridge while the plugin lives.
   spare = spawn();
   let first = spare;
-  let [misses, deaths] = [0, 0]; // deaths — смерти подряд: пауза замены растёт, не шторм запусков
+  let [misses, deaths] = [0, 0]; // deaths in a row: the replacement pause grows, no spawn storm
   void (async () => {
     for (;;) {
       if (stopped) return;
@@ -401,39 +374,37 @@ export async function setupTools(
         state.serverSeen = true;
         const same = JSON.stringify(list) === JSON.stringify(state.listed);
         state.listed = list;
-        state.source = "с сервера";
+        state.source = W.fromServer();
         writeCache(list);
         if (!same) await ctx.tool.reload();
-        say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
+        say(W.raised(list.length), "info");
         return;
       } catch (e) {
         if (stopped) return;
         if (first.bridge.failure) {
-          // Мост списка умер — или был отдан сессии и отпущен ею (тогда молча):
-          // список берёт новый запас сразу, до паузы: мёртвый запас сессии не отдаётся.
-          if (first.session === null)
-            say(`Искрон: мост умер (${(e as Error).message}) — поднимаю новый.`, "warning");
+          // The list's bridge died, or was handed to a session and released by it (then silently).
+          if (first.session === null) say(W.died((e as Error).message), "warning");
           if (spare === first) spare = null;
           first = spare ?? spawn();
           spare = first;
           await sleep(retryPause(deaths++));
         } else {
-          await sleep(retryPause(misses++)); // пауза до повтора: удавшийся — сразу к списку
+          await sleep(retryPause(misses++)); // a pause before the retry
           shake(first);
         }
       }
     }
   })();
 
-  if (lost) void keeper.resumeLost(lost.entries, lost.wordFor); // каждой — о её местах
+  if (lost) void keeper.resumeLost(lost.entries, lost.wordFor); // each one — about its own seats
 
-  // Строка запуска с делом (launch.ts): тот же вызов, что у execute, с его занятостью.
+  // The launch line with a case (launch.ts): the same call as execute, with its busy count.
   const launcher = createLauncher<Slot>({
     rootOf,
     childSlot(sessionID, root) {
       if (!slots.get(root)?.place)
         throw new Error(childWriteRefusal(null, STAND_TOOL, {}, false) ?? "");
-      return children.childSlot(sessionID, slots.get(root)); // без места корня — отказ (#6550 п.2)
+      return children.childSlot(sessionID, slots.get(root)); // no root seat — a refusal (#6550 item 2)
     },
     async call(slot, name, args, sessionID) {
       slot.busy++;
@@ -447,14 +418,14 @@ export async function setupTools(
   });
 
   function forget(session: string): void {
-    runEnds.clear(session); // удалённая сессия уносит и пометку конца прогона
+    runEnds.clear(session); // a deleted session takes its run-end mark along
     launcher.forget(session);
     keeper.forget(session);
     const slot = slots.get(session);
     if (!slot) return;
     slots.delete(session);
     slot.ownStop = true;
-    slot.bridge.stop(); // свёртка моста отпускает стояние: ключ, сокет, занятость
+    slot.bridge.stop(); // the bridge's shutdown releases the standing: key, socket, busy line
   }
 
   return {
@@ -462,7 +433,7 @@ export async function setupTools(
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
       forget(s);
-      runEnds.clear(s, true); // сессии нет — и окончательной пометки нет
+      runEnds.clear(s, true); // no session — no final mark either
     },
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
@@ -470,7 +441,7 @@ export async function setupTools(
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
     adopt: adoptNow,
-    // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (handoff.ts, #6695).
+    // A satellite child moved alone goes as its own satellite to the new folder (handoff.ts, #6695).
     moved: (s, to) =>
       handoff(s, to, home) ||
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
@@ -478,8 +449,8 @@ export async function setupTools(
       stopped = true;
       clearInterval(reaper);
       keeper.stop();
-      await children.pause(); // перезагрузка — не конец ребёнка (#6625): место и дела ждут
-      // Остановка с держащими мостами — на диск: следующий экземпляр скажет о потере.
+      await children.pause(); // a reload is not a child's end (#6625): its seat and cases wait
+      // A stop with holding bridges goes to disk: the next instance tells of the loss.
       const left = writeLostMarker(authDir(), slots.values(), home);
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
@@ -489,7 +460,7 @@ export async function setupTools(
         slot.bridge.stop();
       }
       slots.clear();
-      return left; // близнецу каталога — будить экземпляр этого написания (twins.ts)
+      return left; // to the directory's twin — wake this spelling's instance (twins.ts)
     },
   };
 }
