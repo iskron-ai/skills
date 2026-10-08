@@ -1677,6 +1677,41 @@ test("a place resumed by the bridge itself is announced into the session with it
   }
 });
 
+// The bridge proved the place its own (the session stood it): the word into the session
+// does not suspect another's place nor call to release it.
+test("a place the bridge proved its own is announced without the call to release another's", async () => {
+  const calls = join(SANDBOX, "resumed-own.calls");
+  const resume = join(SANDBOX, "resumed-own.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "proba--931--nks-dev",
+      pending: 0,
+      word: "возврат места с диска; register",
+      own: true,
+    }),
+  );
+  const b = bridgeEnv("resumed-own", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-own", location: { directory: "/work/own" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-own");
+    await until(
+      () => rec.prompts.some((p) => /сам вернул место/.test(p.text)),
+      "the resumed prompt",
+    );
+    const word = rec.prompts.find((p) => /сам вернул место/.test(p.text));
+    assert.match(word.text, /место proba--931--nks-dev/, "the taken name is said");
+    assert.doesNotMatch(word.text, /чужое|action="leave"/, word.text);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A record of a pre-upgrade build carries no session: the directory alone does
 // not return it (#6017), but the bridge names it, and the plugin says it into
 // the session — its holder takes it back by name instead of losing it silently.
@@ -3124,6 +3159,34 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
     );
   } finally {
     if (!stopped) await rec.stop();
+    await fake.stop();
+  }
+});
+
+// mcp 0.111.0 (#6819): the server says list_changed in the SSE of the next
+// answer — here to the real bridge's own calls under iskron_stand. The bridge
+// passes it on, and the plugin re-reads and reloads the tools.
+test("list_changed in the SSE of the real bridge's answers reloads the plugin's tools", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  const rec = await plugin({
+    ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+    ISKRON_BRIDGE_URL: fake.mcpUrl,
+    ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+  });
+  try {
+    await until(() => rec.tools().has("iskron_stand"), "the bridge's own tool", 15000);
+    assert.ok(!rec.tools().has("iskron_batch"));
+    await fake.control({ richTools: true, list_changed: true });
+    const out = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "proba" },
+      "s-lc-real",
+    );
+    assert.match(out.content, /стояние/, out.content);
+    await until(() => rec.tools().has("iskron_batch"), "the new list after list_changed", 8000);
+  } finally {
+    await rec.stop();
     await fake.stop();
   }
 });
