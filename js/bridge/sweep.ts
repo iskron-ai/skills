@@ -1,4 +1,4 @@
-// Уборка мёртвых ключей стояний перед тем, как мост положит свой (см. hold.ts).
+// Sweeping dead standing keys before the bridge lays its own (see hold.ts).
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { connect as connectLocal } from "node:net";
 import { basename, join } from "node:path";
@@ -7,12 +7,12 @@ import { seenFilePathOf, socketPathOf, standingsDirOf } from "../shared/standing
 import { HOLD_RECORD_MAX_AGE_MS } from "./holdrecord.ts";
 
 /**
- * Мост, убитый без прощания, оставляет `.key` и `.sock`: сторож без аргумента
- * перечисляет ключи, и мёртвая запись либо уводит его на сокет, где никого нет,
- * либо заставляет отказать «стояний несколько». Перед тем как положить свой
- * ключ, каждый чужой проверяется одним подключением; неотвечающий — убирается.
+ * A bridge killed without goodbye leaves `.key` and `.sock`, which mislead a watchdog
+ * listing keys (to a socket nobody listens on, or to a "several standings" refusal);
+ * before laying its own key, each other one is probed by one connect and removed if
+ * nobody answers.
  */
-/** Слушает ли кто-то локальный сокет стояния — живой мост держит его, мёртвый оставил файл. */
+/** Whether someone listens on a local standing socket: a live bridge holds it, a dead one left the file. */
 export function localSocketAlive(sock: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (process.platform !== "win32" && !existsSync(sock)) return resolve(false);
@@ -28,28 +28,28 @@ export function localSocketAlive(sock: string): Promise<boolean> {
 }
 
 /**
- * Сколько живёт память отданного (.seen) места на сервере, которое никто не держит: она
- * переживает мост, потому что платформа отдаёт очередь места снова и назавтра
- * (#5831), но не вечно — иначе каталог копил бы файл на каждое имя.
+ * How long the given-memory (.seen) of an unheld server seat lives: it outlives the
+ * bridge because the platform replays the seat's queue the next day too (#5831), but
+ * not forever, or the directory would keep a file for every name.
  */
 const SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function sweepStale(authDir: string, mine: string): void {
   const dir = standingsDirOf(authDir);
   if (!existsSync(dir)) return;
-  // Память места на сервере — `<хеш ключа>.<хеш origin>.seen`, стояния без места — `<хеш ключа>.seen`.
+  // A server seat's memory is `<key hash>.<origin hash>.seen`, a seatless standing's `<key hash>.seen`.
   const mineHash = basename(seenFilePathOf(authDir, mine), ".seen");
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".seen"))) {
     const p = join(dir, f);
     const [keyHash, serverHash] = f.split(".");
     if (keyHash === mineHash || existsSync(join(dir, `${keyHash}.key`))) continue;
     try {
-      // Без сервера память живёт с мостом: ключа нет — моста нет.
+      // Without a server the memory lives with the bridge: no key, no bridge.
       if (serverHash === "seen" || Date.now() - statSync(p).mtimeMs > SEEN_FILE_MAX_AGE_MS)
         unlinkSync(p);
     } catch {}
   }
-  // Память вопросов места (.asks, askdisk.ts) живёт со своей .seen.
+  // A seat's asks memory (.asks, askdisk.ts) lives with its .seen.
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".asks"))) {
     const keyHash = f.split(".")[0];
     if (keyHash === mineHash || existsSync(join(dir, `${keyHash}.key`))) continue;
@@ -58,9 +58,9 @@ export function sweepStale(authDir: string, mine: string): void {
       unlinkSync(join(dir, f));
     } catch {}
   }
-  // Записи держания старше срока простоя места — мертвы у платформы, стираются здесь.
-  // Запись места, чей ключ лежит рядом, — не простой: место держат, и срок записи
-  // считается от ухода его сокета (holdkeep.ts, #6649); мёртвый ключ уберёт проба ниже.
+  // Hold records past the seat's idle limit are dead at the platform. A record whose key
+  // lies beside is held: its age counts from its socket's departure (holdkeep.ts, #6649);
+  // a dead key there is removed by the probe below.
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     if (existsSync(join(dir, `${basename(f, ".hold")}.key`))) continue;
     try {
@@ -73,7 +73,7 @@ export function sweepStale(authDir: string, mine: string): void {
       } catch {}
     }
   }
-  // Спул передачи, который никто не дослал (место не вернулось), — не дольше записи держания (#6586).
+  // A handover spool nobody replayed lives no longer than a hold record (#6586).
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".spool"))) {
     try {
       if (Date.now() - statSync(join(dir, f)).mtimeMs > HOLD_RECORD_MAX_AGE_MS)
@@ -91,8 +91,7 @@ export function sweepStale(authDir: string, mine: string): void {
     }
     if (!key || key === mine) continue;
     const sock = socketPathOf(authDir, key);
-    // Память места на сервере остаётся: место мёртвого моста вернёт другой, и очередь
-    // придёт снова; память без сервера (стояние без места) уходит с мостом.
+    // A server seat's memory stays (another bridge may bring the seat back); a seatless one goes.
     const drop = (): void => {
       for (const p of [keyFile, sock, seenFilePathOf(authDir, key)]) {
         try {

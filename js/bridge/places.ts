@@ -1,13 +1,11 @@
-// Места канала в других графах (граф nks-dev: #5838, отвечая #5837): одна
-// сессия через один мост стоит в каждом графе, где работает. Канал держит
-// места в нескольких графах — register на том же канале в другом графе
-// добавляет место, hello перечисляет их все, а запись подписывается местом
-// своего графа. Поэтому сокет службы один (hold.ts), а здесь — места рядом с
-// тем, ради которого он взят: у каждого своя дверь для сторожа, своя запись
-// держания и своя строка в повторной регистрации (standing.ts).
-import { LOGGERS } from "../delivery/index.ts";
+// Channel seats in other graphs (graph nks-dev: #5838, answering #5837): one
+// service socket (hold.ts); here the seats beside the one it was taken for —
+// each with its own door, hold record and re-register line (standing.ts).
+// register on the same channel in another graph adds a seat; hello lists them all;
+// a write is signed by the seat of its own graph.
+import { LOGGERS, PLACES } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
-import { L } from "../shared/lang.ts";
+import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { type ChannelEvent, Door, type DoorHooks } from "./door.ts";
@@ -24,23 +22,23 @@ export interface Place {
   door: Door;
 }
 
-/** Адреса канала, на котором стоят места, — пишутся в запись держания каждого. */
+/** Channel addresses, written into each seat's hold record. */
 export interface Channel {
   url: string;
   statusUrl: string | null;
   cwd?: string | null;
 }
 
-const extras = scoped(() => new Map<string, Place>()); // ключ места → место с дверью (у сессии)
+const extras = scoped(() => new Map<string, Place>()); // seat key → seat with its door (per session)
 
 export const keyOfPlace = (s: Standing): string => keyOf(s.realm, s.karta, s.name ?? "");
 export const extraPlaces = (): Place[] => [...extras.values()];
 
-/** Место канала в этом графе (наверняка тот же граф), если мост его держит. */
+/** The channel seat in this graph (surely the same graph), if the bridge holds it. */
 export const extraIn = (realm: unknown): Place | undefined =>
   extraPlaces().find((p) => sameRealm(p.standing.realm, realm));
 
-/** Место именно с этими тремя именами среди мест других графов. */
+/** The seat with exactly these three names among seats of other graphs. */
 export function extraOf(realm: unknown, karta: unknown, name: unknown): Place | undefined {
   const p = extraIn(realm);
   return p &&
@@ -50,7 +48,7 @@ export function extraOf(realm: unknown, karta: unknown, name: unknown): Place | 
     : undefined;
 }
 
-/** Запомнить место другого графа для повторной регистрации — одно на граф. */
+/** Remember a seat of another graph for re-registering — one per graph. */
 export function rememberPlace(s: Standing): void {
   state.places = state.places.filter((p) => !sameRealm(p.realm, s.realm));
   state.places.push(s);
@@ -71,7 +69,7 @@ function writeRecord(p: Place, ch: Channel, status?: string): void {
   });
 }
 
-/** Адрес места рядом из хэндла основного места (канал один, хэндл тот же) — помечен выведенным. */
+/** A beside seat's address from the main seat's handle (one channel, same handle) — marked derived. */
 function deriveAddress(p: Place, primaryAddress: string | null | undefined): void {
   const handle = primaryAddress?.match(/^(.*):/)?.[1];
   if (!handle || !p.standing.name) return;
@@ -80,9 +78,8 @@ function deriveAddress(p: Place, primaryAddress: string | null | undefined): voi
 }
 
 /**
- * Поставить место рядом на канал, который держит мост: своя дверь и запись держания. Возвращает ключ.
- * `primaryAddress` — адрес основного места: из него выводится @handle:name места рядом;
- * основное ещё без адреса — у места рядом его нет до hello, что назовёт его само.
+ * Put a beside seat on the bridge's channel: its own door and hold record. Returns the key.
+ * `primaryAddress` gives the beside seat's @handle:name; without it, hello names it later.
  */
 export function addExtra(
   s: Standing,
@@ -93,10 +90,10 @@ export function addExtra(
   const key = keyOfPlace(s);
   const have = extras.get(key);
   if (have) return key;
-  // Иное место того же графа сменяет прежнее — правило «в графе одно место» уже пройдено.
+  // Another seat of the same graph replaces the old one: one seat per graph is already checked.
   for (const p of extraPlaces())
     if (sameRealm(p.standing.realm, s.realm))
-      dropExtra(p.door.key, L("другое место графа", "another seat of the graph"), true);
+      dropExtra(p.door.key, words(PLACES).anotherSeat(), true);
   const door = new Door(key, hooks);
   const place = { standing: s, door };
   deriveAddress(place, primaryAddress);
@@ -112,9 +109,8 @@ export function addExtra(
   return key;
 }
 
-// Слово харнесу о месте рядом (beside, beside-gone): по нему тонкий мост знает места
-// сессии — при смене демона они теряются громко (lostplaces.ts). Не held и не released:
-// те — об основном месте, и плагин OpenCode судит по ним о держании.
+// beside/beside-gone let the thin bridge know the session's seats (lostplaces.ts);
+// not held/released: those are about the main seat, which the OpenCode plugin reads.
 const besideWord = (data: ChannelEvent): void =>
   emit({
     jsonrpc: "2.0",
@@ -122,21 +118,20 @@ const besideWord = (data: ChannelEvent): void =>
     params: { level: "info", logger: LOGGERS.channel, data },
   });
 
-/** Канал сменил адреса (переоткрыт тем же местом): записи мест рядом — за ним. */
+/** The channel changed addresses (reopened by the same seat): beside records follow it. */
 export function repointExtras(ch: Channel): void {
   for (const p of extraPlaces()) writeRecord(p, ch);
 }
 
-/** Занятость, принятая доской для места рядом, — в его запись держания. */
+/** Busyness accepted by the board for a beside seat — into its hold record. */
 export function rememberExtraStatus(key: string, ch: Channel, text: string): void {
   const p = extras.get(key);
   if (p) writeRecord(p, ch, text || "");
 }
 
 /**
- * Отпустить место рядом: дверь закрыта; `forget` стирает запись и строку повторной
- * регистрации. `own` — своё close или revoke сессии: сторож места слышит released
- * с own после неотданных пачек и уходит без тревоги (#6638).
+ * Release a beside seat; `forget` drops its record and re-register line. `own` — the
+ * session's own close or revoke: the watchdog hears released with own and quits calmly (#6638).
  */
 export function dropExtra(key: string, reason: string, forget: boolean, own = false): void {
   const p = extras.get(key);
@@ -152,7 +147,7 @@ export function dropExtra(key: string, reason: string, forget: boolean, own = fa
     state.places = state.places.filter((s) => keyOfPlace(s) !== key);
   }
   standingLog(`released ${key}: ${reason}${forget ? " (record dropped)" : ""}`);
-  // Смена демона снимает места не по слову агента: тонкий мост должен их помнить.
+  // A daemon change drops seats not by the agent's word: the thin bridge must remember them.
   if (!handoverReason()) besideWord({ kind: "beside-gone", key, text: reason });
 }
 
@@ -166,10 +161,9 @@ const all = (primary: Place | null): Place[] => [...(primary ? [primary] : []), 
 const unresolved = (realm: string): boolean => !canonRealm(realm).startsWith("@");
 
 /**
- * hello перечисляет места канала: {realm @owner/slug, standing @handle:name,
- * standing_id, karta_seq}. Каждое узнанное — id своей двери (по нему кадр и
- * занятость находят место); граф места, записанный rN или слагом, заодно
- * узнаёт свою каноническую форму, если имя и роль называют одно место hello.
+ * hello lists the channel's seats {realm, standing, standing_id, karta_seq}: each
+ * recognized one gives its door the id; a seat's rN or slug graph learns its canonical form
+ * when name and role match exactly one hello seat.
  */
 export function learnFromHello(hello: Frame | null, primary: Place | null): void {
   const listed = Array.isArray(hello?.standings) ? hello.standings : [];
@@ -196,7 +190,7 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
   }
 }
 
-/** Места, которым адресован кадр (id места — одно, если оно известно, и тогда id узнаётся); null — кадр без адреса. */
+/** Seats a frame is addressed to (by id when known, else by its address, learning the id); null — no address. */
 function fitsOf(frame: Frame, places: Place[]): Place[] | null {
   const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
   const byId = id ? places.find((p) => p.door.standingId === id) : undefined;
@@ -214,23 +208,20 @@ function fitsOf(frame: Frame, places: Place[]): Place[] | null {
 }
 
 /**
- * Кадр спула смены демона, адресованный месту, которого мост не держит (место
- * рядом не вернулось, #6586): кому он — ключ места из повторной регистрации,
- * иначе адрес кадра. Null — кадр основного места, места рядом или без адреса.
+ * A daemon-change spool frame addressed to a seat the bridge does not hold (#6586):
+ * the seat key from re-register, else the frame's address. Null — a held seat's or no address.
  */
 export function strayOf(frame: Frame | null, primary: Place): string | null {
   if (frame?.type !== "message" || fitsOf(frame, all(primary))?.length !== 0) return null;
   const back = state.places.find((s) => frame.realm != null && sameRealm(s.realm, frame.realm));
   return back
     ? keyOfPlace(back)
-    : `${String(frame.to_standing ?? "—")}, ${L("граф", "graph")} ${String(frame.realm ?? "—")}`;
+    : `${String(frame.to_standing ?? "—")}, ${words(PLACES).graph()} ${String(frame.realm ?? "—")}`;
 }
 
 /**
- * Чьей двери кадр (#5838): по to_standing_id — id места; иначе по графу, адресу
- * и роли кадра, если они называют ровно одно место (и тогда id места узнаётся).
- * Кадр без адреса — слово канала, основному месту. Адрес есть, а места нет или
- * их несколько — основному месту со словом об этом, не молча.
+ * Whose door a frame is (#5838): by id, else by graph, address and role naming exactly
+ * one seat. No address — the main seat; several or none — the main seat with a word, not silently.
  */
 export function routeFrame(frame: Frame | null, primary: Place): { door: Door; note?: string } {
   if (!frame || !extras.size) return { door: primary.door };
@@ -240,11 +231,13 @@ export function routeFrame(frame: Frame | null, primary: Place): { door: Door; n
   const id = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
   return {
     door: primary.door,
-    note: L(
-      `ДЕЛАТЕЛЬ: кадр ${String(frame.id ?? "?")} (to_standing_id ${id || "—"}, ${frame.to_standing ?? "—"}, граф ${frame.realm ?? "—"}) ` +
-        `не сопоставлен ни одному месту моста (${fits.length ? "подходят несколько" : "не подходит ни одно"}) — отдан основному месту ${primary.door.key}; сверь адрес кадра.`,
-      `DOER: frame ${String(frame.id ?? "?")} (to_standing_id ${id || "—"}, ${frame.to_standing ?? "—"}, graph ${frame.realm ?? "—"}) ` +
-        `matches no seat of the bridge (${fits.length ? "several fit" : "none fits"}) — given to the main seat ${primary.door.key}; check the frame's address.`,
+    note: words(PLACES).unmatched(
+      String(frame.id ?? "?"),
+      id || "—",
+      frame.to_standing ?? "—",
+      frame.realm ?? "—",
+      fits.length > 0,
+      primary.door.key,
     ),
   };
 }

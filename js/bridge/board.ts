@@ -1,7 +1,7 @@
-// Доска стояний — поля places[] structuredContent (fields.ts), а без них проза
-// сервера (граф nks-dev: #4514), разобранная по наблюдённой форме: строка места
-// `#N … · @handle:name — …`, за ней `📥 адрес`. Управляющие действия идут только
-// по распознанной однозначной форме.
+// The standings board: places[] of structuredContent (fields.ts), else the server's
+// prose parsed by its observed form (graph @nks/nks-dev, node #4514): a seat line
+// `#N … · @handle:name — …`, then `📥 address`. Control acts only on an unambiguous form.
+import { BOARD_FORM } from "../delivery/index.ts";
 import { boardField, LIVE_STATE, type Seat } from "./fields.ts";
 
 export interface BoardEntry {
@@ -9,9 +9,9 @@ export interface BoardEntry {
   address: string;
   rest: string;
   incoming: string | null;
-  /** Собственный id места — строка `id <uuid>` под строкой места; доска без неё — null. */
+  /** The seat's own id from the `id <uuid>` line under it; null when the board lacks it. */
   id: string | null;
-  /** Признаки из полей; у места, разобранного из прозы, их нет — судит `rest`. */
+  /** Signs from fields; a seat parsed from prose has none — `rest` decides. */
   listening?: boolean;
   undelivered?: number;
   alive?: boolean;
@@ -19,9 +19,9 @@ export interface BoardEntry {
 
 export interface Board {
   entries: BoardEntry[];
-  /** Форма узнана: поля, шапка, фраза пустой доски или хоть одно место. */
+  /** Form recognized: fields, header, empty-board phrase or at least one seat. */
   recognized: boolean;
-  /** Счёт мест в шапке прозы; у полей — со свёрнутыми (folded), без них null: массив сверки не требует. */
+  /** Seat count from the prose header; from fields only with folded seats, else null. */
   declared: number | null;
 }
 
@@ -33,22 +33,22 @@ const fromField = (s: Seat): BoardEntry => ({
   id: s.seat_id ?? null,
   listening: s.listening,
   undelivered: s.pending ?? 0,
-  // Живость — только status api; неизвестное или отсутствующее значение — не живой.
+  // Liveness only from the api status; an unknown or missing value is not alive.
   alive: s.state === LIVE_STATE,
 });
 
-/** Ответ iskron_channel list: поля, если сервер их дал по форме, иначе проза. */
+/** The channel list reply: fields when the server gave them in form, else prose. */
 export function readBoard(a: { text: string; structured?: unknown }): Board {
   const board = boardField(a.structured);
   if (board) {
     const entries = board.seats.map(fromField);
-    // Свёрнутые места доска не перечислила — как шапка прозы, чей счёт не сошёлся.
+    // Folded seats are not listed — like a prose header whose count did not match.
     const declared = board.folded > 0 ? entries.length + board.folded : null;
     return { entries, recognized: true, declared };
   }
   const entries = parseBoard(a.text);
   const header = FORM.boardHeader.exec(a.text);
-  // Пустой граф — законная пустота; наблюдённые фразы держит узел формы доски (#4514).
+  // An empty graph is a legitimate emptiness (#4514).
   const empty = FORM.boardEmpty.test(a.text);
   return {
     entries,
@@ -57,7 +57,7 @@ export function readBoard(a: { text: string; structured?: unknown }): Board {
   };
 }
 
-/** Строки доски: `#N … · @handle:name — …`, за ними `📥 https://…` и `id <uuid>`. */
+/** Board lines: `#N … · @handle:name — …`, then `📥 https://…` and `id <uuid>`. */
 export function parseBoard(text: string): BoardEntry[] {
   const out: BoardEntry[] = [];
   for (const line of text.split("\n")) {
@@ -74,36 +74,22 @@ export function parseBoard(text: string): BoardEntry[] {
   return out;
 }
 
-/** Своя половина имени из адреса `@handle:name` — сравнивать её целиком: `endsWith(":proba")` совпало бы и на соседе `x.proba`. */
+/** Own half of `@handle:name`, compared whole: `endsWith(":proba")` would match neighbour `x.proba`. */
 export const nameOf = (address: string): string => address.slice(address.indexOf(":") + 1);
 
 /**
- * Слова доски и списка хуков на обоих языках сервера: мост на английской
- * поверхности просит accept-language: en. Запасной путь, пока сервер не дал полей (fields.ts, #6637);
- * русские формы наблюдены (#4514), английские — предположены, не наблюдены.
+ * Server prose forms of the board and hook list, both languages (graph @nks/nks-dev,
+ * nodes #4514, #6637): a fallback until the server gives fields; the bridge on an
+ * English surface asks accept-language: en. Russian forms observed, English assumed.
  */
-export const FORM = {
-  boardHeader: /^\s*(?:Каналы|Channels)(?:\s*\((\d+)\))?(?:\s|:|$)/m,
-  boardEmpty:
-    /^\s*(?:Ни одна роль этого графа (?:не держит канала|нигде не стоит)|No role (?:of|in) this graph (?:holds a channel|stands anywhere))/m,
-  listens: /(^|·)\s*(?:слушает|listening)/,
-  alive: /живой|слушает|\blive\b|listening/,
-  undelivered: /(?:не доставлено|undelivered)\s+(\d+)/,
-  hooksHeader: /^\s*(?:Вебхуки|Webhooks)(?:\s|:|\(|$)/m,
-  hooksEmpty: /вебхуки не зарегистрированы|no webhooks (?:are )?registered/i,
-  hookActive: /активен|\bactive\b/,
-  hookState: /активен|пауза|\bactive\b|\bpaused\b/,
-  seatId:
-    /(?:id этого места|id of this (?:seat|place))[^\n]*\n\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
-};
+export const FORM = BOARD_FORM;
 
-/** Слушает ли место по доске — признак присутствия, не трафика. */
+/** Whether the seat listens per the board — presence, not traffic. */
 export const listens = (e: BoardEntry): boolean => e.listening ?? FORM.listens.test(e.rest);
 
-/** Живо ли место по доске. */
 export const alive = (e: BoardEntry): boolean => e.alive ?? FORM.alive.test(e.rest);
 
-/** Сколько кадров доска называет недоставленными у места; 0 — строка об этом молчит. */
+/** Frames the board calls undelivered for the seat; 0 when the line is silent. */
 export function undelivered(e: BoardEntry): number {
   if (e.undelivered != null) return e.undelivered;
   const m = FORM.undelivered.exec(e.rest);

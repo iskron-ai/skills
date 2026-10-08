@@ -1,18 +1,17 @@
-// Отказ api как данные (граф nks-dev: #6637): `_meta["iskron/refusal"]` =
-// {rule, status, data} на отказе iskron_channel и iskron_admin — правило
-// ProblemDetail, его статус и data без секретов. Нет его — потребитель судит прозой.
+// An api refusal as data (graph @nks/nks-dev, node #6637): `_meta[serverProtocol.refusal]`
+// = {rule, status, data} on channel and admin refusals; without it the consumer reads prose.
 import { serverProtocol } from "../delivery/index.ts";
 import { is, isObj } from "./fields.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Отказ api как данные: правило ProblemDetail, статус и его data без секретов. */
+/** An api refusal as data: the ProblemDetail rule, its status and its data without secrets. */
 export interface Refusal {
   rule?: string;
   status?: number;
   data?: Record<string, unknown>;
 }
 
-/** `_meta["iskron/refusal"]` отказа по форме, иначе null. */
+/** The refusal's `_meta[serverProtocol.refusal]` when well-formed, otherwise null. */
 export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
   const r: unknown = reply?.result?._meta?.[serverProtocol.refusal];
   if (!isObj(r) || !is.str(r.rule) || !is.num(r.status)) return null;
@@ -24,10 +23,10 @@ export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
 }
 
 /**
- * register отказан гонкой открытия места: 409 без rule («opened concurrently;
- * register again»). Rule здесь — из errors[0] ProblemDetail (корневой rule nks-mcp
- * не читает): 409 регистрации с правилом только в корне придёт сюда без rule и
- * тоже получит повтор — один, отказ которого вернётся как есть.
+ * register refused by a seat-opening race: 409 without a rule ("opened concurrently;
+ * register again"). The rule comes from ProblemDetail errors[0], not the root (the MCP
+ * server reads no root rule), so a 409 with a root-only rule also lands here and gets one retry,
+ * whose refusal comes back as is.
  */
 export const openedConcurrently = (reply: JsonRpcMessage | null): boolean => {
   const r = reply?.result?.isError ? refusalOf(reply) : null;

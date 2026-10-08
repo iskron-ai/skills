@@ -1,11 +1,11 @@
-// Сравнение версий поставки — три числа через точку, как их штампует
-// release-please. Хвосты вроде `-rc1` не ожидаются и отбрасываются.
+// Delivery version comparison: three dot-separated numbers as release-please stamps
+// them; tails like `-rc1` are dropped.
 export function parseVersion(v: string | null | undefined): [number, number, number] | null {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec((v ?? "").trim());
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-/** >0 — a новее b; <0 — b новее a; 0 — равны или хотя бы одна не читается. */
+/** >0 — a is newer; <0 — b is newer; 0 — equal or either unreadable. */
 export function compareVersions(
   a: string | null | undefined,
   b: string | null | undefined,

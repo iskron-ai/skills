@@ -1,37 +1,29 @@
 import { CLIENTS, envName } from "../delivery/index.ts";
 
-// Имена наших собственных клиентов моста, которые отказ рукопожатия со ссылкой
-// входа читают сами и ждут входа, повторяя рукопожатие: плагин OpenCode —
-// поднимает мост лениво и повторно после простоя, строку входа пишет в stderr
-// сервиса и отдаёт тулом iskron_bridge; выгрузка снимка поверхности (`make surface`) — снимок,
-// записанный из старого ответа при мёртвом гранте, выдал бы себя за живую
-// поверхность (при отказе сети последний ответ по-прежнему получают все
-// клиенты, этот тоже — граф nks-dev: #4664). Мост по этим именам
-// оставляет им прежний отказ рукопожатия; прочее рукопожатие — харнеса,
-// то есть человека у экрана (граф nks-dev: #4790). Расширение pi отказ входа
-// читает и ждёт (js/extension/tools.ts, #4795), но в этот список не входит
-// нарочно: при мёртвом гранте с сохранённым ответом ему, как харнесу, отдаётся
-// кэш — тулы стоят с первой секунды, ссылку входа несёт первый вызов; отказ оно
-// встречает только на пустом кэше, то есть на самом первом входе за адрес.
+// Own bridge clients that read a handshake refusal with a login link themselves and
+// wait for the login, repeating the handshake: the OpenCode plugin and the surface
+// export (`make surface`) (graph @nks/nks-dev, nodes #4664, #4790). Every other
+// handshake is a harness's. The plugin raises the bridge lazily and again after idle;
+// a surface snapshot written from a cached answer on a dead grant would pass for live.
+// The pi extension reads the refusal too but is left out on purpose (js/extension/tools.ts,
+// node #4795): like a harness it gets the cache on a dead grant, so its tools stand at once
+// and the first call carries the login link; it meets the refusal only on an empty cache.
 export const OPENCODE_CLIENT = CLIENTS.opencode;
-export const SURFACE_CLIENT = "export-surface"; // scripts/export-surface.mjs, литералом: .mjs не берёт TS
+export const SURFACE_CLIENT = "export-surface"; // scripts/export-surface.mjs, literal: .mjs cannot import TS
 export const OWN_CLIENTS: ReadonlySet<string> = new Set([OPENCODE_CLIENT, SURFACE_CLIENT]);
 
-// Клиенты, которым кадр стояния доходит уведомлением MCP, а не локальным
-// сторожем: расширение pi и плагин OpenCode. Остальным (Claude Code, Codex)
-// кадр доходит только через сторожа — без него мост глух, и уходит с места
-// сам (bridge/leave.ts, граф nks-dev: #4895).
+// Clients that get the standing frame as an MCP notification rather than through a
+// local watchdog (graph @nks/nks-dev, node #4895). Others hear only through the watchdog;
+// without it the bridge is deaf and leaves the seat itself (bridge/leave.ts).
 export const PI_CLIENT = CLIENTS.pi;
 export const NOTIFIED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);
 
-// Версия хоста для attrs.harness_version (граф nks-dev: #6226). Плагину OpenCode
-// и расширению pi клиент рукопожатия — они сами, и clientInfo.version — их версия,
-// не хоста: версию OpenCode и pi они передают мосту этой переменной при запуске.
+// Host version for attrs.harness_version (graph @nks/nks-dev, node #6226): the plugin
+// and the extension pass the host's version in this variable at launch, since their
+// handshake clientInfo.version is their own, not the host's.
 export const HARNESS_VERSION_ENV = envName("HARNESS_VERSION");
-// Корень набора скиллов для attrs.skills (#6226): мост вне набора (домашняя копия)
-// узнаёт набор только этой переменной — её ставят плагин OpenCode и расширение pi.
+// Skill set root for attrs.skills (#6226): a bridge outside the set learns it only from this variable.
 export const SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
-// Набор узнаётся по мосту поставки в нём: `<корень>/<BRIDGE_SKILL>/scripts/<BRIDGE_FILE>` —
-// так его ищет мост (bridge/skillset.ts) и так плагин OpenCode открывает чтение скиллов набора
-// (opencode/skillread.ts, #6847). Both names come from the delivery layer.
+// A set is recognised by the delivery bridge inside it, at `<root>/<BRIDGE_SKILL>/scripts/<BRIDGE_FILE>`
+// (bridge/skillset.ts, opencode/skillread.ts, #6847).
 export const HOSTED_CLIENTS: ReadonlySet<string> = new Set([PI_CLIENT, OPENCODE_CLIENT]);

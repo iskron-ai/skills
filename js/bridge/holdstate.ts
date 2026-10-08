@@ -1,6 +1,5 @@
-// Состояние держания (hold.ts) — сессии моста (shared/scope.ts): у демона машины
-// сокет канала и двери мест — свои у каждой сессии, по одному на место, как у
-// мостов-процессов. Отдельным модулем — чтобы hold.ts держал поведение, а не поля.
+// Hold state (hold.ts) per bridge session (shared/scope.ts): in the machine daemon each
+// session has its own channel socket and place doors, like separate bridge processes.
 import { type Holder } from "../shared/channel.ts";
 import { scoped } from "../shared/scope.ts";
 import { type ChannelEvent, type Door } from "./door.ts";
@@ -8,41 +7,41 @@ import { type ChannelEvent, type Door } from "./door.ts";
 export type Frame = NonNullable<ChannelEvent["frame"]>;
 
 export const H = scoped(() => ({
-  /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+  /** session dir the place is taken from (stand cwd), kept in the hold record for cwd resume (resume.ts) */
   standCwd: null as string | null,
   holder: null as Holder | null,
-  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  /** last service sign of a socket released by parkStanding; the record lifetime counts from it (holdkeep.ts) */
   heardAt: 0,
-  /** дверь основного места — того, ради которого взят сокет */
+  /** door of the primary place, the one the socket was taken for */
   door: null as Door | null,
   currentKey: null as string | null,
   currentUrl: null as string | null,
   currentStatusUrl: null as string | null,
-  /** ключ места, отнятого у этого моста закрытием 4000 */
+  /** key of the place taken from this bridge by close 4000 */
   evictedKey: null as string | null,
-  /** прицепившийся после — узнаёт, а не молчит */
+  /** told to a client attaching later */
   evictedEvent: null as ChannelEvent | null,
-  /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
+  /** left the place: service socket closed, key and addresses kept (leave.ts) */
   parked: false,
-  /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
+  /** socket reopened on the same address without this opening's hello yet: another may have rotated it (deaf.ts) */
   unheard: false,
-  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  /** key of a place whose socket was released but binding remembered, until hello proves hearing (deaf.ts) */
   deafKey: null as string | null,
-  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  /** places of other graphs on the channel at the 4001: the server remembers the binding, no hearing (deaf.ts) */
   deadPlaces: [] as { realm: string; karta: string | number; name?: string }[],
   attachHooks: [] as (() => void)[],
   helloWaiters: new Set<(f: Frame | null) => void>(),
-  /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
+  /** disk resumes in flight: a dead token during one is a stale record, not an alarm */
   resuming: 0,
-  /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
+  /** own revoke in flight (absorb.ts): close 4001 outruns the revoke answer */
   revokingOwn: false,
-  /** своё close канала в полёте (absorb.ts): закрытие 4001 обгонит ответ, как у revoke (#6634) */
+  /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
   closingOwn: false,
-  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
   handingOver: null as string | null,
 }));
 
-/** Ход после отъёма места (evicted.ts): ставится один раз при загрузке, процессу — один на все сессии. */
+/** Next step after eviction (evicted.ts): set once at load, one per process for all sessions. */
 export const E: { next: ((key: string, url: string, code: number) => void) | null } = {
   next: null,
 };
@@ -50,38 +49,37 @@ export function whenEvicted(fn: (key: string, url: string, code: number) => void
   E.next = fn;
 }
 
-/** Возврат с диска в полёте (+1) или кончился (−1): мёртвый токен при нём — протухшая запись, не тревога. */
+/** A disk resume started (+1) or ended (-1). */
 export function noteResuming(delta: number): void {
   H.resuming += delta;
 }
 
-/** absorb.ts: своё снятие в полёте — закрытие 4001 обгонит ответ revoke, и это не смерть токена. */
+/** absorb.ts: own revoke in flight; close 4001 is then not a dead token. */
 export function setRevokingOwn(v: boolean): void {
   H.revokingOwn = v;
 }
 
-/** absorb.ts: своё close канала в полёте — закрытие 4001 тоже не смерть токена. */
+/** absorb.ts: own channel close in flight; close 4001 is then not a dead token. */
 export function setClosingOwn(v: boolean): void {
   H.closingOwn = v;
 }
 
 /**
- * Процесс передаёт места преемнику (демон машины обновляется, daemon.ts): отпускание
- * мест — не «отпущено», а «передано»; записи держания целы, занятость не снимается.
- * Слово процесса, не сессии: уходят все сессии демона разом.
+ * The process hands places to a successor (daemon update, daemon.ts): "handed over", not
+ * "released"; hold records stay, busy is kept. Process-wide: all daemon sessions leave at once.
  */
 let handingOver: string | null = null;
 export function beginHandover(why: string): void {
   handingOver = why;
 }
 /**
- * Слово сессии: демон гаснет без преемника (SIGTERM), а её тонкий мост на связи —
- * он поднимет новый демон и вернёт место по записи держания. Это смена держателя,
- * не уход делателя: сторожу «передано», занятость не снимается (#6485).
+ * Per session: the daemon stops without a successor (SIGTERM) while the session's thin bridge
+ * is connected and will restore the place by its hold record; a holder change, not the doer
+ * leaving (#6485).
  */
 export function beginSessionHandover(why: string): void {
   H.handingOver = why;
 }
-/** Почему места передаются преемнику; null — не передаются. */
+/** Why places are handed to a successor; null if they are not. */
 export const handoverReason = (): string | null => handingOver ?? H.handingOver;
 export const handoverUnderway = (): boolean => handoverReason() !== null;

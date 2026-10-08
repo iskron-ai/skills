@@ -1,22 +1,22 @@
-// Какой запрос к MCP мост повторяет сам, когда соединение закрылось под ним до
-// ответа (keep-alive из пула, закрытый сервером: ECONNRESET у Bun, UND_ERR_SOCKET у
-// Node; граф nks-dev: #6630). Сервер мог запрос и прочесть: повтор — только там, где
-// второй раз ничего не применит. Записи харнеса (iskron_case, iskron_add_*, update,
-// revoke, leave…) не повторяются: исход их — «неизвестен», как прежде (deliver.ts).
-// connect тоже: прочитанный сервером, он уже выдал место-адрес, и второй повернул бы его.
+// Which MCP requests the bridge repeats itself when the connection closed under them
+// before the reply (graph @nks/nks-dev, node #6630) — a pooled keep-alive closed by the
+// server: ECONNRESET under Bun, UND_ERR_SOCKET under Node. The server may have read the
+// request, so only where a second delivery applies nothing. Harness writes are not
+// repeated: their outcome stays "unknown" (deliver.ts). Nor is connect: a read one
+// already turned the seat address.
 import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** id собственных вызовов моста (call.ts) — не харнеса. */
+/** ids of the bridge's own calls (call.ts), not the harness's. */
 export const OWN_CALL_PREFIX = `${ID_PREFIX}bridge-call-`;
 
-/** Тулы, которые только читают: повтор вызова ничего не меняет. */
+/** Tools that only read: a repeated call changes nothing. */
 export const READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
 
 /**
- * Действия, чей повтор безвреден: чтение доски и списка графов. register не здесь:
- * что двойной register на сервере ничего не меняет, мост показать не может, а его
- * пропуск догоняет ensureStanding перед следующим вызовом.
+ * Actions whose repeat is harmless: reading the board and the graph list. Not
+ * register: the bridge cannot show a double one is harmless, and ensureStanding
+ * catches up a skipped one before the next call.
  */
 const SAFE_ACTIONS: Record<string, Set<string>> = {
   [tool("channel")]: new Set(["list"]),
@@ -24,7 +24,7 @@ const SAFE_ACTIONS: Record<string, Set<string>> = {
 };
 
 export function repeatable(msg: JsonRpcMessage): boolean {
-  if (msg?.id === undefined || msg?.id === null) return true; // уведомление: ответа нет и не ждут
+  if (msg?.id === undefined || msg?.id === null) return true; // a notification: no reply awaited
   if (msg.method === "initialize" || msg.method === "tools/list") return true;
   if (msg.method !== "tools/call") return false;
   const name = String(msg.params?.name ?? "");
@@ -35,10 +35,9 @@ export function repeatable(msg: JsonRpcMessage): boolean {
 }
 
 /**
- * revoke и close собственного места, которые мост шлёт сам на конце прогона (caseexit.ts,
- * id своего вызова — call.ts): повтор на уже снятом месте отвечает «закрыто» и ничего не
- * применяет дважды, а без повтора место висело на доске до срока канала (e2e12, №147).
- * revoke харнеса сюда не входит: его исход по-прежнему «неизвестен».
+ * revoke and close of the bridge's own seat at the end of a run (caseexit.ts): a repeat
+ * on a seat already gone answers "closed" and applies nothing twice, while without it
+ * the seat hung on the board until the channel's ttl. The harness's revoke stays "unknown".
  */
 function ownPlaceEnd(msg: JsonRpcMessage, name: string, action: string): boolean {
   return (

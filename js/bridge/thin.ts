@@ -1,36 +1,30 @@
-// Тонкий мост — сторона агента на шве «тонкий мост ↔ демон машины» (провод — shared/seam.ts,
-// вход — shared/seam-entrance.ts, демон — daemon.ts). Держит stdio харнеса и отдаёт всё демону
-// своего каталога гранта: JSON-RPC как есть в обе стороны. Сам хранит только то, без чего обрыв
-// стал бы молчанием или потерей: копию initialize харнеса, вызовы в полёте и ключ места,
-// которое держит его сессия.
+// Thin bridge: the agent side of the seam to the machine daemon (wire shared/seam.ts,
+// entrance shared/seam-entrance.ts, daemon daemon.ts). It relays the harness stdio to the
+// daemon of its grant directory as JSON-RPC both ways and keeps only what a break would
+// turn into silence or loss: the harness initialize, calls in flight, the held seat key.
 //
-//   демона нет      поднимает его отсоединённо (`iskron.mjs daemon`, копией новее из своей и
-//                   домашней) под выборами (замок подъёма в личном каталоге шва); не встал,
-//                   вход не личный, замка не взять — полный мост в процессе, и мост говорит
-//                   это: stderr, первый ответ тула, отметка запасного пути (fallback.ts).
-//                   Поднятый демон ушёл кодом «демон уже есть» — ждать живого, не идти полным
-//   обрыв связи     запрос, чей приём демон подтвердил (ack), — вердикт «исход
-//                   неизвестен»; не подтверждённый демоном, говорящим ack, сессия не
-//                   видела — он переотправляется после переподхвата сам, вместо ошибки;
-//                   демон без ack — «исход неизвестен» всегда. Закрытый вердиктом id
-//                   помнится: настоящий ответ, пришедший после, харнесу не идёт. Затем
-//                   переподхват по id локальной сессии; сессия новая — initialize
-//                   переигрывается, место сессии возвращается по записи держания
-//                   (iskron/resume с его ключом и сессией харнеса), и вызовы ждут этих
-//                   ходов (спутник на паузе места не берёт); не вернулось — уведомление
-//                   lost и отказ вслух каждого вызова тула в его граф, кроме
-//                   iskron_stand
-//   конец           stdin закрыт, SIGTERM — bye демону с ограниченным ожиданием
+//   no daemon     raise one detached (`<bridge> daemon`, the newer of own and home copy)
+//                 under the raise lock; not up, entrance not private, or no lock — the full
+//                 bridge in-process, said on stderr, in the first tool answer and as a
+//                 fallback mark (fallback.ts). A raised daemon that exits "daemon busy" is
+//                 waited for, not replaced by the full bridge.
+//   link broken   an acked call gets "outcome unknown"; an unacked one (daemon speaks ack)
+//                 is resent after the reattach; a daemon without ack — always unknown. A
+//                 verdicted id is remembered: its late answer is dropped. Reattach by the
+//                 local session id; a new session replays initialize and resumes the held
+//                 seat by its hold record (resume with its key and the harness session), harness calls wait for these moves (a paused
+//                 satellite takes no seat); not back — a lost notice and a spoken refusal of
+//                 each tool call into its graph, except the stand tool.
+//   end           stdin closed, SIGTERM — bye to the daemon with a bounded wait.
 //
-// Умолчание моста во всех харнесах; выключатель ISKRON_BRIDGE_DAEMON=0 (или
-// ISKRON_BRIDGE_NO_DAEMON=1) — полный мост всегда. Выравнивание дома при старте
-// (cli: syncHome/reexec) тонкий мост делает сам, как полный; сверку с релизами
-// GitHub — никогда: её ведёт только демон (в полном ходе — движок, как у полного).
+// Default in every harness; BRIDGE_DAEMON=0 (or BRIDGE_NO_DAEMON=1) — always the full
+// bridge. Home sync at start (cli: syncHome/reexec) is done here as in the full bridge;
+// release checks never: only the daemon runs them (the engine, in full mode).
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 
-import { envName, ID_PREFIX, method } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { BRIDGE_NAME, envName, ID_PREFIX, method, THIN } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import {
   connectSeam,
   DAEMON_ENV,
@@ -55,39 +49,38 @@ import { sleep } from "./store.ts";
 import { debug, flushStdout, log, writeTo } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Сколько ждать демона — своего или поднятого — прежде чем идти полным мостом. */
+/** How long to wait for a daemon, own or raised, before going as the full bridge. */
 const ATTACH_MS = ms(envName("BRIDGE_DAEMON_WAIT_MS"), 5_000);
-/** Сколько ждать демона после обрыва: уходящий демон передаёт места преемнику — тот встаёт не сразу. */
+/** Wait after a break: a leaving daemon hands seats to a successor that does not rise at once. */
 const REATTACH_MS = ms(envName("BRIDGE_DAEMON_REATTACH_MS"), 30_000);
-/** Сколько ждать bye-ok на уходе. */
 const BYE_MS = ms(envName("BRIDGE_BYE_MS"), 5_000);
 const HELLO_MS = 3_000;
 const POLL_MS = 100;
-/** Сколько ждать преемника, которого назвал уходящий демон, прежде чем поднять демон самому. */
+/** How long to wait for a successor named by a leaving daemon before raising one. */
 const SUCCESSOR_MS = 20_000;
-/** Поднятый демон ушёл словом «демон уже есть» — поднимать снова не раньше этой паузы. */
+/** A raised daemon exited "daemon busy": do not raise again before this pause. */
 const BUSY_RETRY_MS = 2_000;
-/** Сколько вызовы харнеса ждут ответа на ходы самого моста в новой сессии. */
+/** How long harness calls wait for the bridge's own moves in a new session. */
 const GATE_MS = 20_000;
 
-/** Тонкий мост включён: умолчание, пока не стоит выключатель. */
+/** Thin bridge on: the default unless a switch is set. */
 export function daemonWanted(): boolean {
   if (process.env[DAEMON_ENV]?.trim() === "0") return false;
   const off = process.env[NO_DAEMON_ENV]?.trim();
   return !off || off === "0";
 }
 
-// --- тонкий мост -------------------------------------------------------------
+// --- thin bridge -------------------------------------------------------------
 
 interface Flight {
   id: string | number;
   msg: JsonRpcMessage;
-  /** Демон подтвердил приём (ack): сессия запрос видела — исход неизвестен. */
+  /** The daemon acked it: the session saw the request — the outcome is unknown. */
   acked: boolean;
 }
 
 export function thinMain(argv: string[]): void {
-  // Конфиг разобран здесь (log и debug читают его); движок поднимается им только в полном ходе.
+  // Config is parsed here (log and debug read it); the engine starts only in full mode.
   const cfg = parseArgs(argv);
   setConfig(cfg);
   const authDir = cfg.authDir;
@@ -101,19 +94,19 @@ export function thinMain(argv: string[]): void {
   let initCopy: JsonRpcMessage | null = null;
   let initSent = false;
   let initializedSeen = false;
-  let word: string | null = null; // слово о полном ходе — в первый ответ тула
+  let word: string | null = null; // the full-mode word, for the first tool answer
   let leaving: Promise<void> | null = null;
   let byeDone: (() => void) | null = null;
-  let heldKey: string | null = null; // место, которое держит сессия, — вернуть его в новой сессии
-  let paused = false; // харнес поставил спутника на паузу (bridge/suspend.ts): место ждёт по записи паузы
+  let heldKey: string | null = null; // the seat the session holds — resumed in a new session
+  let paused = false; // the harness paused the satellite (bridge/suspend.ts): the seat waits on its pause record
   let everAttached = false;
-  let successorAwaited = 0; // миг, когда уходящий демон назвал преемника
+  let successorAwaited = 0; // when a leaving daemon named its successor
   const queue: JsonRpcMessage[] = [];
   const flights = new Map<string, Flight>();
-  const verdicted = new Set<string>(); // id, закрытые вердиктом: их поздний ответ — дубль
+  const verdicted = new Set<string>(); // ids closed by a verdict: a late answer is a duplicate
   const replayIds = new Set<string>();
-  const realmIds = realmListAsk(); // служебные вызовы списка графов (lostplaces.ts)
-  const cancelled = new Set<string>(); // отменённые харнесом, пока их приём не подтверждён
+  const realmIds = realmListAsk(); // own realm-list calls (lostplaces.ts)
+  const cancelled = new Set<string>(); // cancelled by the harness before their ack
   let replays = 0;
   const key = (id: unknown) => JSON.stringify(id);
   const writeHarness = (m: JsonRpcMessage) => writeTo(process.stdout, JSON.stringify(m) + "\n");
@@ -122,22 +115,21 @@ export function thinMain(argv: string[]): void {
     if (msg.method === undefined && msg.id !== undefined && msg.id !== null) {
       const k = key(msg.id);
       if (realmIds.reply(msg, log)) {
-        openGate(k); // ворота держались и на списке графов (askRealms) — ответ пришёл
-        return; // ответ своего вызова списка графов — не харнесу
+        openGate(k); // the gate also waited on the realm list (askRealms)
+        return;
       }
       if (replayIds.delete(k)) {
-        // Ответ хода самого моста (initialize, resume): харнес свой уже получил.
-        // Неудачный возврат места — слово агенту; вызовы харнеса ждали этих ответов.
+        // An answer to the bridge's own move (initialize, resume): the harness has its own.
         const back = resuming.get(k);
         resuming.delete(k);
         if (back && msg.result?.resumed !== true) {
           placeLost(back.key, back.realm, String(msg.result?.word ?? msg.error?.message ?? "?"));
-          askRealms(); // потеря открылась ответом resume — списки графов спросить теперь
+          askRealms(); // the loss surfaced with the resume answer — ask the realm list now
         }
         openGate(k);
         return;
       }
-      cancelled.delete(k); // ответ пришёл — отмена своё отжила
+      cancelled.delete(k);
       if (verdicted.delete(k)) {
         debug(`a late answer to ${k} dropped — the harness already has its verdict`);
         return;
@@ -151,17 +143,16 @@ export function thinMain(argv: string[]): void {
       }
     }
     const place = placeWord(msg);
-    // Слова о местах сессии свёрнуты в lostplaces.seen; released словом сессии
-    // демона при живом харнесе — не уход агента (конец демона без преемника).
+    // Seat words fold into lostplaces.seen; "released" from a daemon session while the
+    // harness lives is not the agent leaving (the daemon ended without a successor).
     heldKey = places.seen(place, heldKey, mode === "daemon" && !leaving);
     writeHarness(msg);
   };
 
-  // Ворота после переподхвата к новой сессии: вызовы харнеса ждут, пока ходы самого
-  // моста (переигранный initialize, возврат места, служебный список графов) не
-  // ответят, — иначе записи обгоняют возврат места и ложатся без автора, а отказ
-  // потерянного места судится до алиасов из списка. Не ответили за GATE_MS —
-  // ворота открываются со словом.
+  // Gate after a reattach to a new session: harness calls wait until the bridge's own
+  // moves (replayed initialize, seat resume, realm list) answer — otherwise writes overtake
+  // the resume and land without an author, and a lost-seat refusal is judged before the
+  // list's aliases. Not answered in GATE_MS — the gate opens with a log line.
   const gate = new Set<string>();
   let gateTimer: ReturnType<typeof setTimeout> | null = null;
   const openGate = (k?: string) => {
@@ -184,38 +175,34 @@ export function thinMain(argv: string[]): void {
     }, GATE_MS);
   };
 
-  // Места сессии и их потеря при смене демона (lostplaces.ts).
   const places = lostPlaces(writeHarness, log);
   const live = places.live;
-  const resuming = new Map<string, { key: string; realm: string }>(); // id iskron/resume → место
+  const resuming = new Map<string, { key: string; realm: string }>(); // resume call id → seat
   const placeLost = (k: string, realm: string, why: string) => {
     places.lose(k, realm, why, cfg.satellite && k === heldKey);
     if (k === heldKey) heldKey = null;
   };
-  // Спросить список графов своим вызовом (потери есть — без списка rN и слаг
-  // вызовов не разрешаются, lostplaces.ts): по переподхвату и по отказу возврата
-  // места — потеря держимого места открывается ответом iskron/resume, позже
-  // точки переподхвата.
+  // Ask the realm list with an own call when seats are lost: without it rN and slug of
+  // calls do not resolve (lostplaces.ts). The held seat's loss surfaces with the resume
+  // answer, later than the reattach.
   const askRealms = () => {
     const m = realmIds.ask(places.lostCount(), () => `${ID_PREFIX}thin-realms-${++replays}`);
     if (!m) return;
     if (mode === "daemon" && link) toDaemon(link, m);
     else if (mode === "local") toLocal(m);
     else return;
-    // Ответ списка в полёте — держать ворота: отказ потерянного места сличает rN
-    // и слаг вызова по алиасам из списка (lostplaces.ts), и вызов, приговорённый
-    // до ответа, получил бы unresolved-отказ там, где список разрешил бы имя.
+    // Hold the gate while the list is in flight: a call judged before it would get an
+    // unresolved refusal where the list's aliases would resolve the name.
     closeGate(key(m.id));
   };
 
-  // Вердикт каждому id в полёте — и память о нём, чтобы поздний ответ не стал вторым.
-  // Неподтверждённый запрос демона, говорящего ack, сессия не видела: при
-  // `resend` он не закрывается вердиктом, а встаёт в очередь — уйдёт снова.
+  // A verdict to every id in flight, remembered so a late answer is not a second one.
+  // With `resend`, a request unacked by an acking daemon was never seen: it is queued again.
   const verdictAll = (why: string, acks: boolean, resend = false): JsonRpcMessage[] => {
     const again: JsonRpcMessage[] = [];
     for (const [k, f] of flights) {
       if (resend && acks && !f.acked) {
-        // Харнес отменил его, пока тот не ушёл, — не переотправлять и не отвечать.
+        // Cancelled by the harness before it went: neither resend nor answer.
         if (cancelled.delete(k)) flights.delete(k);
         else again.push(f.msg);
         continue;
@@ -230,7 +217,7 @@ export function thinMain(argv: string[]): void {
   const toDaemon = (l: SeamLink, msg: JsonRpcMessage) => {
     if (msg.method === "initialize") initSent = true;
     const f = msg.id !== undefined && msg.id !== null ? flights.get(key(msg.id)) : undefined;
-    if (f && f.msg === msg) f.acked = false; // уходит заново — ждёт нового ack
+    if (f && f.msg === msg) f.acked = false; // sent again — waits for a new ack
     l.send({ t: "rpc", msg });
   };
   const toLocal = (msg: JsonRpcMessage) => {
@@ -238,8 +225,8 @@ export function thinMain(argv: string[]): void {
     local?.input.write(JSON.stringify(msg) + "\n");
   };
   const dispatch = (msg: JsonRpcMessage) => {
-    // Место не вернулось в новой сессии: вызов тула в его граф — отказ вслух
-    // (lostplaces.ts); судится в миг отправки, после ворот — возврат места уже ответил.
+    // A tool call into the graph of a seat lost in the new session is refused aloud
+    // (lostplaces.ts), judged at send time — after the gate the resume has answered.
     const refusal = !gate.size && msg.id != null ? places.refusal(msg) : null;
     if (refusal) {
       flights.delete(key(msg.id));
@@ -248,16 +235,14 @@ export function thinMain(argv: string[]): void {
         id: msg.id,
         result: { isError: true, content: [{ type: "text", text: refusal }] },
       });
-    } else if (gate.size)
-      queue.push(msg); // ходы самого моста в новой сессии ещё не ответили
+    } else if (gate.size) queue.push(msg);
     else if (mode === "daemon" && link) toDaemon(link, msg);
     else if (mode === "local") toLocal(msg);
     else queue.push(msg);
   };
-  // Сессия на той стороне новая, а харнес своё рукопожатие уже прошёл: мост
-  // переигрывает его сам, своим id, и ответ харнесу не несёт; место, которое
-  // держала прежняя сессия, возвращается по записи держания. Исходный initialize,
-  // стоящий в очереди на переотправку, и есть рукопожатие — его не дублируем.
+  // The session on the other side is new while the harness already shook hands: the
+  // bridge replays initialize with its own id and keeps the answer; the held seat comes
+  // back by its hold record. An initialize queued for resend is the handshake itself.
   const replay = (send: (m: JsonRpcMessage) => void) => {
     if (!initCopy || !initSent) return;
     if (!queue.some((m) => m.method === "initialize")) {
@@ -267,18 +252,14 @@ export function thinMain(argv: string[]): void {
       send({ ...initCopy, id });
       if (initializedSeen) send({ jsonrpc: "2.0", method: "notifications/initialized" });
     }
-    // Места рядом в других графах тонкий мост не возвращает (предел шага 2) — громко.
+    // Beside seats in other graphs are not resumed by the thin bridge — loudly.
     const held = heldKey ? { key: heldKey, realm: live.get(heldKey) ?? "" } : null;
     for (const [k, realm] of [...live]) {
       if (k === heldKey) continue;
-      placeLost(
-        k,
-        realm,
-        L("места других графов рядом не возвращаются", "beside seats do not come back"),
-      );
+      placeLost(k, realm, words(THIN).besideNotBack());
     }
     live.clear();
-    // Спутник на паузе места не берёт: его конец — не конец прогона, место и дела ждут по записи паузы.
+    // A paused satellite takes no seat: its seat and cases wait on the pause record.
     if (held && paused)
       log(`the session is new — its place ${held.key} is paused and waits on its pause record`);
     else if (held) {
@@ -296,7 +277,7 @@ export function thinMain(argv: string[]): void {
     log(`${reason} — going as the full bridge inside this process`);
     markFallback(authDir, { build: BUILD, cwd: process.cwd(), why: reason });
     word =
-      `iskron-bridge ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process ` +
+      `${BRIDGE_NAME} ${BUILD}: ${reason}; this bridge runs as the full bridge in its own process ` +
       `(the machine's daemon is the default; ${DAEMON_ENV}=0 runs the full bridge on purpose).`;
     const input = new PassThrough();
     const output = new PassThrough();
@@ -311,7 +292,7 @@ export function thinMain(argv: string[]): void {
     local = { session, input };
     mode = "local";
     replay(toLocal);
-    askRealms(); // потери replay'я открылись и здесь — списки графов спросить в своей сессии
+    askRealms(); // the replay's seat losses surface here too: ask in the local session
     for (const m of queue.splice(0)) dispatch(m);
   };
 
@@ -332,7 +313,7 @@ export function thinMain(argv: string[]): void {
       else if (f.t === "ack") {
         const fl = flights.get(key(f.id));
         if (fl) fl.acked = true;
-        cancelled.delete(key(f.id)); // принят сессией — отмена идёт ей самой
+        cancelled.delete(key(f.id)); // taken by the session — a cancel goes to it now
       } else if (f.t === "log")
         writeTo(process.stderr, f.line.endsWith("\n") ? f.line : `${f.line}\n`);
       else if (f.t === "handover") {
@@ -349,7 +330,7 @@ export function thinMain(argv: string[]): void {
       lost(!!w.ack);
     });
     if (!resumed) replay((m) => toDaemon(l, m));
-    askRealms(); // потери при переподхвате — списки графов своим вызовом (lostplaces.ts)
+    askRealms();
     for (const m of queue.splice(0)) dispatch(m);
   };
 
@@ -358,8 +339,8 @@ export function thinMain(argv: string[]): void {
     replayIds.clear();
     resuming.clear();
     realmIds.forget();
-    gate.clear(); // ходы моста в оборванной сессии больше не ответят — новая сессия закроет ворота заново
-    if (gateTimer) clearTimeout(gateTimer); // …и таймер: унаследованный открыл бы ворота раньше GATE_MS новой сессии
+    gate.clear(); // the broken session's moves will not answer — the new session closes the gate again
+    if (gateTimer) clearTimeout(gateTimer); // an inherited timer would open the new session's gate early
     gateTimer = null;
     const inFlight = flights.size;
     const again = verdictAll(
@@ -372,7 +353,7 @@ export function thinMain(argv: string[]): void {
         `${again.length} not taken by the daemon go again after the reattach, ` +
         `${inFlight - again.length} get a verdict; reattaching`,
     );
-    queue.unshift(...again); // не ушедшие — первыми, в прежнем порядке
+    queue.unshift(...again); // unsent ones first, in their order
     void attach();
   };
 
@@ -395,8 +376,8 @@ export function thinMain(argv: string[]): void {
           if (!(e instanceof SeamError)) throw e;
           if (e.kind === "refused")
             return goLocal(`the machine's bridge daemon refused this bridge: ${e.message}`);
-          // Уходящий демон назвал преемника — его и ждать: поднятый нами демон
-          // спорил бы с ним за вход.
+          // A successor named by the leaving daemon is awaited: a daemon raised here
+          // would fight it for the entrance.
           const successorDue = !!successorAwaited && Date.now() - successorAwaited < SUCCESSOR_MS;
           if (e.kind === "absent" && !raise && !successorDue && Date.now() >= raiseAgainAt) {
             const r = raiseDaemon(authDir);
@@ -405,8 +386,8 @@ export function thinMain(argv: string[]): void {
               return goLocal(`cannot raise the bridge daemon for ${authDir}: ${r.why}`);
             if (r.kind === "raising")
               void r.failed.then(({ code, why }) => {
-                // «Демон уже есть» — жив уходящий или встаёт другой: ждать его, не идти
-                // полным; поднять снова — не раньше паузы, иначе подъём за подъёмом.
+                // "Daemon busy": a leaving one lives or another rises — wait for it, and
+                // raise again only after a pause, not raise after raise.
                 if (code !== DAEMON_BUSY_EXIT) return void (raiseFailed = why);
                 r.release();
                 if (raise === r) raise = null;
@@ -437,8 +418,8 @@ export function thinMain(argv: string[]): void {
     }
     if (msg.method === "initialize") initCopy = msg;
     if (msg.method === "notifications/initialized") initializedSeen = true;
-    // Отмена вызова, который ещё не ушёл (ждёт переподхвата или ворот) либо ушёл без
-    // ack уходящему демону: он не уходит снова. Принятый демоном — отмена идёт сессии.
+    // Cancel of a call not yet sent (waiting for reattach or the gate) or sent unacked
+    // to a leaving daemon: it does not go again. An acked one — the cancel goes to the session.
     if (msg.method === "notifications/cancelled") {
       const k = key(msg.params?.requestId);
       const f = flights.get(k);
@@ -451,11 +432,11 @@ export function thinMain(argv: string[]): void {
       }
     }
     if (msg.method && msg.id !== undefined && msg.id !== null) {
-      verdicted.delete(key(msg.id)); // харнес взял id снова — его ответ уже не дубль
-      cancelled.delete(key(msg.id)); // и прежняя отмена этого id — не о нём
+      verdicted.delete(key(msg.id)); // the harness reused the id — its answer is no duplicate
+      cancelled.delete(key(msg.id));
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });
     }
-    dispatch(seeSession(msg)); // сессия, названная плагином, — в возврат места (lostplaces.ts)
+    dispatch(seeSession(msg)); // the session the plugin names goes into the seat's return (lostplaces.ts)
   });
 
   const leave = (why: string): Promise<void> => (leaving ??= windDown(why));
@@ -467,23 +448,23 @@ export function thinMain(argv: string[]): void {
     } else if (link) {
       const l = link;
       acks = !!l.welcome.ack;
-      // bye: демон отвечает всё, что в полёте, снимает сессию и говорит bye-ok
+      // bye: the daemon answers everything in flight, drops the session, says bye-ok
       await new Promise<void>((resolve) => {
         byeDone = resolve;
         setTimeout(resolve, BYE_MS).unref?.();
         l.send({ t: "bye", why });
       });
       l.close();
-    } else acks = true; // связи нет: всё, что ждёт переотправки, так и не ушло
-    // Чего демон не ответил (или что так и не ушло) — вердиктом: харнес мог ещё читать.
+    } else acks = true; // no link: whatever waited for a resend never went
+    // What the daemon did not answer (or never went) gets a verdict: the harness may still read.
     verdictAll("the bridge left before the machine's daemon answered", acks);
     await flushStdout(process.stdout);
     process.exit(0);
   };
   rl.on("close", () => void leave("stdin closed, the harness is gone"));
   process.on("SIGTERM", () => void leave("SIGTERM"));
-  // Ctrl-C: в полном ходе — как у полного моста (выход сразу, без ожидания
-  // входа); через демон — bye, второй Ctrl-C выходит сразу.
+  // Ctrl-C: in full mode as the full bridge (exit at once); through the daemon — bye,
+  // a second Ctrl-C exits at once.
   const localSigint = fullBridgeSigint(leave);
   let interrupted = false;
   process.on("SIGINT", () => {

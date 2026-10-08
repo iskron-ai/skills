@@ -1,11 +1,12 @@
-// Статусный адрес держимого канала для занятости (status.ts, engine.ts, session.ts).
+// Status address of the held channel for busyness (status.ts, engine.ts, session.ts).
 import { H } from "./holdstate.ts";
 import { extraIn } from "./places.ts";
 import { state } from "./transport.ts";
 
 /**
- * Статусный адрес канала, ключ, id и адрес места (@handle:name, как доска; derived — выведен
- * мостом, hello его не называл; ни того, ни другого — null) этого графа (без графа — основного), с именем места — для занятости.
+ * The channel's status address, key, id and seat address (@handle:name as the board has
+ * it; derived — built by the bridge, hello did not name it; neither — null) of this graph
+ * (without a graph — the main one), with the seat name — for busyness.
  */
 export function statusAddress(realm?: string): {
   url: string;

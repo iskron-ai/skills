@@ -1,18 +1,11 @@
-// Штамп кадра — прежде, чем кадр покинет мост (граф nks-dev: #4234).
+// Frame stamp before the frame leaves the bridge (graph @nks/nks-dev, node #4234).
+// No read-ahead of frame bodies: the socket delivers them whole or not at all
+// (graph @nks/nks-dev, node #5207); a real break arrives as invalid JSON and never reaches
+// body parsing. The frame's body_chars is the serialized size, not a checksum.
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { state } from "./transport.ts";
 
-/**
- * Дочитывания у моста нет — и не потому, что его сняли, а потому что тела
- * никто не режет: сокет отдаёт сообщение целым или никак, а настоящий обрыв
- * приходит невалидным JSON и до разбора тела не доживает (слово держателя
- * платформы, граф nks-dev: #5207). body_chars в кадре — размер сериализованного
- * тела, не контрольная сумма; сравнивать его с распакованным текстом значило
- * объявлять целое тело началом и гнать мост дочитывать то, что уже есть.
- * Чтение слова по адресу (history view=message) остаётся дверью для того слоя
- * чтения, который сам сказал, что строку укоротил, — у моста такого слоя нет.
- */
-/** Кто говорит — штампует мост: он один знает роль своего стояния. */
+/** The bridge stamps the speaker: only it knows its standing's role. */
 export function stampOrigin(frame: Frame | null): Frame | null {
   if (!frame || frame.type !== "message") return frame;
   return { ...frame, origin: classifyOrigin(frame, state.standing?.karta) };

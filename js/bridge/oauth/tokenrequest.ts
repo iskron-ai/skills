@@ -19,7 +19,7 @@ async function tokenRequestOnce(meta: Meta, params: Record<string, string>): Pro
     signal: AbortSignal.timeout(30_000),
   });
   noteServerDate(res);
-  // Под Bun пустое тело даёт null, а не бросок — отсюда `?? {}`.
+  // Under Bun an empty body yields null, not a throw — hence `?? {}`.
   const body = ((await res.json().catch(() => null)) ?? {}) as TokenBody & TokenEndpointError;
   if (!res.ok) {
     throw new TokenError(

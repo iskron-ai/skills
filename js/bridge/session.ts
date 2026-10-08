@@ -1,14 +1,9 @@
-// Сессия моста — всё, что идёт после stdio: разбор строк харнеса, доставка
-// (deliver), стояние, двери, usage и уход. Полному мосту stdio подаёт процесс
-// (main.ts); тонкому мосту в запасном ходе и демону машины — потоки (thin.ts,
-// shared/seam.ts). Поведение одно и то же: разрез — только о том, откуда
-// строки приходят и куда уходят ответы.
-//
-// Сессия этого процесса (полный мост, запасной ход тонкого) живёт в области
-// процесса. Сессия чужого моста (демон машины, daemon.ts) — в своей области
-// (shared/scope.ts): её конфиг, транспорт, место, поток вывода, pid, cwd и
-// окружение — моста харнеса, и сессий в одном процессе сколько угодно.
-import "./standwire.ts"; // отъём места и возврат своего встают тем же iskron_stand
+// The bridge session: everything after stdio — the harness's lines, delivery,
+// standing, doors, usage and leaving. The full bridge feeds it the process's
+// stdio (main.ts); the thin bridge's fallback and the machine daemon feed it
+// streams (thin.ts, shared/seam.ts). A foreign bridge's session lives in its
+// own scope (shared/scope.ts).
+import "./standwire.ts"; // a taken seat and an own return stand by the same stand tool
 
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
@@ -33,33 +28,29 @@ import { pauseSettled, suspended } from "./suspend.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
-/** Сколько сессия демона, передающего места преемнику, ждёт вызовов в полёте: остальное тонкий мост закроет вердиктом. */
+/** How long a daemon session handing seats over waits for calls in flight; the thin bridge answers the rest. */
 const HANDOVER_WAIT_MS = Number(process.env[envName("BRIDGE_HANDOVER_WAIT_MS")]) || 10_000;
 
-/** Откуда сессия читает строки харнеса и куда пишет ответы. */
+/** Where the session reads the harness's lines and writes its answers. */
 export interface SessionIO {
   input: NodeJS.ReadableStream;
   output: Writable;
 }
 
 export interface BridgeSession {
-  /** Уход один на сессию: кто пришёл вторым — ждёт первого. Процесс не гасит. */
+  /** One leave per session: a second caller waits for the first. Does not exit the process. */
   leave(why: string): Promise<void>;
-  /** Сессия ушла: вход закрыт (или позван leave) и всё отвечено. */
+  /** Input closed (or leave called) and everything answered. */
   readonly ended: Promise<void>;
-  /** Откуда сессия; null — сессия этого процесса. */
+  /** null — this process's own session. */
   readonly origin: SessionOrigin | null;
-  /** Область сессии (shared/scope.ts): демон исполняет в ней то, что говорит сессии сам. */
+  /** The daemon runs in this scope what it tells the session on its own. */
   readonly scope: Scope | null;
-  /** Миг последнего вызова тула агентом (мс эпохи; 0 — не было): точка хартбита места, #6510 (work.ts). */
+  /** Last agent tool call, ms epoch (0 — none) (graph @nks/nks-dev, node #6510). */
   lastWork(): number;
 }
 
-/**
- * Откуда сессия — мост харнеса, каким его запустили: argv, окружение, cwd, pid,
- * файл моста, отпечаток личного токена. Демон берёт его из рукопожатия шва
- * (shared/seam.ts SeamHello) как есть.
- */
+/** The harness bridge as launched, taken as-is from the seam handshake (shared/seam.ts SeamHello). */
 export interface SessionOrigin {
   argv: string[];
   env: Record<string, string>;
@@ -69,7 +60,7 @@ export interface SessionOrigin {
   patSha?: string | null;
 }
 
-/** Опции сессии чужого моста: id в журнале и куда идёт её слово log. */
+/** Options of a foreign bridge's session: its id in the journal and where its log goes. */
 export interface SessionOptions {
   id?: string;
   log?: (line: string) => void;
@@ -77,12 +68,9 @@ export interface SessionOptions {
 
 let counter = 0;
 
-// Конфиг сессии — из argv и окружения моста харнеса, в её области: ключи
-// сессии (isSessionEnvKey) — его слово, остальное — процесса. Личный токен —
-// не ключ сессии: у демона свой (окружение подъёма или файл гранта), и
-// отпечаток сессии с ним сверяется — другой токен — отказ, а не молчаливая
-// подмена входа. Окружение, прочитанное модулями при загрузке (ручки проб
-// *_MS), — процесса.
+// Session keys (isSessionEnvKey) come from the harness bridge, the rest from the process, as
+// does env read at module load (probe *_MS knobs).
+// The personal token is not a session key: the daemon has its own, and a different one is refused.
 function applyOrigin(origin: SessionOrigin): void {
   const cfg = readArgs(origin.argv);
   if (origin.patSha !== undefined && patShaOf(cfg.pat) !== origin.patSha)
@@ -93,11 +81,10 @@ function applyOrigin(origin: SessionOrigin): void {
 }
 
 /**
- * Открыть сессию моста над потоками. Конец входа — уход сессии (как закрытый
- * stdin у полного моста); выходить ли процессу — решает хозяин сессии.
- * Без origin — сессия этого процесса: setConfig уже позван (main.ts, thin.ts).
- * С origin — сессия чужого моста (демон) в своей области: негодный argv или
- * чужой токен — бросок, и хозяин отказывает сессии.
+ * Open a bridge session over streams. Without origin — this process's session
+ * (setConfig already called); with origin — a foreign bridge's session in its
+ * own scope, throwing on bad argv or a foreign token. End of input is the session's
+ * leave (like stdin closing); whether the process exits is the owner's call.
  */
 export function openSession(
   io: SessionIO,
@@ -120,16 +107,17 @@ export function openSession(
 function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null): BridgeSession {
   setSessionOutput(io.output);
   guardStream(io.output); // before the first write: a broken pipe is news, not a crash
-  holdFromEnv(); // сокет из окружения без connect (отладка) либо возврат места по каталогу сессии (#5140)
-  // Никто не слушает — мост уходит с места сам (#4895). Спутник сторожа не держит
-  // по устройству: его место подписывает записи прогона, и уход по глухоте погасил бы его посреди работы.
+  // A socket from env without connect (debug), or the seat returned by the session dir
+  // (graph @nks/nks-dev, node #5140).
+  holdFromEnv();
+  // Nobody listening, the bridge leaves the seat itself (graph @nks/nks-dev, node #4895); a
+  // satellite's seat signs the run's writes, so it keeps no deafness watch.
   if (!CFG.satellite) startDeafnessWatch();
 
   const rl = createInterface({ input: io.input, terminal: false });
   const pending = new Set<Promise<void>>();
   let handshake: Promise<void> | null = null;
-  // Строки входа приходят событием потока — из области того, кто пишет в поток
-  // (у демона — сокет шва): сессия исполняет их в своей.
+  // Lines arrive in the writer's scope (the daemon's seam socket): run them in the session's.
   rl.on(
     "line",
     bindScope((line: string) => {
@@ -142,15 +130,11 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
         log(`unparseable line from harness: ${trimmed.slice(0, 120)}`);
         return;
       }
-      // Последняя работа агента (work.ts, хартбит места #6510): только вызов тула
-      // агентом — не служебные ходы плагина (iskron/check, iskron/usage) и моста.
+      // Only an agent's tool call counts as work, not the bridge's or plugin's own calls (graph @nks/nks-dev, node #6510).
       if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith(ID_PREFIX))
         noteAgentWork();
-      // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
-      // initialized и первый вызов, не дождавшись ответа на initialize; сервер без
-      // Mcp-Session-Id отвечает 400 (граф nks-dev: #4308). Настоящие клиенты ждут —
-      // мост ждёт за тех, кто не ждёт: всё, что пришло, пока рукопожатие в полёте,
-      // уходит после него, в порядке прихода.
+      // Pipelined clients send calls before the initialize answer; they wait behind the handshake, in order (graph @nks/nks-dev, node #4308).
+      // Sent early, they would reach the server without Mcp-Session-Id and get 400.
       const run = () =>
         deliver(msg).catch((e) => log(`unexpected: ${(e as Error)?.stack || errorMessage(e)}`));
       let p: Promise<void>;
@@ -178,10 +162,9 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
   // and takes the flow over. It is NOT survivable for an in-flight rotation:
   // the killed bridge leaves the machine holding a retired refresh token. That
   // is the price SIGKILL always pays; SIGTERM, stdin-close, and SIGINT no longer do.
-  // Уход один на процесс: харнес, гася мост, закрывает stdin И шлёт SIGTERM, и
-  // второй уход выходил из процесса, не дождавшись, пока первый снимет
-  // занятость с доски (#5140, D1). Кто пришёл вторым — ждёт первого.
-  // У сессии демона вход и процесс не совпадают: вход её ждёт демон, не она.
+  // The harness closes stdin AND sends SIGTERM: the second leave waits for the first (graph @nks/nks-dev, node #5140).
+  // Otherwise it exits before the first takes busyness off the board. A daemon session's
+  // input is not its process: the daemon awaits it.
   let leaving: Promise<void> | null = null;
   let markEnded!: () => void;
   const ended = new Promise<void>((resolve) => (markEnded = resolve));
@@ -190,20 +173,18 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
   );
   const windDown = async (why: string) => {
     debug(`${why} — winding down`);
-    // Демон передаёт места преемнику (daemon.ts): место не отпускается словом,
-    // занятость не снимается, а вызовов в полёте ждём коротко — тонкий мост
-    // закроет неотвеченное вердиктом и переотправит неотправленное.
+    // Handover to a successor daemon (daemon.ts): the seat is kept, calls in flight get a short wait.
     const handover = !!origin && handoverUnderway();
     const paused = suspended();
-    // Место, дела, занятость, снимок расхода — runend.ts; сбой не обрывает уход (e2e12, №147).
+    // A failure of the run's end does not break the leave.
     await closeRun(why, handover).catch((e: Error) => log(`the run's end failed: ${e.message}`));
     if (handover) await Promise.race([Promise.allSettled([...pending]), sleep(HANDOVER_WAIT_MS)]);
     else await Promise.allSettled([...pending, ...tokenRequestsInFlight]);
-    if (paused) await pauseSettled(); // поздний перевзвод паузы повернул адрес — запись за ним
+    if (paused) await pauseSettled(); // a late re-arm of the pause turned the address — wait for its write
     await flushStdout(io.output); // an answer half-written is an answer not given
     if (origin) {
-      // Сессия демона: вход по OAuth и ротация токена — процесса-демона, он живёт
-      // дольше сессии и их дождётся сам; имена спутника свободны с концом сессии.
+      // A daemon session: login and token rotation belong to the daemon process, which outlives it;
+      // satellite names are freed with the session.
       releaseSatelliteClaims();
       return;
     }

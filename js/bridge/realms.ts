@@ -1,36 +1,33 @@
-// Один граф — одно имя (граф nks-dev: #5838). Граф пишут тремя способами:
-// @owner/slug (так его печатают кадры и hello), короткий id rN и голый slug.
-// Сравнивать можно только каноническую форму @owner/slug: сомнение «тот же
-// граф» — не ответ, иначе r5 и чужой слаг слились бы в одно место. Короткий id
-// места узнаётся прежде всего из hello (standings[].realm всегда @owner/slug,
-// places.ts); список графов (iskron_realm list) — запасной путь, когда сличать
-// надо раньше hello. Неразрешённое имя — само по себе, не «тот же граф».
+// One graph, one name (graph @nks/nks-dev, node #5838). A graph is written as
+// @owner/slug, a short id rN or a bare slug; only the canonical @owner/slug is
+// compared, and an unresolved name is itself, never "the same graph" (else r5 and a
+// foreign slug would merge into one seat). The short id is learnt from hello first
+// (standings[].realm is always @owner/slug, places.ts); the graph list is the fallback
+// when matching is needed before hello.
 
-import { L } from "../shared/lang.ts";
+import { REALMS } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 
-// Имена графов — сессии (shared/scope.ts): у сессий демона могут быть разные серверы и учётки.
-const aliases = scoped(() => new Map<string, string>()); // rN или slug → @owner/slug
-const R = scoped(() => ({ listing: null as Promise<void> | null })); // чтение списка в полёте — одно на всех ждущих
+// Per session (shared/scope.ts): daemon sessions may have different servers and accounts.
+const aliases = scoped(() => new Map<string, string>()); // rN or slug → @owner/slug
+const R = scoped(() => ({ listing: null as Promise<void> | null })); // one list read in flight for all waiters
 
 const CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 const trimmed = (r: unknown): string => String(r ?? "").trim();
 
-/** Каноническая форма графа — @owner/slug; неразрешённое имя остаётся собой (и не равно ничему иному). */
+/** The canonical @owner/slug; an unresolved name stays itself (and equals nothing else). */
 export function canonRealm(r: unknown): string {
   const t = trimmed(r);
   if (t.startsWith("@")) return t;
   return aliases.get(t) ?? t;
 }
 
-/** Разрешено ли имя графа в @owner/slug. */
 export const resolvedRealm = (r: unknown): boolean => canonRealm(r).startsWith("@");
 
 /**
- * Отношение двух имён графа: тот же, другой — или не известно. Одно и то же
- * написание — тот же граф; иначе судят только канонические формы, а имя, не
- * разрешённое в @owner/slug, даёт «не известно»: ни место рядом, ни правило
- * одного места на нём не держатся — вызов отказывается вслух (#5838).
+ * Same spelling — same graph; otherwise only canonical forms are compared, and a
+ * name not resolved to @owner/slug gives "unknown": the call refuses aloud (#5838).
  */
 export function realmRelation(a: unknown, b: unknown): "same" | "other" | "unknown" {
   const x = trimmed(a);
@@ -40,34 +37,30 @@ export function realmRelation(a: unknown, b: unknown): "same" | "other" | "unkno
   return canonRealm(x) === canonRealm(y) ? "same" : "other";
 }
 
-/** Тот же ли граф наверняка. */
 export const sameRealm = (a: unknown, b: unknown): boolean => realmRelation(a, b) === "same";
 
-/** Другой ли граф наверняка: оба названы и разрешены в разные @owner/slug. */
+/** Surely another graph: both named and resolved to different @owner/slug. */
 export const otherRealm = (a: unknown, b: unknown): boolean =>
   !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "other";
 
-/** Не известно, тот ли граф: имя не разрешилось — вызов отказывается, не гадает. */
+/** Unknown whether the same graph: the call refuses, it does not guess. */
 export const unknownRealm = (a: unknown, b: unknown): boolean =>
   !!trimmed(a) && !!trimmed(b) && realmRelation(a, b) === "unknown";
 
-/** Слово отказа по неразрешённому имени графа; held — места моста в канонической форме. */
+/** The refusal on an unresolved graph name; held — the bridge's seats in canonical form. */
 export const unresolvedWord = (realm: unknown, held: string[]): string =>
-  L(
-    `Отказано (мост): граф «${trimmed(realm)}» мост не разрешил в @owner/slug (списка графов нет или имени в нём нет) — тот ли это граф, что у мест моста (${held.join(", ")}), не известно, и гадать нельзя. Повтори вызов с полным адресом графа @owner/slug.`,
-    `Refused (bridge): the bridge did not resolve the graph "${trimmed(realm)}" to @owner/slug (there is no list of graphs or the name is not in it) — whether it is the graph of the bridge's seats (${held.join(", ")}) is unknown, and guessing is not allowed. Repeat the call with the full graph address @owner/slug.`,
-  );
+  words(REALMS).unresolved(trimmed(realm), held.join(", "));
 
-/** Запомнить, что это имя графа — такой-то @owner/slug (hello, список графов). */
+/** Remember that this graph name is that @owner/slug (hello, the graph list). */
 export function learnRealm(alias: unknown, canonical: string): void {
   const t = trimmed(alias);
   if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
 }
 
 /**
- * Разобрать текст тула iskron_realm(action="list") — строка графа такова:
- * `    @owner/slug  rN  имя · дата` (четыре пробела, по два между полями).
- * Связывает rN с @owner/slug; голый slug — тоже имя графа, если он в списке один.
+ * Parse the realm tool's action="list" text; a graph line is
+ * `    @owner/slug  rN  name · date` (four spaces, two between fields).
+ * A bare slug is a name too when it is alone in the list.
  */
 const LIST_LINE_RE = /^ {4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) {2}(r\d+) {2}.* · /;
 export function learnRealmList(text: string): void {
@@ -84,9 +77,8 @@ export function learnRealmList(text: string): void {
 }
 
 /**
- * Разрешить имена графов в каноническую форму: есть неразрешённое — список
- * графов перечитывается (граф мог появиться после прошлого чтения); прочтённое
- * не держится навсегда отрицательным ответом. `list` — вызов iskron_realm list.
+ * Resolve graph names: any unresolved one re-reads the graph list (the graph may
+ * have appeared since), so a negative answer is not kept. `list` calls the realm list.
  */
 export async function resolveRealms(
   names: unknown[],

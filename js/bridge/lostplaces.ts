@@ -1,19 +1,15 @@
-// Места сессии глазами тонкого моста (thin.ts) и их потеря при смене демона.
-// Места — ключ → граф, как его назвал агент: основное — по уведомлению held,
-// рядом в других графах — по beside (снятое — beside-gone). Место не вернулось в
-// новой сессии — агенту уведомлением lost сейчас и отказом каждого вызова тула в
-// его граф, кроме iskron_stand, пока место с тем же ключом не взято снова; у
-// спутника — любое место-спутник того же графа (имя .sub-N выбирает мост).
-// Граф вызова сличается с графом потери по realms.ts — канонической формой
-// @owner/slug с разрешением rN и слага; вызов без графа свободен, чужой владелец
-// того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
-// с просьбой полного адреса (#5838), не текст чужой потери.
-import { ID_PREFIX, LOGGERS, method, tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+// Session seats as the thin bridge sees them (thin.ts) and their loss on a daemon
+// change: a lost seat is refused for every tool call into its graph except stand,
+// until retaken; graphs are compared canonically (realms.ts), an unresolved name
+// is refused asking for the full address (#5838). Another owner of the same slug is
+// another graph. Seats are key → graph as the agent named it: the main one by `held`,
+// others by `beside` (`beside-gone` drops one); a lost seat also gets a `lost` notice.
+import { ID_PREFIX, LOGGERS, LOST, method, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Слово сессии о месте, которое она держит или отпустила (hold.ts, places.ts). */
+/** The session's word about a seat it holds or released (hold.ts, places.ts). */
 export function placeWord(
   msg: JsonRpcMessage,
 ): { kind: string; key?: string; realm: string } | null {
@@ -27,12 +23,13 @@ export function placeWord(
 }
 
 /**
- * Сессия харнеса, которую плагин называет мосту (iskron/resume, iskron/check): тонкий
- * мост помнит её и несёт в возврат места в новой сессии демона — без неё запись
- * держания легла бы без сессии, и своё место сессия сочла бы чужим (#6702).
+ * The harness session the plugin names to the bridge (resume, check methods): the thin
+ * bridge keeps it and carries it into the seat's return in a new daemon session — without
+ * it the hold record would land unsigned and the session would take its own seat for
+ * another's (graph @nks/nks-dev, node #6702).
  */
 let harnessSession: string | null = null;
-/** Запомнить сессию харнеса из его вызова; вызов — как есть. */
+/** Remember the harness session from its call; the call passes as is. */
 export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
   const s = msg.params?.session;
   if ((msg.method === method("resume") || msg.method === method("check")) && typeof s === "string")
@@ -40,15 +37,15 @@ export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
   return msg;
 }
 /**
- * Начало id возврата места, который тонкий мост шлёт сам после смены демона (то же у
- * прежних выпусков): живого держателя такой возврат не отнимает, даже своей сессии, —
- * держать может мост, чей харнес ещё жив (resume.ts).
+ * Id prefix of the seat return the thin bridge sends itself after a daemon change (same in
+ * earlier releases): such a return never takes from a live holder, even of its own
+ * session — the holder may be a bridge whose harness is still alive (resume.ts).
  */
 export const THIN_RESUME_ID = `${ID_PREFIX}thin-resume-`;
-/** Параметры возврата места в новой сессии демона: ключ и названная сессия харнеса. */
+/** The return params in a new daemon session: the key and the named harness session. */
 const resumeParams = (key: string): { key: string; session?: string } =>
   harnessSession ? { key, session: harnessSession } : { key };
-/** Возврат места в новой сессии демона — вызов тонкого моста номер n. */
+/** The seat return in a new daemon session — the thin bridge's call number n. */
 export const resumeCall = (key: string, n: number): JsonRpcMessage & { id: string } => ({
   jsonrpc: "2.0",
   id: `${THIN_RESUME_ID}${n}`,
@@ -61,22 +58,17 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
   const lost = new Map<string, { realm: string; satellite: boolean; text: string }>();
   return {
     live,
-    /** Место снова взято (held, beside) — отказ по нему снят. */
+    /**
+     * The seat is taken again (held, beside) — its refusal lifted. A satellite's loss is
+     * lifted by any satellite seat of the same graph: the bridge picks the .sub-N name.
+     */
     regained(k: string, realm: string): void {
       live.set(k, realm);
       for (const [lk, e] of lost)
         if (lk === k || (e.satellite && sameRealm(e.realm, realm))) lost.delete(lk);
     },
     lose(k: string, realm: string, why: string, satellite: boolean): void {
-      const text = satellite
-        ? L(
-            `Отказано (мост): место спутника потеряно при смене демона машины (${k}) — у места спутника нет записи держания, и записи легли бы без автора; вызов не отправлен. Встань снова: iskron_stand с satellite_of.`,
-            `Refused (bridge): the satellite's seat was lost in the machine daemon's change (${k}) — a satellite seat has no holding record, and writes would go unattributed; the call was not sent. Stand again: iskron_stand with satellite_of.`,
-          )
-        : L(
-            `Отказано (мост): место ${k} (граф ${realm}) не вернулось после смены демона машины (${why}) — записи легли бы без автора; вызов не отправлен. Верни место: iskron_stand в этом графе тем же именем.`,
-            `Refused (bridge): the seat ${k} (graph ${realm}) did not come back after the machine daemon's change (${why}) — writes would go unattributed; the call was not sent. Bring it back: iskron_stand in that graph with the same name.`,
-          );
+      const text = satellite ? words(LOST).satellite(k) : words(LOST).seat(k, realm, why);
       lost.set(k, { realm, satellite, text });
       live.delete(k);
       log(text);
@@ -90,20 +82,17 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
         },
       });
     },
-    /** Сколько мест потеряно — тонкий мост решает по этому, учить ли имена графов. */
+    /** The thin bridge decides by it whether to learn graph names. */
     lostCount(): number {
       return lost.size;
     },
     /**
-     * Слово о месте, пришедшее тонкому мосту, свёрнуто здесь; возвращает heldKey
-     * после слова. «Держу» и «рядом» — место взято: отказ по нему снят; held с
-     * иным ключом — агент сменил основное место, и прежний ключ из live прочь —
-     * иначе следующий обрыв назвал бы его потерей. «Отпущено» (released) словом
-     * сессии демона при живом харнесе (`daemonSession`) — не уход агента: так
-     * кончается демон без преемника (SIGTERM/SIGINT), и ключ остаётся —
-     * переподхват вернёт место по записи держания (iskron/resume), а не выйдет —
-     * скажет lost вслух. Подлинный уход агента идёт через собственный leave
-     * тонкого моста, смерть и отъём места — словами dead и evicted.
+     * Fold a seat word reaching the thin bridge; returns heldKey after it. held with
+     * another key drops the old key from live, else the next break would call it lost.
+     * released from the daemon session while the harness lives is a daemon ending
+     * without successor, not the agent leaving: the key stays so the takeover resumes
+     * the seat by its hold record. The agent's real leave goes through the thin
+     * bridge's own leave; death and eviction come as dead and evicted.
      */
     seen(
       place: { kind: string; key?: string; realm: string } | null,
@@ -115,7 +104,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
           if (heldKey && heldKey !== place.key) live.delete(heldKey);
           heldKey = place.key;
         }
-        this.regained(place.key, place.realm); // место снова взято — отказ по нему снят
+        this.regained(place.key, place.realm);
       } else if (place?.kind === "beside-gone" && place.key) live.delete(place.key);
       else if (
         place &&
@@ -129,20 +118,18 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
       return heldKey;
     },
     /**
-     * Отказ вызова тула из-за потерянного места; null — пропустить. Отказ
-     * касается только вызовов в потерянный граф: вызов без графа свободен, граф
-     * сличается канонически (realms.ts), и отказ подписан графом вызова, а не
-     * первой попавшейся потери. Имя, не разрешённое против потерянных, — отказ с
-     * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
+     * Refusal of a tool call for a lost seat; null — let it pass. Only calls into a
+     * lost graph; an unresolved name is refused asking for the full address (#5838).
+     * The refusal carries the call's graph, not the first loss found.
      */
     refusal(msg: JsonRpcMessage): string | null {
       if (!lost.size || msg.method !== "tools/call" || msg.params?.name === tool("stand"))
         return null;
       const r = msg.params?.arguments?.realm;
-      if (typeof r !== "string" || !r.trim()) return null; // вызов без графа — не в потерянный граф
+      if (typeof r !== "string" || !r.trim()) return null; // a call without a graph is free
       const hit = [...lost.entries()].find(([, e]) => realmRelation(r, e.realm) === "same");
       if (hit) return hit[1].text;
-      // Граф, который мост держит, свободен; уверенно другой граф — тоже.
+      // A graph the bridge holds is free; a surely different graph too.
       if ([...live.values()].some((x) => realmRelation(r, x) === "same")) return null;
       return [...lost.values()].some((e) => realmRelation(r, e.realm) === "unknown")
         ? unresolvedWord(r, [...live.values()])
@@ -152,17 +139,14 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
 }
 
 /**
- * Служебные вызовы списка графов (iskron_realm list) тонкого моста: отказ
- * потерянного места сличает rN и слаг вызова с графом потери (realms.ts), а без
- * списка всякое неразрешённое имя — отказ с просьбой полного адреса. Мост зовёт
- * список сам, своим id (`iskron-thin-realms-*`), когда потери есть: при
- * переподхвате — сразу, по отказу возврата места — когда потеря открылась
- * ответом iskron/resume. Отказ вместо списка — громко в log, не молчание.
+ * The thin bridge's own realm list calls: without the list every unresolved name
+ * is refused. Asked with the bridge's own id when losses exist: at takeover at once, or
+ * when a resume answer reveals a loss; a refusal instead of the list goes loudly to log.
  */
 export function realmListAsk() {
-  const asked = new Set<string>(); // JSON.stringify(id) своих вызовов без ответа
+  const asked = new Set<string>(); // JSON.stringify(id) of own calls awaiting an answer
   return {
-    /** Вызов списка, когда потери есть; null — потерь нет или спрос уже в полёте. */
+    /** The list call when losses exist; null — no losses or a call already in flight. */
     ask(lostCount: number, id: () => string): JsonRpcMessage | null {
       if (!lostCount || asked.size) return null;
       const call: JsonRpcMessage = {
@@ -174,7 +158,7 @@ export function realmListAsk() {
       asked.add(JSON.stringify(call.id));
       return call;
     },
-    /** Ответ собственного вызова списка: true — потреблён (алиасы учтены, отказ — громко). */
+    /** The answer to the own list call: true — consumed. */
     reply(msg: JsonRpcMessage, log: (m: string) => void): boolean {
       if (msg.method !== undefined || msg.id === undefined || msg.id === null) return false;
       if (!asked.delete(JSON.stringify(msg.id))) return false;
@@ -190,7 +174,7 @@ export function realmListAsk() {
       learnRealmList(text);
       return true;
     },
-    /** Ответа не будет (связь порвалась) — позволить спросить снова. */
+    /** No answer will come (link broke) — allow asking again. */
     forget(): void {
       asked.clear();
     },

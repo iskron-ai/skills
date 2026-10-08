@@ -1,15 +1,12 @@
-// Список тулов сессии харнеса — снимок на её старте: харнес не перечитывает
-// его, пока сервер не скажет, что он изменился, а выкатка сервера рвёт сессию
-// моста молча (граф nks-dev: #5405). Мост помнит отпечаток отданного списка и,
-// переоткрыв сессию к серверу, сверяет его со свежим: разошёлся — харнесу
-// уходит notifications/tools/list_changed, и он читает список заново.
+// A harness reads the tool list once, and a server rollout cuts the bridge's session
+// silently (graph @nks/nks-dev, node #5405): on a re-opened session the bridge compares
+// the served list's print with a fresh one and sends tools/list_changed if they differ.
 //
-// Посреди живой HTTP-сессии сервер сам кладёт list_changed в SSE ответа на
-// каждый запрос с id, пока сессия не спросит tools/list (#6819): моста ли этот
-// запрос или харнеса — слово уходит харнесу один раз, пока он не начал
-// перечитывать; вызов, ушедший до того, как его tools/list снял пометку,
-// может сказать ещё раз (#6817 допускает лишнее уведомление). Сужение --tools
-// здесь не судится: смена вне набора стоит харнесу перечтения суженной копии.
+// Within a live HTTP session the server itself puts list_changed into the SSE of the
+// answer to every request with an id until the session asks tools/list (#6819): the
+// bridge's request or the harness's, the word reaches the harness once until it rereads;
+// a call sent before its tools/list cleared the mark may say it again (#6817 allows a
+// spare notice). The --tools narrowing is not judged here.
 import { createHash } from "node:crypto";
 
 import { scoped } from "../shared/scope.ts";
@@ -19,15 +16,15 @@ import { type JsonRpcMessage } from "./types.ts";
 const LIST_CHANGED = "notifications/tools/list_changed";
 
 const T = scoped(() => ({
-  served: null as string | null, // у сессии харнеса — свой список
-  told: false, // list_changed сказан, а харнес списка ещё не перечёл
-  inFlight: 0, // tools/list харнеса в полёте (любые страницы)
-  listing: new WeakSet<JsonRpcMessage>(), // tools/list харнеса (первая страница) в полёте
-  heldBack: new WeakSet<JsonRpcMessage>(), // …в чьём ответе сервер сказал list_changed
-  live: new WeakSet<JsonRpcMessage>(), // …на который харнесу ушёл живой список сервера
+  served: null as string | null, // each harness session has its own list
+  told: false, // list_changed said, and the harness has not reread yet
+  inFlight: 0, // the harness's tools/list in flight (any page)
+  listing: new WeakSet<JsonRpcMessage>(), // the harness's tools/list (first page) in flight
+  heldBack: new WeakSet<JsonRpcMessage>(), // …in whose answer the server said list_changed
+  live: new WeakSet<JsonRpcMessage>(), // …answered to the harness with the server's live list
 }));
 
-/** Отпечаток по именам и схемам: описания мост дописывает сам, их различие — не перемена сервера. */
+/** A print of names and schemas: the bridge rewrites descriptions itself, so they are left out. */
 export function toolsPrint(result: unknown): string | null {
   const tools = (result as { tools?: { name?: string; inputSchema?: unknown }[] } | null)?.tools;
   if (!Array.isArray(tools)) return null;
@@ -38,8 +35,8 @@ export function toolsPrint(result: unknown): string | null {
 }
 
 /**
- * Харнесу отдан список (живой или из кэша): запомнить, что он теперь знает.
- * `liveFor` — tools/list харнеса, на который ушёл живой список сервера.
+ * A list was served to the harness (live or cached): remember what it now knows.
+ * `liveFor` — the harness's tools/list answered with the server's live list.
  */
 export function noteServedTools(result: unknown, liveFor?: JsonRpcMessage): void {
   const print = toolsPrint(result);
@@ -49,14 +46,14 @@ export function noteServedTools(result: unknown, liveFor?: JsonRpcMessage): void
   if (liveFor) T.live.add(liveFor);
 }
 
-/** Свои tools/list харнеса в полёте: он и так получит свежий список. */
+/** The harness's own tools/list in flight: it gets a fresh list anyway. */
 export const harnessListing = (): boolean => T.inFlight > 0;
 
 /**
- * tools/list харнеса уходит. Первая страница: смена, объявленная в её же ответе,
- * придёт ему списком, и следующая смена снова его. Возвращает, что сделать по его концу:
- * сервер снял пометку и этим ответом, даже ошибкой (#6817), — не дошёл живой список,
- * придержанное слово уходит харнесу, иначе он остался бы со старым.
+ * The harness's tools/list goes out. First page: a change announced in its own answer
+ * reaches it as the list, and the next change is its again. Returns what to do at its end:
+ * the server cleared the mark with this answer, even an error (#6817) — if no live list
+ * got through, the held-back word goes to the harness, or it would keep the old one.
  */
 export function watchHarnessListing(
   msg: JsonRpcMessage,
@@ -77,33 +74,30 @@ export const isListChanged = (m: JsonRpcMessage): boolean =>
   m?.method === LIST_CHANGED && (m.id === undefined || m.id === null);
 
 function tell(emit: (m: JsonRpcMessage) => void, why: string, again = false): void {
-  if (T.told && !again) return; // харнес уже знает и ещё не перечёл — повтор ничего не добавит
+  if (T.told && !again) return; // the harness already knows and has not reread — a repeat adds nothing
   T.told = true;
   log(`${why} — telling the harness (tools/list_changed)`);
   emit({ jsonrpc: "2.0", method: LIST_CHANGED });
 }
 
 /**
- * Сервер сказал list_changed в ответе на `sent` — запрос моста или харнеса:
- * харнесу, раз на смену. Свой tools/list харнеса принесёт новый список сам —
- * слово ждёт, дошёл ли он (watchHarnessListing).
+ * The server said list_changed answering `sent` — the bridge's request or the harness's:
+ * to the harness, once per change. The harness's own tools/list brings the new list
+ * itself — the word waits to see whether it got through (watchHarnessListing).
  */
 export function heardListChanged(sent: JsonRpcMessage, emit: (m: JsonRpcMessage) => void): void {
   if (T.listing.has(sent)) return void T.heldBack.add(sent);
   tell(emit, `the server said its tool list changed (answering ${sent?.method})`);
 }
 
-/**
- * Сессия к серверу открыта заново: спросить список и сверить с отданным.
- * `ask` — вызов tools/list по новой сессии; `emit` — слово харнесу.
- */
+/** The server session re-opened: `ask` the list over it and compare; `emit` tells the harness. */
 export async function recheckTools(
   ask: () => Promise<JsonRpcMessage | null>,
   emit: (m: JsonRpcMessage) => void,
 ): Promise<void> {
-  if (!T.served) return; // харнес списка ещё не просил — сверять не с чем
+  if (!T.served) return; // the harness has not asked for the list yet
   const fresh = toolsPrint((await ask().catch(() => null))?.result);
   if (!fresh || fresh === T.served) return;
   T.served = fresh;
-  tell(emit, "tool list changed under the re-opened session", true); // разошёлся отпечаток — говорится всегда, как прежде
+  tell(emit, "tool list changed under the re-opened session", true); // a differing print is always said, as before
 }

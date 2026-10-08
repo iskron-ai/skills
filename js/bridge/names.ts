@@ -1,25 +1,26 @@
-// Имя стояния — адрес места (граф nks-dev: #5068). Явное имя либо принимается
-// ровно таким, либо отвергается вслух с названной причиной: молча укороченное
-// имя адресует ДРУГОЕ место. Выведенное имя — машина.репо.модель — из того,
-// что свежая сессия восстановит без памяти; длиннее предела сервера оно
-// укорачивается с пометкой сразу после шапки ответа.
+// The standing name is the seat's address (graph @nks/nks-dev, node #5068): an explicit
+// name is taken exactly or refused aloud; a derived name (host.repo.model) over the
+// server's limit is cut with a note. A silently cut explicit name would address ANOTHER seat.
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 
-import { L } from "../shared/lang.ts";
+import { NAMES, type NameWords } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { NAME_MAX } from "../shared/satname.ts";
 import { sessionCwd } from "../shared/scope.ts";
 
-// Правило имени стояния у сервера (наблюдено отказом 400) — общее с плагином OpenCode.
+// The server's standing-name rule (observed via a 400 refusal), shared with the OpenCode plugin.
 export { NAME_MAX };
 
+const nw = (): NameWords => words(NAMES);
+
 /**
- * Роль как печатает доска — голые цифры либо сентинел (agent, me, realm-owner);
- * имя — без полей. Одна нормализация на запись привязки (register, connect) и
- * на сравнение (iskron_stand, правило «стояние одно на мост»): записанное
- * сырым расходилось с нормализованным, и мост не узнавал свой же сокет (#5154).
+ * Role as the board prints it (bare digits or a sentinel: agent, me, realm-owner), name
+ * without padding — one normalization for writing the binding and for comparing: a raw
+ * record missed its normalized twin and the bridge did not know its own socket
+ * (graph @nks/nks-dev, node #5154).
  */
 export const normKarta = (k: unknown): string =>
   String(k ?? "")
@@ -28,7 +29,7 @@ export const normKarta = (k: unknown): string =>
 export const normName = (n: unknown): string => (typeof n === "string" ? n.trim() : "");
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
-/** Одна часть выведенного имени — к правилу: строчные, допустимые знаки, без краевых точек и дефисов. */
+/** One part of a derived name brought to the rule. */
 export const sanitize = (s: string): string =>
   s
     .toLowerCase()
@@ -36,21 +37,14 @@ export const sanitize = (s: string): string =>
     .replace(/^[-.]+|[-.]+$/g, "")
     .slice(0, NAME_MAX);
 
-/** Чем явное имя нарушает правило — словами, или null, если ничем. */
+/** How an explicit name breaks the rule, in words; null if it does not. */
 export function nameFault(name: string): string | null {
-  if (name.length > NAME_MAX)
-    return L(`длиннее предела: ${name.length} знаков`, `over the limit: ${name.length} signs`);
-  if (!NAME_RE.test(name))
-    return /[A-Z]/.test(name)
-      ? L("заглавные буквы не допускаются", "capital letters are not allowed")
-      : L(
-          "недопустимые знаки или первый знак не буква и не цифра",
-          "signs not allowed, or the first sign is neither a letter nor a digit",
-        );
+  if (name.length > NAME_MAX) return nw().overLimit(name.length);
+  if (!NAME_RE.test(name)) return /[A-Z]/.test(name) ? nw().capitals() : nw().badSigns();
   return null;
 }
 
-/** Части выведенного имени по местам: машина, репо, модель (модель может нести точки — `glm-5.3`, — потому имя не режется по точкам). */
+/** The model may carry dots (`glm-5.3`), so a name is never split on dots. */
 export interface NameParts {
   host: string;
   repo: string;
@@ -60,9 +54,8 @@ const PART_MIN = 3;
 const CUT_ORDER: (keyof NameParts)[] = ["repo", "host", "model"];
 
 /**
- * Выведенное имя длиннее предела — срезать репо-часть, затем машину, модель
- * последней и только когда иначе не уложиться: модель различает сессии одной
- * машины. Возвращает имя и какие части срезаны — для пометки в ответе.
+ * Cut a derived name over the limit: repo, then host, the model last — it tells
+ * sessions of one machine apart. Returns the name and the parts cut.
  */
 export function fitName(parts: NameParts): { name: string; cut: (keyof NameParts)[] } {
   const p = { ...parts };
@@ -111,11 +104,8 @@ const real = (p: string): string => {
 };
 
 /**
- * Имя репо для каталога сессии. Обычная копия — basename toplevel, как всегда.
- * В связанном ворктри toplevel — каталог задачи, поэтому репо берётся от
- * основной копии: общий git-каталог `…/repo/.git` → `repo`; иной расклад
- * (голый репо) — имя origin без `.git`, затем toplevel, затем сам каталог
- * (r5 #5108, второй случай).
+ * Repo name for the session directory; a linked worktree's toplevel is the task dir, so it
+ * takes the name from the main copy, a bare repo from origin (graph @nks/nks-dev, node #5108).
  */
 export function repoName(cwd: string = sessionCwd()): string {
   const top = git(["rev-parse", "--show-toplevel"], cwd);
@@ -130,14 +120,11 @@ export function repoName(cwd: string = sessionCwd()): string {
 }
 
 /**
- * машина.репо.модель — из того, что свежая сессия восстановит без памяти. Третья
- * часть — модель, которой бежит агент (её знает только он, потому она идёт
- * параметром): в момент запуска ветка почти всегда main и не различает
- * ничего, а модель различает сессии одной машины над одним репозиторием.
- * Префикс поставщика (`claude-`) отбрасывается: `claude-opus-5` → `opus-5`.
- * Репо — по директории сессии харнесса (cwd), когда мост запущен не из неё:
- * плагин OpenCode поднимает мост из cwd сервера, и без этого репо выводилось
- * бы из чужого каталога (r5 #5108).
+ * host.repo.model — what a fresh session restores without memory; the model is a
+ * parameter (only the agent knows it), its vendor prefix dropped; the repo comes
+ * from the harness session's cwd: the OpenCode plugin launches the bridge from the server's
+ * cwd (graph @nks/nks-dev, node #5108). At launch the branch is nearly always main and tells
+ * nothing apart; the model tells sessions of one machine over one repo apart.
  */
 export function deriveParts(model?: string, cwd: string = sessionCwd()): NameParts {
   const host = hostname().split(".")[0];

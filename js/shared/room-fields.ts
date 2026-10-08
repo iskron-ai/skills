@@ -1,5 +1,4 @@
-// Поля кадра комнаты, общие словарю родов (room-kinds.ts) и родам вопроса
-// (asks.ts): чтение значений, своё место, своя роль, адресат, поля слов.
+// Room frame fields shared by room-kinds.ts and asks.ts.
 
 export type Rec = Record<string, unknown>;
 export const obj = (v: unknown): Rec =>
@@ -23,14 +22,14 @@ export const opt = (sep: string, v: unknown): string => {
 export const pick = <T extends object>(dict: T, key: string): T[keyof T] | undefined =>
   Object.hasOwn(dict, key) ? dict[key as keyof T] : undefined;
 
-/** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
+/** Own standing of the frame for the invite key — seat id and address: the key format (#5893 §4.2) is unconfirmed. */
 export const mineOf = (frame: Rec): string[] =>
   [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 
 /**
- * Приглашение моей роли (api 0.89.6): ключ несёт id узла роли, поля строки —
- * karta {id, name, seq, realm} (наблюдено на бою), кадр — мой karta_seq. seq
- * принадлежит графу: названные с обеих сторон графы обязаны совпасть.
+ * Invite of my role (api 0.89.6): the key carries the role node id, line fields carry
+ * karta {id, name, seq, realm} (observed in production), the frame my karta_seq. A seq belongs to a graph, so
+ * graphs named on both sides must match.
  */
 export function myRole(frame: Rec, fields: Rec): boolean {
   const ka = obj(fields.karta);
@@ -42,9 +41,9 @@ export function myRole(frame: Rec, fields: Rec): boolean {
 }
 
 /**
- * Адресат слова (api 0.91.3, наблюдено на бою): верхний addressee конверта —
- * строка-адрес места; объект места {standing | handle+name, id, name} тоже
- * принимается. addr — чем сравнивать с моим местом, label — как назвать.
+ * Addressee of a word (api 0.91.3, observed in production): a seat address string
+ * or a seat object {standing | handle+name, id, name}. addr — what to compare with
+ * my seat, label — how to name it.
  */
 export function addresseeOf(v: unknown): { addr: string[]; label: string } | null {
   if (typeof v === "string") return v ? { addr: [v], label: v } : null;

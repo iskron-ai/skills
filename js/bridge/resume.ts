@@ -1,20 +1,10 @@
-// Возврат места с диска (граф nks-dev: #5061, #5140): мост, поднятый заново —
-// перезапуск плагина, вытеснение каталога OpenCode, /mcp reconnect — берёт
-// место по записи держания, а не ротирует его connect-ом. Две двери:
-//   • по имени — iskron_stand (stand.ts) зовёт resumeFromDisk;
-//   • по ключу или каталогу сессии — запрос плагина `iskron/resume {key?, cwd?, session?}`:
-//     мост находит СВОЮ запись (тот же харнесс; тот же ключ без другой сессии
-//     на нём — либо тот же каталог И та же сессия, что на месте стояла), открывает сокет,
-//     регистрируется и отвечает, сколько кадров ожидало. Чужого харнесса запись
-//     не трогается: Claude Code, вставший в той же копии, не теряет места от
-//     плагина OpenCode. Сессия, не стоявшая на месте, по одному каталогу его не
-//     получает (#6017), а строка занятости прежнего держателя не публикуется
-//     заново: это его слово о его работе, и свежая отметка выдала бы её за текущую.
-// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает → сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
-// Мост, ведущий другое место (держит или запарковал), чужой записью не
-// занимается: holdStanding иного ключа убил бы ведомое.
+// Seat return from disk (graph @nks/nks-dev, nodes #5061, #5140, #6017): a restarted
+// bridge takes its seat by the hold record instead of rotating it with connect.
+// Doors: by name (stand.ts calls resumeFromDisk); by key or session directory (the
+// plugin's `resume` request, which may name the harness session); the plugin's `check` request is the hearing watchdog.
+// A bridge leading another seat never takes a foreign record: holdStanding of another
+// key would kill the led one.
 import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
@@ -58,7 +48,7 @@ import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Возврат не нашёл записи названного места (ушла по сроку): следующий iskron_stand это напомнит (#6649). */
+/** A return found no record of the named seat (expired): the next stand says so (#6649). */
 const RJ = scoped(() => ({ lapsed: false }));
 export function takeLapsed(): boolean {
   const was = RJ.lapsed;
@@ -66,38 +56,24 @@ export function takeLapsed(): boolean {
   return was;
 }
 
-/** Строка занятости записи — обратно, если её сказала та же сессия; иначе стирается (#6017). */
+/** The record's busy line — back if the same session said it; otherwise erased (#6017). */
 async function busyBack(rec: HoldRecord): Promise<string> {
   if (!rec.status) return "";
   const me = sessionOfBridge();
   if (!me || rec.session !== me) {
-    rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
-    return L(
-      "; прежняя строка занятости не возвращена — скажи свою",
-      "; the former busy line is not restored — say your own",
-    );
+    rememberStatus(""); // the former holder's line is not ours: drop it from the record
+    return resumeWords.busyForeign();
   }
-  // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
   const st = await publishStatus(rec.status);
-  const kept = st.doing ?? rec.status; // легла строка из ответа, не из записи (дело №234 [139])
-  return st.ok
-    ? L(`; занятость возвращена: ${kept}`, `; busy line restored: ${kept}`)
-    : L(
-        `; занятость не возвращена: ${short(st.body)}`,
-        `; busy line not restored: ${short(st.body)}`,
-      );
+  const kept = st.doing ?? rec.status; // the line from the answer, not from the record
+  return st.ok ? resumeWords.busyRestored(kept) : resumeWords.busyNotRestored(short(st.body));
 }
 
 /**
- * Вернуть с диска место, которое держал прежний мост этого каталога (#5061):
- * только когда его локальный сокет мёртв (живой держатель — не наше место) и
- * мост не ведёт другого места. Слух доказывается свежим hello; мёртвый токен —
- * протухшая запись, стирается тихо, и место занимается заново connect-ом.
- * Строка занятости из записи возвращается, только если возвращается та же
- * сессия, что её сказала; иначе она не публикуется и из записи стирается
- * (#6017): это слово прежнего держателя, и опубликованная заново она читалась
- * бы с доски сказанной сейчас. Возвращает слово об исходе или null, когда
- * возвращать нечего.
+ * Return from disk the seat a former bridge of this directory held (#5061), only
+ * when its local socket is dead and no other seat is led; hearing is proven by a
+ * fresh hello. The busy line returns only to the session that said it (#6017).
+ * null — nothing to return.
  */
 export async function resumeFromDisk(
   realm: string,
@@ -109,12 +85,12 @@ export async function resumeFromDisk(
   if (!rec) return null;
   if (holdsKey(key)) return null;
   const led = ledKey();
-  if (led && led !== key) return null; // ведём другое место — его сокет и ключ не наша жертва
-  if (await localSocketAlive(localSocketPathOf(key))) return null; // держит живой мост — не наше
+  if (led && led !== key) return null;
+  if (await localSocketAlive(localSocketPathOf(key))) return null;
   const prev = state.standing;
   state.standing = { realm, karta, name };
   const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
-  if (rec.base) noteSeatBase(key, rec.base); // запись нового держателя после отъёма её уже не скажет
+  if (rec.base) noteSeatBase(key, rec.base); // the new holder's record no longer carries it after an eviction
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
@@ -124,22 +100,14 @@ export async function resumeFromDisk(
       const busy = await busyBack(rec);
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
-      return {
-        word: L(
-          `возврат места с диска после перезапуска моста — сокет открыт заново тем же адресом (ожидало кадров — ${pending})${busy}`,
-          `the seat returned from disk after the bridge restarted — the socket reopened at the same address (frames waiting — ${pending})${busy}`,
-        ),
-        pending,
-      };
+      return { word: resumeWords.fromDisk(pending, busy), pending };
     }
   } finally {
     noteResuming(-1);
   }
-  // Мёртвый токен запись уже стёр (onDeadToken при возврате); не пришедший за
-  // 4 с hello — не приговор месту: запись цела, и сторож повторит возврат, а
-  // iskron_stand тем же именем перепишет её своим connect. holdStanding выше
-  // переписал её со свежим at — она возвращается прежней, иначе каждая
-  // неудачная попытка продлевала бы ей жизнь бессрочно.
+  // A dead token already erased the record; a missed hello keeps it for the watchdog.
+  // holdStanding rewrote it with a fresh `at`, so the old one is restored below: else every
+  // failed attempt would extend its life indefinitely.
   const onDisk = readHoldRecord(key);
   const kept = onDisk !== null;
   log(
@@ -148,18 +116,16 @@ export async function resumeFromDisk(
       : `hold record for ${key} is stale — dropped, the place is taken anew`,
   );
   releaseStanding(holdWords().resumeFailed());
-  // Только та самая запись: иной адрес на диске значит, что место за это время
-  // занял другой путь (connect этого моста, второй мост на том же каталоге), и
-  // его свежую запись прежняя не перекрывает.
+  // A different url on disk means another path took the seat meanwhile: keep its record.
   if (onDisk?.url === rec.url) restoreHoldRecord(key, rec);
-  state.standing = prev; // память о прежнем имени цела: ничего вместо неё не занято
-  if (rec.cwd) noteStandCwd(prevCwd); // иначе следующий голый connect вписал бы чужой каталог в запись другого места
+  state.standing = prev;
+  if (rec.cwd) noteStandCwd(prevCwd); // else the next bare connect writes a foreign directory into another seat's record
   return null;
 }
 
 /**
- * Взять своё место тем же ходом, что iskron_stand по его имени (stand.ts передаёт его
- * сюда, чтобы не замкнуть импорты): возвращает первую строку ответа.
+ * Take the own seat the same way as the stand tool by its name (standwire.ts passes it
+ * here so imports do not close a loop): returns the answer's first line.
  */
 type TakeOwn = (rec: HoldRecord, cwd: string | undefined) => Promise<string>;
 const T: { takeOwn: TakeOwn | null } = { takeOwn: null };
@@ -167,14 +133,13 @@ export function wireTakeOwn(fn: TakeOwn): void {
   T.takeOwn = fn;
 }
 
-/** Слово о записях прежней сборки без сессии: по каталогу не возвращаются, возвращаются по имени. */
+/** Word on earlier-build records without a session: returned by name, not by directory. */
 export const legacyWord = (names: string[]): string =>
   names.map((n) => resumeWords.legacy(n)).join("; ");
 
 /**
- * Места прежней сборки, которые можно предложить вернуть: сокет места не держит
- * живой мост другой сессии (#6594). Занятое живым соседом не предлагается —
- * вызов с его именем дал бы только атрибуцию без слуха.
+ * Earlier-build seats to offer back: not held by a live bridge of another session (#6594);
+ * a call with a held name would give attribution without hearing.
  */
 async function freeLegacy(recs: HoldRecord[]): Promise<string[]> {
   const free: string[] = [];
@@ -191,21 +156,17 @@ export interface ResumeOutcome {
   key?: string;
   pending?: number;
   word: string;
-  /** Место доказано своим (стояла эта сессия, мост его держит или ведёт): слова о чужом месте не нужно. */
+  /** The seat is proven own (this session stood on it, the bridge holds or leads it): no not-yours word. */
   own?: boolean;
-  /**
-   * Другие записи держания того же каталога (ключи): каталог не различает
-   * стояний одной роли в одной рабочей копии, возврат берёт запись этой сессии —
-   * агент сверяет занятое имя с выведенным для своей сессии (граф nks-dev: #5366).
-   */
+  /** Other hold records of the same directory (keys) (graph @nks/nks-dev, node #5366). */
   others?: string[];
-  /** Имена мест прежней сборки без сессии в каталоге: не возвращены — названы, чтобы их вернули по имени. */
+  /** Earlier-build seat names without a session in the directory: named, not returned. */
   legacy?: string[];
-  /** Свои места, чей сокет держит живой мост другой сессии: не взяты, и сессии нужно слово (#6626). */
+  /** Own seats whose socket a live bridge of another session holds: not taken (#6626). */
   elsewhere?: string[];
 }
 
-/** Обратно на запаркованное место (leave, переоткрытие): сокет заново, hello — доказательство. */
+/** Back to the parked seat: a new socket, hello is the proof. */
 async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
   if (!returnToStanding(how)) return { resumed: false, key, word: resumeWords.failed() };
   const hello = await awaitHello(4000);
@@ -219,12 +180,11 @@ async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
 }
 
 /**
- * Возврат места по ключу или каталогу сессии: своя запись → сокет заново тем же
- * адресом, register (атрибуция записей), занятость обратно. Уже держим —
- * «держу»; запарковано — обратно на место; сокет держит прежний мост этой же
- * сессии — `takeOwn` (возврат нового моста) берёт ходом iskron_stand, сторож слуха
- * моста, место потерявшего, — нет: сессию уже слышат, и два её моста перетягивали
- * бы место каждым тактом; чужое или ведём другое — не трогаем.
+ * Return a seat by key or session directory: own record → socket at the same
+ * address, register, busy line back. Held — said so; parked — back to it. A socket
+ * held by a former bridge of this same session is taken the stand-tool way only with
+ * `takeOwn` (a new bridge's return), not by the hearing watchdog of the bridge that lost
+ * it: the session is already heard, and its two bridges would pull the seat every tick.
  */
 export async function resumeBy(
   sel: ResumeSelector,
@@ -235,15 +195,15 @@ export async function resumeBy(
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
     const said = [resumeWords.noRecord(sel.key, sel.cwd)];
-    if (neighbour.length) said.push(resumeWords.neighbourKey(neighbour));
+    if (neighbour.length) said.push(resumeWords.neighbourKey(neighbour.join(", ")));
     else if (sel.key) {
-      // Ключ назван — место держалось; записи нет — она ушла по сроку (#6649).
+      // A named key with no record: it expired (#6649).
       said.push(resumeWords.rejoin());
       RJ.lapsed = true;
     }
     const foreign = sameDir.filter((k) => !left.includes(k));
-    if (foreign.length) said.push(resumeWords.foreignDir(foreign));
-    if (left.length) said.push(resumeWords.left(left));
+    if (foreign.length) said.push(resumeWords.foreignDir(foreign.join(", ")));
+    if (left.length) said.push(resumeWords.left(left.join(", ")));
     if (legacy.length) said.push(legacyWord(legacy));
     return {
       resumed: false,
@@ -263,16 +223,16 @@ export async function resumeBy(
       skipped.push(resumeWords.otherSeat(key, led));
       continue;
     }
-    // Чей живой сокет — суждение iskron_stand (hearing.ts): прежний мост этой же сессии —
-    // место её, и оно берётся тем же ходом, что iskron_stand, без take (#6702). Каталог —
-    // как у iskron_stand: названный, иначе каталог сессии, не каталог самой записи.
+    // Whose live socket — the stand tool's judgement (hearing.ts): a former bridge of this
+    // same session means the seat is the session's, taken the stand-tool way without take
+    // (#6702). Directory as in stand: the named one, else the session's, not the record's.
     const holder = await localHolder(key, sel.cwd ?? sessionCwd());
     if (holder === "session" && takeOwn && !CFG.satellite && T.takeOwn) {
       const said = await T.takeOwn(rec, sel.cwd);
       const now = ledKey();
       if (now && holdsKey(now)) {
         const hello = await awaitHello(4000);
-        // Встал рядом (имя.N) — слово iskron_stand само называет место; строка записи — не его.
+        // Stood beside (name.N): the stand word names the seat itself; the record's line is not its.
         const busy = now === key ? await busyBack(rec) : "";
         return {
           resumed: true,
@@ -290,8 +250,8 @@ export async function resumeBy(
       elsewhere.push(key);
       continue;
     }
-    // Своё доказано до возврата: на записи стояла эта сессия либо место ведёт сам мост,
-    // и другая названная сессия на записи не стояла.
+    // Own proven before the return: this session stood on the record, or the bridge leads
+    // the seat and no other named session stood on it.
     const me = sel.session ?? sessionOfBridge();
     const proven = (!!me && rec.session === me) || (key === led && !rec.session);
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
@@ -299,7 +259,7 @@ export async function resumeBy(
       const kept = readHoldRecord(key);
       skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
       if (!kept) {
-        skipped.push(resumeWords.rejoin()); // протухшая запись — место у платформы мертво (#6649)
+        skipped.push(resumeWords.rejoin()); // a stale record: the seat is dead at the platform (#6649)
         RJ.lapsed = true;
       }
       continue;
@@ -315,12 +275,12 @@ export async function resumeBy(
       });
       lines.push(r.isError ? resumeWords.registerRefused(short(r.text)) : "register");
     }
-    // Записи, которые цикл выше признал протухшими, уже стёрты — их не называть.
+    // Records the loop above found stale are already erased: not named.
     const others = [
       ...new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir]),
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
-    if (others.length) lines.push(resumeWords.othersInDir(others));
-    // Своё не доказано — путь отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
+    if (others.length) lines.push(resumeWords.othersInDir(others.join(", ")));
+    // Not proven own — leave, not revoke: the platform refuses to revoke the seat that founded the channel.
     if (!proven) lines.push(resumeWords.notYours());
     return {
       resumed: true,
@@ -333,12 +293,12 @@ export async function resumeBy(
   }
   return {
     resumed: false,
-    word: resumeWords.nothingToReturn(skipped),
+    word: resumeWords.nothingToReturn(skipped.join("; ")),
     ...(elsewhere.length ? { elsewhere } : {}),
   };
 }
 
-/** Старт моста: сокет из окружения без connect — отладочный путь. */
+/** Bridge start: a socket from the environment without connect — a debug path. */
 export function holdFromEnv(): void {
   const url = envOf(envName("CHANNEL_SOCKET"))?.trim();
   if (url) holdStanding(url, envOf(envName("CHANNEL_STATUS"))?.trim() || null);
@@ -365,7 +325,7 @@ const selectorOf = (msg: JsonRpcMessage): ResumeSelector => ({
       : undefined,
 });
 
-/** Селектор запроса плагина; названная сессия — сессия этого моста, её несут его записи держания. */
+/** The plugin request's selector; the named session is this bridge's, its hold records carry it. */
 function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   const sel = selectorOf(msg);
   noteHarnessSession(sel.session);
@@ -377,23 +337,22 @@ export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === me
 export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === method("check");
 
 /**
- * `iskron/resume {key?, cwd?, session?}` — запрос плагина: вернуть своё место с диска.
- * Место у живого прежнего моста своей сессии берёт только возврат плагина, не тонкого
- * моста после смены демона (lostplaces.ts).
+ * The plugin's `resume {key?, cwd?, session?}` request: return the own seat from disk.
+ * A seat at a live former bridge of the own session is taken only by the plugin's return,
+ * not by the thin bridge's after a daemon change (lostplaces.ts).
  */
 export async function runResume(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const sel = selectorFrom(msg);
   if (!sel.key && !sel.cwd) return reply(msg, { resumed: false, word: resumeWords.noKeyNoCwd() });
   const replay = typeof msg.id === "string" && msg.id.startsWith(THIN_RESUME_ID);
   const r = await resumeBy(sel, true, !replay);
-  if (r.resumed) afterResume(r.key); // спутник после паузы принимает дела прогона (suspend.ts)
+  if (r.resumed) afterResume(r.key); // a satellite after a pause takes the run's cases (suspend.ts)
   return reply(msg, r);
 }
 
 /**
- * `iskron/check {key?, cwd?}` — сторож плагина раз в N минут: держим место —
- * доска; не слушает — сокет переоткрывается (hello с pending откроет пачку
- * побудки); запарковано — обратно; не ведём — возврат по записи.
+ * The plugin's `check {key?, cwd?}` watchdog: held — read the board, deaf — reopen
+ * the socket; parked — back; not led — return by record.
  */
 export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const sel = selectorFrom(msg);
@@ -401,7 +360,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const key = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
   if (!s || !key || !holdsKey(key)) {
     if (s && key && isParked(s.realm, s.karta, s.name ?? "")) {
-      // Ушёл словом (leave) — уход держится: сторож место не поднимает (#6017).
+      // Left by word: the watchdog does not raise the seat (#6017).
       if (readHoldRecord(key)?.left)
         return reply(msg, {
           holding: false,
@@ -431,13 +390,12 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const pending = undelivered(mine);
   const listening = listens(mine);
   if (listening) {
-    D.reopens = 0; // слух вернулся — счёт переоткрытий с начала
+    D.reopens = 0;
     return reply(msg, { holding: true, key, listening, pending, word: resumeWords.listening() });
   }
-  // Сокет у моста жив, а доска нас не слышит: переоткрыть тем же адресом. Счётчик
-  // «не доставлено N» — только слово в ответе, решает признак слуха. Тормоз:
-  // два переоткрытия подряд не вернули слух — третьего нет, слово вслух вместо
-  // него (иначе каждый такт сторожа рвал бы живой сокет бесконечно).
+  // The undelivered count is only a word in the answer; the hearing flag decides.
+  // The board reads the seat deaf: reopen at the same address, at most REOPEN_LIMIT
+  // times in a row, then say it aloud instead of tearing a live socket forever.
   if (D.reopens >= REOPEN_LIMIT) {
     const text = resumeWords.gaveUp(key, REOPEN_LIMIT);
     if (!D.said) {
@@ -474,6 +432,6 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   });
 }
 
-/** Переоткрытий подряд при доске, читающей место глухим; предел — REOPEN_LIMIT, дальше слово вслух. */
+/** Reopenings in a row while the board reads the seat deaf. */
 const D = scoped(() => ({ reopens: 0, said: false }));
 const REOPEN_LIMIT = 2;

@@ -45,3 +45,63 @@ export {
   VERDICT,
   type VerdictWords,
 } from "./words/rooms.ts";
+// part 5a
+export { BOARD_FORM } from "./patterns/board.ts";
+export { CASE_EXIT_CLOSED } from "./patterns/caseexit.ts";
+export { SERVER_CHOICE } from "./patterns/config.ts";
+export { NOTICE_MARK } from "./patterns/deliver.ts";
+export { ABSORB, type AbsorbWords } from "./words/absorb.ts";
+export { BACKLOG, type BacklogWords } from "./words/backlog.ts";
+export { CALL, type CallWords } from "./words/call.ts";
+export { DEAF, type DeafWords } from "./words/deaf.ts";
+export { DOOR, type DoorWords } from "./words/door.ts";
+export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
+export { HEARING, type HearingWords } from "./words/hearing.ts";
+export { HOOK, type HookWords } from "./words/hook.ts";
+// part 5b
+export { ACTION_LIST_RE, BOARD_HEADER, SEAT_GONE_RE, UNATTRIBUTED_RE } from "./protocol.ts";
+export { LEAVE, type LeaveWords } from "./words/leave.ts";
+export { LISTEN, type ListenWords } from "./words/listen.ts";
+export { LOST, type LostWords } from "./words/lostplaces.ts";
+export { MOMENT, type MomentWords } from "./words/moment.ts";
+export { NAMES, type NameWords } from "./words/names.ts";
+export { NARROW, type NarrowWords } from "./words/narrow.ts";
+export {
+  CALLBACK,
+  type CallbackWords,
+  DEVICE_CLIENT,
+  type DeviceClientWords,
+} from "./words/oauth.ts";
+export { OWNER, type OwnerWords } from "./words/owner.ts";
+export { PLACES, type PlacesWords } from "./words/places.ts";
+export { REALMS, type RealmsWords } from "./words/realms.ts";
+export { RELEASES, type ReleasesWords } from "./words/releases.ts";
+export { RESUME, type ResumeWords } from "./words/resume.ts";
+export { RUN_END, type RunEndWords } from "./words/runend.ts";
+export { SATELLITE, type SatelliteWords } from "./words/satellite.ts";
+export { SEPARATE, type SeparateWords } from "./words/separate.ts";
+export { STAND, type StandWords } from "./words/stand.ts";
+export { STANDING, type StandingWords } from "./words/standing.ts";
+export { STAND_MISS, type StandMissWords } from "./words/standmiss.ts";
+export { STAND_TOOL, type StandToolWords } from "./words/standtool.ts";
+export { STATUS, type StatusWords } from "./words/status.ts";
+export { STATUS_POST, type StatusPostWords } from "./words/statuspost.ts";
+export { SUSPEND, type SuspendWords } from "./words/suspend.ts";
+export { THIN, type ThinWords } from "./words/thin.ts";
+export { UNNAMED, type UnnamedWords } from "./words/unnamed.ts";
+export { UPDATE, type UpdateWords } from "./words/update.ts";
+export { USAGE, type UsageWords } from "./words/usage.ts";
+// part 5c
+export { LAUNCH_LINE } from "./patterns/launch.ts";
+export { APPSERVER, type AppServerWords } from "./words/appserver.ts";
+export { BRIDGE_CLIENT, type BridgeClientWords } from "./words/bridge-client.ts";
+export { CHANNEL, type ChannelWords } from "./words/channel.ts";
+export {
+  CASE_LINE,
+  type CaseLineWords,
+  FRAME_TEXT,
+  type FrameTextWords,
+} from "./words/frame-text.ts";
+export { LAUNCH, type LaunchWords } from "./words/launch.ts";
+export { STALE, type StaleWords } from "./words/stalebatch.ts";
+export { STANDINGS, type StandingsWords } from "./words/standings.ts";

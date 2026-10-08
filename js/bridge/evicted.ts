@@ -1,8 +1,7 @@
-// Место отняли закрытием 4000 (граф nks-dev: решение владельца #6706, #5402):
-// сессия, чьё место отнято, глухой молча не остаётся. Отнял новый мост этой же
-// сессии харнесса (перезапуск, компакшн: его запись держания несёт её) — этот
-// экземпляр уступает тихо, место своё. Отняла другая сессия — держатель встаёт
-// рядом на имя.N со слухом тем же ходом, что iskron_stand, и говорит это в сессию.
+// Seat taken by close 4000 (graph @nks/nks-dev, nodes #6706, #5402): a session never
+// stays deaf silently. Taken by a new bridge of the same harness session (restart,
+// compaction: its hold record names the session) — yield quietly; taken by another
+// session — stand beside as name.N with hearing and say so.
 import { sameDir } from "../shared/canon.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
@@ -22,9 +21,9 @@ import { ownTaking, takerOf } from "./taking.ts";
 import { reinitialize, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Как часто перечитывать намерение и запись нового держателя, пока его connect в полёте. */
+/** Re-read interval of the new holder's intent and record while its connect is in flight. */
 const LOOK_MS = 100;
-/** Через сколько повторить место рядом, когда первую попытку оборвала сеть. */
+/** Delay before retrying the seat beside after a network failure. */
 const RETRY_MS = 2000;
 
 export type StandBeside = (
@@ -32,7 +31,7 @@ export type StandBeside = (
   cwd: string | null,
 ) => Promise<{ ok: boolean; text: string } | null>;
 
-/** Слово об отъёме (4000) — сторожам, клиенту уведомлений и прицепившимся позже. */
+/** The eviction word goes to watchdogs, the notification client and late attachers. */
 function announceEvicted(code: number, text: string): void {
   log(text);
   const ev: ChannelEvent = { kind: "evicted", code, text };
@@ -42,14 +41,13 @@ function announceEvicted(code: number, text: string): void {
 }
 
 /**
- * Отнял ли место новый мост этой сессии — по записи держания под тем же ключом с
- * другим адресом. Её connect ещё в полёте (его намерение лежит, taking.ts; 4000
- * обгоняет ответ) — ждём его исхода, а не срока: намерение пишется до connect,
- * так что без него отнявший — не мост этой сессии на этой машине.
- * Мост, чьей сессии не назвали, уступает тихо названной сессии того же харнесса
- * из того же каталога: она сочла место своим по записи без сессии (hearing.ts),
- * и держатель без сессии был её сиротой — встав рядом, он занял бы второе место
- * без слушателя (#6702). Без сессии с обеих сторон — отъём, как прежде.
+ * Whether this session's new bridge took the seat — a hold record under the same key
+ * with another url. While its connect is in flight (intent in taking.ts; 4000 outruns its
+ * reply) wait for the outcome, not a deadline: the intent is written before connect, so
+ * without it the taker is foreign. A bridge with no session named yields quietly to a named
+ * session of the same harness and directory: that session took the unsigned record as its
+ * own, and standing beside would leave a second seat with no listener (graph @nks/nks-dev,
+ * node #6702). With no session on either side it is a taking, as before.
  */
 async function takenBySession(key: string, url: string): Promise<boolean> {
   const me = sessionOfBridge();
@@ -65,15 +63,14 @@ async function takenBySession(key: string, url: string): Promise<boolean> {
     const got = changed();
     if (got !== null) return got;
     const taker = takerOf(key);
-    if (me ? taker !== me : !taker) return changed() ?? false; // запись могла лечь за миг до стирания намерения
+    if (me ? taker !== me : !taker) return changed() ?? false; // the record may land just before the intent is erased
     await new Promise((res) => setTimeout(res, LOOK_MS));
   }
 }
 
 /**
- * Встать рядом; отказ транспорта (сеть) не теряется необработанным: один
- * отложенный повтор, затем исход — неудачей со словом. Место перестало быть
- * отнятым за ожидание (сессия встала сама) — null, говорить нечего.
+ * Stand beside: a network failure gets one delayed retry, then a failure with its word.
+ * null — the seat stopped being evicted meanwhile.
  */
 async function standBeside(
   key: string,
@@ -82,7 +79,7 @@ async function standBeside(
   beside: StandBeside,
   once = false,
 ): Promise<{ ok: boolean; text: string } | null> {
-  // Попытка, сорванная после connect места рядом, уже увела мост с отнятого — повтор доводит её, не молчит.
+  // An attempt broken after the beside connect already moved the bridge off — the retry finishes it.
   let moved = false;
   let reopened = false;
   let retry = once;
@@ -92,7 +89,7 @@ async function standBeside(
       return await beside(s, H.standCwd);
     } catch (e) {
       moved ||= ledKey() !== key;
-      // Сессия к серверу умерла под попыткой — переоткрыть и повторить, не считая сбоем сети.
+      // The server session died under the attempt — reopen and retry, not a network failure.
       if (e instanceof UpstreamError && e.kind === "session" && !reopened) {
         reopened = true;
         const back = await reinitialize().then(
@@ -111,7 +108,7 @@ async function standBeside(
 }
 
 async function yieldPlace(key: string, url: string, code: number): Promise<void> {
-  // Свой connect этого места в полёте: 4000 обогнал его ответ — адрес повернул этот мост сам.
+  // Own connect of this seat in flight: 4000 overtook its answer — this bridge moved the url itself.
   const own = ownTaking(key);
   if (own) {
     await own;
@@ -120,26 +117,26 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
   const s = state.standing;
   const beside = B.beside;
   if (await takenBySession(key, url)) {
-    if (ledKey() !== key) return; // за ожидание мост уже занял другое
+    if (ledKey() !== key) return; // the bridge took another seat meanwhile
     standingLog(`evicted ${key} by this session's new bridge — released quietly`);
     releaseStanding(holdWords().takenBySession(), false, false, true);
     return;
   }
-  // Спутник живёт прогоном и местом рядом не встаёт; безымянному месту нет основы имени.N.
+  // A satellite lives by its run and never stands beside; an unnamed seat has no base for name.N.
   const name = s?.name ?? "";
   if (CFG.satellite || !s || !name || !beside)
     return announceEvicted(code, holdWords().evicted(code));
-  const base = baseOf(s.realm, s.karta, name); // место рядом отняли — следующее рядом с его основой, не proba.2.2
+  const base = baseOf(s.realm, s.karta, name); // a taken seat beside: next beside its base, not proba.2.2
   announceEvicted(code, holdWords().evictedBeside(code, name, base));
   F.failed = null;
   await besideAndSay(key, s, name, base, beside, [...state.places]);
 }
 
 /**
- * Встать рядом и сказать исход в сессию. Места других графов на отнятом канале
- * connect места рядом роняет — они встают снова на новом канале тем же ходом и
- * называются в слове. Не вышло — место помнится: следующий вызов харнеса
- * повторит попытку прежде, чем подписаться отнятым (standing.ts).
+ * Stand beside and tell the session the outcome. Seats of other graphs on the taken
+ * channel are dropped by the beside connect and stand again on the new one in the same move,
+ * named in the word. On failure the seat is remembered: the next
+ * harness call retries before signing with the taken seat (standing.ts).
  */
 async function besideAndSay(
   key: string,
@@ -170,11 +167,11 @@ async function besideAndSay(
   ].join("\n");
   log(text);
   standingLog(`evicted ${key}: ${r.ok ? "stood beside" : "could not stand beside"}`);
-  // В сессию — словом, как возврат места без её хода (#5366): плагин вкладывает его промптом.
+  // Into the session as a "resumed" word (#5366): the plugin injects it as a prompt.
   notify("warning", { kind: "resumed", text });
 }
 
-/** Встать рядом не вышло (сеть) — что повторить; попытка в полёте одна. */
+/** What to retry after a failed stand-beside; one attempt in flight. */
 const F = scoped(() => ({
   failed: null as {
     key: string;
@@ -184,14 +181,13 @@ const F = scoped(() => ({
     extras: Standing[];
   } | null,
   again: null as Promise<void> | null,
-  /** ход после отъёма в полёте — вызов харнеса ждёт его, а не подписывается отнятым */
+  /** The post-eviction move in flight — a harness call awaits it. */
   pending: null as Promise<void> | null,
 }));
 
 /**
- * Место отнято, а встать рядом мост не смог: перед вызовом харнеса — ещё одна
- * попытка, без отложенного повтора. true — отнятое место всё ещё ведомо:
- * подписываться им нельзя (#6706).
+ * Before a harness call, one more stand-beside attempt without delay. true — the taken
+ * seat still leads and must not sign (#6706).
  */
 export async function standBesideAgain(): Promise<boolean> {
   if (F.pending) await F.pending;
@@ -214,20 +210,19 @@ export async function standBesideAgain(): Promise<boolean> {
 }
 
 /**
- * Вызов харнеса в граф любого места отнятого канала, пока мост не встал рядом:
- * сессия всё ещё привязана к ним, и запись легла бы под подписью места без
- * слуха (#6706). Отказ вслух; iskron_stand и неподписывающие ходы канала идут.
+ * Refuse a harness call into the graph of any seat of the taken channel until the bridge
+ * stands beside: the write would be signed by a deaf seat (#6706). Stand and unsigned moves pass.
  */
 export function evictedRefusal(msg: JsonRpcMessage): string | null {
   const s = state.standing;
   if (!s || !wasEvicted(s.realm, s.karta, s.name ?? "")) return null;
-  // Отъём закрывает весь канал: места других графов на нём глухи так же, как основное.
+  // Eviction closes the whole channel: seats of other graphs on it are deaf too.
   const realm = signedRealm(msg);
   if (realm == null || [s, ...state.places].every((p) => otherRealm(realm, p.realm))) return null;
   return holdWords().evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
 }
 
-/** Чем встать рядом — iskron_stand (stand.ts), переданный сюда, чтобы не замкнуть импорты. */
+/** The stand tool (stand.ts), injected to avoid an import cycle. */
 const B: { beside: StandBeside | null } = { beside: null };
 whenEvicted((key, url, code) => {
   F.pending = yieldPlace(key, url, code).finally(() => {

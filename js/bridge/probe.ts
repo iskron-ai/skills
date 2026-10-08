@@ -1,5 +1,5 @@
-// Проба демона машины без сессии (кадр hello с probe): сборка, pid, число сессий
-// и файл — для `--version` при тонком мосте и раздела демона в `doctor`.
+// A sessionless probe of the machine daemon (a hello frame with probe): build, pid,
+// session count and file — for `--version` of the thin bridge and doctor's daemon section.
 import { fileURLToPath } from "node:url";
 
 import { envName } from "../delivery/index.ts";
@@ -20,8 +20,8 @@ const SELF = (() => {
 })();
 
 /**
- * `--version` при тонком мосте (умолчание): сборка этого файла и сборка демона
- * его каталога гранта — одной строкой каждая; первая строка та же, что всегда.
+ * `--version` of the thin bridge (the default): this file's build, then its grant dir's
+ * daemon, one line each; the first line as always.
  */
 export async function versionLines(args: string[]): Promise<string[]> {
   const lines = [BUILD];
@@ -41,7 +41,7 @@ export type DaemonProbe =
   | { ok: true; socket: string; build: string; pid: number; sessions?: number; path?: string }
   | { ok: false; socket: string; why: string; unsafe?: boolean };
 
-/** Спросить демон каталога гранта из аргументов (или окружения) о сборке, pid и сессиях — не открывая сессии. */
+/** Ask the daemon of the grant dir (args or env) for build, pid and sessions without opening a session. */
 export async function probeDaemon(args: string[]): Promise<DaemonProbe> {
   const i = args.indexOf("--auth-dir");
   const authDir =

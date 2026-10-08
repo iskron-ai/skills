@@ -30,3 +30,20 @@ export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 export const serverProtocol = {
   refusal: "iskron/refusal",
 } as const;
+
+// part 5b
+/**
+ * Перечень action в описании схемы канала сервера: «одно из: a | b | c» (или «one of:»);
+ * группа 1 — голова, группа 2 — перечень. Двуязычно при любом языке сессии.
+ */
+export const ACTION_LIST_RE = /((?:одно из|one of):\s*)([a-z_]+(?:\s*\|\s*[a-z_]+)*)/i;
+/** Заголовок доски каналов на обоих языках сервера — для слова о нераспознанной доске. */
+export const BOARD_HEADER = { ru: "Каналы", en: "Channels" } as const;
+/**
+ * Проза отказа register «места больше нет» (без rule в _meta): занять заново — connect.
+ * Двуязычно при любом языке сессии.
+ */
+export const SEAT_GONE_RE = /no such standing|take it with connect|такого стояния|занять.*connect/i;
+/** Проза отказа канала «сессия не держит стояния» (без rule в _meta). */
+export const UNATTRIBUTED_RE =
+  /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;

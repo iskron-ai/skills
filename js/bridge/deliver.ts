@@ -1,4 +1,4 @@
-import { envName, ID_PREFIX, tool } from "../delivery/index.ts";
+import { BRIDGE_NAME, envName, ID_PREFIX, NOTICE_MARK, tool } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import {
   absorbChannelReply,
@@ -106,22 +106,21 @@ export function syntheticError(
       code: -32001,
       // BUILD is here for the field report: the error is quoted verbatim, and
       // the build string is what dates the code that produced it.
-      message: `iskron-bridge ${BUILD}: ${message}. ${verdict} ${tail}`,
+      message: `${BRIDGE_NAME} ${BUILD}: ${message}. ${verdict} ${tail}`,
     },
   };
 }
 
-// Сеть моргнула — мост стучит ещё раз сам, с растущей паузой, прежде чем
-// отдать сбой агенту (граф nks-dev: #4664). Не дошедший вызов повторяется
-// всегда; дошедший и потерявший ответ — только чтение: запись без ограды
-// версии легла бы второй раз.
+// Network blips are retried with backoff: unsent calls always, answer-lost ones
+// only when they are reads (graph @nks/nks-dev, node #4664): a write has no version
+// fence and would land twice.
 const NET_BACKOFF_MS = (process.env[envName("BRIDGE_NET_BACKOFF_MS")] || "1000,2000,4000")
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n >= 0);
 
-// Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
-// Свой tools/list харнеса в полёте — он и так получит свежий список: не спрашиваем дважды.
+// After a reopen the tool list is rechecked against the harness's copy, unless the
+// harness's own tools/list is in flight (graph @nks/nks-dev, node #5405).
 onReinitialized(() => {
   if (harnessListing()) return;
   return recheckTools(async () => {
@@ -132,9 +131,9 @@ onReinitialized(() => {
     });
     const reply = got as JsonRpcMessage | null;
     if (!reply?.result) return reply;
-    annotateToolList(reply); // в общий кэш — аннотированный и полный список
+    annotateToolList(reply); // the cache keeps the full annotated list
     saveServerCache({ tools: reply.result });
-    return narrowToolList(reply); // сверка — с тем, что видел бы харнес (narrow.ts)
+    return narrowToolList(reply); // compared with what the harness would see
   }, emit);
 });
 
@@ -143,12 +142,9 @@ function isRead(msg: JsonRpcMessage): boolean {
   return msg?.method === "tools/call" && READ_TOOLS.has(String(msg.params?.name ?? ""));
 }
 
-// Рукопожатие или список тулов упёрлись в сеть или во вход: харнес, получивший
-// здесь отказ, считает сервер упавшим до перезапуска, а текст отказа не видит
-// ни человек, ни агент (граф nks-dev: #4790). Последний ответ сервера лежит
-// рядом с грантом — мост отвечает им, а сессия откроется, когда вернётся сеть
-// или ляжет грант: следующий вызов без сессии переинициализируется сам и
-// несёт агенту то, что мешает, — ссылку входа в том числе.
+// initialize/tools/list blocked by network or login are answered from the last
+// cached server answer (graph @nks/nks-dev, node #4790): a harness refused here treats the
+// server as dead until restart; the next call reinitializes and carries the login link.
 function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
   const cache = loadServerCache();
   const result =
@@ -166,21 +162,19 @@ function lastServerAnswer(msg: JsonRpcMessage): JsonRpcMessage | null {
   return shown;
 }
 
-// Наш собственный клиент (плагин OpenCode, `make surface`) отказ рукопожатия
-// читает сам и ждёт входа, повторяя рукопожатие: ему прежний отказ. Остальное
-// рукопожатие — харнеса, то есть человека (#4790); кто в списке и почему,
-// сказано у самого списка.
+// Own clients read a handshake refusal themselves and retry the handshake until login,
+// so they keep the plain refusal (graph @nks/nks-dev, node #4790).
 function ownClient(): boolean {
   const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
   return typeof info?.name === "string" && OWN_CLIENTS.has(info.name);
 }
 
-/** Строка отставания поставки — один раз за сессию, в первый же ответ тула: агент передаст её человеку. */
+/** The delivery-behind notice, once per session, into the first tool reply with a body. */
 function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
   const content = reply?.result?.content;
-  if (!Array.isArray(content)) return reply; // ошибка без тела — строка ждёт следующего ответа
+  if (!Array.isArray(content)) return reply;
   const notice = takeNotice();
-  if (notice && !content.some((c) => /ПОСТАВКА ОТСТАЛА|DELIVERY BEHIND/.test(c?.text ?? ""))) {
+  if (notice && !content.some((c) => NOTICE_MARK.test(c?.text ?? ""))) {
     content.push({ type: "text", text: notice });
   }
   return reply;
@@ -199,7 +193,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
 }
 
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
-  // Слово о занятости не покидает моста: держатель сокета говорит его сам.
+  // Answered by the bridge itself, never sent upstream.
   const local = localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg) ?? localEnd(msg);
   if (local) {
     emit(await local);
@@ -236,9 +230,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
     if (m.id === msg.id) noteStanding(msg, m);
     if (m.id === msg.id && m.result && isInit) saveServerCache({ init: m.result });
     if (m.id === msg.id && msg.method === "tools/list") {
-      annotateToolList(m); // аннотированная форма — в общий кэш, полной
+      annotateToolList(m); // the cache keeps the full annotated list
       if (m.result && !msg.params?.cursor) saveServerCache({ tools: m.result });
-      m = narrowToolList(m); // харнесу — суженная копия, и отпечаток по ней (narrow.ts)
+      m = narrowToolList(m); // the harness gets the narrowed copy, fingerprinted as served
       if (!msg.params?.cursor) noteServedTools(m.result, msg);
     }
     if (isToolCall && hasId && m.id === msg.id) {
@@ -273,8 +267,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
-      // Место отнято, рядом встать не вышло, либо без слуха и, может быть, взято другой
-      // сессией — записью в его граф не подписываться (#6706).
+      // A taken or deaf seat signs no record (graph @nks/nks-dev, node #6706).
       const taken = hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null;
       if (taken) {
         emit({
@@ -285,28 +278,26 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         return;
       }
       if (isStand) {
-        // Тул моста: доска, место, хук, стук — теми же вызовами, что и агент, одним ходом.
+        // The bridge's own tool: board, seat, hook, knock — by the agent's calls, in one move.
         emit(withNotice(await serialized(() => runStand(msg))));
         return;
       }
       if (isResumeCall(msg) || isCheckCall(msg)) {
-        // Запросы плагина к самому мосту: возврат места по каталогу сессии и
-        // сторож слуха (resume.ts, #5140). Сессия к серверу уже открыта выше —
-        // register и доска идут по ней.
+        // Plugin requests to the bridge itself, over the session opened above
+        // (graph @nks/nks-dev, node #5140).
         emit(await serialized(() => (isResumeCall(msg) ? runResume(msg) : runCheck(msg))));
         return;
       }
       if (isUsageCall(msg)) {
-        // Расход сессии от плагина или расширения — в attrs места (usage.ts, #6271).
+        // Session usage into the seat's attrs (graph @nks/nks-dev, node #6271).
         emit(await serialized(() => runUsage(msg)));
         return;
       }
       heldReply = null;
-      // Стояние одно на мост: connect/mint/register под другое место при ведомом
-      // своём — отказ вслух, на сервер не уходит (#5154).
+      // One standing per bridge (graph @nks/nks-dev, node #5154); realms compared in one form (node #5838).
       if (hasId && msg.method === "tools/call" && msg.params?.name === tool("channel"))
-        await resolveAgainstLed(msg.params.arguments?.realm); // графы сличаются в одной форме (#5838)
-      // Мост-спутник: сырые ходы над местом — только своего .sub-N (satellite.ts).
+        await resolveAgainstLed(msg.params.arguments?.realm);
+      // A satellite bridge moves only its own .sub-N seat.
       const satWord =
         hasId && msg.method === "tools/call" && msg.params?.name === tool("channel")
           ? satelliteChannelRefusal(msg.params.arguments ?? {})
@@ -318,21 +309,21 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
             result: { isError: true, content: [{ type: "text", text: satWord }] },
           }
         : hasId
-          ? (outsideSetRefusal(msg) ?? crossPlaceRefusal(msg)) // тул вне набора моста (narrow.ts)
+          ? (outsideSetRefusal(msg) ?? crossPlaceRefusal(msg))
           : null;
       if (cross) {
         emit(cross);
         return;
       }
-      // Занять место сырым ходом канала в роли владельца (主) — тоже только словом человека (owner.ts).
+      // Taking an owner-role seat by a raw channel move needs the human's word (owner.ts).
       const ch = msg.params?.arguments ?? {};
       const takes =
         hasId &&
         msg.method === "tools/call" &&
         msg.params?.name === tool("channel") &&
         ["connect", "mint", "register"].includes(String(ch.action));
-      // Граф своего места — его написанием (hearing.ts); место, которое слушает другая сессия,
-      // сырым ходом не берётся и им не подписываются (#6706).
+      // Own seat's realm in its own spelling; a seat another session hears is not taken
+      // raw (graph @nks/nks-dev, node #6706).
       if (takes && ch.realm != null) ch.realm = await seatRealm(ch.realm, ch.name);
       const notOwner = takes
         ? ((await ownerRefusal(ch.realm, ch.karta)) ?? (await rawSeatRefusal(msg)))
@@ -345,14 +336,15 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         });
         return;
       }
-      expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
+      expectOwnRevoke(msg); // close 4001 may outrun the reply: the bridge must know it revoked
       if (
         msg.method === "tools/call" &&
         msg.params?.name === tool("channel") &&
         msg.params.arguments
       )
-        msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
-      // Сырой connect или mint — под намерением до записи держания (taking.ts, #6706).
+        // Seat fields go on the five raw channel calls too (graph @nks/nks-dev, node #5174).
+        msg.params.arguments = withPlaceFields(msg.params.arguments);
+      // Raw connect/mint runs under an intent until the hold record (graph @nks/nks-dev, node #6706).
       endTaking =
         msg.params?.name === tool("channel") ? beginTaking(msg.params.arguments ?? {}) : null;
       await post(msg, forward);
@@ -383,8 +375,8 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
             );
           }
         }
-        // Ответ connect/mint: мост берёт сокет себе и дописывает, как слушать.
-        // Успешный iskron_case — спутник помнит join прогона (#6573, caseexit.ts).
+        // connect/mint: the bridge takes the socket and appends how to listen; a successful
+        // case join is remembered by a satellite (graph @nks/nks-dev, node #6573).
         noteCaseEntry(msg.params?.name, msg.params?.arguments, held);
         const reply = absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)));
         emit(forHarness(withNotice(reply)));

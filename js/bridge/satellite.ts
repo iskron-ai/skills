@@ -1,23 +1,12 @@
-// Мост-спутник — своё место субагента (граф nks-dev: #6002, условия
-// архитектора в #6001). Claude Code держит MCP-сервер из фронтматтера файла
-// агента одним соединением на имя записи: оно встаёт с прогоном субагента и
-// гаснет с концом прогона, а параллельные прогоны с этой записью делят один
-// процесс и одно место (путь `led` ниже; delegation.md, заметки мейнтейнера).
-// Такой мост, запущенный с --satellite (только флагом), занимает только место-спутник
-// рядом с местом позвавшего: имя `<место позвавшего>.sub-<N>` с первым
-// свободным на доске N, роль — названная karta вызова (её называет
-// запускающий, наследства роли нет), без хука инбокса роли, канал с
-// коротким окном простоя, без записи держания; с концом прогона (stdin закрыт)
-// мост уходит с места, и канал гаснет по окну (session.ts).
-//
-// N выбирается под заявкой машины: разные процессы-спутники, вставшие разом,
-// читают доску раньше чужого connect, и «первое свободное на доске» дало бы
-// обоим одно имя — одно место на два прогона, и уход первого снял бы его
-// второму. Эта гонка выведена из порядка вызовов, живьём не наблюдалась: в деле
-// №74 одно место на двоих держал ОБЩИЙ процесс моста (два файла агента с одной
-// записью — путь `led`), и его чинит своя запись у каждого ролевого файла.
-// Заявка — файл имени в доме моста с pid держателя, выбор идёт под короткой
-// блокировкой каталога заявок с токеном владельца; заявка живого чужого моста — занято.
+// Satellite bridge — a subagent's own seat (graph @nks/nks-dev, nodes #6002, #6001).
+// Started with --satellite, it takes only `<caller seat>.sub-<N>` beside the caller,
+// role from the call's karta, no role inbox hook, a short idle window and no hold
+// record; when the run ends (stdin closed) it leaves the seat (session.ts).
+// Claude Code keeps one connection per frontmatter entry name: parallel runs with the same
+// entry share one process and one seat (the `led` path below).
+// N is picked under a machine-wide claim: a name file with the holder's pid, chosen
+// under a short lock of the claims directory, so bridges standing at once differ
+// (each reads the board before the other's connect, so "first free" alone would collide).
 import { randomBytes } from "node:crypto";
 import {
   mkdirSync,
@@ -30,8 +19,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { envName, tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { envName, SATELLITE, type SatelliteWords, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
 import { type BoardEntry, nameOf, readBoard } from "./board.ts";
@@ -43,11 +32,13 @@ import { otherRealm } from "./realms.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 
-/** Окно простоя канала спутника, с; переменная — шов проб и ручка на случай, если контур сузит разброс. */
+/** Satellite channel idle window, s; the variable is a probe seam. */
 export const SATELLITE_TTL_S = Number(process.env[envName("BRIDGE_SATELLITE_TTL")]) || 300;
 
-// Правило имени спутника — общее с плагином OpenCode (shared/satname.ts); повторный
-// iskron_stand того же прогона узнаёт своё имя по isSatelliteOf.
+const sw = (): SatelliteWords => words(SATELLITE);
+
+// The satellite name rule is shared with the OpenCode plugin (shared/satname.ts); a repeated
+// stand of the same run knows its name by isSatelliteOf.
 export { isSatelliteOf, satelliteName };
 
 export type SatellitePick =
@@ -62,16 +53,14 @@ export type SatellitePick =
   | { ok: false; refusal: string };
 
 const claimDir = (): string => join(CFG.authDir, "satellites");
-// По имени, без графа: имя спутника несёт машину и место позвавшего, а граф
-// в вызове пишут по-разному (@owner/slug, slug, rN) — заявка по нему разошлась бы.
+// By name, not graph: the graph is spelled several ways in a call (@owner/slug, slug, rN).
 const claimFile = (name: string): string =>
   join(claimDir(), `${name.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
-// Заявка пишется pid моста харнеса (shared/scope.ts sessionPid): у сессии демона
-// машины это pid тонкого моста, не демона — заявка живёт, пока жив её мост, и
-// две сессии одного демона друг другу имён не отдают.
-/** Заявки этой сессии — снимаются уходом с места и концом сессии. */
+// Written with the harness bridge's pid (sessionPid): in the daemon it is the thin bridge's,
+// so a claim lives as long as its bridge and two sessions of one daemon never share a name.
+/** This session's claims — dropped on leaving the seat and at session end. */
 const claims = scoped(() => new Set<string>());
-/** Все заявки процесса — файл → pid, которым записан: выход процесса снимает их все. */
+/** All claims of the process — file → pid; process exit drops them all. */
 const allClaims = new Map<string, number>();
 let releaseOnExit = false;
 const LOCK_STALE_MS = 10_000;
@@ -87,8 +76,8 @@ function alive(pid: number): boolean {
 }
 
 /**
- * Заявить имя спутника на этой машине — только под блокировкой каталога.
- * true — имя за этим мостом; false — его держит заявка живого другого моста.
+ * Claim a satellite name on this machine, under the directory lock only.
+ * false — a live other bridge's claim holds it.
  */
 function claimName(name: string): boolean {
   const file = claimFile(name);
@@ -96,7 +85,7 @@ function claimName(name: string): boolean {
   try {
     pid = Number(readFileSync(file, "utf8").trim());
   } catch {
-    // заявки нет
+    // no claim
   }
   const me = sessionPid();
   if (pid && pid !== me && alive(pid)) return false;
@@ -112,26 +101,26 @@ const dropClaim = (f: string, pid: number): void => {
   try {
     if (Number(readFileSync(f, "utf8").trim()) === pid) unlinkSync(f);
   } catch {
-    // уже снята
+    // already dropped
   }
   allClaims.delete(f);
 };
 
-/** Снять заявки этого моста: место отпущено — имя свободно следующему прогону. */
+/** Drop this bridge's claims: the seat is released, the name is free for the next run. */
 export function releaseSatelliteClaims(): void {
   const me = sessionPid();
   for (const f of claims) dropClaim(f, me);
   claims.clear();
 }
 
-/** Выход процесса: заявки всех его сессий. */
+/** Process exit: the claims of all its sessions. */
 function releaseAllClaims(): void {
   for (const [f, pid] of [...allClaims]) dropClaim(f, pid);
 }
 
 const LOCK_OWNER = "owner";
 
-/** Токен держателя блокировки из файла внутри её каталога; null — токена нет (ещё не записан либо каталога нет). */
+/** The lock holder's token from the file inside it; null — not written yet or no lock. */
 function lockOwner(lock: string): string | null {
   try {
     return readFileSync(join(lock, LOCK_OWNER), "utf8").trim();
@@ -140,31 +129,29 @@ function lockOwner(lock: string): string | null {
   }
 }
 
-/** Брошена ли блокировка: держатель мёртв либо она старше LOCK_STALE_MS (токен не записан, держатель завис). */
+/** Abandoned lock: its holder is dead or it is older than LOCK_STALE_MS. */
 function abandoned(lock: string, owner: string | null): boolean {
   const pid = owner ? Number(owner.split(" ")[0]) : 0;
   if (pid && !alive(pid)) return true;
   try {
     return Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
   } catch {
-    return false; // снял другой
+    return false; // dropped by another
   }
 }
 
 /**
- * Унести блокировку с токеном `owner`: rename в уникальное имя атомарен — из
- * двух уносящих её уносит один, и только унёсший удаляет. null — унесена и
- * снята либо её унёс другой. Унёс не ту (между чтением токена и rename
- * держатель сменился) — чужая не снимается и не возвращается: rename назад
- * лёг бы поверх пустого `.lock`, только что созданного третьим мостом. Она
- * остаётся под унесённым именем, а ответ — причина выбирать по одной доске.
+ * Take away the lock with token `owner` by an atomic rename to a unique name; only
+ * the taker removes it. null — removed, or another took it. A lock of another owner
+ * taken by mistake is left under its new name (renaming back could land on a fresh
+ * `.lock`), and the answer is the reason to pick by the board alone.
  */
 function takeLock(lock: string, owner: string | null): string | null {
   const away = `${lock}.${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
     renameSync(lock, away);
   } catch {
-    return null; // унёс другой
+    return null; // another took it
   }
   if (lockOwner(away) !== owner)
     return `the claims lock of another bridge was taken by mistake and is left as ${away}`;
@@ -173,12 +160,10 @@ function takeLock(lock: string, owner: string | null): string | null {
 }
 
 /**
- * Выбор под блокировкой каталога заявок: мосты этой машины выбирают N по
- * очереди. Блокировка — каталог (mkdir атомарен) с токеном владельца (pid и
- * случайное) внутри; брошенную уносит `takeLock`, в конце снимается только
- * своя. Каталог недоступен, заявка не записалась, ждать дольше LOCK_WAIT_MS,
- * чужая блокировка унесена по ошибке либо свою унесли посреди выбора — выбор
- * не гарантирован: вторым значением причина, вслух в журнал и заметкой в ответ.
+ * Pick under the claims directory lock (an atomic mkdir with an owner token inside):
+ * bridges of this machine pick N in turn; an abandoned lock is taken by `takeLock`, only
+ * our own is removed at the end. When the pick is not guaranteed (no directory, claim not
+ * written, wait over LOCK_WAIT_MS, lock lost) the second value is the reason — logged and noted.
  */
 async function underClaimLock<T>(
   fn: (claim: (name: string) => boolean) => T,
@@ -232,7 +217,7 @@ async function underClaimLock<T>(
     if (lockOwner(lock) === token) takeLock(lock, token);
     throw e;
   }
-  // Блокировку унесли посреди выбора — другой мост мог выбирать одновременно: вслух и заметкой.
+  // Lock taken away mid-pick: another bridge may have picked at the same time.
   const lost =
     lockOwner(lock) === token
       ? takeLock(lock, token)
@@ -242,12 +227,10 @@ async function underClaimLock<T>(
 }
 
 /**
- * Место-спутник по доске: место позвавшего (`@handle:name` либо голое имя)
- * должно стоять на доске — любой роли: роль спутника — `karta` вызова; имя —
- * первое `.sub-N`, которого на доске нет вовсе и которое не заявил другой
- * живой мост этой машины (`claim`). `led` — имя места, которое
- * этот мост уже ведёт в графе: спутник той же базы возвращается на него, а не
- * берёт следующий номер.
+ * The satellite seat by the board: the caller's seat (any role — the satellite's role is
+ * the call's karta) must stand on it; the name is
+ * the first `.sub-N` absent from the board and not claimed by another live bridge.
+ * `led` — the seat this bridge already leads: a satellite of the same base returns to it.
  */
 export function pickSatellite(
   entries: BoardEntry[],
@@ -258,50 +241,23 @@ export function pickSatellite(
 ): SatellitePick {
   const address = of.startsWith("@") && of.includes(":") ? of : null;
   const base = address ? nameOf(address) : of.replace(/^@/, "");
-  const fault = base ? nameFault(base) : L("пусто", "empty");
-  if (fault)
-    return {
-      ok: false,
-      refusal: L(
-        `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: @handle:name.`,
-        `Refused (bridge): satellite_of "${of}" is not a seat name (${fault}); pass the caller's seat as the board prints it: @handle:name.`,
-      ),
-    };
+  const fault = base ? nameFault(base) : sw().empty();
+  if (fault) return { ok: false, refusal: sw().notSeatName(of, fault) };
   const callers = entries.filter((e) =>
     address ? e.address === address : nameOf(e.address) === base,
   );
-  if (!callers.length)
-    return {
-      ok: false,
-      refusal: L(
-        `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`,
-        `Refused (bridge): the caller's seat ${of} is not on this graph's board — the satellite has nothing to stand beside; check satellite_of and the graph in the brief.`,
-      ),
-    };
-  // Одно имя у нескольких мест (разные роли) — место своей роли, если оно одно; иначе неоднозначно.
+  if (!callers.length) return { ok: false, refusal: sw().noCaller(of) };
+  // One name on several seats (different roles): the own role's seat if it is the only one.
   const same = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
-  if (same.length !== 1)
-    return {
-      ok: false,
-      refusal: L(
-        `Отказано (мост): имя ${base} на доске носят ${callers.length} места — передай satellite_of полным адресом @handle:name.`,
-        `Refused (bridge): ${callers.length} seats on the board carry the name ${base} — pass satellite_of as the full address @handle:name.`,
-      ),
-    };
+  if (same.length !== 1) return { ok: false, refusal: sw().ambiguous(callers.length, base) };
   const caller = same[0].address;
   const callerKarta = same[0].karta;
   const callerId = same[0].id;
   const notes: string[] = [];
   if (led && isSatelliteOf(base, led)) {
-    // Повтор того же прогона — либо параллельный прогон с той же записью моста:
-    // Claude Code делит соединение сервера фронтматтера по имени записи, не по
-    // файлу — в деле №74 ревьюер и ткач (два файла с одной записью iskron-sub)
-    // шли одним процессом моста и одним местом. Прогона
-    // вызов не называет, различить их мост не может — называет оба.
-    const word = L(
-      `мост уже держит ${led} — повтор этого прогона либо параллельный прогон с той же записью моста (тот же файл агента или другой с той же записью), который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на запись моста`,
-      `the bridge already holds ${led} — a repeat of this run or a parallel run with the same bridge entry (the same agent file or another with the same entry), which shares this seat and loses it when the first one ends; in parallel — no more than one run per bridge entry`,
-    );
+    // A repeat of the run or a parallel run sharing the bridge entry: Claude Code
+    // shares the server connection by entry name, and the call names no run — so name both.
+    const word = sw().alreadyHolds(led);
     log(word);
     notes.push(word);
     return { ok: true, name: led, caller, callerKarta, callerId, notes };
@@ -310,27 +266,15 @@ export function pickSatellite(
   for (let n = 1; n <= 99; n++) {
     const name = satelliteName(base, n);
     if (taken.has(name) || !claim(name)) continue;
-    if (!name.startsWith(`${base}.`))
-      notes.push(
-        L(
-          `имя ${base}.sub-${n} длиннее предела ${NAME_MAX} знаков — база укорочена: ${name}`,
-          `the name ${base}.sub-${n} is longer than the ${NAME_MAX}-sign limit — the base is cut: ${name}`,
-        ),
-      );
+    if (!name.startsWith(`${base}.`)) notes.push(sw().nameCut(base, n, NAME_MAX, name));
     return { ok: true, name, caller, callerKarta, callerId, notes };
   }
-  return {
-    ok: false,
-    refusal: L(
-      `Отказано (мост): у места ${caller} заняты все спутники .sub-1…99 — прибери погасшие места прежних прогонов.`,
-      `Refused (bridge): every satellite .sub-1…99 of the seat ${caller} is taken — clear the dead seats of former runs.`,
-    ),
-  };
+  return { ok: false, refusal: sw().allTaken(caller) };
 }
 
 /**
- * Шаг iskron_stand до вывода имени: спутнику — только место-спутник, мосту
- * сессии — никогда. null — вызов не о спутнике; иначе имя места либо отказ.
+ * The stand step before the name is derived: a satellite bridge takes only a
+ * satellite seat, a session bridge never. null — the call is not about a satellite.
  */
 export async function satelliteGate(
   a: Record<string, unknown>,
@@ -340,36 +284,13 @@ export async function satelliteGate(
 ): Promise<SatellitePick | null> {
   const of = typeof a.satellite_of === "string" ? a.satellite_of.trim() : "";
   const refuse = (refusal: string): SatellitePick => ({ ok: false, refusal });
-  if (CFG.satellite && !of)
-    return refuse(
-      L(
-        "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
-        "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat (@handle:name) from the brief.",
-      ),
-    );
+  if (CFG.satellite && !of) return refuse(sw().needSatelliteOf());
   if (!of) return null;
-  if (!CFG.satellite)
-    return refuse(
-      L(
-        "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
-        "Refused (bridge): satellite_of is for a satellite bridge only (a bridge entry with --satellite in the agent file); this is a session bridge, and a satellite seat on it would take the caller's voice. A subagent without a bridge of its own has a limit: it speaks as the caller's seat and names itself in its lines.",
-      ),
-    );
+  if (!CFG.satellite) return refuse(sw().notSatellite());
   if (asked || a.take === true || (typeof a.room === "string" && a.room.trim()))
-    return refuse(
-      L(
-        "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются.",
-        "Refused (bridge): the bridge derives the satellite's name — name, take and room do not go with satellite_of.",
-      ),
-    );
+    return refuse(sw().derivesName());
   const b = await call(tool("channel"), { action: "list", realm });
-  if (b.isError)
-    return refuse(
-      L(
-        `Отказано: доска не прочиталась — ${short(b.text)}`,
-        `Refused: the board did not read — ${short(b.text)}`,
-      ),
-    );
+  if (b.isError) return refuse(sw().boardUnread(short(b.text)));
   const s = state.standing;
   const led = s && !otherRealm(s.realm, realm) ? (s.name ?? null) : null;
   const { entries } = readBoard(b);
@@ -377,40 +298,22 @@ export async function satelliteGate(
     pickSatellite(entries, of, karta, led, claim),
   );
   if (!pick.ok) return pick;
-  if (unsure && pick.name !== led)
-    pick.notes.push(
-      L(
-        `заявки имён спутников на этой машине выбор не удержали (${unsure}) — имя ${pick.name} выбрано по доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
-        `satellite name claims on this machine did not hold the pick (${unsure}) — the name ${pick.name} was picked by the board: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`,
-      ),
-    );
-  // id места печатает только доска одной роли (list с karta), последней строкой под местом.
+  if (unsure && pick.name !== led) pick.notes.push(sw().claimsUnsure(unsure, pick.name));
+  // Only a one-role board (list with karta) prints the seat id, as the last line under the seat.
   if (!pick.callerId) {
     const k = await call(tool("channel"), { action: "list", realm, karta: pick.callerKarta });
     if (!k.isError)
       pick.callerId = readBoard(k).entries.find((e) => e.address === pick.caller)?.id ?? null;
   }
   noteSatelliteOf(pick.caller, pick.callerId);
-  pick.notes.push(
-    L(
-      `место-спутник ${pick.caller}: роль #${normKarta(karta)}, хука инбокса роли нет, окно простоя канала ${SATELLITE_TTL_S} с, записи держания нет — место живёт прогоном`,
-      `satellite seat of ${pick.caller}: role #${normKarta(karta)}, no role inbox hook, channel idle window ${SATELLITE_TTL_S} s, no holding record — the seat lives by the run`,
-    ),
-  );
-  if (!pick.callerId)
-    pick.notes.push(
-      L(
-        `id места ${pick.caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`,
-        `the board did not print the id of ${pick.caller} — the satellite sign (satellite_of) was not sent to the platform: the seat may inherit the role's undelivered mail`,
-      ),
-    );
+  pick.notes.push(sw().seat(pick.caller, normKarta(karta), SATELLITE_TTL_S));
+  if (!pick.callerId) pick.notes.push(sw().noCallerId(pick.caller));
   return pick;
 }
 
 /**
- * Отказ ли connect именно окну простоя: правило отказа api (`ttl_out_of_range`),
- * а без правила — ответ называет ttl либо несёт код 4xx. Разброс окна и слова
- * отказа держит контур — мост не угадывает их формулировку.
+ * Whether connect refused the idle window: the api refusal rule `ttl_out_of_range`,
+ * else the answer names ttl or carries a 4xx code; the wording is not guessed.
  */
 export const ttlRefused = (a: Pick<Answer, "text" | "refusal">): boolean =>
   a.refusal?.rule
@@ -420,9 +323,8 @@ export const ttlRefused = (a: Pick<Answer, "text" | "refusal">): boolean =>
 const PLACE_ACTIONS = new Set(["connect", "mint", "register", "revoke"]);
 
 /**
- * Ограда моста-спутника на сыром iskron_channel: connect, mint, register и
- * revoke — только своего места `.sub-N`, и только после iskron_stand. Иначе
- * субагент мог бы взять или снять сокет места позвавшего. null — пропустить.
+ * The satellite bridge's fence on the raw channel tool: connect, mint, register and
+ * revoke only of its own `.sub-N` seat, after stand. null — let it through.
  */
 export function satelliteChannelRefusal(args: Record<string, unknown>): string | null {
   if (!CFG.satellite) return null;
@@ -430,11 +332,7 @@ export function satelliteChannelRefusal(args: Record<string, unknown>): string |
   if (!PLACE_ACTIONS.has(action)) return null;
   const s = state.standing;
   const own = s?.name ?? "";
-  if (!s || !SUB_RE.test(own))
-    return L(
-      `Отказано (мост-спутник): ${action} мимо iskron_stand — место этому мосту даёт только iskron_stand с satellite_of; чужое место спутник не берёт и не снимает.`,
-      `Refused (satellite bridge): ${action} bypassing iskron_stand — only iskron_stand with satellite_of gives this bridge a seat; a satellite neither takes nor releases another's seat.`,
-    );
+  if (!s || !SUB_RE.test(own)) return sw().bypass(action);
   const sameRealm = !otherRealm(args.realm, s.realm);
   const karta = normKarta(args.karta ?? s.karta);
   const target =
@@ -447,19 +345,8 @@ export function satelliteChannelRefusal(args: Record<string, unknown>): string |
     target != null &&
     (target === own || target.endsWith(`:${own}`) || (action === "revoke" && target === "mine"));
   if (sameRealm && karta === normKarta(s.karta) && mine) return null;
-  return L(
-    `Отказано (мост-спутник): ${action} — только своего места ${own} (роль #${normKarta(s.karta)}, граф ${s.realm}); место позвавшего и любое другое спутник не берёт и не снимает.`,
-    `Refused (satellite bridge): ${action} — only its own seat ${own} (role #${normKarta(s.karta)}, graph ${s.realm}); a satellite neither takes nor releases the caller's seat or any other.`,
-  );
+  return sw().onlyOwn(action, own, normKarta(s.karta), s.realm);
 }
 
-/** Слово о слухе вместо команды сторожа: спутник сторожа не держит. */
-export const satelliteListenWord = (): string =>
-  L(
-    `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; ` +
-      `с концом прогона мост уходит с места сам, канал гаснет окном простоя ${SATELLITE_TTL_S} с. ` +
-      `Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`,
-    `[iskron-bridge] Satellite seat: do not arm a watchdog — the seat lives by the subagent's run and signs its records; ` +
-      `when the run ends the bridge leaves the seat itself, the channel dies after the ${SATELLITE_TTL_S} s idle window. ` +
-      `The first move — enter the case the brief names and retell the brief as your first message in it.`,
-  );
+/** The hearing word instead of a watchdog command: a satellite holds no watchdog. */
+export const satelliteListenWord = (): string => sw().listen(SATELLITE_TTL_S);

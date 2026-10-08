@@ -1,7 +1,7 @@
-// Кто рукопожался с мостом — имя харнесса из clientInfo.name (граф nks-dev:
-// #5047, #4895): по нему мост знает, доходят ли кадры уведомлением (pi,
-// OpenCode) или только локальным сторожем (Claude Code, Codex), и чью запись
-// держания считать своей.
+// Who shook hands with the bridge — the harness name from clientInfo.name (graph
+// @nks/nks-dev, nodes #5047, #4895): it tells whether frames arrive as notifications
+// (pi, OpenCode) or only via the local watchdog (Claude Code, Codex), and whose hold
+// record is its own.
 import { HARNESS_VERSION_ENV, HOSTED_CLIENTS, NOTIFIED_CLIENTS } from "../shared/clients.ts";
 import { envOf } from "../shared/scope.ts";
 import { state } from "./transport.ts";
@@ -9,22 +9,22 @@ import { state } from "./transport.ts";
 const clientInfo = (): { name?: unknown; version?: unknown } | undefined =>
   (state.initParams as { clientInfo?: { name?: unknown; version?: unknown } } | null)?.clientInfo;
 
-/** Имя харнесса из рукопожатия; пусто, пока рукопожатия не было. */
+/** Empty until the handshake. */
 export function harnessName(): string {
   const info = clientInfo();
   return typeof info?.name === "string" ? info.name : "";
 }
 
 /**
- * Версия хоста его же словами (#6226): Claude Code и Codex — clientInfo.version
- * рукопожатия; плагин OpenCode и расширение pi — окружением от них. Не узнал — "unknown".
+ * The host's version in its own words (graph @nks/nks-dev, node #6226): handshake
+ * clientInfo.version, or the environment for hosted clients; else "unknown".
  */
 export function harnessVersion(): string {
   const v = HOSTED_CLIENTS.has(harnessName())
-    ? envOf(HARNESS_VERSION_ENV) // окружение моста харнеса — у сессии демона не его
+    ? envOf(HARNESS_VERSION_ENV) // the session's environment, not the daemon's
     : clientInfo()?.version;
   return typeof v === "string" && v.trim() ? v.trim() : "unknown";
 }
 
-/** Кадр этому харнесу доходит уведомлением MCP, а не локальным сторожем. */
+/** Frames reach this harness as MCP notifications, not via the local watchdog. */
 export const notifiedClient = (): boolean => NOTIFIED_CLIENTS.has(harnessName());

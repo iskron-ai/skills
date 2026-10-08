@@ -1,10 +1,9 @@
-// Файлы локальной двери места (.key, .sock) — общие пути на ключ: новый мост
-// того же места кладёт свои теми же путями. Дверь сносит только свои — по
-// отпечатку (устройство, inode, время рождения), снятому, когда положила их
-// сама: уступивший мост не удаляет двери преемника (граф nks-dev: #6706).
+// A door's .key and .sock share paths per key with a successor bridge of the same seat:
+// a door removes only files whose stamp (dev, inode, birth time) it took itself, so a
+// yielding bridge never deletes its successor's door (graph @nks/nks-dev, node #6706).
 import { lstatSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
-/** Отпечаток файла по пути; нет файла — null. Переименование и touch его не меняют. */
+/** File stamp at the path; null when absent. Rename and touch keep it. */
 export function stampOf(path: string): string | null {
   try {
     const s = lstatSync(path, { bigint: true });
@@ -14,7 +13,7 @@ export function stampOf(path: string): string | null {
   }
 }
 
-/** Записать файл через переименование — свой inode, даже поверх чужого, — и вернуть его отпечаток. */
+/** Write via rename (own inode even over another's file) and return the stamp. */
 export function writeOwned(path: string, content: string): string | null {
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, content, { mode: 0o600 });
@@ -29,7 +28,7 @@ export function writeOwned(path: string, content: string): string | null {
   return stampOf(path);
 }
 
-/** Удалить файл, только если по пути лежит тот же, что положила эта дверь. */
+/** Unlink only if the file at the path carries this stamp. */
 export function unlinkOwned(path: string, stamp: string | null): void {
   if (!stamp || stampOf(path) !== stamp) return;
   try {
@@ -38,9 +37,9 @@ export function unlinkOwned(path: string, stamp: string | null): void {
 }
 
 /**
- * Закрыть сервер сокета, не снеся чужой сокет того же пути: libuv при закрытии
- * удаляет путь, к которому сервер привязан, кто бы там ни лежал. Лежит чужой —
- * он на миг отводится в сторону и возвращается тем же inode; закрытие синхронно.
+ * Close a socket server without removing another's socket at the same path: libuv
+ * unlinks the bound path on close, so a foreign socket is moved aside and back with the
+ * same inode; the close is synchronous.
  */
 export function closeServerKeeping(path: string, stamp: string | null, close: () => void): void {
   const now = stampOf(path);

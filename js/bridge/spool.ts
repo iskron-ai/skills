@@ -1,11 +1,8 @@
-// Спул передачи места (граф nks-dev: #6586): уходящий демон держит сокет места до
-// вытеснения преемником (handoff.ts), а кадры, пришедшие после закрытия двери,
-// кладёт сюда — строкой JSON на запись, рядом с ключом места (0600). Записи:
-// {open} — передача началась, {frame} — кадр как пришёл, {done} — сокет ушёл
-// (вытеснен или закрыт по пределу). Преемник после hello досылает кадры тем же
-// путём доставки (hold.ts); повтор отсекает память отданного (.seen). Кадр,
-// пролежавший в спуле дольше предела досылки (место не вернулось часами), живым
-// не досылается — идёт с пометкой stale, как лежалые кадры службы.
+// The seat handover spool (graph @nks/nks-dev, node #6586): the outgoing daemon holds
+// the seat's socket until the successor evicts it (handoff.ts) and writes frames that
+// arrive after the door closed here, a JSON line each, beside the seat key (0600).
+// Entries: {open} — handover began, {frame} — a frame as it came, {done} — the socket
+// went (evicted or closed at the limit). The successor replays them after hello through hold.ts; .seen drops repeats.
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -14,18 +11,18 @@ import { type Frame } from "../shared/channel.ts";
 import { bindScope } from "../shared/scope.ts";
 import { log } from "./streams.ts";
 
-/** Сколько уходящий демон держит сокет места, ожидая вытеснения преемником. */
+/** How long the outgoing daemon holds the seat's socket awaiting the successor's eviction. */
 export const HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12_000;
-/** Сколько преемник ждёт конца спула: предел уходящего и запас на его выход. */
+/** How long the successor waits for the spool's end: the outgoing one's limit plus its exit. */
 const DRAIN_MS = HANDOFF_MS + 5_000;
 const DRAIN_TICK_MS = 200;
-/** Предел досылки живым: кадр спула старше — лежалый (stale), хода не стоит. */
+/** Older spooled frames (the seat was gone for long) are replayed marked stale, not live. */
 const SPOOL_LIVE_MS = DRAIN_MS;
 
 interface Entry {
   open?: number;
   frame?: string;
-  /** Когда кадр лёг в спул. */
+  /** When the frame was spooled. */
   at?: number;
   done?: number;
 }
@@ -40,7 +37,7 @@ function append(path: string, entry: Entry): void {
   }
 }
 
-/** Завести спул до того, как преемник прочтёт hello: открытый спул ждут, а не пропускают. */
+/** Open the spool before the successor reads hello: an open spool is waited for, not skipped. */
 export function openSpool(path: string): void {
   try {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -59,11 +56,11 @@ function parseFrame(raw: string): Frame | null {
     const f = JSON.parse(raw) as unknown;
     return f && typeof f === "object" ? (f as Frame) : null;
   } catch {
-    return null; // не JSON — донесём как есть, как сокет
+    return null; // not JSON: delivered as is, as the socket would
   }
 }
 
-/** Записи спула, дописанные целиком (строка с переводом), — недописанная читается следующим проходом. */
+/** Whole entries only (ending in a newline); a partial one is read on the next pass. */
 function entries(path: string): Entry[] | null {
   let text: string;
   try {
@@ -84,7 +81,7 @@ function entries(path: string): Entry[] | null {
     });
 }
 
-/** Кадр, пролежавший дольше предела досылки, — с пометкой stale; время — его, иначе начала передачи. */
+/** A frame older than the live limit gets stale; its time, else the handover's start. */
 function aged(raw: string, at: number): [string, Frame | null] {
   const frame = parseFrame(raw);
   if (Date.now() - at <= SPOOL_LIVE_MS || frame?.type !== "message") return [raw, frame];
@@ -93,9 +90,9 @@ function aged(raw: string, at: number): [string, Frame | null] {
 }
 
 /**
- * Дослать спул места (преемник, по hello): кадры — feed по порядку, пока каждая
- * начатая передача не допишет конец; конец или предел — файл прочь. Спула нет — ничего.
- * Кадры спула приходят после hello преемника и могут встать позже более новых живых.
+ * Replay the seat's spool (the successor, on hello): frames to feed in order until every
+ * begun handover writes its end or the limit passes, then the file goes. Spooled frames
+ * may land after newer live ones.
  */
 export function drainSpool(path: string, feed: (raw: string, frame: Frame | null) => void): void {
   if (draining.has(path)) return;

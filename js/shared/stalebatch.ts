@@ -1,19 +1,20 @@
-// Текст пачки лежалых (граф nks-dev: #4881, #5033) — составляется тем, кто её отдаёт,
-// в миг отдачи (seen.ts): мостом, уведомляя pi и OpenCode, сторожем — печатая или
-// вкладывая в тред. Событие, вошедшее в ход до этого мига, пачка не повторяет (eventIn).
+// Stale batch text (graph @nks/nks-dev, nodes #4881, #5033) — composed by whoever hands
+// it out, at that moment (seen.ts): the bridge notifying pi and OpenCode, the watchdog
+// printing or threading it. An event already in the turn is not repeated (eventIn).
+import { STALE } from "../delivery/index.ts";
 import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
 import { caseCountLines, frameToText } from "./frame-text.ts";
-import { L } from "./lang.ts";
+import { words } from "./lang.ts";
 import { type Marks, splitBatch } from "./seen.ts";
 
 const STALE_BURST_KEEP = 20;
 const BODY_CAP = 800;
 
 /**
- * Пачка лежалых по памяти отдающего `has`: текст ("" — всё уже в ходе) и метки её
- * доставки — пишет их отдающий, когда текст ушёл (#5831). Закон #6574: адресованные
- * месту — текстом, прочие записи дел — счётом; событие — один раз (seen.ts splitBatch).
+ * Stale batch by the giver's memory `has`: the text ("" — all already in the turn) and
+ * its delivery marks, written by the giver once the text is out (#5831). Rule #6574:
+ * addressed to the seat as text, other case records by count; an event once.
  */
 export function staleBatch(all: readonly Frame[], has: Marks): { text: string; keys: string[] } {
   const { shown: frames, kept, keys } = splitBatch(all, STALE_BURST_KEEP, has);
@@ -28,18 +29,6 @@ export function staleBatch(all: readonly Frame[], has: Marks): { text: string; k
         return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
       }),
   ];
-  const cut = count > frames.length;
-  const head = L(
-    `Лежалых кадров: ${count}` +
-      (cut ? `, здесь первые ${frames.length}, не вошло ${count - frames.length}` : "") +
-      " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
-      "адресованные месту — текстом, прочие — счётом; " +
-      'полностью и не вошедшее — iskron_channel(action="history").',
-    `Stale frames: ${count}` +
-      (cut ? `, the first ${frames.length} here, ${count - frames.length} left out` : "") +
-      " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
-      "those addressed to the seat as text, the rest by count; " +
-      'in full and the rest — iskron_channel(action="history").',
-  );
+  const head = words(STALE).head(count, frames.length);
   return { text: `${head}\n\n${bodies.join("\n\n")}`, keys };
 }

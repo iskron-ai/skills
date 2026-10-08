@@ -1,8 +1,8 @@
-// Ходы моста, которые встают тем же iskron_stand, что агент (stand.ts), — переданы
-// туда, где они нужны, отсюда: прямой импорт stand.ts замкнул бы круг импортов.
-//   • место отняли (evicted.ts, #6706) — встать рядом на имя.N;
-//   • возврат места, чей сокет держит прежний мост этой же сессии (resume.ts, #6702), —
-//     взять его тем же суждением, что iskron_stand, без take.
+// Bridge moves that stand by the same stand tool as the agent (stand.ts), wired from
+// here to where they are needed: importing stand.ts directly would close an import loop.
+//   • a seat was taken (evicted.ts, #6706) — stand beside on name.N;
+//   • a return of a seat whose socket a former bridge of this same session holds
+//     (resume.ts, #6702) — take it by the stand tool's judgement, without take.
 import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { serialized } from "./call.ts";
 import { wireEviction } from "./evicted.ts";
@@ -10,7 +10,7 @@ import { wireTakeOwn } from "./resume.ts";
 import { baseOf } from "./separate.ts";
 import { isDirectory, runStand } from "./stand.ts";
 
-/** iskron_stand по имени места изнутри моста, без take: ответ — исход и текст. */
+/** The stand tool by seat name from inside the bridge, without take: the outcome and text. */
 async function standAs(
   id: string,
   place: { realm: string; karta: string | number; name: string },
@@ -32,13 +32,13 @@ wireEviction((place, cwd) =>
   serialized(() =>
     standAs(
       `${ID_PREFIX}bridge-evicted`,
-      { ...place, name: baseOf(place.realm, place.karta, place.name ?? "") }, // основа, от которой место выбрано (#6706)
+      { ...place, name: baseOf(place.realm, place.karta, place.name ?? "") }, // the base the seat was chosen from (#6706)
       cwd,
     ),
   ),
 );
 
-// Возврат уже идёт под serialized (deliver.ts): второй serialized ждал бы сам себя.
+// A return already runs under serialized (deliver.ts): a second serialized would wait on itself.
 wireTakeOwn(
   async (rec, cwd) => (await standAs(`${ID_PREFIX}bridge-resume`, rec, cwd)).text.split("\n")[0],
 );

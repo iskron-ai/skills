@@ -1,8 +1,7 @@
-// Вызов тула сервера самим мостом — теми же вызовами, что и агент (stand.ts,
-// resume.ts): доска, connect, register. Ответ connect впитывается мостом так
-// же, как проксируемый (absorb.ts), а принятый register запоминается стоянием.
-import { tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+// The bridge's own tool calls (board, connect, register), absorbed like proxied ones;
+// an accepted register is remembered by the standing.
+import { CALL, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
 import { structuredOf } from "./fields.ts";
@@ -20,16 +19,11 @@ import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /**
- * В графе место одно на мост (граф nks-dev: #5154). Мост, ведущий место (держит
- * или запарковал), под другую роль или другое имя того же графа молча не
- * переходит: прежде holdStanding снимал родительское место с сокета, а register
- * переписывал привязку — сабагент в дочерней сессии того же моста уводил
- * родителя. Место в ДРУГОМ графе встаёт рядом на том же канале (#5838) — там
- * правило сличает с местом того графа, если мост его уже ведёт. Возвращает ключ
- * ведомого места, когда просят другое, иначе null. Графы сличаются в
- * канонической форме @owner/slug (realms.ts): r5, nks-dev и @nks/nks-dev —
- * один граф, когда разрешены; неразрешённое имя до сюда не доходит — отказ
- * раньше (unresolvedRefusal).
+ * One seat per bridge in a graph; a seat in another graph stands beside on the same
+ * channel (graph @nks/nks-dev, nodes #5154, #5838). Returns the led key when another
+ * seat is asked, else null. Realms compare in canonical @owner/slug form; an unresolved
+ * name never gets here (unresolvedRefusal). In another graph the rule compares against
+ * the seat this bridge already leads there, if any.
  */
 export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): string | null {
   const led = ledKey();
@@ -41,18 +35,13 @@ export function leadsOtherPlace(realm: unknown, karta: unknown, name: unknown): 
   if (!ex && otherRealm(realm, prim.realm)) return null;
   const k = normKarta(karta);
   const n = normName(name);
-  // Роль: «agent» — своя по слову поверхности, что бы ни было записано; всё
-  // прочее сравнивается буквально, сентинел на любой стороне проверку не
-  // выключает: «me» — роль человека, не роль стояния, и с числом не совпадает;
-  // мост, вставший как «me», числовой роли своим местом не считает (#5154).
+  // "agent" is always own; anything else, "me" included, compares literally
+  // (graph @nks/nks-dev, node #5154).
   const sameKarta = k === "agent" || k === String(s.karta);
   return sameKarta && n === (s.name ?? "") ? null : (beside ?? led);
 }
 
-/**
- * Перед сличением графов: мост ведёт место, а граф вызова и граф места записаны
- * по-разному — разрешить оба в @owner/slug одним списком графов (iskron_realm list).
- */
+/** Resolves the call's and the led seats' realms to @owner/slug with one realm list. */
 export async function resolveAgainstLed(realm: unknown): Promise<void> {
   const prim = state.standing;
   if (!prim || !ledKey() || String(realm ?? "").trim() === prim.realm) return;
@@ -62,14 +51,14 @@ export async function resolveAgainstLed(realm: unknown): Promise<void> {
   });
 }
 
-/** Графы мест, которые ведёт мост, — в канонической форме, где она известна. */
+/** Realms of the led seats, canonical where known. */
 export const heldRealms = (): string[] =>
   [state.standing, ...state.places].filter((s) => !!s).map((s) => canonRealm(s?.realm));
 
 /**
- * Имя графа, которое мост не разрешил, против графов своих мест: ни «тот же»
- * (заблокировал бы место рядом), ни «другой» (обошёл бы правило одного места,
- * #5154) — отказ вслух с просьбой о полном @owner/slug (#5838). Иначе null.
+ * An unresolved realm name against the led seats is neither "same" (it would block a seat
+ * beside) nor "other" (it would bypass the one-seat rule):
+ * refuse aloud asking for @owner/slug (graph @nks/nks-dev, nodes #5154, #5838).
  */
 export function unresolvedRefusal(realm: unknown): string | null {
   if (!ledKey() || !state.standing) return null;
@@ -80,71 +69,43 @@ export function unresolvedRefusal(realm: unknown): string | null {
 }
 
 /**
- * Кто слушает просимое место: никто (совет take=true уместен), другая сессия,
- * либо мост не знает (доска не прочлась, прямой вызов доски не читает) — тогда
- * take=true не советуется: живое место другой сессии отнимают только словом человека (#6706).
+ * Who listens on the asked seat; "unknown" — the board did not read, or a direct call reads
+ * no board. When not "free", take=true is not advised
+ * (graph @nks/nks-dev, node #6706).
  */
 export type AskedHearing = "free" | "other" | "unknown";
 
-/** Слово отказа: совет по тому, ЧЕМ просимое место отличается от ведомого. */
+/** Refusal word, advising by how the asked seat differs from the led one. */
 export function otherPlaceWord(
   led: string,
   asked: string,
   sameName = false,
   hearing: AskedHearing = "free",
 ): string {
-  const same = sameName
-    ? L("то же имя под другой ролью; ", "the same name under another role; ")
-    : "";
+  const w = words(CALL);
+  const same = sameName ? w.sameNamePrefix() : "";
   const advice =
     hearing !== "free"
-      ? same +
-        L(
-          `${hearing === "other" ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true) — только по слову человека`,
-          `${hearing === "other" ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true) — only on the human's word`,
-        )
+      ? same + w.heardAdvice(hearing === "other", asked, led)
       : led === asked
-        ? L(
-            "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
-            "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
-          )
+        ? w.sameKeysAdvice()
         : sameName
-          ? L(
-              "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
-              "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
-            )
-          : L(
-              "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
-              "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
-            );
+          ? w.sameNameAdvice()
+          : w.takeOtherAdvice();
   const Advice = `${advice.charAt(0).toUpperCase()}${advice.slice(1)}`;
-  return L(
-    `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ` +
-      `${Advice}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`,
-    `Refused (bridge): this bridge already leads the seat ${led} — one seat per bridge in a graph, and the seat ${asked} would silently take it off the socket. ` +
-      `${Advice}; holding both at once needs a second bridge, that is another harness session; a seat in another graph stands beside by itself.`,
-  );
+  return w.otherPlace(led, asked, Advice);
 }
 
 /**
- * Место в другом графе встаёт рядом только на живом канале этого моста: без
- * него (ушёл с места, место отняли) новый connect снял бы ведомое место молча.
- * Возвращает слово отказа либо null.
+ * A seat in another graph stands beside only on this bridge's live channel;
+ * without it a new connect would silently drop the led seat. Refusal or null.
  */
 export function besideRefusal(realm: unknown, how: "stand" | "connect"): string | null {
   const prim = state.standing;
   const led = ledKey();
   if (!led || !prim || !otherRealm(realm, prim.realm)) return null;
   if (how === "stand" && holdsChannel()) return null;
-  return how === "connect"
-    ? L(
-        `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`,
-        `Refused (bridge): this bridge leads the seat ${led}, and a connect in another graph would open a second channel and take it off the socket. A seat in another graph stands beside on the same channel — iskron_stand(realm=…) or register.`,
-      )
-    : L(
-        `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
-        `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`,
-      );
+  return how === "connect" ? words(CALL).besideConnect(led) : words(CALL).besideStand(led);
 }
 
 const refusal = (msg: JsonRpcMessage, text: string): JsonRpcMessage => ({
@@ -153,7 +114,7 @@ const refusal = (msg: JsonRpcMessage, text: string): JsonRpcMessage => ({
   result: { isError: true, content: [{ type: "text", text }] },
 });
 
-/** Проксируемый connect/mint/register под другое место, когда мост ведёт своё, — отказ вслух вместо тихой подмены. */
+/** Proxied connect/mint/register for another seat while one is led: refused aloud, not swapped silently. */
 export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
   const a = msg.params.arguments ?? {};
@@ -171,15 +132,15 @@ export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
   if (!led) return null;
   const asked = keyOf(realm, karta, name);
   const sameName = name === (state.standing?.name ?? "");
-  return refusal(msg, otherPlaceWord(led, asked, sameName, "unknown")); // доска не читается
+  return refusal(msg, otherPlaceWord(led, asked, sameName, "unknown")); // the board is not read here
 }
 
 export interface Answer {
   text: string;
   isError: boolean;
-  /** structuredContent ответа как есть (fields.ts); нет у сервера — нет и здесь. */
+  /** The reply's structuredContent as is, when the server sent one. */
   structured?: unknown;
-  /** _meta["iskron/refusal"] отказа по форме (fields.ts). */
+  /** The server's structured refusal (fields.ts). */
   refusal?: Refusal;
 }
 
@@ -203,16 +164,16 @@ async function ask(
   return { msg, got: reply as JsonRpcMessage | null };
 }
 
-/** connect и mint места — под намерением до записи держания включительно (taking.ts). */
+/** Seat connect and mint run under the taking intent up to the holding record (taking.ts). */
 export const callTool = (name: string, args: Record<string, unknown>): Promise<Answer> =>
   name === tool("channel") ? takingSeat(args, () => answer(name, args)) : answer(name, args);
 
 async function answer(name: string, args: Record<string, unknown>): Promise<Answer> {
   let { msg, got } = await ask(name, args);
-  // Гонка открытия места (409 без rule, refusal.ts) — register ещё раз, один.
+  // Seat-open race (409 without rule, refusal.ts): register once more, only once.
   if (name === tool("channel") && args.action === "register" && openedConcurrently(got))
     ({ msg, got } = await ask(name, args));
-  if (!got) return { text: L("ответа нет", "no reply"), isError: true };
+  if (!got) return { text: words(CALL).noReply(), isError: true };
   const structured = structuredOf(got);
   const refusal = refusalOf(got);
   if (name === tool("channel")) {
@@ -230,10 +191,9 @@ async function answer(name: string, args: Record<string, unknown>): Promise<Answ
 
 export const short = (s: string, n = 300): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-// Ходы моста над местом — iskron_stand, iskron/resume, iskron/check — идут по
-// одному: столкновение стояния с тиком сторожа дало бы два holdStanding и
-// лишний released, по которому плагин снял бы holding (#5140).
-// Очередь — сессии (shared/scope.ts): ходы разных сессий демона над своими местами друг друга не ждут.
+// Seat moves (stand, resume, check) run one at a time, per session
+// (graph @nks/nks-dev, node #5140): a stand colliding with a watchdog tick would give two
+// holdStanding and a stray released. Daemon sessions do not wait for each other.
 const Q = scoped(() => ({ chain: Promise.resolve() as Promise<unknown> }));
 export function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const p = Q.chain.then(fn, fn);

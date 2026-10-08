@@ -1,12 +1,7 @@
-// Выход спутника из дел прогона и снятие его места (граф nks-dev: #6573, #6593).
-//
-// Спутник входит в дела строкой запуска (iskron_case join) и выходит концом
-// поручения; прогон, оборванный без выхода, оставляет место в деле истекать
-// сроком — «slop» в гроссбухе. Мост видит каждый iskron_case прогона и помнит
-// её join'ы; на конце прогона (session.ts, windDown) он выходит из них сам —
-// после отпуска сокета и .key, до revoke места, — тем же ходом iskron_case leave. Отказ не бьёт: дело
-// закроется сроком места и без нас, слово — в журнал моста.
-import { envName, tool } from "../delivery/index.ts";
+// A satellite's exit from its run's cases and revoke of its seats at the run's end
+// (graph @nks/nks-dev, nodes #6573, #6593). At session.ts windDown, after the socket and .key
+// go and before the revoke; a failed leave only logs, the case lapses by the seat's term.
+import { CASE_EXIT_CLOSED, envName, tool } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import { type Answer, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -17,16 +12,16 @@ import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Все выходы конца прогона — под одним потолком: харнес гасит мост по короткой отсрочке. */
+/** One cap for all end-of-run exits: the harness kills the bridge after a short grace. */
 const LEAVE_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1_500;
 
-/** Дела прогона — у сессии (демон держит многих): ключ — граф и номер без знака. */
+/** The run's cases, per session (a daemon holds many); key — realm and bare number. */
 const joined = scoped(() => new Map<string, { realm?: string; room: string }>());
 
-/** «#102», «№102», « 102 » — один номер; id дела — как есть. */
-const roomNo = (room: string): string => room.replace(/^[#№]\s*/, "");
+/** "#102", "\u2116102", " 102 " are one number; a case id stays as is. */
+const roomNo = (room: string): string => room.replace(/^[#\u2116]\s*/, "");
 
-/** Успешный ход iskron_case прогона: join запоминает дело, leave снимает. */
+/** A successful case join remembers the case, a leave forgets it. */
 export function noteCaseEntry(name: unknown, args: unknown, reply: JsonRpcMessage): void {
   if (reply.result?.isError || (name !== tool("case") && name !== tool("room"))) return;
   const a = (args ?? {}) as Record<string, unknown>;
@@ -35,25 +30,26 @@ export function noteCaseEntry(name: unknown, args: unknown, reply: JsonRpcMessag
   if (!room || (a.action === "join" && room.startsWith("-"))) return;
   const realm = typeof a.realm === "string" ? a.realm : undefined;
   const no = roomNo(room);
-  // Тот же номер в графе, не известном как другой (r5 и @nks/nks-dev до hello), — то же дело.
+  // The same number in a realm not known to be another (rN and its @owner/slug before hello)
+  // is the same case.
   for (const [k, c] of joined)
     if (roomNo(c.room) === no && !otherRealm(c.realm, realm)) joined.delete(k);
   if (a.action === "join") joined.set(`${realm ? canonRealm(realm) : ""}#${no}`, { realm, room });
 }
 
-/** Дела прогона — в запись паузы спутника (suspend.ts): новый мост выйдет из них на конце. */
+/** The run's cases for the satellite's pause record (suspend.ts): the next bridge leaves them. */
 export const joinedCases = (): { realm?: string; room: string }[] => [...joined.values()];
 
-/** Дела прогона, переданные паузой прежнего моста: этот мост их и покинет на конце. */
+/** Cases handed over by the former bridge's pause: this bridge leaves them at the end. */
 export function seedJoined(cases: { realm?: string; room: string }[] | undefined): void {
   for (const c of cases ?? [])
     if (c?.room) joined.set(`${c.realm ? canonRealm(c.realm) : ""}#${roomNo(c.room)}`, c);
 }
 
 /**
- * Выйти из дел прогона — на конце прогона спутника, прежде чем место уйдёт
- * (#6573): разом и под общим потолком — невышедшее закроется сроком места.
- * Только мост-спутник: место сессии переживает её и возвращается.
+ * Leaves the run's cases at a satellite's end, before the seat goes, all at once
+ * under the cap (graph @nks/nks-dev, node #6573). Satellites only: a session's own seat
+ * outlives it and returns.
  */
 export async function leaveJoinedCases(): Promise<void> {
   if (!CFG.satellite || !joined.size) return;
@@ -77,29 +73,29 @@ export async function leaveJoinedCases(): Promise<void> {
     );
 }
 
-/** Места спутника — основное и в других графах; снять до releaseStanding: оно стирает места рядом. */
+/** A satellite's seats, main and in other graphs; taken before releaseStanding erases them. */
 export const satellitePlaces = (): Standing[] =>
   CFG.satellite
     ? [
-        // Вытесненное (4000) место держит другой — законный take: его revoke снял бы чужое.
+        // An evicted (4000) seat belongs to its taker: revoking it would remove theirs.
         H.evictedKey && H.evictedKey === H.currentKey ? null : state.standing,
         ...extraPlaces().map((p) => p.standing),
       ].filter((s): s is Standing => !!s?.name)
     : [];
 
 /**
- * Снять места-спутники на конце прогона (#6550, правило 4; #6593): закрытый
- * сокет места с доски не снимает — только revoke либо срок канала. Каждое место
- * канала, и в других графах. Зовётся после releaseStanding и выхода из дел:
- * сокет уже отпущен, и закрытие 4001 некому принять за смерть токена.
+ * Revokes the satellite's seats at the run's end (graph @nks/nks-dev, nodes #6550,
+ * #6593): a closed socket does not remove a seat from the board, only a revoke or the
+ * channel's term does. Every seat of the channel, other graphs included. Called after
+ * releaseStanding and the case exits, so a 4001 close is not taken for a dead token.
  */
 export async function revokeSatellitePlaces(places: Standing[]): Promise<string[]> {
   if (!places.length) return [];
-  const failed = new Set(places.map((s) => s.name as string)); // снятое вычёркивается
+  const failed = new Set(places.map((s) => s.name as string)); // revoked names are struck out
   const revokes = places.map((s) =>
     call(tool("channel"), { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
-        // Уже снятое (4001 платформы, повтор после закрытого соединения) — тоже снято.
+        // Already gone (the platform's 4001, a retry after a closed connection) counts as revoked.
         if (!r.isError || alreadyClosed(r)) {
           failed.delete(s.name as string);
           return log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
@@ -116,18 +112,15 @@ export async function revokeSatellitePlaces(places: Standing[]): Promise<string[
 }
 
 /**
- * Ответ revoke о месте, которого уже нет на доске. Отказ api своего правила этому
- * не даёт: место кончилось — 410, неизвестно — 404 без правила
- * (`_meta["iskron/refusal"]`); прочий отказ api — иной (основное место канала и
- * т.п.); без данных — проза.
+ * A revoke reply about a seat already gone: 410, or 404 without a rule; any other api
+ * refusal (e.g. the channel's main seat) is a real failure; without refusal data — the prose.
  */
-const ALREADY_CLOSED = /закрыт|снят|отозван|closed|revoked|not found|не найден/i;
 const alreadyClosed = (r: Answer): boolean =>
   r.refusal
     ? r.refusal.status === 410 || (r.refusal.status === 404 && !r.refusal.rule)
-    : ALREADY_CLOSED.test(r.text);
+    : CASE_EXIT_CLOSED.test(r.text);
 
-/** true — успело под потолком конца прогона. */
+/** true when the work finished under the end-of-run cap. */
 async function underCap(work: Promise<unknown>): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cap = new Promise<"cap">((r) => (timer = setTimeout(() => r("cap"), LEAVE_CAP_MS)));

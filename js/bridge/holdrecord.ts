@@ -1,8 +1,7 @@
-// Запись держания на диске (граф nks-dev: #5061): мост, поднятый заново —
-// перезапуск плагина, /mcp reconnect — возвращает место по имени, а не
-// ротирует его connect-ом: адрес, хуки и очередь остаются теми же. Секрет
-// лежит 0600 рядом с ключом стояния, как грант; стирается снятием и мёртвым
-// токеном (hold.ts).
+// The hold record on disk (graph @nks/nks-dev, node #5061): a restarted bridge returns the
+// place by name instead of rotating it with connect, so address, hooks and queue stay the
+// same. The secret lies 0600 beside the standing key, like the grant; revoke and a dead
+// token erase it (hold.ts).
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -13,7 +12,7 @@ import { log } from "./streams.ts";
 
 const holdFilePathFor = (key: string): string => holdFilePathOf(CFG.authDir, key);
 
-/** Ключ стояния по его трём именам — та же форма, что у keyFor в hold.ts. */
+/** Standing key from its three names, in the same form as keyFor in hold.ts. */
 export function keyOf(realm: string, karta: string | number, name: string): string {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
@@ -24,30 +23,30 @@ export interface HoldRecord {
   name: string;
   url: string;
   statusUrl: string | null;
-  /** строка занятости, опубликованная от этого места, — возвращается вместе с ним */
+  /** busy text published from this place; returns with it */
   status?: string;
-  /** каталог сессии харнесса, из которого место занято (cwd в iskron_stand): по нему мост, поднятый заново, находит своё место без слова агента (#5140) */
+  /** harness session dir the place was taken from (stand cwd): a restarted bridge finds its place by it (#5140) */
   cwd?: string;
-  /** харнесс, чей мост занял место (clientInfo.name рукопожатия): возврат по каталогу не переходит границу харнесса */
+  /** harness whose bridge took the place (handshake clientInfo.name): a cwd resume does not cross harnesses */
   client?: string;
-  /** ключ стояния — тот, что печатает блок [iskron-bridge]; возврат по ключу точнее возврата по каталогу */
+  /** standing key as printed in the bridge block; resume by key is more precise than by cwd */
   key?: string;
-  /** сессия харнесса, стоявшая на месте (id сессии плагина OpenCode): по каталогу место возвращается только ей (#6017) */
+  /** harness session that stood on the place (OpenCode plugin session id): a cwd resume returns it only to that session (#6017) */
   session?: string;
-  /** держатель отпустил место словом (iskron_channel leave): ни сторож, ни возврат по каталогу или ключу его не поднимают — только iskron_stand по имени */
+  /** released by the holder's leave: neither watchdog nor cwd/key resume raise it, only stand by name */
   left?: boolean;
-  /** когда записано (мс эпохи) — переписывается и уходом сессии с живым сокетом (#6649): место без сокета живёт у платформы шесть часов, дольше запись мертва */
+  /** written at (epoch ms), rewritten also when a session leaves with a live socket (#6649); a socketless place lives six hours at the platform */
   at?: number;
-  /** дела, в которые вошёл спутник, — пишет только его пауза на перезагрузку плагина (suspend.ts) */
+  /** cases a satellite entered; written only by its pause for a plugin reload (suspend.ts) */
   cases?: { realm?: string; room: string }[];
-  /** основа места: имя, от которого мост выбрал это место рядом (`имя.N`), у основного — само имя (#6706) */
+  /** place base: the name the bridge derived this beside place from (`name.N`); the primary's own name (#6706) */
   base?: string;
 }
 
-/** Срок записи — время простоя, которое платформа даёт месту без сокета. */
+/** Record lifetime: the idle time the platform grants a socketless place. */
 export const HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
-/** Сессия харнесса, чей это мост, — её называет плагин в `iskron/resume` и `iskron/check` (resume.ts). */
+/** The harness session of this bridge, named by the plugin in its resume and check methods (resume.ts). */
 const H = scoped(() => ({ session: null as string | null }));
 export function noteHarnessSession(id: string | undefined): void {
   if (id) H.session = id;
@@ -63,11 +62,10 @@ function onDisk(key: string): HoldRecord | null {
 }
 
 /**
- * Основа места знает только выбравший его мост: по виду имени её не угадать —
- * модель в выведенном имени несёт точки (`glm-5.3`), явное имя тоже (#6706).
- * Она лежит и отдельным файлом рядом с записью держания: отъём и мёртвый токен
- * стирают запись, а основа не стареет — новое занятие места (и мост, поднятый
- * заново) берёт её оттуда.
+ * Only the bridge that chose the place knows its base; names carry dots (`glm-5.3`), so it
+ * cannot be guessed (#6706). It also lives in a separate file beside the hold record, which
+ * eviction and a dead token erase; the base does not age, so a new take of the place (or a
+ * restarted bridge) reads it from there.
  */
 const B = scoped(() => new Map<string, string>());
 export function noteSeatBase(key: string, base: string): void {
@@ -89,9 +87,8 @@ const baseOnDisk = (key: string): string | null => {
   }
 };
 /**
- * Основа места: запомненная этим мостом (выбор места, возврат по записи), иначе
- * записанная тем, кто выбрал место прежде (запись держания любой давности, затем
- * файл основы) — тогда и запоминается; null — неизвестна.
+ * Place base: remembered by this bridge, else written by whoever chose the place before
+ * (hold record of any age, then the base file) and remembered; null if unknown.
  */
 export function seatBaseOf(key: string): string | null {
   const known = B.get(key);
@@ -102,11 +99,11 @@ export function seatBaseOf(key: string): string | null {
 }
 
 /**
- * Сессия в записи — названная ЭТОМУ процессу моста (или переданная явно); мост,
- * чья сессия не названа, чужую с диска не наследует (#6017) — кроме записи того же
- * адреса: место продолжается (возврат с диска, занятость, отметка), и стоявшая на
- * нём сессия из записи не стирается (#6702).
- * `left` держится с диска, пока новое держание не скажет `left: false`.
+ * The session in the record is one named to THIS bridge process (or passed explicitly):
+ * a bridge without a named session does not inherit one from disk (#6017) — except a record
+ * of the same url: the seat goes on (return from disk, busyness, mark) and the session that
+ * stood on it is not erased (#6702).
+ * `left` persists from disk until a new hold says `left: false`.
  */
 export function writeHoldRecord(
   key: string,
@@ -114,7 +111,7 @@ export function writeHoldRecord(
   paused = false,
   at = Date.now(),
 ): void {
-  // Место спутника живёт прогоном (satellite.ts): с диска его возвращает только пауза на перезагрузку плагина (suspend.ts).
+  // A satellite's place lives for the run (satellite.ts); only a plugin-reload pause restores it from disk (suspend.ts).
   if (CFG.satellite && !paused) return;
   try {
     const was = onDisk(key);
@@ -136,9 +133,8 @@ export function writeHoldRecord(
   }
 }
 /**
- * Вернуть запись такой, какой она была до неудавшегося возврата, — с прежней
- * меткой времени: попытка без hello место не молодит, и срок записи держит
- * последнее настоящее держание, а не последнюю попытку (#6137).
+ * Restore the record as it was before a failed resume, old timestamp included: an attempt
+ * without hello does not rejuvenate the place (#6137).
  */
 export function restoreHoldRecord(key: string, rec: HoldRecord): void {
   if (CFG.satellite) return;
@@ -148,18 +144,18 @@ export function restoreHoldRecord(key: string, rec: HoldRecord): void {
     log(`hold record not restored: ${(e as Error).message}`);
   }
 }
-/** Пометить запись места отпущенной словом держателя (leave) или снять пометку (возврат на место). */
+/** Mark the place record left by the holder (leave) or clear the mark (return). */
 export function markLeft(key: string, on: boolean): void {
   const r = readHoldRecord(key);
   if (r && (r.left === true) !== on) writeHoldRecord(key, { ...r, left: on });
 }
-/** Запись места; просроченная стирается и не читается — кроме чтения `anyAge` держащего её моста (holdkeep.ts). */
+/** The place record; an expired one is erased and not read, except by an `anyAge` read of its holder (holdkeep.ts). */
 export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
   try {
     const r = JSON.parse(readFileSync(holdFilePathFor(key), "utf8")) as HoldRecord;
     if (!r || typeof r.url !== "string" || !r.realm || r.karta == null) return null;
     if (anyAge) return r;
-    // Запись без метки времени — не свежая, а неведомая: как и уборка, считаем просроченной.
+    // No timestamp means unknown age: expired, as the sweep treats it.
     if (typeof r.at !== "number" || Date.now() - r.at > HOLD_RECORD_MAX_AGE_MS) {
       dropHoldRecord(key);
       return null;
@@ -169,7 +165,7 @@ export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
     return null;
   }
 }
-/** Записи держания под этим именем у любой роли — какого графа, судит вызывающий. */
+/** Hold records under this name for any role; the caller judges the graph. */
 export function holdRecordsNamed(name: string): HoldRecord[] {
   const dir = dirname(holdFilePathFor("_"));
   try {
@@ -187,7 +183,7 @@ export function holdRecordsNamed(name: string): HoldRecord[] {
     return [];
   }
 }
-/** Стереть запись, только если она этого держателя (тот же адрес): запись нового держателя, отнявшего место, цела. */
+/** Erase the record only if it is this holder's (same address); an evicting holder's record stays. */
 export function dropOwnHoldRecord(key: string, url: string | null): void {
   const r = readHoldRecord(key, true);
   if (!r || !url || r.url === url) dropHoldRecord(key);

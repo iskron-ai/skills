@@ -1,9 +1,8 @@
-// Какой iskron_stand мост исполняет одной занятостью (граф nks-dev: #6509) —
-// одна правда для моста (bridge/status.ts) и плагина OpenCode
-// (opencode/satellite.ts): вызов со status и только этими аргументами. Всякий
-// другой заданный аргумент (model, room, room_karta, take, …) — занятие места.
+// Which stand call the bridge runs as busy-only (graph @nks/nks-dev, node #6509):
+// one truth for the bridge (bridge/status.ts) and the OpenCode plugin
+// (opencode/satellite.ts). Any other set argument means taking the seat.
 
-/** Аргументы вызова одной занятости; satellite_of и cwd подставляет плагин OpenCode сам. */
+/** Arguments of a busy-only call; satellite_of and cwd are filled in by the OpenCode plugin. */
 export const STATUS_ONLY_ARGS: ReadonlySet<string> = new Set([
   "realm",
   "karta",
@@ -15,6 +14,6 @@ export const STATUS_ONLY_ARGS: ReadonlySet<string> = new Set([
 
 const unset = (v: unknown): boolean => v == null || v === false || v === "";
 
-/** Заданные аргументы вызова вне списка одной занятости — они ведут полный путь занятия. */
+/** Set arguments outside the busy-only list — they take the full seat-taking path. */
 export const takingArgs = (args: Record<string, unknown>): string[] =>
   Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));

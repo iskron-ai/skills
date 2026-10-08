@@ -1,9 +1,9 @@
 // Question kinds in a case — ask, answer, ack (graph @nks/nks-dev, nodes #6866,
 // #6867, #6870; the bridge's share — #6868): who is asked, who gets the answer
 // and the acceptance, and their words. The stacking rule stays in room-kinds.ts.
-import { ASK } from "../delivery/index.ts";
+import { ASK, CASE_LINE } from "../delivery/index.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
-import { L, words } from "./lang.ts";
+import { words } from "./lang.ts";
 import { addresseeOf, mineOf, myRole, need, obj, opt, pick, type Rec, str } from "./room-fields.ts";
 
 export const ASK_KINDS = new Set(["ask", "answer", "ack"]);
@@ -61,7 +61,7 @@ export function addressedMine(frame: Rec): boolean {
   return !!to && to.addr.some((a) => mine.includes(a));
 }
 
-const quote = (s: string): string => (s ? L(`«${s}»`, `“${s}”`) : "");
+const quote = (s: string): string => (s ? words(CASE_LINE).quote(s) : "");
 
 function formOf(fields: Rec): string {
   const W = words(ASK);

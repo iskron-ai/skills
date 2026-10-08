@@ -7,6 +7,7 @@ import {
   DEFAULT_SERVER_URL,
   envName,
   HOME_DIR,
+  SERVER_CHOICE,
   SERVER_URLS,
   tool,
   TOOL_PREFIX,
@@ -18,19 +19,19 @@ import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
 
 export { DEFAULT_SERVER_URL };
-/** Английский Искрон (граф nks-dev: #5040): тот же продовый контур, второй адрес. */
+/** The English production address (graph @nks/nks-dev, node #5040). */
 export const ENGLISH_SERVER_URL = SERVER_URLS.en;
-/** Продовые адреса — только за ними мост следит за релизами поставки; другой инстанс — другая поставка. */
+/** Only behind production addresses does the bridge follow delivery releases. */
 const PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
 function strip(url: string): string {
   return url.replace(/\/+$/, "");
 }
 export const isProductionServer = (url: string): boolean => PRODUCTION_URLS.has(strip(url));
-/** Слово человека об адресе: `ru` и `en` — два продовых, иначе полный URL. */
+/** The human's word for the address: `ru` and `en` name the production ones, else a full URL. */
 export function resolveServerChoice(word: string): string | null {
   const w = word.trim();
-  if (/^(ru|russian|русский)$/i.test(w)) return DEFAULT_SERVER_URL;
-  if (/^(en|ai|english|английский)$/i.test(w)) return ENGLISH_SERVER_URL;
+  if (SERVER_CHOICE.ru.test(w)) return DEFAULT_SERVER_URL;
+  if (SERVER_CHOICE.en.test(w)) return ENGLISH_SERVER_URL;
   try {
     return new URL(w).href;
   } catch {
@@ -39,9 +40,8 @@ export function resolveServerChoice(word: string): string | null {
 }
 
 /**
- * Постоянный выбор адреса на машине — файл рядом с грантом: плагинная запись
- * харнеса аргументов не несёт, и иначе выбор до неё не доехал бы. Читается,
- * когда ни аргумент, ни окружение адреса не назвали.
+ * The machine's persistent address choice, a file beside the grant: a plugin entry
+ * carries no arguments. Read when neither argument nor environment names the address.
  */
 export const serverChoicePath = (authDir: string): string => join(authDir, "server");
 export function readServerChoice(authDir: string): string | null {
@@ -61,10 +61,8 @@ export function writeServerChoice(authDir: string, url: string): string {
   return path;
 }
 
-// Конфиг моста — один на сессию (shared/scope.ts): у полного моста сессия одна,
-// и конфиг лежит в области процесса; демон машины выставляет конфиг каждой
-// сессии в её области из argv и окружения моста харнеса. Импортёры читают
-// CFG.x как прежде — прокси отдаёт конфиг своей области.
+// One config per session scope; CFG proxies to the current scope's config. The full bridge
+// keeps it in the process scope; the daemon sets one per session from that session's argv/env.
 const cfgSlot = scoped(() => ({ cfg: null as Config | null }));
 export const CFG: Config = new Proxy({} as Config, {
   get: (_, k) => (cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : undefined),
@@ -73,13 +71,13 @@ export const CFG: Config = new Proxy({} as Config, {
 
 export function setConfig(cfg: Config): void {
   cfgSlot.cfg = cfg;
-  setServerLang(cfg.serverUrl); // язык моста — по его серверу (shared/lang.ts)
+  setServerLang(cfg.serverUrl);
 }
 
-/** Аргументы не годятся (или просят только версию): процесс уходит этим кодом, демон отказывает сессии. */
+/** Bad arguments (or --version): the process exits with this code, the daemon refuses the session. */
 export class ArgsError extends Error {
   readonly code: number;
-  /** Что сказать в stdout вместо слова в stderr (--version). */
+  /** Text for stdout instead of stderr (--version). */
   readonly out: string | null;
   constructor(message: string, code: number, out: string | null = null) {
     super(message);
@@ -88,7 +86,7 @@ export class ArgsError extends Error {
   }
 }
 
-/** Разбор аргументов процесса: негодный — слово и выход, как всегда. */
+/** Parses process arguments; bad ones print and exit. */
 export function parseArgs(argv: string[]): Config {
   try {
     return readArgs(argv);
@@ -100,7 +98,7 @@ export function parseArgs(argv: string[]): Config {
   }
 }
 
-/** Разбор аргументов без выхода: негодный — ArgsError (демон — отказ сессии, не смерть). */
+/** Parses arguments without exiting: bad ones throw ArgsError. */
 export function readArgs(argv: string[]): Config {
   const cfg: Config = {
     serverUrl: "",
@@ -117,8 +115,8 @@ export function readArgs(argv: string[]): Config {
     pat: null,
     patSource: null,
     serverSource: "argument",
-    // Только флагом: мост старше спутника на незнакомом флаге падает громко, а
-    // переменную пропустил бы молча и встал бы полным местом с записью держания.
+    // Flag only: an older bridge fails loudly on an unknown flag but would ignore a variable
+    // and stand as a full seat with a hold record.
     satellite: false,
     tools: null,
   };
@@ -126,7 +124,7 @@ export function readArgs(argv: string[]): Config {
     const a = argv[i];
     if (a === "--timeout") cfg.timeoutMs = Number(argv[++i]);
     else if (a === "--tools") {
-      // Набор тулов харнеса (narrow.ts): имена через запятую, префикс iskron_ можно опустить.
+      // Harness tool set (narrow.ts): comma-separated names, the tool prefix optional.
       const names = (argv[++i] ?? "")
         .split(",")
         .map((s) => s.trim())
@@ -162,11 +160,9 @@ export function readArgs(argv: string[]): Config {
 }
 
 /**
- * Личный токен доступа (PAT) — второй вход моста, в обход OAuth (граф nks-dev:
- * #4267). Источники по старшинству: переменная ISKRON_BRIDGE_TOKEN, затем файл
- * `token` рядом с хранилищем гранта. Файл, а не флаг: в argv токен виден в ps.
- * С PAT мост не открывает discovery, не ходит в браузер и не обновляет ничего —
- * 401 при нём означает одно: токен отвергнут, и починит его только человек.
+ * Personal access token, bypassing OAuth (graph @nks/nks-dev, node #4267): the
+ * BRIDGE_TOKEN variable, then the `token` file beside the grant (never argv: ps shows it).
+ * With a PAT there is no discovery, browser or refresh: a 401 means the token was rejected.
  */
 function readPat(cfg: Config): void {
   const fromEnv = envOf(envName("BRIDGE_TOKEN"))?.trim();
@@ -183,6 +179,6 @@ function readPat(cfg: Config): void {
       cfg.patSource = file;
     }
   } catch {
-    /* файла нет — вход по OAuth, как прежде */
+    /* no file: OAuth login */
   }
 }

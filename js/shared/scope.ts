@@ -1,34 +1,31 @@
-// Состояние сессии моста — не процесса (шаг 2 к 7.0.0: демон машины держит
-// много сессий в одном процессе). Полный мост — процесс с одной сессией: его
-// состояние лежит в области процесса, как прежде. Демон открывает каждую
-// сессию в своей области (AsyncLocalStorage): конфиг, транспорт, место,
-// поток вывода, pid, cwd и окружение моста харнеса — её, а не демона.
+// Bridge state per session, not per process: the machine daemon holds many sessions
+// in one process, each in its own AsyncLocalStorage scope; a full bridge is a process
+// with one session in the process scope.
 //
-// Модуль с состоянием держит его через scoped(): значение заводится лениво в
-// области, из которой к нему обратились. Область доходит сама по цепочкам
-// промисов и таймеров; обработчик события, повешенный внутри сессии и
-// зовущийся извне (строка входа, кадр сокета, клиент двери), оборачивается
-// bindScope — иначе он увидел бы область процесса, то есть чужое состояние.
+// Stateful modules hold state through scoped(), created lazily in the calling scope.
+// The scope follows promise and timer chains by itself; an event handler hung inside
+// a session and called from outside must be wrapped in bindScope, or it would see the
+// process scope.
 import { AsyncLocalStorage } from "node:async_hooks";
 
-/** Откуда сессия — мост харнеса, каким его запустили (рукопожатие шва). */
+/** Where the session comes from — the harness's bridge as launched (seam handshake). */
 export interface ScopeOrigin {
-  /** Окружение моста харнеса — только ключи сессии (shared/seam.ts isSessionEnvKey). */
+  /** The harness bridge's environment — session keys only (shared/seam.ts isSessionEnvKey). */
   env: Record<string, string>;
   cwd: string;
   pid: number;
-  /** Файл моста харнеса: по нему находится набор скиллов (skillset.ts). */
+  /** The harness bridge's file: the skill set is found by it (skillset.ts). */
   path: string;
 }
 
 export interface Scope {
   readonly id: string;
-  /** null — область процесса: окружение, cwd и pid — самого процесса. */
+  /** null — the process scope. */
   readonly origin: ScopeOrigin | null;
-  /** Ключи окружения, которые в этой области — слово сессии (остальные — процесса). */
+  /** Environment keys that belong to the session in this scope (the rest — to the process). */
   readonly sessionKey: (k: string) => boolean;
   readonly slots: Map<object, unknown>;
-  /** Куда пишется слово log этой области; null — stderr процесса (или журнал демона). */
+  /** Where this scope's log goes; null — the process stderr (or the daemon journal). */
   log: ((line: string) => void) | null;
 }
 
@@ -43,7 +40,7 @@ const PROCESS: Scope = {
 
 export const currentScope = (): Scope => als.getStore() ?? PROCESS;
 export const processScope = (): Scope => PROCESS;
-/** Внутри области сессии (демон), а не процесса. */
+/** Inside a session scope (daemon), not the process scope. */
 export const inSessionScope = (): boolean => !!als.getStore()?.origin;
 
 export function newScope(
@@ -56,13 +53,13 @@ export function newScope(
 
 export const runIn = <T>(scope: Scope, fn: () => T): T => als.run(scope, fn);
 
-/** Обработчик, который зовут извне области, — исполнить в области, где он повешен. */
+/** A handler called from outside the scope runs in the scope where it was hung. */
 export function bindScope<A extends unknown[], R>(fn: (...a: A) => R): (...a: A) => R {
   const s = als.getStore();
   return s ? (...a: A) => als.run(s, () => fn(...a)) : fn;
 }
 
-/** bindScope над каждым обработчиком объекта опций (сокет канала, дверь). */
+/** bindScope over every handler of an options object. */
 export const bindAll = <T extends object>(o: T): T =>
   Object.fromEntries(
     Object.entries(o).map(([k, v]) => [
@@ -72,9 +69,9 @@ export const bindAll = <T extends object>(o: T): T =>
   ) as T;
 
 /**
- * Значение на область: объект (или Map, Set), заводимый init при первом
- * обращении из области. Прокси отдаёт поля и методы значения своей области —
- * модуль пишет `S.x` и `map.get(k)`, как писал бы по модульной переменной.
+ * A value per scope: an object (or Map, Set) created by init on first access from the
+ * scope. The proxy serves the current scope's value, so a module writes `S.x` and
+ * `map.get(k)` as with a module variable.
  */
 export function scoped<T extends object>(init: () => T): T {
   const key = {};
@@ -105,14 +102,14 @@ export function scoped<T extends object>(init: () => T): T {
   });
 }
 
-/** Переменная окружения глазами области: ключ сессии — из окружения моста харнеса. */
+/** An environment variable as the scope sees it: a session key comes from the harness bridge's environment. */
 export function envOf(k: string): string | undefined {
   const s = currentScope();
   if (s.origin && s.sessionKey(k)) return s.origin.env[k];
   return process.env[k];
 }
 
-/** pid того, чья это сессия: мост харнеса, а не демон. */
+/** pid of the session's owner: the harness bridge, not the daemon. */
 export const sessionPid = (): number => currentScope().origin?.pid ?? process.pid;
-/** Каталог, из которого харнес запустил мост. */
+/** Directory the harness launched the bridge from. */
 export const sessionCwd = (): string => currentScope().origin?.cwd ?? process.cwd();

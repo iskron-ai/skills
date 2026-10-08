@@ -1,47 +1,44 @@
-// Шов «тонкий мост ↔ демон машины» — локальный протокол (шаг 1 к 7.0.0).
+// The "thin bridge ↔ machine daemon" seam — a local protocol.
 //
-// Демон машины держит соединение с MCP и сокеты канала; мост агента тонкий:
-// stdio харнеса он отдаёт демону своего каталога гранта по локальному входу.
-// Этот модуль — обе стороны провода, без движка: кадрирование, рукопожатие,
-// версии, ack, bye, ошибки. Вход (путь, личный каталог, замки) — seam-entrance.ts;
-// сторону демона (приём, сессии, окно переподхвата) — seam-host.ts; тонкий
-// мост — bridge/thin.ts.
+// The daemon holds the MCP connection and channel sockets; the agent's thin bridge
+// hands the harness's stdio to the daemon of its grant directory. This module is both
+// sides of the wire: framing, handshake, versions, ack, bye, errors. Entrance —
+// seam-entrance.ts; the daemon side — seam-host.ts; the thin bridge — bridge/thin.ts.
 //
-// Провод — NDJSON поверх unix-сокета 0600 в личном каталоге (именованный канал
-// под Windows): одна строка — один кадр `{t: …}`.
-//   тонкий → демон  hello   первым кадром; версия шва, сборка, путь, argv, env, cwd, pid,
-//                           session (переподхват по id локальной сессии), probe (только спросить сборку)
-//   демон → тонкий  welcome сборка и pid демона, id локальной сессии, resumed, ack
-//                   refuse  шов не той версии либо сессия не принята — с причиной
-//   в обе стороны   rpc     JSON-RPC как есть, свои методы и уведомления тоже
-//   демон → тонкий  ack     запрос с этим id принят сессией (кадр ack ушёл ядру прежде,
-//                           чем запрос отдан сессии: нет ack — сессия запроса не видела)
-//   тонкий → демон  bye     конец сессии по слову харнеса (stdin закрыт, SIGTERM)
-//   демон → тонкий  bye-ok  сессия ушла: всё, что было в полёте, отвечено
-//   демон → тонкий  log     слово сессии в stderr тонкого моста — харнес видит его, как видел
-//                           stderr полного (шаг 2; тонкий мост шага 1 кадр пропускает)
-//   демон → тонкий  handover демон передаёт места преемнику: связь сейчас оборвётся, и тонкий
-//                           мост ждёт преемника, а не поднимает демон сам (шаг 2)
-// Кадр незнакомого вида пропускается обеими сторонами: новое добавляется без смены версии.
-// Закрытие сокета без bye (SIGKILL тонкого моста) — тот же конец сессии в
-// демоне, по истечении окна переподхвата SEAM_REATTACH_GRACE_MS.
+// Wire: NDJSON over a 0600 unix socket in a private directory (a named pipe on
+// Windows), one line per `{t: …}` frame.
+//   thin → daemon   hello    first; seam version, build, path, argv, env, cwd, pid,
+//                            session (reattach by local session id), probe (build only)
+//   daemon → thin   welcome  daemon build and pid, local session id, resumed, ack
+//                   refuse   wrong seam version or session not accepted — with a reason
+//   both ways       rpc      JSON-RPC as is, the bridge's own methods and notifications too
+//   daemon → thin   ack      the request with this id was taken by the session (sent to
+//                            the kernel before the request reaches the session: no ack —
+//                            the session never saw the request)
+//   thin → daemon   bye      session end on the harness's word (stdin closed, SIGTERM)
+//   daemon → thin   bye-ok   the session left: everything in flight answered
+//   daemon → thin   log      a session line for the thin bridge's stderr
+//   daemon → thin   handover the daemon hands seats to a successor: the thin bridge
+//                            waits for it instead of raising a daemon itself
+// An unknown frame kind is skipped by both sides, so additions need no version bump.
+// A socket closed without bye ends the session after SEAM_REATTACH_GRACE_MS.
 import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
 
 import { ENV_PREFIX, envName, PRODUCT } from "../delivery/index.ts";
 
-/** Версия провода. Разные версии не говорят: демон отвечает refuse, тонкий мост идёт полным. */
+/** Wire version. Different versions do not talk: the daemon refuses, the thin bridge runs full. */
 export const SEAM_PROTOCOL = 1;
 
-/** Сколько демон держит сессию, чей сокет закрылся без bye, в ожидании переподхвата. */
+/** How long the daemon keeps a session whose socket closed without bye, awaiting reattach. */
 export const SEAM_REATTACH_GRACE_MS = 5_000;
 
-/** Тонкий мост — умолчание; `0` — выключатель: полный мост в процессе (пробы, человек). */
+/** Thin bridge by default; `0` switches to a full in-process bridge (probes, people). */
 export const DAEMON_ENV = envName("BRIDGE_DAEMON");
-/** Выключатель прежнего имени: полный мост в процессе, что бы ни было. */
+/** The old-name switch: a full in-process bridge regardless. */
 export const NO_DAEMON_ENV = envName("BRIDGE_NO_DAEMON");
 
-/** Сообщение JSON-RPC — провод его не разбирает, только несёт. */
+/** A JSON-RPC message — the wire carries it without parsing. */
 export interface RpcMessage {
   jsonrpc?: string;
   id?: string | number | null;
@@ -60,21 +57,21 @@ export interface SeamHello {
    * daemon of an earlier release ignores it — so an update never drops a thin bridge to full.
    */
   product?: string;
-  /** Сборка тонкого моста, `vX.Y.Z+хеш`. */
+  /** Thin bridge build, `vX.Y.Z+hash`. */
   build: string;
-  /** Путь файла тонкого моста — какой копией запустил харнес. */
+  /** The thin bridge's file — which copy the harness launched. */
   path: string;
-  /** argv моста после подкоманды: --satellite, --client-name, --auth-dir, адрес сервера… */
+  /** Bridge argv after the subcommand: --satellite, --client-name, --auth-dir, server address… */
   argv: string[];
-  /** Окружение харнеса, нужное сессии (seamEnv): без личного токена — он не едет по шву. */
+  /** Harness environment the session needs (seamEnv), without the personal token. */
   env: Record<string, string>;
   cwd: string;
   pid: number;
-  /** Отпечаток личного токена моста (sha256, 16 знаков); null — вход по OAuth. Демон с другим — refuse. */
+  /** Personal token fingerprint (sha256, 16 chars); null — OAuth login. A daemon with another refuses. */
   patSha?: string | null;
-  /** id локальной сессии для переподхвата; нет — новая сессия. */
+  /** Local session id for reattach; absent — a new session. */
   session?: string | null;
-  /** Только спросить сборку демона (--version): сессии не открывать. */
+  /** Only ask the daemon's build (--version): open no session. */
   probe?: boolean;
 }
 
@@ -83,15 +80,15 @@ export interface SeamWelcome {
   seam: number;
   build: string;
   pid: number;
-  /** id локальной сессии; null — ответ на probe. */
+  /** Local session id; null — a probe answer. */
   session: string | null;
-  /** Сессия та же, что названа в hello: initialize не переигрывается. */
+  /** The same session as named in hello: initialize is not replayed. */
   resumed: boolean;
-  /** Демон подтверждает приём запросов кадром ack; нет — исход любого ушедшего запроса неизвестен. */
+  /** The daemon confirms requests with ack; absent — the fate of any sent request is unknown. */
   ack?: boolean;
-  /** Ответ на probe: сколько сессий держит демон (doctor). */
+  /** Probe answer: how many sessions the daemon holds (doctor). */
   sessions?: number;
-  /** Ответ на probe: файл демона. */
+  /** Probe answer: the daemon's file. */
   path?: string;
 }
 
@@ -142,18 +139,17 @@ export type SeamFrame =
   | SeamLog
   | SeamHandover;
 
-// --- рукопожатие -------------------------------------------------------------
+// --- handshake ---------------------------------------------------------------
 
-/** Личный токен по шву не ездит: демон того же пользователя берёт его из своего окружения или файла гранта. */
+/** The personal token never crosses the seam: the same user's daemon takes it from its env or grant file. */
 export const TOKEN_ENV = envName("BRIDGE_TOKEN");
 
-/** Отпечаток личного токена — сверить, что демон ходит тем же токеном; null — токена нет. */
+/** Personal token fingerprint — to check the daemon uses the same token; null — no token. */
 export const patShaOf = (pat: string | null | undefined): string | null =>
   pat ? createHash("sha256").update(pat).digest("hex").slice(0, 16) : null;
 
-// Окружение, которое нужно сессии в демоне: всё своё (ISKRON_*, кроме токена),
-// корень плагина, место лока скиллов (XDG_STATE_HOME, shared/skilllock.ts), прокси
-// и доверенные сертификаты. Остальное окружение харнеса демону не нужно.
+// Environment a daemon session needs: everything under the delivery prefix but the
+// token, plugin root, skill lock place (shared/skilllock.ts), proxies and CA certs.
 const PASS_ENV = new Set([
   "CLAUDE_PLUGIN_ROOT",
   "XDG_STATE_HOME",
@@ -169,7 +165,7 @@ const PASS_ENV = new Set([
   "all_proxy",
 ]);
 
-/** Ключ окружения сессии: его значение — слово харнеса, а не демона. */
+/** A session environment key: its value is the harness's, not the daemon's. */
 export const isSessionEnvKey = (k: string): boolean =>
   k !== TOKEN_ENV && (k.startsWith(ENV_PREFIX) || PASS_ENV.has(k));
 
@@ -179,8 +175,8 @@ export function seamEnv(env: NodeJS.ProcessEnv = process.env): Record<string, st
   return out;
 }
 
-// Демону, поднятому тонким мостом, — окружение сессии, свой токен и основа
-// процесса (дом, пути, tmp, рантайм), не всё окружение харнеса.
+// A daemon raised by a thin bridge gets the session env, the token and the process
+// basics (home, paths, tmp, runtime), not the whole harness env.
 const BASE_ENV = [
   "HOME",
   "USERPROFILE",
@@ -225,7 +221,7 @@ export function helloFrame(o: {
   };
 }
 
-/** Причина отказа в рукопожатии; null — принято. */
+/** Handshake refusal reason; null — accepted. */
 export function checkHello(f: unknown): string | null {
   const h = f as Partial<SeamHello> | null;
   if (!h || h.t !== "hello") return "the first frame is not a hello";
@@ -238,9 +234,9 @@ export function checkHello(f: unknown): string | null {
   return null;
 }
 
-// --- кадрирование ------------------------------------------------------------
+// --- framing -----------------------------------------------------------------
 
-/** Читать кадры из сокета: строка — кадр; строка, не ставшая JSON, — onBad. */
+/** Read frames from the socket: a line is a frame; a line that is not JSON goes to onBad. */
 export function readFrames(
   socket: Socket,
   onFrame: (f: SeamFrame) => void,
@@ -267,7 +263,7 @@ export function readFrames(
   });
 }
 
-/** Записать кадр; cb — когда байты отданы ядру (err — не отданы: кадр не ушёл). */
+/** Write a frame; cb — when the bytes reached the kernel (err — they did not). */
 export function writeFrame(
   socket: Socket,
   frame: SeamFrame,
@@ -280,9 +276,9 @@ export function writeFrame(
   return socket.write(JSON.stringify(frame) + "\n", cb);
 }
 
-// --- сторона тонкого моста ---------------------------------------------------
+// --- thin bridge side --------------------------------------------------------
 
-/** Почему связь с демоном не встала: нет демона, отказал, оборвалась до welcome. */
+/** Why the daemon link failed: no daemon, refused, broken before welcome. */
 export class SeamError extends Error {
   kind: "absent" | "refused" | "broken";
   constructor(kind: "absent" | "refused" | "broken", message: string) {
@@ -291,20 +287,20 @@ export class SeamError extends Error {
   }
 }
 
-/** Связь тонкого моста с демоном после welcome. */
+/** The thin bridge's link to the daemon after welcome. */
 export interface SeamLink {
   readonly welcome: SeamWelcome;
   send(frame: SeamFrame, cb?: (err?: Error | null) => void): boolean;
-  /** Кадры демона; пришедшие до подписки — не теряются. */
+  /** Daemon frames; those that came before subscribing are kept. */
   onFrame(cb: (f: SeamFrame) => void): void;
-  /** Связь оборвалась (демон ушёл, сокет закрыт). Один раз. */
+  /** The link broke (daemon gone, socket closed). Once. */
   onClose(cb: () => void): void;
   close(): void;
 }
 
 const ABSENT = new Set(["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ENOTDIR"]);
 
-/** Подключиться к демону и пройти рукопожатие. Отказ — SeamError. */
+/** Connect to the daemon and pass the handshake. Failure — SeamError. */
 export function connectSeam(path: string, hello: SeamHello, timeoutMs: number): Promise<SeamLink> {
   return new Promise((resolveLink, reject) => {
     const socket = connect(path);
@@ -324,7 +320,7 @@ export function connectSeam(path: string, hello: SeamHello, timeoutMs: number): 
     );
     timer.unref?.();
     socket.on("error", (e: NodeJS.ErrnoException) => {
-      if (welcome) return; // после welcome ошибка — это закрытие, его скажет close
+      if (welcome) return; // after welcome an error is a close, reported by close
       fail(new SeamError(ABSENT.has(e.code ?? "") ? "absent" : "broken", `${e.code ?? e.message}`));
     });
     socket.on("close", () => {

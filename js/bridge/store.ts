@@ -90,7 +90,7 @@ export function saveServerCache(patch: ServerCache): void {
     writeFileSync(tmp, JSON.stringify({ ...loadServerCache(), ...patch }), { mode: 0o600 });
     renameSync(tmp, serverCachePath());
   } catch {
-    /* кэш — удобство, не обязательство */
+    /* the cache is a convenience, not an obligation */
   }
 }
 
@@ -107,9 +107,9 @@ export function grantLog(msg: string): void {
 }
 
 /**
- * Журнал длиннее предела начинается заново, а прежний уходит в `<журнал>.1`:
- * переполнение приходится на шумный миг — смену демона, — и стёртый целиком журнал
- * терял бы ровно то, что после неё разбирают.
+ * A journal past the limit starts over and the former one moves to `<journal>.1`: the
+ * overflow falls on a noisy moment — a daemon change — and a journal erased whole
+ * would lose exactly what is read after it.
  */
 export function rotateJournal(path: string, max: number): void {
   try {
@@ -117,7 +117,7 @@ export function rotateJournal(path: string, max: number): void {
   } catch {}
 }
 
-/** Строка в машинный журнал рядом с грантом: время, pid, сборка; журнал длиннее 128 КБ — в `.1`. */
+/** A line in a machine journal beside the grant: time, pid, build; past 128 KB it moves to `.1`. */
 export function appendJournal(path: string, msg: string): void {
   try {
     mkdirSync(CFG.authDir, { recursive: true, mode: 0o700 });
@@ -128,7 +128,7 @@ export function appendJournal(path: string, msg: string): void {
   } catch {} // a log that cannot be written must never break the call
 }
 
-/** Журнал жизни стояний — held/released/parked/resumed/evicted/dead, рядом с grant.log (граф nks-dev: #5140). */
+/** The standings' life journal — held/released/parked/resumed/evicted/dead (graph @nks/nks-dev, node #5140). */
 export function standingsLogPath(): string {
   return join(CFG.authDir, "standings.log");
 }

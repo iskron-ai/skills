@@ -1,13 +1,10 @@
-// Сторона демона на шве «тонкий мост ↔ демон машины» (провод — seam.ts).
-//
-// Демон машины (шаг 2) берёт отсюда три вещи как есть:
-//   listenSeam(authDir, onSocket) локальный вход (seam-entrance.ts): личный каталог
-//                                 0700 этого пользователя, замок жизни демона, сокет
-//                                 0600; мёртвый сокет убирается, живой — отказ
-//   serveSeam(socket, host)       рукопожатие, ack, проводка rpc, bye, окно переподхвата
-//   streamSeamSession(id, open)   сессия движка над потоками (bridge/session.ts
-//                                 openSession) как SeamSession
-// Хозяин (SeamHost) решает, какую сессию открыть на hello и какую вернуть по id.
+// Daemon side of the seam (wire — seam.ts):
+//   listenSeam(authDir, onSocket) local entrance (seam-entrance.ts): private 0700
+//                                 directory, daemon life lock, 0600 socket; a dead
+//                                 socket is removed, a live one refuses
+//   serveSeam(socket, host)       handshake, ack, rpc, bye, reattach window
+//   streamSeamSession(id, open)   an engine session over streams as a SeamSession
+// The host (SeamHost) decides which session to open on hello and which to return by id.
 import { chmodSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { createInterface } from "node:readline";
@@ -30,83 +27,81 @@ import {
   takeFileLock,
 } from "./seam-entrance.ts";
 
-/** Сессия движка глазами шва. */
+/** An engine session as the seam sees it. */
 export interface SeamSession {
   readonly id: string;
-  /** Сообщение харнеса — в сессию. */
+  /** A harness message into the session. */
   deliver(msg: RpcMessage): void;
   /**
-   * Куда сессия пишет харнесу: текущий сокет; null — связи нет, сказанное теряется.
-   * `logSink` — куда идёт слово log сессии (кадр log тонкому мосту).
+   * Where the session writes to the harness: the current socket; null — no link, output
+   * is lost. `logSink` — where the session's log goes (log frame to the thin bridge).
    */
   attach(sink: ((msg: RpcMessage) => void) | null, logSink?: ((line: string) => void) | null): void;
-  /** Конец сессии; разрешается, когда всё в полёте отвечено. Повторный зов ждёт первого. */
+  /** End of the session; resolves when everything in flight is answered. A repeat call awaits the first. */
   end(why: string): Promise<void>;
 }
 
-/** Хозяин сессий демона. */
+/** The daemon's session host. */
 export interface SeamHost {
-  /** Сборка демона, `vX.Y.Z+хеш` — в welcome и refuse. */
+  /** Daemon build, `vX.Y.Z+hash` — in welcome and refuse. */
   build: string;
-  /** Новая сессия по рукопожатию; строка — отказ с этой причиной. */
+  /** A new session by handshake; a string — refusal with this reason. */
   open(hello: SeamHello): SeamSession | string | Promise<SeamSession | string>;
-  /** Живая сессия по id — для переподхвата; null — такой нет (новая откроется). */
+  /** A live session by id, for reattach; null — none (a new one opens). */
   find(id: string): SeamSession | null;
-  /** Слово демона в его лог. */
+  /** A daemon line into its log. */
   log?(msg: string): void;
-  /** Сколько сессий держит демон — в ответ на probe. */
+  /** How many sessions the daemon holds — in a probe answer. */
   count?(): number;
-  /** Файл демона — в ответ на probe. */
+  /** The daemon's file — in a probe answer. */
   path?: string;
   /**
-   * Демон уходит (передаёт места преемнику): новые запросы не принимаются —
-   * без ack тонкий мост знает, что они не ушли, и переотправит их преемнику.
+   * The daemon is leaving (handing seats to a successor): new requests are not taken —
+   * without ack the thin bridge knows they did not go and resends them to the successor.
    */
   draining?(): boolean;
   /**
-   * Запрос, который уходящий демон отвечает сам (пауза спутника: передача её уже
-   * поставила); null — не берётся, как прочие.
+   * A request the leaving daemon answers itself (satellite pause: the handover already
+   * set it); null — not taken, like the rest.
    */
   answerDraining?(session: string, msg: RpcMessage): Promise<RpcMessage> | null;
 }
 
 const HELLO_WAIT_MS = 5_000;
 
-// Окно переподхвата: сессия, чей сокет закрылся без bye, ждёт свой тонкий мост
-// столько-то, затем уходит тем же концом, что и по bye.
+// Reattach window: a session whose socket closed without bye waits for its thin bridge,
+// then ends the same way as on bye.
 const graceTimers = new Map<SeamSession, NodeJS.Timeout>();
-// Чей сокет сейчас несёт сессию: закрытие прежнего после переподхвата — не обрыв.
+// Whose socket carries the session now: closing the old one after reattach is no drop.
 const owners = new Map<SeamSession, Socket>();
 
-/** Обслужить одно соединение тонкого моста. */
+/** Serve one thin bridge connection. */
 export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTACH_GRACE_MS): void {
   const say = (m: string) => host.log?.(m);
   let session: SeamSession | null = null;
   let helloSeen = false;
   let byeing = false;
-  const early: SeamFrame[] = []; // кадры, пришедшие, пока хозяин открывал сессию
+  const early: SeamFrame[] = []; // frames that came while the host opened the session
   const helloTimer = setTimeout(() => {
     if (!helloSeen) socket.destroy();
   }, HELLO_WAIT_MS);
   helloTimer.unref?.();
-  socket.on("error", () => {}); // обрыв скажет close
+  socket.on("error", () => {}); // close reports the drop
   const refuse = (reason: string) => {
     say(`seam refused: ${reason}`);
     writeFrame(socket, { t: "refuse", seam: SEAM_PROTOCOL, build: host.build, reason });
     socket.end();
   };
-  // Запрос отдаётся сессии только после того, как его ack ушёл ядру: нет ack у
-  // тонкого моста — сессия запроса не видела, и «не отправлено» честно. Кадры
-  // идут цепочкой — порядок прихода держится (initialize прежде initialized).
+  // A request reaches the session only after its ack reached the kernel: no ack at the
+  // thin bridge means the session never saw it. Chained to keep arrival order.
   let chain = Promise.resolve();
   const onFrame = (s: SeamSession, f: SeamFrame) => {
     if (f.t === "rpc") {
       const msg = f.msg;
       const request = msg.method !== undefined && msg.id !== undefined && msg.id !== null;
-      // Уходящий демон не берёт новых запросов (без ack тонкий мост переотправит их
-      // преемнику); уведомления (cancelled) и ответы харнеса на запросы сервера —
-      // о том, что уже в полёте в этой сессии, — ей и доставляются. Что хозяин отвечает
-      // сам (answerDraining), — принимается и отвечается им.
+      // A leaving daemon takes no new requests (the thin bridge resends them); notifications
+      // and harness replies about what is in flight are still delivered; answerDraining
+      // requests are taken and answered by the host.
       if (request && host.draining?.()) {
         const late = host.answerDraining?.(s.id, msg) ?? null;
         if (!late) {
@@ -178,8 +173,8 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
       socket.end();
       return;
     }
-    // Уходящий демон не отказывает (отказ увёл бы тонкий мост полным ходом навсегда) —
-    // рвёт связь: тонкий мост ждёт преемника тем же переподхватом.
+    // A leaving daemon drops rather than refuses (a refusal would send the thin bridge
+    // full for good): the thin bridge waits for the successor by reattach.
     if (host.draining?.()) {
       say("seam hello dropped: the daemon is handing over to its successor");
       socket.destroy();
@@ -224,8 +219,8 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
 }
 
 /**
- * Сессия над потоками: open получает вход и выход, как openSession движка, и
- * `log` — куда слать слово сессии: тонкому мосту, пока он на связи (onLog — всегда, журнал демона).
+ * A session over streams: open gets input and output, like the engine's openSession,
+ * and `log` — to the thin bridge while linked (onLog — always, the daemon journal).
  */
 export function streamSeamSession(
   id: string,
@@ -258,7 +253,7 @@ export function streamSeamSession(
   let ending: Promise<void> | null = null;
   return {
     id,
-    // Сессия ушла — вход закрыт: запись в закрытый поток была бы ошибкой, не доставкой.
+    // Session gone — input closed: writing to an ended stream would be an error.
     deliver: (msg) => void (input.writableEnded || input.write(JSON.stringify(msg) + "\n")),
     attach: (s, l) => {
       sink = s;
@@ -267,7 +262,7 @@ export function streamSeamSession(
     end: (why) =>
       (ending ??= engine
         .leave(why)
-        .then(() => new Promise<void>((r) => setImmediate(r))) // последние строки выхода — до bye-ok
+        .then(() => new Promise<void>((r) => setImmediate(r))) // last output lines before bye-ok
         .then(() => void input.end())),
   };
 }
@@ -276,9 +271,8 @@ const fail = (code: string, message: string): NodeJS.ErrnoException =>
   Object.assign(new Error(message), { code });
 
 /**
- * Потолок давности замка жизни демона без ответа сокета: столько демону дано
- * встать (замок взят, сокет ещё не слушает). Дольше живой демон отвечает на
- * пробу сокета — молчащий сокет при старом замке значит, что замок протух.
+ * Age ceiling of the daemon life lock without a socket answer: the time a daemon has to
+ * rise. Past it a silent socket under an old lock means the lock is stale.
  */
 export const DAEMON_RISE_MS = 15_000;
 
@@ -293,12 +287,11 @@ const socketAnswers = (path: string): Promise<boolean> =>
   });
 
 /**
- * Поднять локальный вход демона этого каталога гранта. Порядок: вход личный
- * (иначе EUNSAFE); сокет не отвечает (отвечает — EADDRINUSE, не отвязывается);
- * замок жизни демона взят — его держит только свой живой процесс не дольше
- * DAEMON_RISE_MS (держит — EADDRINUSE со словом о замке; чужой pid, мёртвый или
- * старше потолка — замок протух); только тогда мёртвый сокет убирается и
- * слушается новый, 0600. Замок снимается с закрытием сервера и с выходом процесса.
+ * Raise the daemon entrance of this grant directory. Order: the entrance is private
+ * (else EUNSAFE); the socket does not answer (else EADDRINUSE); the life lock is taken
+ * (held by a live own process within DAEMON_RISE_MS — EADDRINUSE; a foreign or dead pid,
+ * or one past the ceiling, is a stale lock); only then the dead
+ * socket is removed and a new 0600 one listens. The lock goes with the server or process.
  */
 export async function listenSeam(authDir: string, onSocket: (s: Socket) => void): Promise<Server> {
   const bad = seamEntranceProblem(authDir);
@@ -318,7 +311,7 @@ export async function listenSeam(authDir: string, onSocket: (s: Socket) => void)
   try {
     if (!win) {
       try {
-        unlinkSync(path); // сокет умершего демона
+        unlinkSync(path); // a dead daemon's socket
       } catch {}
     }
     const server = createServer(onSocket);

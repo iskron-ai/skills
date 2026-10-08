@@ -1,95 +1,54 @@
-// Блок `[iskron-bridge]` в ответе connect и iskron_stand: одна строка слушания
-// своего харнеса (граф nks-dev: #5047) — агент pi, получивший три команды,
-// запускал сторож Claude Code.
+// The bridge block in the connect and stand answers: one listen line for the own
+// harness (graph nks-dev: #5047).
 import { fileURLToPath } from "node:url";
 
+import { LISTEN } from "../delivery/index.ts";
 import { NOTIFIED_CLIENTS, PI_CLIENT } from "../shared/clients.ts";
-import { L, lang } from "../shared/lang.ts";
+import { lang, words } from "../shared/lang.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { doors, heldKey } from "./hold.ts";
 import { state } from "./transport.ts";
 
-/** Имя клиента рукопожатия — по нему мост знает харнес (граф nks-dev: #5047). */
+/** Handshake client name — tells the bridge the harness (graph nks-dev: #5047). */
 function clientName(): string {
   const info = (state.initParams as { clientInfo?: { name?: unknown } } | null)?.clientInfo;
   return typeof info?.name === "string" ? info.name : "";
 }
 
-/**
- * Блок `[iskron-bridge]` с командой слушания — для ответа connect и для
- * iskron_stand. Строка слушания — одна, своего харнеса: агент pi, получивший
- * три команды, запускал сторож Claude Code (#5047); незнакомому клиенту — все.
- */
+/** The bridge block with the listen command — one line for the own harness, all for an unknown one (#5047). */
 export function listenBlock(realm?: string): string | null {
-  const key = heldKey(realm); // место этого графа на канале (#5838); без графа — основное
+  const key = heldKey(realm); // the seat of this graph on the channel (#5838); no graph — the main one
   if (!key) return null;
-  const listen = listenLine(key);
-  return L(
-    `[iskron-bridge] Сокет этого стояния держит мост — вручать его никому не нужно` +
-      ` (строка выше о том, что никто не слушает, описывает миг до этого держания).` +
-      `\n${listen}` +
-      `\nЗанятость: iskron_stand(realm, status) на этом месте — пустой status снимает.` +
-      `\nКадры приходят и уведомлениями MCP (logger iskron-channel).`,
-    `[iskron-bridge] The bridge holds this standing's socket — there is no one to hand it to` +
-      ` (a line above saying no one listens describes the moment before this holding).` +
-      `\n${listen}` +
-      `\nBusy line: iskron_stand(realm, status) on this seat — an empty status clears it.` +
-      `\nFrames also come as MCP notifications (logger iskron-channel).`,
-  );
+  return words(LISTEN).block(listenLine(key));
 }
 
-/**
- * Строка слушания, когда к месту этого графа не прицеплен ни один сторож, а
- * харнесу он нужен (не pi и не OpenCode), — для ответа занятости: место держит
- * мост, слуха нет. Иначе null.
- */
+/** The listen line when no watchdog is attached to this graph's seat and the harness needs one; else null. */
 export function unheardListenBlock(realm?: string): string | null {
   const key = heldKey(realm);
   if (!key || NOTIFIED_CLIENTS.has(clientName())) return null;
   if ((doors().find((d) => d.key === key)?.clients.size ?? 0) > 0) return null;
-  return L(
-    `[iskron-bridge] Сторож к этому месту не прицеплен — кадры копятся. ${listenLine(key)}`,
-    `[iskron-bridge] No watchdog is attached to this seat — frames pile up. ${listenLine(key)}`,
-  );
+  return words(LISTEN).unheard(listenLine(key));
 }
 
-/** Одна строка слушания своего харнеса для места key. */
+/** The own harness's single listen line for seat `key`. */
 function listenLine(key: string): string {
+  const W = words(LISTEN);
   const self = fileURLToPath(import.meta.url);
-  // Сторож выводит каталог сокетов так же, как мост: не по умолчанию — скажи ему где.
+  // The watchdog derives the socket dir like the bridge: tell it where when not default.
   const authArg = CFG.authDir === defaultAuthDir() ? "" : ` --auth-dir "${CFG.authDir}"`;
-  // Язык сторожу называет мост: сам он адреса сервера не знает.
+  // The watchdog does not know the server address, so the bridge names the language.
   const where = `${authArg} --lang ${lang()}`;
   const client = clientName();
-  const monitor = L(
-    `под Monitor — node "${self}" watchdog ${key}${where} с наибольшим timeout_ms, перевзводить по истечении (Claude Code)`,
-    `under Monitor — node "${self}" watchdog ${key}${where} with the largest timeout_ms, re-armed when it runs out (Claude Code)`,
-  );
-  const exit = L(
-    `фоновой задачей — node "${self}" watchdog-exit ${key}${where} (выходит нулём на первом сообщении)`,
-    `as a background task — node "${self}" watchdog-exit ${key}${where} (exits zero on the first message)`,
-  );
-  const codex = L(
-    `в Codex внутри одной длинной команды своей оболочки — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (кадр входит в идущий тред через app-server; отдельной командой с nohup сторож умирает вместе с ней)`,
-    `in Codex inside one long command of your shell — node "${self}" watchdog-codex ${key}${where} & …; kill %1 (a frame enters the running thread through app-server; as a separate nohup command the watchdog dies with it)`,
-  );
-  // Имена: claude-code снято с рукопожатия Claude Code; pi и OpenCode — свои
-  // константы; Codex — по подстроке, его рукопожатие в поле не снималось.
+  const monitor = W.monitor(self, key, where);
+  const exit = W.exit(self, key, where);
+  const codex = W.codex(self, key, where);
+  // claude-code observed in the Claude Code handshake; Codex by substring, its handshake not observed.
   return NOTIFIED_CLIENTS.has(client)
-    ? L(
-        `Слушает ${client === PI_CLIENT ? "расширение pi" : "плагин OpenCode"} само — сторож не нужен, кадры входят в ход.`,
-        `The ${client === PI_CLIENT ? "pi extension" : "OpenCode plugin"} listens itself — no watchdog needed, frames enter the turn.`,
-      )
+    ? W.self(client === PI_CLIENT)
     : client === "claude-code"
-      ? L(
-          `Слушать: ${monitor}; без Monitor — ${exit}.`,
-          `Listen: ${monitor}; without Monitor — ${exit}.`,
-        )
+      ? W.claude(monitor, exit)
       : /codex/i.test(client)
-        ? L(
-            `Слушать: ${codex}; без двери app-server — ${exit}.`,
-            `Listen: ${codex}; without the app-server door — ${exit}.`,
-          )
-        : L(`Слушать: ${monitor}; ${exit}; ${codex}.`, `Listen: ${monitor}; ${exit}; ${codex}.`);
+        ? W.codexLine(codex, exit)
+        : W.any(monitor, exit, codex);
 }

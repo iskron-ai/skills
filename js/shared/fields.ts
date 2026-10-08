@@ -1,28 +1,26 @@
-// Поля ответа по запросу (граф nks-dev: #6637, решение #6731): сервер отдаёт
-// structuredContent и outputSchema только MCP-сессии клиента, объявившего
-// capabilities.experimental["iskron/structured"] в initialize. Харнес, который
-// получил поля, может передать модели одни поля без текста (Claude Code, #6707);
-// мост просит их для собственного разбора всегда, а харнесу отдаёт, только если
-// просил он сам. Плагин OpenCode (поля — когда текста нет, bridge-client.ts
-// resultToContent) и расширение pi (details тула) объявляют ключ мосту.
+// Response fields on request (graph @nks/nks-dev, nodes #6637, #6731, #6707): the server
+// gives structuredContent and outputSchema only to a client that declared the fields
+// capability in initialize. The bridge always asks for itself and passes the fields
+// to the harness only when the harness asked. A harness given fields may pass the model
+// the fields without text; the OpenCode plugin and the pi extension declare the key.
 
 import { STRUCTURED_CAPABILITY } from "../delivery/index.ts";
 
-/** Ключ capability полей ответа. */
+/** Capability key of response fields. */
 export const FIELDS_CAPABILITY = STRUCTURED_CAPABILITY;
 
-/** capabilities клиента моста, которому поля отдаются (плагин OpenCode, расширение pi). */
+/** Capabilities of a bridge client that receives the fields (OpenCode plugin, pi extension). */
 export const FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {};
 
-/** Просил ли поля сам клиент — по params его initialize. */
+/** Whether the client itself asked for the fields, by its initialize params. */
 export const asksFields = (initParams: unknown): boolean =>
   FIELDS_CAPABILITY in obj(obj(obj(initParams).capabilities).experimental);
 
-/** params initialize с объявленным ключом; объявленное клиентом значение не трогается. */
+/** Initialize params with the key declared; a value the client declared is kept. */
 export function withFieldsAsked(initParams: unknown): Obj {
   const p = obj(initParams);
   const caps = obj(p.capabilities);
