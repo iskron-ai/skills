@@ -6124,9 +6124,13 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     await quiet(ask(95, MY_KARTA + 1, {}, OTHER_KEY));
     await quiet(answer(96, 95, BORIS));
     await quiet(askWithdrawn(98, 95)); // a question to another withdrawn
+    // …withdrawn by a person's place (window, bot): still a count, not a person's word.
+    const byPerson = askWithdrawn(96, 95);
+    byPerson.provenance = { ...byPerson.provenance, user_karta_seq: 48 };
+    await quiet(byPerson);
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
     assert.equal(a.delivery, "steer", "the answer to my question wakes me now");
-    assert.match(a.text, /^№7 «Стенд»: записей 3, тебе 0 — /, "the others ride as a count");
+    assert.match(a.text, /^№7 «Стенд»: записей 4, тебе 0 — /, "the others ride as a count");
     assert.match(a.text, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: later; «после обеда»/);
     assert.doesNotMatch(a.text, /снят|@boris/);
     // A question to my seat (fields.to.standing) is mine even when its role is not mine.

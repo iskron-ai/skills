@@ -66,8 +66,13 @@ export const byMe = (frame: Rec): boolean => {
  * не правило слова человека «всегда целиком» (#6867). Одно определение — пачке
  * сторожей моста (roomstack.ts) и плагину OpenCode.
  */
-export const askFromPerson = (frame: Rec): boolean =>
-  ASK_KINDS.has(str(obj(frame.line).kind)) && classifyOrigin(frame as Frame) === "human";
+export const askFromPerson = (frame: Rec): boolean => {
+  const line = obj(frame.line);
+  const kind = str(line.kind);
+  // Снятие вопроса — тоже строка вопроса: progress с fields.withdraws.
+  const asking = ASK_KINDS.has(kind) || (kind === "progress" && !!str(obj(line.fields).withdraws));
+  return asking && classifyOrigin(frame as Frame) === "human";
+};
 
 /** Аккаунт места по адресу @handle:name; без адреса — пусто. */
 const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ?? "";

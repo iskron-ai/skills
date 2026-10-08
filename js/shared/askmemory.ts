@@ -56,8 +56,9 @@ export function closesMine(store: AskStore, frame: Rec): boolean {
 
 /**
  * Записать кадр в память: вопрос мне — открыт; снятие его номера — погас;
- * «принята» и переспрос на ключе — погас весь ключ. Ответ ключ не гасит:
- * отвеченный вопрос ещё переспрашивают (#6778).
+ * «принята» и переспрос на ключе — погас весь ключ; ответ другого места моей
+ * роли — погас его вопрос (мне сказан им). Свой ответ не гасит: отвеченный мною
+ * вопрос ещё переспрашивают (#6778), и переспрос другому мне скажут.
  */
 export function noteAsk(store: AskStore, frame: Rec): void {
   if (!str(lineOf(frame).key)) return;
@@ -75,7 +76,10 @@ export function noteAsk(store: AskStore, frame: Rec): void {
   }
   if (kind === "progress" && str(fields.withdraws))
     store.add(`off:${base}${str(fields.withdraws)}`);
-  else if ((kind === "ack" || kind === "ask") && !byMe(frame))
+  else if (kind === "answer" && !byMe(frame)) {
+    const n = str(lineOf(frame).refers_to) || str(frame.in_reply_to);
+    if (n) store.add(`off:${base}${n}`);
+  } else if ((kind === "ack" || kind === "ask") && !byMe(frame))
     for (const n of openOn(store, frame)) store.add(`off:${base}${n}`);
 }
 

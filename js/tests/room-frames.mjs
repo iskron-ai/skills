@@ -451,6 +451,14 @@ export const answer = (entry_id, refers_to, addressee = ME, fields = { choice: "
     }),
   );
 
+/** Мой ответ на вопрос refers_to — место проб отвечает спросившему Борису. */
+export const myAnswer = (entry_id, refers_to) => {
+  const f = answer(entry_id, refers_to, BORIS);
+  f.line.author = { kind: "standing", standing: ME, name: "proba" };
+  f.provenance = { from_standing: ME, from_karta_seq: MY_KARTA, auth: "pat", via: "room" };
+  return f;
+};
+
 /** «Принята» на ответ refers_to; кадр адресован месту ответившего. */
 export const ack = (entry_id, refers_to, addressee = HUMAN.standing) =>
   roomFrame("ack", {

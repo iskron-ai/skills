@@ -57,6 +57,7 @@ import {
   legacyRoom,
   ME,
   MY_KARTA,
+  myAnswer,
   nodeBound,
   nodeOp,
   progress,
@@ -5217,13 +5218,16 @@ test("question kinds under the Monitor watchdog: another seat's answer to my que
   await sendRoom(fake, ask(90));
   await sendRoom(fake, answer(91, 90, BORIS)); // my role's other seat answered the asker Boris
   await sendRoom(fake, answer(96, 95, BORIS)); // a question I was never asked
+  // The other seat's answer told me my question is out: its later withdrawal is a count.
+  await sendRoom(fake, askWithdrawn(98, 90));
   await sendRoom(fake, ack(97, 96, ME));
   await new Promise((r) => setTimeout(r, 1000));
   assert.ok(!wd.out.includes("отвечает на"), `an answer not to me interrupted:\n${wd.out}`);
   await nudge(fake);
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
   const flat = wd.out.replace(/\n/g, " ");
-  assert.match(flat, /записей 4, тебе 3/, wd.out);
+  assert.match(flat, /записей 5, тебе 3/, wd.out);
+  assert.doesNotMatch(flat, /вопрос \[90\] снят/, `told twice:\n${wd.out}`);
   assert.match(flat, /отвечает на \[90\]/, `the answer to my question in words:\n${wd.out}`);
   assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
   assert.doesNotMatch(flat, /отвечает на \[95\]/, `another's answer leaked:\n${wd.out}`);
@@ -5281,7 +5285,7 @@ for (const [what, closer, words, answered, replayed, askAgain] of [
     false,
   ],
   [
-    "an answered question re-asked of another role",
+    "a question I answered, re-asked of another role,",
     () => reask(91, MY_KARTA + 1, 89),
     "[91] Алексей",
     true,
@@ -5314,8 +5318,8 @@ for (const [what, closer, words, answered, replayed, askAgain] of [
     await sendRoom(fake, ask(90));
     assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
     assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
-    // my role's other seat answered the asker
-    if (answered) await sendRoom(fake, answer(89, 90, BORIS));
+    // I answered the asker myself: my answer does not put the question out
+    if (answered) await sendRoom(fake, myAnswer(89, 90));
     if (askAgain) await sendRoom(fake, ask(90)); // the platform hands the question again
     if (replayed) await sendRoom(fake, closer()); // received, then the bridge dies in its window
     await new Promise((r) => setTimeout(r, 300));
