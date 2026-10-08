@@ -82,9 +82,48 @@ const cases = [
     true,
     false,
   ],
+  // a refusal git printed vetoes the whole push decision: the exit status, the
+  // confirmation line and the quiet fallback alike — a half-refused push too
   [
     "git push origin a b 2>&1 | tail -3",
-    "To github.com:o/r.git\n ! [rejected]        a -> a (fetch first)\n   1234567..89abcde  b -> b",
+    "To github.com:o/r.git\n ! [rejected]        a -> a (fetch first)\n   1234567..89abcde  b -> b\nerror: failed to push some refs to 'github.com:o/r.git'",
+    false,
+    false,
+  ],
+  [
+    "git push -q nonexistent-remote",
+    "fatal: 'nonexistent-remote' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x",
+    "error: src refspec feat/x does not match any\nerror: failed to push some refs to 'github.com:o/r.git'",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x && gh pr create --fill",
+    "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x 2>&1 && echo ok",
+    "To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (fetch first)\nerror: failed to push some refs to 'github.com:o/r.git'\nok",
+    false,
+    false,
+  ],
+  [
+    "git push origin feat/x 2>&1 && echo ok",
+    "To github.com:o/r.git\n ! [remote rejected] feat/x -> feat/x (pre-receive hook declined)\nerror: failed to push some refs to 'github.com:o/r.git'\nok",
+    false,
+    false,
+  ],
+  // the remote's own chatter is not git's refusal
+  [
+    "git push origin feat/x && echo ok",
+    "remote: error: nothing wrong here\nTo github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x\nok",
     true,
     false,
   ],
@@ -400,6 +439,28 @@ test("opencode rituals template: wakes by outcome", async () => {
       { push, merge },
       command,
     );
+  }
+});
+
+// OpenCode may hand no exit status: a push last in the chain then wakes by its
+// form, unless the output carries git's refusal.
+test("opencode rituals template: a refused push with an unknown exit does not wake", async () => {
+  const after = await loadPlugin();
+  for (const [content, push] of [
+    ["fatal: 'nonexistent-remote' does not appear to be a git repository", false],
+    ["To github.com:o/r.git\n ! [rejected]        feat/x -> feat/x (fetch first)", false],
+    ["error: failed to push some refs to 'github.com:o/r.git'", false],
+    ["", true],
+  ]) {
+    const input = {
+      tool: "bash",
+      id: callID(),
+      status: "completed",
+      input: { command: "git push origin feat/x" },
+      result: { content, metadata: {} },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("пуш"), push, content);
   }
 });
 

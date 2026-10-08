@@ -166,12 +166,12 @@ export default {
       );
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
       // тихий пуш (-q/--quiet) не печатает «To <remote>» и по выводу неотличим от отказа: судит состояние git —
-      // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master;
-      // равенство могло стоять до команды — видимый отказ git в выводе (fatal:, error:, ! [rejected]) вето;
-      // вето читает весь вывод вызова: fatal:/error: соседней команды глушит и принятый тихий пуш
+      // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master
+      // видимый отказ git (fatal:, error:, ! [rejected]) — вето на всё решение пуша: код выхода (и неизвестный), строку
+      // подтверждения, равенство ссылок; вето читает весь вывод вызова — fatal:/error: соседней команды глушит и принятый пуш
+      const refused = /^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m.test(out);
       let quiet = false;
-      if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") &&
-        !/^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m.test(out)) {
+      if (!refused && new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<")) {
         // каталог сессии, не процесса сервера; нет его — хук молчит
         const cwd = await dirOf(input.sessionID);
         if (typeof cwd === "string" && cwd) {
@@ -182,7 +182,7 @@ export default {
         }
       }
       const tagsOnly = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/; // метка выпуска — не ветка на ревью
-      const note = (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet
+      const note = !refused && ((ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) && !tagsOnly.test(out)) || quiet)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
             ran("fj pr merge", "-h|--help", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd))
