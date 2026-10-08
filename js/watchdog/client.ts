@@ -1,6 +1,6 @@
-// Клиент локального сокета стояния, который держит мост (граф nks-dev: #4234).
-// Сторож больше ничего не держит и не переоткрывает: он читает события моста и
-// превращает их в то, что понимает харнес — строку под Monitor или выход процесса.
+// The client of the local standing socket the bridge holds (graph @nks/nks-dev, node #4234).
+// A watchdog holds and reopens nothing: it reads the bridge's events and turns them into
+// what the harness understands — a line under Monitor or a process exit.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -15,8 +15,8 @@ import { staleBatch } from "../shared/stalebatch.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
 import { wd } from "./words.ts";
 
-// Мост может подняться чуть позже сторожа, место — вернуться после смены демона.
-// Переменная — шов для проб, не ручка человека.
+// The bridge may come up a little after the watchdog, a seat may return after a daemon
+// change. The variable is a probe seam, not a human knob.
 const ATTACH_WINDOW_MS = Number(process.env[envName("WATCHDOG_ATTACH_MS")]) || 60_000;
 const RETRY_MS = 1000;
 
@@ -31,7 +31,7 @@ export interface WatchdogArgs {
   authDir: string;
 }
 
-/** `[ключ] [--auth-dir <dir>] [--lang en|ru]` — каталог тот же, что у моста, иначе сторож ищет не там; язык мост называет сам. */
+/** `[key] [--auth-dir <dir>] [--lang en|ru]`: the bridge's directory, else the watchdog looks elsewhere; the bridge names the language. */
 export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
   const out: WatchdogArgs = { authDir: authDirFromEnv() };
   for (let i = 0; i < argv.length; i++) {
@@ -43,13 +43,13 @@ export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
   return out;
 }
 
-/** Какое стояние слушать: названное, либо единственное, которое держит мост. */
+/** Which standing to listen to: the named one, or the only one the bridge holds. */
 export function resolveStanding(argv: string[]): Resolved | { error: string } {
   const { key, authDir } = parseWatchdogArgs(argv);
   const dir = standingsDirOf(authDir);
   const pathFor = (k: string) => socketPathOf(authDir, k);
   if (key) return { key, path: pathFor(key), authDir };
-  // Читаемые ключи лежат рядом с сокетами файлами <хеш>.key — их и перечисляем.
+  // Readable keys lie next to the sockets as <hash>.key files.
   const held = existsSync(dir)
     ? readdirSync(dir)
         .filter((f) => f.endsWith(".key"))
@@ -65,18 +65,17 @@ export function resolveStanding(argv: string[]): Resolved | { error: string } {
   if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
     return {
-      error: wd.noHeld(),
+      error: wd().noHeld(),
     };
   }
   return {
-    error: wd.severalHeld(held),
+    error: wd().severalHeld(held.join(", ")),
   };
 }
 
 /**
- * Файл памяти отданного, который мост назвал в attached (память места — по его
- * серверу, а сервер сторожу не известен); мост, не назвавший его, оставляет
- * выведенный путь. Память перечитывается из названного файла.
+ * The delivered-memory file the bridge named in `attached` (the seat's memory is per
+ * server, unknown to the watchdog); without one the derived path stays. Re-read from it.
  */
 export function adoptSeenPath(
   named: string | undefined,
@@ -90,10 +89,10 @@ export function adoptSeenPath(
 }
 
 /**
- * Пачка лежалых в миг отдачи — по памяти сторожа `has` (shared/stalebatch.ts). Кадр
- * старого моста несёт лишь показанные кадры и метки сверх них (unshown): тогда — его
- * текст со счётом «не вошло» и его метки, показанные — метками доставки (#5831). Сверх
- * показанных событие вошло лишь числом: его `ev:`/`evs:` метятся `cev:`/`cevs:` (seen.ts).
+ * A stale batch at delivery time, by the watchdog's memory `has` (shared/stalebatch.ts).
+ * An older bridge's event carries only the shown frames and the marks beyond them
+ * (unshown): then its text and marks are used, shown ones as delivery keys (#5831);
+ * events beyond the shown went in only as a count: `ev:`/`evs:` become `cev:`/`cevs:` (seen.ts).
  */
 export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: string[] } {
   if (!ev.unshown) return staleBatch(ev.frames ?? [], has);
@@ -103,9 +102,9 @@ export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: str
 }
 
 /**
- * Шапки пачек — строками в момент печати (#6574): пачка ждёт кадрами, и копия, чьё
- * событие уже в ходе по памяти сторожа или входит текстом этого же вывода — кадрами
- * `carriers`, — не считается (seen.ts eventIn). Сами они в своей шапке остаются.
+ * Batch heads as lines at print time (#6574): a copy whose event is already in the turn
+ * by the watchdog's memory, or goes as text in this same output (`carriers`), is not
+ * counted (seen.ts eventIn). The carriers themselves stay in their own head.
  */
 export function heldHeads(groups: Frame[][], marks: Marks, carriers: Frame[] = []): string[] {
   const own = new Set(carriers.flatMap((f) => deliveryKeys(f)));
@@ -118,23 +117,21 @@ export function heldHeads(groups: Frame[][], marks: Marks, carriers: Frame[] = [
 
 export interface AttachOptions {
   onEvent: (ev: ChannelEvent) => void;
-  /** Мост ушёл (или так и не поднялся за окно): сокета больше нет. */
+  /** The bridge left (or never came up within the window): the socket is gone. */
   onGone: (why: string) => void;
 }
 
 /**
- * Прицепиться к локальному сокету и читать NDJSON-события, пока мост жив.
- * Событие handover — демон машины передаёт место преемнику (обновление или SIGTERM
- * при тонком мосте на связи): дверь закроется и
- * откроется тем же путём, и сторож переподхватывает её в том же окне, что и на
- * старте, а не уходит словом «мост отпустил стояние».
+ * Attach to the local socket and read NDJSON events while the bridge lives. On a
+ * `handover` event (the machine daemon passes the seat to a successor) the door closes
+ * and reopens at the same path, and the watchdog re-attaches within the start window.
  */
 export function attach(path: string, o: AttachOptions): void {
   let startedAt = Date.now();
   let attached = false;
   let handover = false;
-  let waitingBack = false; // место передано и ждёт возврата
-  let ownRelease = false; // мост отпустил место своим close/revoke сессии
+  let waitingBack = false; // the seat was handed over and waits to return
+  let ownRelease = false; // the bridge released the seat by the session's own close/revoke
 
   function tryOnce(): void {
     const sock = connect(path);
@@ -154,10 +151,9 @@ export function attach(path: string, o: AttachOptions): void {
         try {
           ev = JSON.parse(line) as ChannelEvent;
         } catch {
-          continue; // не наша строка
+          continue; // not our line
         }
-        // Кадр, пришедший без разбора (мост отдал только raw), разбираем здесь:
-        // клиент судит по type, и судить должен по кадру, а не по его отсутствию.
+        // A frame given only as raw is parsed here: the client judges by its type.
         if (ev.kind === "frame" && ev.frame === undefined && typeof ev.raw === "string") {
           try {
             ev.frame = JSON.parse(ev.raw) as ChannelEvent["frame"];
@@ -166,30 +162,30 @@ export function attach(path: string, o: AttachOptions): void {
           }
         }
         if (ev.kind === "handover") {
-          handover = true; // закрытие, которое последует, — не уход моста
+          handover = true; // the close that follows is not the bridge leaving
           continue;
         }
-        if (ev.kind === "released" && ev.own) ownRelease = true; // своё close/revoke: сторож уходит сам
+        if (ev.kind === "released" && ev.own) ownRelease = true; // own close/revoke: the watchdog leaves itself
         o.onEvent(ev);
       }
     });
     sock.on("error", () => {
-      /* закрытие скажет своё */
+      /* the close event speaks for it */
     });
     sock.on("close", () => {
       if (attached && handover) {
-        // Место уходит к преемнику демона: та же дверь откроется снова — ждём её окном старта.
+        // The seat goes to the daemon's successor: the same door reopens, wait with the start window.
         attached = false;
         handover = false;
         waitingBack = true;
         startedAt = Date.now();
         return void setTimeout(tryOnce, RETRY_MS);
       }
-      if (ownRelease) return; // своё отпускание сказано событием released — не уход моста (#6638)
-      if (attached) return o.onGone(wd.bridgeLetGo());
+      if (ownRelease) return; // an own release was said by the released event (#6638)
+      if (attached) return o.onGone(wd().bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s = ATTACH_WINDOW_MS / 1000;
-        return o.onGone(waitingBack ? wd.seatNotBack(s, path) : wd.noSocket(path, s));
+        return o.onGone(waitingBack ? wd().seatNotBack(s, path) : wd().noSocket(path, s));
       }
       setTimeout(tryOnce, RETRY_MS);
     });

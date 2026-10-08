@@ -1,9 +1,8 @@
-// use — постоянный выбор адреса сервера на этой машине (граф nks-dev: #5040):
-// `ru` — mcp.iskron.ru, `en` — mcp.iskron.ai, иначе полный URL другого
-// инстанса. Пишется файлом рядом с грантом; мост читает его при пустом
-// аргументе и пустом окружении — так выбор доезжает и до плагинной записи,
-// которая аргументов не несёт. Грант у моста раздельный по хосту: смена
-// адреса — новый вход.
+// use: a lasting choice of the server address on this machine (graph @nks/nks-dev,
+// node #5040): `ru`, `en` or the full URL of another instance. Written as a file next
+// to the grant; the bridge reads it when both the argument and the environment are
+// empty, so the choice reaches plugin entries that carry no arguments. The grant is
+// per host: a new address means a new login.
 import {
   CFG,
   parseArgs,
@@ -11,12 +10,15 @@ import {
   setConfig,
   writeServerChoice,
 } from "../bridge/config.ts";
-import { L, setServerLang } from "../shared/lang.ts";
+import { CLI, type CliWords } from "../delivery/index.ts";
+import { setServerLang, words } from "../shared/lang.ts";
 import { freshnessWord } from "./doctor.ts";
 
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
 };
+
+const cw = (): CliWords => words(CLI);
 
 export function runUse(argv: string[]): void {
   let word: string | undefined;
@@ -30,27 +32,12 @@ export function runUse(argv: string[]): void {
   setConfig(parseArgs(rest));
   const url = word ? resolveServerChoice(word) : null;
   if (!url) {
-    out(
-      L(
-        "use: назови адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса",
-        "use: name an address — en (mcp.iskron.ai), ru (mcp.iskron.ru) or the full URL of an instance",
-      ),
-    );
+    out(cw().useNoAddress());
     process.exitCode = 2;
     return;
   }
   const path = writeServerChoice(CFG.authDir, url);
-  setServerLang(url); // ответ — на языке нового выбора, не прежнего
-  out(
-    L(
-      `мост смотрит на ${url} — записано в ${path}; ${freshnessWord(url)}`,
-      `the bridge looks at ${url} — written to ${path}; ${freshnessWord(url)}`,
-    ),
-  );
-  out(
-    L(
-      "Действует с нового процесса моста: перезапусти сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход.",
-      "Takes effect from a new bridge process: restart the harness sessions. The grant is separate per address — the first call at a new address leads to login.",
-    ),
-  );
+  setServerLang(url); // the answer is in the language of the new choice
+  out(cw().useWritten(url, path, freshnessWord(url)));
+  out(cw().useEffect());
 }

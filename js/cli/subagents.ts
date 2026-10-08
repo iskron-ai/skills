@@ -1,9 +1,8 @@
-// doctor, раздел «субагенты»: у каждого файла агента проекта свой мост-спутник,
-// и этот мост на этой машине поднимается и отдаёт тулы, которые API примет.
-// Поломка здесь не видна ни человеку, ни агенту: субагент без моста просто
-// работает без тулов графа, а схема, которую API отвергает, роняет весь прогон
-// ошибкой 400 без имени тула. Каждая находка — строка с готовым действием.
-// Норма записи — skills/iskronify/references/delegation.md; форма — satform.ts.
+// doctor's subagents section: each project agent file has its own satellite bridge,
+// and that bridge starts on this machine and hands out tools the API accepts. A
+// breakage here is invisible: a subagent without a bridge just works without graph
+// tools, and a schema the API rejects fails the whole run with a nameless 400. Each
+// finding is a line with a ready action. The entry form is satform.ts.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
@@ -12,24 +11,23 @@ import { CFG, isProductionServer } from "../bridge/config.ts";
 import { loadStore, storePath } from "../bridge/store.ts";
 import { BRIDGE_NAME, envName, PLUGIN_NAME, PRODUCT, SUB_ENTRY_PREFIX } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
-import { L } from "../shared/lang.ts";
 import { escapeRe } from "../shared/regex.ts";
 import { frontmatterText, parseFrontmatter, type YamlValue } from "./frontmatter.ts";
 import { PRODUCT_PATTERN, PRODUCT_RE } from "./installnames.ts";
 import { bridgePathOf, formOf, readyEntry, SATELLITE_ARGS, toolsTail } from "./satform.ts";
 import { loginAdvice, probeSatellite } from "./satprobe.ts";
-import { formWord, todo } from "./subwords.ts";
+import { formWord, subWords as sw, todo } from "./subwords.ts";
 
 type Out = (s: string) => void;
 
-/** ОС, под которую судится команда записи; переменная — шов проб (Windows на любой машине). */
+/** The OS the entry command is judged for; the variable is a probe seam (Windows on any machine). */
 const PLATFORM_ENV = envName("DOCTOR_PLATFORM");
 const platform = (): string => process.env[PLATFORM_ENV] || process.platform;
 
 const BRIDGE_RE = new RegExp(
   `${escapeRe(BRIDGE_NAME)}|(^|[\\\\/"'\\s])${PRODUCT_PATTERN}[^\\\\/"'\\s]*\\.mjs`,
 );
-/** Префиксы серверов графа в шаблоне проекции — снимаются всегда, когда своих не нашлось. */
+/** Graph server prefixes of the projection template, removed whenever none of our own were found. */
 const TEMPLATE_PARENTS = [
   `mcp__${BRIDGE_NAME}`,
   `mcp__plugin_${PLUGIN_NAME}_${PRODUCT}`,
@@ -38,7 +36,7 @@ const TEMPLATE_PARENTS = [
 
 interface Entry {
   name: string;
-  ref: boolean; // строка-ссылка на сервер конфига сессии, не встроенная запись
+  ref: boolean; // a reference to a session config server, not an inline entry
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -100,7 +98,7 @@ function agentFiles(dir: string, scope: AgentFile["scope"]): AgentFile[] {
   });
 }
 
-/** Корень проекта: первый каталог вверх от cwd с файлами агентов, иначе с .git, иначе cwd; дом — не проект. */
+/** Project root: the first directory up from cwd with agent files, else with .git, else cwd; home is not a project. */
 export function projectRoot(): string {
   const home = resolve(homedir());
   let gitRoot: string | null = null;
@@ -116,7 +114,7 @@ export function projectRoot(): string {
   return gitRoot ?? process.cwd();
 }
 
-/** Где на этой машине лежит команда; null — не нашлась. */
+/** Where the command lies on this machine; null if not found. */
 export function which(cmd: string, cwd: string): string | null {
   if (isAbsolute(cmd) || /[\\/]/.test(cmd)) {
     const p = resolve(cwd, cmd);
@@ -137,13 +135,13 @@ export function which(cmd: string, cwd: string): string | null {
   return null;
 }
 
-/** Адрес — сервер графа: продовый (русский или английский) либо тот, на который смотрит мост этой машины. */
+/** The address is a graph server: a production one or the one this machine's bridge looks at. */
 export function graphServer(url: string): boolean {
   const norm = (u: string) => u.trim().replace(/\/+$/, "").toLowerCase();
   return isProductionServer(url) || norm(url) === norm(CFG.serverUrl);
 }
 
-/** Серверы моста, которые субагент унаследует от позвавшего: их тулы надо снять disallowedTools. */
+/** Bridge servers the subagent inherits from its caller: their tools must go into disallowedTools. */
 function parentBridges(root: string): string[] {
   const found = new Set<string>();
   const scan = (servers: unknown, prefix: (n: string) => string) => {
@@ -152,7 +150,7 @@ function parentBridges(root: string): string[] {
       const e = (v ?? {}) as { command?: string; args?: string[]; url?: string };
       const hay = [e.command ?? "", ...(e.args ?? [])].join(" ");
       if (BRIDGE_RE.test(hay) && !hay.includes("--satellite")) found.add(prefix(n));
-      // Нативная http-запись на сервер графа — те же тулы графа у субагента, снимаются так же.
+      // A native http entry on the graph server gives the same graph tools, removed the same way.
       else if (typeof e.url === "string" && graphServer(e.url)) found.add(prefix(n));
     }
   };
@@ -187,7 +185,7 @@ function parentBridges(root: string): string[] {
   return [...found];
 }
 
-/** Доверие к папке: сервер из фронтматтера в недоверенной папке не поднимается, и диалога нет. */
+/** Folder trust: in an untrusted folder a frontmatter server does not start, and no dialog says so. */
 function trustLine(root: string): string | null {
   let cfg: { projects?: Record<string, { hasTrustDialogAccepted?: boolean }> };
   try {
@@ -208,18 +206,11 @@ function trustLine(root: string): string | null {
   }
   if (chain.some((d) => keys.includes(d))) return null;
   const near = keys.find((k) => chain.some((d) => d.toLowerCase() === k.toLowerCase()));
-  if (near)
-    return L(
-      `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запусти claude в терминале из этой папки и прими диалог доверия либо открой папку тем же написанием пути`,
-      `folder trust was accepted for "${near}", but the project is opened as "${here}" — Claude Code compares the path letter for letter (C:/ and c:/ are different folders), and in an untrusted folder the frontmatter server does not start without a dialog → run claude in a terminal from this folder and accept the trust dialog, or open the folder with the same spelling of the path`,
-    );
-  return L(
-    `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запусти claude в этой папке и прими диалог доверия`,
-    `trust for the folder "${here}" and its parents is not marked in ~/.claude.json — in an untrusted folder the frontmatter server does not start, and there is no dialog about it → run claude in this folder and accept the trust dialog`,
-  );
+  if (near) return sw().trustNear(near, here);
+  return sw().trustNone(here);
 }
 
-/** Есть ли у машины вход, которым пробный спутник откроет сессию, — иначе проба лишь начала бы вход, которого никто не кончит. */
+/** Whether the machine has a login for the probe satellite; otherwise a probe would only start a login nobody finishes. */
 function hasGrant(): boolean {
   if (CFG.pat) return true;
   try {
@@ -241,7 +232,7 @@ interface Report {
 export async function subagentsReport(out: Out): Promise<void> {
   const root = projectRoot();
   const userDir = join(homedir(), ".claude", "agents");
-  // Из дома doctor зовут чаще всего: дом — не проект, его агенты — пользовательские.
+  // doctor is most often called from home: home is not a project, its agents are the user's.
   const atHome = resolve(root) === resolve(homedir());
   const project = atHome ? [] : agentFiles(join(root, ".claude", "agents"), "project");
   const shadowed = new Set(project.map((f) => f.agent));
@@ -251,27 +242,14 @@ export async function subagentsReport(out: Out): Promise<void> {
     ...agentFiles(join(root, ".opencode", "agents"), "project"),
     ...agentFiles(join(root, ".opencode", "agent"), "project"),
   ];
-  const osNote = process.env[PLATFORM_ENV]
-    ? L(`ОС под суд: ${platform()}`, `OS under judgment: ${platform()}`)
-    : platform();
-  out(L(`субагенты: проект ${root} (${osNote})`, `subagents: project ${root} (${osNote})`));
+  const osNote = process.env[PLATFORM_ENV] ? sw().osJudged(platform()) : platform();
+  out(sw().header(root, osNote));
   if (!claude.length && !opencode.length) {
     const dirs = `${join(root, ".claude", "agents")}, ${userDir}, ${join(root, ".opencode", "agents")}`;
-    out(
-      L(
-        `  файлов агентов нет (${dirs}) — позови doctor из каталога проекта, если субагенты там`,
-        `  no agent files (${dirs}) — call doctor from the project directory if the subagents are there`,
-      ),
-    );
+    out(sw().noFiles(dirs));
     return;
   }
-  for (const f of user.filter((f) => shadowed.has(f.agent)))
-    out(
-      L(
-        `  ${f.path}: затенён файлом проекта с тем же именем «${f.agent}» — Claude Code берёт проектный`,
-        `  ${f.path}: shadowed by the project file with the same name "${f.agent}" — Claude Code takes the project one`,
-      ),
-    );
+  for (const f of user.filter((f) => shadowed.has(f.agent))) out(sw().shadowed(f.path, f.agent));
 
   const parents = parentBridges(root);
   const required = parents.length ? parents : TEMPLATE_PARENTS;
@@ -284,87 +262,51 @@ export async function subagentsReport(out: Out): Promise<void> {
     const ours = entries.filter((e) => BRIDGE_RE.test([e.command, ...e.args].join(" ")));
     const sat = ours.filter((e) => formOf(e) !== "session");
     let probeEntry: Entry | null = null;
-    // Снимаемые мосты позвавшего — прежние строки файла плюс найденные на машине (или шаблон).
+    // The caller's bridges to remove: the file's former lines plus those found on the machine (or the template).
     const own = sat.map((e) => `mcp__${e.name}`);
     const disallowed = listOf(f.fm.disallowedTools).map((d) => d.replace(/__\*$/, ""));
-    // Набор тулов записи (`--tools`) едет в готовый блок: замена формы его не теряет.
+    // The entry's tool set (`--tools`) rides into the ready block: replacing the form keeps it.
     const block = (name: string, e?: Entry) =>
-      `${L("блоком ниже вместо прежних mcpServers и disallowedTools", "with the block below instead of the former mcpServers and disallowedTools")}:\n${readyEntry(
-        name,
-        [...new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
-        e ? toolsTail(e) : [],
-      )}`;
+      sw().withBlock(
+        readyEntry(
+          name,
+          [...new Set([...disallowed, ...required])].filter((p) => p !== `mcp__${name}`),
+          e ? toolsTail(e) : [],
+        ),
+      );
     const canonical = (e: Entry): Entry => ({
-      name: `${e.name} ${L("(предложенная форма)", "(proposed form)")}`,
+      name: sw().proposed(e.name),
       ref: false,
       command: "node",
       args: [...SATELLITE_ARGS, ...toolsTail(e)],
       env: e.env,
     });
     const refs = entries.filter((e) => e.ref && PRODUCT_RE.test(e.name));
-    for (const r of refs)
-      lines.push(
-        L(
-          `запись «${r.name}» — ссылка на сервер из конфига сессии, не свой мост на прогон → замени встроенной записью, ${block(expected)}`,
-          `entry "${r.name}" is a reference to a server from the session config, not its own bridge per run → replace it with an inline entry, ${block(expected)}`,
-        ),
-      );
+    for (const r of refs) lines.push(sw().refEntry(r.name, block(expected)));
     if (!sat.length) {
       if (ours.length)
-        lines.push(
-          L(
-            `запись «${ours[0].name}»: ${formWord("session")} → ${block(expected, ours[0])}`,
-            `entry "${ours[0].name}": ${formWord("session")} → ${block(expected, ours[0])}`,
-          ),
-        );
-      else if (!refs.length)
-        lines.push(
-          L(
-            `записи моста-спутника нет — у субагента нет тулов графа → вставь во фронтматтер ${block(expected)}`,
-            `no satellite bridge entry — the subagent has no graph tools → insert into the frontmatter ${block(expected)}`,
-          ),
-        );
+        lines.push(sw().formEntry(ours[0].name, formWord("session"), block(expected, ours[0])));
+      else if (!refs.length) lines.push(sw().noEntry(block(expected)));
     }
     for (const e of sat) {
       byName.set(e.name, [...(byName.get(e.name) ?? []), f.path]);
-      if (e.name === SUB_ENTRY_PREFIX)
-        lines.push(
-          L(
-            `запись названа «iskron-sub» — общим именем прежнего контракта: второй файл с ним поведёт свои прогоны тем же процессом моста → переименуй запись в iskron-sub-${f.agent}`,
-            `the entry is named "iskron-sub" — the shared name of the former contract: a second file with it would run its runs through the same bridge process → rename the entry to iskron-sub-${f.agent}`,
-          ),
-        );
-      // Готовый блок несёт и своё имя: общее имя прежнего контракта в нём не повторяется.
+      if (e.name === SUB_ENTRY_PREFIX) lines.push(sw().sharedName(f.agent));
+      // The ready block carries its own name: the former shared name is not repeated in it.
       const name = e.name === SUB_ENTRY_PREFIX ? expected : e.name;
       const form = formOf(e);
       if (form !== "eval") {
-        lines.push(
-          L(
-            `запись «${e.name}»: ${formWord(form)} → замени ${block(name, e)}`,
-            `entry "${e.name}": ${formWord(form)} → replace ${block(name, e)}`,
-          ),
-        );
-        // Пробуем ту форму, что предложена взамен, — если домашний мост, который она зовёт, есть.
+        lines.push(sw().replaceEntry(e.name, formWord(form), block(name, e)));
+        // Probe the proposed form, if the home bridge it calls exists.
         if (!probeEntry && existsSync(homeBridgePath())) probeEntry = canonical(e);
         continue;
       }
       if (!which(e.command, root)) {
-        lines.push(
-          L(
-            `команда записи «${e.name}» «${e.command}» на этой машине не находится (PATH) → поставь Node 22+ либо добавь каталог node в PATH: Claude Code запускает его по PATH`,
-            `the command of entry "${e.name}" "${e.command}" is not found on this machine (PATH) → install Node 22+ or add the node directory to PATH: Claude Code launches it via PATH`,
-          ),
-        );
+        lines.push(sw().noCommand(e.name, e.command));
         continue;
       }
       const bridge = bridgePathOf(e);
       if (bridge && !existsSync(resolve(root, bridge))) {
-        lines.push(
-          L(
-            `моста по пути записи нет: ${bridge} → поставь его (скилл establish-mcp кладёт домашнюю копию ${homeBridgePath()}), затем повтори doctor`,
-            `no bridge at the entry path: ${bridge} → install it (the establish-mcp skill places a home copy at ${homeBridgePath()}), then repeat doctor`,
-          ),
-        );
+        lines.push(sw().noBridge(bridge, homeBridgePath()));
         continue;
       }
       if (!probeEntry) probeEntry = e;
@@ -374,73 +316,34 @@ export async function subagentsReport(out: Out): Promise<void> {
       const fix = [...new Set([...disallowed, ...required])]
         .filter((p) => !own.includes(p))
         .join(", ");
-      lines.push(
-        L(
-          `мосты позвавшего не сняты (${need.join(", ") || "disallowedTools нет"}) — субагент унаследует их тулы, и его записи уйдут местом позвавшего → замени строку: disallowedTools: ${fix}`,
-          `the caller's bridges are not removed (${need.join(", ") || "no disallowedTools"}) — the subagent would inherit their tools, and its writes would go out under the caller's seat → replace the line: disallowedTools: ${fix}`,
-        ),
-      );
+      lines.push(sw().callerBridges(need.join(", "), fix));
     }
-    for (const o of own.filter((o) => disallowed.includes(o)))
-      lines.push(
-        L(
-          `disallowedTools снимает свой же мост ${o} → убери ${o} из disallowedTools`,
-          `disallowedTools removes the entry's own bridge ${o} → remove ${o} from disallowedTools`,
-        ),
-      );
+    for (const o of own.filter((o) => disallowed.includes(o))) lines.push(sw().ownRemoved(o));
     reports.push({ f, lines, probe: probeEntry, names: sat.map((e) => e.name) });
   }
   for (const [name, files] of byName) {
     if (files.length < 2) continue;
     for (const r of reports.filter((r) => files.includes(r.f.path)))
-      r.lines.push(
-        L(
-          `имя записи «${name}» делят ${files.length} файла(ов): ${files.join(", ")} — Claude Code держит одно соединение на имя записи, их прогоны пойдут одним процессом моста, и первый закончивший погасит место другим → переименуй запись в этом файле: iskron-sub-${r.f.agent}`,
-          `the entry name "${name}" is shared by ${files.length} file(s): ${files.join(", ")} — Claude Code keeps one connection per entry name, their runs would go through one bridge process, and the first to finish would put out the seat for the others → rename the entry in this file: iskron-sub-${r.f.agent}`,
-        ),
-      );
+      r.lines.push(sw().nameShared(name, files.length, files.join(", "), r.f.agent));
   }
-  // Без входа проба лишь начала бы вход, который никто не кончит (регистрация клиента, замок входа):
-  // её не зовём и говорим, как войти.
+  // Without a login a probe would only start a login nobody finishes: it is not run, and how to log in is said.
   const grant = hasGrant();
   let noGrantSaid = false;
-  // Одна команда — одна проба: те же байты моста отвечают всем файлам одинаково.
+  // One command, one probe: the same bridge bytes answer every file alike.
   const probed = new Map<string, { label: string; failed: boolean }>();
   for (const r of reports) {
-    // Проба — до заголовка: файл «в порядке», только если и его строки, и проба чисты,
-    // иначе цикл «doctor до раздела без НАДО:» кончался бы при сломанном субагенте.
+    // The probe goes before the heading: a file is fine only if its lines and its probe are clean,
+    // else the "rerun doctor until no TODO" loop would end on a broken subagent.
     const seen: string[] = [];
     if (r.probe && !grant) {
-      r.lines.push(
-        noGrantSaid
-          ? L(
-              "проба спутника не шла — входа в граф на этой машине нет (действие — строкой выше)",
-              "the satellite probe did not run — there is no graph login on this machine (the action is in the line above)",
-            )
-          : L(
-              `проба спутника не шла — входа в граф на этой машине нет → ${loginAdvice()}`,
-              `the satellite probe did not run — there is no graph login on this machine → ${loginAdvice()}`,
-            ),
-      );
+      r.lines.push(noGrantSaid ? sw().noGrantAgain() : sw().noGrant(loginAdvice()));
       noGrantSaid = true;
     } else if (r.probe) {
       const key = JSON.stringify([r.probe.command, r.probe.args, r.probe.env]);
       const first = probed.get(key);
       if (first) {
-        if (first.failed)
-          r.lines.push(
-            L(
-              `проба той же команды, что у «${first.label}», не прошла — действие выше`,
-              `the probe of the same command as "${first.label}" failed — the action is above`,
-            ),
-          );
-        else
-          seen.push(
-            L(
-              `проба: та же команда, что у «${first.label}» выше`,
-              `probe: the same command as "${first.label}" above`,
-            ),
-          );
+        if (first.failed) r.lines.push(sw().sameFailed(first.label));
+        else seen.push(sw().sameProbe(first.label));
       } else {
         const res = await probeSatellite(r.probe.name, r.probe, root);
         probed.set(key, { label: r.probe.name, failed: res.findings.length > 0 });
@@ -448,13 +351,13 @@ export async function subagentsReport(out: Out): Promise<void> {
         r.lines.push(...res.findings);
       }
     }
-    const where = r.f.scope === "user" ? L(" (пользовательский)", " (user)") : "";
+    const where = r.f.scope === "user" ? sw().userScope() : "";
     const named = r.names.length
-      ? L(`запись «${r.names.join("», «")}»`, `entry "${r.names.join('", "')}"`)
-      : L("без записи моста-спутника", "no satellite bridge entry");
-    out(`  ${r.f.path}${where}: ${named}${r.lines.length ? "" : L(" — в порядке", " — fine")}`);
+      ? sw().named(...(r.names as [string, ...string[]]))
+      : sw().unnamed();
+    out(`  ${r.f.path}${where}: ${named}${r.lines.length ? "" : sw().fine()}`);
     for (const l of seen) out(`    ${l}`);
-    // Готовый блок — строками с отступом в шесть пробелов: сняв их, его вставляют во фронтматтер.
+    // The ready block goes as lines indented by six spaces: stripped of them, it is pasted into the frontmatter.
     for (const l of r.lines) {
       const [head, ...rest] = l.split("\n");
       out(`    ${todo()} ${head}`);
@@ -467,17 +370,7 @@ export async function subagentsReport(out: Out): Promise<void> {
   }
   for (const f of opencode) {
     const keys = Object.keys(f.fm).filter((k) => k === "mcpServers" || k === "mcp");
-    const keyNote = keys.length
-      ? L(
-          `; НАДО: ключ ${keys.join(", ")} OpenCode в файле агента не читает → убери его`,
-          `; TODO: the key ${keys.join(", ")} is not read by OpenCode in an agent file → remove it`,
-        )
-      : "";
-    out(
-      L(
-        `  ${f.path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
-        `  ${f.path}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`,
-      ),
-    );
+    const keyNote = keys.length ? sw().ocKeys(keys.join(", ")) : "";
+    out(sw().ocAgent(f.path, keyNote));
   }
 }

@@ -1,14 +1,13 @@
-// Запись mcp Искрона рядом с плагином OpenCode: её тулы едут namespaced, а мост
-// у неё общий для сессий сервиса — запись дочерней сессии может уйти под
-// подписью соседней (граф nks-dev: #5553, класс #4283). Где лежит конфиг и как
-// он читается — поверхность #5559, наблюдённая на opencode 2.0.9.
+// An mcp entry of this delivery beside the OpenCode plugin (graph @nks/nks-dev, node
+// #5553, class #4283): its tools go namespaced and its bridge is shared by the
+// service's sessions. Where the config lies and how it is read — surface #5559.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { isProductionServer } from "../bridge/config.ts";
-import { BRIDGE_NAME } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { BRIDGE_NAME, HARNESS, type HarnessWords } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { escapeRe } from "../shared/regex.ts";
 import { PRODUCT_PATTERN } from "./installnames.ts";
 
@@ -16,6 +15,8 @@ import { PRODUCT_PATTERN } from "./installnames.ts";
 const BRIDGE_PART_RE = new RegExp(
   `(^|[\\\\/])${PRODUCT_PATTERN}[^\\\\/]*\\.mjs$|${escapeRe(BRIDGE_NAME)}`,
 );
+
+const hw = (): HarnessWords => words(HARNESS);
 
 export function openCodeMcpEntries(out: (s: string) => void): void {
   const dirFiles = (d: string): string[] => [
@@ -25,8 +26,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
     join(d, ".opencode", "opencode.jsonc"),
   ];
   const upwards: string[] = [];
-  // Проектный слой выключается переменной — тогда файлы дерева OpenCode не читает,
-  // и советовать по ним значит указывать на конфиг, которым он не пользуется.
+  // With the project layer disabled OpenCode reads no tree files, so they are not advised on.
   if (!process.env.OPENCODE_CONFIG_PROJECT_DISABLE)
     for (let d = process.cwd(); ;) {
       upwards.push(...dirFiles(d));
@@ -34,21 +34,18 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       if (up === d) break;
       d = up;
     }
-  // Переменные названы бинарём 2.0.9, но влияния на `opencode mcp list` у них не
-  // наблюдалось (#5559): читаем их на стороне безопасности — лишняя строка дешевле
-  // молчания о записи, которую сервис всё же возьмёт.
+  // These variables showed no effect on `opencode mcp list` (#5559): read anyway, on the
+  // safe side — an extra line is cheaper than silence about an entry the service takes.
   const files = [
     ...(process.env.OPENCODE_CONFIG ? [process.env.OPENCODE_CONFIG] : []),
-    // Относится ли каталог из переменной к проектному слою, выключатель которого
-    // читается ниже, не наблюдалось (#5559): читаем его в любом случае.
+    // Whether this directory belongs to the switchable project layer was not observed (#5559).
     ...(process.env.OPENCODE_CONFIG_DIR ? dirFiles(process.env.OPENCODE_CONFIG_DIR) : []),
     ...dirFiles(join(homedir(), ".config", "opencode")),
     ...upwards,
   ];
-  // Своя запись двух родов, и цена у них разная: локальный мост той же поставки
-  // (тулы namespaced, мост общий для сессий сервиса — чужая подпись) и нативная
-  // http-запись на адрес Искрона (мимо моста: стояния у неё нет вовсе, а путь к
-  // графу один — мост). Чужой сервер, лежащий в каталоге со словом iskron в пути, — не наш.
+  // Two kinds of own entry: a local bridge of this delivery (namespaced tools, a bridge
+  // shared by the service's sessions) and a native http entry on the production address
+  // (around the bridge, no standing). A foreign server under a path with the product name is not ours.
   const kindOf = (v: unknown): "bridge" | "http" | null => {
     const e = (v ?? {}) as { command?: string | string[]; args?: string[]; url?: string };
     const parts = [
@@ -56,15 +53,13 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       ...(e.args ?? []),
     ];
     if (parts.some((p) => BRIDGE_PART_RE.test(String(p)))) return "bridge";
-    // Продовых адреса ровно два — русский и английский (#5040), и решает их общий
-    // предикат: прочие хосты тех же доменов поставке не принадлежат.
+    // Exactly two production addresses (#5040), decided by the shared predicate.
     if (e.url && isProductionServer(e.url)) return "http";
     return null;
   };
-  // .jsonc существует ради комментариев и висячих запятых: JSON.parse падает на
-  // тех и других. Два прохода, и оба щадят строковый литерал: сперва уходят
-  // комментарии, затем запятая перед закрывающей скобкой — одним проходом
-  // запятая, отделённая от скобки комментарием, осталась бы на месте.
+  // .jsonc allows comments and trailing commas. Two passes, both sparing string literals:
+  // comments first, then a comma before a closing bracket — in one pass a comma separated
+  // from the bracket by a comment would stay.
   const parse = (text: string): { mcp?: Record<string, unknown> } => {
     const STRING = '"(?:[^"\\\\]|\\\\.)*"';
     const noComments = text.replace(
@@ -77,8 +72,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
     );
     return JSON.parse(noTrailing) as { mcp?: Record<string, unknown> };
   };
-  // Путь, по которому запись признана мостом, — чтобы читатель сверил сам, а не
-  // верил слову: совпадение идёт по имени файла и бывает случайным.
+  // The path that made the entry count as the bridge, so the reader can check: the match is by file name.
   const bridgePath = (v: unknown): string => {
     const e = (v ?? {}) as { command?: string | string[]; args?: string[] };
     const parts = [
@@ -91,13 +85,12 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
   const sources: [string, string][] = [];
   for (const f of new Set(files)) {
     if (!existsSync(f)) continue;
-    // Нечитаемый файл по пути вверх (права, каталог вместо файла) не смеет
-    // ронять весь отчёт: остальные его строки — такие же факты.
+    // An unreadable file on the way up must not drop the whole report.
     try {
       sources.push([f, readFileSync(f, "utf8")]);
     } catch {
       unreadable++;
-      out(L(`OpenCode: ${f} не читается`, `OpenCode: ${f} is unreadable`));
+      out(hw().ocUnreadable(f));
     }
   }
   if (process.env.OPENCODE_CONFIG_CONTENT)
@@ -111,39 +104,17 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
         if (!kind) continue;
         found++;
         if ((v as { enabled?: boolean }).enabled === false) {
-          out(
-            L(
-              `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
-              `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron but is disabled — not in play`,
-            ),
-          );
+          out(hw().ocDisabled(name, file));
           continue;
         }
-        out(
-          kind === "bridge"
-            ? L(
-                `OpenCode: запись mcp «${name}» в ${file} зовёт ${bridgePath(v)} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
-                `OpenCode: the mcp entry "${name}" in ${file} calls ${bridgePath(v)} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
-              )
-            : L(
-                `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http, мимо моста — её тулы namespaced, стояния канала у неё нет, и записи уходят без места. Путь к графу один — мост, его приносит плагин поставки. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет`,
-                `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http, around the bridge — its tools are namespaced, it has no channel standing, and its writes go out without a seat. The one path to the graph is the bridge, brought by the delivery plugin. Remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command`,
-              ),
-        );
+        out(kind === "bridge" ? hw().ocBridge(name, file, bridgePath(v)) : hw().ocHttp(name, file));
       }
     } catch {
       unreadable++;
-      out(L(`OpenCode: ${file} не читается`, `OpenCode: ${file} is unreadable`));
+      out(hw().ocUnreadable(file));
     }
   }
-  // Чистого отчёта без названного охвата не бывает: doctor идёт вверх от СВОЕГО
-  // каталога, а зовут его обычно из дома — тогда запись в дереве проекта он не
-  // видел вовсе, и молчание прочли бы как «записи нет» (граф nks-dev: #4279).
-  if (!found)
-    out(
-      L(
-        `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${process.cwd()}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
-        `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${process.cwd()}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`,
-      ),
-    );
+  // No clean report without a named reach: doctor walks up from ITS directory, so an
+  // entry in another project tree was not seen (graph @nks/nks-dev, node #4279).
+  if (!found) out(hw().ocNone(unreadable, process.cwd()));
 }

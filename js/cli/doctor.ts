@@ -1,8 +1,6 @@
-// doctor — одна команда на машине пользователя, отвечающая «какая сборка стоит
-// и работает ли она». Сам читает и не пишет: ни в хранилище гранта, ни в лог.
-// Каждая строка — факт, наблюдённый здесь и сейчас, с названным путём.
-// Исключение одно — проба моста-спутника в разделе «субагенты»: это запуск
-// самого моста, и пишет он то, что пишет мост (кэш ответа сервера, обновлённый грант).
+// doctor: which build is installed and whether it works. It only reads; every line is
+// a fact observed here and now, with its path. The one exception is the satellite probe
+// of the subagents section: it runs the bridge itself, which writes what a bridge writes.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,8 +24,16 @@ import { grantLogPath, loadGrantState, loadStore, storePath } from "../bridge/st
 import { daemonWanted } from "../bridge/thin.ts";
 import { refreshHours, tokenUsable } from "../bridge/tokens.ts";
 import { readLatest } from "../bridge/update.ts";
-import { CLIENTS, PLUGIN_COPY_FILE, PLUGIN_FILE, PLUGIN_NAME } from "../delivery/index.ts";
+import {
+  CLIENTS,
+  DOCTOR,
+  type DoctorWords,
+  PLUGIN_COPY_FILE,
+  PLUGIN_FILE,
+  PLUGIN_NAME,
+} from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { words } from "../shared/lang.ts";
 import { escapeRe } from "../shared/regex.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { compareVersions } from "../shared/semver.ts";
@@ -36,7 +42,6 @@ import { codexCopies } from "./codexcache.ts";
 import { type Launch, launchReport, openCodeRuntimeWord } from "./doctornode.ts";
 import { secondPathReport } from "./doctorpaths.ts";
 import { skillsReport } from "./doctorskills.ts";
-import { dw } from "./doctorwords.ts";
 import { BRIDGE_FILE_RE, PLUGIN_KEY_RE, PRODUCT_RE } from "./installnames.ts";
 import { openCodeMcpEntries } from "./opencode-config.ts";
 import { subagentsReport } from "./subagents.ts";
@@ -44,6 +49,8 @@ import { subagentsReport } from "./subagents.ts";
 const out = (s: string): void => {
   process.stdout.write(s + "\n");
 };
+
+const dw = (): DoctorWords => words(DOCTOR);
 
 const hashOf = (buf: Buffer): string => createHash("sha256").update(buf).digest("hex").slice(0, 8);
 
@@ -63,38 +70,40 @@ function homeCopyReport(): void {
     self = readFileSync(fileURLToPath(import.meta.url));
   } catch {}
   if (!existsSync(home)) {
-    out(dw.homeNone(home));
+    out(dw().homeNone(home));
     return;
   }
   const bytes = readFileSync(home);
   if (self && bytes.equals(self)) {
-    out(dw.homeSame(home));
+    out(dw().homeSame(home));
     return;
   }
   const v = versionIn(bytes.toString("utf8"));
-  out(dw.homeDiffers(home, v ?? "?", hashOf(bytes), self ? fileURLToPath(import.meta.url) : null));
+  out(
+    dw().homeDiffers(home, v ?? "?", hashOf(bytes), self ? fileURLToPath(import.meta.url) : null),
+  );
 }
 
-/** Откуда мост взял адрес — человеку, который спрашивает «на что он смотрит». */
+/** Where the bridge took its server address from. */
 export function serverSourceWord(): string {
   switch (CFG.serverSource) {
     case "argument":
-      return dw.srcArgument();
+      return dw().srcArgument();
     case "env":
-      return dw.srcEnv();
+      return dw().srcEnv();
     case "file":
-      return dw.srcFile(serverChoicePath(CFG.authDir));
+      return dw().srcFile(serverChoicePath(CFG.authDir));
     default:
-      return dw.srcDefault(serverChoicePath(CFG.authDir));
+      return dw().srcDefault(serverChoicePath(CFG.authDir));
   }
 }
 
-/** Следит ли мост за релизами поставки на этом адресе. */
+/** Whether the bridge follows the delivery releases at this address. */
 export const freshnessWord = (url: string): string =>
-  isProductionServer(url) ? dw.freshProd() : dw.freshOther();
+  isProductionServer(url) ? dw().freshProd() : dw().freshOther();
 
 async function serverReport(): Promise<void> {
-  out(dw.server(CFG.serverUrl, serverSourceWord()));
+  out(dw().server(CFG.serverUrl, serverSourceWord()));
   out(`  ${freshnessWord(CFG.serverUrl)}`);
   let res: Response;
   try {
@@ -108,17 +117,17 @@ async function serverReport(): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
-    out(dw.unreachable(errorMessage(e)));
+    out(dw().unreachable(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
   const www = res.headers.get("www-authenticate");
   const note = www
-    ? dw.wantsOAuth()
+    ? dw().wantsOAuth()
     : res.status >= 400 && res.status < 500
-      ? dw.noTokenProbe()
+      ? dw().noTokenProbe()
       : "";
-  out(dw.answers(res.status, note));
+  out(dw().answers(res.status, note));
   try {
     const meta = await discoverMeta(www);
     out(`  OAuth: token endpoint ${meta.as.token_endpoint}`);
@@ -129,7 +138,7 @@ async function serverReport(): Promise<void> {
 }
 
 async function patReport(): Promise<void> {
-  out(dw.grantPat(String(CFG.patSource)));
+  out(dw().grantPat(String(CFG.patSource)));
   let res: Response;
   try {
     res = await fetch(CFG.serverUrl, {
@@ -152,76 +161,76 @@ async function patReport(): Promise<void> {
       signal: AbortSignal.timeout(10_000),
     });
   } catch (e) {
-    out(dw.patCheckFailed(errorMessage(e)));
+    out(dw().patCheckFailed(errorMessage(e)));
     return;
   }
   res.body?.cancel?.();
-  if (res.status === 401) out(dw.patRejected());
-  else if (res.ok) out(dw.patAccepted(res.status));
-  else out(dw.patOther(res.status));
+  if (res.status === 401) out(dw().patRejected());
+  else if (res.ok) out(dw().patAccepted(res.status));
+  else out(dw().patOther(res.status));
   const path = storePath();
-  if (existsSync(path)) out(dw.patStore(path));
+  if (existsSync(path)) out(dw().patStore(path));
 }
 
 function grantReport(): void {
   const path = storePath();
-  out(dw.grant(path));
+  out(dw().grant(path));
   if (!existsSync(path)) {
-    out(dw.noStore());
+    out(dw().noStore());
     return;
   }
   const store = loadStore();
   const t = store.tokens;
   if (!t?.access_token) {
-    out(dw.noTokens());
+    out(dw().noTokens());
   } else {
     const usable = tokenUsable(t);
     const left = t.expires_at ? t.expires_at - now() : null;
-    out(dw.access(usable, left, seconds));
+    out(dw().access(usable, left, left !== null ? seconds(Math.abs(left)) : ""));
     const hours = refreshHours(t);
-    if (!t.refresh_token) out(dw.refreshNone());
+    if (!t.refresh_token) out(dw().refreshNone());
     else {
       const parts: string[] = [];
       if (hours.nbf)
         parts.push(
-          now() < hours.nbf ? dw.refreshValidIn(seconds(hours.nbf - now())) : dw.refreshValid(),
+          now() < hours.nbf ? dw().refreshValidIn(seconds(hours.nbf - now())) : dw().refreshValid(),
         );
       if (hours.exp)
         parts.push(
           now() >= hours.exp
-            ? dw.refreshExpired()
-            : dw.refreshExpiresIn(seconds(hours.exp - now())),
+            ? dw().refreshExpired()
+            : dw().refreshExpiresIn(seconds(hours.exp - now())),
         );
-      out(dw.refresh(parts));
+      out(dw().refresh(parts.join(", ")));
     }
   }
   if (store.client?.client_id) out(`  client_id: ${store.client.client_id}`);
   const st = loadGrantState();
   if (st.refused_since)
-    out(dw.refusedSince(new Date(st.refused_since).toISOString(), st.reason ?? ""));
+    out(dw().refusedSince(new Date(st.refused_since).toISOString(), st.reason ?? ""));
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync(path + suffix)) out(dw.lock(path + suffix));
+    if (existsSync(path + suffix)) out(dw().lock(path + suffix));
   }
   const logPath = grantLogPath();
   if (existsSync(logPath)) {
     const lines = readFileSync(logPath, "utf8").trim().split("\n").slice(-3);
-    out(dw.grantLog());
+    out(dw().grantLog());
     for (const l of lines) out(`    ${l}`);
   }
 }
 
-/** Что мост знает о свежем релизе — по кэшу сверки, без похода в сеть. */
+/** The latest release as the bridge's check cache knows it, without the network. */
 function latestReport(): void {
   const latest = readLatest(CFG.authDir);
   if (!latest) {
-    out(dw.latestNotAsked());
+    out(dw().latestNotAsked());
     return;
   }
   const ago = Math.round((Date.now() - latest.checked_at) / 60_000);
-  if (!latest.version) out(dw.latestUnknown(latest.error, ago));
+  if (!latest.version) out(dw().latestUnknown(latest.error, ago));
   else if (compareVersions(latest.version, VERSION) > 0)
-    out(dw.latestBehind(latest.version, VERSION, latest.downloaded, ago));
-  else out(dw.latestCurrent(latest.version, ago));
+    out(dw().latestBehind(latest.version, VERSION, latest.downloaded.join(", "), ago));
+  else out(dw().latestCurrent(latest.version, ago));
 }
 
 // A regular install of this delivery carries the bridge entry inside the
@@ -238,13 +247,13 @@ function claudePluginReport(): void {
     };
     const mine = Object.entries(reg.plugins ?? {}).filter(([k]) => PLUGIN_KEY_RE.test(k));
     if (!mine.length) {
-      out(dw.pluginMissing(registry));
+      out(dw().pluginMissing(registry));
       return;
     }
     for (const [key, installs] of mine) {
       for (const inst of installs) {
         const manifest = inst.installPath ? join(inst.installPath, ".mcp.json") : "";
-        let entry = dw.entryNotFound();
+        let entry = dw().entryNotFound();
         if (manifest && existsSync(manifest)) {
           try {
             const m = JSON.parse(readFileSync(manifest, "utf8")) as {
@@ -254,7 +263,7 @@ function claudePluginReport(): void {
               (v.args ?? []).some((a) => BRIDGE_FILE_RE.test(a)),
             );
             if (hit) {
-              entry = dw.entryFound(hit[0]);
+              entry = dw().entryFound(hit[0]);
               launches.push({
                 who: `Claude Code ${key}`,
                 harness: "claude",
@@ -262,16 +271,22 @@ function claudePluginReport(): void {
               });
             }
           } catch {
-            entry = dw.unreadable(manifest);
+            entry = dw().unreadable(manifest);
           }
         }
         out(
-          dw.pluginLine(key, inst.version ?? "?", inst.scope ?? "?", entry, inst.installPath ?? ""),
+          dw().pluginLine(
+            key,
+            inst.version ?? "?",
+            inst.scope ?? "?",
+            entry,
+            inst.installPath ?? "",
+          ),
         );
       }
     }
   } catch {
-    out(dw.claudeUnreadable(registry));
+    out(dw().claudeUnreadable(registry));
   }
 }
 
@@ -292,7 +307,7 @@ function codexPluginReport(home: string): void {
   let found = 0;
   for (const { market, plugin, dir } of codexCopies(home)) {
     const manifest = join(dir, ".codex-plugin", "plugin.json");
-    let word = dw.codexNoManifest();
+    let word = dw().codexNoManifest();
     if (existsSync(manifest)) {
       try {
         const m = JSON.parse(readFileSync(manifest, "utf8")) as {
@@ -302,7 +317,7 @@ function codexPluginReport(home: string): void {
         const hit = Object.values(m.mcpServers ?? {}).find((v) =>
           (v.args ?? []).some((a) => BRIDGE_FILE_RE.test(a)),
         );
-        word = dw.codexManifest(m.version ?? "?", !!hit);
+        word = dw().codexManifest(m.version ?? "?", !!hit);
         if (hit)
           launches.push({
             who: `Codex ${plugin}@${market}`,
@@ -310,16 +325,16 @@ function codexPluginReport(home: string): void {
             command: hit.command ?? "",
           });
       } catch {
-        word = dw.unreadable(manifest);
+        word = dw().unreadable(manifest);
       }
     }
     found++;
-    out(dw.codexPlugin(plugin, market, word, dir));
+    out(dw().codexPlugin(plugin, market, word, dir));
   }
-  if (!found) out(dw.codexNoPlugin(cache));
+  if (!found) out(dw().codexNoPlugin(cache));
 }
 
-// Команды stdio-записей моста, найденные отчётом харнессов, — для сверки с PATH (doctornode.ts).
+// Commands of the bridge stdio entries found by the harness report, checked against PATH (doctornode.ts).
 const launches: Launch[] = [];
 
 export function harnessReport(): void {
@@ -336,7 +351,7 @@ export function harnessReport(): void {
       );
       if (entries.length) {
         for (const [name, v] of entries) {
-          out(dw.claudeEntry(name, v.command ?? "", (v.args ?? []).join(" ")));
+          out(dw().claudeEntry(name, v.command ?? "", (v.args ?? []).join(" ")));
           launches.push({
             who: `Claude Code «${name}»`,
             harness: "claude",
@@ -344,60 +359,60 @@ export function harnessReport(): void {
             entry: name,
           });
         }
-      } else out(dw.claudeNoManual());
+      } else out(dw().claudeNoManual());
     } catch {
-      out(dw.claudeUnreadable(claude));
+      out(dw().claudeUnreadable(claude));
     }
   }
-  // OpenCode: плагин из поставки лежит копией в каталоге плагинов; та же сверка, что и у моста.
+  // OpenCode: the delivery plugin lies as a copy in the plugins directory.
   const opencodeDir = join(homedir(), ".config", "opencode");
   if (existsSync(opencodeDir)) {
     const copy = join(opencodeDir, "plugins", PLUGIN_COPY_FILE);
     const packaged = join(dirname(fileURLToPath(import.meta.url)), PLUGIN_FILE);
-    if (!existsSync(copy)) out(dw.ocNoPlugin(copy));
-    else if (!existsSync(packaged)) out(dw.ocNoPackaged(copy));
-    else if (readFileSync(copy).equals(readFileSync(packaged))) out(dw.ocSame(copy));
-    else out(dw.ocDiffers(copy, packaged));
+    if (!existsSync(copy)) out(dw().ocNoPlugin(copy));
+    else if (!existsSync(packaged)) out(dw().ocNoPackaged(copy));
+    else if (readFileSync(copy).equals(readFileSync(packaged))) out(dw().ocSame(copy));
+    else out(dw().ocDiffers(copy, packaged));
     if (existsSync(copy)) out(openCodeRuntimeWord());
   }
   openCodeMcpEntries(out);
   for (const codexHome of codexHomes()) {
-    out(dw.codexHome(codexHome));
+    out(dw().codexHome(codexHome));
     codexPluginReport(codexHome);
     const door = join(codexHome, "app-server-control", "app-server-control.sock");
-    if (existsSync(door)) out(dw.codexDoorOpen(door));
-    else if (Buffer.byteLength(door) > 100) out(dw.codexDoorNever());
-    else out(dw.codexDoorNone(door));
+    if (existsSync(door)) out(dw().codexDoorOpen(door));
+    else if (Buffer.byteLength(door) > 100) out(dw().codexDoorNever());
+    else out(dw().codexDoorNone(door));
     const codex = join(codexHome, "config.toml");
     if (existsSync(codex)) {
       const text = readFileSync(codex, "utf8");
-      out(dw.codexManual(CODEX_ENTRY_RE.test(text)));
+      out(dw().codexManual(CODEX_ENTRY_RE.test(text)));
     }
   }
   launchReport(out, launches);
   secondPathReport(out, codexHomes());
 }
 
-/** Демон машины своего каталога гранта: режим, сокет, pid, сборка, число сессий. */
+/** The machine daemon of this grant directory: mode, socket, pid, build, sessions. */
 async function daemonReport(): Promise<void> {
-  out(daemonWanted() ? dw.daemonOn() : dw.daemonOff());
-  out(dw.daemonGrant(CFG.authDir));
+  out(daemonWanted() ? dw().daemonOn() : dw().daemonOff());
+  out(dw().daemonGrant(CFG.authDir));
   const fallbacks = readFallbacks(CFG.authDir);
-  if (!fallbacks.length) out(dw.fallbackNone());
+  if (!fallbacks.length) out(dw().fallbackNone());
   else {
-    out(dw.fallbackCount(fallbacks.length));
-    for (const f of fallbacks) out(dw.fallbackOne(f.pid, f.build, f.since, f.cwd, f.why));
+    out(dw().fallbackCount(fallbacks.length));
+    for (const f of fallbacks) out(dw().fallbackOne(f.pid, f.build, f.since, f.cwd, f.why));
   }
-  // doctor не пишет: личного каталога шва нет — демона не поднимали, и проба его бы создала.
+  // No seam directory means no daemon was ever raised, and a probe would create it.
   if (!existsSync(seamRunDir(CFG.authDir))) {
-    out(dw.daemonNeverUp(seamRunDir(CFG.authDir)));
+    out(dw().daemonNeverUp(seamRunDir(CFG.authDir)));
     return;
   }
   const d = await probeDaemon(["--auth-dir", CFG.authDir]);
   if (d.ok) {
-    out(dw.daemonSocket(d.socket));
+    out(dw().daemonSocket(d.socket));
     out(
-      dw.daemonAnswers(
+      dw().daemonAnswers(
         d.pid,
         d.build,
         !d.build.startsWith(`v${VERSION}+`),
@@ -406,14 +421,14 @@ async function daemonReport(): Promise<void> {
         d.path,
       ),
     );
-  } else if (d.unsafe) out(dw.daemonUnsafe(d.why));
-  else out(dw.daemonSilent(d.socket, d.why));
+  } else if (d.unsafe) out(dw().daemonUnsafe(d.why));
+  else out(dw().daemonSilent(d.socket, d.why));
 }
 
 export async function runDoctor(argv: string[]): Promise<void> {
   setConfig(parseArgs(argv));
-  out(`iskron doctor — ${BUILD}`);
-  out(dw.thisFile(fileURLToPath(import.meta.url)));
+  out(dw().title(BUILD));
+  out(dw().thisFile(fileURLToPath(import.meta.url)));
   out(`node: ${process.version}`);
   homeCopyReport();
   latestReport();

@@ -55,3 +55,14 @@ export const SERVER_URLS = {
   en: "https://mcp.iskron.ai/",
 } as const;
 export const DEFAULT_SERVER_URL = SERVER_URLS.ru;
+
+// part 6
+/**
+ * Код `node -e` единой формы записи моста-спутника: путь к дому из homedir, путь в
+ * argv[1], импорт моста. Эталон: копии в ролевых файлах и delegation.md сверяет
+ * с ним `make validate` (норма — skills/iskronify/references/delegation.md).
+ */
+export const SATELLITE_CODE =
+  "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
+/** Имя раздела хуков в скилле бутстрапа поставки — как оно стоит в скилле, на любом языке слов. */
+export const HOOKS_SECTION = "Хуки";

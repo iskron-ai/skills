@@ -1,28 +1,23 @@
-// iskron.mjs watchdog [ключ] — сторож под наблюдателем харнеса.
-//
-// Сокет стояния держит мост (см. ../bridge/hold.ts); этот процесс — его
-// локальный клиент: печатает каждый кадр на stdout (под Monitor каждая
-// строка приходит событием в ход делателя), а на
-// мёртвом токене и на обрывах при живой службе выходит ненулевым — громко,
-// как и прежде. Секрета у него нет и аргумент ему не нужен, когда мост держит
-// одно стояние; ключ из ответа connect различает несколько.
+// The `watchdog` subcommand: a watchdog under a harness observer. The bridge holds the
+// standing socket (../bridge/hold.ts); this process is its local client: it prints each
+// frame to stdout (under Monitor each line is an event in the doer's turn) and exits
+// non-zero, loudly, on a dead token and on drops while the service is alive. It holds
+// no secret and needs no argument while the bridge holds one standing.
 import { writeSync } from "node:fs";
 
 import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
-import { L } from "../shared/lang.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import { adoptSeenPath, attach, heldHeads, resolveStanding, staleOf } from "./client.ts";
 import { RingReplay } from "./replay.ts";
 import { doer, wd } from "./words.ts";
 
-// Monitor Claude Code режет строку события длиннее ~500 знаков (наблюдено:
-// «...(truncated)»), а строки в одном залпе склеивает в одно событие целиком.
-// Кадр-сообщение идёт тем же текстом, что в pi и OpenCode (кто говорит,
-// провенанс, конверт, тело), телом построчно (граф nks-dev: #5011, #5033).
+// Claude Code's Monitor cuts an event line longer than ~500 chars and glues the lines
+// of one burst into one event. A message frame goes as the same text as in pi and
+// OpenCode, its body line by line (graph @nks/nks-dev, nodes #5011, #5033).
 const LINE_MAX = 400;
 
 export function wrapLines(text: string, max = LINE_MAX): string[] {
@@ -41,33 +36,23 @@ export function wrapLines(text: string, max = LINE_MAX): string[] {
   return out;
 }
 
-const plural = (n: number): string => {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  const form =
-    m10 === 1 && m100 !== 11 ? 0 : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? 1 : 2;
-  return `${n} ${L(["кадр", "кадра", "кадров"][form], n === 1 ? "frame" : "frames")}`;
-};
-
-// Monitor склеивает строки, пришедшие в пределах ~200 мс, в одно событие и режет
-// его по длине: кадр вне пачки (слово человека, прерывающий, прямой) печатается
-// отдельным событием — с паузой больше окна склейки до себя и после себя.
-// Переменная — шов для проб, не ручка человека: очередь в сотни кадров идёт по паузе на кадр.
+// Monitor glues lines arriving within ~200 ms into one event: a frame outside a batch
+// is printed as its own event, with a pause longer than the glue window around it.
+// The variable is a probe seam, not a human knob.
 const ALONE_GAP_MS = Number(process.env[envName("WATCHDOG_ALONE_MS")]) || 300;
-/** Сколько шапок пачек из одних счётов ждёт адресованного, не больше. */
+/** At most this many count-only batch heads wait for an addressed line. */
 const RIDERS_MAX = 100;
 let queue: Promise<void> = Promise.resolve();
 let lastAt = 0;
 let lastAlone = false;
 
-/** Сколько строка прицепления ждёт кадров кольца, названных мостом, не дольше. */
+/** How long the attach line waits for the ring frames the bridge named, at most. */
 const REPLAY_WAIT_MS = 1000;
 
 /**
- * Блок строк одной записью; alone — отдельным событием Monitor. after — когда
- * запись ушла (колбэк write), не когда вызвана: пометка .seen — после отдачи.
- * Строки-функция составляется в миг печати: по памяти, где уже метки напечатанного выше;
- * ready — строки известны позже, чем встают в очередь: очередь ждёт их на своём месте.
+ * A block of lines in one write; alone — a separate Monitor event. after runs when the
+ * write went out (write callback), so .seen is marked after delivery. A lines function
+ * is built at print time; ready — lines known later than they queue: the queue waits.
  */
 const out = (
   lines: string[] | (() => string[]),
@@ -86,14 +71,14 @@ const out = (
     );
     lastAt = Date.now();
     lastAlone = alone;
-    if (!failed) after?.(); // не ушла — не отдана: перевзвод отдаст снова
+    if (!failed) after?.(); // not written means not delivered: re-arming delivers it again
   });
 };
 
 const log = (s: string): void => out([s]);
 
-// Последнее слово перед выходом: синхронно, иначе выход следом уносит саму строку;
-// выход ждёт опустевшей очереди: всё поставленное до него уже записано.
+// The last word before exit is written synchronously, else the exit takes the line with
+// it; the exit waits for the queue to drain.
 const loudExit = (s: string, code: number): void => {
   queue = queue.then(() => exitNow(s, code));
 };
@@ -113,31 +98,31 @@ export function runWatchdog(argv: string[]): void {
     writeSync(2, `${doer(target.error)}\n`);
     process.exit(2);
   }
-  // Напечатанный кадр — отданный: пометка его, а не записи моста, держит перевзвод от повтора.
+  // A printed frame is a delivered one: its mark, not the bridge's, keeps re-arming from repeats.
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
-  const queued = new Set<string>(); // id в очереди печати: пометка ляжет после неё
-  const folded: (() => void)[] = []; // пометки свёрнутых слов череды — после её строки
-  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
-  // Под Monitor строка stdout будит ход: пачка из одних счётов (#6574) не
-  // печатается сама — её шапка ждёт и уходит перед ближайшей адресованной строкой.
-  let head = false; // шапка идущей пачки ждёт её первой адресованной строки
-  let fresh = false; // в идущей пачке есть не отданный прежде кадр
-  let batch: Frame[] = []; // кадры идущей пачки — её счёт
-  const riders: Frame[][] = []; // пачки из одних счётов — кадрами до печати (heldHeads)
-  const riderMarks: (() => void)[] = []; // их пометки — после печати
+  const queued = new Set<string>(); // ids queued for print: marked after it
+  const folded: (() => void)[] = []; // marks of folded words of a run, after its line
+  const cases = new Set<string>(); // cases already introduced in the current batch
+  // Under Monitor a stdout line wakes the turn: a count-only batch (#6574) is not
+  // printed by itself — its head waits and goes before the next addressed line.
+  let head = false; // the current batch's head waits for its first addressed line
+  let fresh = false; // the current batch has a frame not delivered before
+  let batch: Frame[] = []; // the current batch's frames, its count
+  const riders: Frame[][] = []; // count-only batches, as frames until printed (heldHeads)
+  const riderMarks: (() => void)[] = []; // their marks, after printing
   const hold = (): void => {
     if (head) riders.push(batch);
-    riders.splice(0, Math.max(0, riders.length - RIDERS_MAX)); // старшие уходят: счёт не копится без меры
+    riders.splice(0, Math.max(0, riders.length - RIDERS_MAX)); // the oldest go: the count is bounded
     head = false;
   };
-  /** Строки и пометки адресованных строк идущей пачки — печатаются блоком на её последнем кадре. */
+  /** Lines and marks of the current batch's addressed lines, printed as a block on its last frame. */
   let block: { lines: string[]; marks: (() => void)[]; carriers: Frame[] } = {
     lines: [],
     marks: [],
     carriers: [],
   };
-  /** Ждущие шапки и шапка идущей пачки — строками перед адресованным, в миг печати; пометки — после. */
+  /** Waiting heads and the current batch's head as lines before the addressed one, at print time; marks after. */
   const take = (carriers: Frame[]): { lines: () => string[]; marks: (() => void)[] } => {
     const groups = [...riders.splice(0), ...(head ? [batch] : [])];
     head = false;
@@ -146,9 +131,9 @@ export function runWatchdog(argv: string[]): void {
       marks: riderMarks.splice(0),
     };
   };
-  // Строка прицепления — после кадров кольца, со счётом напечатанного (replay.ts).
+  // The attach line goes after the ring frames, with the printed count (replay.ts).
   const ring = new RingReplay();
-  // Последнее слово сторожа не ждёт ворот кольца.
+  // The watchdog's last word does not wait for the ring gate.
   const leave = (s: string, code: number): void => {
     ring.end();
     loudExit(s, code);
@@ -158,12 +143,12 @@ export function runWatchdog(argv: string[]): void {
       const fromRing = ev.kind === "frame" && ring.next();
       switch (ev.kind) {
         case "attached": {
-          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // the seat's memory on its server
           const ready = ring.start(ev.buffered ?? 0, REPLAY_WAIT_MS);
           const key = ev.key;
           out(
             () => [
-              wd.listening(key, ring.printed ? wd.backfilled(plural(ring.printed)) : ""),
+              wd().listening(key, ring.printed ? wd().backfilled(wd().frames(ring.printed)) : ""),
               ...(ring.hello ? [ring.hello] : []),
             ],
             false,
@@ -179,26 +164,24 @@ export function runWatchdog(argv: string[]): void {
             break;
           }
           if (f?.type !== "message") {
-            log(ev.raw ?? ""); // служебный кадр (hello, статус) короток и печатается как есть
+            log(ev.raw ?? ""); // a service frame (hello, status) is short and printed as is
             break;
           }
-          // Повтор уже напечатанного или ждущего печати (тот же id) — вторая линия за мостом: не печатается (#5831).
+          // A repeat of a printed or queued frame (same id) is not printed (#5831).
           const id = typeof f.id === "string" ? f.id : "";
           const again = !!id && (seen.has(id) || queued.has(id));
           if (id && !again) queued.add(id);
           const mark = (): void => {
-            for (const k of deliveryKeys(f)) noteSeen(seenPath, k, seen); // после печати
+            for (const k of deliveryKeys(f)) noteSeen(seenPath, k, seen); // after printing
             queued.delete(id);
           };
           if (ev.batch) {
-            // Пачка дела — счётом по делам в шапке (#6574); строка ниже — только
-            // адресованному месту. Адресное слово не мне, свёрнутое в череду
-            // (folded), своей строки не печатает: метится вместе со строкой
-            // череды, которая его считает (#6081); неадресованное — метится
-            // с шапкой, назвавшей его числом. Пачка печатается одним блоком на
-            // последнем кадре: её шапка — по всем её кадрам (client.ts heldHeads).
+            // A case batch goes as a per-case count in the head (#6574); a line only for
+            // the addressed seat. A folded word not for me prints no line and is marked with
+            // the run line that counts it (#6081); an unaddressed one with the head that
+            // counted it. The batch prints as one block on its last frame (client.ts heldHeads).
             if (ev.batch.at === 1) {
-              cases.clear(); // зачин дела — у первой его строки в пачке
+              cases.clear(); // a case's intro goes with its first line in the batch
               fresh = false;
               batch = [];
               block = { lines: [], marks: [], carriers: [] };
@@ -222,7 +205,7 @@ export function runWatchdog(argv: string[]): void {
               }
             }
             if (ev.batch.at < ev.batch.of) break;
-            // Пачка из одних отданных — повтор: её шапка уже ушла и в ждущий счёт не встаёт.
+            // A batch of only delivered frames is a repeat: its head went already.
             if (!fresh) head = false;
             if (!block.lines.length) {
               hold();
@@ -247,12 +230,12 @@ export function runWatchdog(argv: string[]): void {
         }
         case "note":
           if (ev.batch)
-            head = true; // шапка пачки — её кадрами, с её первой адресованной строкой
+            head = true; // a batch head goes by its frames, with its first addressed line
           else log(ev.text ?? "");
           break;
         case "stale": {
-          // Одна пачка — одно событие, судится в миг печати по памяти сторожа (shared/stalebatch.ts):
-          // событие, напечатанное выше в очереди, пачка не повторит. Напечатана — отдана вся.
+          // One batch, one event, judged at print time by the watchdog's memory
+          // (shared/stalebatch.ts). Printed means delivered whole.
           let keys: string[] = [];
           const lines = (): string[] => {
             const b = staleOf(ev, (k) => seen.has(k));
@@ -266,18 +249,18 @@ export function runWatchdog(argv: string[]): void {
         }
         case "dead":
         case "evicted":
-          leave(ev.text ?? wd.seatLost(), 1);
+          leave(ev.text ?? wd().seatLost(), 1);
           break;
         case "alive":
-          log(ev.text ?? wd.aliveNote()); // держание идёт, сторож слушает дальше
+          log(ev.text ?? wd().aliveNote()); // holding goes on, the watchdog keeps listening
           break;
         case "released":
-          // Своё close/revoke — последнее слово сторожа, без тревоги и ненулевого кода (#6638).
-          if (ev.own) leave(wd.bridgeReleasedSocket(ev.text ?? ""), 0);
-          else log(wd.bridgeReleasedSocket(ev.text ?? ""));
+          // An own close/revoke is the last word, without alarm or a non-zero code (#6638).
+          if (ev.own) leave(wd().bridgeReleasedSocket(ev.text ?? ""), 0);
+          else log(wd().bridgeReleasedSocket(ev.text ?? ""));
           break;
       }
-      ring.settle(); // кольцо отдано: строка прицепления знает счёт
+      ring.settle(); // the ring is delivered: the attach line knows the count
     },
     onGone: (why) => leave(doer(why), 1),
   });

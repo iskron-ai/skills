@@ -556,10 +556,10 @@ test("use en writes the English production address next to the grant; doctor nam
 // готовое действие (делегирование: skills/iskronify/references/delegation.md).
 // Единая форма записи (проверена живым Claude Code 2.1.285): node сам собирает
 // путь к дому, `--` отделяет флаг моста, splice кладёт путь моста в argv[1].
-// Эталон — SATELLITE_CODE в js/cli/satform.ts: проба берёт его оттуда, копий не держит.
+// Эталон — SATELLITE_CODE в js/delivery/product.ts: проба берёт его оттуда, копий не держит.
 const SAT_CODE = JSON.parse(
   /SATELLITE_CODE\s*=\s*("(?:[^"\\]|\\.)*")/.exec(
-    readFileSync(join(HERE, "..", "cli", "satform.ts"), "utf8"),
+    readFileSync(join(HERE, "..", "delivery", "product.ts"), "utf8"),
   )[1],
 );
 const SAT_ARGS = `args: [${["-e", SAT_CODE, "--", "--satellite"].map((a) => JSON.stringify(a)).join(", ")}]`;

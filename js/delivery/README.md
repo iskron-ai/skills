@@ -13,3 +13,10 @@
 - `words/asks.ts` — слова вопроса в деле (`ASK`): ask, answer, ack, снятие, зов роли платформой.
 - `words/hold.ts` — слова держателя сокета (`HOLD`); совет о мёртвом токене приходит аргументом.
 - `protocol.ts` — имена тулов (`TOOL_PREFIX`, `tool`), методы плагин↔мост (`method`), логгеры уведомлений (`LOGGERS`), префикс внутренних id (`ID_PREFIX`) — из имени продукта; ключи протокола сервера (`SERVER_PROTOCOL`: отказ api, поля ответа) — своим значением, его подтверждает поверхность своего сервера.
+- `words/cli.ts` — слова подкоманд (`CLI`): справка `--help`, строка выравнивания дома, `update`, `use`.
+- `words/doctor.ts` — слова `doctor` (`DOCTOR`): сборка, дом, сервер, грант, релиз, плагины харнесов, демон машины.
+- `words/doctorharness.ts` — слова `doctor` о харнесах (`HARNESS`): команда записи в PATH, второй путь мимо моста, отставание скиллов, записи mcp OpenCode.
+- `words/subagents.ts` — слова раздела «субагенты» `doctor` (`SUBAGENT`), метка строки-действия и формы записи спутника; эталон кода записи — `SATELLITE_CODE` в `product.ts`.
+- `words/satprobe.ts` — слова пробы моста-спутника (`SAT_PROBE`); образцы разбираемой ею прозы (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`) — в `protocol.ts`.
+- `words/rituals.ts` — слова `check-rituals` (`RITUALS`); имя раздела хуков скилла бутстрапа — `HOOKS_SECTION` в `product.ts`.
+- `words/watchdog.ts` — слова сторожей (`WATCHDOG`): знак слуха, исходы, дверь Codex.

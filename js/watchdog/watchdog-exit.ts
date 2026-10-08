@@ -1,11 +1,8 @@
-// iskron.mjs watchdog-exit [ключ] — сторож выхода-на-кадре.
-//
-// Для харнесов БЕЗ встроенного наблюдателя сокета: там вывод фоновой задачи
-// читается только по запросу, и единственное, что харнес превращает в
-// прерывание, — конец процесса. Сокет держит мост; этот клиент печатает
-// первое настоящее сообщение синхронной записью и ВЫХОДИТ нулём — конец
-// процесса и есть доставка. Служебные кадры (hello, пинги) уводит в stderr;
-// мёртвый токен и обрывы при живой службе объявляет ненулевым выходом.
+// The `watchdog-exit` subcommand: exit on a frame, for harnesses WITHOUT a socket
+// observer, where the only thing turned into an interrupt is a process ending. The
+// bridge holds the socket; this client prints the first real message synchronously and
+// EXITS zero — the exit is the delivery. Service frames go to stderr; a dead token and
+// drops while the service is alive are a non-zero exit.
 import { createHash } from "node:crypto";
 import { writeSync } from "node:fs";
 
@@ -38,10 +35,10 @@ export function frameId(ev: ChannelEvent): string {
 }
 
 const wake = (s: string): void => {
-  writeSync(1, s + "\n"); // делателю: то, что его будит
+  writeSync(1, s + "\n"); // to the doer: what wakes them
 };
 const note = (s: string): void => {
-  writeSync(2, s + "\n"); // в лог: то, что будить не должно
+  writeSync(2, s + "\n"); // to the log: what must not wake
 };
 
 export function runWatchdogExit(argv: string[]): void {
@@ -52,19 +49,19 @@ export function runWatchdogExit(argv: string[]): void {
   }
   let seenPath = seenFilePathOf(target.authDir, target.key);
   const seen = seenIds(seenPath);
-  let head = false; // шапка идущей пачки ждёт её последнего кадра
-  let fresh = false; // в идущей пачке есть не отданный прежде кадр
+  let head = false; // the current batch's head waits for its last frame
+  let fresh = false; // the current batch has a frame not delivered before
   let block: { lines: string[]; shown: Frame[]; ids: string[] } = { lines: [], shown: [], ids: [] };
-  const folded: string[] = []; // id свёрнутых адресных слов череды — метятся с её строкой (#6081)
-  const cases = new Set<string>(); // дела, уже названные зачином в идущей пачке
-  // Пачка из одних счётов (#6574) не будит: шапка ждёт ближайшей побудки, id —
-  // её пометки; со смертью сторожа неотданное придёт кольцом моста снова.
-  let batch: Frame[] = []; // кадры идущей пачки — её счёт, если она не разбудила
-  const riders: Frame[][] = []; // пачки из одних счётов — кадрами до побудки (heldHeads)
+  const folded: string[] = []; // ids of folded addressed words of a run, marked with its line (#6081)
+  const cases = new Set<string>(); // cases already introduced in the current batch
+  // A count-only batch (#6574) does not wake: its head waits for the next wake-up, its
+  // ids for that marking; if the watchdog dies, the undelivered comes again from the ring.
+  let batch: Frame[] = []; // the current batch's frames, its count if it did not wake
+  const riders: Frame[][] = []; // count-only batches, as frames until a wake-up (heldHeads)
   const riderIds: string[] = [];
   const hold = (): void => {
     if (head) riders.push(batch);
-    riders.splice(0, Math.max(0, riders.length - 100)); // старшие уходят: счёт не копится без меры
+    riders.splice(0, Math.max(0, riders.length - 100)); // the oldest go: the count is bounded
     head = false;
   };
   attach(target.path, {
@@ -72,13 +69,12 @@ export function runWatchdogExit(argv: string[]): void {
       switch (ev.kind) {
         case "frame": {
           const type = ev.frame?.type;
-          if (type !== "message") return note(wd.notWakeup(type));
+          if (type !== "message") return note(wd().notWakeup(type));
           const id = frameId(ev);
           const f = ev.frame ?? null;
           const has = (k: string): boolean => seen.has(k);
-          // Сперва отдать, затем пометить напечатанное — с событием, если оно вошло текстом
-          // (seen.ts deliveryKeys); выход И ЕСТЬ доставка. Запись до побудки при смерти между
-          // ними потеряла бы кадр насовсем.
+          // Deliver first, then mark what was printed (seen.ts deliveryKeys); the exit IS the
+          // delivery. Marking before the wake-up would lose the frame on a death in between.
           const deliver = (
             groups: Frame[][],
             lines: string[],
@@ -91,7 +87,7 @@ export function runWatchdogExit(argv: string[]): void {
             process.exit(0);
           };
           if (!ev.batch) {
-            if (seen.has(id)) return note(wd.seenEarlier(id));
+            if (seen.has(id)) return note(wd().seenEarlier(id));
             return deliver(
               riders.splice(0),
               [f ? frameToText(f, ev.raw ?? "") : (ev.raw ?? "")],
@@ -99,17 +95,17 @@ export function runWatchdogExit(argv: string[]): void {
               [id],
             );
           }
-          // Пачка кадров комнаты (мост, roomstack.ts) — одна побудка: печатается блоком на
-          // последнем кадре залпа — шапка по всем её кадрам (#6574), строки только адресованным
-          // месту. Пачка без адресованных не будит: её шапка ждёт ближайшей побудки.
+          // A room batch (bridge, roomstack.ts) is one wake-up, printed as a block on the last
+          // frame: the head over all its frames (#6574), lines only for the addressed seat.
+          // A batch with nothing addressed does not wake: its head waits for the next one.
           if (ev.batch.at === 1) {
             batch = [];
-            cases.clear(); // зачин дела — у первой его строки в пачке
+            cases.clear(); // a case's intro goes with its first line in the batch
             block = { lines: [], shown: [], ids: [] };
             fresh = false;
           }
           if (f) batch.push(f);
-          if (seen.has(id)) note(wd.seenEarlier(id));
+          if (seen.has(id)) note(wd().seenEarlier(id));
           else {
             fresh = true;
             if (ev.batch.folded) folded.push(id);
@@ -123,10 +119,10 @@ export function runWatchdogExit(argv: string[]): void {
             }
           }
           if (ev.batch.at < ev.batch.of) return;
-          if (!fresh) head = false; // пачка из одних отданных — повтор: в ждущий счёт не встаёт
+          if (!fresh) head = false; // a batch of only delivered frames is a repeat: not counted
           if (!block.lines.length) {
             hold();
-            return note(wd.unaddressed());
+            return note(wd().unaddressed());
           }
           const groups = [...riders.splice(0), ...(head ? [batch] : [])];
           head = false;
@@ -134,8 +130,8 @@ export function runWatchdogExit(argv: string[]): void {
         }
         case "stale":
           {
-            // Пачка лежалых: не повод будить, но и не потеря — тела в логе, метки пачки помечены;
-            // судится в миг записи по памяти сторожа (shared/stalebatch.ts).
+            // A stale batch does not wake but is not lost: bodies in the log, its marks noted;
+            // judged at write time by the watchdog's memory (shared/stalebatch.ts).
             const b = staleOf(ev, (k) => seen.has(k));
             if (b.text) note(b.text);
             for (const k of b.keys) noteSeen(seenPath, k, seen);
@@ -144,19 +140,19 @@ export function runWatchdogExit(argv: string[]): void {
         case "dead":
         case "alive":
         case "evicted":
-          note(ev.text ?? wd.seatLost());
+          note(ev.text ?? wd().seatLost());
           process.exit(1);
           break;
         case "attached":
-          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // память места на его сервере
-          note(wd.listening(ev.key));
+          seenPath = adoptSeenPath(ev.seen, seenPath, seen); // the seat's memory on its server
+          note(wd().listening(ev.key));
           break;
         case "released":
-          note(wd.bridgeReleasedSocket(ev.text ?? ""));
-          if (ev.own) process.exit(0); // своё close/revoke — не уход моста (#6638)
+          note(wd().bridgeReleasedSocket(ev.text ?? ""));
+          if (ev.own) process.exit(0); // an own close/revoke is not the bridge leaving (#6638)
           break;
         default:
-          if (ev.kind === "note" && ev.batch) head = true; // шапка пачки — её кадрами, с её первым кадром
+          if (ev.kind === "note" && ev.batch) head = true; // a batch head goes by its frames
           note(ev.text ?? ev.kind);
       }
     },

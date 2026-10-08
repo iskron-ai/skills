@@ -1,17 +1,26 @@
-// Пробный запуск моста-спутника для раздела «субагенты» doctor: та команда,
-// которую поднимет харнес, отвечает ли на initialize и tools/list, и примет
-// ли API Anthropic схемы её тулов. Схема с oneOf/allOf/anyOf на верхнем уровне
-// роняет весь прогон субагента ошибкой 400, не назвав тула, — здесь он назван.
+// A trial run of the satellite bridge for doctor's subagents section: does the command
+// the harness will raise answer initialize and tools/list, and will the Anthropic API
+// accept its tool schemas. A top-level oneOf/allOf/anyOf fails the whole subagent run
+// with a 400 that names no tool; here the tool is named.
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import { CLIENTS, envName } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import {
+  CLIENTS,
+  envName,
+  SAT_LOGIN_RE,
+  SAT_OLD_FLAG_RE,
+  SAT_PROBE,
+  type SatProbeWords,
+} from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
+
+const sw = (): SatProbeWords => words(SAT_PROBE);
 
 const PROBE_MS = Number(process.env[envName("DOCTOR_PROBE_MS")]) || 30_000;
-/** Срок одного запроса пробного моста: столько он может ждать запрос в полёте, уходя. */
+/** One request deadline of the probe bridge: how long it may wait for an in-flight request when leaving. */
 const REQUEST_MS = 20_000;
-/** Windows: ожидание ухода по закрытому stdin — дольше срока запроса со сменой токена. */
+/** Windows: wait for leaving on closed stdin, longer than a request with a token renewal. */
 const WIN_WAIT_MS = 40_000;
 
 interface Reply {
@@ -29,17 +38,10 @@ export interface ProbeCommand {
   env: Record<string, string>;
 }
 
-/** Как войти, когда у машины нет живого входа: ссылка пробного моста умирает вместе с ним. */
-export const loginAdvice = (): string =>
-  L(
-    "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor",
-    "log in: call any iskron_* tool in the main session and open the login link from its answer (or put a personal token in ~/.iskron-bridge/token — the establish-mcp skill), then repeat doctor",
-  );
+/** How to log in when the machine has no live login: the probe bridge's link dies with it. */
+export const loginAdvice = (): string => sw().loginAdvice();
 
-/** Отказ, за которым стоит вход: ссылка входа, OAuth, отвергнутый токен. */
-const LOGIN_RE = /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
-
-/** Итог пробы: `lines` — что наблюдено, `findings` — поломки, у каждой готовое действие. */
+/** The probe's outcome: `lines` observed, `findings` breakages, each with a ready action. */
 export interface ProbeResult {
   lines: string[];
   findings: string[];
@@ -60,10 +62,10 @@ export async function probeSatellite(
     [envName("BRIDGE_ORPHAN_FLOW_MS")]: "1",
     [envName("BRIDGE_TIMEOUT")]: e.env[envName("BRIDGE_TIMEOUT")] ?? String(REQUEST_MS),
   };
-  delete env[envName("CHANNEL_SOCKET")]; // проба не держит чужого сокета
+  delete env[envName("CHANNEL_SOCKET")]; // the probe holds no foreign socket
   delete env[envName("CHANNEL_STATUS")];
   const child = spawn(e.command, e.args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-  child.stdin.on("error", () => {}); // мост ушёл раньше записи — это его исход, не падение doctor
+  child.stdin.on("error", () => {}); // the bridge left before the write: its outcome, not a doctor crash
   let stderr = "";
   child.stderr.on("data", (c: Buffer) => (stderr = (stderr + c.toString()).slice(-4000)));
   const replies = new Map<number, Reply>();
@@ -81,7 +83,7 @@ export async function probeSatellite(
     wake?.();
   });
   child.on("exit", (code, sig) => {
-    exited ??= L(`вышел с кодом ${code ?? sig}`, `exited with code ${code ?? sig}`);
+    exited ??= sw().exited(String(code ?? sig));
     wake?.();
   });
   const deadline = Date.now() + PROBE_MS;
@@ -107,45 +109,24 @@ export async function probeSatellite(
     capabilities: {},
     clientInfo: { name: CLIENTS.doctor, version: "1" },
   });
-  // Отказ со ссылкой входа — мёртвый грант машины: ссылку проба унесёт с собой,
-  // поэтому совет тот же, что без входа, а не «сделай, что велит отказ».
+  // A refusal with a login link is a dead machine grant: the link leaves with the
+  // probe, so the advice is the no-login one, not "do what the refusal says".
   const refusal = (what: string, raw: unknown): string => {
     const msg = String(raw ?? "");
-    return LOGIN_RE.test(msg)
-      ? L(
-          `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${loginAdvice()}`,
-          `probe "${label}": ${what} — the satellite is not logged in: the machine grant is dead or revoked → ${loginAdvice()}`,
-        )
-      : L(
-          `проба «${label}»: ${what} вернул отказ: ${msg.slice(0, 300)} → сделай, что велит отказ, и повтори doctor`,
-          `probe "${label}": ${what} returned a refusal: ${msg.slice(0, 300)} → do what the refusal says and repeat doctor`,
-        );
+    return SAT_LOGIN_RE.test(msg)
+      ? sw().refusalLogin(label, what, loginAdvice())
+      : sw().refusal(label, what, msg.slice(0, 300));
   };
   if (!init) {
-    const why =
-      exited ??
-      L(`молчит ${Math.round(PROBE_MS / 1000)}s`, `silent for ${Math.round(PROBE_MS / 1000)}s`);
+    const why = exited ?? sw().silent(Math.round(PROBE_MS / 1000));
     const flag = /unknown argument: --tools/.test(stderr)
       ? "--tools"
-      : /satellite|unknown (flag|option)|неизвестн/i.test(stderr)
+      : SAT_OLD_FLAG_RE.test(stderr)
         ? "--satellite"
         : null;
-    const old = flag
-      ? L(
-          ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update`,
-          ` — it seems the home bridge is older than the ${flag} flag → node ~/.iskron-bridge/iskron-bridge.mjs update`,
-        )
-      : L(
-          " → запусти эту команду руками и прочти, что она пишет в stderr",
-          " → run this command by hand and read what it writes to stderr",
-        );
+    const old = flag ? sw().oldFlag(flag) : sw().runByHand();
     const stderrNote = tail() ? `; stderr: ${tail()}` : "";
-    findings.push(
-      L(
-        `проба «${label}»: мост не ответил на initialize (${why}${stderrNote})${old}`,
-        `probe "${label}": the bridge did not answer initialize (${why}${stderrNote})${old}`,
-      ),
-    );
+    findings.push(sw().noInit(label, why, stderrNote, old));
   } else if (init.error) {
     findings.push(refusal("initialize", init.error.message));
   } else {
@@ -156,39 +137,23 @@ export async function probeSatellite(
     const info = init.result?.serverInfo ?? {};
     const list = await ask(2, "tools/list", {});
     const tools = list?.result?.tools ?? [];
-    if (!list)
-      findings.push(
-        L(
-          `проба «${label}»: initialize ответил (${info.name ?? "?"} v${info.version ?? "?"}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`,
-          `probe "${label}": initialize answered (${info.name ?? "?"} v${info.version ?? "?"}), tools/list did not (${exited ?? "silent"}) → run the command by hand and read its stderr`,
-        ),
-      );
+    const name = info.name ?? "?";
+    const version = info.version ?? "?";
+    if (!list) findings.push(sw().noList(label, name, version, exited));
     else if (list.error) findings.push(refusal("tools/list", list.error.message));
     else {
-      lines.push(
-        L(
-          `проба «${label}»: мост ответил — ${info.name ?? "?"} v${info.version ?? "?"}, тулов ${tools.length}`,
-          `probe "${label}": the bridge answered — ${info.name ?? "?"} v${info.version ?? "?"}, tools ${tools.length}`,
-        ),
-      );
+      lines.push(sw().answered(label, name, version, tools.length));
       for (const t of tools) {
         const bad = ["oneOf", "allOf", "anyOf"].filter((k) => t.inputSchema && k in t.inputSchema);
-        if (bad.length)
-          findings.push(
-            L(
-              `тул ${t.name}: схема несёт ${bad.join(", ")} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
-              `tool ${t.name}: the schema carries ${bad.join(", ")} at the top level — the server hands out a schema the Anthropic API will reject ("input_schema does not support oneOf, allOf, or anyOf at the top level"), and the whole subagent run fails, not just this tool → the server fixes this, not the agent file or the bridge (the bridge passes the schema as is): tell the MCP server operator the tool name — whoever holds the address from the "server" line above — and wait for their update, then repeat doctor`,
-            ),
-          );
+        if (bad.length) findings.push(sw().schema(t.name, bad.join(", ")));
       }
     }
   }
-  // Уход — вежливо: закрытый stdin и SIGTERM мост отрабатывает сам и перед выходом
-  // дожидается запросов в полёте, в том числе смены токена, — SIGKILL посреди неё
-  // оставил бы машину со списанным refresh-токеном. Поэтому SIGKILL — только мосту,
-  // который не ушёл и после SIGTERM за срок своего запроса, и об этом строка.
+  // Leave politely: on closed stdin and SIGTERM the bridge waits for in-flight requests,
+  // a token renewal among them — a SIGKILL mid-renewal would leave the machine with a
+  // spent refresh token. SIGKILL only for a bridge still there after SIGTERM, with a line.
   const gone = new Promise<void>((res) => (exited ? res() : child.once("exit", () => res())));
-  // Таймеры отпущены: мост, ушедший сразу, не держит doctor лишние секунды.
+  // Timers are unref'd: a bridge that left at once does not hold doctor.
   const within = (ms: number) =>
     Promise.race([
       gone.then(() => true),
@@ -196,16 +161,10 @@ export async function probeSatellite(
     ]);
   child.stdin.end();
   if (process.platform === "win32") {
-    // На Windows любой сигнал — TerminateProcess, мгновенный и без уборки: мосту
-    // остаётся только закрытый stdin, и ждём его дольше смены токена.
+    // On Windows any signal is an instant TerminateProcess without cleanup: only closed stdin is left.
     if (!(await within(WIN_WAIT_MS))) {
       child.kill();
-      findings.push(
-        L(
-          `проба «${label}»: мост не ушёл по закрытому stdin за ${WIN_WAIT_MS / 1000}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`,
-          `probe "${label}": the bridge did not leave on closed stdin within ${WIN_WAIT_MS / 1000}s — killed forcibly → repeat doctor; if it was renewing the token, a login may be needed again`,
-        ),
-      );
+      findings.push(sw().winKilled(label, WIN_WAIT_MS / 1000));
     }
     return { lines, findings };
   }
@@ -214,12 +173,7 @@ export async function probeSatellite(
     if (!(await within(REQUEST_MS + 10_000))) {
       child.kill("SIGKILL");
       const secs = Math.round((REQUEST_MS + 20_000) / 1000);
-      findings.push(
-        L(
-          `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${secs}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`,
-          `probe "${label}": the bridge left neither on closed stdin nor on SIGTERM within ${secs}s — killed with SIGKILL → repeat doctor; if it was renewing the token, a login may be needed again`,
-        ),
-      );
+      findings.push(sw().sigKilled(label, secs));
     }
   }
   return { lines, findings };
