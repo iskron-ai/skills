@@ -20,6 +20,9 @@ import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CORE_DIRS = ["bridge", "shared", "opencode", "extension", "watchdog", "cli"];
+// A new directory under js/ must be named here or in CORE_DIRS, so a new core
+// directory cannot slip past the gate unchecked.
+const NOT_CORE = new Set(["delivery", "roadmap", "tests", "node_modules"]);
 const EXEMPT = new Set(["README.md"]);
 
 const args = process.argv.slice(2);
@@ -70,6 +73,9 @@ function walk(dir) {
 
 const violations = [];
 let count = 0;
+for (const e of readdirSync(join(root, "js"), { withFileTypes: true }))
+  if (e.isDirectory() && !CORE_DIRS.includes(e.name) && !NOT_CORE.has(e.name))
+    violations.push(`js/${e.name}/:0: a directory neither core nor known outside it`);
 for (const d of CORE_DIRS) {
   for (const file of walk(join(root, "js", d))) {
     count++;

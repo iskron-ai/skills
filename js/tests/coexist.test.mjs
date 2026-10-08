@@ -75,7 +75,9 @@ function run(args, extra = {}) {
   return spawnSync(process.execPath, [BRIDGE, ...args], { encoding: "utf8", env, timeout: 15_000 });
 }
 
-test("the core of the other delivery is this repo's core, byte for byte", () => {
+// A precondition of the probe, not evidence of portability: the other build below is
+// made from exactly these core files (the real two-copy comparison is the neighbour's).
+test("the probe's copy carries this repo's core files unchanged", () => {
   for (const d of CORE)
     for (const f of files(join(SRC, d))) {
       const rel = relative(SRC, f);

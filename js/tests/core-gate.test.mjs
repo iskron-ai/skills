@@ -23,6 +23,7 @@ const RED = {
   "l-call": "js/shared/a.ts:2: call L(",
   filename: "js/cli/iskron.ts:0: product name",
   nested: "js/shared/deep/inner/x.ts:1: product name",
+  "new-dir": "js/daemon/:0: a directory neither core nor known outside it",
 };
 
 for (const [name, line] of Object.entries(RED)) {
