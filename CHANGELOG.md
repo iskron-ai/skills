@@ -1,5 +1,24 @@
 # Changelog
 
+## [7.7.0](https://github.com/iskron-ai/skills/compare/v7.6.0...v7.7.0) (2026-10-08)
+
+
+### Features
+
+* **skills:** уборка каждым законченным куском — деревья, ветки, временные файлы, выход из дел; контракт 25 ([#410](https://github.com/iskron-ai/skills/issues/410)) ([fd138d7](https://github.com/iskron-ai/skills/commit/fd138d73844c9f94ecb0b9799a3b0e4af12fd279))
+
+
+### Bug Fixes
+
+* **bridge:** a login taken over from a killed bridge says its link and names the dead owner ([#405](https://github.com/iskron-ai/skills/issues/405)) ([f1fc629](https://github.com/iskron-ai/skills/commit/f1fc6297e99e2eb2519c337167f8802c51368c13))
+* **bridge:** list_changed from the SSE of any answer reaches the harness once per change ([#6819](https://github.com/iskron-ai/skills/issues/6819)) ([#411](https://github.com/iskron-ai/skills/issues/411)) ([1f39191](https://github.com/iskron-ai/skills/commit/1f3919174d71e5211f5fbf69f52bc08d0b62b404))
+* **bridge:** the plugin's resume takes back the seat its session's former bridge still holds, as iskron_stand does; overfull journals rotate to .1 ([#409](https://github.com/iskron-ai/skills/issues/409)) ([8aaa13e](https://github.com/iskron-ai/skills/commit/8aaa13ea5e9a8f4512ca6c597f9f48139afc8f42))
+* **bridge:** возврат своего места не называет его чужим ([#413](https://github.com/iskron-ai/skills/issues/413)) ([7552169](https://github.com/iskron-ai/skills/commit/755216908fc708a63941d4890eac41635afa7e53))
+* **iskronify:** видимый отказ не будит пуш и мерж; пуш только меток — по форме команды ([#404](https://github.com/iskron-ai/skills/issues/404)) ([4c94afa](https://github.com/iskron-ai/skills/commit/4c94afa944e3810bdc63c3d3c088a81ee95846f7))
+* **iskronify:** готчи — строками в GOTCHAS.md, где его назначила «Раскладка», узел не обязателен (слово владельца) ([#408](https://github.com/iskron-ai/skills/issues/408)) ([9d516d1](https://github.com/iskron-ai/skills/commit/9d516d1fb2591bfd0fc4518a8cd9739363ce6c15))
+* **iskronify:** маршрут отказа memory-guard — факты о коде и ловушки в граф, в AGENTS.md только конвенции, ритуалы и команды ([#407](https://github.com/iskron-ai/skills/issues/407)) ([bf4ad20](https://github.com/iskron-ai/skills/commit/bf4ad201d816d1cbcfb09ed03ca385b52724c2a4))
+* **iskronify:** приветствие плагина OpenCode несёт то же, что SessionStart — вход в дело словом start и мост-спутник субагента ([#412](https://github.com/iskron-ai/skills/issues/412)) ([08ad385](https://github.com/iskron-ai/skills/commit/08ad385dd9c6e2bfc3143c75c83cfa94a3c75593))
+
 ## [7.6.0](https://github.com/iskron-ai/skills/compare/v7.5.0...v7.6.0) (2026-10-08)
 
 

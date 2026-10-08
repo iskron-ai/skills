@@ -740,7 +740,7 @@ var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.6.0";
+var VERSION = "7.7.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -801,6 +801,22 @@ var never = new Promise(() => {
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
 var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
+// js/bridge/toolsync.ts
+var T = scoped(() => ({
+  served: null,
+  // у сессии харнеса — свой список
+  told: false,
+  // list_changed сказан, а харнес списка ещё не перечёл
+  inFlight: 0,
+  // tools/list харнеса в полёте (любые страницы)
+  listing: /* @__PURE__ */ new WeakSet(),
+  // tools/list харнеса (первая страница) в полёте
+  heldBack: /* @__PURE__ */ new WeakSet(),
+  // …в чьём ответе сервер сказал list_changed
+  live: /* @__PURE__ */ new WeakSet()
+  // …на который харнесу ушёл живой список сервера
+}));
 
 // js/shared/satname.ts
 var NAME_MAX = 48;
@@ -2111,10 +2127,12 @@ async function sessionDirectory(ctx, sessionID) {
 var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
 var PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 1e4);
 var STEP_MS = 500;
-function resumedWord(key) {
+function resumedWord(key, own = false) {
+  if (own)
+    return `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`;
   return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`;
 }
-var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не мост этой сессии: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`;
+var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`;
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
@@ -2175,7 +2193,8 @@ function createKeeper(doors) {
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
       doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string" && !quiet) doors.tell(root, resumedWord(r.key), slot.child);
+      if (typeof r.key === "string" && !quiet)
+        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -2211,7 +2230,8 @@ function createKeeper(doors) {
     retrying.delete(root);
     if (r?.resumed) {
       doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
-      if (typeof r.key === "string") doors.tell(root, resumedWord(r.key), slot.child);
+      if (typeof r.key === "string")
+        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
     } else if (r?.reopened)
       doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
     else if (r?.stuck) doors.say(r.word, "error");
