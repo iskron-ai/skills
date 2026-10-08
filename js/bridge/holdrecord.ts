@@ -1,6 +1,7 @@
 // The hold record on disk (graph @nks/nks-dev, node #5061): a restarted bridge returns the
-// place by name instead of rotating it with connect. The secret lies 0600 beside the
-// standing key, like the grant; revoke and a dead token erase it (hold.ts).
+// place by name instead of rotating it with connect, so address, hooks and queue stay the
+// same. The secret lies 0600 beside the standing key, like the grant; revoke and a dead
+// token erase it (hold.ts).
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -11,7 +12,7 @@ import { log } from "./streams.ts";
 
 const holdFilePathFor = (key: string): string => holdFilePathOf(CFG.authDir, key);
 
-/** Standing key from its three names; unsafe path characters become underscores. */
+/** Standing key from its three names, in the same form as keyFor in hold.ts. */
 export function keyOf(realm: string, karta: string | number, name: string): string {
   return `${name || "_"}--${karta}--${realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
 }
@@ -63,7 +64,8 @@ function onDisk(key: string): HoldRecord | null {
 /**
  * Only the bridge that chose the place knows its base; names carry dots (`glm-5.3`), so it
  * cannot be guessed (#6706). It also lives in a separate file beside the hold record, which
- * eviction and a dead token erase; the base does not age.
+ * eviction and a dead token erase; the base does not age, so a new take of the place (or a
+ * restarted bridge) reads it from there.
  */
 const B = scoped(() => new Map<string, string>());
 export function noteSeatBase(key: string, base: string): void {

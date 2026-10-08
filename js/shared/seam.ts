@@ -11,9 +11,10 @@
 //                            session (reattach by local session id), probe (build only)
 //   daemon → thin   welcome  daemon build and pid, local session id, resumed, ack
 //                   refuse   wrong seam version or session not accepted — with a reason
-//   both ways       rpc      JSON-RPC as is
+//   both ways       rpc      JSON-RPC as is, the bridge's own methods and notifications too
 //   daemon → thin   ack      the request with this id was taken by the session (sent to
-//                            the kernel before the request reaches the session)
+//                            the kernel before the request reaches the session: no ack —
+//                            the session never saw the request)
 //   thin → daemon   bye      session end on the harness's word (stdin closed, SIGTERM)
 //   daemon → thin   bye-ok   the session left: everything in flight answered
 //   daemon → thin   log      a session line for the thin bridge's stderr

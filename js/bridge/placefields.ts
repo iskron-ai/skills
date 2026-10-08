@@ -1,5 +1,8 @@
-// Seat fields named on every take and register (graph nks-dev: #5174, #6226).
-// attrs are replaced whole by the server, so the bridge always sends its full set.
+// Seat fields named on every take and register (graph nks-dev: #5174, #6226): model —
+// the agent's model without the vendor prefix; attrs — the build marker {name, version,
+// stamp}, the installed skill set by the same triple, the harness and the host version.
+// attrs are replaced whole by the server, so the bridge always sends its full set:
+// a partial write would erase its own build marker.
 import { BRIDGE_NAME } from "../delivery/index.ts";
 import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -21,7 +24,8 @@ const P = scoped(() => ({
   satelliteOfId: "",
   localeWarned: false,
 }));
-// The agent's own attrs, per the seat they were named for.
+// The agent's own attrs, per the seat they were named for: they ride in its repeated
+// registers and never move to another seat.
 const extras = scoped(() => new Map<string, Record<string, unknown>>());
 type Place = { realm?: unknown; karta?: unknown; name?: unknown };
 // Normalized like the binding: #931 and 931 alike, the name trimmed.
@@ -96,7 +100,10 @@ export function noteLocaleEcho(
   log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);
 }
 
-/** connect/mint/register called by the agent itself carry the same fields; its model and attrs are kept. */
+/**
+ * connect/mint/register called by the agent itself carry the same fields; its model and
+ * attrs are kept, the build marker is written over them.
+ */
 export function withPlaceFields(args: Record<string, unknown>): Record<string, unknown> {
   if (!PLACE_ACTIONS.has(String(args.action))) return args;
   rememberModel(args.model);

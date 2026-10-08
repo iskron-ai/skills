@@ -8,6 +8,8 @@ import { state } from "./transport.ts";
 /**
  * Refreshes `at` of an existing hold record when the session leaves: the record's term
  * counts from the socket's last life, and an erased record is not revived.
+ * Counted from the last write, a seat held past the term without a new busy line would
+ * leave with an expired record; a dead socket stamps its last life, not now.
  */
 export function keepHoldRecord(): void {
   const s = state.standing;

@@ -24,8 +24,9 @@ export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
 
 /**
  * register refused by a seat-opening race: 409 without a rule ("opened concurrently;
- * register again"). The rule comes from ProblemDetail errors[0], not the root, so a
- * 409 with a root-only rule also lands here and gets one retry.
+ * register again"). The rule comes from ProblemDetail errors[0], not the root (the MCP
+ * server reads no root rule), so a 409 with a root-only rule also lands here and gets one retry,
+ * whose refusal comes back as is.
  */
 export const openedConcurrently = (reply: JsonRpcMessage | null): boolean => {
   const r = reply?.result?.isError ? refusalOf(reply) : null;

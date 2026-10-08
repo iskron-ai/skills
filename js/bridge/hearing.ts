@@ -1,5 +1,7 @@
 // Whether another session listens on a seat (graph @nks/nks-dev, node #6706): a live local
 // socket held by another session, or a listening row on the board; an unread board is "unknown".
+// One answer for every path: the take=true advice, raw connect, mint and register, and
+// the seat beside in the stand tool.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -68,6 +70,8 @@ export function boardHearing(bd: Board | null, karta: string, name: string): Ask
   const at = bd.entries.filter((e) => ofSeat(e, karta, name));
   if (at.some(listens)) return "other";
   const unread = bd.declared != null && bd.declared !== bd.entries.length;
+  // A board not parsed whole (header count off, seat not among parsed rows) is "unknown", not
+  // "free": neither the take=true advice nor a pass without take.
   return unread && (at.length === 0 || isSentinel(karta)) ? "unknown" : "free";
 }
 
@@ -101,6 +105,7 @@ async function heldLocallyByOther(realm: string, karta: string, name: string): P
   return false;
 }
 
+/** Who listens on the seat: another session, nobody, or the bridge does not know. */
 export async function askedHearing(
   realm: string,
   karta: string,
@@ -136,7 +141,10 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   return w.rawSeatRefusal(who, action);
 }
 
-/** This bridge itself listens on the seat; an evicted or parked seat is not its own. */
+/**
+ * This bridge itself listens on the seat; an evicted or parked seat is not its own: a parked
+ * seat may have been taken by another session meanwhile.
+ */
 export function ledHere(realm: string, karta: string, name: string): boolean {
   if (holdsStanding(realm, karta, name)) return true;
   return (

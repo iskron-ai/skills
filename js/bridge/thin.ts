@@ -292,7 +292,7 @@ export function thinMain(argv: string[]): void {
     local = { session, input };
     mode = "local";
     replay(toLocal);
-    askRealms();
+    askRealms(); // the replay's seat losses surface here too: ask in the local session
     for (const m of queue.splice(0)) dispatch(m);
   };
 

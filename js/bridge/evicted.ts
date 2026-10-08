@@ -1,6 +1,7 @@
 // Seat taken by close 4000 (graph @nks/nks-dev, nodes #6706, #5402): a session never
-// stays deaf silently. Taken by a new bridge of the same harness session — yield quietly;
-// taken by another session — stand beside as name.N with hearing and say so.
+// stays deaf silently. Taken by a new bridge of the same harness session (restart,
+// compaction: its hold record names the session) — yield quietly; taken by another
+// session — stand beside as name.N with hearing and say so.
 import { scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
 import { signedRealm } from "./deaf.ts";
@@ -39,8 +40,9 @@ function announceEvicted(code: number, text: string): void {
 
 /**
  * Whether this session's new bridge took the seat — a hold record under the same key
- * with another url. While its connect is in flight (intent in taking.ts) wait for the
- * outcome: the intent is written before connect, so without it the taker is foreign.
+ * with another url. While its connect is in flight (intent in taking.ts; 4000 outruns its
+ * reply) wait for the outcome, not a deadline: the intent is written before connect, so
+ * without it the taker is foreign.
  */
 async function takenBySession(key: string, url: string): Promise<boolean> {
   const me = sessionOfBridge();
@@ -123,7 +125,8 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
 
 /**
  * Stand beside and tell the session the outcome. Seats of other graphs on the taken
- * channel stand again on the new one. On failure the seat is remembered: the next
+ * channel are dropped by the beside connect and stand again on the new one in the same move,
+ * named in the word. On failure the seat is remembered: the next
  * harness call retries before signing with the taken seat (standing.ts).
  */
 async function besideAndSay(
