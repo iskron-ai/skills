@@ -147,19 +147,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say: (t, level) => say(t, level ?? "warning"),
   });
   // A child waiting on a permission or interrupted not by a cancel — a word to the parent (waits.ts),
-  // only about a child this instance hosts (#6815 item 7).
+  // told once per process across deliveries (#6815 item 7).
   const waits = createWaits(ctx, {
     tell: teller(ctx, say),
     isLead: (s) => half.leadOf(s) !== null,
-    hosts: (child, parent) => {
-      const root = roots.get(child);
-      return (
-        half.owns(child) ||
-        half.leadOf(child) !== null ||
-        half.owns(parent) ||
-        (root !== undefined && half.owns(root))
-      );
-    },
   });
   const controller = new AbortController();
   void (async () => {

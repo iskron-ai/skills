@@ -6657,7 +6657,6 @@ test("a background child waiting on a permission: the parent hears it once, woke
   };
   try {
     await serverTools(rec);
-    await rec.call("iskron_orient", {}, "root"); // this instance hosts the root's bridge (#6815 item 7)
     ask("per_1", "child");
     ask("per_1", "child");
     ask("per_2", "root");
@@ -6701,7 +6700,6 @@ test("the wait words in English: only the human answers or cancels, in the child
   const words = () => rec.synthetics.filter((s) => /waiting for a permission/.test(s.text));
   try {
     await serverTools(rec);
-    await rec.call("iskron_orient", {}, "root"); // this instance hosts the root's bridge (#6815 item 7)
     rec.emit({
       type: "permission.asked",
       data: { id: "per_en", sessionID: "child", action: "bash", resources: ["a", "b", "c", "d"] },
@@ -6755,7 +6753,6 @@ test("a lead child interrupted (superseded) gets no word from the instance of an
   };
   try {
     await serverTools(other);
-    await other.call("iskron_orient", {}, "root"); // this instance hosts the root's bridge (#6815 item 7)
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     cut("evt_lead", "child", "superseded");
     cut("evt_plain", "plain", "shutdown");
@@ -6780,7 +6777,6 @@ test("a child without a place whose turn is interrupted by shutdown: the parent 
     rec.emit({ type: "session.execution.interrupted", id, data: { sessionID, reason } });
   try {
     await serverTools(rec);
-    await rec.call("iskron_orient", {}, "root"); // this instance hosts the root's bridge (#6815 item 7)
     cut("evt_1", "child", "shutdown");
     cut("evt_1", "child", "shutdown");
     cut("evt_2", "child", "user");
@@ -6803,28 +6799,30 @@ test("a child without a place whose turn is interrupted by shutdown: the parent 
 
 // Two plugins of two deliveries in one OpenCode both see the service's stream (graph
 // @nks/nks-dev, node #6815 item 7): a word about a child waiting or interrupted comes
-// only from the instance that hosts the child — a bridge for it or its root, or a lead.
-test("a child this plugin does not host: its permission wait and its interruption give the parent no word", async () => {
+// once in the process, whichever plugin claims it first.
+test("two plugins in one process: a child's permission wait and interruption reach the parent once", async () => {
   const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
-  const rec = await plugin(bridgeEnv("permission-unhosted", env).env, {
-    location: { directory: SANDBOX },
-    sessions: WAIT_SESSIONS(SANDBOX),
-  });
+  const opts = { location: { directory: SANDBOX }, sessions: WAIT_SESSIONS(SANDBOX) };
+  const a = await plugin(bridgeEnv("permission-two-a", env).env, opts);
+  const b = await plugin(bridgeEnv("permission-two-b", env).env, opts);
   try {
-    await serverTools(rec);
-    rec.emit({
-      type: "permission.asked",
-      data: { id: "per_x", sessionID: "child", action: "bash", resources: ["ls"] },
-    });
-    rec.emit({
-      type: "session.execution.interrupted",
-      id: "evt_x",
-      data: { sessionID: "child", reason: "shutdown" },
-    });
+    for (const rec of [a, b]) {
+      rec.emit({
+        type: "permission.asked",
+        data: { id: "per_x", sessionID: "child", action: "bash", resources: ["ls"] },
+      });
+      rec.emit({
+        type: "session.execution.interrupted",
+        id: "evt_x",
+        data: { sessionID: "child", reason: "shutdown" },
+      });
+    }
     await delay(600);
-    assert.deepEqual(waitWords(rec), [], "no bridge here for the child or its root");
+    const words = [...waitWords(a), ...waitWords(b)];
+    assert.equal(words.length, 2, JSON.stringify(words.map((w) => w.text)));
   } finally {
-    await rec.stop();
+    await a.stop();
+    await b.stop();
   }
 });
 

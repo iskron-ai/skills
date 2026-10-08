@@ -6,9 +6,8 @@
 // without a satellite seat, was unheard too: leads.ts hears only leads (#6550 item 4).
 // The stream is the service's: ours is a session whose directory equals this instance's as a
 // STRING, not after realpath — each spelling has its own instance, and only it knows whether the
-// child is a lead. And ours is only a child this instance hosts — a bridge for it or its root, or
-// a lead (#6815 item 7): two plugins of two deliveries in one OpenCode do not wake the parent twice.
-// Cost: a non-background child's word lands after the human's answer; a shutdown before session.get loses it.
+// child is a lead. A word is claimed in a process-wide set under a delivery-neutral key, so two
+// plugins of two deliveries in one OpenCode tell the parent once (#6815 item 7). Cost: a non-background child's word lands after the human's answer; a shutdown before session.get loses it.
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 import { envName } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
@@ -27,9 +26,11 @@ export interface WaitDoors {
   tell(session: string, text: string, wake: boolean): Promise<void>;
   /** A lead subagent (satellite) — its interruptions are leads.ts's. */
   isLead(child: string): boolean;
-  /** This instance hosts the child: a bridge for it or its root, or it is a lead (#6815 item 7). */
-  hosts(child: string, parent: string): boolean;
 }
+
+/** Words told in this process by any delivery's plugin; the key is delivery-neutral on purpose. */
+const toldInProcess = (): Set<string> =>
+  ((globalThis as any).__bridgeChildWordsTold ??= new Set<string>());
 
 export const askWord = (who: string, action: string, resources: string[]): string => {
   const cut = resources.slice(0, RESOURCES).map((r) => {
@@ -48,7 +49,7 @@ export const interruptWord = (who: string, reason: string): string => W().interr
 export function createWaits(ctx: Context, d: WaitDoors) {
   const home = homeOf(ctx);
   const answered = new Set<string>();
-  const told = new Set<string>();
+  const told = toldInProcess();
   const once = (key: string): boolean => {
     if (told.has(key)) return false;
     told.add(key);
@@ -70,7 +71,6 @@ export function createWaits(ctx: Context, d: WaitDoors) {
     if (typeof parent !== "string" || !parent) return null;
     const dir: unknown = s?.location?.directory ?? ev?.location?.directory;
     if (home && typeof dir === "string" && dir && dir !== home.directory) return null;
-    if (!d.hosts(sessionID, parent)) return null;
     const title = typeof s?.title === "string" ? s.title.trim() : "";
     return { parent, who: title ? `«${title}» (${sessionID})` : sessionID };
   }
