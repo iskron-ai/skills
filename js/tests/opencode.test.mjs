@@ -6797,10 +6797,37 @@ test("a child without a place whose turn is interrupted by shutdown: the parent 
   }
 });
 
-// Two plugins of two deliveries in one OpenCode both see the service's stream (graph
-// @nks/nks-dev, node #6815 item 7): a word about a child waiting or interrupted comes
-// once in the process, whichever plugin claims it first.
-test("two plugins in one process: a child's permission wait and interruption reach the parent once", async () => {
+// Two plugins in one OpenCode both see the service's stream (graph @nks/nks-dev, node
+// #6815 item 7): a word about a child waiting or interrupted is claimed per delivery —
+// twice-loaded copies of one delivery say it once, another delivery's claim does not
+// silence this one (each delivery knows only its own lead subagents).
+test("another delivery's claim on a child's word does not silence this delivery", async () => {
+  const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
+  const opts = { location: { directory: SANDBOX }, sessions: WAIT_SESSIONS(SANDBOX) };
+  const claimed = new Set(["per_y", "evt_y"]);
+  globalThis.__bridgeChildWordsTold = claimed;
+  globalThis.__otherChildWordsTold = claimed;
+  const a = await plugin(bridgeEnv("permission-other-claim", env).env, opts);
+  try {
+    a.emit({
+      type: "permission.asked",
+      data: { id: "per_y", sessionID: "child", action: "bash", resources: ["ls"] },
+    });
+    a.emit({
+      type: "session.execution.interrupted",
+      id: "evt_y",
+      data: { sessionID: "child", reason: "shutdown" },
+    });
+    await delay(600);
+    assert.equal(waitWords(a).length, 2, JSON.stringify(waitWords(a).map((w) => w.text)));
+  } finally {
+    delete globalThis.__bridgeChildWordsTold;
+    delete globalThis.__otherChildWordsTold;
+    await a.stop();
+  }
+});
+
+test("two copies of one delivery in one process: a child's permission wait and interruption reach the parent once", async () => {
   const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
   const opts = { location: { directory: SANDBOX }, sessions: WAIT_SESSIONS(SANDBOX) };
   const a = await plugin(bridgeEnv("permission-two-a", env).env, opts);

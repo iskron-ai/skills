@@ -6,7 +6,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { HOME_BRIDGE_FILE, HOME_DIR, SATELLITE_CODE } from "../delivery/product.ts";
+import { HOME_BRIDGE_FILE, HOME_DIR, PRODUCT, SATELLITE_CODE } from "../delivery/product.ts";
+import { serverProtocol, STRUCTURED_CAPABILITY } from "../delivery/protocol.ts";
 import { versionIn } from "../shared/version.ts";
 import { BUILT_BRIDGE, REPO } from "./built.mjs";
 
@@ -64,5 +65,15 @@ test("the satellite entry code launches this delivery's home bridge", () => {
   assert.ok(
     SATELLITE_CODE.includes(`homedir(),'${HOME_DIR}','${HOME_BRIDGE_FILE}')`),
     `SATELLITE_CODE must join ${HOME_DIR}/${HOME_BRIDGE_FILE}: ${SATELLITE_CODE}`,
+  );
+});
+
+test("protocol keys: the fields capability follows the product, the refusal key is the server's", () => {
+  assert.equal(STRUCTURED_CAPABILITY, `${PRODUCT}/structured`);
+  assert.equal(typeof serverProtocol.refusal, "string");
+  const bridge = readFileSync(BUILT_BRIDGE, "utf8");
+  assert.ok(
+    bridge.includes(serverProtocol.refusal),
+    "the built bridge reads the server's refusal key",
   );
 });

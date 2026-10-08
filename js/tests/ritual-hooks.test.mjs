@@ -290,6 +290,37 @@ test(
   },
 );
 
+// The guard refuses with a route, not a bare "forbidden": the project graph by
+// name, the persistence section as the repo's AGENTS.md calls it, the personal
+// graph. The template carries the first two as slots; this repo — filled.
+const refusal = (groups) => {
+  const payload = JSON.stringify({
+    tool_name: "Write",
+    tool_input: { file_path: join(memory, "MEMORY.md") },
+  });
+  return guardOf(groups, "Write")
+    .map((h) => spawnSync("sh", ["-c", h.command], { input: payload, encoding: "utf8" }).stderr)
+    .join("\n");
+};
+test("memory-guard (hooks.md): the refusal routes through the slots", () => {
+  const said = refusal(templateGuard());
+  for (const slot of ["<Граф>", "<Раздел персистентности>", "@handle/mind"])
+    assert.ok(said.includes(slot), `the refusal names ${slot}: ${said}`);
+});
+test("memory-guard (settings): the refusal names this repo's graph and section", () => {
+  const said = refusal(settings.hooks.PreToolUse ?? []);
+  const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
+  const graph = /^'Граф': '(@[^ ']+)/m.exec(agents)?.[1];
+  const headings = new Set([...agents.matchAll(/^## (.+)$/gm)].map((m) => m[1].trim()));
+  assert.ok(graph && said.includes(graph), `the refusal names the graph ${graph}: ${said}`);
+  assert.ok(
+    [...said.matchAll(/«([^»]+)»/g)].some((m) => headings.has(m[1])),
+    `the refusal names a section of AGENTS.md as it is titled: ${said}`,
+  );
+  assert.ok(said.includes("@handle/mind"), `the refusal names the personal graph: ${said}`);
+  assert.doesNotMatch(said, /<[^>\s]+>/, "no slot is left unfilled");
+});
+
 // every `jq -e '<filter>'` a hook command runs (the push hook runs two)
 const filtersOf = (command) => [...command.matchAll(/jq -e '([^']+)'/g)].map((m) => m[1]);
 
