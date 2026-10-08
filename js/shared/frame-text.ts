@@ -87,7 +87,9 @@ function tail(frame: Frame, withReply: boolean): string {
  * A standing frame, short, into the agent's turn — the same in pi, OpenCode and the
  * watchdogs (graph @nks/nks-dev, node #6081): the first line is case, record, kind and
  * who; then the text once. Rule #6574: a case record not addressed to the seat goes
- * as a count (caseCountLine).
+ * as a count (caseCountLine). The bridge has already checked the frame; provenance and
+ * envelope are never printed raw (case or channel history reads the whole frame), and
+ * delivery never tells the agent to answer.
  */
 export function frameToText(frame: Frame | null | undefined, raw: string): string {
   if (!frame) return raw;
@@ -127,7 +129,7 @@ const BATCH_TEXT = 160;
  * A case batch frame for the watchdog in one line: case, [entry_id], kind, author,
  * start of text; the case opening on its first appearance. An addressed word not to
  * me (#6081) has no body; run — the number of words in the pair's run closed by this
- * frame (foldAsides).
+ * frame (foldAsides), absent for a lone frame. No envelope: batchPointer reads it whole.
  */
 export function batchLine(frame: Frame, run?: number, withZachin = true): string {
   const f = frame as Rec;
@@ -201,7 +203,10 @@ export function caseCountLine(frames: Frame[]): string {
   );
 }
 
-/** Batch count lines — one per case (#6574), above all its records. */
+/**
+ * Batch count lines — one per case (#6574), above all its records: "yours N" counts the
+ * addressed ones that follow as lines below, so the count does not contradict them.
+ */
 export function caseCountLines(frames: Frame[]): string[] {
   return casesOf(frames).map(caseCountLine).filter(Boolean);
 }
@@ -216,7 +221,7 @@ export function batchHead(frames: Frame[]): string {
  * first record (since exists from mcp 0.84.2).
  */
 export function batchPointer(frames: Frame[]): string {
-  // realm is always required by the case tool.
+  // A case is a graph plus a number; realm is always required by the case tool.
   const since = new Map<string, number>();
   for (const frame of frames) {
     const f = frame as Record<string, unknown>;

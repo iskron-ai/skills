@@ -48,8 +48,8 @@ const REAL_ENV = {
   ISKRON_BRIDGE_DAEMON_TRACE: "1",
 };
 
-function startBridge(serverUrl, authDir, env = {}, args = []) {
-  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
+function startBridge(serverUrl, authDir, env = {}, args = [], path = BRIDGE) {
+  const proc = spawn(NODE, [path, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -1041,6 +1041,61 @@ test("a thin bridge newer than the daemon moves the daemon to its build", async 
   });
 });
 
+// The last release on the other side of the seam (graph @nks/nks-dev, nodes #6815, #6702):
+// an update must not drop a thin bridge to the full one. The last release is the committed
+// bridge of main (or ISKRON_OLD_BRIDGE_PATH); its hello names no product.
+const OLD_BRIDGE =
+  process.env.ISKRON_OLD_BRIDGE_PATH ||
+  join(HERE, "..", "..", "skills", "establish-mcp", "scripts", "iskron.mjs");
+const FULL = /as the full bridge/;
+
+for (const [label, first, second] of [
+  ["a thin bridge of the last release through this daemon", BRIDGE, OLD_BRIDGE],
+  ["this thin bridge through the daemon of the last release", OLD_BRIDGE, BRIDGE],
+]) {
+  test(`${label}: it stays thin and its seat stands`, async () => {
+    await withFake(async ({ dir, procs, fake }) => {
+      const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
+      const env = { HOME: home, USERPROFILE: home };
+      const at = (path) => {
+        const b = startBridge(fake.mcpUrl, dir, env, [], path);
+        procs.push(b);
+        return b;
+      };
+      try {
+        const raiser = at(first);
+        await handshake(raiser);
+        const [daemon] = await waitFor(
+          "the daemon",
+          () => daemonPidIn(raiser.stderr)[0] && daemonPidIn(raiser.stderr),
+        );
+        const other = at(second);
+        await handshake(other);
+        const r = await stand(other, { realm: "nks-dev", karta: 931, name: "cross" });
+        assert.ok(!r.result?.isError, `${textOf(r)}\n${other.stderr}`);
+        assert.equal(placeOf(r), "cross", textOf(r));
+        assert.doesNotMatch(other.stderr, FULL, other.stderr);
+        assert.deepEqual(daemonPidIn(other.stderr), [daemon], other.stderr);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  });
+}
+
+test("a hello of another delivery's thin bridge is refused by this daemon", async () => {
+  await withFake(async ({ dir, bridge }) => {
+    const b = bridge({});
+    await handshake(b);
+    await waitFor("the daemon", () => daemonPidIn(b.stderr)[0]);
+    const hello = {
+      ...helloFrame({ build: "v0.0.0+probe", path: BRIDGE, argv: [] }),
+      product: "other",
+    };
+    await assert.rejects(connectSeam(seamSocketPath(dir), hello, 10_000), /other/);
+  });
+});
+
 test("doctor names the daemon: the mode, the socket, the pid, the build and the sessions", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const doctor = (env) =>
@@ -1477,6 +1532,33 @@ test("SIGTERM of the daemon is not the agent leaving: the seat comes back and wr
     );
     assert.match(a.stderr, /bringing its place .* back from the hold record/);
     assert.equal(daemonPids(dir).length, 2, "a new daemon was raised");
+  });
+});
+
+// #6702, обновление 7.4.1 → 7.5.0 на 16-m3: новый демон вернул место по записи держания
+// без сессии харнеса — запись легла без session, и та же сессия OpenCode, вставая
+// заново, сочла своё место чужим и встала рядом на .2.
+test("the daemon's successor brings the seat back and the hold record still names the harness session", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({});
+    await handshake(a);
+    await a.request("iskron/resume", { session: "ses-d" }); // плагин называет сессию мосту
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-s" });
+    assert.ok(!r.result?.isError, textOf(r));
+    const standings = join(dir, "standings");
+    const record = () => {
+      const f = readdirSync(standings).find((x) => x.endsWith(".hold"));
+      return f ? JSON.parse(readFileSync(join(standings, f), "utf8")) : null;
+    };
+    assert.equal(record()?.session, "ses-d", "the record names the session that stood");
+    const [first] = await waitFor("the daemon", () => daemonPids(dir)[0] && daemonPids(dir));
+    process.kill(first, "SIGTERM");
+    await waitFor("the old daemon gone", () => !alive(first), 30_000);
+    const w = await write(a, "after-term"); // ворота: ждёт возврата места в новой сессии
+    assert.ok(w.result && !w.result.isError, JSON.stringify(w));
+    assert.match(a.stderr, /bringing its place .* back from the hold record/);
+    assert.equal(fake.state.counts.unattributed, 0, a.stderr);
+    assert.equal(record()?.session, "ses-d", `the session survives the handover:\n${a.stderr}`);
   });
 });
 

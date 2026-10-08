@@ -104,10 +104,10 @@ async function enterCase(l, call, satelliteOf, placeName) {
     await call("iskron_stand", stand);
   } catch (e) {
     const why = e.message;
-    const join7 = `iskron_case(action="join", room="${room}")`;
+    const join9 = `iskron_case(action="join", room="${room}")`;
     return L(
-      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join7}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
-      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join7}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
+      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join9}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join9}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
     );
   }
   const place = placeName() || L("своим местом", "in a seat of its own");
@@ -153,9 +153,194 @@ function isDirectWord(frame) {
   return origin === "human" || !!p.from_standing || p.from_karta_seq != null;
 }
 
+// js/shared/room-fields.ts
+var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
+function fill(template, v) {
+  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep2, name) => {
+    const x = str(v[name]);
+    if (sep2) return x ? sep2 + x : "";
+    return x || "?";
+  });
+}
+var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
+function myRole(frame, fields) {
+  const ka = obj(fields.karta);
+  const seq = str(ka.seq);
+  if (!seq || seq !== str(frame.karta_seq)) return false;
+  const theirs = str(ka.realm);
+  const mine = str(frame.realm) || str(obj(frame.room).realm);
+  return !theirs || !mine || theirs === mine;
+}
+function addresseeOf(v) {
+  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
+  const o = obj(v);
+  const handle = str(o.handle).replace(/^@/, "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const id = str(o.id);
+  const name = str(o.standing) ? str(o.name) : "";
+  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const addr = [standing, id].filter(Boolean);
+  return addr.length ? { addr, label } : null;
+}
+
+// js/shared/asks.ts
+var ASK_WORDS = {
+  ask: "{author} спрашивает роль {to}{ to_place} [{key}]: «{done}»{; form}{; advice}",
+  ask_place: "(место {place})",
+  ask_yes_no: "ответ: да или нет (yes | no)",
+  ask_free: "ответ своим текстом",
+  ask_choice: "варианты: {options}",
+  ask_advice: "рекомендация: {option}{ — why}",
+  answer: "{author} отвечает на [{refers_to}]: {reply}",
+  ack: "ответ [{refers_to}] принят{: reply} · {author}",
+  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
+  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
+  // Зов роли платформой по погасшему месту: cause — почему зовут.
+  invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
+  invite_answer_waiting: "платформа зовёт роль {who} в дело: ответ ждёт приёма, спросившее место {standing} ушло"
+};
+var ASK_WORDS_EN = {
+  ask: "{author} asks the role {to}{ to_place} [{key}]: “{done}”{; form}{; advice}",
+  ask_place: "(seat {place})",
+  ask_yes_no: "answer: yes or no (yes | no)",
+  ask_free: "answer in your own words",
+  ask_choice: "options: {options}",
+  ask_advice: "recommended: {option}{ — why}",
+  answer: "{author} answers [{refers_to}]: {reply}",
+  ack: "answer [{refers_to}] accepted{: reply} · {author}",
+  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
+  invite_ownerless: "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
+  invite_answer_waiting: "the platform calls the role {who} to the case: an answer awaits acceptance, the asking seat {standing} has left"
+};
+var ASK_KINDS = /* @__PURE__ */ new Set(["ask", "answer", "ack"]);
+var askWord = (key) => (lang() === "en" ? ASK_WORDS_EN : ASK_WORDS)[key];
+var phrase = (key, values = {}) => fill(askWord(key) ?? "", values);
+var toOf = (fields) => obj(fields.to);
+var byMe = (frame) => {
+  const mine = mineOf(frame);
+  const author = obj(obj(frame.line).author);
+  return [str(author.id), str(author.standing)].some((a) => a && mine.includes(a));
+};
+var askFromPerson = (frame) => {
+  const line = obj(frame.line);
+  const kind = str(line.kind);
+  const asking = ASK_KINDS.has(kind) || kind === "progress" && !!str(obj(line.fields).withdraws);
+  return asking && classifyOrigin(frame) === "human";
+};
+var handleOf = (address) => /^@([^:]+):/.exec(address)?.[1] ?? "";
+function askedMine(frame, fields) {
+  const mine = mineOf(frame);
+  if (byMe(frame)) return false;
+  const to = toOf(fields);
+  const place = addresseeOf(to.standing);
+  if (place?.addr.some((a) => mine.includes(a))) return true;
+  if (!myRole(frame, { karta: to.karta })) return false;
+  if (!place) return true;
+  const theirs = handleOf(str(obj(to.standing).standing) || str(to.standing));
+  return !!theirs && theirs === handleOf(str(frame.to_standing));
+}
+function addressedMine(frame) {
+  if (frame.addressee_left === true) return false;
+  const to = addresseeOf(frame.addressee) ?? addresseeOf(toOf(obj(obj(frame.line).fields)));
+  const mine = mineOf(frame);
+  return !!to && to.addr.some((a) => mine.includes(a));
+}
+var quote = (s) => s ? L(`«${s}»`, `“${s}”`) : "";
+function formOf(fields) {
+  const form = str(fields.form);
+  if (form === "yes_no") return phrase("ask_yes_no");
+  if (form === "free") return phrase("ask_free");
+  if (form !== "choice" || !Array.isArray(fields.options)) return "";
+  const options = fields.options.map((o) => {
+    const x = obj(o);
+    const ctx = str(x.context);
+    return `${str(x.id)} ${quote(str(x.label))}${ctx ? ` (${ctx})` : ""}`;
+  }).join(", ");
+  return phrase("ask_choice", { options });
+}
+function askValues(kind, line, fields) {
+  if (kind !== "ask")
+    return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
+  const to = toOf(fields);
+  const k = obj(to.karta);
+  const place = addresseeOf(to.standing)?.label ?? "";
+  const rec3 = obj(fields.recommendation);
+  return {
+    to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
+    to_place: place ? phrase("ask_place", { place }) : "",
+    form: formOf(fields),
+    advice: str(rec3.option) || str(rec3.why) ? phrase("ask_advice", { option: str(rec3.option) || "—", why: rec3.why }) : ""
+  };
+}
+
 // js/shared/numbering.ts
 var numberingOf = (frame) => frame.numbering === "case" ? "case" : "";
 var numberedKey = (frame, key) => key && numberingOf(frame) ? `case:${key}` : key;
+
+// js/shared/askmemory.ts
+var baseOf = (frame) => numberedKey(
+  frame,
+  `${mineOf(frame)[0] ?? ""}|${str(obj(frame.room).id) || str(obj(frame.room).seq)}|${str(obj(frame.line).key)}`
+);
+var lineOf = (frame) => obj(frame.line);
+var kindOf = (frame) => str(lineOf(frame).kind);
+var numOf = (frame) => str(lineOf(frame).entry_id ?? frame.entry_id);
+function openOn(store, frame) {
+  const base = `${baseOf(frame)}#`;
+  const out2 = [];
+  for (const s of store.keys())
+    if (s.startsWith(base) && !store.has(`off:${s}`)) out2.push(s.slice(base.length));
+  return out2;
+}
+var namedOf = (frame) => {
+  const kind = kindOf(frame);
+  if (kind === "progress") return str(obj(lineOf(frame).fields).withdraws);
+  if (kind === "answer") return str(lineOf(frame).refers_to) || str(frame.in_reply_to);
+  return "";
+};
+var isOpen = (store, frame, n2) => {
+  const k = `${baseOf(frame)}#${n2}`;
+  return !!n2 && store.has(k) && !store.has(`off:${k}`);
+};
+function closesMine(store, frame) {
+  if (byMe(frame) || !str(lineOf(frame).key)) return false;
+  const kind = kindOf(frame);
+  if (kind === "progress" || kind === "answer") return isOpen(store, frame, namedOf(frame));
+  return kind === "ask" && !askedMine(frame, obj(lineOf(frame).fields)) && openOn(store, frame).length > 0;
+}
+function noteAsk(store, frame) {
+  if (!str(lineOf(frame).key)) return;
+  const kind = kindOf(frame);
+  const fields = obj(lineOf(frame).fields);
+  const base = `${baseOf(frame)}#`;
+  if (kind === "ask" && askedMine(frame, fields)) {
+    const own = numOf(frame);
+    if (store.has(`${base}${own}`)) return;
+    for (const n2 of openOn(store, frame)) store.add(`off:${base}${n2}`);
+    store.add(`${base}${own}`);
+    return;
+  }
+  if (kind === "progress" || kind === "answer" && !byMe(frame)) {
+    const n2 = namedOf(frame);
+    if (isOpen(store, frame, n2)) store.add(`off:${base}${n2}`);
+  } else if ((kind === "ack" || kind === "ask") && !byMe(frame))
+    for (const n2 of openOn(store, frame)) store.add(`off:${base}${n2}`);
+}
+var ASKS_KEPT = 512;
+var kept = /* @__PURE__ */ new Set();
+var processAsks = {
+  has: (s) => kept.has(s),
+  add: (s) => {
+    kept.add(s);
+    for (const old of kept) {
+      if (kept.size <= ASKS_KEPT) break;
+      kept.delete(old);
+    }
+  },
+  keys: () => kept
+};
 
 // js/shared/room-kinds.ts
 var WORDS = {
@@ -279,7 +464,7 @@ var VERDICT_WORDS_EN = {
   bad: "slop"
 };
 var words = () => lang() === "en" ? WORDS_EN : WORDS;
-var phrase = (key, values = {}) => fill(words()[key] ?? "", values);
+var phrase2 = (key, values = {}) => fill(words()[key] ?? "", values);
 var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
 var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
@@ -295,6 +480,11 @@ var RULES = {
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
+  // Толчок по ожиданию (#6655): прерывает только ответ ждавшему; вопрос мне,
+  // «принята» и снятие — пачкой, текстом как адресованные (#6868).
+  ask: "batch",
+  answer: "addressed",
+  ack: "batch",
   progress: "batch",
   opened: "batch",
   joined: "batch",
@@ -305,8 +495,6 @@ var RULES = {
   // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
   auto: "batch"
 };
-var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
-var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 function authorOf(author) {
   const a = obj(author);
   const name = str(a.name);
@@ -315,26 +503,9 @@ function authorOf(author) {
   if (standing) return standing;
   return a.kind === "platform" ? L("платформа", "platform") : "?";
 }
-var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
-function fill(template, v) {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep2, name) => {
-    const x = str(v[name]);
-    if (sep2) return x ? sep2 + x : "";
-    return x || "?";
-  });
-}
 function roomOf(v) {
   const r = obj(v);
   return str(r.seq) || str(r.id) || str(v);
-}
-var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
-function myRole(frame, fields) {
-  const ka = obj(fields.karta);
-  const seq = str(ka.seq);
-  if (!seq || seq !== str(frame.karta_seq)) return false;
-  const theirs = str(ka.realm);
-  const mine = str(frame.realm) || str(obj(frame.room).realm);
-  return !theirs || !mine || theirs === mine;
 }
 function whoOf(fields) {
   const st = obj(fields.standing);
@@ -342,17 +513,6 @@ function whoOf(fields) {
   const name = str(st.name) || str(ka.name);
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
-}
-function addresseeOf(v) {
-  if (typeof v === "string") return v ? { addr: [v], label: v } : null;
-  const o = obj(v);
-  const handle = str(o.handle).replace(/^@/, "");
-  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
-  const id = str(o.id);
-  const name = str(o.standing) ? str(o.name) : "";
-  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
-  const addr = [standing, id].filter(Boolean);
-  return addr.length ? { addr, label } : null;
 }
 function wordsCount(n2) {
   const W = words();
@@ -372,6 +532,7 @@ function roomKind(frame) {
   const key = str(line.key);
   const mine = mineOf(f);
   const node = obj(fields.node);
+  const cause = kind === "invite" ? str(fields.cause) : "";
   const byWhom = authorOf(
     kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
   );
@@ -386,12 +547,16 @@ function roomKind(frame) {
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
     // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
+    // Ответ и приём (#6867) — так же: refers_to строки, in_reply_to конверта.
     refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
     // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
     // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
-    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : whoOf(fields) || after(key, "invite:"),
+    // Зов роли (#6870) — роль по имени из fields.karta, погасшее место — fields.gone_standing.
+    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
+    standing: str(fields.gone_standing) || addresseeOf(fields.gone_standing)?.label,
+    ...ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {},
     room: roomOf(fields.room) || after(key, "link:"),
     rel: relWords()[str(fields.rel)] ?? fields.rel,
     code: fields.code,
@@ -399,7 +564,8 @@ function roomKind(frame) {
     name: node.name,
     realm: node.realm,
     // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
-    reasoning: kind === "node" ? line.done || f.body : void 0
+    reasoning: kind === "node" ? line.done || f.body : void 0,
+    withdraws: fields.withdraws
   };
   const rule = RULES[kind];
   const author = str(values.author);
@@ -433,7 +599,7 @@ function roomKind(frame) {
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : (
+  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : cause && askWord(`invite_${cause}`) ? askWord(`invite_${cause}`) : kind === "progress" && str(fields.withdraws) ? askWord("ask_withdrawn") : ASK_KINDS.has(kind) ? askWord(kind) : (
     // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
     kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
   );
@@ -447,7 +613,7 @@ function roomKind(frame) {
   const stack = rule === "stack" ? (
     // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
     f.stack === "defer" ? "batch" : "interrupt"
-  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule;
+  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
@@ -474,6 +640,22 @@ function rememberWord(key) {
     addressedWords.delete(old);
   }
 }
+var ASK_CLOSERS = /* @__PURE__ */ new Set(["ask", "answer", "ack", "progress"]);
+var askDecided = /* @__PURE__ */ new Map();
+function askMemory(f) {
+  if (f.asks_decided === true) return false;
+  const id = str(f.id) || wordKeyOf(f);
+  const was = askDecided.get(id);
+  if (was !== void 0) return was;
+  const hit = closesMine(processAsks, f);
+  noteAsk(processAsks, f);
+  askDecided.set(id, hit);
+  for (const old of askDecided.keys()) {
+    if (askDecided.size <= WORDS_KEPT) break;
+    askDecided.delete(old);
+  }
+  return hit;
+}
 function addressedToMine(frame) {
   if (!frame) return false;
   const f = frame;
@@ -484,6 +666,7 @@ function addressedToMine(frame) {
   const fields = obj(line.fields);
   const rk = roomKind(frame);
   if (rk?.aside) return false;
+  const closesAsk = !!rk && ASK_CLOSERS.has(rk.kind) && askMemory(f);
   const mine = mineOf(f);
   const hit = (v) => {
     const a = addresseeOf(v);
@@ -502,24 +685,62 @@ function addressedToMine(frame) {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
+  if (rk?.kind === "ask" && askedMine(f, fields)) return true;
+  if (closesAsk || rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true) return true;
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
     if (rk.kind === "invite" && myRole(f, fields)) return true;
   }
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  if (rk && ASK_KINDS.has(rk.kind) || askFromPerson(f)) return false;
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
 }
+
+// js/shared/seen.ts
+var evOf = (v) => typeof v === "number" || typeof v === "string" && v ? `ev:${v}` : "";
+function eventKeyOf(frame) {
+  const via = frame?.provenance?.via;
+  if (via === "room") return evOf(frame?.event_id);
+  if (via !== "graph") return "";
+  const body = frame?.body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "";
+  return evOf(body.event_id);
+}
+var asText = (frame) => addressedToMine(frame);
+function deliveryKeys(frame, named = false) {
+  const id = typeof frame?.id === "string" ? frame.id : "";
+  const ev = frame && asText(frame) ? eventKeyOf(frame) : "";
+  const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
+  return [id, mark && (named ? `c${mark}` : mark)].filter(Boolean);
+}
+function eventIn(frame, has) {
+  const ev = frame ? eventKeyOf(frame) : "";
+  if (!ev || !frame) return false;
+  const n2 = ev.slice(3);
+  const stale = frame.stale === true;
+  const keys = !asText(frame) ? [ev, `evs:${n2}`] : stale ? [ev, `evs:${n2}`, `cev:${n2}`, `cevs:${n2}`] : [ev, `cev:${n2}`];
+  return keys.some(has);
+}
+var isTact = (frame) => frame?.provenance?.wake === "look_up";
+var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.received_at === "string" ? f.received_at : "").reduce((a, b) => b > a ? b : a, "");
+var onlyTacts = (frames) => !!frames?.length && frames.every(isTact);
 
 // js/shared/clients.ts
 var OPENCODE_CLIENT = "opencode-iskron";
 var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
 var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+var BRIDGE_SKILL = "establish-mcp";
+var BRIDGE_FILE = "iskron.mjs";
+
+// js/shared/fields.ts
+var FIELDS_CAPABILITY = "iskron/structured";
+var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.4.1";
+var VERSION = "7.6.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -581,6 +802,15 @@ var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
 var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
 
+// js/shared/satname.ts
+var NAME_MAX = 48;
+var SUB_RE = /\.sub-([1-9]\d*)$/;
+var satelliteName = (base, n2) => base.slice(0, NAME_MAX - `.sub-${n2}`.length).replace(/[-._]+$/, "") + `.sub-${n2}`;
+function isSatelliteOf(base, name) {
+  const m = SUB_RE.exec(name);
+  return !!m && satelliteName(base, Number(m[1])) === name;
+}
+
 // js/bridge/transport.ts
 var state = scoped(() => ({
   sessionId: null,
@@ -619,14 +849,38 @@ var state = scoped(() => ({
 }));
 var reinit = scoped(() => ({ inFlight: null }));
 
-// js/shared/frame-text.ts
+// js/shared/keyfold.ts
 var rec = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+function superseded(frames) {
+  const last = /* @__PURE__ */ new Map();
+  const out2 = /* @__PURE__ */ new Set();
+  frames.forEach((f, i) => {
+    const r = f;
+    const line = rec(r.line);
+    const key = typeof line.key === "string" ? line.key : "";
+    if (line.kind !== "progress" || !key || line.verdict === "bad" || addressedToMine(f)) return;
+    const k = `${idOf(rec(r.room).id) || idOf(rec(r.room).seq)}|${key}`;
+    const e = Number(r.entry_id ?? line.entry_id);
+    const at = Number.isFinite(e) ? e : i;
+    const was = last.get(k);
+    if (!was) return void last.set(k, { frame: f, at });
+    if (at >= was.at) {
+      out2.add(was.frame);
+      last.set(k, { frame: f, at });
+    } else out2.add(f);
+  });
+  return out2;
+}
+
+// js/shared/frame-text.ts
+var rec2 = (v) => v && typeof v === "object" ? v : {};
+var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
 function casesOf(frames) {
   const by = /* @__PURE__ */ new Map();
   for (const f of frames) {
-    const key = caseKey(f) || idOf(f.id) || "?";
+    const key = caseKey(f) || idOf2(f.id) || "?";
     const got = by.get(key);
     if (got) got.push(f);
     else by.set(key, [f]);
@@ -635,31 +889,31 @@ function casesOf(frames) {
 }
 function caseOf(frame) {
   const f = frame;
-  const room = rec(f.room);
-  const n2 = idOf(room.seq) || idOf(room.id);
+  const room = rec2(f.room);
+  const n2 = idOf2(room.seq) || idOf2(room.id);
   if (!n2) return null;
   const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
   const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
-  const realm = idOf(room.realm) || idOf(f.realm);
+  const realm = idOf2(room.realm) || idOf2(f.realm);
   return { room: n2, zachin, realm };
 }
 var caseKey = (frame) => caseOf(frame)?.room ?? "";
 function caseHead(frame, withZachin) {
   const c = caseOf(frame);
   if (!c) return "";
-  const no = phrase("case", { room: c.room });
+  const no = phrase2("case", { room: c.room });
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
 function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  if (origin === "platform") return phrase("who_platform");
-  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase("who_graph");
+  if (origin === "platform") return phrase2("who_platform");
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase2("who_graph");
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return phrase("who_human", { user: p.user }) + place;
+  if (origin === "human") return phrase2("who_human", { user: p.user }) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
-  return phrase(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
+  return phrase2(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
 }
 function textOf(frame) {
   if (roomKind(frame)?.aside) return "";
@@ -669,11 +923,11 @@ function textOf(frame) {
 function tail(frame, withReply) {
   const f = frame;
   const parts = [];
-  const to = idOf(f.in_reply_to) || idOf(frame.provenance?.in_reply_to);
-  if (withReply && to) parts.push(phrase("reply_to", { id: to }));
-  if (frame.stale === true) parts.push(phrase("stale"));
+  const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
+  if (withReply && to) parts.push(phrase2("reply_to", { id: to }));
+  if (frame.stale === true) parts.push(phrase2("stale"));
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
-    parts.push(phrase("body_read", { how: frame.body_read }));
+    parts.push(phrase2("body_read", { how: frame.body_read }));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 function frameToText(frame, raw) {
@@ -685,9 +939,9 @@ function frameToText(frame, raw) {
   if (c) {
     if (!addressedToMine(frame)) return caseCountLine([frame]);
     const rk = roomKind(frame);
-    const line = rec(f.line);
-    const entry = idOf(f.entry_id) || idOf(line.entry_id);
-    const words2 = rk ? rk.words : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+    const line = rec2(f.line);
+    const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
+    const words2 = rk ? rk.words : phrase2("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
     const who = origin === "platform" ? "" : whoOf2(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
@@ -708,7 +962,7 @@ function batchLine(frame, run, withZachin = true) {
   const head = caseHead(frame, withZachin);
   const pre = head ? `${head} ` : "";
   if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
-  const line = rec(f.line);
+  const line = rec2(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
   const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
@@ -732,12 +986,11 @@ function caseCountLine(frames) {
   const c = frames.length ? caseOf(frames[0]) : null;
   if (!c) return "";
   const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
   const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
-  return L(
-    `${head}: записей ${frames.length}, тебе ${mineN}`,
-    `${head}: ${frames.length} records, yours ${mineN}`
-  ) + yours + batchPointer(frames) + ".";
+  const n2 = frames.length - gone;
+  return L(`${head}: записей ${n2}, тебе ${mineN}`, `${head}: ${n2} records, yours ${mineN}`) + (gone ? L(`, сменённых строк ключа ${gone}`, `, ${gone} superseded lines of a key`) : "") + yours + batchPointer(frames) + ".";
 }
 function caseCountLines(frames) {
   return casesOf(frames).map(caseCountLine).filter(Boolean);
@@ -772,6 +1025,7 @@ var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var H = scoped(() => ({ session: null }));
+var B = scoped(() => /* @__PURE__ */ new Map());
 
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -794,6 +1048,12 @@ var H2 = scoped(() => ({
   evictedEvent: null,
   /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
   parked: false,
+  /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
+  unheard: false,
+  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  deafKey: null,
+  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  deadPlaces: [],
   attachHooks: [],
   helloWaiters: /* @__PURE__ */ new Set(),
   /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
@@ -805,15 +1065,6 @@ var H2 = scoped(() => ({
   /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
   handingOver: null
 }));
-
-// js/shared/satname.ts
-var NAME_MAX = 48;
-var SUB_RE = /\.sub-([1-9]\d*)$/;
-var satelliteName = (base, n2) => base.slice(0, NAME_MAX - `.sub-${n2}`.length).replace(/[-._]+$/, "") + `.sub-${n2}`;
-function isSatelliteOf(base, name) {
-  const m = SUB_RE.exec(name);
-  return !!m && satelliteName(base, Number(m[1])) === name;
-}
 
 // js/bridge/realms.ts
 var aliases = scoped(() => /* @__PURE__ */ new Map());
@@ -967,12 +1218,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve4 = settle(res);
+      const resolve6 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error(L("вызов отменён", "call aborted")));
       }
-      this.pending.set(id, { resolve: resolve4, reject });
+      this.pending.set(id, { resolve: resolve6, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -1362,7 +1613,8 @@ async function handshake(b, onLogin, onReady) {
         "initialize",
         {
           protocolVersion: PROTOCOL,
-          capabilities: {},
+          capabilities: FIELDS_CAPABILITIES,
+          // поля ответа — и этому клиенту (#6637)
           clientInfo: { name: OPENCODE_CLIENT, version: "1" }
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) }
@@ -1625,8 +1877,207 @@ var createHandoff = (d) => (session, to, home) => {
   return true;
 };
 
+// js/opencode/skillread.ts
+import { existsSync as existsSync2, lstatSync, readdirSync as readdirSync4, realpathSync as realpathSync3 } from "node:fs";
+import { homedir as homedir5 } from "node:os";
+import { basename as basename3, dirname as dirname2, isAbsolute, join as join8, relative, resolve as resolve5 } from "node:path";
+
+// js/shared/skilllock.ts
+import { existsSync, readFileSync as readFileSync6, realpathSync as realpathSync2 } from "node:fs";
+import { homedir as homedir4 } from "node:os";
+import { basename as basename2, dirname, join as join7, resolve as resolve4 } from "node:path";
+var canon = (p) => {
+  try {
+    return realpathSync2(p);
+  } catch {
+    return resolve4(p);
+  }
+};
+function lockPlaces(root, stateHome = process.env.XDG_STATE_HOME) {
+  const places = [];
+  if (stateHome && canon(root) === canon(join7(homedir4(), ".agents", "skills")))
+    places.push(join7(stateHome, "skills", ".skill-lock.json"));
+  places.push(join7(dirname(root), ".skill-lock.json"));
+  if (basename2(root) === "skills" && basename2(dirname(root)) === ".agents")
+    places.push(join7(dirname(dirname(root)), "skills-lock.json"));
+  return places;
+}
+function skillLock(root, stateHome = process.env.XDG_STATE_HOME) {
+  const place = lockPlaces(root, stateHome).find((p) => existsSync(p));
+  if (!place) return null;
+  try {
+    const lock = JSON.parse(readFileSync6(place, "utf8"));
+    return lock.skills ?? {};
+  } catch {
+    return null;
+  }
+}
+
+// js/opencode/skillread.ts
+var READERS = /* @__PURE__ */ new Set(["read", "glob", "grep"]);
+var CALLS = 256;
+var WALK = 4096;
+var canon2 = (p) => {
+  try {
+    return realpathSync3(p);
+  } catch {
+    return null;
+  }
+};
+var absent = (p) => {
+  try {
+    return lstatSync(p, { throwIfNoEntry: false }) === void 0;
+  } catch {
+    return false;
+  }
+};
+function canonReach(p) {
+  const tail2 = [];
+  let at = p;
+  for (; ; ) {
+    const c = canon2(at);
+    if (c) return tail2.length ? join8(c, ...tail2.reverse()) : c;
+    if (!absent(at)) return null;
+    const name = basename3(at);
+    const up = dirname2(at);
+    if (up === at || name === "." || name === "..") return null;
+    tail2.push(name);
+    at = up;
+  }
+}
+function resourceDir(resource) {
+  const dir = resource.replace(/[\\/]\*$/, "");
+  return /[*?[\]{}]/.test(dir) ? null : dir;
+}
+function within(p, root) {
+  const rel = relative(root, p);
+  return rel === "" || !rel.startsWith("..") && !isAbsolute(rel);
+}
+function bridgeRoot(s) {
+  const path = typeof s?.path === "string" ? s.path : null;
+  if (s?.id !== BRIDGE_SKILL || !path || !isAbsolute(path)) return null;
+  const dir = dirname2(path);
+  if (basename3(dir) !== BRIDGE_SKILL || !existsSync2(join8(dir, "scripts", BRIDGE_FILE))) return null;
+  return dirname2(dir);
+}
+async function skillDirs(ctx) {
+  const res = await ctx.skill.list();
+  const list = Array.isArray(res) ? res : res?.data ?? [];
+  const listed = [];
+  for (const s of list) {
+    const path = typeof s?.path === "string" ? s.path : null;
+    if (!path || !isAbsolute(path)) continue;
+    const dir = canon2(dirname2(path));
+    const id = String(s?.id ?? "");
+    if (dir && basename3(dir) === id) listed.push({ id, dir });
+  }
+  const sets = /* @__PURE__ */ new Map();
+  for (const s of list) {
+    const root = bridgeRoot(s);
+    const c = root ? canon2(root) : null;
+    if (c) sets.set(c, skillLock(c));
+  }
+  return listed.filter(({ id, dir }) => {
+    const lock = sets.get(dirname2(dir));
+    if (!lock) return false;
+    const source = lock[BRIDGE_SKILL]?.source;
+    return typeof source === "string" && lock[id]?.source === source;
+  }).map(({ dir }) => dir);
+}
+function leadsOut(dir) {
+  const stack = [dir];
+  let seen = 0;
+  while (stack.length) {
+    const d = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync4(d, { withFileTypes: true });
+    } catch {
+      return true;
+    }
+    for (const e of entries) {
+      if (++seen > WALK) return true;
+      const p = join8(d, e.name);
+      if (e.isSymbolicLink()) {
+        const c = canon2(p);
+        if (!c || !within(c, dir)) return true;
+      } else if (e.isDirectory()) stack.push(p);
+    }
+  }
+  return false;
+}
+function absolute(p, base) {
+  if (p === "~" || p.startsWith("~/")) return join8(homedir5(), p.slice(1));
+  if (isAbsolute(p)) return p;
+  return base ? resolve5(base, p) : null;
+}
+var dotted = (p) => p.split(/[\\/]/).some((s) => s === "." || s === "..");
+function reached(call, resources, base) {
+  const out2 = [];
+  for (const r of resources) {
+    const dir = resourceDir(String(r));
+    if (!dir || dotted(dir)) return null;
+    out2.push(dir);
+  }
+  const input = call.input ?? {};
+  for (const key of ["path", "filePath"]) {
+    const p = input[key];
+    if (p === void 0) continue;
+    const abs = typeof p === "string" && !(isAbsolute(p) && dotted(p)) ? absolute(p, base) : null;
+    if (!abs) return null;
+    out2.push(abs);
+  }
+  for (const key of ["pattern", "include"]) {
+    if (call.tool === "grep" && key === "pattern") continue;
+    const pat = input[key];
+    if (pat === void 0) continue;
+    if (typeof pat !== "string" || isAbsolute(pat) || pat.startsWith("~") || pat.includes(".."))
+      return null;
+  }
+  return out2.length ? out2 : null;
+}
+async function setupSkillReads(ctx) {
+  const { permission, tool } = ctx;
+  if (typeof permission?.hook !== "function" || typeof tool?.hook !== "function") return false;
+  const calls = /* @__PURE__ */ new Map();
+  await tool.hook("execute.before", (t) => {
+    if (typeof t?.id !== "string" || typeof t?.tool !== "string") return;
+    const was = calls.get(t.id);
+    const clash = was && (was.tool !== t.tool || was.session !== t.sessionID);
+    const input = READERS.has(t.tool) ? t.input : void 0;
+    calls.set(t.id, { tool: clash ? "" : t.tool, input, session: t.sessionID });
+    while (calls.size > CALLS) calls.delete(calls.keys().next().value);
+  });
+  const loc = ctx.location;
+  const base = typeof loc?.directory === "string" && loc.directory ? loc.directory : null;
+  const lifts = async (e) => {
+    if (e?.action !== "external_directory" || e.effect !== "ask") return false;
+    const id = e.source?.type === "tool" ? e.source.id : null;
+    const call = typeof id === "string" ? calls.get(id) : void 0;
+    if (!call || !READERS.has(call.tool) || typeof e.sessionID !== "string") return false;
+    if (e.sessionID !== call.session) return false;
+    const paths = reached(call, Array.isArray(e.resources) ? e.resources : [], base);
+    if (!paths) return false;
+    const roots = await skillDirs(ctx);
+    const walked = /* @__PURE__ */ new Set();
+    for (const p of paths) {
+      const c = canonReach(p);
+      const root = c ? roots.find((r) => within(c, r)) : void 0;
+      if (!root) return false;
+      walked.add(root);
+    }
+    return call.tool === "read" || ![...walked].some(leadsOut);
+  };
+  await permission.hook("evaluate", async (e) => {
+    try {
+      if (await lifts(e)) e.effect = "allow";
+    } catch {
+    }
+  });
+  return true;
+}
+
 // js/opencode/host.ts
-import { dirname } from "node:path";
 async function hostEnvOf(ctx) {
   const env = {};
   const v = ctx.app?.version;
@@ -1634,9 +2085,8 @@ async function hostEnvOf(ctx) {
   try {
     const res = await ctx.skill.list();
     const list = Array.isArray(res) ? res : res?.data ?? [];
-    const own = list.find((s) => s?.id === "establish-mcp");
-    if (typeof own?.path === "string" && own.path)
-      env[SKILLS_ROOT_ENV] = dirname(dirname(own.path));
+    const root = list.map(bridgeRoot).find((r) => r !== null);
+    if (root) env[SKILLS_ROOT_ENV] = root;
   } catch {
   }
   return env;
@@ -1664,7 +2114,7 @@ var STEP_MS = 500;
 function resumedWord(key) {
   return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`;
 }
-var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит живой мост другой сессии, не мост этой: слух и занятость здесь места не держат. Твоё место — верни его iskron_stand(take=true), только словом человека; не твоё — встань своим именем iskron_stand.`;
+var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не мост этой сессии: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`;
 function createKeeper(doors) {
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
@@ -2008,9 +2458,9 @@ var placeGone = (kind) => kind === "evicted" ? "его место-спутник
 var placeGoneRefusal = (kind) => kind === "evicted" ? "её место-спутник вытеснено другим держателем" : "её место-спутник отозвано или закрыто платформой (4001)";
 var END_MS = 5e3;
 var SUMMARY_MAX = 4e3;
-var endWord = (who, why, last, kept) => {
+var endWord = (who, why, last, kept2) => {
   const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
-  const done = kept ? `${keptLine(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. ` : "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ";
+  const done = kept2 ? `${keptLine(who, kept2)}; снять его — iskron_channel(action="revoke", standing="${kept2}"), только словом человека. ` : "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ";
   return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
 ${said || "(текста он не оставил — смотри его дело)"}`;
 };
@@ -2078,9 +2528,9 @@ function createLeads(d) {
     if (!l) return;
     leads.delete(child);
     over.add(child);
-    const kept = ended && kind === "end" ? d.ownPlace(child) : null;
-    if (kept) d.say(`Искрон: ${keptLine(who(l, child), kept)}`, "warning");
-    if (ended && !kept) d.seal(child);
+    const kept2 = ended && kind === "end" ? d.ownPlace(child) : null;
+    if (kept2) d.say(`Искрон: ${keptLine(who(l, child), kept2)}`, "warning");
+    if (ended && !kept2) d.seal(child);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const tell = async (text, wakes) => {
@@ -2089,10 +2539,10 @@ function createLeads(d) {
 (родителя плагин не знает — итог некому)`, "warning");
     };
     await tell(
-      kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept),
+      kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept2),
       wake
     );
-    if (!ended || kept) return;
+    if (!ended || kept2) return;
     const failed = await d.close(child).catch(() => null);
     await d.end(child).catch(
       (e) => d.say(
@@ -2569,6 +3019,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const lost = takeLostMarker(authDir(), home);
   if (lost?.text) say(lost.text, "warning");
   if (lost) adopt.take(lost.entries);
+  const adoptNow = () => void (stopped || adopt.now());
   function shake(slot) {
     slot.ready = handshake(slot.bridge, login.on, login.done);
     slot.ready.catch(() => {
@@ -2784,9 +3235,9 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
-    adopt: () => adopt.now(),
+    adopt: adoptNow,
     // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (handoff.ts, #6695).
-    moved: (s, to) => handoff(s, to, home) || mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adopt.now, away: leads.away }, s, to),
+    moved: (s, to) => handoff(s, to, home) || mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
     async stop() {
       stopped = true;
       clearInterval(reaper);
@@ -2806,6 +3257,77 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   };
 }
 
+// js/opencode/tacts.ts
+var WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 36e5;
+function setupTacts(send, takenEarly, freshestRoot, say) {
+  const busy = /* @__PURE__ */ new Set();
+  const queued = /* @__PURE__ */ new Map();
+  const held = /* @__PURE__ */ new Map();
+  const occupied = (id) => {
+    for (const [k, q] of queued) if (q.at + WAKE_HOLD_MS <= Date.now()) queued.delete(k);
+    return busy.has(id) || [...queued.values()].some((q) => q.session === id);
+  };
+  function put(session, child, ev, what) {
+    void send(session, ev.text ?? "", what, child).then((got) => {
+      if (!got?.inbox || takenEarly.delete(got.inbox)) return;
+      queued.set(got.inbox, { session: got.session, at: Date.now() });
+      for (const k of queued.keys()) if (queued.size > 100) queued.delete(k);
+    });
+  }
+  function release(id) {
+    const t = held.get(id);
+    if (!t) return;
+    held.delete(id);
+    clearTimeout(t.timer);
+    put(t.session, t.child, t.ev, "такт внимания");
+  }
+  return {
+    offer(session, child, ev, what) {
+      const id = session ?? freshestRoot();
+      if (!id || !ev.frames?.some(isTact)) return false;
+      const prev = held.get(id);
+      const at = tactAt(ev.frames);
+      const was = prev ? tactAt(prev.ev.frames) : "";
+      const older = !!at && !!was && at < was;
+      if (!onlyTacts(ev.frames) || !occupied(id)) {
+        if (prev && !older) {
+          clearTimeout(prev.timer);
+          held.delete(id);
+        }
+        put(session, child, ev, what);
+        return true;
+      }
+      if (older) return true;
+      const timer = prev?.timer ?? setTimeout(() => release(id), WAKE_HOLD_MS);
+      timer.unref?.();
+      held.set(id, { session, child, ev, timer });
+      say(
+        `Искрон: такт внимания ждёт конца хода сессии${prev ? " — прежний ждущий свёрнут" : ""}`,
+        "info"
+      );
+      return true;
+    },
+    busy(session) {
+      busy.add(session);
+      for (const s of busy) if (busy.size > 100) busy.delete(s);
+    },
+    taken(session, inbox) {
+      if (inbox) return void (queued.delete(inbox) && this.busy(session));
+      busy.delete(session);
+      for (const [k, q] of queued) if (q.session === session) queued.delete(k);
+      release(session);
+    },
+    gone(session) {
+      busy.delete(session);
+      clearTimeout(held.get(session)?.timer);
+      held.delete(session);
+    },
+    stop() {
+      for (const id of [...held.keys()]) release(id);
+    }
+  };
+}
+
 // js/opencode/channel.ts
 var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
 var CASE_BATCH_CAP = 20;
@@ -2813,10 +3335,12 @@ var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
 function toPile(frame) {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside && !askFromPerson(frame))
+    return false;
   return !addressedToMine(frame) || stackOf(frame) === "batch";
 }
 var RIDERS_MAX = 500;
+var MARKS_KEPT = 500;
 function setupChannel(ctx, say, freshestRoot) {
   async function accepting(id) {
     try {
@@ -2863,6 +3387,13 @@ function setupChannel(ctx, say, freshestRoot) {
   }
   const piles = /* @__PURE__ */ new Map();
   const takenEarly = /* @__PURE__ */ new Set();
+  const tacts = setupTacts(
+    (session, text, what, child) => deliver(session, text, what, "queue", child),
+    takenEarly,
+    freshestRoot,
+    say
+  );
+  const tact = tacts.offer;
   function schedule(p) {
     if (p.timer) clearTimeout(p.timer);
     const wait = p.pending ? Math.max(0, p.pending.at + PENDING_MAX_MS - Date.now()) : CASE_BATCH_MS;
@@ -2876,8 +3407,8 @@ function setupChannel(ctx, say, freshestRoot) {
   function flush(p) {
     if (p.timer) clearTimeout(p.timer);
     p.timer = null;
-    if (!p.held.length) return;
-    const frames = p.held.splice(0);
+    const frames = fresh(p, p.held.splice(0));
+    if (!frames.length) return;
     if (!frames.some((f) => addressedToMine(f))) {
       p.riders.push(...frames);
       p.riders.splice(0, Math.max(0, p.riders.length - RIDERS_MAX));
@@ -2885,7 +3416,10 @@ function setupChannel(ctx, say, freshestRoot) {
     }
     const at = Date.now();
     p.pending = { session: "", inbox: null, at };
-    const text = [batchHead([...p.riders.splice(0), ...frames]), ...batchLines(frames)].join("\n");
+    const text = [
+      batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
+      ...batchLines(frames)
+    ].join("\n");
     void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
@@ -2896,14 +3430,31 @@ function setupChannel(ctx, say, freshestRoot) {
     const key = `${child ? "child" : "root"}:${session ?? ""}`;
     let p = piles.get(key);
     if (!p)
-      piles.set(key, p = { session, child, held: [], riders: [], timer: null, pending: null });
+      piles.set(
+        key,
+        p = {
+          session,
+          child,
+          held: [],
+          riders: [],
+          timer: null,
+          pending: null,
+          marks: /* @__PURE__ */ new Set()
+        }
+      );
     if (frame.id && p.held.some((f) => f.id === frame.id)) return;
     p.held.push(frame);
     if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
     if (!p.timer) schedule(p);
   }
+  function noteOwn(p, keys) {
+    if (!p) return;
+    for (const k of keys ?? []) p.marks.add(k);
+    for (const old of p.marks) if (p.marks.size > MARKS_KEPT) p.marks.delete(old);
+  }
+  const fresh = (p, fs) => fs.filter((f) => !eventIn(f, (k) => p.marks.has(k)));
   function riding(ps) {
-    const got = ps.flatMap((p) => p.riders.splice(0));
+    const got = ps.flatMap((p) => fresh(p, p.riders.splice(0)));
     return got.length ? [batchHead(got)] : [];
   }
   function loud(session, text, child = false) {
@@ -2911,7 +3462,13 @@ function setupChannel(ctx, say, freshestRoot) {
     void deliver(session, text, "кадр", "steer", child);
   }
   return {
+    status(session, on) {
+      if (on) tacts.busy(session);
+      else this.taken(session);
+    },
+    gone: tacts.gone,
     taken(session, inbox) {
+      tacts.taken(session, inbox);
       let matched = false;
       for (const p of piles.values()) {
         if (!p.pending || (inbox ? p.pending.inbox !== inbox : p.pending.session !== session))
@@ -2926,6 +3483,7 @@ function setupChannel(ctx, say, freshestRoot) {
       }
     },
     stop() {
+      tacts.stop();
       for (const p of piles.values()) {
         p.pending = null;
         flush(p);
@@ -2947,6 +3505,7 @@ function setupChannel(ctx, say, freshestRoot) {
           if (frame?.type === "status") return;
           if (frame && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
+          noteOwn(own, deliveryKeys(frame));
           void deliver(
             session,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
@@ -2965,17 +3524,17 @@ function setupChannel(ctx, say, freshestRoot) {
           );
           return;
         case "stale":
-          if (ev.text) void deliver(session, ev.text, "пачка лежалых кадров", "queue", child);
+          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
+          if (ev.text && !tact(session, child, ev, "пачка лежалых кадров"))
+            void deliver(session, ev.text, "пачка лежалых кадров", "queue", child);
           return;
         case "backlog":
-          if (ev.text)
-            void deliver(
-              session,
-              ev.text,
-              `пачка побудки (${ev.frames?.length ?? 0})`,
-              "queue",
-              child
-            );
+          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
+          if (ev.text) {
+            const what = `пачка побудки (${ev.frames?.length ?? 0})`;
+            if (!tact(session, child, ev, what))
+              void deliver(session, ev.text, what, "queue", child);
+          }
           return;
         case "lost":
           if (ev.text) loud(session, ev.text, child);
@@ -2995,7 +3554,7 @@ function setupChannel(ctx, say, freshestRoot) {
         case "evicted":
           loud(
             session,
-            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Привязка записей цела; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека.`,
+            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`,
             child
           );
           return;
@@ -3017,7 +3576,7 @@ function setupChannel(ctx, say, freshestRoot) {
 }
 
 // js/opencode/commands.ts
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 function slashOf(markdown) {
   if (!markdown.startsWith("---")) return false;
   const end = markdown.indexOf("\n---", 3);
@@ -3040,7 +3599,7 @@ async function listSkills(ctx) {
     if (!id || !path) continue;
     let text;
     try {
-      text = readFileSync6(path, "utf8");
+      text = readFileSync7(path, "utf8");
     } catch {
       continue;
     }
@@ -3203,7 +3762,7 @@ function createUsageFeed(opts) {
 var WAIT_MS = Number(process.env.ISKRON_PERMISSION_WAIT_MS) || 2e4;
 var RESOURCES = 3;
 var RESOURCE_MAX = 160;
-var askWord = (who, action, resources) => {
+var askWord2 = (who, action, resources) => {
   const cut = resources.slice(0, RESOURCES).map((r) => {
     const one = r.replace(/\s+/g, " ").trim();
     return one.length > RESOURCE_MAX ? `${one.slice(0, RESOURCE_MAX)}…` : one;
@@ -3251,7 +3810,7 @@ function createWaits(ctx, d) {
     const list = Array.isArray(resources) ? resources.map(String) : [];
     await d.tell(
       kid.parent,
-      askWord(kid.who, String(action ?? L("действие", "action")), list),
+      askWord2(kid.who, String(action ?? L("действие", "action")), list),
       true
     );
   }
@@ -3371,6 +3930,15 @@ ${counts}`;
   } catch (e) {
     say(`Искрон: команды скиллов не встали — ${e.message}`, "error");
   }
+  try {
+    if (!await setupSkillReads(ctx))
+      say(
+        "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
+        "warning"
+      );
+  } catch (e) {
+    say(`Искрон: чтение файлов скиллов поставки не открылось — ${e.message}`, "error");
+  }
   const usage = createUsageFeed({
     listModels: () => ctx.model.list(),
     bridgeOf: (s) => half.bridgeOf(s)
@@ -3399,6 +3967,7 @@ ${counts}`;
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            ch?.gone(id);
             void usage.flush(id).finally(() => {
               usage.forget(id);
               half.forget(id);
@@ -3433,6 +4002,11 @@ ${counts}`;
             break;
           case "session.idle":
             if (id) ch?.taken(id);
+            break;
+          // Занят ли ход — ждёт ли такт внимания его конца (channel.ts, #6569); retry — тоже ход.
+          case "session.status":
+            if (id && typeof ev.data?.status?.type === "string")
+              ch?.status(id, ev.data.status.type !== "idle");
             break;
           // Конец хода — не конец субагента (#6625): ребёнок ждёт кадров своего дела,
           // кончает его явный акт (leads.ts). Здесь — лишь ждущий снимок расхода.

@@ -121,9 +121,8 @@ export const ROOM: Readonly<Record<Lang, RoomWords>> = {
     body: (refersTo, author) => `text of message [${refersTo}] from ${author}`,
     bodyAborted: (refersTo) => `message [${refersTo}] cut off by its author`,
     bodyLapsed: (refersTo) => `message [${refersTo}] cut off by the platform on its deadline`,
-    // Прежний шаблон не заполнял это поле: разделитель с буквами — фигурные скобки уходили как есть.
-    closing: (author, endsAt) =>
-      `the lead ${author} proposes to close the case by ${endsAt}{; evidence: evidence}`,
+    closing: (author, endsAt, evidence) =>
+      `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
     closingMay: (entryId) =>
       `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
     closingNot: () => "the objection is not yours to make",
@@ -134,8 +133,7 @@ export const ROOM: Readonly<Record<Lang, RoomWords>> = {
       `[${key}] [${done}] = ${verdict}${note} · ${author}`,
     opened: (author) => `case opened by ${author}`,
     joined: (who) => `entered ${who}`,
-    // То же, что у closing: поле reason прежний шаблон не заполнял.
-    left: (who) => `left ${who}{; reason: reason}`,
+    left: (who, reason) => `left ${who}${reason ? `; reason: ${reason}` : ""}`,
     invite: (author, who) => `${author} invites ${who} to the case`,
     withdraw: (author) => `invitation withdrawn by ${author}`,
     node: (seq, name, realm, reasoning) =>

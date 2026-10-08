@@ -380,6 +380,59 @@ test("a pending flow whose listener is gone is taken over, not re-published", as
   });
 });
 
+// A login killed half-way with its tab marked (#6928): the next bridge on the
+// same auth dir takes it over, and since the dead bridge's marker keeps the tab
+// shut, its own log is where the link is said — without it, a reader of that
+// log saw "no upstream session yet" and nothing else, as if the bridge hung.
+test("a login whose bridge was killed half-way: the next one says its link and names the dead owner", async (t) => {
+  if (process.platform === "win32") return t.skip("the opener is PowerShell there");
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const root = mkdtempSync(join(tmpdir(), "iskron-opener-"));
+    for (const name of ["open", "xdg-open"])
+      writeFileSync(join(root, name), "#!/bin/sh\n", { mode: 0o755 });
+    const opener = { PATH: `${root}:${process.env.PATH}` };
+    const a = spawnBridge(opener, { browser: true });
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    await waitFor(() => readdirSync(dir).some((f) => f.includes(".auth-pending.tab-")), "its tab");
+    const dead = a.proc.pid;
+    await a.stop(); // SIGKILL: the record and the tab marker survive their owner
+
+    const b = spawnBridge(opener, { browser: true });
+    const answer = await b.call("initialize", 1, INIT_PARAMS);
+    assert.equal(authorizeUrlIn(answer.error?.message), url, "the same login, taken over");
+    await b.call("tools/list", 2);
+    assert.ok(b.stderr.includes(url), `the next bridge's log must say the link:\n${b.stderr}`);
+    const trail = readFileSync(join(dir, "grant.log"), "utf8");
+    assert.match(trail, new RegExp(`pid ${dead}\\b.*taken over`), `grant.log:\n${trail}`);
+    assert.equal(
+      JSON.parse(readFileSync(lockFile(dir), "utf8")).pid,
+      b.proc.pid,
+      "the record is the taker's",
+    );
+  });
+});
+
+// The other half of the same rule: a login whose bridge lives is that bridge's —
+// joined, with its link, never taken from under it.
+test("a login whose bridge lives is joined, not taken over", async (t) => {
+  await withFake(t, {}, async ({ dir, spawnBridge }) => {
+    const a = spawnBridge();
+    const url = authorizeUrlIn((await a.call("initialize", 1, INIT_PARAMS)).error?.message);
+    assert.ok(url, "a login must be pending");
+    const b = spawnBridge();
+    const answer = await b.call("initialize", 1, INIT_PARAMS);
+    assert.equal(authorizeUrlIn(answer.error?.message), url, "the live login's link, joined");
+    assert.equal(
+      JSON.parse(readFileSync(lockFile(dir), "utf8")).pid,
+      a.proc.pid,
+      "still its owner's",
+    );
+    assert.doesNotMatch(readFileSync(join(dir, "grant.log"), "utf8"), /taken over/);
+    assert.doesNotMatch(b.stderr, /is gone/);
+  });
+});
+
 test("a bridge told to stop mid-flow outlives it, so the human's click still lands", async (t) => {
   await withFake(t, {}, async ({ dir, spawnBridge }) => {
     const bridge = spawnBridge();
