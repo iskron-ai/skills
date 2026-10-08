@@ -1,6 +1,6 @@
-// Чтение хуков роли для iskron_stand (hook.ts ставит, здесь — читается): список
-// хуков роли — полями webhooks[] (hookfields.ts), без них прозой сервера, — и
-// схема iskron_admin, объявляет ли она параметр channel.
+// Reading role hooks for the stand tool (hook.ts arms them): the role hook list — as
+// webhooks[] fields (hookfields.ts), else the server's prose — and whether the admin
+// tool schema declares the channel parameter.
 import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { FORM } from "./board.ts";
 import { callTool as call } from "./call.ts";
@@ -9,9 +9,9 @@ import { post, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /**
- * Параметры iskron_admin по схеме сервера — читаются заново на каждый iskron_stand:
- * работающий мост подхватывает channel, как только сервер его объявит. null —
- * схему прочесть не удалось (tools/list отказал, пуст или тул на другой странице).
+ * Admin tool parameters by the server schema, read anew on every stand so a running
+ * bridge picks up channel once the server declares it. null — the schema did not read
+ * (tools/list refused, was empty, or the tool is on another page).
  */
 export async function adminParamNames(): Promise<Set<string> | null> {
   const id = `${ID_PREFIX}bridge-admin-schema-${++state.reinitCounter}`;
@@ -29,19 +29,19 @@ export async function adminParamNames(): Promise<Set<string> | null> {
   const admin = (
     tools as { name?: string; inputSchema?: { properties?: Record<string, unknown> } }[]
   ).find((t) => t?.name === tool("admin"));
-  if (!admin) return null; // тула на этой странице нет (список постраничный или урезан) — схема не прочтена
+  if (!admin) return null; // not on this page (the list is paged or cut) — schema unread
   return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
 }
 
-/** Список хуков прозой: узнан ли и будит ли хук место с этим именем. */
+/** The hook list as prose: recognized, and whether a hook wakes the seat with this name. */
 function fromProse(
   text: string,
   isError: boolean,
   name: string,
 ): { recognized: boolean; wakesMe: boolean } {
-  // Пустой список поверхность печатает без заголовка: «Для #N вебхуки не зарегистрированы.» (#5380).
-  // Заголовок узнан, а слово состояния хука — нет: язык угадан частично, и «не будит»
-  // поставило бы второй хук; такой список не распознан целиком.
+  // An empty list is printed without a header (graph @nks/nks-dev, node #5380). A known
+  // header with an unknown hook state word means a half-guessed language; "does not wake"
+  // would arm a second hook, so such a list is not recognized at all.
   const blocks = text.split(/\n(?=\s*#\d+\s*→)/).slice(1);
   const recognized =
     !isError &&
@@ -54,7 +54,7 @@ function fromProse(
   };
 }
 
-/** Хуки роли: узнан ли список, будит ли активный хук место этой сессии, текст ответа. */
+/** Role hooks: list recognized, an active hook wakes this session's seat, the answer text. */
 export async function readRoleHooks(
   realm: string,
   karta: string,

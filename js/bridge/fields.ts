@@ -1,16 +1,12 @@
-// Поля ответов сервера рядом с прозой (граф nks-dev: #6637): structuredContent
-// `{action, …}` на успехе iskron_channel и iskron_admin — ключами api, как их шлёт
-// nks-mcp, — и `_meta["iskron/refusal"]` = {rule, status, data} на отказе. Мост
-// читает поле, когда оно есть и сходится с формой, иначе — прежний шаблон
-// прозы (board.ts, standing.ts, hook.ts), со строкой в лог. Секретов (сокет,
-// статусный адрес, url хука) в полях нет — они только в тексте. Здесь — места
-// (seats[]) и общее; хуки — hookfields.ts, отказ — refusal.ts.
+// Server reply fields next to the prose (graph @nks/nks-dev, node #6637): read when present
+// and on form, else the prose template with a log line. Seats and common helpers here.
+import { tool } from "../delivery/index.ts";
 import { asksFields } from "../shared/fields.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Место — seats[] ответа list, connect и register (у connect и register — одно). */
+/** A seat — seats[] of list, connect and register (one for connect and register). */
 export interface Seat {
   seat_id?: string;
   karta_seq?: number;
@@ -18,21 +14,19 @@ export interface Seat {
   /** `@handle:name` */
   standing?: string;
   listening?: boolean;
-  /** status места в api: `active` | `revoked` | `expired`. */
+  /** api status: `active` | `revoked` | `expired`. */
   state?: string;
-  /** недоставленное */
   pending?: number;
-  /** входящий адрес */
   inbound?: string;
   locale?: string;
   satellite_of?: string | null;
   realm?: string;
   doing?: string;
-  /** register: true — место открыто этим вызовом, false — уже было. */
+  /** register: true — opened by this call, false — already existed. */
   opened?: boolean;
 }
 
-/** Место живо — только по status api; иное и отсутствующее значение живости не дают. */
+/** A seat is live only by api status; any other or missing value is not live. */
 export const LIVE_STATE = "active";
 
 type Obj = Record<string, unknown>;
@@ -62,12 +56,12 @@ const SEAT_KEYS: Record<string, (v: unknown) => boolean> = {
 export const structuredOf = (reply: JsonRpcMessage | null): unknown =>
   reply?.result?.structuredContent;
 
-/** Харнес сам просил поля ответа (shared/fields.ts, #6731) — иначе они ему не отдаются. */
+/** The harness asked for reply fields itself (graph @nks/nks-dev, node #6731). */
 export const harnessAsksFields = (): boolean => asksFields(state.initParams);
 
 /**
- * Ответ тула харнесу: без structuredContent, если поля он не просил, — Claude Code
- * при них отдаёт модели одни поля без текста (#6707). Мост их уже прочёл.
+ * A tool reply for the harness: without structuredContent unless it asked for fields
+ * (graph @nks/nks-dev, node #6707).
  */
 export function forHarness(reply: JsonRpcMessage): JsonRpcMessage {
   const r = reply?.result;
@@ -76,16 +70,12 @@ export function forHarness(reply: JsonRpcMessage): JsonRpcMessage {
   return { ...reply, result: rest };
 }
 
-/**
- * Данные прошли не целиком: сервер выбросил ряды (`dropped` > 0) или не донёс
- * их вовсе (`incomplete: true`, остался {action, incomplete}). Такие поля не
- * годятся — места или хука, которого в них нет, проза бы не потеряла.
- */
+/** Rows were dropped (`dropped` > 0) or not carried at all (`incomplete: true`). */
 export const incomplete = (sc: unknown): boolean =>
   isObj(sc) && (sc.incomplete === true || (sc.dropped !== undefined && sc.dropped !== 0));
 
 const said = new Set<string>();
-/** Поля нет, они неполны или не по форме — шаблон; одна строка в лог на ход за процесс (сторож читает доску каждый такт). */
+/** Falls back to the prose template; one log line per reason per process. */
 export function fallback(what: string, sc: unknown): null {
   const why =
     sc === undefined
@@ -103,16 +93,16 @@ export function fallback(what: string, sc: unknown): null {
 const seat = (v: unknown): Seat | null =>
   isObj(v) && Object.entries(SEAT_KEYS).every(([k, ok]) => ok(v[k])) ? (v as Seat) : null;
 
-/** seats[] ответа этого action — все по форме, иначе null (одно непонятое место — и весь ответ шаблоном). */
+/** seats[] of this action, all on form, else null. */
 function seats(sc: unknown, action: string): Seat[] | null {
-  const what = `iskron_channel ${action}`;
+  const what = `${tool("channel")} ${action}`;
   if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.seats))
     return fallback(what, sc);
   const out = sc.seats.map(seat);
   return out.every((s) => s) ? (out as Seat[]) : fallback(what, sc);
 }
 
-/** Доска полями: места с ролью, адресом и слухом; folded — сколько мест доска свернула (0 — ни одного). */
+/** The board by fields; folded — how many seats the board folded. */
 export function boardField(sc: unknown): { seats: Seat[]; folded: number } | null {
   const list = seats(sc, "list");
   if (!list) return null;
@@ -124,13 +114,13 @@ export function boardField(sc: unknown): { seats: Seat[]; folded: number } | nul
       s.standing.startsWith("@") &&
       typeof s.listening === "boolean",
   );
-  if (!whole || !is.num(folded)) return fallback("iskron_channel list", sc);
+  if (!whole || !is.num(folded)) return fallback(`${tool("channel")} list`, sc);
   return { seats: list, folded: typeof folded === "number" ? folded : 0 };
 }
 
-/** Место ответа connect или register — одно, иначе null. */
+/** The single seat of a connect or register reply, else null. */
 export function seatField(sc: unknown, action: string): Seat | null {
   const list = seats(sc, action);
   if (!list) return null;
-  return list.length === 1 ? list[0] : fallback(`iskron_channel ${action}`, sc);
+  return list.length === 1 ? list[0] : fallback(`${tool("channel")} ${action}`, sc);
 }

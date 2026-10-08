@@ -1,13 +1,11 @@
-// Хук инбокса роли в iskron_stand — чтобы вимарша posed_to приходила тем же
-// сокетом. Место основного графа будит свой входящий адрес. Место другого
-// графа на том же канале своего адреса не имеет: адрес (hook_token) — у канала
-// и привязан к графу, где канал открыт; хук роли в этом графе ставится на канал
-// телом {"channel":"self"}, и доставка идёт внутри службы — в очередь мест роли
-// этого графа на живых сокетах, с to_standing_id места (#5838, слово
-// держателя API). Мост ходит к хукам тулом iskron_admin(action="add_webhook");
-// channel он передаёт, только если схема тула этот параметр объявляет.
-import { tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+// Role inbox hook in the stand tool, so that a posed_to inquiry arrives over the same
+// socket (graph @nks/nks-dev, node #5838). The main graph's seat is woken by its own
+// incoming address; a seat of another graph on the same channel has none — the address
+// (hook_token) belongs to the channel and its graph, so the role hook there goes on the
+// channel with body {"channel":"self"}, delivered inside the service to that graph's
+// role seats. channel is passed only if the admin tool schema declares it.
+import { HOOK, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { callTool as call, short } from "./call.ts";
 import { adminParamNames, readRoleHooks } from "./hooklist.ts";
 
@@ -15,88 +13,47 @@ export interface HookPlace {
   realm: string;
   karta: string;
   name: string;
-  /** входящий адрес места — только у места графа, где открыт канал */
+  /** The seat's incoming address — only for the seat of the graph where the channel is open. */
   incoming: string | null;
   heardHere: boolean;
-  /** отдельное место имя.N — хук роли ему не взводится */
+  /** A separate seat name.N — no role hook for it. */
   sub: boolean;
-  /** место другого графа на канале этого моста */
+  /** A seat of another graph on this bridge's channel. */
   beside: boolean;
-  /** граф, где открыт канал (основное место) — для слова об адресе */
+  /** The graph where the channel is open (main seat) — for the word about the address. */
   channelRealm: string;
 }
 
-/** Шаг хука инбокса роли; возвращает строку ответа iskron_stand. */
+/** The role inbox hook step; returns a line of the stand answer. */
 export async function armRoleHook(p: HookPlace): Promise<string> {
   const { realm, karta, name } = p;
   const hooks = await readRoleHooks(realm, karta, name);
   const { recognized, wakesMe } = hooks;
-  const H = L("Хук инбокса роли", "Role inbox hook");
-  if (p.sub)
-    return L(
-      `${H}: отдельному месту не взводится — почту роли слушает основное место, дела доставляют своё сами.`,
-      `${H}: not armed for a separate seat — the main seat listens to the role's mail, cases deliver their own.`,
-    );
-  if (wakesMe)
-    return L(`${H}: стоит и будит это стояние.`, `${H}: in place and wakes this standing.`);
-  if (!recognized)
-    return L(
-      `${H}: список хуков не распознан — не трогаю (${short(hooks.text, 120)}).`,
-      `${H}: the hook list is not recognized — left alone (${short(hooks.text, 120)}).`,
-    );
-  if (!p.heardHere)
-    return L(
-      `${H}: не взвожу — слух у другого держателя.`,
-      `${H}: not armed — another holder has the hearing.`,
-    );
+  const w = words(HOOK);
+  if (p.sub) return w.sub();
+  if (wakesMe) return w.wakesMe();
+  if (!recognized) return w.unrecognized(short(hooks.text, 120));
+  if (!p.heardHere) return w.otherHolder();
   if (p.beside) {
-    // Своего адреса у места нет — хук ставится на канал, если тул это умеет.
     const params = await adminParamNames();
-    const noAddress = L(
-      `у места этого графа своего входящего адреса нет (адрес — у канала, открытого в графе ${p.channelRealm})`,
-      `this graph's seat has no incoming address of its own (the address is the channel's, opened in graph ${p.channelRealm})`,
-    );
-    if (!params)
-      return L(
-        `${H}: не взведён — ${noAddress}, а схему тула iskron_admin прочесть не удалось (tools/list не ответил или iskron_admin в нём не нашёлся) — объявлен ли параметр channel, не известно; хук на канал (channel=self) не взвожу вслепую — повтори iskron_stand этого графа.`,
-        `${H}: not armed — ${noAddress}, and the iskron_admin schema could not be read (tools/list did not answer or has no iskron_admin) — whether it declares channel is unknown; no blind hook on the channel (channel=self) — repeat iskron_stand for this graph.`,
-      );
-    if (!params.has("channel"))
-      return L(
-        `${H}: не взведён — ${noAddress}, а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`,
-        `${H}: not armed — ${noAddress}, and iskron_admin(action="add_webhook") on this surface declares no channel parameter; nothing to arm a channel hook (channel=self) with — this graph's role mail does not come over the socket.`,
-      );
+    const noAddress = w.noAddress(p.channelRealm);
+    if (!params) return w.noSchema(noAddress);
+    if (!params.has("channel")) return w.noChannelParam(noAddress);
     const h = await call(tool("admin"), {
       action: "add_webhook",
       realm,
       node_id: karta,
       channel: "self",
     });
-    return h.isError
-      ? L(
-          `${H}: на канал (channel=self) не взвёлся — ${short(h.text)}`,
-          `${H}: not armed on the channel (channel=self) — ${short(h.text)}`,
-        )
-      : L(
-          `${H}: взведён на канал (channel=self) — почта роли этого графа идёт в тот же сокет месту этого графа (${short(h.text, 120)}).`,
-          `${H}: armed on the channel (channel=self) — this graph's role mail goes into the same socket to this graph's seat (${short(h.text, 120)}).`,
-        );
+    return h.isError ? w.channelFailed(short(h.text)) : w.channelArmed(short(h.text, 120));
   }
-  if (!p.incoming)
-    return L(
-      `${H}: не взведён — входящий адрес стояния не прочитался.`,
-      `${H}: not armed — the standing's incoming address did not read.`,
-    );
+  if (!p.incoming) return w.noIncoming();
   const h = await call(tool("admin"), {
     action: "add_webhook",
     realm,
     node_id: karta,
-    url: p.incoming, // без ttl_seconds: 0 снимает срок только в update_webhook; на добавлении его отвергает контур (слово архитектора, #5380)
+    // No ttl_seconds: 0 lifts the term only in update_webhook; on add it is rejected (graph @nks/nks-dev, node #5380).
+    url: p.incoming,
   });
-  return h.isError
-    ? L(`${H}: не взвёлся — ${short(h.text)}`, `${H}: not armed — ${short(h.text)}`)
-    : L(
-        `${H}: взведён на входящий адрес места (${short(h.text, 120)}).`,
-        `${H}: armed on the seat's incoming address (${short(h.text, 120)}).`,
-      );
+  return h.isError ? w.failed(short(h.text)) : w.armed(short(h.text, 120));
 }

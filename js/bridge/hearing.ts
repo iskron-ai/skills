@@ -1,17 +1,10 @@
-// Слушает ли место другая сессия (решение владельца #6706) — одно знание о месте
-// на все пути: совет take=true в отказе «место одно на мост», сырой connect,
-// mint и register, выбор места рядом в iskron_stand. «Слушает» — живой локальный
-// сокет места, который держит не эта сессия, либо строка «слушает» на доске.
-// Доска не прочлась или разобрана не целиком (счёт мест в шапке не сошёлся с
-// разобранным, а место среди разобранных не найдено) — мост не знает, кто
-// слушает: это не «свободно», ни совета take=true, ни прохода без take.
-// Роль-сентинел (agent, me, realm-owner) — не число доски: «agent» берёт роль
-// места, которое мост ведёт в этом графе, иначе место ищется под любой ролью.
+// Whether another session listens on a seat (graph @nks/nks-dev, node #6706): a live local
+// socket held by another session, or a listening row on the board; an unread board is "unknown".
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { HEARING, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.ts";
@@ -25,13 +18,12 @@ import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** Роль не числом — сентинел: доска печатает роли числами, сличить его с ней нельзя. */
+/** A non-numeric role is a sentinel: the board prints roles as numbers. */
 export const isSentinel = (karta: string): boolean => !/^\d+$/.test(karta);
 
 /**
- * Роль вызова в форме доски: «agent» — роль места, которое мост ведёт в этом
- * графе, иначе роль, под которой это имя держала эта же сессия (запись держания
- * прежнего моста): своё место узнаётся и под сентинелом.
+ * The call's role in board form: "agent" resolves to the role of the seat led in this
+ * graph, else to the role this session held the name under.
  */
 export function seatKarta(realm: unknown, karta: unknown, name = ""): string {
   const k = normKarta(karta);
@@ -46,20 +38,11 @@ export function seatKarta(realm: unknown, karta: unknown, name = ""): string {
   return rec ? normKarta(rec.karta) : k;
 }
 
-/** «agent», которого мост не разрешил в число: место не сличить ни с доской, ни с прежним держанием — отказ. */
+/** Refusal for an "agent" the bridge could not resolve to a number. */
 export const unresolvedAgent = (karta: string, what: string): string | null =>
-  karta !== "agent"
-    ? null
-    : L(
-        `Отказано (мост): karta="agent" — мост не ведёт места в этом графе и не знает, какой роли это имя у этой сессии, а место под сентинелом не сличить ни с доской, ни с прежним держанием (${what} мог бы встать вторым местом или взять чужое). Назови роль числом — роль агента из AGENTS.md.`,
-        `Refused (bridge): karta="agent" — the bridge leads no seat in this graph and does not know which role this session held the name under, and a seat under the sentinel matches neither the board nor a former hold (${what} could make a second seat or take another's). Name the role by number — the agent's role from AGENTS.md.`,
-      );
+  karta !== "agent" ? null : words(HEARING).unresolvedAgent(what);
 
-/**
- * Написание графа места: тот же граф, записанный иначе, чем у мест, которые
- * ведёт мост, или у записей держания этого имени, берёт их написание — у места
- * один ключ, и своё под другим написанием не становится чужим. Не разрешилось — как есть.
- */
+/** The seat's graph in the spelling of led seats or hold records of this name, so a seat keeps one key. */
 export async function seatRealm(given: unknown, asked: unknown): Promise<string> {
   const realm = typeof given === "string" ? given.trim() : "";
   const name = normName(asked);
@@ -67,7 +50,7 @@ export async function seatRealm(given: unknown, asked: unknown): Promise<string>
     ...[state.standing, ...state.places].flatMap((p) => (p ? [p.realm] : [])),
     ...(name ? holdRecordsNamed(name).flatMap((r) => (r.realm ? [r.realm] : [])) : []),
   ];
-  await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
+  await resolveAgainstLed(realm); // graphs compare in one @owner/slug form (graph @nks/nks-dev, node #5838)
   if (!realm || !known.length || known.includes(realm)) return realm;
   await resolveRealms([realm, ...known], async () => {
     const r = await call(tool("realm"), { action: "list" });
@@ -76,11 +59,10 @@ export async function seatRealm(given: unknown, asked: unknown): Promise<string>
   return known.find((r) => sameRealm(r, realm)) ?? realm;
 }
 
-/** Строка доски — это место: то же имя и та же роль (сентинел — любая). */
+/** A board row is this seat: same name and role (a sentinel matches any role). */
 export const ofSeat = (e: BoardEntry, karta: string, name: string): boolean =>
   (isSentinel(karta) || e.karta === karta) && nameOf(e.address) === name;
 
-/** Что доска знает о месте. */
 export function boardHearing(bd: Board | null, karta: string, name: string): AskedHearing {
   if (!bd?.recognized) return "unknown";
   const at = bd.entries.filter((e) => ofSeat(e, karta, name));
@@ -89,7 +71,7 @@ export function boardHearing(bd: Board | null, karta: string, name: string): Ask
   return unread && (at.length === 0 || isSentinel(karta)) ? "unknown" : "free";
 }
 
-/** Ключи мест графа под этим именем у любой роли, что лежат в каталоге гранта. */
+/** Seat keys of this graph and name under any role in the grant directory. */
 function keysNamed(realm: string, name: string): string[] {
   const dir = standingsDirOf(CFG.authDir);
   try {
@@ -105,10 +87,7 @@ function keysNamed(realm: string, name: string): string[] {
   }
 }
 
-/**
- * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
- * этой сессии (её запись держания), другой — или никто (сокета нет).
- */
+/** Who holds the seat's live local socket: this bridge, a former bridge of this session, another, or none. */
 export async function localHolder(key: string): Promise<"self" | "session" | "other" | null> {
   if (!(await localSocketAlive(localSocketPathOf(key)))) return null;
   if (doors().some((d) => d.key === key && d.ownsSocket)) return "self";
@@ -116,14 +95,12 @@ export async function localHolder(key: string): Promise<"self" | "session" | "ot
   return me && readHoldRecord(key, true)?.session === me ? "session" : "other";
 }
 
-/** Живой локальный сокет места держит мост другой сессии. */
 async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
   for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
     if ((await localHolder(key)) === "other") return true;
   return false;
 }
 
-/** Кто слушает место: другая сессия, никто или мост не знает. */
 export async function askedHearing(
   realm: string,
   karta: string,
@@ -135,10 +112,8 @@ export async function askedHearing(
 }
 
 /**
- * Сырой connect, mint или register места, которое этот мост не ведёт, а слушает
- * другая сессия (или мост не знает): connect отнял бы его без take, register
- * подписал бы записи чужим местом. Отказ вслух; iskron_stand своё вернёт сам, а
- * у чужого встанет рядом.
+ * Refuses a raw connect, mint or register of a seat this bridge does not lead while
+ * another session listens on it (or the bridge does not know).
  */
 export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null> {
   if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
@@ -147,7 +122,7 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   if (!["connect", "mint", "register"].includes(action)) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   const name = normName(a.name);
-  // Роль не названа — та же неизвестность, что «agent»: место без роли не сличить ни с чем.
+  // An unnamed role is as unknown as "agent".
   const karta = seatKarta(realm, normKarta(a.karta) || "agent", name);
   if (!realm) return null;
   const agent = unresolvedAgent(karta, action);
@@ -156,29 +131,17 @@ export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null
   const hearing = await askedHearing(realm, karta, name);
   if (hearing === "free") return null;
   const seat = keyOf(realm, karta, name);
-  const who =
-    hearing === "other"
-      ? L(`место ${seat} слушает другая сессия`, `another session listens on the seat ${seat}`)
-      : L(
-          `слушает ли место ${seat} другая сессия, мост не знает (доска не прочлась или разобрана не целиком)`,
-          `the bridge does not know whether another session listens on the seat ${seat} (the board did not read, or not all of it)`,
-        );
-  return L(
-    `Отказано (мост): ${who} — ${action} ${action === "register" ? "подписал бы записи чужим местом" : "отнял бы его"}; вызов не отправлен. Встань iskron_stand: своё место мост вернёт сам, у чужого встанет рядом на имя.N со слухом.`,
-    `Refused (bridge): ${who} — ${action} ${action === "register" ? "would sign writes with another's seat" : "would take it"}; the call was not sent. Stand with iskron_stand: the bridge takes its own seat back by itself and stands beside another's on name.N with hearing.`,
-  );
+  const w = words(HEARING);
+  const who = hearing === "other" ? w.otherListens(seat) : w.unknownListens(seat);
+  return w.rawSeatRefusal(who, action);
 }
 
-/**
- * Место слушает сам этот мост — держит или переоткрывает свой сокет. Отнятое — не
- * его; оставленное словом (leave) — без слуха: его за это время могла взять
- * другая сессия, вернуть его — iskron_stand (deaf.ts).
- */
+/** This bridge itself listens on the seat; an evicted or parked seat is not its own. */
 export function ledHere(realm: string, karta: string, name: string): boolean {
   if (holdsStanding(realm, karta, name)) return true;
   return (
     ledKey() === keyOf(realm, karta, name) &&
-    !H.unheard && // вернулся тем же адресом без hello — адрес мог повернуть другой (deaf.ts)
+    !H.unheard && // back on the same address without hello — another may have turned it
     !wasEvicted(realm, karta, name) &&
     !isParked(realm, karta, name)
   );

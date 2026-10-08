@@ -1,14 +1,10 @@
-// Память вопросов места на диске (граф nks-dev: роды #6867, доля моста #6868):
-// файл `.asks` рядом с памятью отданного (.seen). Вопрос человеку ждёт ответа
-// сутками, а .seen держит день трафика — открытый вопрос оттуда вытеснился бы,
-// и гасящее его пришло бы числом. Здесь запись живёт с местом: по строке на
-// вопрос мне, на его гашение и на решение моста по id гасящего кадра —
-// вопросов мало, файл не обрезается; файл без своего .seen убирает уборка (sweep.ts).
+// A seat's question memory on disk (graph @nks/nks-dev, nodes #6867, #6868): the
+// `.asks` file beside `.seen`, one line per question, closer and decision; never
+// trimmed, removed with its `.seen` by sweep.ts.
 import { appendFileSync, readFileSync } from "node:fs";
 
 import { type AskStore } from "../shared/askmemory.ts";
 
-/** Путь памяти вопросов места по пути его .seen. */
 export const asksPathOf = (seenPath: string): string => seenPath.replace(/\.seen$/, "") + ".asks";
 
 const loaded = new Map<string, Set<string>>();
@@ -21,7 +17,7 @@ function load(path: string): Set<string> {
   }
 }
 
-/** Память вопросов места: в процессе — набор, на диске — дописью. */
+/** In process a set, on disk an append-only file. */
 export function diskAsks(seenPath: string): AskStore {
   const path = asksPathOf(seenPath);
   let set = loaded.get(path);

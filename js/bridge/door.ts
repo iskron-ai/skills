@@ -1,13 +1,13 @@
-// Локальная дверь места (граф nks-dev: #4230, #5838): сокет в каталоге гранта,
-// к которому цепляется сторож места, его кольцо кадров и память отданного.
-// Сокет службы у моста один на канал (hold.ts), дверей — по одной на место:
-// канал держит места в нескольких графах, и кадр идёт к двери своего места.
+// A seat's local door: the grant-dir socket its watchdog attaches to, its frame ring
+// and delivered memory (graph @nks/nks-dev, nodes #4230, #5838). One service socket
+// per channel (hold.ts), one door per seat: a frame goes to its own seat's door.
 import { chmodSync, mkdirSync, unlinkSync, utimesSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 
+import { DOOR } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
-import { L } from "../shared/lang.ts";
+import { words } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
 import { foldedTacts, type Marks, noteSeen, seenIds, splitBatch } from "../shared/seen.ts";
 import {
@@ -27,14 +27,14 @@ import { StaleBurst } from "./stale.ts";
 import { log } from "./streams.ts";
 import { sweepStale } from "./sweep.ts";
 
-const RING = 20; // кадров, которые прицепившийся позже клиент получит задним числом
+const RING = 20; // frames a late-attaching client gets retroactively
 
-/** Ключ стояния без места — сокет из окружения (hold.ts keyFor). */
+/** Key of a standing without a seat — the socket from the environment (hold.ts keyFor). */
 export const ENV_KEY = "env";
 
 export interface ChannelEvent {
-  // held — мост взял сокет (питает holding плагина OpenCode, #5140); backlog — пачка побудки; lost — слух потерян, resumed — место возвращено без хода агента (оба синтезирует плагин, #5366);
-  // handover — демон машины передаёт место преемнику: дверь закроется и откроется тем же путём, сторож переподхватывает её (watchdog/client.ts)
+  // held — the bridge took the socket (OpenCode plugin holding, #5140); backlog — a wake batch; lost, resumed — synthesized by the plugin (#5366);
+  // handover — the machine daemon hands the seat to a successor: the door reopens at the same path (watchdog/client.ts)
   // prettier-ignore
   kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "handover" | "beside" | "beside-gone";
   key?: string;
@@ -44,34 +44,32 @@ export interface ChannelEvent {
   code?: number;
   version?: string;
   buffered?: number;
-  /** kind="attached": файл памяти отданного этого места — сторож метит и читает его, а не выводит путь сам (сервер ему не известен). */
+  /** kind="attached": this seat's delivered-memory file — the watchdog reads it instead of deriving the path. */
   seen?: string;
-  /** kind="stale": все кадры полосы — принятое, пока место не слушали, или повтор службы; сторож судит их сам в миг отдачи (shared/stalebatch.ts); kind="backlog": показанные кадры пачки по received_at. */
+  /** kind="stale": frames received while unheard or replayed, judged by the watchdog (shared/stalebatch.ts); kind="backlog": shown frames by received_at. */
   frames?: Frame[];
-  /** kind="stale" и "backlog": метки доставки пачки (seen.ts splitBatch) — пишет внёсший её в ход. */
+  /** kind="stale" and "backlog": delivery marks of the batch (seen.ts splitBatch), written by whoever delivers it. */
   marks?: string[];
-  /** kind="stale" моста прежней сборки: показаны не все кадры, это — метки сверх показанных (watchdog/client.ts staleOf). */
+  /** kind="stale" from an older bridge: marks beyond the shown frames (watchdog/client.ts staleOf). */
   unshown?: string[];
-  /** kind="held": место, которое мост держит, — по нему плагин OpenCode ставит спутником дочернюю сессию (#6002). */
+  /** kind="held": the held seat — the OpenCode plugin seats a child session as satellite by it (#6002). */
   place?: { realm: string; karta: string; name: string };
-  /** kind="backlog": сколько кадров ожидало по hello. */
+  /** kind="backlog": frames pending per hello. */
   pending?: number;
   /**
-   * kind="frame" из пачки кадров комнаты (roomstack.ts): его место в залпе — at из of; пачка — одна побудка.
-   * Свёртка адресных слов не мне (#6081, foldAsides): folded — кадр свёрнут в строку следующего;
-   * fold — число слов череды, которую закрывает строка этого кадра (без него — сам кадр).
+   * kind="frame" from a room batch (roomstack.ts): position `at` of `of`; the batch is one wake.
+   * Asides folding (#6081, foldAsides): folded — merged into the next frame's line;
+   * fold — how many words of the run this frame's line closes.
    */
   batch?: { at: number; of: number; fold?: number; folded?: true };
-  /** kind="released": место отпущено своим close или revoke этой сессии — не уход моста, сторож выходит без тревоги (#6638). */
+  /** kind="released": released by this session's own close or revoke — the watchdog exits without alarm (#6638). */
   own?: true;
 }
 
 export interface DoorHooks {
-  /** прицепился локальный клиент — сторож вернулся к месту */
   onAttach: () => void;
-  /** событие, которое прицепившийся позже должен узнать, а не прочесть молчанием (место отняли) */
+  /** An event a late attacher must learn rather than read as silence (seat taken). */
   lateEvent: () => ChannelEvent | null;
-  /** локальный сокет не поднялся — слово делателю */
   onError: (text: string) => void;
 }
 
@@ -79,35 +77,29 @@ export class Door {
   readonly key: string;
   readonly clients = new Set<Socket>();
   readonly ring: { raw: string; frame: Frame | null }[] = [];
-  /** Память доставленных кадров — та же, что читает сторож выхода (../shared/seen.ts). */
+  /** Delivered frames — the same memory the exit watchdog reads (../shared/seen.ts). */
   seen: Set<string>;
-  /** С какого мига ни один локальный клиент не слушает; null — слушают. */
+  /** Since when no local client listens; null — someone listens. */
   idleAt: number | null = Date.now();
-  /** Метки места: память моста и файл .seen, который пишут внёсшие кадр в ход (seen.ts eventIn). */
   readonly marks: Marks = (k) => marksOf(this.seen, this.seenPath)(k);
-  /** Пачки места — лежалая и побудки: у каждого места свои (#5838). */
+  /** Stale and wake batches are per seat (#5838). */
   readonly stale = new StaleBurst(this.marks);
   readonly backlog = new Backlog(this.marks);
-  /** Пачка кадров комнаты рода «в пачку» — для сторожей, не для клиентов уведомлений (roomstack.ts, #5851). */
+  /** Room batch for watchdogs, not notification clients (roomstack.ts, #5851). */
   readonly roomBatch = new RoomBatch(this.marks);
-  /** id места у платформы (hello standings[].standing_id) — по нему кадр находит дверь и занятость — место. */
+  /** Platform seat id (hello standings[].standing_id). */
   standingId: string | null = null;
-  /**
-   * Адрес места @handle:name — так место зовёт доска: из hello (standings[].standing), а у
-   * места рядом до того — выведен из хэндла основного места (addressDerived); нет ни того, ни другого — null.
-   */
+  /** Seat address @handle:name — from hello, or derived from the main seat's handle for a seat beside. */
   address: string | null = null;
-  /** address выведен мостом, а не назван hello. */
   addressDerived = false;
-  /** Почему локальный сокет не поднялся; null — поднят или ещё поднимается. */
+  /** Why the local socket did not come up; null — up or still coming up. */
   listenError: string | null = null;
   private server: Server | null = null;
   private freshen: ReturnType<typeof setInterval> | null = null;
-  /** Отпечатки .key и .sock, которые положила эта дверь (doorfiles.ts): close сносит только их. */
+  /** Stamps of the .key and .sock this door laid (doorfiles.ts): close removes only those. */
   private stamps: { key: string | null; sock: string | null } = { key: null, sock: null };
   private readonly hooks: DoorHooks;
-  // Каталог гранта и сервер — сессии, открывшей дверь (shared/scope.ts): дверь
-  // закрывается и из чужой области (уход демона), а пути у неё те же.
+  // Captured from the opening session's scope: the door may be closed from another scope (daemon exit).
   private readonly authDir: string;
   private readonly serverUrl: string;
 
@@ -123,10 +115,7 @@ export class Door {
     this.seen = seenIds(this.seenPath);
   }
 
-  /**
-   * Место (ключ по имени, роли и графу) помнит отданное на своём сервере и после
-   * моста; стояние без места (ключ "env") смешивает места — его память живёт с мостом.
-   */
+  /** A seat keeps its delivered memory per server beyond the bridge; the "env" standing's memory dies with it. */
   get persistent(): boolean {
     return this.key !== ENV_KEY;
   }
@@ -139,7 +128,7 @@ export class Door {
     return socketPathOf(this.authDir, this.key);
   }
 
-  /** По пути сокета лежит сокет этой двери, а не положенный поверх преемником. */
+  /** The socket at the path is this door's, not one a successor laid over it. */
   get ownsSocket(): boolean {
     return !!this.stamps.sock && stampOf(this.socketPath) === this.stamps.sock;
   }
@@ -169,12 +158,7 @@ export class Door {
       const bad = privateDirProblem(dirname(path));
       if (bad) {
         this.listenError = bad;
-        this.hooks.onError(
-          L(
-            `ДЕЛАТЕЛЬ: локальный сокет стояния не поднят — ${bad}`,
-            `DOER: the local standing socket is not up — ${bad}`,
-          ),
-        );
+        this.hooks.onError(words(DOOR).privateDir(bad));
         return;
       }
     }
@@ -196,13 +180,9 @@ export class Door {
         sock.on("close", () => gone(sock));
         sock.on("error", () => gone(sock));
         this.hooks.onAttach();
-        // Задним числом — доказательство держания (hello) и кадры, которых ни один
-        // местный клиент ещё не получал: перевзведённый сторож не должен нести
-        // делателю то же кольцо второй раз — память доставленного у моста есть.
-        // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
-        // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Событие —
-        // один раз, текстом или числом, и внутри повтора (seen.ts splitBatch). Такт, за
-        // которым в кольце идёт новее, свёрнут (#6569): отдавшего у него не будет — метит мост.
+        // Replay only ring frames no local client has delivered yet (the delivering client
+        // marks them); frames held in a room batch come with it; a tact superseded later in
+        // the ring is folded and marked by the bridge (#6569).
         const folded = foldedTacts(this.ring.map((r) => r.frame));
         for (const f of folded) if (f.id) noteSeen(this.seenPath, String(f.id), this.seen);
         const waiting = this.ring.filter(
@@ -223,8 +203,8 @@ export class Door {
             seen: this.seenPath,
           } satisfies ChannelEvent) + "\n",
         );
-        // Неадресованные месту записи дел (#6574) — пачкой впереди, счётом: так
-        // пришли бы и живыми; поодиночке сторож взял бы их за побудку.
+        // Case entries not addressed to the seat go first as one counted batch (#6574):
+        // one by one the watchdog would take them for a wake.
         const counts = backlog.filter((h): h is { raw: string; frame: Frame } =>
           countOnly(h.frame),
         );
@@ -233,19 +213,14 @@ export class Door {
         for (const { raw, frame } of backlog) {
           if (!countOnly(frame)) put({ kind: "frame", raw, frame });
         }
-        // Место отняли, а сторож перевзвёлся: молчание читалось бы как слух.
+        // Seat taken and the watchdog re-armed: silence would read as hearing.
         const late = this.hooks.lateEvent();
         if (late) sock.write(JSON.stringify(late) + "\n");
       }),
     );
     srv.on("error", (e) => {
       this.listenError = e.message;
-      this.hooks.onError(
-        L(
-          `ДЕЛАТЕЛЬ: локальный сокет стояния не поднялся (${e.message}) — сторожу не к чему цепляться`,
-          `DOER: the local standing socket did not come up (${e.message}) — the watchdog has nothing to attach to`,
-        ),
-      );
+      this.hooks.onError(words(DOOR).listenFailed(e.message));
     });
     srv.listen(
       path,
@@ -257,7 +232,7 @@ export class Door {
         }
         this.stamps.sock = stampOf(path);
         log(`standing socket held; local listeners attach at ${path}`);
-        // Чистка /tmp (macOS — трое суток без доступа) не снесёт сокет долгой вахты.
+        // Keep /tmp cleaners (macOS: 3 days without access) off a long watch's socket.
         if (dirname(path) === shortSocketDir()) {
           const touch = (): void => {
             const now = new Date();
@@ -275,21 +250,17 @@ export class Door {
     this.server = srv;
   }
 
-  /** Отдать неотданные пачки сейчас — при отпускании: побудки и комнаты (backlog.ts). */
   flushBatches(): void {
     this.backlog.flushNow();
     this.roomBatch.flushNow();
   }
 
   /**
-   * Закрыть дверь: клиенты, сервер, файлы ключа и сокета. Идемпотентно. Память
-   * отданного места (.seen по серверу) остаётся: место, возвращённое новым мостом,
-   * получает от платформы ту же очередь снова и не должно отдать её второй раз
-   * (#5831); лежалые файлы прибирает уборка по возрасту (sweep.ts). Память
-   * стояния без места уходит с мостом, как прежде.
+   * Close the door: clients, server, key and socket files. Idempotent. A seat's
+   * delivered memory stays: a new bridge gets the same queue again (#5831); sweep.ts
+   * removes old files by age.
    */
   close(): void {
-    // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
     this.flushBatches();
     this.stale.drop();
     for (const c of this.clients) {
@@ -306,8 +277,7 @@ export class Door {
         srv?.close();
       } catch {}
     };
-    // Файлы двери — только свои: тем же путём мог встать преемник того же места (doorfiles.ts).
-    // Сокет, ещё не поднятый (отпечатка нет), закрывается как есть.
+    // Only own files: a successor of the same seat may sit at the same path (doorfiles.ts).
     if (process.platform === "win32" || !this.stamps.sock) shut();
     else closeServerKeeping(this.socketPath, this.stamps.sock, shut);
     unlinkOwned(keyFilePathOf(this.authDir, this.key), this.stamps.key);

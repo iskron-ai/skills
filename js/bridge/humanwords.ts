@@ -1,36 +1,36 @@
-// Слова человека в полёте (#5953) — память двери моста: тело такого слова —
-// слово человека, не кадр пачки (roomstack.ts). Ключ — нумерация, дело и номер
-// записи: номер свой в каждом деле (граф nks-dev: #6576, shared/numbering.ts).
+// Human words in flight (graph @nks/nks-dev, node #5953) — the bridge door's memory:
+// the body of such a word is the human's word, not a batch frame (roomstack.ts). Key —
+// numbering, case and entry number: the number is per case (node #6576, shared/numbering.ts).
 import { type Frame } from "../shared/channel.ts";
 import { numberedKey } from "../shared/numbering.ts";
 
-/** Сколько слов человека в полёте помнить до их тела. */
+/** How many human words in flight to remember until their body. */
 const HUMAN_WORDS_KEEP = 200;
 
 const rec = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" ? (v as Record<string, unknown>) : {};
 export const idOf = (v: unknown): string =>
   typeof v === "number" || (typeof v === "string" && v) ? String(v) : "";
-/** entry_id записи дела: из строки журнала, иначе из конверта. */
+/** entry_id of a case entry: from the journal line, else from the envelope. */
 const entryOf = (frame: Frame): string => {
   const f = rec(frame);
   return idOf(rec(f.line).entry_id ?? f.entry_id);
 };
-/** Дело кадра (id, иначе seq); "" — кадр без дела, и запись узнаётся одним номером. */
+/** The frame's case (id, else seq); "" — a frame without a case, the entry is known by number alone. */
 const caseOf = (frame: Frame): string => {
   const room = rec(rec(frame).room);
   return idOf(room.id) || idOf(room.seq);
 };
 const wordKey = (frame: Frame, entry: string): string =>
   entry ? numberedKey(frame, `${caseOf(frame)}|${entry}`) : "";
-/** Кадр held — то слово, чьё тело body несёт (word — запись слова в деле тела). */
+/** Whether frame held is the word whose body `body` carries (word — the word's entry in the body's case). */
 export const isWordOf = (held: Frame, body: Frame, word: string): boolean =>
   !!word && wordKey(held, entryOf(held)) === wordKey(body, word);
 
 export class HumanWords {
   private readonly words = new Set<string>();
 
-  /** Слово человека в полёте — по его собственной записи. */
+  /** A human word in flight — by its own entry. */
   remember(said: Frame): void {
     const key = wordKey(said, entryOf(said));
     if (!key) return;
@@ -39,7 +39,7 @@ export class HumanWords {
     if (this.words.size > HUMAN_WORDS_KEEP && !oldest.done) this.words.delete(oldest.value);
   }
 
-  /** true — тело несёт слово человека в полёте (word — запись слова в деле тела); память снята. */
+  /** true — the body carries a human word in flight (word — its entry in the body's case); forgotten. */
   forget(body: Frame, word: string): boolean {
     const key = wordKey(body, word);
     return !!key && this.words.delete(key);

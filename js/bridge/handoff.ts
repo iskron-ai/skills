@@ -1,12 +1,8 @@
-// Передача сокета места преемнику при смене демона (граф nks-dev: #6586, #6482).
-// Сервер пишет в закрывающийся сокет, пока не прочтёт кадр закрытия, и считает
-// кадр доставленным по записи — закрытый сокет терял бы слово молча. Поэтому
-// уходящий демон сокет не закрывает: держит его, пока преемник не откроет тот же
-// адрес и сервер не вытеснит старый кодом 4000, либо до предела; пришедшее за это
-// время — в спул (spool.ts). Предел вышел — сокет закрыт, как прежде, и занятость снята.
-import { LOGGERS } from "../delivery/index.ts";
+// Handing a seat's socket to the successor on daemon change (graph @nks/nks-dev, nodes #6586, #6482):
+// the leaving daemon keeps the socket until the successor's 4000 or the limit; frames go to the spool.
+import { HANDOFF, LOGGERS } from "../delivery/index.ts";
 import { EVICTED_CODE, type Frame, type Holder } from "../shared/channel.ts";
-import { L } from "../shared/lang.ts";
+import { words } from "../shared/lang.ts";
 import { socketPathOf, spoolFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
@@ -16,10 +12,9 @@ import { publishStatusTo } from "./statuspost.ts";
 import { emit, log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
 
-/** Удержанные сокеты мест — процесса, не сессии: демон ждёт их всех перед уходом. */
+/** Kept seat sockets, per process: the daemon awaits them all before leaving. */
 const pending = new Set<Promise<void>>();
 
-/** Держать сокет места до вытеснения преемником или до предела; кадры — в спул. */
 function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null): void {
   const path = spoolFilePathOf(CFG.authDir, key);
   const door = socketPathOf(CFG.authDir, key);
@@ -36,11 +31,7 @@ function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null)
       void Promise.resolve(after).then(() => resolve());
     };
     timer = setTimeout(() => {
-      // Преемник не взял место — возвращать его некому (тонкий мост умер следом,
-      // SIGTERM обоим): занятость — слово ушедшего, уходит с местом (#5059).
-      // Вернётся мост позже — место вернёт запись держания, а строку занятости —
-      // только той же сессии харнеса, которую назвал плагин (resume.ts, #6017);
-      // мост без имени сессии (Claude Code) встаёт без строки, её говорят заново.
+      // No successor: the busy line leaves with the seat (graph @nks/nks-dev, nodes #5059, #6017).
       const cleared = statusUrl ? clearBusy(key, statusUrl, door) : undefined;
       end(`no successor took the socket in ${HANDOFF_MS / 1000}s — closed`, cleared);
       holder.close("the successor did not take the place");
@@ -59,11 +50,8 @@ function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null)
 }
 
 /**
- * Снять занятость места, которое преемник не взял до предела. Пустой POST без
- * standing_id ложится на все места канала — и на строку, которую преемник,
- * вставший в последний миг (его 4000 ещё в пути), уже поставил: дверь места
- * слушает — место его, строка не трогается. Окно остаётся одно: преемник
- * открыл сокет у службы, а дверь ещё не поднял.
+ * Clears the busy line of a seat no successor took. An empty POST hits every seat of
+ * the channel, so a listening door means a late successor and the line is left alone.
  */
 async function clearBusy(key: string, statusUrl: string, door: string): Promise<void> {
   if (await localSocketAlive(door)) {
@@ -74,10 +62,7 @@ async function clearBusy(key: string, statusUrl: string, door: string): Promise<
   log(`place ${key}: ${st.ok ? "busy line cleared" : `busy line not cleared — ${st.body}`}`);
 }
 
-/**
- * Отпустить сокет места: передаётся (keepFor — ключ места) — держать до вытеснения,
- * иначе закрыть. `statusUrl` — занятость места, снимаемая, если преемник не пришёл.
- */
+/** Lets a seat's socket go: kept until eviction when handed over (keepFor), else closed. */
 export function letGo(
   holder: Holder | null,
   keepFor: string | null,
@@ -89,9 +74,8 @@ export function letGo(
 }
 
 /**
- * Место держит этот держатель (hello) — дослать пришедшее уходящему демону тем же
- * путём. Кадр места, которого мост не держит (место рядом не вернулось), основному
- * месту его кадром не отдаётся и в его .seen не метится — слово с адресатом и кадром.
+ * Feeds the leaving daemon's spool through this holder. A frame of a seat the bridge
+ * does not hold is not given to the primary seat — it becomes a note to the doer.
  */
 export function takeSpool(
   key: string,
@@ -102,12 +86,7 @@ export function takeSpool(
     const p = primary();
     const to = p && strayOf(frame, p);
     if (!p || !to) return feed(raw, frame);
-    const text = L(
-      `ДЕЛАТЕЛЬ: кадр ${String(frame?.id ?? "?")} из спула смены демона адресован месту ${to}, ` +
-        `не вернувшемуся, — не кадр места ${p.door.key}; вернуть место — iskron_stand в его графе. Кадр: ${raw}`,
-      `DOER: frame ${String(frame?.id ?? "?")} from the daemon-change spool is addressed to the seat ${to}, ` +
-        `which has not returned — not a frame of the seat ${p.door.key}; to bring the seat back — iskron_stand in its graph. Frame: ${raw}`,
-    );
+    const text = words(HANDOFF).strayFrame(String(frame?.id ?? "?"), to, p.door.key, raw);
     log(text);
     const ev: ChannelEvent = { kind: "note", text };
     p.door.broadcast(ev);
@@ -119,5 +98,4 @@ export function takeSpool(
   });
 }
 
-/** Все удержанные сокеты отпущены — вытеснены преемником или закрыты по пределу. */
 export const handoffsSettled = (): Promise<void> => Promise.all([...pending]).then(() => undefined);
