@@ -166,9 +166,11 @@ export default {
       );
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
       // тихий пуш (-q/--quiet) не печатает «To <remote>» и по выводу неотличим от отказа: судит состояние git —
-      // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master
+      // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master;
+      // равенство могло стоять до команды — видимый отказ git в выводе (fatal:, error:, ! [rejected]) вето
       let quiet = false;
-      if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<")) {
+      if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") &&
+        !/^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m.test(out)) {
         // каталог сессии, не процесса сервера; нет его — хук молчит
         const cwd = await dirOf(input.sessionID);
         if (typeof cwd === "string" && cwd) {

@@ -585,6 +585,70 @@ for (const [name, command, wakes, lands] of quietCases) {
   });
 }
 
+// Equal refs are the state of the repository, not the outcome of this push: they
+// may hold before the call, and a refusal leaves them as they were. A refusal
+// git did print (`fatal:`, `error:`, ` ! [rejected]`, ` ! [remote rejected]` at
+// a line start) vetoes the fallback; a quiet success still wakes.
+// [name, command, output (null — run it for real), wakes]
+const quietVeto = [
+  [
+    "a refusal before `;` stays silent",
+    "git push -q nonexistent-remote; echo finished",
+    null,
+    false,
+  ],
+  [
+    "a fatal after progress lines stays silent",
+    "git push -q origin feat/x 2>&1 | tail -4",
+    "Enumerating objects: 3, done.\nCounting objects: 100% (3/3), done.\nWriting objects: 100% (2/2), 230 bytes | 230.00 KiB/s, done.\nfatal: the remote end hung up unexpectedly\n",
+    false,
+  ],
+  [
+    "a remote rejection stays silent",
+    "git push -q origin feat/x 2>&1 | tail -2",
+    " ! [remote rejected] feat/x -> feat/x (pre-receive hook declined)\nerror: failed to push some refs to 'origin'\n",
+    false,
+  ],
+  [
+    "a rejection stays silent",
+    "git push -q origin feat/x 2>&1 | head -1",
+    " ! [rejected]        feat/x -> feat/x (fetch first)\n",
+    false,
+  ],
+  [
+    "an error line alone stays silent",
+    "git push -q origin feat/x; echo done",
+    "error: src refspec feat/y does not match any\ndone\n",
+    false,
+  ],
+  [
+    "a quiet success with remote chatter wakes",
+    "git push -q origin feat/x 2>&1 | tail -3",
+    "remote: \nremote: Create a pull request for 'feat/x' on GitHub by visiting:\nremote:      https://example.org/pull/new/feat/x\n",
+    true,
+  ],
+  ["a quiet success without output wakes", "git push -q origin feat/x; echo done", "done\n", true],
+];
+
+for (const [name, cmd, given, wakes] of quietVeto) {
+  test(`quiet push, refs already equal: ${name}`, async () => {
+    const { a } = quietRepos(); // HEAD equals @{push} before the call
+    const output = given ?? sh(a, cmd);
+    assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
+    const after = await loadPlugin({ s1: a });
+    const input = {
+      tool: "bash",
+      id: callID(),
+      sessionID: "s1",
+      status: "completed",
+      input: { command: cmd },
+      result: { content: output, metadata: { exit: 0 } },
+    };
+    await after(input);
+    assert.equal(String(input.result.content).includes("пуш"), wakes, `opencode: ${cmd}`);
+  });
+}
+
 // text is not a command, whatever the state of git says
 for (const cmd of [
   'echo "note; git push -q origin x"',
