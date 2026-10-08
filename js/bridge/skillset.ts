@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BRIDGE_FILE, BRIDGE_SKILL, SKILL_SET } from "../delivery/index.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL, SKILL_SET, SKILL_STAMP_FILE } from "../delivery/index.ts";
 import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { currentScope, envOf } from "../shared/scope.ts";
 import { skillLock } from "../shared/skilllock.ts";
@@ -75,7 +75,7 @@ function treeStamp(root: string): string | null {
   for (const name of names) {
     let body: Buffer;
     try {
-      body = readFileSync(join(root, name, "SKILL.md"));
+      body = readFileSync(join(root, name, SKILL_STAMP_FILE));
     } catch {
       continue;
     }

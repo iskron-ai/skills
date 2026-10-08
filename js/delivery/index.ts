@@ -19,6 +19,7 @@ export {
   RUNTIME_PREFIX,
   SERVER_URLS,
   SKILL_SET,
+  SKILL_STAMP_FILE,
   SUB_ENTRY_PREFIX,
 } from "./product.ts";
 export { BUILD_MARK, CHANNEL_MARK, VERSION } from "./version.ts";
