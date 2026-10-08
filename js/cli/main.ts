@@ -1,24 +1,6 @@
-// Один исполняемый файл поставки iskron на все три процесса и диагностику:
-//
-//   node iskron.mjs [bridge] [server-url] [flags]   мост stdio↔https (по умолчанию)
-//   node iskron.mjs watchdog [ключ] [--auth-dir <dir>] [--lang en|ru]        сторож сокета под наблюдателем харнеса
-//   node iskron.mjs watchdog-exit [ключ] [--auth-dir <dir>] [--lang en|ru]   сторож выхода-на-кадре
-//   node iskron.mjs watchdog-codex [ключ] [--auth-dir <dir>] [--lang en|ru]  сторож Codex: кадр в идущий тред через app-server
-//   node iskron.mjs doctor [server-url] [flags]     какая сборка стоит и работает ли она
-//   node iskron.mjs update [--auth-dir <dir>]       свежий релиз в дом: мост, плагин OpenCode, SETUP.md
-//   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]  постоянный выбор адреса сервера на этой машине
-//   node iskron.mjs check-rituals [репо...] [--json] [-- репо...]  плагины ритуалов OpenCode не пишут в сессии чужих каталогов и не ломаются
-//   node iskron.mjs daemon --auth-dir <dir>         демон машины для тонких мостов (bridge/daemon.ts)
-//   node iskron.mjs version | --version             сборка vX.Y.Z+хеш и сборка демона (без неё при ISKRON_BRIDGE_DAEMON=0)
-//
-// Каждый долгоживущий запуск (мост, сторожа) сперва выравнивает дом: своя
-// сборка новее домашней — ложится в дом; домашняя новее — запускается она
-// (js/bridge/update.ts). Так свежая копия побеждает, каким бы файлом ни
-// запустил харнес.
-//
-// Подкоманда без аргументов и всё, что не подкоманда, — мост: так запись в
-// конфиге харнеса `node ~/.iskron-bridge/iskron-bridge.mjs` остаётся верной,
-// каким бы именем ни лежала копия.
+// One executable for the bridge, the watchdogs, the daemon and diagnostics;
+// subcommands are listed by --help. No subcommand, or anything that is not one,
+// runs the bridge, so a harness config entry stays valid whatever the copy is named.
 import { BUILD } from "../bridge/build.ts";
 import { daemonMain } from "../bridge/daemon.ts";
 import { bridgeMain } from "../bridge/main.ts";
@@ -55,9 +37,9 @@ const usage = (): string => `iskron ${BUILD}
 const argv = process.argv.slice(2);
 const [first, ...rest] = argv;
 
-// Дом против себя — только у долгоживущих: мост и сторожа. doctor и update
-// говорят о том файле, который запустили; --version и --help чисты. Демон
-// машины сверяет дом сам: домашняя новее — встаёт преемником, а не обёрткой.
+// Only long-lived runs (bridge, watchdogs) align the home copy first (bridge/update.ts):
+// doctor and update speak of the file that was launched, and the daemon aligns itself,
+// rising as a successor rather than a wrapper.
 const LONG_LIVED = new Set([undefined, "bridge", "watchdog", "watchdog-exit", "watchdog-codex"]);
 const longLived =
   LONG_LIVED.has(first) ||
@@ -101,12 +83,11 @@ function dispatch(): void {
       bridgeMain(rest);
       break;
     case "daemon":
-      // Демон машины для тонких мостов (bridge/daemon.ts); дом против себя он сверяет сам.
       void daemonMain(rest);
       break;
     case "--version":
     case "version":
-      // При тонком мосте (умолчание) — и сборка демона своего каталога гранта, второй строкой.
+      // With the thin bridge (the default) the daemon's build follows on a second line.
       void versionLines(rest).then((lines) => process.stdout.write(lines.join("\n") + "\n"));
       break;
     case "--help":

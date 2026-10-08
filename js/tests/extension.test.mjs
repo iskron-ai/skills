@@ -20,7 +20,7 @@
 //     to the network and a browser. Away from extensions/, and with HOME moved,
 //     every candidate is the probe's to choose.
 //
-// The shipped file is the esbuild output of js/extension/iskron.ts — plain ESM,
+// The shipped file is the esbuild output of js/extension/main.ts — plain ESM,
 // loaded by Node as is; the TypeScript source is checked against the real pi
 // types by `npm run typecheck`, not here.
 //

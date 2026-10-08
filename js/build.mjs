@@ -73,11 +73,11 @@ async function produce() {
   // к нему печатает сам мост в ответе connect, и второй копии никто не называет.
   outputs.set(
     "skills/establish-mcp/scripts/iskron.mjs",
-    await bundleNode("js/cli/iskron.ts", "#!/usr/bin/env node"),
+    await bundleNode("js/cli/main.ts", "#!/usr/bin/env node"),
   );
 
   // Расширение pi — ESM-модуль с default-экспортом; pi грузит .js из extensions/.
-  outputs.set("extensions/iskron.js", await bundleNode("js/extension/iskron.ts"));
+  outputs.set("extensions/iskron.js", await bundleNode("js/extension/main.ts"));
 
   // Плагин OpenCode — ESM-модуль формы OpenCode 2 без единого импорта: типы
   // @opencode/plugin стираются сборкой. Едет в establish-mcp, потому что
@@ -105,8 +105,14 @@ async function produce() {
 // (bundle-sync: ISKRON_BUILD_CHANNEL=release). Рабочая копия собирает dev в DEV_DIR вне
 // индекса — ею гонятся пробы и живые прогоны, и такой мост дом машины не освежает.
 // Сверка: в закоммиченных байтах нет метки dev, у моста — метка выпуска.
-const DEV_MARK = '"iskron-build:dev"';
-const RELEASE_MARK = '"iskron-build:release"';
+// Метка — одним источником в слое поставки (js/delivery/version.ts, граф nks-dev: #6809).
+const MARK_SOURCE = "js/delivery/version.ts";
+const markDev = /^export const CHANNEL_MARK: string = "([^"]+:dev)";$/m.exec(
+  readFileSync(join(ROOT, MARK_SOURCE), "utf8"),
+)?.[1];
+if (!markDev) throw new Error(`${MARK_SOURCE}: нет строки CHANNEL_MARK с меткой :dev`);
+const DEV_MARK = `"${markDev}"`;
+const RELEASE_MARK = `"${markDev.replace(/:dev$/, ":release")}"`;
 const RELEASE = process.env.ISKRON_BUILD_CHANNEL === "release";
 const DEV_DIR = join(ROOT, "dist", "dev");
 const BRIDGE = "skills/establish-mcp/scripts/iskron.mjs";
@@ -158,7 +164,7 @@ if (CHECK) {
       `выходы сборки разошлись со списком OUTPUTS: ${[...outputs.keys()].join(", ")}`,
     );
   if (!outputs.get(BRIDGE).includes(DEV_MARK))
-    throw new Error(`iskron.mjs: нет метки канала ${DEV_MARK} (js/shared/version.ts)`);
+    throw new Error(`iskron.mjs: нет метки канала ${DEV_MARK} (${MARK_SOURCE})`);
   const base = RELEASE ? ROOT : DEV_DIR;
   for (const [rel, built] of outputs) {
     const path = join(base, rel);
