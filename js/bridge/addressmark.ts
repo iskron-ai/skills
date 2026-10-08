@@ -5,8 +5,10 @@
 // Так же гасящее вопрос мне — снятие, ответ другого места моей роли, переспрос
 // другому: адресата у них нет. Сторож выхода выходит на первом кадре, второй
 // приходит новому процессу — память процесса его не узнает. Мост видит оба:
-// метит второй addressed; первый помнит в памяти отданного места (.seen), чтобы
-// узнать второй и после своего перезапуска и в лежалых.
+// метит второй addressed; первый помнит на диске — слово в .seen места, вопрос
+// в его .asks (askdisk.ts), — чтобы узнать второй и после своего перезапуска.
+// Решение моста о кадре вопроса — единственное: кадр несёт asks_decided, и
+// плагины и сторожа своей памятью вопросов его не перерешают.
 import { addressedToMine, wordKeyOf } from "../shared/addressed.ts";
 import { closesMine, noteAsk } from "../shared/askmemory.ts";
 import { ASK_KINDS } from "../shared/asks.ts";
@@ -25,15 +27,14 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
   } else if (rk?.kind === "body" && !rk.aside) {
     if (seen.has(markOf(frame)) || addressedToMine(frame)) frame.addressed = true;
   } else if (rk && (ASK_KINDS.has(rk.kind) || rk.kind === "progress")) {
-    // Решение — один раз на кадр и на диске: повтор того же кадра платформой
-    // (мост умер в окне пачки) находит его, хотя вопрос в памяти уже погашен.
-    // Решил мост — одна память на кадр: плагины и сторожа читают addressed, своей не судят.
-    const hit = `askhit:${typeof frame.id === "string" ? frame.id : ""}`;
+    // Решение — один раз на кадр, в .asks рядом с вопросами: повтор того же кадра
+    // платформой (мост умер в окне пачки) находит его, хотя вопрос уже погашен.
+    const hit = `hit:${typeof frame.id === "string" ? frame.id : ""}`;
     const store = diskAsks(seenPath);
-    if (seen.has(hit)) frame.addressed = true;
+    if (store.has(hit)) frame.addressed = true;
     else if (closesMine(store, frame as Record<string, unknown>)) {
       frame.addressed = true;
-      if (typeof frame.id === "string") noteSeen(seenPath, hit, seen);
+      if (typeof frame.id === "string") store.add(hit);
     }
     noteAsk(store, frame as Record<string, unknown>);
     (frame as Record<string, unknown>).asks_decided = true;

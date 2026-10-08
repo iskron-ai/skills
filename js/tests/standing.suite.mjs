@@ -5391,6 +5391,16 @@ for (const [what, closer, words, answered, replayed, askAgain, evicted] of [
     false,
     true,
   ],
+  // …and its replay after .seen let go of the first receipt.
+  [
+    "a withdrawal replayed after .seen let go",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    true,
+    false,
+    true,
+  ],
 ])
   test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
     const { fake, dir, key, bridge } = await connected(t, {

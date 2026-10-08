@@ -6166,6 +6166,9 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const foreign = ask(101, MY_KARTA, {}, OTHER_KEY);
     foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
     await quiet(foreign);
+    // The bridge decided the frame (asks_decided): the plugin does not re-decide it by its
+    // own memory — not addressed by the bridge, a count, though it would close 100 here.
+    await quiet({ ...askWithdrawn(98, 100), asks_decided: true });
     // The withdrawal of the question to me open on the key (the last re-ask, 100) is mine,
     // in words, without a wake.
     const w = await send(askWithdrawn(99, 100), 5);
