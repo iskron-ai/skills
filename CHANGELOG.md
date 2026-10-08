@@ -1,5 +1,24 @@
 # Changelog
 
+## [7.6.0](https://github.com/iskron-ai/skills/compare/v7.5.0...v7.6.0) (2026-10-08)
+
+
+### Features
+
+* **assistant:** check abandoned work before calling its role ([#389](https://github.com/iskron-ai/skills/issues/389)) ([2c2294c](https://github.com/iskron-ai/skills/commit/2c2294c07ed74ad39155c65c2012e4905826ae4e))
+* **iskronify:** memory-guard refuses with a route from slots, role files keep the repo tail; contract 24 ([#388](https://github.com/iskron-ai/skills/issues/388)) ([30176d5](https://github.com/iskron-ai/skills/commit/30176d5927a7ed08fdf06ee09ac48da5d3a7ba28))
+* **skills:** вопрос человеку — карточкой ask, ответ — ack, адрес — стояние; строка дела — сводка ([#396](https://github.com/iskron-ai/skills/issues/396)) ([1319c39](https://github.com/iskron-ai/skills/commit/1319c39b653d1bc177dcef4bf046d5255c6ae51c))
+* **skills:** связать моменты двери с ходами по графу ([#384](https://github.com/iskron-ai/skills/issues/384)) ([5c59710](https://github.com/iskron-ai/skills/commit/5c59710c2646affe0282014d5bc06d345051545b))
+
+
+### Bug Fixes
+
+* **bridge:** запись держания без сессии не делает своё место чужим ([#386](https://github.com/iskron-ai/skills/issues/386)) ([8d0a0e5](https://github.com/iskron-ai/skills/commit/8d0a0e577962a4a1d7cc40f9b31ae33a4eb77680))
+* **iskronify:** готчи — узлом всегда, GOTCHAS.md лишь указатель на узлы (шаблон в ногу с Шагом 7) ([#394](https://github.com/iskron-ai/skills/issues/394)) ([96aa261](https://github.com/iskron-ai/skills/commit/96aa2619954d0929435295728a9f73f33bda751b))
+* **iskronify:** холодное ревью в OpenCode — ручная изоляция отрешённым деревом ведущего, не «ревью не было» ([#399](https://github.com/iskron-ai/skills/issues/399)) ([e2c48fd](https://github.com/iskron-ai/skills/commit/e2c48fdad4f83507adb8b2d028d7907b94641596))
+* **iskronify:** хук мержа в ногу с ритуалом (исключение работы по ссылке, модусы по свидетельству, «протки»); строка дела — сводка, не журнал на каждое действие ([#397](https://github.com/iskron-ai/skills/issues/397)) ([1d7bae1](https://github.com/iskron-ai/skills/commit/1d7bae163c3a902c6b878284b0a379062c1a39e5))
+* **tests:** перевзвод после пачки лежалых и тред Codex ждут метки сторожа, а не печати и паузы ([#398](https://github.com/iskron-ai/skills/issues/398)) ([4d7590c](https://github.com/iskron-ai/skills/commit/4d7590c0aa21d2ce615a219a04f3846b56919210))
+
 ## [7.5.0](https://github.com/iskron-ai/skills/compare/v7.4.1...v7.5.0) (2026-10-08)
 
 
