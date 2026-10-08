@@ -2,7 +2,7 @@
 // добавка к части 2): `*/SKILL.md` — прежняя мера, `*/**` — каждый файл скилла.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -49,6 +49,21 @@ test("the every-file mask sees a change in any file of a skill", () => {
     assert.notEqual(treeStamp(root, "*/**"), before);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the every-file mask follows a file symlink as the one-file mask does", () => {
+  const root = set();
+  const target = join(root, "..", `${root.split("/").pop()}-target.md`);
+  try {
+    writeFileSync(target, "one");
+    symlinkSync(target, join(root, "a", "linked.md"));
+    const before = treeStamp(root, "*/**");
+    writeFileSync(target, "two");
+    assert.notEqual(treeStamp(root, "*/**"), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(target, { force: true });
   }
 });
 
