@@ -286,6 +286,9 @@ export async function resumeBy(
       elsewhere.push(key);
       continue;
     }
+    // Своё доказано до возврата: на записи стояла эта сессия либо место ведёт сам мост.
+    const me = sel.session ?? sessionOfBridge();
+    const proven = key === led || (!!me && rec.session === me);
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
       const kept = readHoldRecord(key);
@@ -312,8 +315,8 @@ export async function resumeBy(
       ...new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir]),
     ].filter((k) => k !== key && readHoldRecord(k) !== null);
     if (others.length) lines.push(resumeWords.othersInDir(others));
-    // Взятое не своё — отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
-    lines.push(resumeWords.notYours());
+    // Своё не доказано — путь отпустить, не кончая канала: revoke места, основавшего канал, платформа отвергает.
+    if (!proven) lines.push(resumeWords.notYours());
     return { resumed: true, key, pending: back.pending, word: lines.join("; "), others };
   }
   return {
