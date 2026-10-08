@@ -1,6 +1,7 @@
 // Имя продукта и всё, что из него выводится (граф @nks/nks-dev, узлы #6809, #6815):
 // две поставки на одной машине не сталкиваются, пока каждое имя здесь выведено из
 // своего PRODUCT — дом и грант, переменные окружения, сокеты и pipes, файлы, клиенты.
+import type { Lang } from "./lang.ts";
 
 /** Имя продукта — строчными, как в имени дома, файлов и клиентов. */
 export const PRODUCT = "iskron";
@@ -64,5 +65,5 @@ export const DEFAULT_SERVER_URL = SERVER_URLS.ru;
  */
 export const SATELLITE_CODE =
   "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
-/** Имя раздела хуков в скилле бутстрапа поставки — как оно стоит в скилле, на любом языке слов. */
-export const HOOKS_SECTION = "Хуки";
+/** Имя раздела хуков в скилле бутстрапа поставки — на языке слов. */
+export const HOOKS_SECTION: Readonly<Record<Lang, string>> = { ru: "Хуки", en: "Hooks" };

@@ -44,7 +44,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
       return `    ход: ${shell}; ${alt}`;
     },
     launchNotFound: (who, cmd, absolute) =>
-      `НАДО: ${who}: команда «${cmd}» не найдена${absolute ? "" : " в PATH этой оболочки"} или не исполнима — харнесс мост не поднимет (spawn ENOENT)`,
+      `${who}: команда «${cmd}» не найдена${absolute ? "" : " в PATH этой оболочки"} или не исполнима — харнесс мост не поднимет (spawn ENOENT)`,
     launchAbsolute: (who, cmd) => `${who}: команда ${cmd} — исполнима, от PATH не зависит`,
     launchFound: (who, cmd, found) => `${who}: «${cmd}» → ${found}`,
     launchProfile: (who, cmd, found, dir) =>
@@ -52,7 +52,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     openCodeRuntime: () =>
       "OpenCode: мост плагина бежит на рантайме самого OpenCode — от node в PATH не зависит",
     secondPath: (where, name, url, remove) =>
-      `НАДО: ${where}: запись «${name}» ведёт ${url} напрямую по http, мимо моста — второй путь к тому же серверу: тулы двоятся, записи этого пути уходят без места. Путь к графу один — мост → убери её: ${remove}`,
+      `${where}: запись «${name}» ведёт ${url} напрямую по http, мимо моста — второй путь к тому же серверу: тулы двоятся, записи этого пути уходят без места. Путь к графу один — мост → убери её: ${remove}`,
     deleteFrom: (file) => `удали её из ${file}`,
     connector: (name, file) =>
       `Claude Code: коннектор «${name}» в истории подключений (${file}, claudeAiMcpEverConnected; строка останется и после снятия) — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом, а адреса коннектора на диске нет. Если он стоит и ведёт на сервер графа — это второй путь мимо моста → убери его в claude.ai (Настройки → Коннекторы) или выключи в Claude Code (/mcp)`,
@@ -66,7 +66,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     skillsBelowRelease: (release) =>
       `НИЖЕ релиза v${release}, вровень с мостом: отстала поставка целиком (мост — подкоманда update)`,
     skillsBehind: (root, v, why, how) =>
-      `НАДО: скиллы: ${root} — v${v}, ${why} → обнови набор: ${how}; затем новая сессия`,
+      `скиллы: ${root} — v${v}, ${why} → обнови набор: ${how}; затем новая сессия`,
     ocUnreadable: (file) => `OpenCode: ${file} не читается`,
     ocDisabled: (name, file) =>
       `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
@@ -88,7 +88,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
       return `    fix: ${shell}; ${alt}`;
     },
     launchNotFound: (who, cmd, absolute) =>
-      `TODO: ${who}: the command "${cmd}" is not found${absolute ? "" : " in this shell's PATH"} or not executable — the harness will not raise the bridge (spawn ENOENT)`,
+      `${who}: the command "${cmd}" is not found${absolute ? "" : " in this shell's PATH"} or not executable — the harness will not raise the bridge (spawn ENOENT)`,
     launchAbsolute: (who, cmd) =>
       `${who}: the command ${cmd} is executable and independent of PATH`,
     launchFound: (who, cmd, found) => `${who}: "${cmd}" → ${found}`,
@@ -97,7 +97,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     openCodeRuntime: () =>
       "OpenCode: the plugin's bridge runs on OpenCode's own runtime — independent of node in PATH",
     secondPath: (where, name, url, remove) =>
-      `TODO: ${where}: the entry "${name}" leads to ${url} directly over http, around the bridge — a second path to the same server: the tools double, and writes on this path go out without a seat. The one path to the graph is the bridge → remove it: ${remove}`,
+      `${where}: the entry "${name}" leads to ${url} directly over http, around the bridge — a second path to the same server: the tools double, and writes on this path go out without a seat. The one path to the graph is the bridge → remove it: ${remove}`,
     deleteFrom: (file) => `delete it from ${file}`,
     connector: (name, file) =>
       `Claude Code: the connector "${name}" is in the connection history (${file}, claudeAiMcpEverConnected; the line stays after removal) — claude.ai connectors come into every Claude Code session next to the bridge, and the connector's address is not on disk. If it is installed and leads to the graph server, it is a second path around the bridge → remove it in claude.ai (Settings → Connectors) or disable it in Claude Code (/mcp)`,
@@ -112,7 +112,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     skillsBelowRelease: (release) =>
       `BEHIND the release v${release}, level with the bridge: the whole delivery is behind (the bridge — the update subcommand)`,
     skillsBehind: (root, v, why, how) =>
-      `TODO: skills: ${root} — v${v}, ${why} → update the set: ${how}; then a new session`,
+      `skills: ${root} — v${v}, ${why} → update the set: ${how}; then a new session`,
     ocUnreadable: (file) => `OpenCode: ${file} is unreadable`,
     ocDisabled: (name, file) =>
       `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron but is disabled — not in play`,
