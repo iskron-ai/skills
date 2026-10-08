@@ -1,31 +1,31 @@
-// Половина «тулы» снаружи (tools.ts) — то, чем plugin.ts её зовёт, и её пустая
-// форма: мост не найден или половина не встала, а плагин грузится дальше.
-/* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
+// The "tools" half from outside (tools.ts) — what plugin.ts calls it by, and its empty
+// form: no bridge found or the half did not come up, and the plugin loads on.
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK events without a schema */
 import type { Bridge } from "../shared/bridge-client.ts";
 import type { Home, LostEntry } from "./records.ts";
 import type { Slot } from "./slot.ts";
 
 export interface ToolsHalf {
-  /** Сессия умерла — её мост отпускается вместе со стоянием. */
+  /** The session died — its bridge is released together with its standing. */
   forget(session: string): void;
-  /** Событие сервиса: ход, текст, удаление ведущего субагента (leads.ts, #6625). */
+  /** A service event: a lead subagent's turn, text, deletion (leads.ts, #6625). */
   onEvent(ev: any): void;
-  /** Первый промпт сессии — строка запуска с делом исполняется до хода модели (launch.ts). */
+  /** A session's first prompt — the launch line with a case runs before the model's turn (launch.ts). */
   launch(session: string, text: string): Promise<string | null>;
-  /** Остановка; держанные места, легшие маркером, — наверх (twins.ts). */
+  /** The stop; held seats that went into a marker — upward (twins.ts). */
   stop(): void | Promise<void | LostEntry[]>;
-  bridgeOf(session: string): Bridge | null; // мост держащего слота — для расхода сессии (usage.ts)
-  /** Имя места живого ведущего субагента; не ведущий — null (notice.ts). */
+  bridgeOf(session: string): Bridge | null; // the holding slot's bridge — for session usage (usage.ts)
+  /** The seat name of a live lead subagent; not a lead — null (notice.ts). */
   leadOf(session: string): string | null;
-  /** Сессии с занятым местом — корень, ведущий спутник; корни первыми (keepalive.ts). */
+  /** Sessions with a held seat — root, lead satellite; roots first (keepalive.ts). */
   holders(): string[];
-  /** У сессии есть мост этого экземпляра — она в его каталоге (keepalive.ts). */
+  /** The session has a bridge of this instance — it is in its directory (keepalive.ts). */
   owns(session: string): boolean;
-  /** Слот корня, держащий место в этом экземпляре; нет — null (twins.ts). */
+  /** A root's slot holding a seat in this instance; none — null (twins.ts). */
   held(root: string): Slot | null;
-  /** Взять маркер своей локации сейчас — ребёнок перенесён сюда (adopt.ts, #6695). */
+  /** Take this location's marker now — a child moved here (adopt.ts, #6695). */
   adopt(): void;
-  /** Сессию перенесли в локацию to (событие session.moved). */
+  /** The session moved to location to (event session.moved). */
   moved(session: string, to: Home | null): void;
 }
 

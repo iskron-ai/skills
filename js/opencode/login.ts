@@ -1,41 +1,44 @@
-// Вход человека в браузере — общий на все мосты плагина (tools.ts): сказать
-// один раз на вход, а вызов, ждущий рукопожатия, отпустить в миг, когда мост
-// запросил вход, — человека внутри вызова не ждут, адрес уходит ответом.
+// The human's sign-in in the browser — shared by all the plugin's bridges (tools.ts): said once
+// per sign-in, and a call waiting for the handshake is let go the moment the bridge asked for a
+// sign-in — the human is not waited for inside a call, the address goes back as the answer.
+import { OPENCODE, OPENCODE_KEEP } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import type { Say } from "./tools.ts";
 
 export interface Login {
-  /** Мост ждёт входа человека. */
+  /** The bridge waits for the human's sign-in. */
   readonly pending: boolean;
-  /** Адрес входа, который назвал мост. */
+  /** The sign-in address the bridge named. */
   readonly url: string | null;
-  /** Страница входа с кодом — тот же вход с другого устройства, если мост её назвал. */
+  /** The sign-in page with a code — the same sign-in from another device, if the bridge named it. */
   readonly device: string | null;
-  /** Мост запросил вход (handshake): ждущие отпускаются, человеку — слово, одно на вход. */
+  /** The bridge asked for a sign-in (handshake): waiters are let go, the human gets a word, one per sign-in. */
   on(url: string | null, device?: string | null): void;
-  /** Рукопожатие прошло — вход кончился. */
+  /** The handshake passed — the sign-in is over. */
   done(): void;
-  /** Рукопожатие под гонкой со входом: запрошенный вход — отказ вызова с адресом. */
+  /** The handshake raced against the sign-in: a requested sign-in is the call's refusal with the address. */
   race(ready: () => Promise<void>): Promise<void>;
 }
 
 /**
- * Как войти не с машины OpenCode: страница с кодом, если сервер её даёт, иначе
- * туннель или токен. `device` без адреса — слово моста, почему кода нет.
+ * How to sign in not from the OpenCode machine: the page with a code, if the server gives one,
+ * otherwise a tunnel or a token. `device` without an address — the bridge's word why there is no code.
  */
 export function elsewhere(device: string | null): string {
+  const W = words(OPENCODE_KEEP);
   return device && /^https?:/.test(device)
-    ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token`
-    : (device ? `${device}; ` : "") +
-        "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+    ? W.elsewhereDevice(device)
+    : W.elsewhereTunnel(device ?? "");
 }
 
 export function createLogin(say: Say): Login {
-  // Вход кончился или мост открыл новый (другая ссылка) — скажется снова.
+  const W = words(OPENCODE_KEEP);
+  // The sign-in ended or the bridge opened a new one (another link) — it is said again.
   let pending = false;
   let url: string | null = null;
   let device: string | null = null;
   const waiters = new Set<() => void>();
-  /** Обещание входа и его снятие — вызов, кончившийся иначе, ждуна за собой не оставляет. */
+  /** The sign-in promise and its removal — a call that ended otherwise leaves no waiter behind. */
   function started(): { promise: Promise<void>; cancel: () => void } {
     if (pending) return { promise: Promise.resolve(), cancel() {} };
     let waiter: () => void = () => {};
@@ -44,9 +47,9 @@ export function createLogin(say: Say): Login {
     return { promise, cancel: () => waiters.delete(waiter) };
   }
   function error(): Error {
+    const O = words(OPENCODE);
     return new Error(
-      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. ` +
-        `Адрес локальный для машины OpenCode: ${elsewhere(device)} (скилл establish-mcp).`,
+      W.needLoginError(url ? O.openInBrowser(url) : O.finishInBrowser(), elsewhere(device)),
     );
   }
   return {
@@ -67,9 +70,7 @@ export function createLogin(say: Say): Login {
       url = next;
       device = nextDevice;
       say(
-        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; ` +
-          `адрес локальный: ${elsewhere(device)}. ` +
-          "Тулы iskron_* поднимутся после входа сами.",
+        W.needLogin(next ? W.openAndFinish(next) : W.finishItInBrowser(), elsewhere(device)),
         "warning",
       );
     },

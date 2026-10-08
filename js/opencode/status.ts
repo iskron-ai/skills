@@ -1,18 +1,17 @@
-// Текст тула iskron_bridge — что знает плагин о своём мосте: сборки, вход,
-// список тулов и сколько мостов живо. Отдельно от плагина: чистая сборка строк.
-import { tool } from "../delivery/index.ts";
+// The bridge status tool's text — what the plugin knows of its bridge: builds, sign-in,
+// the tool list and how many bridges live. Pure string assembly, apart from the plugin.
+import { OPENCODE, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { elsewhere } from "./login.ts";
 
-/** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
+/** The plugin's service tool: the bridge's state while the server's tools are not there yet. */
 export const STATUS_TOOL = tool("bridge");
 
-/** Определение служебного тула для ctx.tool.transform: текст — в миг вызова. */
+/** The service tool's definition for ctx.tool.transform: the text is taken at call time. */
 export const statusTool = (text: () => string) => ({
   name: STATUS_TOOL,
-  description:
-    "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. " +
-    "Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- схема входа SDK без типа
+  description: words(OPENCODE).statusDescription(),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's input schema has no type
   input: { type: "object", properties: {}, additionalProperties: false } as any,
   async execute() {
     return { content: text() };
@@ -27,16 +26,19 @@ export function statusLines(
   sessions: number,
   spare: number,
 ): string {
+  const W = words(OPENCODE);
   return [
-    `мост: ${path}`,
+    W.statusBridge(path),
     builds,
     login.loginPending
-      ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. ` +
-        `Адрес локальный: ${elsewhere(login.loginDevice)} (скилл establish-mcp).`
+      ? W.statusLoginPending(
+          login.loginUrl ? W.openInBrowser(login.loginUrl) : W.finishInBrowser(),
+          elsewhere(login.loginDevice),
+        )
       : state.serverSeen
-        ? "вход: есть, сервер отвечает"
-        : "вход: мост ещё не ответил (рукопожатие идёт)",
-    `тулов iskron_*: ${state.listed.length} (${state.source})`,
-    `мостов живых: ${sessions + spare}, сессий с мостом: ${sessions}`,
+        ? W.statusLoginDone()
+        : W.statusLoginWaiting(),
+    W.statusTools(state.listed.length, state.source),
+    W.statusBridges(sessions + spare, sessions),
   ].join("\n");
 }

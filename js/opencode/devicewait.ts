@@ -1,26 +1,28 @@
-// Код входа с другого устройства (граф nks-dev: #6570) живёт минуты, а
-// рукопожатие ждёт гранта дольше. Мост держит код до конца его срока и выпускает
-// новый, только когда старый истёк: сам — и переписывает запись входа
-// (`<хранилище>.auth-pending`), или по вызову — и код ложится рядом
-// (`….auth-pending.device`). Плагин спрашивает мост снова, когда сменилось одно
-// из двух или срок кода прошёл: ответ на вопрос и есть свежий код.
+// A sign-in code for another device (graph @nks/nks-dev, node #6570) lives minutes, while the
+// handshake waits for the grant longer. The bridge keeps a code until its term ends and issues a
+// new one only when the old expired: by itself — rewriting the sign-in record
+// (`<store>.auth-pending`), or on a call — the code lands beside it (`….auth-pending.device`).
+// The plugin asks the bridge again when either changed or the code's term passed.
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+import { OPENCODE_KEEP } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 
 const UNTIL = /valid until (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) UTC/;
 
 /**
- * Страница входа с кодом и конец её срока — как мост назвал их в отказе; нет
- * её, потому что на сервере нет клиента входа по коду, — слово моста, почему.
+ * The sign-in page with a code and its term's end — as the bridge named them in its refusal;
+ * none because the server has no code sign-in client — the bridge's word why.
  */
 export function deviceOf(message: string): string | null {
   const link = /from another device: (\S+)/.exec(message)?.[1];
   if (!link) return /no sign-in by code: (.+?) — or give the bridge/.exec(message)?.[1] ?? null;
   const until = UNTIL.exec(message)?.[1];
-  return until ? `${link} (код действует до ${until} UTC)` : link;
+  return until ? words(OPENCODE_KEEP).codeUntil(link, until) : link;
 }
 
-/** Отпечаток записи входа и кода рядом; null — записи нет, вход кончился. */
+/** A fingerprint of the sign-in record and the code beside it; null — no record, the sign-in ended. */
 function loginStamp(dir: string): string | null {
   try {
     const files = readdirSync(dir).filter(
@@ -36,10 +38,7 @@ function loginStamp(dir: string): string | null {
   }
 }
 
-/**
- * Сторож кода одного отказа. Запись пропала — вход кончился, и вопрос открыл
- * бы новый: тогда ждать гранта, как прежде.
- */
+/** The code watch of one refusal. The record gone — the sign-in ended: wait for the grant as before. */
 export function codeWatch(dir: string, message: string): { moved: () => boolean } {
   const before = loginStamp(dir);
   const until = UNTIL.exec(message)?.[1];

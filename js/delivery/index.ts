@@ -107,3 +107,9 @@ export { RITUALS, type RitualWords } from "./words/rituals.ts";
 export { SAT_PROBE, type SatProbeWords } from "./words/satprobe.ts";
 export { SUBAGENT, type SubagentWords } from "./words/subagents.ts";
 export { WATCHDOG, type WatchdogWords } from "./words/watchdog.ts";
+// part 7
+export { LEAD, type LeadWords } from "./words/leads.ts";
+export { OPENCODE, type OpencodeWords } from "./words/opencode.ts";
+export { OPENCODE_KEEP, type OpencodeKeepWords } from "./words/opencode-keep.ts";
+export { PI, type PiWords } from "./words/pi.ts";
+export { PLUGIN, type PluginWords } from "./words/plugin.ts";

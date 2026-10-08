@@ -1,20 +1,18 @@
-// Половина «команды» — скиллы поставки в палитре «/» OpenCode.
+// The "commands" half — the delivery's skills in OpenCode's «/» palette.
 //
-// Контракт поставки: каждый скилл с `slash: true` во фронтматтере набирается
-// человеком как /name. OpenCode 2 этот ключ отбрасывает (парсер берёт name,
-// description и metadata.opencode/autoinvoke), а палитру «/» собирает только из
-// команд; скилл в ней — лишь «@»-упоминание. Поэтому команду на каждый такой
-// скилл регистрирует плагин: она грузит скилл тулом skill и отдаёт агенту слова
-// человека как есть. Ключ читается из самого SKILL.md по пути, который OpenCode
-// отдаёт в списке скиллов, — так набор команд равен установленному набору
-// поставки, а не списку в коде.
+// Every skill with `slash: true` in its frontmatter is typed by the human as /name. OpenCode 2
+// drops that key and builds the palette only from commands, so the plugin registers a command
+// per such skill: it loads the skill with the skill tool and hands the human's words over as is.
+// The key is read from the SKILL.md itself, so the command set equals the installed set.
 import { readFileSync } from "node:fs";
 
+import { OPENCODE } from "../delivery/index.ts";
 import { snippet } from "../shared/bridge-client.ts";
+import { words } from "../shared/lang.ts";
 import type { Context } from "./plugin.ts";
 import { type Say } from "./tools.ts";
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK answers without a schema */
 
 export interface SkillCommand {
   id: string;
@@ -22,11 +20,11 @@ export interface SkillCommand {
 }
 
 export interface CommandsHalf {
-  /** Перечитать скиллы и переиграть команды (skill.updated). */
+  /** Reread the skills and replay the commands (skill.updated). */
   refresh(): Promise<void>;
 }
 
-/** `slash: true` во фронтматтере — и только оно; всё прочее — не команда. */
+/** `slash: true` in the frontmatter — and only that; anything else is no command. */
 export function slashOf(markdown: string): boolean {
   if (!markdown.startsWith("---")) return false;
   const end = markdown.indexOf("\n---", 3);
@@ -35,13 +33,9 @@ export function slashOf(markdown: string): boolean {
   return /^slash:\s*true\s*$/m.test(head);
 }
 
-/** Текст, который команда кладёт в сессию вместо слова человека. */
+/** The text the command puts into the session instead of the human's word. */
 export function commandText(id: string, args: string): string {
-  return (
-    `Загрузи скилл \`${id}\` инструментом \`skill\` (id: \`${id}\`) и действуй строго по нему. ` +
-    "Это набрал человек, а не ты; его слова — ниже.\n\n" +
-    args.trim()
-  );
+  return words(OPENCODE).commandHead(id) + args.trim();
 }
 
 async function listSkills(ctx: Context): Promise<SkillCommand[]> {
@@ -82,8 +76,7 @@ export async function setupCommands(ctx: Context, say: Say): Promise<CommandsHal
       });
     }
   });
-  if (state.commands.length)
-    say(`Искрон: команд «/» по скиллам поставки: ${state.commands.length}.`, "info");
+  if (state.commands.length) say(words(OPENCODE).commandsCount(state.commands.length), "info");
   return {
     async refresh() {
       const next = await listSkills(ctx);
