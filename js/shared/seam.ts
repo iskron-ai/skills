@@ -31,7 +31,7 @@ import { connect, type Socket } from "node:net";
 import { ENV_PREFIX, envName, PRODUCT } from "../delivery/index.ts";
 
 /** Версия провода. Разные версии не говорят: демон отвечает refuse, тонкий мост идёт полным. */
-export const SEAM_PROTOCOL = 2;
+export const SEAM_PROTOCOL = 1;
 
 /** Сколько демон держит сессию, чей сокет закрылся без bye, в ожидании переподхвата. */
 export const SEAM_REATTACH_GRACE_MS = 5_000;
@@ -54,8 +54,12 @@ export interface RpcMessage {
 export interface SeamHello {
   t: "hello";
   seam: number;
-  /** The thin bridge's delivery (since seam protocol 2, graph @nks/nks-dev, node #6815). */
-  product: string;
+  /**
+   * The thin bridge's delivery (graph @nks/nks-dev, node #6815). An additive field of
+   * protocol 1: a hello without it comes from an earlier release of this delivery, and a
+   * daemon of an earlier release ignores it — so an update never drops a thin bridge to full.
+   */
+  product?: string;
   /** Сборка тонкого моста, `vX.Y.Z+хеш`. */
   build: string;
   /** Путь файла тонкого моста — какой копией запустил харнес. */
@@ -227,7 +231,7 @@ export function checkHello(f: unknown): string | null {
   if (!h || h.t !== "hello") return "the first frame is not a hello";
   if (h.seam !== SEAM_PROTOCOL)
     return `seam protocol ${String(h.seam)} is not spoken here (this side speaks ${SEAM_PROTOCOL})`;
-  if (h.product !== PRODUCT)
+  if (h.product !== undefined && h.product !== PRODUCT)
     return `the thin bridge belongs to the delivery ${String(h.product)} (this side is ${PRODUCT})`;
   if (!Array.isArray(h.argv) || typeof h.cwd !== "string" || typeof h.pid !== "number")
     return "the hello lacks argv, cwd or pid";
