@@ -10,7 +10,7 @@
 import { sameDir } from "../shared/canon.ts";
 import { type AskedHearing } from "./call.ts";
 import { harnessName } from "./client.ts";
-import { localHolder } from "./hearing.ts";
+import { localHolder, unsignedHere } from "./hearing.ts";
 import { holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
 import { keyOf, readHoldRecord, seatBaseOf, sessionOfBridge } from "./holdrecord.ts";
 import { heardOnReturn } from "./leave.ts";
@@ -32,9 +32,10 @@ export const suffixed = (base: string, n: number): string =>
 
 /**
  * Своё по записи держания: на ней стояла та же сессия харнесса, что у этого
- * моста (харнесс, не называющий сессий, — без сессии с обеих сторон, и запись
- * этого харнесса из этого каталога `cwd`: мёртвый предшественник здесь — всё,
- * что о нём известно; дом моста общий у всех каталогов и харнессов), а
+ * моста, либо запись без сессии этого харнесса из этого каталога `cwd` (харнесс,
+ * не называющий сессий, — без сессии с обеих сторон: мёртвый предшественник
+ * здесь — всё, что о нём известно; у названной сессии — место, чей держатель
+ * сессии не назвал, #6702; дом моста общий у всех каталогов и харнессов), а
  * локальный сокет места не отвечает. Доска может ещё читать его слушающим —
  * место возвращается по записи со слухом, не подписью без него (#6706).
  */
@@ -47,9 +48,11 @@ export async function ownByRecord(
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
   const me = sessionOfBridge();
-  if (!rec || (rec.session ?? null) !== me) return false;
-  if (!me && (rec.client !== harnessName() || !sameDir(rec.cwd, cwd))) return false;
-  return !(await localSocketAlive(localSocketPathOf(key)));
+  if (!rec) return false;
+  const mine = me
+    ? rec.session === me || unsignedHere(rec, cwd)
+    : !rec.session && rec.client === harnessName() && sameDir(rec.cwd, cwd);
+  return mine && !(await localSocketAlive(localSocketPathOf(key)));
 }
 
 /** Кто держит место: этот мост, прежний мост этой сессии, кто-то другой, никто — или мост не знает. */
@@ -72,7 +75,7 @@ async function holderOf(
   if (wasEvicted(realm, karta, name)) return "taken"; // отнял другой держатель (4000)
   const key = keyOf(realm, karta, name);
   if (ledKey() === key) return "mine"; // своё место в окне переоткрытия сокета
-  const local = await localHolder(key);
+  const local = await localHolder(key, cwd);
   if (local) return local === "self" ? "mine" : local === "session" ? "session" : "taken";
   // Запись другой названной сессии — её место, хоть доска и не читает его слушающим:
   // её мост вернёт его сам (перезапуск сервиса харнесса), возврат с диска не наш.
