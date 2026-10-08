@@ -1,5 +1,11 @@
 // A seat without hearing: no record goes under it until the board says nobody else
-// listens on it (graph @nks/nks-dev, node #6706).
+// listens on it (graph @nks/nks-dev, node #6706). The seat goes deaf when the bridge
+// left it (leave), dropped its socket (dead token 4001, reopen without hello) or
+// reopens it at the same address without hello (another holder may have turned it:
+// the server answers 404). The socket is shared by the channel's seats, so the main
+// seat and the seats of other graphs go deaf together. Right after leaving, the board
+// may still read the bridge's own closed socket as listening. A taken seat (4000)
+// is evicted.ts.
 import { DEAF, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { askedHearing } from "./hearing.ts";
