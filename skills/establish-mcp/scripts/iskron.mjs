@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.5.0";
+var VERSION = "7.6.0";
 var CHANNEL_MARK = "iskron-build:release";
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
@@ -4514,8 +4514,8 @@ function seatBaseOf(key) {
 function writeHoldRecord(key, rec5, paused = false, at2 = Date.now()) {
   if (CFG.satellite && !paused) return;
   try {
-    const session = H.session ?? rec5.session;
-    const was = rec5.left == null || (rec5.base ?? B.get(key)) == null ? onDisk(key) : null;
+    const was = onDisk(key);
+    const session = H.session ?? rec5.session ?? (was?.url === rec5.url ? was.session : void 0);
     const left = rec5.left ?? was?.left === true;
     writeFileSync9(
       holdFilePathFor(key),
@@ -5964,6 +5964,22 @@ function listenLine(key) {
 // js/bridge/hearing.ts
 import { readdirSync as readdirSync4, readFileSync as readFileSync14 } from "node:fs";
 import { join as join11 } from "node:path";
+
+// js/shared/canon.ts
+import { realpathSync as realpathSync2 } from "node:fs";
+import { sep } from "node:path";
+function canonDir(p) {
+  let real2 = p;
+  try {
+    real2 = realpathSync2.native(p);
+  } catch {
+  }
+  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
+  return real2;
+}
+var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
+
+// js/bridge/hearing.ts
 var isSentinel = (karta) => !/^\d+$/.test(karta);
 function seatKarta(realm, karta, name = "") {
   const k = normKarta(karta);
@@ -6014,19 +6030,28 @@ function keysNamed(realm, name) {
     return [];
   }
 }
-async function localHolder(key) {
+var unsignedHere = (rec5, cwd) => !rec5.session && !rec5.left && rec5.client === harnessName() && sameDir(rec5.cwd, cwd);
+async function localHolder(key, cwd) {
   if (!await localSocketAlive(localSocketPathOf(key))) return null;
   if (doors().some((d) => d.key === key && d.ownsSocket)) return "self";
   const me = sessionOfBridge();
-  return me && readHoldRecord(key, true)?.session === me ? "session" : "other";
+  const rec5 = me ? readHoldRecord(key, true) : null;
+  if (!rec5) return "other";
+  return rec5.session === me || cwd != null && unsignedHere(rec5, cwd) ? "session" : "other";
 }
-async function heldLocallyByOther(realm, karta, name) {
-  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
-    if (await localHolder(key) === "other") return true;
-  return false;
+async function heldLocally(realm, karta, name, cwd) {
+  let own = false;
+  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)]) {
+    const h = await localHolder(key, cwd);
+    if (h === "other") return "other";
+    own ||= h === "session";
+  }
+  return own ? "session" : null;
 }
-async function askedHearing(realm, karta, name) {
-  if (await heldLocallyByOther(realm, karta, name)) return "other";
+async function askedHearing(realm, karta, name, cwd = H2.standCwd ?? sessionCwd()) {
+  const local = await heldLocally(realm, karta, name, cwd);
+  if (local === "other") return "other";
+  if (local === "session") return "free";
   const b = await callTool("iskron_channel", { action: "list", realm }).catch(() => null);
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }
@@ -6103,20 +6128,6 @@ async function deafRefusal(msg) {
     `Refused (bridge): ${why}; the call will not go under its signature — not sent. Stand again with iskron_stand: the bridge takes its own seat back by itself and stands beside another's on name.N with hearing.`
   ) : null;
 }
-
-// js/shared/canon.ts
-import { realpathSync as realpathSync2 } from "node:fs";
-import { sep } from "node:path";
-function canonDir(p) {
-  let real2 = p;
-  try {
-    real2 = realpathSync2.native(p);
-  } catch {
-  }
-  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
-  return real2;
-}
-var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
 
 // js/bridge/satellite.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
@@ -6817,6 +6828,47 @@ function localLeave(msg) {
 import { existsSync as existsSync4, readdirSync as readdirSync6, readFileSync as readFileSync18 } from "node:fs";
 import { join as join15 } from "node:path";
 
+// js/bridge/holdkeep.ts
+function keepHoldRecord() {
+  const s2 = state.standing;
+  const key = H2.currentKey;
+  if (!s2 || !key || !H2.currentUrl) return;
+  const alive5 = !!H2.holder?.alive;
+  const at2 = alive5 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
+  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
+  const was = readHoldRecord(key, true);
+  if (was && at2 > (was.at ?? 0))
+    writeHoldRecord(
+      key,
+      {
+        ...was,
+        realm: s2.realm,
+        karta: s2.karta,
+        name: s2.name ?? "",
+        url: ch.url,
+        statusUrl: ch.statusUrl,
+        cwd: ch.cwd ?? was.cwd,
+        client: harnessName(),
+        key
+      },
+      false,
+      at2
+    );
+  if (!alive5) return;
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
+  }
+}
+function signHeldRecord() {
+  const key = H2.currentKey;
+  if (!key || !H2.holder?.alive || !sessionOfBridge()) return;
+  for (const k of [key, ...extraPlaces().map((p) => p.door.key)]) {
+    const rec5 = readHoldRecord(k);
+    if (rec5 && !rec5.session && rec5.url === H2.currentUrl) writeHoldRecord(k, rec5);
+  }
+}
+
 // js/bridge/resumewords.ts
 var via = "iskron_stand";
 var resumeWords = {
@@ -7309,6 +7361,7 @@ var selectorOf = (msg) => ({
 function selectorFrom(msg) {
   const sel = selectorOf(msg);
   noteHarnessSession(sel.session);
+  signHeldRecord();
   return sel;
 }
 var isResumeCall = (msg) => msg?.method === "iskron/resume";
@@ -7423,9 +7476,9 @@ async function ownByRecord(realm, karta, name, cwd) {
   const key = keyOf(realm, karta, name);
   const rec5 = readHoldRecord(key);
   const me = sessionOfBridge();
-  if (!rec5 || (rec5.session ?? null) !== me) return false;
-  if (!me && (rec5.client !== harnessName() || !sameDir(rec5.cwd, cwd))) return false;
-  return !await localSocketAlive(localSocketPathOf(key));
+  if (!rec5) return false;
+  const mine = me ? rec5.session === me || unsignedHere(rec5, cwd) : !rec5.session && rec5.client === harnessName() && sameDir(rec5.cwd, cwd);
+  return mine && !await localSocketAlive(localSocketPathOf(key));
 }
 async function holderOf(realm, karta, name, hearing, cwd) {
   await heardOnReturn();
@@ -7433,7 +7486,7 @@ async function holderOf(realm, karta, name, hearing, cwd) {
   if (wasEvicted(realm, karta, name)) return "taken";
   const key = keyOf(realm, karta, name);
   if (ledKey() === key) return "mine";
-  const local = await localHolder(key);
+  const local = await localHolder(key, cwd);
   if (local) return local === "self" ? "mine" : local === "session" ? "session" : "taken";
   if (theirsByRecord(key)) return "taken";
   const h = hearing(name);
@@ -7564,15 +7617,16 @@ function announceEvicted(code, text) {
 }
 async function takenBySession(key, url) {
   const me = sessionOfBridge();
-  if (!me) return false;
+  const ours = (r) => me ? r.session === me : !!r.session && r.client === harnessName() && sameDir(r.cwd, H2.standCwd ?? void 0);
   const changed = () => {
     const r = readHoldRecord(key, true);
-    return r && r.url !== url ? r.session === me : null;
+    return r && r.url !== url ? ours(r) : null;
   };
   for (; ; ) {
     const got = changed();
     if (got !== null) return got;
-    if (takerOf(key) !== me) return changed() ?? false;
+    const taker = takerOf(key);
+    if (me ? taker !== me : !taker) return changed() ?? false;
     await new Promise((res) => setTimeout(res, LOOK_MS));
   }
 }
@@ -8813,39 +8867,6 @@ function readFallbacks(authDir) {
   return out7;
 }
 
-// js/bridge/holdkeep.ts
-function keepHoldRecord() {
-  const s2 = state.standing;
-  const key = H2.currentKey;
-  if (!s2 || !key || !H2.currentUrl) return;
-  const alive5 = !!H2.holder?.alive;
-  const at2 = alive5 ? Date.now() : Math.max(H2.holder?.heardAt ?? 0, H2.heardAt);
-  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd };
-  const was = readHoldRecord(key, true);
-  if (was && at2 > (was.at ?? 0))
-    writeHoldRecord(
-      key,
-      {
-        ...was,
-        realm: s2.realm,
-        karta: s2.karta,
-        name: s2.name ?? "",
-        url: ch.url,
-        statusUrl: ch.statusUrl,
-        cwd: ch.cwd ?? was.cwd,
-        client: harnessName(),
-        key
-      },
-      false,
-      at2
-    );
-  if (!alive5) return;
-  for (const p of extraPlaces()) {
-    const r = readHoldRecord(p.door.key, true);
-    if (r) rememberExtraStatus(p.door.key, { ...ch, cwd: ch.cwd ?? r.cwd }, r.status ?? "");
-  }
-}
-
 // js/bridge/runend.ts
 var R3 = scoped(() => ({
   run: null,
@@ -9513,7 +9534,7 @@ async function runStand(msg) {
   }
   const led = besideTaken ? null : leadsOtherPlace(realm, karta, name);
   if (led && a.take !== true) {
-    const hearing2 = await askedHearing(realm, karta, name);
+    const hearing2 = await askedHearing(realm, karta, name, cwd);
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing2));
     return done(true);
   }
@@ -9719,8 +9740,8 @@ async function runStand(msg) {
 // js/bridge/moment.ts
 var WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
 var jsonLine = () => L(
-  "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; вопрос соседу и ожидание — вимаршей `posed_to`, не строкой дела; строки CHECKS в ответе — работа этого такта.",
-  "The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; a question to a neighbour and a wait are a vimarsha with `posed_to`, not a case line; the CHECKS lines in the reply are this beat's work."
+  "Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; вопрос по сути или обязательство — вимаршей `posed_to` отвечающей роли с «Отвечено, когда»; разовая задача или вопрос — в деле, кончается исходом; отказ доставки рода не меняет; строки CHECKS в ответе — работа этого такта.",
+  "The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; a substantive question or obligation is a vimarsha with `posed_to` to the answering role and an answer criterion; a one-off task or question belongs in a case and ends with its outcome; delivery refusal does not change its kind; the CHECKS lines in the reply are this beat's work."
 );
 var momentLine = () => L("[мост] ", "[bridge] ") + jsonLine();
 var statusLine = () => L(
@@ -10557,6 +10578,14 @@ function placeWord(msg) {
   const realm = typeof data?.place?.realm === "string" ? data.place.realm.trim() : "";
   return typeof data?.kind === "string" ? { kind: data.kind, key: typeof data.key === "string" ? data.key : void 0, realm } : null;
 }
+var harnessSession = null;
+function seeSession(msg) {
+  const s2 = msg.params?.session;
+  if ((msg.method === "iskron/resume" || msg.method === "iskron/check") && typeof s2 === "string")
+    harnessSession = s2.trim() || harnessSession;
+  return msg;
+}
+var resumeParams = (key) => harnessSession ? { key, session: harnessSession } : { key };
 function lostPlaces(say2, log3) {
   const live = /* @__PURE__ */ new Map();
   const lost = /* @__PURE__ */ new Map();
@@ -10907,7 +10936,7 @@ function thinMain(argv2) {
       resuming.set(key(id), held2);
       closeGate(key(id));
       log(`the session is new — bringing its place ${held2.key} back from the hold record`);
-      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: held2.key } });
+      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: resumeParams(held2.key) });
     }
   };
   const goLocal = (reason) => {
@@ -11061,7 +11090,7 @@ function thinMain(argv2) {
       cancelled.delete(key(msg.id));
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });
     }
-    dispatch2(msg);
+    dispatch2(seeSession(msg));
   });
   const leave = (why) => leaving ??= windDown(why);
   const windDown = async (why) => {
