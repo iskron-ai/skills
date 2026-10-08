@@ -1,5 +1,38 @@
 # Changelog
 
+## [7.5.0](https://github.com/iskron-ai/skills/compare/v7.4.1...v7.5.0) (2026-10-08)
+
+
+### Features
+
+* **bridge:** поля по запросу, обрезка занятости, ключ события, свёртка строк ключа ([#374](https://github.com/iskron-ai/skills/issues/374)) ([d7a4216](https://github.com/iskron-ai/skills/commit/d7a42164b3a6af001b67dd0866e91dc1e3d715f7))
+* **bridge:** роды вопроса в деле — ask, answer, ack и зов роли ([#379](https://github.com/iskron-ai/skills/issues/379)) ([0417fd5](https://github.com/iskron-ai/skills/commit/0417fd50a15d97fa677367835d4e1b0e13e61460))
+* **evals:** пробы чтения графа — набор и протокол двух плеч ([#361](https://github.com/iskron-ai/skills/issues/361)) ([7bd3782](https://github.com/iskron-ai/skills/commit/7bd37821b24c3e84ce7b05f5592e6f523163ed15))
+* **iskronify:** чужой код в контекст не берут — интеграция у стюарда или в графе; контракт 21 ([#358](https://github.com/iskron-ai/skills/issues/358)) ([5861a6f](https://github.com/iskron-ai/skills/commit/5861a6f4695756c496c64ce15c040d90f9540f72))
+* **skills:** граф — место общей работы, дело — разговор; контракт 22 ([#362](https://github.com/iskron-ai/skills/issues/362)) ([e3b558f](https://github.com/iskron-ai/skills/commit/e3b558f2f3fc157b47e40f2795bb3ceb9ffec747))
+
+
+### Bug Fixes
+
+* **bridge:** doctor называет демон, команду записи, второй путь и отставание скиллов; место без имени не занимается ([#380](https://github.com/iskron-ai/skills/issues/380)) ([5e620da](https://github.com/iskron-ai/skills/commit/5e620daef0682e9e00ecd584b518d8ffeea3e466))
+* **bridge:** своё место сессии мост возвращает сам; чужое — рядом со слухом, без подписи ([#363](https://github.com/iskron-ai/skills/issues/363)) ([1cde81b](https://github.com/iskron-ai/skills/commit/1cde81b4851e0943eac82b93483e29b9613a1ed2))
+* **bridge:** такт внимания до последнего, пока ход занят ([#381](https://github.com/iskron-ai/skills/issues/381)) ([0aa761d](https://github.com/iskron-ai/skills/commit/0aa761dce8117d364deedbbc0ab1860932f32303))
+* **bridge:** шум сторожа и заметки раскатки ([#372](https://github.com/iskron-ai/skills/issues/372)) ([b9a3412](https://github.com/iskron-ai/skills/commit/b9a3412b1b752d878cc2eb8856e83779bb07f1cf))
+* **evals:** пробы чтения графа — по повторному ревью [#361](https://github.com/iskron-ai/skills/issues/361) ([#370](https://github.com/iskron-ai/skills/issues/370)) ([6ba53db](https://github.com/iskron-ai/skills/commit/6ba53db6f33393b30659c5ff8f8738ab5d0b26ff))
+* **evals:** пробы чтения графа — по разбору первого прогона ([#378](https://github.com/iskron-ai/skills/issues/378)) ([c38e4f7](https://github.com/iskron-ai/skills/commit/c38e4f77daa66e6bef95f8b1ef84998b1ec61c37))
+* **feedback:** адрес фидбэка — свой граф или @nks/feedback ([#371](https://github.com/iskron-ai/skills/issues/371)) ([327b336](https://github.com/iskron-ai/skills/commit/327b3366730c9b0f0030e7999266ca3a9a56292d))
+* **iskronify:** «протки», не «проткай» ([#368](https://github.com/iskron-ai/skills/issues/368)) ([cc06b95](https://github.com/iskron-ai/skills/commit/cc06b95b4c5d258c8d0dabfb8ecd5c0188501927))
+* **iskronify:** роли исполнения и ревью — на opus; контракт 23 ([#373](https://github.com/iskron-ai/skills/issues/373)) ([f737e48](https://github.com/iskron-ai/skills/commit/f737e487a4a5b3b8b1fbf6f95100bb7de3f6d0b8))
+* **opencode:** плагин открывает чтение файлов скиллов поставки вне рабочей копии ([#376](https://github.com/iskron-ai/skills/issues/376)) ([00c2a8a](https://github.com/iskron-ai/skills/commit/00c2a8a3f86cd1eee1fdfb1637c60c5e0cd386fe))
+* **setup,plugin:** http-записи нигде — только мост ([#369](https://github.com/iskron-ai/skills/issues/369)) ([f6456cf](https://github.com/iskron-ai/skills/commit/f6456cfb25894dfeb7e4c7a5a9ae8e46f7baa026))
+* **skills,setup:** один путь к графу — мост ([#366](https://github.com/iskron-ai/skills/issues/366)) ([2a5458c](https://github.com/iskron-ai/skills/commit/2a5458c21c5f0218a2912f5dc58ee9bade5b5646))
+* **skills:** foreign questions are not taken or held — filter by own mandate ([#357](https://github.com/iskron-ai/skills/issues/357)) ([60ec760](https://github.com/iskron-ai/skills/commit/60ec76071374ec152188bf4e4af1e1455635bf40))
+* **skills:** второй и третий круги ревью [#362](https://github.com/iskron-ai/skills/issues/362) — в main ([#364](https://github.com/iskron-ai/skills/issues/364)) ([cfca7a0](https://github.com/iskron-ai/skills/commit/cfca7a07b876b4902a5f039b009e1859a88944fb))
+* **standing:** одно pending в hello глухоты не доказывает — различает history и живое получение ([#365](https://github.com/iskron-ai/skills/issues/365)) ([322afa7](https://github.com/iskron-ai/skills/commit/322afa7ca1358843077e5941c0cda62263fb0870))
+* **standing:** ребёнок без места корня — отказ ([#375](https://github.com/iskron-ai/skills/issues/375)) ([7f88727](https://github.com/iskron-ai/skills/commit/7f887271ca9b7c906d714d3b5c8ba9d5e5712499))
+* **standing:** своё место без take=true; безымянного места мост не занимает ([#382](https://github.com/iskron-ai/skills/issues/382)) ([b2281c7](https://github.com/iskron-ai/skills/commit/b2281c7574b22e7c1f716c3405ec71c544e6ee28))
+* **tests:** нестабильные пробы плагина OpenCode — причина, не ретрай ([#377](https://github.com/iskron-ai/skills/issues/377)) ([83ebebc](https://github.com/iskron-ai/skills/commit/83ebebcd20cecb3a5a55e420b926d272575f567c))
+
 ## [7.4.1](https://github.com/iskron-ai/skills/compare/v7.4.0...v7.4.1) (2026-10-07)
 
 
