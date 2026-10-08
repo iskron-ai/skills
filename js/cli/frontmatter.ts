@@ -1,10 +1,8 @@
-// Фронтматтер файла агента — подмножество YAML, которым такие файлы пишут:
-// карты, блочные списки (в том числе `- имя:` с картой под ним), списки и карты
-// в скобках, строки в двойных и одинарных кавычках, голые скаляры, в том числе
-// многострочные (`|`, `>` и продолжение с большим отступом). Полный YAML
-// doctor не нужен: ему надо прочесть mcpServers и disallowedTools так, как их
-// пишет проекция iskronify и как их правит человек руками. Непрочитанное
-// остаётся строкой — doctor говорит о том, что прочёл, а не угадывает.
+// An agent file's frontmatter: the YAML subset such files are written in — maps, block
+// lists (including `- name:` with a map under it), flow lists and maps, double- and
+// single-quoted strings, plain scalars including multi-line ones (`|`, `>`, deeper
+// continuation). doctor needs mcpServers and disallowedTools as the projection writes
+// them and a human edits them; what is not read stays a string, nothing is guessed.
 
 export type YamlValue = string | YamlValue[] | { [key: string]: YamlValue } | null;
 
@@ -13,16 +11,16 @@ interface Line {
   text: string;
 }
 
-/** Текст между первыми двумя строками `---`; нет фронтматтера — null. */
+/** The text between the first two `---` lines; null without frontmatter. */
 export function frontmatterText(file: string): string | null {
-  const body = file.charCodeAt(0) === 0xfeff ? file.slice(1) : file; // BOM Блокнота Windows
+  const body = file.charCodeAt(0) === 0xfeff ? file.slice(1) : file; // Windows Notepad BOM
   const lines = body.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return null;
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
   return end < 0 ? null : lines.slice(1, end).join("\n");
 }
 
-/** Скаляр, список или карта в скобках — значение, стоящее в строке после `ключ:`. */
+/** A scalar, flow list or flow map: the value on the line after `key:`. */
 export function parseScalar(raw: string): YamlValue {
   const s = raw.trim();
   if (s.startsWith("[") && s.endsWith("]")) return splitFlow(s.slice(1, -1)).map(parseScalar);
@@ -46,7 +44,7 @@ export function parseScalar(raw: string): YamlValue {
   return s.replace(/\s+#.*$/, "");
 }
 
-// Запятые списка в скобках — только вне кавычек и вложенных скобок.
+// Flow list commas count only outside quotes and nested brackets.
 function splitFlow(body: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -82,7 +80,7 @@ const unquoteKey = (k: string): string =>
     ? k.slice(1, -1)
     : k;
 
-/** Разобранный фронтматтер: карта верхнего уровня. */
+/** The parsed frontmatter: the top-level map. */
 export function parseFrontmatter(text: string): Record<string, YamlValue> {
   const lines: Line[] = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -93,8 +91,8 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
   let i = 0;
   const isItem = (l: Line) => l.text === "-" || l.text.startsWith("- ");
 
-  // Значение в строке и его продолжение: строки глубже владельца значения —
-  // тело блочного скаляра (`|`, `>`) или перенос голого, а не новые ключи.
+  // Lines deeper than the value's owner are a block scalar body (`|`, `>`) or a plain
+  // scalar's continuation, not new keys.
   const scalarAt = (raw: string, owner: number): YamlValue => {
     const more: string[] = [];
     while (i < lines.length && lines[i].indent > owner) more.push(lines[i++].text);
@@ -115,14 +113,14 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
       const m = KEY.exec(lines[i].text);
       i++;
       if (!m) {
-        while (i < lines.length && lines[i].indent > indent) i++; // непрочитанное — целиком
+        while (i < lines.length && lines[i].indent > indent) i++; // skip the unread part whole
         continue;
       }
       const key = unquoteKey(m[1].trim());
       if (m[2] !== undefined && m[2].trim() !== "") outMap[key] = scalarAt(m[2], indent);
       else {
         const next = lines[i];
-        // `ключ:` и список под ним на том же отступе — законная форма YAML.
+        // `key:` with a list under it at the same indent is valid YAML.
         outMap[key] =
           next && (next.indent > indent || (next.indent === indent && isItem(next)))
             ? block(next.indent)
@@ -143,7 +141,7 @@ export function parseFrontmatter(text: string): Record<string, YamlValue> {
         continue;
       }
       if (KEY.test(content)) {
-        // `- ключ: …` открывает карту, чьи прочие ключи стоят на отступе содержимого.
+        // `- key: …` opens a map whose other keys stand at the content's indent.
         lines[i] = { indent: indent + (lines[i].text.length - content.length), text: content };
         items.push(map(lines[i].indent));
         continue;

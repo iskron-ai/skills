@@ -1,18 +1,18 @@
-// Второй путь к тому же серверу рядом с мостом (граф nks-dev: #6728): http-запись
-// на сервер графа в конфиге харнесса или коннектор claude.ai — тулы двоятся, а
-// записи этого пути уходят без места. Путь к графу один — мост; запись в конфиге —
-// строка «НАДО» с ходом; коннектор виден только по истории подключений, которая не
-// гаснет после снятия, — строкой без «НАДО», с ходом. Записи OpenCode называет opencode-config.ts.
+// A second path to the same server beside the bridge (graph @nks/nks-dev, node #6728):
+// an http entry in a harness config is a TODO line; a claude.ai connector is seen only
+// in the connection history, which outlives removal, so it is a line without TODO.
+// OpenCode entries are reported by opencode-config.ts.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { CONNECTOR_PATTERN } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+import { CONNECTOR_PATTERN, HARNESS, type HarnessWords } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { graphServer, projectRoot } from "./subagents.ts";
-import { todo } from "./subwords.ts";
 
 type Out = (s: string) => void;
+
+const hw = (): HarnessWords => words(HARNESS);
 
 const readJson = (p: string): Record<string, unknown> | null => {
   try {
@@ -28,15 +28,9 @@ const httpEntries = (servers: unknown): [string, string][] =>
     .map(([n, v]) => [n, String(v.url)]);
 
 const say = (out: Out, where: string, name: string, url: string, remove: string): void =>
-  out(
-    L(
-      `${todo()} ${where}: запись «${name}» ведёт ${url} напрямую по http, мимо моста — второй путь к тому же серверу: тулы двоятся, записи этого пути уходят без места. Путь к графу один — мост → убери её: ${remove}`,
-      `${todo()} ${where}: the entry "${name}" leads to ${url} directly over http, around the bridge — a second path to the same server: the tools double, and writes on this path go out without a seat. The one path to the graph is the bridge → remove it: ${remove}`,
-    ),
-  );
+  out(hw().secondPath(where, name, url, remove));
 
-// Коннектор claude.ai Claude Code приносит в каждую сессию; его адреса на диске
-// нет — только имя, под которым он подключался. Имя Искрона — повод проверить.
+// A claude.ai connector has no address on disk, only the name it was connected under.
 const CONNECTOR_RE = CONNECTOR_PATTERN;
 
 function claudeCode(out: Out): void {
@@ -57,18 +51,13 @@ function claudeCode(out: Out): void {
       );
   const mcp = join(projectRoot(), ".mcp.json");
   for (const [n, url] of httpEntries(readJson(mcp)?.mcpServers))
-    say(out, `Claude Code (${mcp})`, n, url, L(`удали её из ${mcp}`, `delete it from ${mcp}`));
+    say(out, `Claude Code (${mcp})`, n, url, hw().deleteFrom(mcp));
   const ever = Array.isArray(cfg.claudeAiMcpEverConnected) ? cfg.claudeAiMcpEverConnected : [];
   for (const c of ever.map(String).filter((c) => CONNECTOR_RE.test(c)))
-    out(
-      L(
-        `Claude Code: коннектор «${c}» в истории подключений (${file}, claudeAiMcpEverConnected; строка останется и после снятия) — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом, а адреса коннектора на диске нет. Если он стоит и ведёт на сервер графа — это второй путь мимо моста → убери его в claude.ai (Настройки → Коннекторы) или выключи в Claude Code (/mcp)`,
-        `Claude Code: the connector "${c}" is in the connection history (${file}, claudeAiMcpEverConnected; the line stays after removal) — claude.ai connectors come into every Claude Code session next to the bridge, and the connector's address is not on disk. If it is installed and leads to the graph server, it is a second path around the bridge → remove it in claude.ai (Settings → Connectors) or disable it in Claude Code (/mcp)`,
-      ),
-    );
+    out(hw().connector(c, file));
 }
 
-/** [mcp_servers.<имя>] с url = "…" в config.toml Codex — без разбора TOML целиком. */
+/** `[mcp_servers.<name>]` with `url = "…"` in a Codex config.toml, without a full TOML parse. */
 function codexHttp(text: string): [string, string][] {
   const found: [string, string][] = [];
   let section: string | null = null;
