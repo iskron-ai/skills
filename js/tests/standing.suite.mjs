@@ -5343,7 +5343,8 @@ test("question kinds under the Monitor watchdog: a question to me, its withdrawa
 // the last line of the key is no longer my question (#6867, #6778).
 // The platform hands a frame again when the bridge died in its batch window: the
 // replayed withdrawal is still mine, though the first receipt put the question out.
-for (const [what, closer, words, answered, replayed, askAgain] of [
+// The open question outlives the day of .seen: its memory is the seat's .asks.
+for (const [what, closer, words, answered, replayed, askAgain, evicted] of [
   ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят", false, false],
   [
     "a question re-asked of another role",
@@ -5375,6 +5376,15 @@ for (const [what, closer, words, answered, replayed, askAgain] of [
     false,
     true,
   ],
+  [
+    "a withdrawal of a question older than .seen keeps",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    false,
+    false,
+    true,
+  ],
 ])
   test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
     const { fake, dir, key, bridge } = await connected(t, {
@@ -5394,6 +5404,10 @@ for (const [what, closer, words, answered, replayed, askAgain] of [
     bridge.proc.kill("SIGKILL");
     await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
     await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+    // A day of traffic later .seen no longer holds the question.
+    if (evicted)
+      for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".seen")))
+        writeFileSync(join(dir, "standings", f), "");
     const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
     t.after(() => second.stop());
     assert.ok((await second.call("initialize", 1, INIT)).result);

@@ -45,6 +45,8 @@ const ASK_CLOSERS = new Set(["ask", "answer", "ack", "progress"]);
  */
 const askDecided = new Map<string, boolean>();
 function askMemory(f: Rec): boolean {
+  // Решил мост (bridge/addressmark.ts, память места на диске) — его addressed и есть ответ.
+  if (f.asks_decided === true) return false;
   const id = str(f.id) || wordKeyOf(f as Frame);
   const was = askDecided.get(id);
   if (was !== undefined) return was;
