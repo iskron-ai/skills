@@ -12,8 +12,8 @@ export interface StandWords {
   noModel: () => string;
   legacy: (address: string, realm: string, karta: string) => string;
   boardUnread: (text: string) => string;
-  /** ru, en — заголовок доски на обоих языках сервера (BOARD_HEADER, protocol.ts). */
-  boardUnknown: (start: string, ru: string, en: string) => string;
+  /** own — заголовок доски на языке сессии, others — на прочих языках сервера (BOARD_HEADER, protocol.ts). */
+  boardUnknown: (start: string, own: string, others: string) => string;
   boardAmbiguous: (n: number, name: string, karta: string) => string;
   boardCount: (declared: number, parsed: number) => string;
   boardCountFound: (declared: number, parsed: number) => string;
@@ -71,8 +71,8 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     legacy: (address, realm, karta) =>
       `на доске живо место прежнего имени ${address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
     boardUnread: (text) => `Отказано: доска не прочиталась — ${text}`,
-    boardUnknown: (start, ru, en) =>
-      `Отказано: форма доски не распознана — ни заголовка «${ru}» («${en}»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
+    boardUnknown: (start, own, others) =>
+      `Отказано: форма доски не распознана — ни заголовка «${own}» («${others}»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
     boardAmbiguous: (n, name, karta) =>
       `Отказано: на доске ${n} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`,
     boardCount: (declared, parsed) =>
@@ -150,8 +150,8 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     legacy: (address, realm, karta) =>
       `a seat of the former name ${address} is alive on the board — cases and hooks may hold its address; remove it: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
     boardUnread: (text) => `Refused: the board did not read — ${text}`,
-    boardUnknown: (start, ru, en) =>
-      `Refused: the board's form is not recognized — no «${en}» («${ru}») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`,
+    boardUnknown: (start, own, others) =>
+      `Refused: the board's form is not recognized — no «${own}» («${others}») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`,
     boardAmbiguous: (n, name, karta) =>
       `Refused: the board has ${n} seats named ${name} for role #${karta} — the form is ambiguous, the state cannot be told.`,
     boardCount: (declared, parsed) =>

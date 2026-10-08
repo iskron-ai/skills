@@ -59,7 +59,13 @@ export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
 export { HEARING, type HearingWords } from "./words/hearing.ts";
 export { HOOK, type HookWords } from "./words/hook.ts";
 // part 5b
-export { ACTION_LIST_RE, BOARD_HEADER, SEAT_GONE_RE, UNATTRIBUTED_RE } from "./protocol.ts";
+export {
+  ACTION_LIST_RE,
+  BOARD_HEADER,
+  SEAT_GONE_RE,
+  SERVER_LOCALE,
+  UNATTRIBUTED_RE,
+} from "./protocol.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
 export { LISTEN, type ListenWords } from "./words/listen.ts";
 export { LOST, type LostWords } from "./words/lostplaces.ts";
@@ -115,3 +121,9 @@ export { RITUALS, type RitualWords } from "./words/rituals.ts";
 export { SAT_PROBE, type SatProbeWords } from "./words/satprobe.ts";
 export { SUBAGENT, type SubagentWords } from "./words/subagents.ts";
 export { WATCHDOG, type WatchdogWords } from "./words/watchdog.ts";
+// part 7
+export { LEAD, type LeadWords } from "./words/leads.ts";
+export { OPENCODE, type OpencodeWords } from "./words/opencode.ts";
+export { OPENCODE_KEEP, type OpencodeKeepWords } from "./words/opencode-keep.ts";
+export { PI, type PiWords } from "./words/pi.ts";
+export { PLUGIN, type PluginWords } from "./words/plugin.ts";

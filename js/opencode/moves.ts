@@ -1,16 +1,15 @@
-// Сессия и локация экземпляра плагина (граф nks-dev: #6550, правило 3; #6626).
-// OpenCode грузит плагин по разу на локацию, и тулы сессии идут через экземпляр её
-// локации. Сессию переносят между папками (событие session.moved, data.location):
-// ушла отсюда — прежний экземпляр кладёт маркер с меткой НОВОЙ локации (marker.ts) и
-// гасит мост корня, запись держания цела. Экземпляр новой папки часто создаётся самим
-// переносом и грузится после события: он берёт маркер при setup; живой — по событию,
-// дав прежнему его положить. Место возвращается с терпением к уходу прежнего сокета
-// (keep.ts); дети-спутники едут маркером, и их запись в новой папке — отказ (adopt.ts).
-// Ребёнка переносят и одного, без родителя (#6695): вставший спутником едет им же
-// (handoff.ts); не вставший — экземпляр его новой папки находит корень в
-// экземпляре папки родителя (farRoot) и ставит спутника его места.
-/* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
-import { envName } from "../delivery/index.ts";
+// A session and the plugin instance's location (graph @nks/nks-dev: #6550, rule 3; #6626).
+// OpenCode loads the plugin once per location, and a session's tools go through its location's
+// instance. A session moved away (session.moved, data.location) — the previous instance lays a
+// marker tagged with the NEW location (marker.ts) and puts the root's bridge down, the holding
+// record intact. The new folder's instance takes the marker at setup, a live one on the event
+// after the previous lays it. The seat returns patiently (keep.ts); satellite children travel by
+// marker, and their writes in the new folder are refused (adopt.ts). A child moved alone
+// (#6695): a satellite goes as itself (handoff.ts); one not standing — the new folder's instance
+// finds the root in the parent's folder instance (farRoot) and stands a satellite of its seat.
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK answers without a schema */
+import { envName, OPENCODE_KEEP } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { authDir } from "./bridge-io.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { writeLostMarker } from "./marker.ts";
@@ -20,24 +19,25 @@ import type { Slot } from "./slot.ts";
 import type { Say } from "./tools.ts";
 import { heldInProcess } from "./twins.ts";
 
-/** Сколько живой экземпляр новой папки ждёт маркера переноса от прежнего. */
+/** How long a live new folder's instance waits for the previous one's move marker. */
 const ADOPT_MS = Number(process.env[envName("MOVE_ADOPT_MS")]) || 1_000;
 
 export interface MoveDoors {
   say: Say;
   slots: Map<string, Slot>;
   rootOf(session: string): Promise<string>;
-  /** Мост сессии гасится вместе со стоянием её сокета; запись держания корня цела. */
+  /** The session's bridge goes down with its socket's standing; the root's holding record stays. */
   forget(session: string): void;
-  /** Слот корня: новый сам возвращает место (keep.ts). */
+  /** The root's slot: a new one returns the seat itself (keep.ts). */
   slotFor(session: string, touch: boolean): Promise<Slot>;
-  /** Маркер своей локации — взять и вернуть его места (adopt.ts). */
+  /** This location's marker — take it and return its seats (adopt.ts). */
   adopt(): void;
-  /** Ребёнок перенесённого корня кончен здесь (leads.ts). */
+  /** A moved root's child ends here (leads.ts). */
   away(child: string): Promise<void>;
 }
 
 export function createMoves(ctx: Context) {
+  const W = words(OPENCODE_KEEP);
   const home = homeOf(ctx);
   const directoryOf = (sessionID: string) => sessionDirectory(ctx, sessionID);
   const exists = (sessionID: string): Promise<boolean> =>
@@ -47,17 +47,17 @@ export function createMoves(ctx: Context) {
         () => true,
         () => false,
       );
-  /** Сессия читается и стоит в локации этого экземпляра: место ей возвращает он. */
+  /** The session is readable and in this instance's location: this instance returns its seat. */
   const ours = async (sessionID: string): Promise<boolean> => {
     if (!(await exists(sessionID))) return false;
     const dir = home ? await directoryOf(sessionID) : null;
     return !home || !dir || dir === home.directory;
   };
-  const left = new Set<string>(); // корни, перенесённые отсюда в другую папку
-  /** Сессию перенесли в локацию to. */
+  const left = new Set<string>(); // roots moved from here to another folder
+  /** The session moved to location to. */
   function moved(d: MoveDoors, s: string, to: Home | null): void {
     if (!home || !to?.directory || d.slots.get(s)?.child) return;
-    // Написание — как пришло: перенос /tmp/A ↔ /private/tmp/A — перенос между экземплярами (#5048).
+    // The spelling as it came: /tmp/A ↔ /private/tmp/A is a move between instances (#5048).
     if (to.directory !== home.directory) {
       const root = d.slots.get(s);
       if (!root) return;
@@ -65,12 +65,8 @@ export function createMoves(ctx: Context) {
       const kids = [...d.slots.values()].filter((k) => k.child && of && k.satelliteOf?.name === of);
       const away = [{ ...root, dir: to.directory }, ...kids].map((x) => ({ ...x, moved: true }));
       writeLostMarker(authDir(), away, to);
-      d.say(
-        `Искрон: сессия ${s} перенесена в ${to.directory} — её место отпускаю экземпляру той папки`,
-        "info",
-      );
-      // Дети с родителем не переезжают (OpenCode, наблюдено): их поручение кончает перенос —
-      // мост гасится здесь, родителю «перенесён» без «КОНЧЕН», а не вторая жизнь без конца.
+      d.say(W.movedAway(s, to.directory), "info");
+      // Children do not move with the parent (OpenCode, observed): the move ends their errand here.
       left.add(s);
       for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);
@@ -80,35 +76,24 @@ export function createMoves(ctx: Context) {
     setTimeout(() => d.adopt(), ADOPT_MS).unref?.();
   }
   /**
-   * Слово моста в сессию; «место отняли» — не сессии, перенесённой в другую папку:
-   * отнял её же мост нового экземпляра (take из новой папки), слово было бы чужим.
+   * A bridge word into the session; "seat taken" is not for a session moved away: its own new
+   * instance's bridge took it, and the word would be foreign.
    */
   function relay(on: (s: string | null, p: any, child?: boolean) => void, say: Say) {
     return (s: string | null, params: any, child: boolean): void => {
       if (params?.data?.kind !== "evicted" || !home || !s || child) return on(s, params, child);
-      void ours(s).then((mine) =>
-        mine
-          ? on(s, params, child)
-          : say(`Искрон: место сессии ${s} занято из её новой папки — она перенесена`, "info"),
-      );
+      void ours(s).then((mine) => (mine ? on(s, params, child) : say(W.takenFromNew(s), "info")));
     };
   }
-  /**
-   * Вызов дочерней сессии, чей корень перенесён отсюда: мост корня здесь не поднимается
-   * (вернул бы место перенесённого корня этим экземпляром — #6626), отказ вслух.
-   */
+  /** A child's call whose root moved away: the root's bridge is not raised here (#6626), a refusal aloud. */
   function guard(root: string, session: string): void {
     if (root === session || !left.has(root)) return;
-    throw new Error(
-      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, ` +
-        "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
-    );
+    throw new Error(W.parentMoved());
   }
   /**
-   * Корень дочерней сессии, которую перенесли одну в этот каталог (#6695): место родителя
-   * держит экземпляр его каталога, и в этом процессе он находится общим реестром (twins.ts) —
-   * ребёнок встаёт спутником его места, как до переноса. Не нашёлся, а корень в другом
-   * каталоге — "foreign": мост корня здесь его места не возвращает (#6626), встать — отказ.
+   * The root of a child moved alone into this directory (#6695): the parent's seat is held by
+   * its directory's instance, found in this process by the shared registry (twins.ts). Not found
+   * and the root elsewhere — "foreign": the root's bridge does not return its seat here (#6626).
    */
   async function farRoot(root: string): Promise<Slot | "foreign" | null> {
     const held = heldInProcess(root);
@@ -116,13 +101,9 @@ export function createMoves(ctx: Context) {
     const dir = home ? await directoryOf(root) : null;
     return home && dir && dir !== home.directory ? "foreign" : null;
   }
-  /** Отказ встать спутником корня из другого каталога, которого процесс не держит, — на этот миг. */
+  /** A refusal to stand as a satellite of a root in another directory the process does not hold — for now. */
   const farRefusal = async (root: string | null): Promise<string | null> =>
-    root && (await farRoot(root)) === "foreign"
-      ? "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя " +
-        "не держит ни один экземпляр плагина этого процесса OpenCode — родитель в другом процессе либо места не держит. " +
-        "Спутником отсюда не встать; читать можно и так, писать — словом запустившему."
-      : null;
+    root && (await farRoot(root)) === "foreign" ? W.farRefusal() : null;
   return { home, directoryOf, exists, ours, moved, relay, guard, farRoot, farRefusal };
 }
 

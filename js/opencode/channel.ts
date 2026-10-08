@@ -1,39 +1,26 @@
-// Половина «канал» — кадры стояния внутри сессии OpenCode (граф nks-dev: #4266).
+// The "channel" half — standing frames inside an OpenCode session (graph @nks/nks-dev, node #4266).
 //
-// Сокет стояния держит мост сессии (дочерний процесс плагина, свой у каждой
-// корневой сессии): переоткрывает, различает мёртвый токен, публикует
-// занятость. Плагину остаётся то, чего у моста нет, — вложить кадр в сессию
-// агента промптом (ctx.session.prompt). У промпта OpenCode 2 два способа
-// вложения (поверхность харнеса: «Enter steers the active session, Alt+Enter
-// queues the prompt for later»): steer входит в идущий ход следующим шагом,
-// queue ждёт конца хода — и очередь харнес отдаёт по одному промпту на ход.
-// Живой кадр и громкое слово о слухе идут steer: с queue у делателя с длинными
-// ходами кадры всплывали по одному за ход и отставали часами (граф nks-dev:
-// #5233). Пачка побудки и лежалых — queue: она не срочна и ход не режет.
-// Кадры дела «в пачку» — тоже queue, одним промптом на пачку, как у сторожа:
-// шапка счётом по делам с указателем, строки ниже — только адресованные месту
-// (#6574); неадресованное дело идёт в пачку и со стопкой прерывания — текстом
-// в ход входит только адресованное. Пока прежний промпт пачки не взят ходом,
-// новые кадры копятся здесь (дописать неотданный промпт контекст плагина не
-// даёт) и уходят одним, когда OpenCode скажет, что взял. Пачка из одних счётов
-// хода не будит: ждёт и едет шапкой с ближайшим промптом в сессию — пачки,
-// кадра или человека (хук prompt). Прямое слово и слово человека в пачку не
-// ложатся — steer, целиком.
-// Доставка есть возврат управления агенту; кадр, ушедший в лог, — глушитель
-// (урок контура opencode-плагина канала: делатель стоит глухим, считая себя
-// слушающим).
+// The session's bridge holds the standing socket; the plugin puts a frame into the agent's
+// session as a prompt (ctx.session.prompt). steer enters the running turn at the next step,
+// queue waits for the turn's end, one prompt per turn: a live frame and a loud word go steer,
+// or frames lagged by hours (#5233). Wake-up and stale batches go queue: not urgent.
+// Case frames for the pile go queue too, one prompt per pile: a head of counts per case and
+// below it only lines addressed to the seat (#6574). While the pile's previous prompt is not
+// taken, new frames gather here and leave as one when OpenCode says it took it; a pile of counts
+// only wakes no turn and rides the next prompt into the session (the prompt hook). A direct word
+// and a human's word go steer, whole. Delivery is handing control back to the agent; a frame
+// gone to a log is a silencer (#4355).
 //
-// Адресат — сессия, чей мост принёс кадр: адрес приходит вместе с событием,
-// угадывать нечего. Кадр от моста, ещё никому не отданного, идёт в свежайшую
-// корневую сессию, которую плагин видел (списка сессий у контекста OpenCode 2
-// нет); дочерняя сессия (субагент) — адресат только своего моста, поднятого её
-// собственным стоянием (#5154), угадыванием она не выбирается.
+// The addressee is the session whose bridge brought the frame; a frame of a bridge given to
+// nobody yet goes to the freshest root seen; a child session is the addressee only of its own
+// bridge (#5154).
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { envName } from "../delivery/index.ts";
+import { envName, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
+import { words } from "../shared/lang.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
 import type { Context } from "./plugin.ts";
@@ -41,34 +28,29 @@ import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
 
 export interface Channel {
-  /**
-   * Дверь половины «тулы»: событие моста сессии `session` (null — мост ещё
-   * ничей); `child` — мост дочерней сессии, вставшей своим вызовом.
-   */
+  /** The tools half's door: an event of session `session`'s bridge (null — nobody's yet); `child` — a child's own bridge. */
   onEvent(session: string | null, params: unknown, child?: boolean): void;
-  /** OpenCode взял промпт из очереди сессии (`inbox` — его id) или сессия встала (без id). */
+  /** OpenCode took a prompt from the session's queue (`inbox` — its id) or the session went idle (no id). */
   taken(session: string, inbox?: string): void;
-  /** Ход сессии занят (busy) или свободен — по session.status. */
+  /** The session's turn is busy or free — by session.status. */
   status(session: string, busy: boolean): void;
-  /** Сессию удалили: её ждущий такт входить некуда (tacts.ts). */
+  /** The session was deleted: its waiting tact has nowhere to go (tacts.ts). */
   gone(session: string): void;
-  /** Плагин останавливают: накопленное уходит сейчас, не умирает с ним. */
+  /** The plugin stops: what gathered leaves now. */
   stop(): void;
-  /** Счёт записей, ждущих попутного промпта в корневую сессию `session`; null — их нет. */
+  /** Counts of records waiting for a passing prompt into root session `session`; null — none. */
   ride(session: string): string | null;
 }
 
-/** Окно пачки дела; переменная — шов для проб, не ручка человека. */
+/** The case pile window; the variable is a probe seam. */
 const CASE_BATCH_MS = Number(process.env[envName("OPENCODE_BATCH_MS")]) || 5_000;
-/** Полная пачка уходит, не дожидаясь окна. */
+/** A full pile leaves without waiting for the window. */
 const CASE_BATCH_CAP = 20;
-/** Промпт пачки, о взятии которого OpenCode молчит дольше, считается взятым: кадры не ждут вечно. */
+/** A pile prompt whose taking OpenCode keeps silent about longer is counted taken. */
 const PENDING_MAX_MS = Number(process.env[envName("OPENCODE_PENDING_MS")]) || 120_000;
 /**
- * Кадр дела в пачку: не прямое слово и не слово человека (его полёт и обрыв —
- * в пачку, как и его адресное слово не мне, #6081); запись дела, не
- * адресованная месту, — в пачку при любой стопке (#6574): текстом в ход
- * входит только адресованное, прочее уходит счётом в шапке.
+ * A case frame for the pile: not a direct word and not a human's word (its flight and abort —
+ * to the pile, #6081); a case record not addressed to the seat — to the pile at any stack (#6574).
  */
 function toPile(frame: Frame | null): boolean {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
@@ -80,31 +62,33 @@ function toPile(frame: Frame | null): boolean {
     !askFromPerson(frame)
   )
     return false;
-  return !addressedToMine(frame) || stackOf(frame) === "batch"; // адресованность — до стопки: слово в полёте запоминается
+  return !addressedToMine(frame) || stackOf(frame) === "batch"; // addressing before stack: a word in flight is remembered
 }
 
-/** Сколько неадресованных записей ждёт попутного промпта, не больше; старшие уходят. */
+/** How many unaddressed records wait for a passing prompt at most; older ones go. */
 const RIDERS_MAX = 500;
 
 interface Pile {
   session: string | null;
   child: boolean;
   held: Frame[];
-  /** Пачки из одних счётов (#6574): хода не будят — едут счётом с ближайшим промптом в сессию. */
+  /** Piles of counts only (#6574): they wake no turn and ride the next prompt into the session. */
   riders: Frame[];
   timer: ReturnType<typeof setTimeout> | null;
-  /** Промпт пачки в очереди сессии, ещё не взятый ходом; inbox null — ещё в полёте. */
+  /** The pile's prompt in the session's queue, not taken yet; inbox null — still in flight. */
   pending: { session: string; inbox: string | null; at: number } | null;
-  /** Метки внесённого в эту сессию текстом (seen.ts deliveryKeys): счёт пачки их не повторит. */
+  /** Marks of what entered this session as text (seen.ts deliveryKeys): the pile's count skips them. */
   marks: Set<string>;
 }
 
 const MARKS_KEPT = 500;
 
-/* eslint-disable @typescript-eslint/no-explicit-any -- уведомления моста без схемы */
+/* eslint-disable @typescript-eslint/no-explicit-any -- bridge notifications without a schema */
 
 export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string | null): Channel {
-  /** Сессия ещё принимает слово: существует и не в архиве. */
+  const W = words(OPENCODE);
+  const P = words(PLUGIN);
+  /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
     try {
       const info: any = await ctx.session.get({ sessionID: id } as any);
@@ -114,61 +98,46 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     }
   }
 
-  // Каждое вложение — строкой в лог с адресом и кадром, отказ — громко: кадр,
-  // прочитанный мостом и не дошедший до хода, снаружи неотличим от глухоты,
-  // а доска при этом говорит «слушает» (граф nks-dev: #4355).
+  // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(
     session: string | null,
     text: string,
-    frame = "кадр",
+    frame = W.frame(),
     delivery: "steer" | "queue" = "steer",
     child = false,
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (child && (!id || !(await accepting(id)))) {
-      // Место дочерней сессии пережило её: корню этот кадр не адресован — там
-      // стоит другое стояние (#5167). Громко, и кадр остаётся в истории места.
-      say(
-        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; ` +
-          `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
-        "error",
-      );
+      // The child's seat outlived it: the frame is not the root's (#5167); it stays in the seat's history.
+      say(W.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
       return null;
     }
     if (id && !(await accepting(id))) {
-      say(
-        `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
-        "warning",
-      );
+      say(W.sessionClosed(id, frame), "warning");
       id = null;
     }
     id ??= freshestRoot();
     if (id && id !== session && !(await accepting(id))) id = null;
     if (!id) {
-      say(
-        `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` +
-          text.slice(0, 120),
-        "error",
-      );
+      say(W.nowhere(frame, text.slice(0, 120)), "error");
       return null;
     }
     try {
       const r: any = await ctx.session.prompt({ sessionID: id, text, delivery });
-      say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
+      say(W.delivered(frame, id), "info");
       const inbox = r?.id ?? r?.data?.id;
       return { session: id, inbox: typeof inbox === "string" ? inbox : null };
     } catch (e) {
-      say(`Искрон: ${frame} не вложился в сессию ${id}: ${(e as Error).message}`, "error");
+      say(W.notDelivered(frame, id, (e as Error).message), "error");
       return null;
     }
   }
 
-  // Пачки дела — по мосту-адресату: копятся окном, а пока прежний промпт пачки
-  // ждёт в очереди сессии — до его взятия. Кадр покидает пачку, только войдя в
-  // отданный промпт.
+  // Case piles by the addressee bridge: gathered by the window, and while the previous pile
+  // prompt waits in the session's queue — until it is taken.
   const piles = new Map<string, Pile>();
   const takenEarly = new Set<string>();
-  // Такт внимания в занятый ход не входит — ждёт его конца последним (tacts.ts, #6569).
+  // The attention tact does not enter a busy turn — it waits for its end, last (tacts.ts, #6569).
   const tacts = setupTacts(
     (session, text, what, child) => deliver(session, text, what, "queue", child),
     takenEarly,
@@ -184,7 +153,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       : CASE_BATCH_MS;
     p.timer = setTimeout(() => {
       p.timer = null;
-      p.pending = null; // окно вышло либо OpenCode молчит о взятии дольше предела
+      p.pending = null; // the window passed or OpenCode is silent about the taking past the limit
       flush(p);
     }, wait);
     (p.timer as { unref?: () => void }).unref?.();
@@ -195,7 +164,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     p.timer = null;
     const frames = fresh(p, p.held.splice(0));
     if (!frames.length) return;
-    // Пачка из одних счётов хода не будит (#6574): ждёт попутного промпта.
+    // A pile of counts only wakes no turn (#6574): it waits for a passing prompt.
     if (!frames.some((f) => addressedToMine(f))) {
       p.riders.push(...frames);
       p.riders.splice(0, Math.max(0, p.riders.length - RIDERS_MAX));
@@ -207,8 +176,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
       ...batchLines(frames),
     ].join("\n");
-    void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
-      // Без id взятия не увидеть: следующая пачка — по окну, не по взятию.
+    void deliver(p.session, text, W.caseBatch(frames.length), "queue", p.child).then((got) => {
+      // Without an id the taking is not seen: the next pile goes by the window.
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
       if (p.held.length) schedule(p);
@@ -231,24 +200,24 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           marks: new Set(),
         }),
       );
-    if (frame.id && p.held.some((f) => f.id === frame.id)) return; // повтор ждущего
+    if (frame.id && p.held.some((f) => f.id === frame.id)) return; // a repeat of a waiting one
     p.held.push(frame);
     if (!p.pending && p.held.length >= CASE_BATCH_CAP) return flush(p);
     if (!p.timer) schedule(p);
   }
 
-  /** Внесённое в сессию текстом — в метки её пачки. Только своя сессия: у чужой своя доставка. */
+  /** What entered the session as text — into its pile's marks. Only its own session. */
   function noteOwn(p: Pile | undefined, keys: string[] | undefined): void {
     if (!p) return;
     for (const k of keys ?? []) p.marks.add(k);
     for (const old of p.marks) if (p.marks.size > MARKS_KEPT) p.marks.delete(old);
   }
 
-  /** Кадры пачки, чьё событие в сессию ещё не вошло (seen.ts eventIn). */
+  /** The pile's frames whose event has not entered the session yet (seen.ts eventIn). */
   const fresh = (p: Pile, fs: Frame[]): Frame[] =>
     fs.filter((f) => !eventIn(f, (k) => p.marks.has(k)));
 
-  /** Счёт попутных записей пачек — строками шапки; пачки отдают их. */
+  /** The piles' riding counts as head lines; the piles give them away. */
   function riding(ps: Pile[]): string[] {
     const got = ps.flatMap((p) => fresh(p, p.riders.splice(0)));
     return got.length ? [batchHead(got)] : [];
@@ -256,7 +225,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
 
   function loud(session: string | null, text: string, child = false): void {
     say(text, "error");
-    void deliver(session, text, "кадр", "steer", child);
+    void deliver(session, text, W.frame(), "steer", child);
   }
 
   return {
@@ -273,9 +242,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           continue;
         matched = true;
         p.pending = null;
-        flush(p); // накопленное за ходом уже подождало — уходит сейчас
+        flush(p); // what gathered behind the turn has waited — it leaves now
       }
-      // Взятие обогнало ответ на prompt: id запоминается, пачка сверит его по ответу.
+      // The taking overtook the prompt's answer: the id is remembered, the pile checks it by the answer.
       if (inbox && !matched) {
         takenEarly.add(inbox);
         for (const old of takenEarly) if (takenEarly.size > 100) takenEarly.delete(old);
@@ -300,84 +269,65 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       switch (ev.kind) {
         case "frame": {
           const frame = ev.frame ?? null;
-          // Служебные кадры не будят: hello доказывает, что сокет держат, и только.
-          if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
+          // Service frames wake nothing: hello proves the socket is held, and only that.
+          if (frame?.type === "hello") return say(P.listening(), "info");
           if (frame?.type === "status") return;
-          // Путь кадра (#5851): с event_kind — правило рода, без него — своя стопка
-          // кадра, как прежде (#4957); пачка — одним промптом очередью, прочее — вставкой.
+          // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
           if (frame && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
-          noteOwn(own, deliveryKeys(frame)); // кадр входит текстом — счёт пачки его не повторит
+          noteOwn(own, deliveryKeys(frame)); // the frame enters as text — the pile's count skips it
           void deliver(
             session,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
-            `кадр ${frame?.id ?? "без id"}`,
+            frame?.id != null ? W.frameId(String(frame.id)) : W.frameNoId(),
             "steer",
             child,
           );
           return;
         }
-        // Слово моста ребёнка — только ему (child): корню оно не адресовано (#6625).
+        // A child's bridge word goes only to it (child): it is not the root's (#6625).
         case "dead":
-          loud(
-            session,
-            `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect")` +
-              ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
-            child,
-          );
+          loud(session, P.dead(String(ev.code)), child);
           return;
         case "stale":
           noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
-          if (ev.text && !tact(session, child, ev, "пачка лежалых кадров"))
-            void deliver(session, ev.text, "пачка лежалых кадров", "queue", child); // одна пачка — один промпт
+          if (ev.text && !tact(session, child, ev, W.staleBatch()))
+            void deliver(session, ev.text, W.staleBatch(), "queue", child); // one pile — one prompt
           return;
         case "backlog":
           noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
-          // Побудка с накопленным — один промпт на пачку, не ход на кадр (#5140).
-          // Очередью — сознательная развилка: пачка в полтора десятка кадров,
-          // вставленная посреди хода, режет работу делателя; одним промптом она
-          // по одному за ход не всплывёт, а ждёт лишь конца текущего хода.
+          // A wake-up with the backlog — one prompt per pile, queued: steered mid-turn it would cut the doer's work (#5140).
           if (ev.text) {
-            const what = `пачка побудки (${ev.frames?.length ?? 0})`;
+            const what = W.wakeBatch(ev.frames?.length ?? 0);
             if (!tact(session, child, ev, what))
               void deliver(session, ev.text, what, "queue", child);
           }
           return;
         case "lost":
-          // Держащий мост вышел или прежний плагин остановили: громко, в сессию.
+          // The holding bridge exited or the previous plugin was stopped: loudly, into the session.
           if (ev.text) loud(session, ev.text, child);
           return;
         case "resumed":
-          // Мост вернул место сам (#5366): занятое имя — в сессию, как и потеря слуха.
+          // The bridge returned the seat itself (#5366): the taken name goes into the session.
           if (ev.text) {
             say(ev.text, "warning");
-            void deliver(session, ev.text, "слово о возвращённом месте", "steer", child);
+            void deliver(session, ev.text, W.resumedLabel(), "steer", child);
           }
           return;
         case "held":
-          say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
+          say(W.held(ev.key ?? ""), "info");
           return;
         case "released":
-          say(`Искрон: мост отпустил стояние ${ev.key ?? ""} — ${ev.text ?? ""}`, "warning");
+          say(W.released(ev.key ?? "", ev.text ?? ""), "warning");
           return;
         case "evicted":
-          loud(
-            session,
-            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. ` +
-              "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.",
-            child,
-          );
+          loud(session, P.evicted(String(ev.code)), child);
           return;
         case "alive":
-          loud(
-            session,
-            `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; ` +
-              "не пройдёт — спроси о токене.",
-            child,
-          );
+          loud(session, P.alive(ev.version ?? ""), child);
           return;
         case "note":
-          if (ev.text) say(`Искрон: ${ev.text}`, "warning");
+          if (ev.text) say(P.note(ev.text), "warning");
           return;
         default:
           return;

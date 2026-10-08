@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK answers without a schema */
 import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
-import { tellDone, tellFailed } from "./leadwords.ts";
+import { W } from "./leadwords.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
 import type { Say } from "./tools.ts";
@@ -104,9 +104,9 @@ export function teller(ctx: Context, say: Say): LeadDoors["tell"] {
       if (typeof s.synthetic === "function")
         await s.synthetic({ sessionID, text, delivery, resume: wake });
       else await s.prompt({ sessionID, text, delivery, resume: wake });
-      say(tellDone(sessionID), "info");
+      say(W().tellDone(sessionID), "info");
     } catch (e) {
-      say(tellFailed(sessionID, (e as Error).message), "error");
+      say(W().tellFailed(sessionID, (e as Error).message), "error");
     }
   };
 }

@@ -3,7 +3,7 @@
 // stamp}, the installed skill set by the same triple, the harness and the host version.
 // attrs are replaced whole by the server, so the bridge always sends its full set:
 // a partial write would erase its own build marker.
-import { BRIDGE_NAME } from "../delivery/index.ts";
+import { BRIDGE_NAME, SERVER_LOCALE } from "../delivery/index.ts";
 import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { VERSION } from "../shared/version.ts";
@@ -54,16 +54,17 @@ export function rememberModel(m: unknown): void {
 export function placeFields(place: Place = {}): {
   model?: string;
   satellite_of?: string;
-  locale?: "en";
+  locale?: string;
   attrs: Record<string, unknown>;
 } {
   const harness = harnessName();
   const extra = extras.get(placeKey(place)) ?? {};
   const { model, usage, satelliteOf, satelliteOfId } = P;
+  const locale = SERVER_LOCALE[lang()];
   return {
     ...(model ? { model } : {}),
-    // Seat language (#6080): only en is asked; otherwise the server default decides.
-    ...(lang() === "en" ? { locale: "en" as const } : {}),
+    // Seat language (#6080): asked only where the layer names a locale; otherwise the server default decides.
+    ...(locale ? { locale } : {}),
     ...(CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {}),
     attrs: {
       ...extra,

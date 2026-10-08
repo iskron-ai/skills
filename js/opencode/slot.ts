@@ -1,31 +1,30 @@
-// Мост одной сессии — слот половины «тулы» (tools.ts); тип отдельно, чтобы его брали
-// и модули, которые tools.ts зовёт (twins.ts, half.ts), без круга импортов.
-import { envName } from "../delivery/index.ts";
+// One session's bridge — a slot of the "tools" half (tools.ts); the type stands apart so
+// that modules tools.ts calls (twins.ts, half.ts) take it without an import cycle.
+import { envName, OPENCODE, PRODUCT } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { type KeptSlot, WATCH_MS } from "./keep.ts";
 import type { SatelliteSlot } from "./satellite.ts";
 
 /**
- * Мост сессии, которая давно молчит и ничего не держит, отпускается. Инвариант:
- * IDLE_MS > WATCH_MS — сторож слуха (keep.ts) смотрит за стоявшим слотом чаще,
- * чем жнец его сжимает, иначе мост, потерявший место, ушёл бы прежде возврата.
+ * The bridge of a session long silent and holding nothing is released. Invariant:
+ * IDLE_MS > WATCH_MS — the hearing watchdog (keep.ts) looks at a slot that stood more
+ * often than the reaper shrinks it, or a bridge that lost its seat would go before the return.
  */
 export const IDLE_MS = Number(process.env[envName("BRIDGE_IDLE_MS")] || 30 * 60_000);
 if (IDLE_MS <= WATCH_MS)
-  process.stderr.write(
-    `[iskron/warning] ISKRON_BRIDGE_IDLE_MS (${IDLE_MS}) не длиннее такта сторожа слуха (${WATCH_MS}): слот может быть сжат прежде возврата места\n`,
-  );
-/** Шаг жнеца простоя; переменная — для проб. */
+  process.stderr.write(`[${PRODUCT}/warning] ${words(OPENCODE).idleShort(IDLE_MS, WATCH_MS)}\n`);
+/** The idle reaper's step; the variable is for probes. */
 export const REAP_MS = Number(process.env[envName("BRIDGE_REAP_MS")] || 60_000);
 
-/** Мост одной сессии. */
+/** One session's bridge. */
 export interface Slot extends KeptSlot, SatelliteSlot {
-  /** Рукопожатие прошло — можно звать тулы. */
+  /** The handshake passed — tools may be called. */
   ready: Promise<unknown>;
-  /** Корневая сессия, которой принадлежит мост; null — ещё никому не отдан. */
+  /** The root session the bridge belongs to; null — not given to anyone yet. */
   session: string | null;
   lastCall: number;
-  /** Вызовов в полёте — мост посреди вызова жнецу не отдаётся. */
+  /** Calls in flight — a bridge in the middle of a call is not given to the reaper. */
   busy: number;
-  /** Мост остановлен самим плагином — его выход не потеря слуха. */
+  /** Stopped by the plugin itself — its exit is not a loss of hearing. */
   ownStop: boolean;
 }

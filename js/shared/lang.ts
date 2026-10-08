@@ -48,5 +48,3 @@ export const lang = (): Lang => (S.current ??= resolve());
 
 /** The entry of a layer dictionary in the session language. */
 export const words = <T>(dict: Readonly<Record<Lang, T>>): T => dict[lang()];
-
-export const L = (ru: string, en: string): string => (lang() === "en" ? en : ru);

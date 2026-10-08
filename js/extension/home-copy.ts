@@ -1,4 +1,4 @@
-// Где лежит мост и как его домашняя копия держится в ногу с поставкой.
+// Where the bridge lies and how its home copy keeps in step with the delivery.
 import {
   accessSync,
   chmodSync,
@@ -11,8 +11,9 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { BRIDGE_FILE, BRIDGE_SKILL, envName } from "../delivery/index.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL, envName, PI } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { words } from "../shared/lang.ts";
 import { devBuildIn, releaseBuildIn, versionIn } from "../shared/version.ts";
 
 export { homeBridgePath };
@@ -21,7 +22,7 @@ const BRIDGE_PATH_ENV = envName("BRIDGE_PATH");
 
 export type Notify = (text: string, level?: "info" | "warning" | "error") => void;
 
-/** Строгое сравнение X.Y.Z: 1 если a новее b, -1 если старее, 0 если равны или нечитаемо. */
+/** Strict X.Y.Z comparison: 1 if a is newer than b, -1 if older, 0 if equal or unreadable. */
 export function newer(a: string, b: string): number {
   const pa = a.split(".").map(Number),
     pb = b.split(".").map(Number);
@@ -32,10 +33,9 @@ export function newer(a: string, b: string): number {
 }
 
 /**
- * Путь к мосту, приехавшему в этом же пакете. Выводится ОДИН раз и служит обеим
- * половинам: той, что зеркалит копию домой, и той, что мост поднимает. Разъехавшись,
- * они зеркалили бы один файл, а запускали другой, и молча.
- * Бросает, когда загрузчик не дал собственного пути, — звать под try.
+ * The bridge that came in this same package. Derived ONCE and serving both halves — the one
+ * mirroring the home copy and the one raising the bridge — so they never mirror one file and run
+ * another. Throws when the loader gave no own path — call under try.
  */
 export function packagedBridgePath(): string {
   return resolve(
@@ -49,117 +49,80 @@ export function packagedBridgePath(): string {
 }
 
 /**
- * Обновление поставки НЕ обновляло мост: расширение предпочитает домашнюю копию,
- * потому что рядом с ней лежит грант, — и делатель работал старым, считая, что
- * обновился. Наблюдено на штатной установке сразу после релиза: код 6.0.0 поднял
- * мост 5.0.0. Дорого это тем, что мост штампует сборку в каждую ошибку и в лог
- * гранта: полевой репорт с новой поставки приходил бы со старым числом.
+ * Keeps the home copy a MIRROR of the delivery's bridge: the extension prefers the home copy
+ * (the grant lies beside it), and a delivery update used to leave the old bridge running. The
+ * grant survives the swap (its state is separate files keyed by the server address). Compared by
+ * bytes, not version: between releases a git install moves while the version constant stands;
+ * at an equal version only an explicit dev build at home is replaced (#147 [145]).
  *
- * Грант замену переживает, и это ПРОВЕРЕНО, а не предположено: всё состояние
- * входа живёт отдельными файлами в том же каталоге, а имя хранилища выводится из
- * адреса сервера, не из пути и не из байт скрипта. В приёмке новый мост
- * воспользовался refresh-токеном, оставленным старым.
- *
- * ПРАВИЛО СРАВНЕНИЯ — по байтам, а не по версии, и это исправление собственной
- * ошибки. Версия есть номер РЕЛИЗА, а не тождество файла: при установке из
- * git-источника едет ветка, а константа между релизами стоит на месте, — сверка
- * по версии не сработала бы никогда именно там, где поставка обновляется чаще
- * всего. Мост и сам различает себя хешем собственных байт, и скилл транспорта
- * говорит это строкой выше. Поэтому: домашняя копия должна ЗЕРКАЛИТЬ ту, что
- * приехала с поставкой, — кроме случая, когда её версия строго новее. Поправка
- * #147 [145]: при равной версии зеркалится только поверх явной dev-сборки — выпуск
- * той же версии в доме не переписывается.
- *
- * Ограды. Мост поставки не сборка выпуска (метка канала dev — сборка рабочей копии,
- * #6650) — дом не трогаем вовсе. Строго новее дома — не трогаем, потому что это мог быть свежий мост,
- * положенный человеком руками. Путь, заданный переменной, не трогаем вовсе:
- * выбор человека старше нашей заботы. И НЕТ ГОЛОСА — НЕТ ПОДМЕНЫ: в сессии, где
- * сказать нечем, копия не меняется; чинить не запрещено, чинить молча запрещено,
- * и молчание здесь не оправдание, а условие отказа.
+ * Fences: a delivery bridge that is not a release build is never written home (#6650); a home
+ * copy strictly newer is left alone; a path named by the variable is left alone; and NO VOICE —
+ * NO SWAP: in a session that cannot speak the copy does not change.
  */
 export function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
   if (process.env[BRIDGE_PATH_ENV]?.trim()) return;
-  if (!canSpeak) return; // сказать нечем — значит и менять нечего: тихой подмены не бывает
+  if (!canSpeak) return; // nothing to speak with — nothing to change: no silent swap
+  const W = words(PI);
   let packagedPath: string;
   try {
     packagedPath = packagedBridgePath();
   } catch {
-    return; // загрузчик не дал собственного пути — сравнивать не с чем
+    return; // the loader gave no own path — nothing to compare with
   }
   const homePath = homeBridgePath();
   let packaged: Buffer;
   try {
     packaged = readFileSync(packagedPath);
   } catch {
-    return; // поставка моста не несёт — это дело establish-mcp, не наше
+    return; // the delivery carries no bridge — that is the bridge skill's business
   }
   const vPackaged = versionIn(packaged.toString("utf8"));
   if (!vPackaged) {
-    // Сама починка мертва: файл на месте, а прочесть его версию нечем.
-    notify(
-      "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
-      "warning",
-    );
+    // The repair itself is dead: the file is there, its version unreadable.
+    notify(W.versionUnreadable(), "warning");
     return;
   }
-  // Дом пишет только сборка выпуска (#6650): мост рабочей копии — тоже «поставка»,
-  // но непринятая, и в доме он ушёл бы всем харнесам машины.
+  // Only a release build writes home (#6650): a working copy's bridge would reach every harness of the machine.
   if (!releaseBuildIn(packaged.toString("utf8"))) return;
 
   let home: Buffer;
   try {
     home = readFileSync(homePath);
   } catch {
-    return; // домашней копии ещё нет — её заводит establish-mcp, не мы
+    return; // no home copy yet — the bridge skill lays it, not us
   }
-  if (home.equals(packaged)) return; // байт в байт — говорить не о чем
+  if (home.equals(packaged)) return; // byte for byte — nothing to say
 
   const vHome = versionIn(home.toString("utf8"));
   if (vHome && newer(vHome, vPackaged) > 0) {
-    notify(
-      `Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`,
-      "warning",
-    );
+    notify(W.homeNewer(vHome, vPackaged), "warning");
     return;
   }
-  // Равная версия: дом вытесняется только ЯВНОЙ dev-сборкой (#147 [145]) — дом без метки
-  // есть выпуск до меток, и мост main той же версии, но иных байт, его не переписывает.
+  // An equal version: home is replaced only by an EXPLICIT dev build (#147 [145]).
   if (vHome === vPackaged && !devBuildIn(home.toString("utf8"))) return;
 
-  const was = vHome ?? "версия не читается";
-  const tmp = `${homePath}.tmp-${process.pid}`; // имя с pid: два старта рядом не пишут в один файл
+  const was = vHome ?? W.noVersion();
+  const tmp = `${homePath}.tmp-${process.pid}`; // a pid in the name: two starts side by side do not write one file
   try {
     writeFileSync(tmp, packaged);
     chmodSync(tmp, 0o755);
     renameSync(tmp, homePath);
-    notify(
-      vHome === vPackaged
-        ? `Искрон: мост дома заменён на привезённый поставкой — версия та же (${vPackaged}), байты другие. Грант не тронут.`
-        : `Искрон: мост дома обновлён ${was} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`,
-      "info",
-    );
+    notify(vHome === vPackaged ? W.replacedSame(vPackaged) : W.updated(was, vPackaged), "info");
   } catch (e) {
     try {
       unlinkSync(tmp);
     } catch {
-      /* нечего убирать */
+      /* nothing to clean */
     }
-    notify(
-      `Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${(e as Error).message}). Работаю тем, что есть.`,
-      "warning",
-    );
+    notify(W.replaceFailed(was, vPackaged, (e as Error).message), "warning");
   }
 }
 
 /**
- * Путь к мосту выводится, не зашивается: расширение и мост едут одним репозиторием.
- * ПОРЯДОК НЕСУЩИЙ: сперва привезённый поставкой, домашняя копия — только когда
- * поставка моста не несёт. Расширение и мост говорят одним протоколом уведомлений
- * (кадры стояния), и версия у них одна на двоих; домашняя копия — контракт с
- * конфигами ДРУГИХ харнесов, и она отстаёт всякий раз, когда сессия без голоса
- * (headless) не вправе её обновить. Наблюдено живьём: с домашней копией впереди
- * headless-сессия pi молча подняла мост прежней версии — тулы работали, а
- * стояние не держалось, и ни одной строки об этом не было.
+ * The bridge's path is derived, not hard-coded. ORDER MATTERS: the delivery's bridge first, the
+ * home copy only when the delivery carries none — the extension and the bridge share one
+ * notification protocol and one version, while the home copy lags whenever a headless session may
+ * not update it.
  */
 export function findBridge(): { path: string; tried: string[] } | { path: null; tried: string[] } {
   const tried: string[] = [];
@@ -170,10 +133,10 @@ export function findBridge(): { path: string; tried: string[] } | { path: null; 
   const named = process.env[BRIDGE_PATH_ENV]?.trim();
   push(named ? resolve(named) : null);
   try {
-    // pi install git:… кладёт расширение рядом со скиллами того же репозитория.
+    // A git install of pi puts the extension next to the skills of the same repository.
     push(packagedBridgePath());
   } catch {
-    /* загрузчик не дал собственного пути — остаются переменная и домашняя копия */
+    /* the loader gave no own path — the variable and the home copy remain */
   }
   push(homeBridgePath());
   for (const candidate of tried) {
@@ -181,7 +144,7 @@ export function findBridge(): { path: string; tried: string[] } | { path: null; 
       accessSync(candidate, constants.R_OK);
       return { path: candidate, tried };
     } catch {
-      /* следующий кандидат */
+      /* next candidate */
     }
   }
   return { path: null, tried };

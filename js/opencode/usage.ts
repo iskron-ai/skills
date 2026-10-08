@@ -1,10 +1,9 @@
-// Расход сессии OpenCode для attrs места (граф nks-dev: #6271, #6401). Из событий
-// сервиса: session.usage.updated — потрачено сессией накопительно, по видам
-// токенов; session.step.started — модель шага; session.step.ended — сколько
-// вошло в окно на этом шаге; размер окна — limit.context модели из ctx.model.list().
-// Мосту уходит не чаще раза в DEBOUNCE_MS на сессию: мост сам решает, стоит ли
-// сдвиг вызова на сервер (bridge/usage.ts). Конец прогона и удаление сессии
-// сбрасывают ждущий снимок сразу (flush) — до того, как мост уйдёт с местом.
+// An OpenCode session's usage for the seat's attrs (graph @nks/nks-dev, nodes #6271, #6401).
+// From service events: session.usage.updated — spent by the session cumulatively, by token
+// kind; session.step.started — the step's model; session.step.ended — how much entered the
+// window on the step; the window size — the model's limit.context from ctx.model.list().
+// To the bridge at most once per DEBOUNCE_MS per session (the bridge decides, bridge/usage.ts);
+// a run's end and the session's deletion flush the pending snapshot before the bridge leaves.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { envName, method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
@@ -24,10 +23,10 @@ const DEBOUNCE_MS = Number(process.env[envName("USAGE_DEBOUNCE_MS")] || 10_000);
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-/** Токены одного отчёта сервиса: новые (без чтения кеша) — «потрачено», всё входное — «в окне». */
+/** One service report's tokens: new ones (no cache read) are "spent", all input is "in the window". */
 const spent = (t: any): number => n(t?.input) + n(t?.output) + n(t?.reasoning) + n(t?.cache?.write);
 const inWindow = (t: any): number => n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write);
-/** По видам: рассуждение — выход модели. */
+/** By kind: reasoning is model output. */
 const kinds = (t: any): UsagePayload => ({
   input: n(t?.input),
   output: n(t?.output) + n(t?.reasoning),
@@ -37,7 +36,7 @@ const kinds = (t: any): UsagePayload => ({
 
 export interface UsageFeed {
   onEvent: (ev: any) => void;
-  /** Ждущий снимок сессии — мосту сейчас, мимо паузы; ждать ответа моста. */
+  /** The session's pending snapshot to the bridge now, past the pause; waits for the bridge's answer. */
   flush: (session: string) => Promise<void>;
   forget: (session: string) => void;
   stop: () => void;
@@ -45,7 +44,7 @@ export interface UsageFeed {
 
 export function createUsageFeed(opts: {
   listModels: () => Promise<unknown>;
-  /** Мост, держащий место самой сессии; null — места нет, отдавать некуда. */
+  /** The bridge holding the session's own seat; null — no seat, nowhere to send. */
   bridgeOf: (session: string) => Bridge | null;
 }): UsageFeed {
   const bySession = new Map<string, UsagePayload & { ref?: string }>();
@@ -65,12 +64,11 @@ export function createUsageFeed(opts: {
           if (ctx && id) windows.set(`${prov ?? ""}/${id}`, ctx);
         }
       } catch {
-        listed = null; // список не пришёл — спросим снова на следующем шаге
+        listed = null; // the list did not come — ask again on the next step
       }
     })());
 
-  // Снимки сессии уходят мосту по одному: следующий — после ответа на ушедший,
-  // иначе последний обогнал бы предыдущий, и место легло бы со старыми цифрами.
+  // Snapshots go one at a time: otherwise the last could overtake the previous and the seat keep old numbers.
   const inFlight = new Map<string, Promise<void>>();
   const send = async (session: string, timeoutMs: number): Promise<void> => {
     const u = bySession.get(session);
@@ -85,7 +83,7 @@ export function createUsageFeed(opts: {
   const flush = (session: string, timeoutMs = 10_000): Promise<void> => {
     clearTimeout(timers.get(session));
     timers.delete(session);
-    // Цифры берутся в миг отправки, не постановки: уходит последний снимок.
+    // Numbers are taken when sent, not when queued: the last snapshot goes.
     const p = (inFlight.get(session) ?? Promise.resolve()).then(() => send(session, timeoutMs));
     inFlight.set(session, p);
     void p.finally(() => {
@@ -130,7 +128,7 @@ export function createUsageFeed(opts: {
       bySession.set(session, u);
       schedule(session);
     },
-    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    // No pending snapshot — wait for the one in flight: the bridge does not leave the seat before its answer.
     flush: (session) =>
       timers.has(session) ? flush(session, 3_000) : (inFlight.get(session) ?? Promise.resolve()),
     forget(session: string): void {

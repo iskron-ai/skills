@@ -77,3 +77,19 @@ test("protocol keys: the fields capability follows the product, the refusal key 
     "the built bridge reads the server's refusal key",
   );
 });
+
+// A delivery with other languages (graph @nks/nks-dev, node #6809) copies the core as is:
+// the core names no language key — it goes through LANGS, the default and lang().
+test("the core names no language key of the layer", () => {
+  const KEY = /\.(ru|en)\b|["'](ru|en)["']/;
+  const hits = [];
+  for (const d of ["bridge", "shared", "opencode", "extension", "watchdog", "cli"])
+    for (const f of readdirSync(join(REPO, "js", d), { recursive: true }))
+      if (String(f).endsWith(".ts"))
+        readFileSync(join(REPO, "js", d, String(f)), "utf8")
+          .split("\n")
+          .forEach((line, i) => {
+            if (KEY.test(line)) hits.push(`js/${d}/${f}:${i + 1}: ${line.trim()}`);
+          });
+  assert.deepEqual(hits, []);
+});

@@ -1,60 +1,51 @@
-// Место держит каталог загруженным. OpenCode 2.0.22 (@opencode/LocationActivity)
-// выгружает службы каталога через 60 мин без сохраняемых событий его сессий
-// (Session.Event.Durable); GET, SSE и открытый TUI срок не продлевают, настройки нет.
-// С выгрузкой останавливается плагин, мост отпускает место — и кадры с побудками
-// не доходят до первого запроса к каталогу, ночью часами. Пока в экземпляре есть
-// занятое место, плагин сам кладёт такое событие.
+// A held seat keeps the directory loaded. OpenCode 2.0.22 (LocationActivity) unloads a
+// directory's services after 60 min without durable events of its sessions; GET, SSE and an
+// open TUI do not extend it. With the unload the plugin stops and the bridge lets the seat go.
+// While the instance has a held seat, the plugin lays such an event itself.
 //
-// Срок продлевает только событие с конвертом location: его ставит окружающая Location
-// вызова (HTTP с sessionLocationMiddleware, исполнение хода) либо явный {location} в
-// publish. Вызовы ctx.session.* плагина идут без окружающей Location — update
-// метаданных событие кладёт, а срок не продлевает (живой прогон: событие в 09:53, выгрузка
-// в 10:03). Явный {location} из поверхности плагина ставит только session.create. Поэтому
-// событие — дочерняя сессия места, созданная и сразу удалённая: её session.created несёт
-// location родителя, ход ей не даётся, корневой список её не показывает.
+// Only an event with a location envelope extends the term; of the plugin surface only
+// session.create sets one explicitly. So the event is a child session of the seat, created
+// and removed at once: its session.created carries the parent's location, it gets no turn.
 //
-// ЦЕНА. Каталог, где занято место, не выгружается никогда — службы каталога живут, пока
-// живо место. И выгрузка больше не снимает зависший ход: перед выгрузкой сервер прерывал
-// ходы каталога с reason "inactivity", теперь этого не будет — зависший ход снимает человек
-// (отмена). Выключатель — ISKRON_KEEPALIVE_MS=0 (SETUP.md, раздел OpenCode).
-/* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
-import { envName } from "../delivery/index.ts";
+// Cost: a directory with a held seat is never unloaded, and the unload no longer cuts a hung
+// turn — the human cancels it. The switch: the KEEPALIVE_MS variable set to 0.
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
+import { envName, OPENCODE_KEEP } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import type { Context } from "./plugin.ts";
 
-/** Порог тишины до события; 0 — выключено. Срок каталога — 60 мин. */
+/** Silence before the event; 0 — off. The directory's term is 60 min. */
 const EVERY_MS = (() => {
   const v = process.env[envName("KEEPALIVE_MS")];
   return v === undefined || v === "" ? 50 * 60_000 : Number(v) || 0;
 })();
 
-// События хода OpenCode 2.0.22 (schema/session-event.ts, durable) — их публикует исполнение
-// в Location каталога, и они продлевают срок сами. Слова плагина (synthetic, inbox, правки
-// сессии) идут без Location и не продлевают; дельты, прогресс тула, usage.updated не
-// сохраняются. Неизвестное не считается: лишнее событие дешевле выгрузки.
+// OpenCode 2.0.22 turn events (schema/session-event.ts, durable) extend the term themselves;
+// the plugin's words, deltas, tool progress and usage.updated do not. Unknown is not counted.
 const DURABLE =
   /^session\.(execution\.(started|succeeded|failed|interrupted)|(step|text|reasoning|compaction)\.(started|ended|failed)|tool\.(called|success|failed|input\.(started|ended))|shell\.(started|ended)|skill\.activated|instructions\.updated|message\.content\.updated|usage\.recorded|retry\.scheduled)$/;
 
-/** Сколько неудалённых служебных сессий плагин помнит для повтора. */
+/** How many unremoved service sessions the plugin remembers for a retry. */
 const LEFTOVER_MAX = 20;
 
-/** Заголовок дочерней сессии-однодневки: по нему её узнают в событиях и журнале. */
-export const KEEPALIVE_TITLE = "iskron: каталог держит место";
+/** The title of the one-day child session: events and the log know it by it. */
+export const keepaliveTitle = (): string => words(OPENCODE_KEEP).keepaliveTitle();
 
 export interface KeepAlive {
-  /** Событие сервиса: сохраняемое событие сессии этого экземпляра продлевает срок само. */
+  /** A service event: a durable event of this instance's session extends the term itself. */
   onEvent(ev: any): void;
   stop(): void;
 }
 
 export interface KeepDoors {
-  /** Сессии экземпляра с занятым местом (корень с местом, живой ведущий спутник). */
+  /** The instance's sessions with a held seat (a root with a seat, a live lead satellite). */
   holders(): string[];
-  /** Сессия этого экземпляра: её события продлевают срок его каталога. */
+  /** A session of this instance: its events extend its directory's term. */
   owns(session: string): boolean;
   say(text: string, level?: "warning" | "error"): void;
 }
 
-/** Сессии держащих слотов, корни первыми: событие ляжет в корень с местом. */
+/** Sessions of holding slots, roots first: the event lands in a root with a seat. */
 export const holdersOf = (
   slots: Iterable<{ holding: boolean; session?: string | null; child?: boolean }>,
 ): string[] =>
@@ -65,22 +56,20 @@ export const holdersOf = (
 
 export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
   if (EVERY_MS <= 0) return { onEvent() {}, stop() {} };
+  const W = words(OPENCODE_KEEP);
+  const title = keepaliveTitle();
   let last = Date.now();
   let busy = false;
-  // Служебные сессии, которые удалить не вышло: повтор — по попытке на такт, после продления.
+  // Service sessions that could not be removed: one retry per tact, after the extension.
   const leftover = new Set<string>();
   let noRemoveSaid = false;
   let capSaid = false;
-  /** Одна попытка удаления; любой сбой, и синхронный, — false, не отказ промиса. */
+  /** One removal try; any failure, a synchronous one too, is false, not a rejection. */
   async function removeOnce(id: string): Promise<boolean> {
-    // remove есть у контекста OpenCode 2.0.22, но не в типах @opencode/plugin 2.0.4.
+    // remove is on the OpenCode 2.0.22 context, but not in the @opencode/plugin 2.0.4 types.
     const fn = (ctx.session as any).remove;
     if (typeof fn !== "function") {
-      if (!noRemoveSaid)
-        d.say(
-          `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${KEEPALIVE_TITLE}» не удаляются и копятся дочерними у места; продление идёт`,
-          "error",
-        );
+      if (!noRemoveSaid) d.say(W.noRemove(title), "error");
       noRemoveSaid = true;
       return false;
     }
@@ -95,47 +84,36 @@ export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
     leftover.add(id);
     if (leftover.size <= LEFTOVER_MAX) return;
     const oldest = leftover.values().next().value as string;
-    leftover.delete(oldest); // за пределом не помним: удалит человек
-    if (!capSaid)
-      d.say(
-        `Искрон: неудалённых служебных сессий продления больше ${LEFTOVER_MAX} — старшие больше не повторяю, удали дочерние «${KEEPALIVE_TITLE}» руками`,
-        "error",
-      );
+    leftover.delete(oldest); // past the limit — not remembered: the human removes it
+    if (!capSaid) d.say(W.cap(LEFTOVER_MAX, title), "error");
     capSaid = true;
   }
-  /** Продление: служебная сессия создана — срок продлён (её session.created несёт location). */
+  /** The extension: a service session created — the term extended (its session.created carries location). */
   async function touch(session: string): Promise<string | null> {
     let s: any;
     try {
-      s = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE } as any);
+      s = await ctx.session.create({ parentID: session, title } as any);
     } catch (e) {
-      d.say(`Искрон: каталог не продлён — служебная сессия не создана: ${(e as Error).message}`);
+      d.say(W.notCreated((e as Error).message));
       return null;
     }
     const id = s?.id ?? s?.data?.id;
     if (typeof id === "string") return id;
-    d.say(
-      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
-      "error",
-    );
+    d.say(W.noId(JSON.stringify(s ?? null).slice(0, 160), title), "error");
     return null;
   }
-  /** Уборка — после продления и независимо от него: свежей две попытки, прежним по одной. */
+  /** Tidying — after the extension and independent of it: two tries for a fresh one, one for earlier ones. */
   async function tidy(fresh: string | null): Promise<void> {
     for (const id of [...leftover]) if (await removeOnce(id)) leftover.delete(id);
     if (!fresh) return;
     if ((await removeOnce(fresh)) || (await removeOnce(fresh))) return;
     remember(fresh);
-    if (!noRemoveSaid)
-      d.say(
-        `Искрон: каталог продлён, служебная сессия ${fresh} не удалена — повторю на следующем такте`,
-      );
+    if (!noRemoveSaid) d.say(W.notRemoved(fresh));
   }
   async function tick(): Promise<void> {
     let fresh: string | null = null;
     const held = Date.now() - last >= EVERY_MS ? d.holders() : [];
     if (held.length) {
-      // без места каталог не держим
       last = Date.now();
       fresh = await touch(held[0]);
     }
@@ -146,7 +124,7 @@ export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
       if (busy) return;
       busy = true;
       void tick()
-        .catch((e: Error) => d.say(`Искрон: такт продления каталога сорвался — ${e.message}`))
+        .catch((e: Error) => d.say(W.tickFailed(e.message)))
         .finally(() => (busy = false));
     },
     Math.max(50, Math.min(60_000, EVERY_MS / 5)),
@@ -155,7 +133,7 @@ export function createKeepAlive(ctx: Context, d: KeepDoors): KeepAlive {
   return {
     onEvent(ev) {
       const s = ev?.data?.sessionID;
-      // Только событие с конвертом location продлевает срок — синтетика плагина его не несёт.
+      // Only an event with a location envelope extends the term — the plugin's synthetics carry none.
       if (typeof s === "string" && ev?.location && DURABLE.test(String(ev?.type)) && d.owns(s))
         last = Date.now();
     },

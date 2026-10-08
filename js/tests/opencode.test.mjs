@@ -3470,12 +3470,13 @@ test("a delivery skill's files outside the working copy are read without an ask 
     assert.equal(
       await read(join(plugged, "kin", "references", "phrasebook.md")),
       "ask",
-      "a lockless root opens nothing, though it carries the bridge — no source is proven",
+      "a lockless root opens no other skill, though it carries the bridge — no source is proven",
     );
+    // A hand install (no lock): the bridge skill is told by the bridge it carries.
     assert.equal(
-      await read(join(plugged, "establish-mcp", "SKILL.md")),
-      "ask",
-      "not even its bridge skill",
+      await read(join(plugged, "establish-mcp", "references", "phrasebook.md")),
+      "allow",
+      "a lockless root opens its bridge skill — the one that carries the bridge",
     );
     assert.equal(
       await read(join(broken, "torn", "references", "phrasebook.md")),
@@ -5609,7 +5610,8 @@ test("on an English server (*.ai) the launch line reads «case №N» and the wo
     await until(() => rec.tools().has("iskron_stand"), "the stand tool", 8000);
     // Ребёнок встаёт только спутником места корня (#6550 п.2): корень стоит первым.
     await rec.call("iskron_stand", { realm: "r5", karta: "#2816" }, "root");
-    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
+    // The plugin speaks the session language too (#6806 item 7): English on a *.ai server.
+    await until(() => /the bridge holds the standing/.test(rec.said()), "the root's held word");
     const read = await rec.prompt("child", "start r5 #48 case №77 from @me:lead");
     assert.equal(
       read,
@@ -6718,6 +6720,7 @@ test("a background child waiting on a permission: the parent hears it once, woke
     other.emit(ev); // the stream is the service's: every instance sees it
   };
   try {
+    await serverTools(rec);
     ask("per_1", "child");
     ask("per_1", "child");
     ask("per_2", "root");
@@ -6760,6 +6763,7 @@ test("the wait words in English: only the human answers or cancels, in the child
   });
   const words = () => rec.synthetics.filter((s) => /waiting for a permission/.test(s.text));
   try {
+    await serverTools(rec);
     rec.emit({
       type: "permission.asked",
       data: { id: "per_en", sessionID: "child", action: "bash", resources: ["a", "b", "c", "d"] },
@@ -6812,6 +6816,7 @@ test("a lead child interrupted (superseded) gets no word from the instance of an
     other.emit(ev);
   };
   try {
+    await serverTools(other);
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     cut("evt_lead", "child", "superseded");
     cut("evt_plain", "plain", "shutdown");
@@ -6835,6 +6840,7 @@ test("a child without a place whose turn is interrupted by shutdown: the parent 
   const cut = (id, sessionID, reason) =>
     rec.emit({ type: "session.execution.interrupted", id, data: { sessionID, reason } });
   try {
+    await serverTools(rec);
     cut("evt_1", "child", "shutdown");
     cut("evt_1", "child", "shutdown");
     cut("evt_2", "child", "user");
@@ -6852,5 +6858,142 @@ test("a child without a place whose turn is interrupted by shutdown: the parent 
     );
   } finally {
     await rec.stop();
+  }
+});
+
+// Two plugins in one OpenCode both see the service's stream (graph @nks/nks-dev, node
+// #6815 item 7): a word about a child waiting or interrupted is claimed per delivery —
+// twice-loaded copies of one delivery say it once, another delivery's claim does not
+// silence this one (each delivery knows only its own lead subagents).
+test("another delivery's claim on a child's word does not silence this delivery", async () => {
+  const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
+  const opts = { location: { directory: SANDBOX }, sessions: WAIT_SESSIONS(SANDBOX) };
+  const claimed = new Set(["per_y", "evt_y"]);
+  globalThis.__bridgeChildWordsTold = claimed;
+  globalThis.__otherChildWordsTold = claimed;
+  const a = await plugin(bridgeEnv("permission-other-claim", env).env, opts);
+  try {
+    a.emit({
+      type: "permission.asked",
+      data: { id: "per_y", sessionID: "child", action: "bash", resources: ["ls"] },
+    });
+    a.emit({
+      type: "session.execution.interrupted",
+      id: "evt_y",
+      data: { sessionID: "child", reason: "shutdown" },
+    });
+    await delay(600);
+    assert.equal(waitWords(a).length, 2, JSON.stringify(waitWords(a).map((w) => w.text)));
+  } finally {
+    delete globalThis.__bridgeChildWordsTold;
+    delete globalThis.__otherChildWordsTold;
+    await a.stop();
+  }
+});
+
+test("two copies of one delivery in one process: a child's permission wait and interruption reach the parent once", async () => {
+  const env = { ISKRON_PERMISSION_WAIT_MS: 100 };
+  const opts = { location: { directory: SANDBOX }, sessions: WAIT_SESSIONS(SANDBOX) };
+  const a = await plugin(bridgeEnv("permission-two-a", env).env, opts);
+  const b = await plugin(bridgeEnv("permission-two-b", env).env, opts);
+  try {
+    for (const rec of [a, b]) {
+      rec.emit({
+        type: "permission.asked",
+        data: { id: "per_x", sessionID: "child", action: "bash", resources: ["ls"] },
+      });
+      rec.emit({
+        type: "session.execution.interrupted",
+        id: "evt_x",
+        data: { sessionID: "child", reason: "shutdown" },
+      });
+    }
+    await delay(600);
+    const words = [...waitWords(a), ...waitWords(b)];
+    assert.equal(words.length, 2, JSON.stringify(words.map((w) => w.text)));
+  } finally {
+    await a.stop();
+    await b.stop();
+  }
+});
+
+// ── the session language (graph @nks/nks-dev, node #6806 item 7) ─────────────
+// The plugin speaks the session language of shared/lang.ts (ISKRON_BRIDGE_LANG,
+// ISKRON_BRIDGE_URL, the `server` file): Russian stays byte for byte, English has no Cyrillic.
+const ANY_CYRILLIC = /\p{Script=Cyrillic}/u;
+const SPEECH = {
+  en: {
+    missing: (tried) =>
+      `Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: ${tried}. Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.`,
+    listening: "Iskron: the channel is listening",
+    dead: (code) =>
+      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+  },
+  ru: {
+    missing: (tried) =>
+      `Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: ${tried}. Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.`,
+    listening: "Искрон: канал слушает",
+    dead: (code) =>
+      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+  },
+};
+
+for (const [lang, chosen, label] of [
+  ["en", { ISKRON_BRIDGE_LANG: "en" }, "ISKRON_BRIDGE_LANG=en"],
+  ["en", { ISKRON_BRIDGE_URL: "https://mcp.iskron.ai/" }, "ISKRON_BRIDGE_URL on *.ai"],
+  ["ru", { ISKRON_BRIDGE_LANG: "ru" }, "ISKRON_BRIDGE_LANG=ru"],
+]) {
+  const say = SPEECH[lang];
+  test(`${label}: the missing bridge, the listening channel and a dead token are said in ${lang}`, async () => {
+    const missing = join(SANDBOX, "no-such-bridge.mjs");
+    const none = await plugin({ ISKRON_BRIDGE_PATH: missing, ...chosen });
+    try {
+      const tried = [missing, join(SANDBOX, ".iskron-bridge", "iskron-bridge.mjs")].join(", ");
+      assert.ok(none.said().includes(`[iskron/error] ${say.missing(tried)}\n`), none.said());
+      if (lang === "en") assert.doesNotMatch(none.said(), ANY_CYRILLIC, none.said());
+    } finally {
+      await none.stop();
+    }
+    const b = bridgeEnv(`speech-${label.replace(/\W+/g, "-")}`, chosen);
+    const rec = await plugin(b.env);
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-lang");
+      const pid = pidOf(b.log);
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
+      );
+      await until(() => rec.said().includes(`[iskron] ${say.listening}\n`), "the hello line");
+      appendFileSync(`${b.events}.${pid}`, event("dead", { code: 4001 }));
+      await until(() => rec.prompts.length === 1, "the dead-token prompt");
+      assert.equal(rec.prompts[0].text, say.dead(4001));
+      assert.ok(rec.said().includes(`[iskron/error] ${say.dead(4001)}\n`), rec.said());
+    } finally {
+      await rec.stop();
+    }
+  });
+}
+
+test("the bridge the plugin raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, none under ru", async () => {
+  for (const lang of ["en", "ru"]) {
+    const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+    const rec = await plugin({
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_BRIDGE_LANG: lang,
+    });
+    try {
+      await until(() => rec.tools().has("iskron_stand"), "the bridge's own tool", 15000);
+      await until(() => fake.state.acceptLanguage.size > 0, "a request to the server", 15000);
+      const asked = [...fake.state.acceptLanguage];
+      if (lang === "en") assert.ok(asked.includes("en"), asked.join(","));
+      else assert.ok(asked.length && !asked.includes("en"), asked.join(","));
+    } finally {
+      await rec.stop();
+      await fake.stop();
+    }
   }
 });

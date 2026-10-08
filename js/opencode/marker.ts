@@ -1,14 +1,16 @@
-// Маркер потери (граф nks-dev: #5140, #6626): остановленный с держащими мостами
-// плагин пишет, кого держал; следующий экземпляр возвращает эти места (keep.ts).
-// Экземпляр один на локацию OpenCode, тулы сессии идут через экземпляр её локации,
-// а обновление поставки перезагружает все разом: файл несёт метку локации, и берутся
-// только файлы своей — взяв чужой, экземпляр вернул бы место своим мостом и сказал
-// сессии «вернул», а её занятость шла бы мостом её экземпляра, места не держащим.
-// Файл прежней сборки без метки читают все, беря записи своего каталога; снимает его срок.
+// The loss marker (graph @nks/nks-dev: #5140, #6626): a plugin stopped with holding bridges
+// writes whom it held; the next instance returns those seats (keep.ts). One instance per
+// OpenCode location, a session's tools go through its location's instance, and a delivery
+// update reloads them all at once: the file carries the location's tag and only one's own are
+// taken — a foreign one would return the seat by this bridge while the session's busy line goes
+// by its own instance's bridge, which holds no seat. An older build's untagged file is read by
+// all, each taking its own directory's records; its term removes it.
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { OPENCODE_KEEP } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import type { KeptSlot } from "./keep.ts";
 import { processStart } from "./procstart.ts";
 import { entryOf, type Home, type LostEntry } from "./records.ts";
@@ -17,29 +19,25 @@ type Lost = { at: string; entries: LostEntry[] };
 type Held = KeptSlot & { place?: { name: string } | null; moved?: boolean };
 
 const PREFIX = "opencode-lost";
-/** Срок файла прежней сборки и записи переноса: экземпляры встают за секунды. */
+/** The term of an older build's file and of a move record: instances come up in seconds. */
 const LEGACY_MS = 2 * 60_000;
-/** Запас на секундную точность `ps -o lstart`: старт в ту же секунду, что запись маркера, — автор. */
+/** Slack for the second precision of `ps -o lstart`: a start in the marker's write second is its author. */
 const START_SLACK_MS = 1000;
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 /**
- * Метка локации в имени файла; экземпляр без локации — «any». Написание каталога — как
- * пришло, не канонизированное: OpenCode 2.0.24 держит экземпляр на каждое написание, и
- * хуки сессии идут только в экземпляр её написания (граф nks-dev: #5048, дело №147).
+ * The location tag in the file name; an instance without a location — "any". The directory's
+ * spelling as it came, not canonical: OpenCode 2.0.24 keeps an instance per spelling (#5048, case №147).
  */
 const tagOf = (home: Home | null): string =>
   home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
-/** Метка файла `opencode-lost.@<метка>.…`; null — файл прежней сборки. */
+/** The tag of a file `opencode-lost.@<tag>.…`; null — an older build's file. */
 const tagIn = (f: string): string | null => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
 /**
- * Файл живого другого сервера OpenCode: на машине их бывает несколько, и каждый
- * грузит плагин для той же папки. Маркер пишет процесс сервера (pid в имени); его
- * сессии зовут тулы через его экземпляр — взяв чужой, этот вернул бы место своим
- * мостом, а сессия пошла бы мостом своего сервера (наблюдено 7.2.1→7.2.2, #6626).
- * Автора различает старт процесса под pid против записи маркера, не возраст файла
- * (#147 [100]): стартовал раньше записи — это автор, живой, маркер его навсегда;
- * позже — pid переиспользован, автора нет; процесса нет или старт не узнать — брать.
+ * A file of another live OpenCode server: a machine may run several, each loading the plugin for
+ * the same folder (observed 7.2.1→7.2.2, #6626). The author is told by the process start under the
+ * pid against the marker's write, not by the file's age (#147 [100]): started earlier — the live
+ * author, its marker; later — the pid reused; no process or no start known — take it.
  */
 const otherLive = (f: string, path: string): boolean => {
   const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
@@ -54,8 +52,8 @@ const otherLive = (f: string, path: string): boolean => {
 };
 
 /**
- * Держащие мосты — на диск, кого держали: остановка плагина либо перенос сессии в другую
- * папку (home — её локация). Возвращает записанное; файл не лёг — пусто.
+ * Holding bridges to disk, whom they held: a plugin stop or a session's move to another folder
+ * (home — its location). Returns what was written; the file did not land — empty.
  */
 export function writeLostMarker(
   authDir: string,
@@ -76,13 +74,13 @@ export function writeLostMarker(
     writeFileSync(join(authDir, name), JSON.stringify(lost), { mode: 0o600 });
     return entries;
   } catch {
-    return []; // маркер — слово, не обязательство
+    return []; // the marker is a word, not an obligation
   }
 }
 
 /**
- * Лежит ли маркер этой локации, никем не взятый (twins.ts: поднялся ли её экземпляр).
- * Маркер другого живого сервера того же каталога не в счёт: takeLostMarker его не берёт.
+ * Whether this location's marker lies untaken (twins.ts: did its instance come up).
+ * Another live server's marker of the same directory does not count: takeLostMarker skips it.
  */
 export function markerWaits(authDir: string, home: Home | null): boolean {
   try {
@@ -94,31 +92,31 @@ export function markerWaits(authDir: string, home: Home | null): boolean {
   }
 }
 
-/** Записи файла, которые берёт этот экземпляр; файл своей метки снимается, прежней сборки — по сроку. */
+/** The file's records this instance takes; an own-tag file is removed, an older build's by its term. */
 function readOwn(path: string, tag: string | null, home: Home | null): Lost | null {
   const drop = () => {
     try {
       unlinkSync(path);
     } catch {
-      /* снял другой экземпляр */
+      /* removed by another instance */
     }
   };
   let lost: Lost | null = null;
   try {
     const text = readFileSync(path, "utf8");
-    if (tag !== null) drop(); // сперва снять, потом разбирать: битый иначе лежал бы вечно
+    if (tag !== null) drop(); // remove first, then parse: a broken file would lie forever otherwise
     lost = JSON.parse(text) as Lost;
   } catch {
-    /* снят другим или битый — не слово */
+    /* removed by another or broken — no word */
   }
   if (tag === null && !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS)) drop();
   if (!lost) return null;
-  // Прежняя сборка писала файл без метки: своя запись в нём — запись своего каталога.
+  // An older build wrote untagged: its own record is a record of its own directory.
   const mine = (e: LostEntry) => tag !== null || !home || !e.dir || e.dir === home.directory;
   return { at: lost.at, entries: (lost.entries ?? []).filter(mine) };
 }
 
-/** Маркеры прежних экземпляров своей локации, прочитанные и стёртые: слово о потере слуха и ключи мест. */
+/** Previous instances' markers of this location, read and removed: the word about lost hearing and the seats' keys. */
 export function takeLostMarker(
   authDir: string,
   home: Home | null,
@@ -133,14 +131,14 @@ export function takeLostMarker(
     return null;
   }
   const mine = tagOf(home);
-  // Файлы своей метки — первыми: запись сессии из файла прежней сборки их не перебивает.
+  // Own-tag files first: a session's record from an older build's file does not override them.
   files.sort((a, b) => Number(tagIn(b) !== null) - Number(tagIn(a) !== null));
   for (const f of files) {
     const tag = tagIn(f);
-    if (tag !== null && tag !== mine) continue; // маркер другой локации — её экземпляру
-    if (otherLive(f, join(authDir, f))) continue; // маркер другого живого сервера — его экземпляру
+    if (tag !== null && tag !== mine) continue; // another location's marker — its instance's
+    if (otherLive(f, join(authDir, f))) continue; // another live server's marker — its instance's
     const lost = readOwn(join(authDir, f), tag, home);
-    // Перенос, не взятый экземпляром новой папки сразу, устарел: сессия ушла дальше.
+    // A move not taken by the new folder's instance at once is stale: the session went on.
     const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
     for (const e of lost?.entries ?? []) {
       if (!e?.session || seen.has(e.session) || (e.moved && stale)) continue;
@@ -152,20 +150,17 @@ export function takeLostMarker(
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
-  // Слово — корням, не перенесённым: места детей возвращаются тихо (children.ts), перенос — не потеря.
-  // Каждой сессии — только её места: чужой ключ в её слове звал бы её возвращать чужое.
+  // The word is for roots not moved: children's seats return silently (children.ts), a move is no loss.
+  // Each session only about its own seats: a foreign key in its word would call it to return a foreign seat.
   const word = (of: LostEntry[]): string | null => {
     const where = of
       .filter((e) => !e.child && !e.moved)
       .map((e) => e.key ?? e.dir ?? e.session)
       .join(", ");
-    return where
-      ? `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. ` +
-          "Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand."
-      : null;
+    return where ? words(OPENCODE_KEEP).lostWord(hhmm, where) : null;
   };
   return {
-    text: word(entries), // журналу — все
+    text: word(entries), // the log gets all
     entries,
     wordFor: (s) => word(entries.filter((e) => e.session === s)),
   };

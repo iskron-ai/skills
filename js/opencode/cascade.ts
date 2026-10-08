@@ -1,22 +1,19 @@
-// Отмена хода родителя — не отмена ребёнка (граф nks-dev: #6625; дело №147 [150]).
-// OpenCode 2.0.22 (packages/core/src/tool/plugin/subagent.ts): task-тул с background=false
-// ждёт ребёнка в jobs.block, и прерывание хода родителя зовёт onInterrupt →
-// sessions.interrupt(child) без причины, то есть «user». Событие ребёнка — тот же
-// session.execution.interrupted { reason: "user" }, что у прямой отмены: в data иного
-// признака нет. Различает родитель: при каскаде его ход прерван тем же «user» рядом по
-// времени (порядок двух событий не держится — оба публикует settle своего исполнения);
-// при прямой отмене ребёнка ход родителя идёт дальше — его task-тул получает «Subagent cancelled».
-/* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
+// A cancel of the parent's turn is no cancel of the child (graph @nks/nks-dev, node #6625; case №147).
+// OpenCode 2.0.22 (core/src/tool/plugin/subagent.ts): a task tool with background=false waits
+// for the child, and interrupting the parent's turn interrupts the child without a reason,
+// i.e. "user" — the same event as a direct cancel. The parent tells them apart: in a cascade
+// its own turn is interrupted with "user" close in time (the two events come in any order).
+/* eslint-disable @typescript-eslint/no-explicit-any -- SDK events without a schema */
 import { envName } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 
-/** Окно, в котором прерывание родителя и ребёнка считаются одной отменой. */
+/** The window in which the parent's and the child's interruptions count as one cancel. */
 const WINDOW_MS = Number(process.env[envName("CASCADE_MS")]) || 3_000;
 
 export interface Cascade {
-  /** Всякое событие сервиса: прерывания с reason «user» запоминаются по сессии. */
+  /** Every service event: interruptions with reason "user" are remembered per session. */
   note(ev: any): void;
-  /** Ход ребёнка, прерванный в t, оборван отменой хода его родителя — ждёт до окна. */
+  /** The child's turn interrupted at t was cut by its parent's cancel — waits up to the window. */
   byParent(parent: Promise<string | null>, t: number): Promise<boolean>;
 }
 
