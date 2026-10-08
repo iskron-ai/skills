@@ -7,12 +7,13 @@
 // Слово человека — настройка его окружения: ISKRON_BRIDGE_OWNER_ROLE=1 у моста
 // харнеса, не аргумент вызова агента. «me» и «realm-owner» — роль самого человека:
 // та же граница. Род не прочитался — отказ с причиной, не обход.
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { callTool, short } from "./call.ts";
 import { normKarta } from "./names.ts";
 
-export const OWNER_ENV = "ISKRON_BRIDGE_OWNER_ROLE";
+export const OWNER_ENV = envName("BRIDGE_OWNER_ROLE");
 const HUMAN = new Set(["me", "realm-owner"]);
 /** Страница поиска ролей владельца — наибольшая, что принимает iskron_search. */
 const OWNERS_PAGE = 100;

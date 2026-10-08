@@ -2,15 +2,22 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import {
+  BRIDGE_NAME,
+  DEFAULT_SERVER_URL,
+  envName,
+  HOME_DIR,
+  SERVER_URLS,
+} from "../delivery/index.ts";
 import { setServerLang } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { BUILD } from "./build.ts";
 import { log } from "./streams.ts";
 import { type Config } from "./types.ts";
 
-export const DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
+export { DEFAULT_SERVER_URL };
 /** Английский Искрон (граф nks-dev: #5040): тот же продовый контур, второй адрес. */
-export const ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
+export const ENGLISH_SERVER_URL = SERVER_URLS.en;
 /** Продовые адреса — только за ними мост следит за релизами поставки; другой инстанс — другая поставка. */
 const PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
 function strip(url: string): string {
@@ -95,16 +102,16 @@ export function parseArgs(argv: string[]): Config {
 export function readArgs(argv: string[]): Config {
   const cfg: Config = {
     serverUrl: "",
-    timeoutMs: Number(envOf("ISKRON_BRIDGE_TIMEOUT")) || 120_000,
-    authDir: envOf("ISKRON_BRIDGE_AUTH_DIR") || join(homedir(), ".iskron-bridge"),
-    clientName: "iskron-bridge",
-    noBrowser: !!envOf("ISKRON_BRIDGE_NO_BROWSER"),
-    debug: !!envOf("ISKRON_BRIDGE_DEBUG"),
-    scope: envOf("ISKRON_BRIDGE_SCOPE") || null,
-    resource: envOf("ISKRON_BRIDGE_RESOURCE") || null,
-    staticClientId: envOf("ISKRON_BRIDGE_CLIENT_ID") || null,
-    deviceClientId: envOf("ISKRON_BRIDGE_DEVICE_CLIENT") || null,
-    deviceRegister: envOf("ISKRON_BRIDGE_DEVICE_REGISTER") === "1",
+    timeoutMs: Number(envOf(envName("BRIDGE_TIMEOUT"))) || 120_000,
+    authDir: envOf(envName("BRIDGE_AUTH_DIR")) || join(homedir(), HOME_DIR),
+    clientName: BRIDGE_NAME,
+    noBrowser: !!envOf(envName("BRIDGE_NO_BROWSER")),
+    debug: !!envOf(envName("BRIDGE_DEBUG")),
+    scope: envOf(envName("BRIDGE_SCOPE")) || null,
+    resource: envOf(envName("BRIDGE_RESOURCE")) || null,
+    staticClientId: envOf(envName("BRIDGE_CLIENT_ID")) || null,
+    deviceClientId: envOf(envName("BRIDGE_DEVICE_CLIENT")) || null,
+    deviceRegister: envOf(envName("BRIDGE_DEVICE_REGISTER")) === "1",
     pat: null,
     patSource: null,
     serverSource: "argument",
@@ -137,10 +144,10 @@ export function readArgs(argv: string[]): Config {
     else throw new ArgsError(`unknown argument: ${a}`, 2);
   }
   if (!cfg.serverUrl) {
-    const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
+    const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
     const fromFile = fromEnv ? null : readServerChoice(cfg.authDir);
     cfg.serverUrl = fromEnv || fromFile || DEFAULT_SERVER_URL;
-    cfg.serverSource = fromEnv ? "ISKRON_BRIDGE_URL" : fromFile ? "file" : "default";
+    cfg.serverSource = fromEnv ? "env" : fromFile ? "file" : "default";
   }
   try {
     new URL(cfg.serverUrl);
@@ -160,10 +167,10 @@ export function readArgs(argv: string[]): Config {
  * 401 при нём означает одно: токен отвергнут, и починит его только человек.
  */
 function readPat(cfg: Config): void {
-  const fromEnv = envOf("ISKRON_BRIDGE_TOKEN")?.trim();
+  const fromEnv = envOf(envName("BRIDGE_TOKEN"))?.trim();
   if (fromEnv) {
     cfg.pat = fromEnv;
-    cfg.patSource = "ISKRON_BRIDGE_TOKEN";
+    cfg.patSource = envName("BRIDGE_TOKEN");
     return;
   }
   const file = join(cfg.authDir, "token");

@@ -21,7 +21,7 @@ import { type Dirent, existsSync, lstatSync, readdirSync, realpathSync } from "n
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { BRIDGE_FILE, BRIDGE_SKILL } from "../shared/clients.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL } from "../delivery/index.ts";
 import { skillLock } from "../shared/skilllock.ts";
 import type { Context } from "./plugin.ts";
 

@@ -29,6 +29,7 @@
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import {
   connectSeam,
@@ -42,7 +43,7 @@ import {
 import { seamEntranceProblem, seamSocketPath } from "../shared/seam-entrance.ts";
 import { BUILD } from "./build.ts";
 import { parseArgs, setConfig } from "./config.ts";
-import { DAEMON_BUSY_EXIT } from "./daemon.ts";
+import { DAEMON_BUSY_EXIT, ms } from "./daemon.ts";
 import { syntheticError } from "./deliver.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
@@ -54,16 +55,12 @@ import { sleep } from "./store.ts";
 import { debug, flushStdout, log, writeTo } from "./streams.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-const ms = (name: string, dflt: number): number => {
-  const v = Number(process.env[name]);
-  return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
-};
 /** Сколько ждать демона — своего или поднятого — прежде чем идти полным мостом. */
-const ATTACH_MS = ms("ISKRON_BRIDGE_DAEMON_WAIT_MS", 5_000);
+const ATTACH_MS = ms(envName("BRIDGE_DAEMON_WAIT_MS"), 5_000);
 /** Сколько ждать демона после обрыва: уходящий демон передаёт места преемнику — тот встаёт не сразу. */
-const REATTACH_MS = ms("ISKRON_BRIDGE_DAEMON_REATTACH_MS", 30_000);
+const REATTACH_MS = ms(envName("BRIDGE_DAEMON_REATTACH_MS"), 30_000);
 /** Сколько ждать bye-ok на уходе. */
-const BYE_MS = ms("ISKRON_BRIDGE_BYE_MS", 5_000);
+const BYE_MS = ms(envName("BRIDGE_BYE_MS"), 5_000);
 const HELLO_MS = 3_000;
 const POLL_MS = 100;
 /** Сколько ждать преемника, которого назвал уходящий демон, прежде чем поднять демон самому. */

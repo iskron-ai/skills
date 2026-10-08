@@ -20,6 +20,7 @@
 // экспортов нет. Bun канал не наполняет — его пинги приходят событием сокета (ниже).
 import * as diagnostics from "node:diagnostics_channel";
 
+import { envName } from "../delivery/index.ts";
 import { L } from "./lang.ts";
 
 /** Канал, в который undici (WebSocket Node) публикует каждый входящий протокольный пинг. */
@@ -31,7 +32,7 @@ const SILENT_INTERVALS = 3;
  * терпение), и при пинге раз в 5 с три интервала короче паузы цикла событий у
  * харнеса; здоровое соединение не должно читаться подвисшим (граф nks-dev: #5380).
  */
-const SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 60_000;
+const SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 60_000;
 
 /** Закрытия, после которых тем же токеном не переоткрываются. */
 export const DEAD_TOKEN_CODES = [4001, 4002];
@@ -52,7 +53,7 @@ const ERROR_GUESS_DELAY_MS = 500;
  * Паузы переоткрытия, когда служба жива, а сокет рвут: растут до потолка и
  * сбрасываются сокетом, прожившим дольше быстрого обрыва (граф nks-dev: #4664).
  */
-const FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000")
+const FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000")
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n > 0);

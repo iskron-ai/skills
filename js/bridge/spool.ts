@@ -9,12 +9,13 @@
 import { appendFileSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { bindScope } from "../shared/scope.ts";
 import { log } from "./streams.ts";
 
 /** Сколько уходящий демон держит сокет места, ожидая вытеснения преемником. */
-export const HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12_000;
+export const HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12_000;
 /** Сколько преемник ждёт конца спула: предел уходящего и запас на его выход. */
 const DRAIN_MS = HANDOFF_MS + 5_000;
 const DRAIN_TICK_MS = 200;

@@ -10,10 +10,10 @@
 //     плагина OpenCode. Сессия, не стоявшая на месте, по одному каталогу его не
 //     получает (#6017), а строка занятости прежнего держателя не публикуется
 //     заново: это его слово о его работе, и свежая отметка выдала бы её за текущую.
-// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает →
-// сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
+// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает → сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
 // Мост, ведущий другое место (держит или запарковал), чужой записью не
 // занимается: holdStanding иного ключа убил бы ведомое.
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
@@ -340,8 +340,8 @@ export async function resumeBy(
 
 /** Старт моста: сокет из окружения без connect — отладочный путь. */
 export function holdFromEnv(): void {
-  const url = envOf("ISKRON_CHANNEL_SOCKET")?.trim();
-  if (url) holdStanding(url, envOf("ISKRON_CHANNEL_STATUS")?.trim() || null);
+  const url = envOf(envName("CHANNEL_SOCKET"))?.trim();
+  if (url) holdStanding(url, envOf(envName("CHANNEL_STATUS"))?.trim() || null);
 }
 
 const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => ({

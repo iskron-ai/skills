@@ -7,10 +7,11 @@
 // времени (порядок двух событий не держится — оба публикует settle своего исполнения);
 // при прямой отмене ребёнка ход родителя идёт дальше — его task-тул получает «Subagent cancelled».
 /* eslint-disable @typescript-eslint/no-explicit-any -- события SDK без схемы */
+import { envName } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 
 /** Окно, в котором прерывание родителя и ребёнка считаются одной отменой. */
-const WINDOW_MS = Number(process.env.ISKRON_CASCADE_MS) || 3_000;
+const WINDOW_MS = Number(process.env[envName("CASCADE_MS")]) || 3_000;
 
 export interface Cascade {
   /** Всякое событие сервиса: прерывания с reason «user» запоминаются по сессии. */

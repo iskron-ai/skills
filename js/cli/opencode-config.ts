@@ -7,7 +7,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { isProductionServer } from "../bridge/config.ts";
+import { BRIDGE_NAME } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
+import { escapeRe } from "../shared/regex.ts";
+import { PRODUCT_PATTERN } from "./installnames.ts";
+
+/** A command part that runs this delivery's bridge: its file or its home copy. */
+const BRIDGE_PART_RE = new RegExp(
+  `(^|[\\\\/])${PRODUCT_PATTERN}[^\\\\/]*\\.mjs$|${escapeRe(BRIDGE_NAME)}`,
+);
 
 export function openCodeMcpEntries(out: (s: string) => void): void {
   const dirFiles = (d: string): string[] => [
@@ -47,8 +55,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       ...(Array.isArray(e.command) ? e.command : e.command ? [e.command] : []),
       ...(e.args ?? []),
     ];
-    if (parts.some((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(String(p))))
-      return "bridge";
+    if (parts.some((p) => BRIDGE_PART_RE.test(String(p)))) return "bridge";
     // Продовых адреса ровно два — русский и английский (#5040), и решает их общий
     // предикат: прочие хосты тех же доменов поставке не принадлежат.
     if (e.url && isProductionServer(e.url)) return "http";
@@ -78,9 +85,7 @@ export function openCodeMcpEntries(out: (s: string) => void): void {
       ...(Array.isArray(e.command) ? e.command : e.command ? [e.command] : []),
       ...(e.args ?? []),
     ].map(String);
-    return (
-      parts.find((p) => /(^|[\\/])iskron[^\\/]*\.mjs$|iskron-bridge/.test(p)) ?? parts.join(" ")
-    );
+    return parts.find((p) => BRIDGE_PART_RE.test(p)) ?? parts.join(" ");
   };
   let unreadable = 0;
   const sources: [string, string][] = [];

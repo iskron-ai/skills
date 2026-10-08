@@ -1,3 +1,4 @@
+import { BRIDGE_NAME } from "../../delivery/index.ts";
 import { L } from "../../shared/lang.ts";
 import { CFG } from "../config.ts";
 import { errorMessage } from "../errors.ts";
@@ -16,7 +17,7 @@ import {
 // carries none, the token is minted without one — so only a client whose
 // default audience is the mcp address yields a token mcp accepts; a dynamic
 // registration has no default audience.
-const DEVICE_CLIENT_ID = "iskron-bridge";
+const DEVICE_CLIENT_ID = BRIDGE_NAME;
 
 /** The server does not know the client or does not let it take the device grant. */
 const clientRefused = (e: unknown): boolean =>

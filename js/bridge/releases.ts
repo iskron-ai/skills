@@ -9,14 +9,15 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { BRIDGE_NAME, envName, SKILL_SET } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { VERSION } from "../shared/version.ts";
 import { log } from "./streams.ts";
 
 export const RELEASES_URL =
-  process.env.ISKRON_BRIDGE_RELEASES_URL?.trim() ||
-  "https://api.github.com/repos/iskron-ai/skills/releases/latest";
+  process.env[envName("BRIDGE_RELEASES_URL")]?.trim() ||
+  `https://api.github.com/repos/${SKILL_SET}/releases/latest`;
 /**
  * Страница релизов — не REST API и не его анонимный лимит: её 302 называет
  * свежий тег. Запасной путь, когда API не ответил. API, наведённый переменной
@@ -24,10 +25,10 @@ export const RELEASES_URL =
  * сворачиваем.
  */
 export const RELEASES_PAGE_URL: string | null =
-  process.env.ISKRON_BRIDGE_RELEASES_PAGE_URL?.trim() ||
-  (process.env.ISKRON_BRIDGE_RELEASES_URL?.trim()
+  process.env[envName("BRIDGE_RELEASES_PAGE_URL")]?.trim() ||
+  (process.env[envName("BRIDGE_RELEASES_URL")]?.trim()
     ? null
-    : "https://github.com/iskron-ai/skills/releases/latest");
+    : `https://github.com/${SKILL_SET}/releases/latest`);
 /** Сколько свежий тег из общего на машину кэша годен фоновой сверке любого моста. */
 export const TAG_TTL_MS = 60 * 60 * 1000;
 /** Общий на машину ответ «свежий тег» — в доме моста, не в каталоге гранта. */
@@ -104,7 +105,7 @@ function rateLimitOf(res: Response): RateLimitError | null {
 
 async function tagFromApi(): Promise<string | null> {
   const res = await fetch(RELEASES_URL, {
-    headers: { accept: "application/vnd.github+json", "user-agent": `iskron-bridge/${VERSION}` },
+    headers: { accept: "application/vnd.github+json", "user-agent": `${BRIDGE_NAME}/${VERSION}` },
     signal: AbortSignal.timeout(15_000),
   });
   const limited = rateLimitOf(res);
@@ -121,7 +122,7 @@ async function tagFromApi(): Promise<string | null> {
 async function tagFromPage(url: string): Promise<string> {
   const res = await fetch(url, {
     redirect: "manual",
-    headers: { "user-agent": `iskron-bridge/${VERSION}` },
+    headers: { "user-agent": `${BRIDGE_NAME}/${VERSION}` },
     signal: AbortSignal.timeout(15_000),
   });
   const location = res.headers.get("location") ?? "";

@@ -11,10 +11,13 @@ import {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { BRIDGE_FILE, BRIDGE_SKILL, envName } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { devBuildIn, releaseBuildIn, versionIn } from "../shared/version.ts";
 
 export { homeBridgePath };
+
+const BRIDGE_PATH_ENV = envName("BRIDGE_PATH");
 
 export type Notify = (text: string, level?: "info" | "warning" | "error") => void;
 
@@ -39,9 +42,9 @@ export function packagedBridgePath(): string {
     dirname(fileURLToPath(import.meta.url)),
     "..",
     "skills",
-    "establish-mcp",
+    BRIDGE_SKILL,
     "scripts",
-    "iskron.mjs",
+    BRIDGE_FILE,
   );
 }
 
@@ -75,7 +78,7 @@ export function packagedBridgePath(): string {
  * и молчание здесь не оправдание, а условие отказа.
  */
 export function refreshHomeBridge(notify: Notify, canSpeak: boolean): void {
-  if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
+  if (process.env[BRIDGE_PATH_ENV]?.trim()) return;
   if (!canSpeak) return; // сказать нечем — значит и менять нечего: тихой подмены не бывает
   let packagedPath: string;
   try {
@@ -164,9 +167,8 @@ export function findBridge(): { path: string; tried: string[] } | { path: null; 
     if (!p) return;
     tried.push(p);
   };
-  push(
-    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve(process.env.ISKRON_BRIDGE_PATH.trim()) : null,
-  );
+  const named = process.env[BRIDGE_PATH_ENV]?.trim();
+  push(named ? resolve(named) : null);
   try {
     // pi install git:… кладёт расширение рядом со скиллами того же репозитория.
     push(packagedBridgePath());

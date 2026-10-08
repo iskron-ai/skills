@@ -22,6 +22,7 @@ import { dirname } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { envName } from "../delivery/index.ts";
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { HARNESS_VERSION_ENV, PI_CLIENT, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
@@ -32,13 +33,13 @@ import { setupUsage } from "./usage.ts";
 export type ChannelEventSink = (params: any) => void;
 
 /** Сколько ждать поднятия моста, ПРЕЖДЕ чем отпустить старт сессии. */
-const READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 20000);
+const READY_WAIT_MS = Number(process.env[envName("MCP_READY_WAIT_MS")] || 20000);
 /** Потолок самого рукопожатия. Щедрый: первый запуск уводит человека в браузер. */
-const HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 600000);
+const HANDSHAKE_MS = Number(process.env[envName("MCP_HANDSHAKE_MS")] || 600000);
 /** Такт «я ещё жду» у долгого вызова. */
 const TICK_MS = 15000;
 /** Такт повтора рукопожатия, пока мост ждёт входа человека. */
-const AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3000);
+const AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 3000);
 /** Отказ моста «нужен вход»: вход опубликован, мост держит его — гасить мост нельзя (#4795). Форма — та же, что читает плагин OpenCode. */
 const AUTH_PENDING = /authorization required/i;
 
@@ -331,7 +332,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     prompted = true;
     const l = parseLaunch(event.text);
     if (!l) return { action: "continue" };
-    const of = l.of ?? (process.env.ISKRON_SATELLITE_OF?.trim() || null);
+    const of = l.of ?? (process.env[envName("SATELLITE_OF")]?.trim() || null);
     if (of && !satellite) {
       bridge?.stop();
       bridge = null;

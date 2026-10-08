@@ -2,6 +2,7 @@
 // и файл — для `--version` при тонком мосте и раздела демона в `doctor`.
 import { fileURLToPath } from "node:url";
 
+import { envName } from "../delivery/index.ts";
 import { connectSeam, helloFrame } from "../shared/seam.ts";
 import { seamEntranceProblem, seamSocketPath } from "../shared/seam-entrance.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
@@ -44,7 +45,9 @@ export type DaemonProbe =
 export async function probeDaemon(args: string[]): Promise<DaemonProbe> {
   const i = args.indexOf("--auth-dir");
   const authDir =
-    (i >= 0 ? args[i + 1] : undefined) || process.env.ISKRON_BRIDGE_AUTH_DIR || defaultAuthDir();
+    (i >= 0 ? args[i + 1] : undefined) ||
+    process.env[envName("BRIDGE_AUTH_DIR")] ||
+    defaultAuthDir();
   const unsafe = seamEntranceProblem(authDir);
   if (unsafe) return { ok: false, socket: "", why: unsafe, unsafe: true };
   const socket = seamSocketPath(authDir);

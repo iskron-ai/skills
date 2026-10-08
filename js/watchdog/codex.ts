@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { CLIENTS, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { type Frame } from "../shared/channel.ts";
@@ -96,7 +97,7 @@ export function runWatchdogCodex(argv: string[]): void {
       d.send({
         method: "initialize",
         id: nextId++,
-        params: { clientInfo: { name: "iskron-watchdog", title: "iskron", version: "1" } },
+        params: { clientInfo: { name: CLIENTS.watchdog, title: PRODUCT, version: "1" } },
       });
       d.send({ method: "initialized" });
       const back = again.splice(0);

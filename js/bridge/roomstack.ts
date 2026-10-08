@@ -8,6 +8,7 @@
 // ниже — только адресованные месту. Слово человека в пачку не ложится. Кадр
 // без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
 // при этом получает каждый кадр (hold.ts).
+import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
@@ -19,7 +20,7 @@ import { HumanWords, idOf, isWordOf } from "./humanwords.ts";
 import { log } from "./streams.ts";
 
 /** Окно пачки; переменная — шов для проб, не ручка человека. */
-const ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 60_000;
+const ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 60_000;
 /** Полная пачка уходит сразу, не дожидаясь окна: кадр не отбрасывается никогда. */
 const ROOM_BATCH_CAP = 20;
 

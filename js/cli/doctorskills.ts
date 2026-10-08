@@ -9,11 +9,12 @@ import { join, resolve } from "node:path";
 import { CFG } from "../bridge/config.ts";
 import { skillsRoot } from "../bridge/skillset.ts";
 import { readLatest, skillMoves } from "../bridge/update.ts";
-import { BRIDGE_FILE, BRIDGE_SKILL } from "../shared/clients.ts";
+import { BRIDGE_FILE, BRIDGE_SKILL } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { compareVersions } from "../shared/semver.ts";
 import { VERSION, versionIn } from "../shared/version.ts";
 import { codexCopies } from "./codexcache.ts";
+import { PLUGIN_KEY_RE } from "./installnames.ts";
 import { todo } from "./subwords.ts";
 
 type Out = (s: string) => void;
@@ -28,7 +29,7 @@ function sets(codexHomes: string[]): [string, Kind][] {
       readFileSync(join(homedir(), ".claude", "plugins", "installed_plugins.json"), "utf8"),
     ) as { plugins?: Record<string, { installPath?: string }[]> };
     for (const [key, installs] of Object.entries(reg.plugins ?? {}))
-      if (/^iskron@/.test(key))
+      if (PLUGIN_KEY_RE.test(key))
         for (const i of installs)
           if (i.installPath) found.push([join(i.installPath, "skills"), "claude"]);
   } catch {}

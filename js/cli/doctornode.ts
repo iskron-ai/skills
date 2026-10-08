@@ -6,6 +6,7 @@ import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute } from "node:path";
 
+import { envName } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { which } from "./subagents.ts";
@@ -19,7 +20,7 @@ export interface Launch {
   entry?: string;
 }
 
-const platform = (): string => process.env.ISKRON_DOCTOR_PLATFORM || process.platform;
+const platform = (): string => process.env[envName("DOCTOR_PLATFORM")] || process.platform;
 
 // Каталоги, которые есть в PATH и у процесса, запущенного не из оболочки:
 // launchd на macOS даёт /usr/bin:/bin:/usr/sbin:/sbin, Linux-сессия — и /usr/local/bin.

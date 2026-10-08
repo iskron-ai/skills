@@ -1,6 +1,7 @@
 // Стук iskron_stand в место человека — по полному адресу с провода (stand.ts).
 // Правило #4342: один стук, повтор один раз не раньше чем через две минуты,
 // дальше — слово человеку.
+import { envName } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import { callTool as call, short } from "./call.ts";
 import { SW } from "./standwords.ts";
@@ -13,7 +14,7 @@ import { SW } from "./standwords.ts";
  */
 const knocks = scoped(() => new Map<string, { at: number; count: number }>());
 // Окно повтора — 2 минуты по #4342; переменная — шов для проб, не ручка человека.
-const KNOCK_REPEAT_AFTER_MS = Number(process.env.ISKRON_STAND_KNOCK_REPEAT_MS) || 120_000;
+const KNOCK_REPEAT_AFTER_MS = Number(process.env[envName("STAND_KNOCK_REPEAT_MS")]) || 120_000;
 const KNOCK_LIMIT = 2;
 
 /** Новый цикл входа места — счёт его стуков сброшен. */

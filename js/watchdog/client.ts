@@ -6,6 +6,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
+import { envName } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
@@ -16,7 +17,7 @@ import { wd } from "./words.ts";
 
 // Мост может подняться чуть позже сторожа, место — вернуться после смены демона.
 // Переменная — шов для проб, не ручка человека.
-const ATTACH_WINDOW_MS = Number(process.env.ISKRON_WATCHDOG_ATTACH_MS) || 60_000;
+const ATTACH_WINDOW_MS = Number(process.env[envName("WATCHDOG_ATTACH_MS")]) || 60_000;
 const RETRY_MS = 1000;
 
 export interface Resolved {

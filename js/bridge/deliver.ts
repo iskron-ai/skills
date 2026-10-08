@@ -1,3 +1,4 @@
+import { envName } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import {
   absorbChannelReply,
@@ -114,7 +115,7 @@ export function syntheticError(
 // отдать сбой агенту (граф nks-dev: #4664). Не дошедший вызов повторяется
 // всегда; дошедший и потерявший ответ — только чтение: запись без ограды
 // версии легла бы второй раз.
-const NET_BACKOFF_MS = (process.env.ISKRON_BRIDGE_NET_BACKOFF_MS || "1000,2000,4000")
+const NET_BACKOFF_MS = (process.env[envName("BRIDGE_NET_BACKOFF_MS")] || "1000,2000,4000")
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n >= 0);

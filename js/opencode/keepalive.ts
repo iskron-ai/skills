@@ -18,11 +18,12 @@
 // ходы каталога с reason "inactivity", теперь этого не будет — зависший ход снимает человек
 // (отмена). Выключатель — ISKRON_KEEPALIVE_MS=0 (SETUP.md, раздел OpenCode).
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+import { envName } from "../delivery/index.ts";
 import type { Context } from "./plugin.ts";
 
 /** Порог тишины до события; 0 — выключено. Срок каталога — 60 мин. */
 const EVERY_MS = (() => {
-  const v = process.env.ISKRON_KEEPALIVE_MS;
+  const v = process.env[envName("KEEPALIVE_MS")];
   return v === undefined || v === "" ? 50 * 60_000 : Number(v) || 0;
 })();
 

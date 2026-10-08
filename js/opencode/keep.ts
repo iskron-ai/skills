@@ -14,15 +14,16 @@
 //     (`iskron/check {key?, cwd}`): мёртвый мост поднимается заново и возвращает
 //     место, глухой переоткрывает сокет; мост, места не ведущий, из-под сторожа
 //     выходит — его простой снова считает жнец.
+import { envName } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { sleep } from "./bridge-io.ts";
 import type { LostEntry } from "./records.ts";
 import type { Say } from "./tools.ts";
 
 /** Такт сторожа слуха; переменная — шов для проб, не ручка человека. Инвариант: короче простоя жнеца (tools.ts). */
-export const WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 60_000);
+export const WATCH_MS = Number(process.env[envName("BRIDGE_WATCH_MS")] || 5 * 60_000);
 /** Сколько возврат ждёт ухода сокета прежнего моста (bye тонкого моста — до 5 с); переменная — для проб. */
-const PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 10_000);
+const PATIENCE_MS = Number(process.env[envName("RESUME_PATIENCE_MS")] || 10_000);
 const STEP_MS = 500;
 
 /** Исход возврата: место взято; его сокет держит живой чужой мост; не вернулось иначе. */

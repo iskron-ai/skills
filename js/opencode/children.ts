@@ -6,6 +6,7 @@
 // сказанный родителю ход уходят в маркер потери (keep.ts). Новый экземпляр поднимает
 // ребёнку мост тем же спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
 // связка с родителем — parentID сессии (leads.ts). Не вернулось — конец со словом родителю.
+import { envName } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
@@ -17,9 +18,9 @@ import { handedOver } from "./twins.ts";
  * Возврат места ребёнка ждёт ухода сокета прежнего моста (он уходит своим bye) до
  * BACK_MS — не счётом попыток (keep.ts); попытки — только на иные сбои возврата.
  */
-const BACK_MS = Number(process.env.ISKRON_CHILD_BACK_MS) || 15_000;
+const BACK_MS = Number(process.env[envName("CHILD_BACK_MS")]) || 15_000;
 const BACK_TRIES = 4;
-const BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1_000;
+const BACK_PAUSE_MS = Number(process.env[envName("CHILD_BACK_PAUSE_MS")]) || 1_000;
 /** Пауза моста ребёнка перед остановкой плагина — не дольше этого. */
 export const PAUSE_MS = 1_500;
 

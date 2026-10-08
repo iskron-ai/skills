@@ -7,6 +7,7 @@
 // одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
 // как у лежалых) и указанием на history за остальным. Окно у каждого места
 // своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
+import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
@@ -15,7 +16,7 @@ import { type Marks, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
 /** Окно накопления; переменная — шов для проб, не ручка человека. */
-const BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+const BACKLOG_MS = Number(process.env[envName("BRIDGE_BACKLOG_MS")]) || 1500;
 const BACKLOG_KEEP = 20;
 const BODY_CAP = 800;
 

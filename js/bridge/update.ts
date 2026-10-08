@@ -18,6 +18,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  BRIDGE_FILE,
+  BRIDGE_NAME,
+  BRIDGE_SKILL,
+  envName,
+  PLUGIN_COPY_FILE,
+  PLUGIN_FILE,
+  SKILL_SET,
+} from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -29,7 +38,8 @@ import { SKILLS_ROOT_ENV, skillsRoot } from "./skillset.ts";
 import { emit, log } from "./streams.ts";
 
 export const RAW_URL =
-  process.env.ISKRON_BRIDGE_RAW_URL?.trim() || "https://raw.githubusercontent.com/iskron-ai/skills";
+  process.env[envName("BRIDGE_RAW_URL")]?.trim() ||
+  `https://raw.githubusercontent.com/${SKILL_SET}`;
 export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Неудачная сверка без названного сброса повторяется через это время, не через шесть часов. */
 export const FAILED_RETRY_MS = 15 * 60 * 1000;
@@ -43,14 +53,14 @@ const envMs = (name: string, dflt: number): number => {
   const v = Number(process.env[name]);
   return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
 };
-export const RETRY_FLOOR_MS = envMs("ISKRON_BRIDGE_RETRY_FLOOR_MS", 60_000);
-export const RETRY_JITTER_MS = envMs("ISKRON_BRIDGE_RETRY_JITTER_MS", 60_000);
+export const RETRY_FLOOR_MS = envMs(envName("BRIDGE_RETRY_FLOOR_MS"), 60_000);
+export const RETRY_JITTER_MS = envMs(envName("BRIDGE_RETRY_JITTER_MS"), 60_000);
 /** Пробы и CI: ни дома не трогать, ни в сеть не ходить. */
-export const updatesDisabled = (): boolean => !!process.env.ISKRON_BRIDGE_NO_UPDATE;
+export const updatesDisabled = (): boolean => !!process.env[envName("BRIDGE_NO_UPDATE")];
 
 export const selfPath = (): string => fileURLToPath(import.meta.url);
 export const opencodePluginPath = (): string =>
-  join(homedir(), ".config", "opencode", "plugins", "iskron.js");
+  join(homedir(), ".config", "opencode", "plugins", PLUGIN_COPY_FILE);
 export const setupPathOf = (authDir: string): string => join(authDir, "SETUP.md");
 export const latestPathOf = (authDir: string): string => join(authDir, "latest.json");
 
@@ -108,7 +118,7 @@ export function syncHome(self = selfPath()): HomeSync {
     writeAtomic(home, mine);
     out.copied.push(home);
     const plugin = opencodePluginPath();
-    const packaged = join(dirname(self), "opencode-plugin.js");
+    const packaged = join(dirname(self), PLUGIN_FILE);
     if (existsSync(plugin) && existsSync(packaged)) {
       const fresh = readFileSync(packaged);
       if (!readFileSync(plugin).equals(fresh)) {
@@ -140,7 +150,7 @@ export function reexec(path: string, argv: string[]): void {
     stdio: "inherit",
     env: {
       ...process.env,
-      ISKRON_BRIDGE_REEXEC: "1",
+      [envName("BRIDGE_REEXEC")]: "1",
       ...(root ? { [SKILLS_ROOT_ENV]: root } : {}),
     },
   });
@@ -179,7 +189,7 @@ async function fetchText(url: string): Promise<string> {
   const res = await fetch(url, {
     headers: {
       accept: "application/vnd.github+json, text/plain, */*",
-      "user-agent": `iskron-bridge/${VERSION}`,
+      "user-agent": `${BRIDGE_NAME}/${VERSION}`,
     },
     signal: AbortSignal.timeout(15_000),
   });
@@ -195,7 +205,7 @@ export async function downloadRelease(
 ): Promise<string[]> {
   const written: string[] = [];
   const base = `${RAW_URL}/${tag}`;
-  const bridge = await fetchText(`${base}/skills/establish-mcp/scripts/iskron.mjs`);
+  const bridge = await fetchText(`${base}/skills/${BRIDGE_SKILL}/scripts/${BRIDGE_FILE}`);
   const got = versionIn(bridge);
   if (got !== version)
     throw new Error(
@@ -212,7 +222,7 @@ export async function downloadRelease(
   }
   const plugin = opencodePluginPath();
   if (existsSync(plugin)) {
-    const fresh = await fetchText(`${base}/skills/establish-mcp/scripts/opencode-plugin.js`);
+    const fresh = await fetchText(`${base}/skills/${BRIDGE_SKILL}/scripts/${PLUGIN_FILE}`);
     if (readFileSync(plugin, "utf8") !== fresh) {
       writeAtomic(plugin, fresh);
       written.push(plugin);
@@ -369,7 +379,7 @@ export function startFreshnessWatch(
   onChecked: () => void = () => {},
 ): void {
   if (updatesDisabled()) return;
-  const explicit = !!process.env.ISKRON_BRIDGE_RELEASES_URL?.trim();
+  const explicit = !!process.env[envName("BRIDGE_RELEASES_URL")]?.trim();
   if (!explicit && !isProductionServer(serverUrl)) {
     log(
       `releases not watched: ${serverUrl} is not a production address — another instance is another delivery`,
@@ -402,7 +412,7 @@ export function startFreshnessWatch(
     log(notice);
     tell(notice);
   };
-  const delay = Number(process.env.ISKRON_BRIDGE_UPDATE_DELAY_MS ?? 2000);
+  const delay = Number(process.env[envName("BRIDGE_UPDATE_DELAY_MS")] ?? 2000);
   setTimeout(() => void tick(), Number.isFinite(delay) ? delay : 2000).unref();
   setInterval(() => void tick(), CHECK_INTERVAL_MS).unref();
 }

@@ -30,6 +30,7 @@ import { type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { envName } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { runIn, type Scope } from "../shared/scope.ts";
 import { type SeamHello, writeFrame } from "../shared/seam.ts";
@@ -65,20 +66,21 @@ import {
   updatesDisabled,
 } from "./update.ts";
 
-const ms = (name: string, dflt: number): number => {
+/** A duration in ms from the environment variable `name`, else `dflt` (thin.ts reads it too). */
+export const ms = (name: string, dflt: number): number => {
   const v = Number(process.env[name]);
   return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
 };
 /** Окно простоя: столько демон живёт после ухода последней сессии. */
-const IDLE_MS = ms("ISKRON_BRIDGE_DAEMON_IDLE_MS", 60_000);
+const IDLE_MS = ms(envName("BRIDGE_DAEMON_IDLE_MS"), 60_000);
 /** Как часто демон смотрит на домашнюю копию (дешёвая сверка по mtime). */
-const HOME_CHECK_MS = ms("ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS", 60_000);
+const HOME_CHECK_MS = ms(envName("BRIDGE_DAEMON_HOME_CHECK_MS"), 60_000);
 /** Сколько преемник ждёт, пока уходящий отпустит вход. */
-const SUCCESSOR_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_SUCCESSOR_WAIT_MS", 20_000);
+const SUCCESSOR_WAIT_MS = ms(envName("BRIDGE_DAEMON_SUCCESSOR_WAIT_MS"), 20_000);
 /** Сколько демон держит сессию, чей шов закрылся без bye (переподхват). */
-const GRACE_MS = ms("ISKRON_BRIDGE_DAEMON_GRACE_MS", 5_000);
+const GRACE_MS = ms(envName("BRIDGE_DAEMON_GRACE_MS"), 5_000);
 /** Сколько уходящий демон ждёт живой тонкий мост спутника на паузе передачи у преемника. */
-const RETURN_WAIT_MS = ms("ISKRON_BRIDGE_DAEMON_RETURN_WAIT_MS", 30_000);
+const RETURN_WAIT_MS = ms(envName("BRIDGE_DAEMON_RETURN_WAIT_MS"), 30_000);
 const JOURNAL_MAX = 256_000;
 
 /** Код выхода: демон этого гранта уже жив (или встаёт) — поднявшему ждать его, а не идти полным. */
@@ -282,7 +284,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
       const traced: SeamSession = {
         ...s,
         deliver: (msg) => {
-          if (process.env.ISKRON_BRIDGE_DAEMON_TRACE)
+          if (process.env[envName("BRIDGE_DAEMON_TRACE")])
             journal(`[${id}] rpc ${msg.method ?? "reply"} ${JSON.stringify(msg.id ?? null)}`);
           s.deliver(msg);
         },

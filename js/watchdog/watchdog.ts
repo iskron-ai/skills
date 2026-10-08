@@ -8,6 +8,7 @@
 // одно стояние; ключ из ответа connect различает несколько.
 import { writeSync } from "node:fs";
 
+import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
@@ -52,7 +53,7 @@ const plural = (n: number): string => {
 // его по длине: кадр вне пачки (слово человека, прерывающий, прямой) печатается
 // отдельным событием — с паузой больше окна склейки до себя и после себя.
 // Переменная — шов для проб, не ручка человека: очередь в сотни кадров идёт по паузе на кадр.
-const ALONE_GAP_MS = Number(process.env.ISKRON_WATCHDOG_ALONE_MS) || 300;
+const ALONE_GAP_MS = Number(process.env[envName("WATCHDOG_ALONE_MS")]) || 300;
 /** Сколько шапок пачек из одних счётов ждёт адресованного, не больше. */
 const RIDERS_MAX = 100;
 let queue: Promise<void> = Promise.resolve();

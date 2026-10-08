@@ -12,13 +12,14 @@
 // модуля и пережил бы выгрузку своего экземпляра. Слово — одно, от экземпляра написания.
 // Цена: у не фонового ребёнка слово ляжет после ответа человека; shutdown до ответа session.get его теряет.
 /* eslint-disable @typescript-eslint/no-explicit-any -- события и ответы SDK без схемы */
+import { envName } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { sleep } from "./bridge-io.ts";
 import { homeOf } from "./host.ts";
 import type { Context } from "./plugin.ts";
 
 /** Запрос, снятый за это время (человек ответил в окне ребёнка), родителю не называется. */
-const WAIT_MS = Number(process.env.ISKRON_PERMISSION_WAIT_MS) || 20_000;
+const WAIT_MS = Number(process.env[envName("PERMISSION_WAIT_MS")]) || 20_000;
 /** Ресурсов в слове — не больше; каждый — не длиннее. */
 const RESOURCES = 3;
 const RESOURCE_MAX = 160;

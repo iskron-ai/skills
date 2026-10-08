@@ -4,6 +4,8 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { PRODUCT_RE } from "./installnames.ts";
+
 export interface CodexCopy {
   market: string;
   plugin: string;
@@ -25,7 +27,7 @@ export function codexCopies(home: string): CodexCopy[] {
   const out: CodexCopy[] = [];
   for (const market of list(cache))
     for (const plugin of list(join(cache, market))) {
-      if (!/iskron/.test(plugin)) continue;
+      if (!PRODUCT_RE.test(plugin)) continue;
       const dir = join(cache, market, plugin);
       const versions = isCopy(dir) ? [] : list(dir).filter((v) => isCopy(join(dir, v)));
       if (!versions.length) out.push({ market, plugin, dir });

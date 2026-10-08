@@ -13,6 +13,7 @@ import "./standwire.ts"; // отъём места и возврат своего
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
+import { envName } from "../delivery/index.ts";
 import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
 import { CFG, readArgs, setConfig } from "./config.ts";
@@ -33,7 +34,7 @@ import { type JsonRpcMessage } from "./types.ts";
 import { lastAgentWork, noteAgentWork } from "./work.ts";
 
 /** Сколько сессия демона, передающего места преемнику, ждёт вызовов в полёте: остальное тонкий мост закроет вердиктом. */
-const HANDOVER_WAIT_MS = Number(process.env.ISKRON_BRIDGE_HANDOVER_WAIT_MS) || 10_000;
+const HANDOVER_WAIT_MS = Number(process.env[envName("BRIDGE_HANDOVER_WAIT_MS")]) || 10_000;
 
 /** Откуда сессия читает строки харнеса и куда пишет ответы. */
 export interface SessionIO {
