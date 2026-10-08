@@ -202,7 +202,9 @@ export default {
     const START =
       "Прочти раздел «Старт» скилла-двери iskron до действий. Адреса (AGENTS.md, фронтматтер): граф <Граф>, " +
       "фокус-контур #<Фокус-контур>, роль агента #<Роль агента>, роль владельца #<Роль владельца>. " +
-      "Стояние — только на вахту, одним iskron_stand.";
+      "Стояние — только на вахту (слово «вахта», start, адрес места из окна, кадр), одним iskron_stand; " +
+      "start <граф> <роль> <дело №N> входит в это дело. У субагента свой мост-спутник " +
+      "(iskron_stand с satellite_of, join, leave — на нём); на мосту запустившего он в граф не пишет.";
     const ac = new AbortController();
     (async () => {
       for await (const ev of await ctx.event.subscribe({ signal: ac.signal })) {
