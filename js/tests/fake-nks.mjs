@@ -514,6 +514,7 @@ export async function startFakeNks(opts = {}) {
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
         "listChangedOn",
+        "listError", // tools/list отвечает ошибкой JSON-RPC (сервер снимает пометку и так, #6817)
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -912,6 +913,14 @@ export async function startFakeNks(opts = {}) {
       if (msg.id === undefined || msg.id === null) {
         res.writeHead(202, extra);
         return res.end();
+      }
+      if (msg.method === "tools/list" && st.listError) {
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "list failed" } },
+          extra,
+        );
       }
       if (msg.method === "tools/list" && st.tools) {
         return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } }, extra);

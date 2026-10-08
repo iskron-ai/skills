@@ -40,7 +40,13 @@ import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
 import { beginTaking } from "./taking.ts";
-import { noteHarnessListing, noteServedTools, recheckTools } from "./toolsync.ts";
+import {
+  noteHarnessListing,
+  noteLiveListing,
+  noteServedTools,
+  recheckTools,
+  settleHarnessListing,
+} from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
@@ -197,6 +203,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     await deliverOne(msg);
   } finally {
     if (listing) H.listing--;
+    if (listing) settleHarnessListing(msg, emit);
     settleOwnRevoke(msg);
   }
 }
@@ -243,6 +250,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       if (m.result && !msg.params?.cursor) saveServerCache({ tools: m.result });
       m = narrowToolList(m); // харнесу — суженная копия, и отпечаток по ней (narrow.ts)
       if (!msg.params?.cursor) noteServedTools(m.result);
+      if (!msg.params?.cursor && m.result) noteLiveListing(msg);
     }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;

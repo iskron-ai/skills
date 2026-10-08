@@ -1129,6 +1129,22 @@ test("list_changed in the SSE of the harness's calls reaches the harness once pe
   assert.equal(heard(), 2, "the next change after the re-read is heard");
 });
 
+// The harness's own tools/list carries the notice and clears the server's mark
+// even when it fails (#6817): the notice is held back only for a list that reached
+// the harness, or the harness is left with the old one and nothing to say otherwise.
+test("list_changed carried by a failed tools/list of the harness still reaches it", async (t) => {
+  const { fake, bridge } = await connected(t);
+  await bridge.call("tools/list", 20, {});
+  await fake.control({ richTools: true, list_changed: true, listError: true });
+  const failed = await bridge.call("tools/list", 21, {});
+  assert.ok(failed.error, JSON.stringify(failed));
+  assert.deepEqual(fake.state.listChangedSent, ["tools/list"]);
+  await waitFor(
+    () => bridge.notifications.some((n) => n.method === "notifications/tools/list_changed"),
+    "list_changed after the failed re-read",
+  );
+});
+
 test("a re-opened session with the same tool list says nothing", async (t) => {
   const { fake, bridge } = await connected(t);
   await bridge.call("tools/list", 20, {});

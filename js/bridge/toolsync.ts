@@ -22,6 +22,8 @@ const T = scoped(() => ({
   served: null as string | null, // у сессии харнеса — свой список
   told: false, // list_changed сказан, а харнес списка ещё не перечёл
   listing: new WeakSet<JsonRpcMessage>(), // tools/list харнеса (первая страница) в полёте
+  heldBack: new WeakSet<JsonRpcMessage>(), // …в чьём ответе сервер сказал list_changed
+  live: new WeakSet<JsonRpcMessage>(), // …на который харнесу ушёл живой список сервера
 }));
 
 /** Отпечаток по именам и схемам: описания мост дописывает сам, их различие — не перемена сервера. */
@@ -44,7 +46,7 @@ export function noteServedTools(result: unknown): void {
 
 /**
  * Запрос — tools/list харнеса: смена, объявленная в его же ответе, придёт ему списком.
- * Харнес перечитывает — следующая смена снова его, даже если это чтение сорвётся.
+ * Харнес перечитывает — следующая смена снова его.
  */
 export function noteHarnessListing(msg: JsonRpcMessage): void {
   T.listing.add(msg);
@@ -63,11 +65,26 @@ function tell(emit: (m: JsonRpcMessage) => void, why: string, again = false): vo
 
 /**
  * Сервер сказал list_changed в ответе на `sent` — запрос моста или харнеса:
- * харнесу, раз на смену. Свой tools/list харнеса принесёт новый список сам.
+ * харнесу, раз на смену. Свой tools/list харнеса принесёт новый список сам —
+ * слово ждёт, дошёл ли он (settleHarnessListing).
  */
 export function heardListChanged(sent: JsonRpcMessage, emit: (m: JsonRpcMessage) => void): void {
-  if (T.listing.has(sent)) return;
+  if (T.listing.has(sent)) return void T.heldBack.add(sent);
   tell(emit, `the server said its tool list changed (answering ${sent?.method})`);
+}
+
+/** Живой список сервера отдан харнесу в ответ на его tools/list. */
+export function noteLiveListing(msg: JsonRpcMessage): void {
+  T.live.add(msg);
+}
+
+/**
+ * tools/list харнеса кончился. Сервер снял пометку и этим ответом, даже ошибкой (#6817):
+ * не дошёл живой список — придержанное слово уходит харнесу, иначе он остался бы со старым.
+ */
+export function settleHarnessListing(msg: JsonRpcMessage, emit: (m: JsonRpcMessage) => void): void {
+  if (T.heldBack.has(msg) && !T.live.has(msg))
+    tell(emit, "the server said its tool list changed, and no fresh list reached the harness");
 }
 
 /**
