@@ -1,11 +1,10 @@
-// Прогон области плагина ритуалов OpenCode (граф nks-dev, узлы #6686, #5048).
-// Поток ctx.event.subscribe один на сервер OpenCode машины: экземпляр видит
-// session.created всех каталогов — его область и проверяется. Хуки ctx.tool.hook
-// будит только вызов в каталоге экземпляра (наблюдено на 2.0.24): они гоняются в
-// своей сессии и судятся лишь на поломку. Каталог экземпляра даётся через
-// символическую ссылку, а своя сессия приходит дважды — настоящим путём и
-// написанием экземпляра: так же /tmp и /private/tmp расходятся живьём, и сырое
-// сравнение строк теряет свою сессию под одним из написаний.
+// The scope run of an OpenCode ritual plugin (graph @nks/nks-dev, nodes #6686, #5048).
+// One ctx.event.subscribe stream per OpenCode server: an instance sees session.created
+// of every directory, and that scope is checked. ctx.tool.hook fires only for calls in
+// the instance's directory, so hooks run in its own session and are judged only for
+// breakage. The instance directory is given through a symlink and its own session
+// comes twice, by the real path and by the instance's spelling — as /tmp and
+// /private/tmp diverge live, where raw string comparison loses one of them.
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,22 +15,22 @@ import { type Fn, runHooks, type Who } from "./ritualcalls.ts";
 const SETTLE_MS = 200;
 const SETUP_MS = 5000;
 
-/** Чем плагин задел сессии: записи на событиях потока и поломки хуков тулов. */
+/** What the plugin did to sessions: writes on stream events and tool hook breakages. */
 export interface Scope {
-  /** Записи в сессию на session.created. */
+  /** Writes into a session on session.created. */
   writes: Record<Who, number>;
-  /** Плагин подписался на поток событий (ctx.event.subscribe). */
+  /** The plugin subscribed to the event stream (ctx.event.subscribe). */
   subscribed: boolean;
-  /** Хук тула сломан в своей сессии: ошибка кода (ReferenceError…), бросок на обычной записи или после вызова. */
+  /** A tool hook broke in its own session: a code error, a throw on a plain write or after a call. */
   broken: string[];
-  /** В своей сессии guard бросил на записи в путь памяти. */
+  /** In its own session the guard threw on a write into the memory path. */
   ownBefore: boolean;
-  /** Хук после пуша в своей сессии дописал результат. */
+  /** The after-push hook appended to the result in its own session. */
   ownAfter: boolean;
 }
 
-// Член ctx, которого прогон не задал, — вызываемый no-op; `then` пуст, чтобы
-// `await ctx.x` не принял заглушку за промис.
+// A ctx member the run did not set is a callable no-op; `then` is empty so that
+// `await ctx.x` does not take the stub for a promise.
 const loose = (fields: object = {}): object =>
   new Proxy(fields, {
     get: (t, k) =>
@@ -40,8 +39,8 @@ const loose = (fields: object = {}): object =>
         : loose(async () => undefined),
   });
 
-// Поля Context (@opencode/plugin 2.0.4, promise/plugin.d.ts): неназванные прогоном —
-// заглушки; поля вне Context (ctx.directory и т. п.) — undefined, как живьём.
+// Context fields (@opencode/plugin 2.0.4, promise/plugin.d.ts) the run does not name are
+// stubs; fields outside Context (ctx.directory etc.) are undefined, as live.
 const DOMAINS = new Set(
   "app location options agent aisdk command event experimental integration mcp model generate permission plugin provider reference rpc session shell skill storage tool vcs websearch worktree".split(
     " ",
@@ -55,9 +54,9 @@ const context = (fields: object): object =>
         : loose(async () => undefined),
   });
 
-// Образец может держать «сказано однажды» на globalThis — общим для всех экземпляров
-// процесса, как на живом сервере. Ревизор гоняет плагины и прогоны одним процессом:
-// перед каждым прогоном добавленное плагинами снимается, id сессий — свои у прогона.
+// A sample may keep "said once" on globalThis, shared by all instances of the process.
+// The auditor runs plugins in one process: before each run what plugins added is removed,
+// and session ids are the run's own.
 const baseline = new Set(Reflect.ownKeys(globalThis));
 const dropPluginGlobals = (): void => {
   const g = globalThis as Record<PropertyKey, unknown>;
@@ -77,8 +76,8 @@ const created = (sessionID: string, directory: string) => {
 const settle = (ms = SETTLE_MS) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Грузит плагин из файла с ctx.location — ссылкой на own — и проверяет его против
- * сессий own (обоими написаниями) и foreign. Каталог ссылки убирается за собой.
+ * Loads the plugin with ctx.location a symlink to own and checks it against sessions
+ * of own (both spellings) and foreign. The symlink directory is removed afterwards.
  */
 export async function probeScope(file: string, own: string, foreign: string): Promise<Scope> {
   const aliasRoot = mkdtempSync(join(tmpdir(), "ritual-scope-alias-"));

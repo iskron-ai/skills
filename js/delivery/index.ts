@@ -105,3 +105,13 @@ export {
 export { LAUNCH, type LaunchWords } from "./words/launch.ts";
 export { STALE, type StaleWords } from "./words/stalebatch.ts";
 export { STANDINGS, type StandingsWords } from "./words/standings.ts";
+// part 6
+export { HOOKS_SECTION, SATELLITE_CODE } from "./product.ts";
+export { SAT_LOGIN_RE, SAT_OLD_FLAG_RE } from "./protocol.ts";
+export { CLI, type CliWords } from "./words/cli.ts";
+export { DOCTOR, type DoctorWords } from "./words/doctor.ts";
+export { HARNESS, type HarnessWords } from "./words/doctorharness.ts";
+export { RITUALS, type RitualWords } from "./words/rituals.ts";
+export { SAT_PROBE, type SatProbeWords } from "./words/satprobe.ts";
+export { SUBAGENT, type SubagentWords } from "./words/subagents.ts";
+export { WATCHDOG, type WatchdogWords } from "./words/watchdog.ts";

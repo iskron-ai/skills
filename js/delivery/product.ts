@@ -1,6 +1,7 @@
 // Имя продукта и всё, что из него выводится (граф @nks/nks-dev, узлы #6809, #6815):
 // две поставки на одной машине не сталкиваются, пока каждое имя здесь выведено из
 // своего PRODUCT — дом и грант, переменные окружения, сокеты и pipes, файлы, клиенты.
+import type { Lang } from "./lang.ts";
 
 /** Имя продукта — строчными, как в имени дома, файлов и клиентов. */
 export const PRODUCT = "iskron";
@@ -58,3 +59,14 @@ export const SERVER_URLS = {
   en: "https://mcp.iskron.ai/",
 } as const;
 export const DEFAULT_SERVER_URL = SERVER_URLS.ru;
+
+// part 6
+/**
+ * Код `node -e` единой формы записи моста-спутника: путь к дому из homedir, путь в
+ * argv[1], импорт моста. Эталон: копии в ролевых файлах и delegation.md сверяет
+ * с ним `make validate` (норма — skills/iskronify/references/delegation.md).
+ */
+export const SATELLITE_CODE =
+  "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
+/** Имя раздела хуков в скилле бутстрапа поставки — на языке слов. */
+export const HOOKS_SECTION: Readonly<Record<Lang, string>> = { ru: "Хуки", en: "Hooks" };

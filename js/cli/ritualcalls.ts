@@ -1,18 +1,18 @@
-// Вызовы тулов, которыми прогон области (cli/ritualprobe.ts) испытывает хуки
-// плагина ритуалов: запись в путь проектной памяти (memory-guard), обычная запись
-// (guard молчит) и пуш с мержем (напоминания после). Вход хука — по типам @opencode/plugin 2.0.4: sessionID без каталога.
+// Tool calls the scope run (cli/ritualprobe.ts) tries ritual plugin hooks with: a write
+// into the project memory path (memory-guard), a plain write (guard silent), and a push
+// with a merge (after-reminders). Hook input per @opencode/plugin 2.0.4 types: sessionID, no directory.
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type Fn = (...a: unknown[]) => unknown;
-/** Своя сессия (настоящий путь), своя под написанием экземпляра (ссылка), чужая. */
+/** Own session (real path), own under the instance's spelling (a symlink), foreign. */
 export type Who = "mine" | "twin" | "theirs";
 
 const memoryPath = join(homedir(), ".claude", "projects", "-probe", "memory", "MEMORY.md");
 const pushed = "To github.com:o/r.git\n   1234567..89abcde  feat/x -> feat/x";
 
-// Образец может говорить однажды на вызов (ключ — id вызова) на весь процесс:
-// у каждого вызова свой id, чтобы прогоны и плагины одного процесса не глушили друг друга.
+// A sample may speak once per call id for the whole process: every call gets its own
+// id so runs and plugins of one process do not silence each other.
 let seq = 0;
 const fresh = (kind: string): string => `${kind}-${++seq}`;
 const isPlain = (id: string): boolean => id.startsWith("plain-");
@@ -51,18 +51,17 @@ const calls = (sessionID: string) => ({
   })),
 });
 
-// Ошибка самого кода хука, не блокировка: образец исполняется как есть, и
-// неопределённое имя — провал, а не guard.
+// An error of the hook's own code, not a block: an undefined name is a failure, not a guard.
 const BROKEN = new Set(["ReferenceError", "TypeError", "SyntaxError", "RangeError"]);
 
 export interface Hits {
-  /** Бросок или подмена вызова: «execute.before write: throw (…)», «execute.after bash: changed». */
+  /** A throw or a changed call: "execute.before write: throw (…)", "execute.after bash: changed". */
   hit: string[];
-  /** Хук сломан: бросок ошибки кода, бросок на обычной записи или после вызова. */
+  /** The hook is broken: a code error, a throw on a plain write or after the call. */
   broken: string[];
 }
 
-/** Зовёт хуки тулов на вызовах сессии; что бросило, подменило вызов или сломалось. */
+/** Calls the tool hooks on the session's calls: what threw, changed the call or broke. */
 export async function runHooks(hooks: Record<string, Fn[]>, sessionID: string): Promise<Hits> {
   const hit: string[] = [];
   const broken: string[] = [];

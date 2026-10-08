@@ -534,12 +534,12 @@ try {
 
 // Код `node -e` записи моста-спутника живёт в десятке копий (ролевые файлы,
 // блоки delegation.md, проба doctor), а правда одна — SATELLITE_CODE в
-// js/cli/satform.ts: doctor признаёт рабочей только эту форму. Разошедшаяся
+// js/delivery/product.ts: doctor признаёт рабочей только эту форму. Разошедшаяся
 // копия шла бы к потребителю молча, пока doctor не назовёт её у него на машине.
 try {
-  const satform = readFileSync(join(root, "js", "cli", "satform.ts"), "utf8");
+  const satform = readFileSync(join(root, "js", "delivery", "product.ts"), "utf8");
   const m = /SATELLITE_CODE\s*=\s*("(?:[^"\\]|\\.)*")/.exec(satform);
-  if (!m) fail("js/cli/satform.ts", "эталон SATELLITE_CODE не найден — сверять копии не с чем");
+  if (!m) fail("js/delivery/product.ts", "эталон SATELLITE_CODE не найден — сверять копии не с чем");
   else {
     const canonical = JSON.parse(m[1]);
     const agentsDir = join(root, ".claude", "agents");
@@ -555,14 +555,14 @@ try {
       const text = readFileSync(join(root, rel), "utf8");
       const found = [...text.matchAll(/"-e",\s*("(?:[^"\\]|\\.)*")/g)].map((x) => JSON.parse(x[1]));
       if (!found.length)
-        fail(rel, "нет записи моста-спутника формы `node -e` — единая форма (js/cli/satform.ts) не спроецирована");
+        fail(rel, "нет записи моста-спутника формы `node -e` — единая форма (SATELLITE_CODE в js/delivery/product.ts) не спроецирована");
       for (const code of found)
         if (code !== canonical)
-          fail(rel, "код `node -e` записи моста-спутника расходится с эталоном SATELLITE_CODE в js/cli/satform.ts — скопируй его побайтово");
+          fail(rel, "код `node -e` записи моста-спутника расходится с эталоном SATELLITE_CODE в js/delivery/product.ts — скопируй его побайтово");
     }
   }
 } catch (e) {
-  fail("js/cli/satform.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
+  fail("js/delivery/product.ts", `сверка копий кода записи моста-спутника не удалась: ${e.message}`);
 }
 
 // `description` ролевых файлов агентов — YAML-скаляр, и без кавычек он plain:

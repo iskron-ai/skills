@@ -1,6 +1,5 @@
-// Копии плагина iskron в кэше Codex: `<дом>/plugins/cache/<рынок>/<плагин>/`, у
-// других плагинов на машине — с уровнем версии ниже (`…/<плагин>/<версия>/`).
-// Раскладка самого iskron с версией не наблюдалась — читаются обе.
+// Copies of this delivery's plugin in the Codex cache: `<home>/plugins/cache/<market>/<plugin>/`,
+// other plugins add a version level (`…/<plugin>/<version>/`); both layouts are read.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 

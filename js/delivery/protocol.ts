@@ -47,3 +47,13 @@ export const SEAT_GONE_RE = /no such standing|take it with connect|такого 
 /** Проза отказа канала «сессия не держит стояния» (без rule в _meta). */
 export const UNATTRIBUTED_RE =
   /не зарегистрирован[аоы]? ни за каким стоянием|hold no registered standing/i;
+
+// part 6
+/**
+ * Образцы прозы, которую разбирает проба моста-спутника doctor (граф @nks/nks-dev,
+ * узел #6809): двуязычны при любом языке сессии. Отказ сервера, за которым стоит вход.
+ */
+export const SAT_LOGIN_RE =
+  /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
+/** stderr моста, не знающего флага спутника. */
+export const SAT_OLD_FLAG_RE = /satellite|unknown (flag|option)|неизвестн/i;

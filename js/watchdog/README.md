@@ -7,6 +7,6 @@
 - `replay.ts` — ворота строки прицепления `watchdog`: ждёт кадров кольца, названных мостом, считает напечатанное, hello кольца — один (#5671).
 - `watchdog-exit.ts` — `watchdog-exit`: выход нулём на первом сообщении, для харнесов без наблюдателя.
 - `codex.ts` — `watchdog-codex`: кадр в идущий тред Codex через дверь app-server (#4286).
-- `words.ts` — слова сторожей на языке поставки (#6080).
+- `words.ts` — доступ к словам сторожей на языке сессии (#6080); сами слова — `js/delivery/words/watchdog.ts`.
 
 Пробы — `js/tests/standing.test.mjs` (`make test-watchdog`), устаревшие сторожа нативного транспорта — `js/tests/watchdog-legacy.test.mjs`.

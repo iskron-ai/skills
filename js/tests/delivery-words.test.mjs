@@ -58,6 +58,19 @@ for (const file of FILES) {
   });
 }
 
+test("doctor's harness words carry no TODO mark of their own — core puts todo() before them", async () => {
+  const { HARNESS } = await import(pathToFileURL(join(DIR, "doctorharness.ts")).href);
+  for (const l of LANGS) {
+    const w = HARNESS[l];
+    for (const out of [
+      w.launchNotFound("who", "cmd", true),
+      w.secondPath("where", "name", "url", "remove"),
+      w.skillsBehind("root", "1", "why", "how"),
+    ])
+      assert.doesNotMatch(out, /^(TODO|НАДО):/, `${l}: ${out}`);
+  }
+});
+
 test("the English case words name the closing's evidence and the leaver's reason", async () => {
   const { ROOM } = await import(pathToFileURL(join(DIR, "rooms.ts")).href);
   assert.equal(

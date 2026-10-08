@@ -1,23 +1,16 @@
-// Форма записи моста-спутника в файле агента — одна на все ОС: `node -e` сам
-// собирает путь к домашнему мосту из os.homedir(), без оболочки и без
-// машинного пути в файле (Claude Code не раскрывает переменные в args
-// фронтматтера, а sh на Windows нет). `--` отделяет флаги моста от флагов
-// node, а splice кладёт путь моста в argv[1] — иначе мост не увидит
-// `--satellite` в process.argv.slice(2) и встанет мостом сессии. Проверена
-// живьём на macOS (Claude Code 2.1.285); на Windows не сверена (REALITY.md).
-// SATELLITE_CODE — эталон: копии в ролевых файлах и delegation.md сверяет
-// с ним `make validate`. Норма — skills/iskronify/references/delegation.md.
+// The satellite bridge entry form in an agent file, one for every OS: `node -e` builds
+// the home bridge path from os.homedir(), with no shell and no machine path in the file
+// (Claude Code does not expand variables in frontmatter args; Windows has no sh). `--`
+// separates the bridge flags from node's, and splice puts the bridge path into argv[1],
+// else the bridge misses `--satellite` in process.argv.slice(2) and stands as a session
+// bridge. Verified live on macOS only (REALITY.md). The reference code is SATELLITE_CODE.
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
-import { HOME_DIR } from "../delivery/index.ts";
+import { HOME_DIR, SATELLITE_CODE } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { escapeRe } from "../shared/regex.ts";
 import { PRODUCT_PATTERN } from "./installnames.ts";
-
-/** Код `node -e` единой формы: путь к дому из homedir, путь в argv[1], импорт моста. */
-export const SATELLITE_CODE =
-  "const p=require('path').join(require('os').homedir(),'.iskron-bridge','iskron-bridge.mjs');process.argv.splice(1,0,p);import(require('url').pathToFileURL(p).href)";
 
 export const SATELLITE_ARGS = ["-e", SATELLITE_CODE, "--", "--satellite"];
 
@@ -27,14 +20,14 @@ export interface SatEntry {
 }
 
 /**
- * Род формы записи: `eval` — рабочая `node -e`; остальные — поломка или форма,
- * которую единая заменяет.
- *  - eval-no-sep: `--satellite` без `--` — node примет его за свой флаг и не запустится;
- *  - eval-session: мост не увидит `--satellite` в своём argv и встанет мостом сессии;
- *  - eval-other: `node -e` с кодом не эталона — живьём не сверен;
- *  - shell: `sh -c` прежнего контракта — на Windows sh нет;
- *  - path: путь к мосту прямо в args — машинный путь в общем файле;
- *  - session: `--satellite` нет вовсе — мост сессии, не спутник.
+ * Entry form kind: `eval` is the working `node -e`; the others are breakages or forms
+ * the single form replaces.
+ *  - eval-no-sep: `--satellite` without `--`, node takes it for its own flag;
+ *  - eval-session: the bridge misses `--satellite` in its argv and stands as a session bridge;
+ *  - eval-other: `node -e` with code other than the reference, not verified live;
+ *  - shell: `sh -c` of the former contract, Windows has no sh;
+ *  - path: the bridge path straight in args, a machine path in a shared file;
+ *  - session: no `--satellite` at all.
  */
 export type SatForm =
   "eval" | "eval-no-sep" | "eval-session" | "eval-other" | "shell" | "path" | "session";
@@ -45,18 +38,11 @@ const cmdBase = (c: string): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
-/**
- * Список тулов — правило моста (bridge/config.ts, parseArgs): имена через запятую,
- * пробелы вокруг имён вырезаются, пустые куски не считаются. «case, look» — тот же
- * набор, что «case,look», и рабочая запись с ним остаётся рабочей.
- */
+/** A tool list by the bridge's rule (bridge/config.ts, parseArgs): comma-separated, trimmed, empty parts ignored. */
 const isToolList = (v: string | undefined): v is string =>
   !!v && v.split(",").some((s) => s.trim().length > 0);
 
-/**
- * Хвост флагов моста, который запись несёт после `--satellite` и который готовый
- * блок переносит: набор тулов `--tools a,b,c`. Любая форма — массивом или строкой sh -c.
- */
+/** The bridge flag tail after `--satellite` that the ready block carries over: `--tools a,b,c`, from any form. */
 export function toolsTail(e: SatEntry): string[] {
   const words = SHELLS.has(cmdBase(e.command))
     ? (e.args[e.args.indexOf("-c") + 1] ?? "")
@@ -75,10 +61,9 @@ export function formOf(e: SatEntry): SatForm {
     if (sep < 0) return e.args.slice(2).includes("--satellite") ? "eval-no-sep" : "session";
     const after = e.args.slice(sep + 1);
     const spliced = /process\.argv\.splice\(\s*1\s*,\s*0\s*,/.test(e.args[1] ?? "");
-    // Без splice process.argv = [node, ...after], и slice(2) теряет первый флаг моста.
+    // Without splice process.argv = [node, ...after], and slice(2) loses the first bridge flag.
     if (!(spliced ? after : after.slice(1)).includes("--satellite")) return "eval-session";
-    // Рабочей признаётся только эталонная форма: любой другой код — не сверенный живьём.
-    // После --satellite — ничего либо набор тулов `--tools a,b,c` (bridge/narrow.ts).
+    // Only the reference form counts as working. After --satellite: nothing or `--tools a,b,c` (bridge/narrow.ts).
     const tail = after.slice(1);
     const known =
       !tail.length || (tail.length === 2 && tail[0] === "--tools" && isToolList(tail[1]));
@@ -106,7 +91,7 @@ const expandHome = (p: string): string =>
     .replace(/^~(?=[\\/])/, homedir())
     .replace(/\$\{HOME\}|\$HOME|%USERPROFILE%|\$\{USERPROFILE\}|\$USERPROFILE/g, homedir());
 
-/** Путь к мосту, который запустит запись, — разбором args массивом: дом с пробелом остаётся целым. */
+/** The bridge path the entry will run, parsed from args as an array: a home with a space stays whole. */
 export function bridgePathOf(e: SatEntry): string | null {
   const base = cmdBase(e.command);
   if (base === "node" && (e.args[0] === "-e" || e.args[0] === "--eval")) {
@@ -126,9 +111,8 @@ export function bridgePathOf(e: SatEntry): string | null {
 }
 
 /**
- * Готовый блок записи — блочной формой YAML, той же, что пишет проекция и читает
- * doctor: вставленный вместо прежних mcpServers и disallowedTools, он на повторе
- * не даёт ни одной строки «НАДО:». Один на все ОС — машинного в нём нет.
+ * The ready entry block in YAML block form, as the projection writes and doctor reads:
+ * pasted instead of the former mcpServers and disallowedTools, it gives no TODO line on rerun.
  */
 export function readyEntry(name: string, disallowed: string[], tail: string[] = []): string {
   return [
