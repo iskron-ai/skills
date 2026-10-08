@@ -33,8 +33,15 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
   } else if (rk?.kind === "body" && !rk.aside) {
     if (seen.has(markOf(frame)) || addressedToMine(frame)) frame.addressed = true;
   } else if (rk && (ASK_KINDS.has(rk.kind) || rk.kind === "progress")) {
+    // Решение — один раз на кадр и на диске: повтор того же кадра платформой
+    // (мост умер в окне пачки) находит его, хотя вопрос в памяти уже погашен.
+    const hit = `askhit:${typeof frame.id === "string" ? frame.id : ""}`;
     const store = seenAsks(seenPath, seen);
-    if (closesMine(store, frame as Record<string, unknown>)) frame.addressed = true;
+    if (seen.has(hit)) frame.addressed = true;
+    else if (closesMine(store, frame as Record<string, unknown>)) {
+      frame.addressed = true;
+      if (typeof frame.id === "string") noteSeen(seenPath, hit, seen);
+    }
     noteAsk(store, frame as Record<string, unknown>);
   }
 }
