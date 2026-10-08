@@ -95,5 +95,6 @@ test("resume from disk by key on a bridge whose session is not named keeps the s
   assert.equal(r.result?.resumed, true, JSON.stringify(r));
   // Мост без названной сессии своё место не доказал — путь отпустить назван.
   assert.match(r.result.word, /место не твоё — iskron_channel\(action="leave"\)/, r.result.word);
+  assert.equal(r.result.own, false, "not proven own");
   assert.equal(holdRecord(dir, KEY)?.session, "ses-1", "the session survives the resume");
 });

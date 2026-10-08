@@ -1677,6 +1677,41 @@ test("a place resumed by the bridge itself is announced into the session with it
   }
 });
 
+// The bridge proved the place its own (the session stood it): the word into the session
+// does not suspect another's place nor call to release it.
+test("a place the bridge proved its own is announced without the call to release another's", async () => {
+  const calls = join(SANDBOX, "resumed-own.calls");
+  const resume = join(SANDBOX, "resumed-own.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      resumed: true,
+      key: "proba--931--nks-dev",
+      pending: 0,
+      word: "возврат места с диска; register",
+      own: true,
+    }),
+  );
+  const b = bridgeEnv("resumed-own", { FB_CALLS: calls, FB_RESUME: resume });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-own", location: { directory: "/work/own" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "s-own");
+    await until(
+      () => rec.prompts.some((p) => /сам вернул место/.test(p.text)),
+      "the resumed prompt",
+    );
+    const word = rec.prompts.find((p) => /сам вернул место/.test(p.text));
+    assert.match(word.text, /место proba--931--nks-dev/, "the taken name is said");
+    assert.doesNotMatch(word.text, /чужое|action="leave"/, word.text);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A record of a pre-upgrade build carries no session: the directory alone does
 // not return it (#6017), but the bridge names it, and the plugin says it into
 // the session — its holder takes it back by name instead of losing it silently.

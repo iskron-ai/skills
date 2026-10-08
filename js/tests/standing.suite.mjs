@@ -2514,6 +2514,7 @@ test("iskron/resume by the session's directory: a bridge restarted after the plu
   assert.match(back.result.word, /занятость возвращена: на вахте/);
   // Место этой же сессии — своё: слова «место не твоё» нет, плагин показывает его человеку.
   assert.doesNotMatch(back.result.word, /не твоё|action="leave"/, back.result.word);
+  assert.equal(back.result.own, true, "the answer says the place is proven own");
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
   assert.equal(fresh().length, 1, "one socket reopened on the saved address");
   assert.equal(
@@ -2587,6 +2588,7 @@ test("iskron/resume of a session moved to another folder takes back the place it
   const back = await second.call("iskron/resume", 2, { cwd: after, session: "ses-moved" });
   assert.equal(back.result?.resumed, true, JSON.stringify(back));
   assert.equal(back.result.key, "proba--931--nks-dev");
+  assert.doesNotMatch(back.result.word, /не твоё|action="leave"/, back.result.word);
   assert.equal(fake.state.counts.connect, 1, "the place is resumed, not rotated");
 });
 
