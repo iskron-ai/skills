@@ -1,6 +1,4 @@
-// Веер одного события графа по местам роли (граф nks-dev: #5829): у каждой копии
-// свой id кадра и тот же event_id; лежалые копии погасших мест приходят живому
-// месту при переоткрытии сокета. Делатель слышит событие один раз.
+// Fan-out of one graph event over a role's seats (graph @nks/nks-dev, node #5829).
 import { statSync } from "node:fs";
 
 import { type Frame } from "../shared/channel.ts";
@@ -8,12 +6,7 @@ import { eventIn, eventKeyOf, type Marks, sameCopy, seenIds } from "../shared/se
 import { type Door } from "./door.ts";
 import { log } from "./streams.ts";
 
-/**
- * Последнее прочтение каждого файла .seen и его отпечаток (inode, размер, mtime).
- * Файл перечитывается, только когда отпечаток сменился — дописью любого писателя
- * или обрезкой (rename); иначе отдаётся прежний набор. Кадр, чья метка найдена в
- * памяти моста, файла не трогает вовсе.
- */
+/** Last read of each .seen file keyed by its stamp (inode, size, mtime); reread only when the stamp changes. */
 const lastRead = new Map<string, { stamp: string; ids: Set<string> }>();
 
 function givenIds(seenPath: string): Set<string> {
@@ -32,7 +25,7 @@ function givenIds(seenPath: string): Set<string> {
   return ids;
 }
 
-/** Помечена ли хоть одна метка отданной — в памяти моста или в файле .seen, который пишут клиенты. */
+/** Whether any key is marked delivered — in bridge memory or in the clients' .seen file. */
 export function isDelivered(keys: string[], seen: Set<string>, seenPath: string): boolean {
   if (!keys.length) return false;
   if (keys.some((k) => seen.has(k))) return true;
@@ -40,16 +33,14 @@ export function isDelivered(keys: string[], seen: Set<string>, seenPath: string)
   return keys.some((k) => given.has(k));
 }
 
-/** Метки места — память моста и файл .seen, который пишут внёсшие кадр в ход (seen.ts eventIn). */
 export const marksOf =
   (seen: Set<string>, seenPath: string): Marks =>
   (k) =>
     isDelivered([k], seen, seenPath);
 
 /**
- * Метка события, если эту копию предлагать незачем: событие уже в ходе (seen.ts eventIn)
- * или копия того же рода будет предложена не позже этой. Кадр, вытесненный из кольца
- * неотданным, не держит событие: следующая копия предлагается.
+ * The event key if this copy need not be offered: the event is already in the turn,
+ * or a copy of the same kind is offered no later than this one.
  */
 function redundantEvent(
   frame: Frame | null,
@@ -58,19 +49,14 @@ function redundantEvent(
   const ev = frame?.type === "message" ? eventKeyOf(frame) : "";
   if (!ev || !frame) return "";
   if (eventIn(frame, marksOf(d.seen, d.seenPath))) return ev;
-  // Неотданная копия того же рода в кольце старше этой: прицепившемуся она будет предложена
-  // раньше, поэтому эту не кладём. Вытесняется она тоже раньше (кольцо — очередь на RING
-  // кадров, door.ts): придёт до прицепления больше RING кадров — событие с ней и уйдёт.
+  // An older undelivered copy in the ring is offered first and evicted first.
   if (d.ring.some((r) => sameCopy(r.frame, frame))) return ev;
-  // Лежалую держит копия в той же копящейся пачке — у них одна отдача. Живую пачка не держит:
-  // она ещё не отдана и в кольцо не входит; живая идёт сама и вынимает из пачки лежалые копии
-  // своего рода — событие дойдёт ею (живая будит, #5842).
+  // A live copy carries the event itself and pulls stale copies of its kind out of the batch (graph @nks/nks-dev, node #5842).
   if (frame.stale === true) return d.stale.holdsCopy(frame) ? ev : "";
   d.stale.dropCopies(frame);
   return "";
 }
 
-/** Копию предлагать незачем (redundantEvent) — строкой в лог моста, и true. */
 export function redundantCopy(
   frame: Frame | null,
   d: Pick<Door, "ring" | "seen" | "seenPath" | "stale">,

@@ -1,3 +1,5 @@
+import { envName } from "../delivery/index.ts";
+
 export const NOT_SENT = "not-sent";
 export const UNKNOWN = "unknown";
 export type Outcome = typeof NOT_SENT | typeof UNKNOWN;
@@ -96,7 +98,7 @@ export class AuthPending extends Error {
             ? ` — or sign in from another device: ${device.link} (code ${device.user_code}, ` +
               `valid until ${utcTime(device.expires_at)}; a call after that brings a new one)`
             : "") +
-        ` — or give the bridge a personal access token instead (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)`,
+        ` — or give the bridge a personal access token instead (${envName("BRIDGE_TOKEN")}, or the file <auth-dir>/token)`,
     );
     this.authorizeUrl = url;
   }
@@ -136,8 +138,8 @@ export class DeadGrantError extends Error {
   }
 }
 
-// Соединение закрыто под запросом, ответа не было: Node (undici) — UND_ERR_SOCKET
-// «other side closed», Bun — ECONNRESET «The socket connection was closed unexpectedly».
+// Connection closed under the request with no answer: Node (undici) — UND_ERR_SOCKET
+// "other side closed", Bun — ECONNRESET "The socket connection was closed unexpectedly".
 const CLOSED = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
 export const closedUnder = (e: unknown): boolean => {
   const err = e as { code?: string; cause?: { code?: string } } | null;

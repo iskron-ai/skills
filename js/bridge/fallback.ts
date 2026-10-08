@@ -1,7 +1,6 @@
-// Запасной путь тонкого моста: демон машины не встал или отказал, и сессия
-// идёт полным мостом в своём процессе (thin.ts, goLocal). Демон о ней не знает,
-// поэтому мост оставляет отметку в каталоге гранта на время жизни процесса, и
-// doctor называет такие сессии (граф nks-dev: #6489).
+// Thin bridge fallback: the machine daemon is down, so the session runs a full bridge
+// in-process (thin.ts, goLocal) and leaves a mark in the grant dir for its lifetime so
+// that doctor can name it (graph @nks/nks-dev, node #6489).
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -24,10 +23,7 @@ const alive = (pid: number): boolean => {
   }
 };
 
-/**
- * Снять отметки убитых (SIGKILL, падение): pid, доставшийся другому процессу, не
- * должен читаться сессией. Зовут следующий мост мимо демона и демон при подъёме.
- */
+/** Remove marks of killed processes, so a reused pid is not read as a session. */
 export function pruneFallbacks(authDir: string): void {
   let names: string[] = [];
   try {
@@ -42,7 +38,7 @@ export function pruneFallbacks(authDir: string): void {
   }
 }
 
-/** Отметить свою сессию мимо демона; отметка уходит с процессом. Сбой записи не мешает мосту. */
+/** Mark this session as running past the daemon; the mark leaves with the process. */
 export function markFallback(authDir: string, f: Omit<Fallback, "pid" | "since">): void {
   const file = join(fallbackDir(authDir), `${process.pid}.json`);
   try {
@@ -58,7 +54,7 @@ export function markFallback(authDir: string, f: Omit<Fallback, "pid" | "since">
   } catch {}
 }
 
-/** Живые запасные сессии каталога гранта; отметки умерших процессов не читаются (и не стираются: doctor не пишет). */
+/** Live fallback sessions of the grant dir; dead marks are skipped, not removed (doctor does not write). */
 export function readFallbacks(authDir: string): Fallback[] {
   let names: string[];
   try {

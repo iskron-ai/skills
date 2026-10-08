@@ -1,17 +1,10 @@
-// Держание сокета стояния мостом (граф nks-dev: #4233, #4234, #4235).
-//
-// Мост проксирует ответ `iskron_channel(connect|mint)` и видит в нём адрес
-// сокета, показанный единожды. С этой строки сокет его: он держит его той же
-// дисциплиной канала, что прежде держал сторож (../shared/channel.ts), и до
-// конца MCP-сессии — как исполнитель комнаты разговоров держит стояние треда.
-// Наружу из моста ведут две двери, и ни одна не несёт секрета:
-//   • локальный сокет в каталоге гранта (#4230, door.ts) — к нему цепляется
-//     сторож под Monitor (подкоманда watchdog) и печатает кадры строками-событиями;
-//   • уведомления MCP `notifications/message` с logger «iskron-channel» — их
-//     читает расширение pi и вкладывает кадр в ход.
-// Сокет один на канал, а канал держит места в нескольких графах (#5838):
-// места рядом с основным — places.ts, кадр идёт к двери места своего графа.
-// Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
+// The bridge holds the standing's socket (graph @nks/nks-dev, nodes #4233, #4234, #4235).
+// The socket address, shown once in the channel connect|mint answer, is held with the
+// channel discipline of ../shared/channel.ts until the MCP session ends. Two doors lead
+// out, neither carries the secret: the local socket in the grant dir (#4230, door.ts) for
+// the watchdog, and MCP notifications/message under LOGGERS.channel for pi.
+// One socket per channel, places of several graphs on it (#5838, places.ts).
+// The busy text is written by the doer beside the socket (#4231) and published by the bridge.
 import { LOGGERS } from "../delivery/index.ts";
 import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
@@ -48,17 +41,16 @@ import { type Standing, state } from "./transport.ts";
 
 export type { ChannelEvent } from "./door.ts";
 
-/** Имя стояния → безопасная часть пути: буквы, цифры, точка, дефис; прочее — подчёркивание. */
 function keyFor(): string {
   const s = state.standing;
   return s ? keyOf(s.realm, s.karta, s.name ?? "") : ENV_KEY;
 }
 
-/** Возвращает прежний каталог — неудачный возврат с диска откатывает его (resume.ts). */
+/** Returns the previous cwd: a failed resume from disk rolls back to it (resume.ts). */
 export function noteStandCwd(cwd: string | null): string | null {
   const prev = H.standCwd;
   H.standCwd = cwd;
-  // Место уже держится (connect был раньше stand) — каталог дописывается в запись сейчас.
+  // Already held (connect came before stand): write the cwd into the record now.
   if (cwd && H.currentKey && H.currentUrl)
     rememberStatus(readHoldRecord(H.currentKey)?.status ?? "");
   return prev;
@@ -67,7 +59,7 @@ export function noteStandCwd(cwd: string | null): string | null {
 const channel = (): Channel | null =>
   H.currentUrl ? { url: H.currentUrl, statusUrl: H.currentStatusUrl, cwd: H.standCwd } : null;
 
-/** Занятость принята доской — запомнить её в записи держания места этого графа (status.ts). */
+/** Busy text accepted by the board: keep it in the hold record of this graph's place (status.ts). */
 export function rememberStatus(text: string, realm?: string): void {
   const s = state.standing;
   const ch = channel();
@@ -89,18 +81,18 @@ export function rememberStatus(text: string, realm?: string): void {
 
 export { keyOf, readHoldRecord } from "./holdrecord.ts";
 
-/** Держит ли мост живой сокет ИМЕННО этого ключа (resume.ts). */
+/** Whether the bridge holds a live socket for exactly this key (resume.ts). */
 export const holdsKey = (key: string): boolean => !!H.holder?.alive && H.currentKey === key;
-/** Ключ места, которое ведёт мост — держит или запарковал; null — не ведёт никакого (resume.ts). */
+/** Key of the place the bridge leads, held or parked; null if none (resume.ts). */
 export const ledKey = (): string | null => H.currentKey;
-/** Держит ли мост живой сокет канала — места других графов встают на него рядом (#5838). */
+/** Whether the bridge holds a live channel socket; places of other graphs stand beside it (#5838). */
 export const holdsChannel = (): boolean => !!H.holder?.alive && !!H.currentKey;
-/** Путь локального сокета ключа — для проверки живого держателя (resume.ts). */
+/** Local socket path of the key, to probe for a live holder (resume.ts). */
 export const localSocketPathOf = (key: string): string => socketPathOf(CFG.authDir, key);
 export { noteResuming, setClosingOwn, setRevokingOwn } from "./holdstate.ts";
 
-// Лежалые повторы службы после пересборки сессии копятся в одно слово, а не
-// будят pi и OpenCode по одному (граф nks-dev: #4881, #5033).
+// Stale service repeats after a session rebuild fold into one word, not one wake per frame
+// (graph @nks/nks-dev, nodes #4881, #5033).
 
 const doorHooks: DoorHooks = {
   onAttach: () => {
@@ -113,7 +105,7 @@ const doorHooks: DoorHooks = {
   },
 };
 
-/** Все двери канала: основного места и мест рядом. */
+/** All channel doors: the primary place and the places beside. */
 export const doors = (): Door[] => [
   ...(H.door ? [H.door] : []),
   ...extraPlaces().map((p) => p.door),
@@ -132,21 +124,21 @@ function isOwn(realm: string, karta: string | number, name: string): boolean {
   );
 }
 
-/** Держит ли этот мост сокет ИМЕННО этого стояния — тогда register довольно, connect ротировал бы живое место без причины. */
+/** Whether this bridge holds the socket of exactly this standing: then register suffices, connect would rotate a live place. */
 export function holdsStanding(realm: string, karta: string | number, name: string): boolean {
-  return !!H.holder?.alive && !H.unheard && isOwn(realm, karta, name); // возврат без hello — не держание
+  return !!H.holder?.alive && !H.unheard && isOwn(realm, karta, name); // resumed without hello is not held
 }
 
-/** Отняли ли у этого моста сокет ИМЕННО этого стояния (закрытие 4000): привязка цела, слух — у другого; статусный адрес — пока его не повернул чужой connect. */
+/** Whether exactly this standing's socket was taken from this bridge (close 4000): binding intact, hearing elsewhere; status address kept until a foreign connect rotates it. */
 export function wasEvicted(realm: string, karta: string | number, name: string): boolean {
   return !!H.evictedKey && H.evictedKey === H.currentKey && isOwn(realm, karta, name);
 }
 
-/** Есть ли у моста статусный адрес ИМЕННО этого стояния — занятость идёт от стояния, не от живого сокета, но только от своего. */
+/** Whether the bridge has a status address for exactly this standing: busy follows the standing, not a live socket, but only its own. */
 export const hasStatusAddressFor = (realm: string, karta: string | number, name: string): boolean =>
   !!H.currentStatusUrl && !!H.currentKey && isOwn(realm, karta, name);
 
-/** Места, которые держит мост: основное первым, затем места других графов (#5838). */
+/** Places the bridge holds: the primary first, then places of other graphs (#5838). */
 export const heldPlaces = (): { key: string; realm: string; primary: boolean }[] => [
   ...(H.door && state.standing
     ? [{ key: H.door.key, realm: state.standing.realm, primary: true }]
@@ -154,14 +146,14 @@ export const heldPlaces = (): { key: string; realm: string; primary: boolean }[]
   ...extraPlaces().map((p) => ({ key: p.door.key, realm: p.standing.realm, primary: false })),
 ];
 
-/** Место другого графа, если вызов его называет: уход и занятость — места своего графа (#5838). */
+/** The place of another graph if the call names it: leave and busy belong to that graph's place (#5838). */
 export const besideKeyIn = (realm: unknown): string | null => extraIn(realm)?.door.key ?? null;
 
-/** Ушёл ли мост с ИМЕННО этого места (leave.ts): адрес помнит, сокет закрыт — вернуться можно без connect. */
+/** Whether the bridge left exactly this place (leave.ts): address kept, socket closed, return needs no connect. */
 export const isParked = (realm: string, karta: string | number, name: string): boolean =>
   H.parked && isOwn(realm, karta, name);
 
-/** С какого мига мост никто не слушает локально ни у одной двери; null — слушают или держать нечего. */
+/** Since when no local listener is at any door; null if listened to or nothing is held. */
 export function listenerIdleSince(): number | null {
   if (!H.holder?.alive) return null;
   const ds = doors();
@@ -169,14 +161,14 @@ export function listenerIdleSince(): number | null {
   return Math.max(...ds.map((d) => d.idleAt ?? 0));
 }
 
-/** Позвать, когда прицепился локальный клиент — сторож вернулся к месту. */
+/** Called when a local client attaches: the watchdog is back at the place. */
 export function onListenerAttached(fn: () => void): void {
   H.attachHooks.push(fn);
 }
-/** Локальных клиентов сейчас у всех дверей (проба живости из sweep.ts отпадает тут же — она не сторож). */
+/** Local clients at all doors now (the sweep.ts liveness probe drops at once; it is not a watchdog). */
 export const localListeners = (): number => doors().reduce((n, d) => n + d.clients.size, 0);
 
-/** Кадр hello — доказательство держания; из кольца, если уже пришёл, иначе ожидание под пределом. */
+/** The hello frame proves holding: from the ring if already here, else awaited up to the timeout. */
 export function awaitHello(timeoutMs: number): Promise<Frame | null> {
   const seen = H.door?.ring.find((r) => r.frame?.type === "hello")?.frame ?? null;
   if (seen) return Promise.resolve(seen);
@@ -190,11 +182,11 @@ export function awaitHello(timeoutMs: number): Promise<Frame | null> {
   });
 }
 
-/** Ключ стояния, которое держит мост, — основного либо места названного графа (listen.ts). */
+/** Key of the held standing: the primary or the named graph's place (listen.ts). */
 export const heldKey = (realm?: string): string | null =>
   (realm ? besideKeyIn(realm) : null) ?? H.currentKey;
 
-/** Событие канала — всем дверям: сокет у мест общий. */
+/** A channel event goes to every door: places share the socket. */
 export function broadcast(ev: ChannelEvent): void {
   for (const d of doors()) d.broadcast(ev);
 }
@@ -207,7 +199,7 @@ export function notify(level: "info" | "warning" | "error", data: ChannelEvent):
   });
 }
 
-/** Поставить место другого графа рядом на канал, который держит мост (#5838). Null — канала нет. */
+/** Stand a place of another graph beside, on the channel the bridge holds (#5838). Null if no channel. */
 export function addPlace(s: Standing): string | null {
   const ch = channel();
   const primary = state.standing;
@@ -215,14 +207,14 @@ export function addPlace(s: Standing): string | null {
   return addExtra(s, ch, doorHooks, H.door?.address ?? null);
 }
 
-/** id места этого графа у платформы, если register, hello или кадр его назвали. */
+/** The platform id of this graph's place, if register, hello or a frame named it. */
 export const standingIdIn = (realm: string): string | null =>
   (extraIn(realm)?.door ?? H.door)?.standingId ?? null;
 
 /**
- * id места из ответа register (RegisteredSession.standing_id, #5838): по нему
- * кадр находит дверь места, а занятость — место. Новое место приходит в тот же
- * сокет — служба перечитывает места канала на каждом проходе доставки.
+ * Place id from the register answer (RegisteredSession.standing_id, #5838): frames find
+ * the place's door by it, busy finds the place. A new place arrives on the same socket:
+ * the service rereads the channel's places on each delivery pass.
  */
 export function noteStandingId(realm: string, id: string | null): void {
   const d =
@@ -235,11 +227,11 @@ const held = (): Place | null =>
   H.door && state.standing ? { standing: state.standing, door: H.door } : null;
 
 /**
- * Отпустить всё, что держим: сокет службы, двери, публикацию. Идемпотентно.
- * `forget` стирает и записи держания — снятие, мёртвый токен. `keepBeside` —
- * тот же канал переоткрывается: места рядом остаются на нём. `own` — отпускает
- * своё close, revoke или leave сессии: released несёт own, сторожа уходят без тревоги (#6638).
- * `keepBusy` — место на паузе (suspend.ts): переданный сокет, не взятый преемником, занятость не снимает.
+ * Release everything held: service socket, doors, publication. Idempotent.
+ * `forget` also drops hold records (revoke, dead token). `keepBeside`: the same channel
+ * reopens and places beside stay on it. `own`: the session's own close, revoke or leave;
+ * released carries own and watchdogs leave without alarm (#6638).
+ * `keepBusy`: a paused place (suspend.ts); a handed socket not taken by a successor keeps busy.
  */
 export function releaseStanding(
   reason: string,
@@ -251,25 +243,25 @@ export function releaseStanding(
   if (forget && H.currentKey) dropOwnHoldRecord(H.currentKey, H.currentUrl);
   if (!keepBeside) dropAllExtras(reason, forget, own);
   if (!H.holder && !H.door) return;
-  // Пачка, ещё не отданная, уходит сейчас, а не теряется молча (backlog.ts).
+  // An unsent batch leaves now instead of being lost silently (backlog.ts).
   H.door?.flushBatches();
   const key = H.currentKey ?? undefined;
   const handover = handoverReason();
   if (handover && !forget) {
-    // Демон передаёт место преемнику (daemon.ts): не «отпущено» — сторож переподхватит
-    // ту же дверь, плагин holding не снимает, а тонкий мост вернёт место в новой сессии.
+    // Handed to a successor daemon (daemon.ts), not released: the watchdog re-attaches the
+    // same door, the plugin keeps holding, the thin bridge restores the place in a new session.
     standingLog(`handed over ${H.currentKey ?? "?"}: ${handover}`);
     broadcast({ kind: "handover", key, text: handover });
   } else {
     standingLog(`released ${H.currentKey ?? "?"}: ${reason}${forget ? " (record dropped)" : ""}`);
     const released: ChannelEvent = { kind: "released", key, text: reason, ...(own && { own }) };
     broadcast(released);
-    notify("info", released); // плагин OpenCode снимает holding по этому слову, не по догадке (#5140)
+    notify("info", released); // the OpenCode plugin drops holding on this word, not a guess (#5140)
   }
   const busy = keepBusy ? null : H.currentStatusUrl;
-  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason, busy); // до вытеснения (#6586)
+  letGo(H.holder, handover && !forget ? (key ?? null) : null, reason, busy); // before eviction (#6586)
   H.holder = null;
-  for (const w of [...H.helloWaiters]) w(null); // ждать hello от отпущенного сокета незачем
+  for (const w of [...H.helloWaiters]) w(null);
   H.door?.close();
   H.door = null;
   Object.assign(H, { parked: false, unheard: false });
@@ -280,12 +272,12 @@ export function releaseStanding(
   H.evictedEvent = null;
 }
 
-/** Взять этот адрес и держать его, чем бы ни был занят прежний. */
+/** Take this address and hold it, whatever the previous one was. */
 export function holdStanding(url: string, statusUrl?: string | null): string {
   const key = keyFor();
   if (url === H.currentUrl && key === H.currentKey && H.holder?.alive) return key;
-  // Иное имя — прежнее место мост бросает сам: его запись стирается, иначе возврат по каталогу поднимал бы брошенное (#5140).
-  // То же место заново — места рядом остаются на канале (#5838).
+  // Another name: the old place's record is dropped, else a cwd resume would raise it (#5140).
+  // The same place again: places beside stay on the channel (#5838).
   const same = !!H.currentKey && H.currentKey === key;
   releaseStanding(holdWords().newSocket(), !!H.currentKey && H.currentKey !== key, same);
   const status = statusUrl || deriveStatusUrl(url);
@@ -304,21 +296,21 @@ export function holdStanding(url: string, statusUrl?: string | null): string {
       cwd: H.standCwd ?? readHoldRecord(key)?.cwd,
       client: harnessName(),
       key,
-      left: false, // сокет держится снова — пометка ухода словом снята
+      left: false, // held again: the leave mark is cleared
     });
   const ch = channel();
   if (same && ch) repointExtras(ch);
   openHolder(url, key);
   standingLog(`held ${key}${H.standCwd ? ` cwd=${H.standCwd}` : ""}`);
-  // Слово «держу» уходит и уведомлением: плагин OpenCode не жнёт держащий мост
-  // по простою, а прежде узнавал о держании лишь из attached локального сокета,
-  // которого у него нет (#5140); место — чтобы дочерняя сессия встала его спутником (#6002).
+  // "held" also goes as a notification: the OpenCode plugin has no local socket to learn it
+  // from and must not reap a holding bridge on idle (#5140); the place lets a child session
+  // stand as its satellite (#6002).
   const place = s ? { realm: s.realm, karta: String(s.karta), name: s.name ?? "" } : undefined;
   notify("info", { kind: "held", key, ...(place ? { place } : {}) });
   return key;
 }
 
-/** Уйти с места (leave.ts): сокет службы закрыт — у всех мест канала, ключи, адреса и двери целы. Возвращает ключ или null. */
+/** Leave the place (leave.ts): the service socket closes for all channel places; keys, addresses and doors stay. Returns the key or null. */
 export function parkStanding(reason: string): string | null {
   if (!H.holder?.alive || !H.currentKey) return null;
   H.heardAt = Math.max(H.heardAt, H.holder.heardAt);
@@ -331,14 +323,14 @@ export function parkStanding(reason: string): string | null {
   return H.currentKey;
 }
 
-/** Сокет открывается заново тем же адресом: слух — с hello нового открытия, не прежним из кольца (#5036 §4, deaf.ts). */
+/** The socket reopens on the same address: hearing comes from this opening's hello, not an old one in the ring (#5036 §4, deaf.ts). */
 function expectHello(): void {
   H.unheard = true;
   for (const d of doors())
     d.ring.splice(0, d.ring.length, ...d.ring.filter((r) => r.frame?.type !== "hello"));
 }
 
-/** Вернуться на место, с которого ушёл: тот же адрес, сокет открыт заново. */
+/** Return to the place left: same address, socket reopened. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
   H.parked = false;
@@ -348,21 +340,20 @@ export function resumeStanding(): boolean {
   return true;
 }
 
-/** Кадр одной двери: кольцо, рассылка её клиентам, уведомление — как прежде у единственного места. */
+/** One door's frame: ring, broadcast to its clients, notification. */
 function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null): void {
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
-  // Копия события графа, уже предложенного или отданного (веер, fanout.ts), — никому.
+  // A copy of a graph event already offered or delivered (fanout.ts) goes to no one.
   if (redundantCopy(full, d)) return;
-  if (full?.type === "message") markAddressed(full, seenPath, d.seen); // до повтора и лежалых
-  // Повтор уже отданного кадра (тот же id — платформа отдала его снова после возврата места) никому не рассылается; отданное клиенты помечают сами — в файле.
+  if (full?.type === "message") markAddressed(full, seenPath, d.seen); // before repeat and stale checks
+  // A repeat of a delivered frame (same id, re-sent after the place returned) is broadcast to no one; clients mark delivered frames themselves, in the file.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
-  // Лежалый кадр — принятое, пока место не слушали (после revoke — почта предшественника),
-  // либо повтор службы после пересборки сессии: хода не стоит, но и не теряется — одной
-  // пачкой на полосу, не по одному; лежалая копия уже отданного кадра в пачку не идёт.
-  // pi и OpenCode: уведомление пачкой и есть доставка — отданными метятся все кадры
-  // полосы, иначе платформа, отдав их снова после переподключения, будит ими опять (#5831).
-  // Прямое слово в пачку лежалых не ложится: идёт отдельно и целиком, путём живого.
+  // A stale frame (accepted while unheard, e.g. the predecessor's mail after revoke, or a
+  // service repeat after a session rebuild) costs no turn but is not lost: one batch per lane;
+  // a stale copy of a delivered frame is skipped. In pi and OpenCode the batch notification is
+  // the delivery, so every frame of the lane is marked seen, else the platform re-sends and
+  // wakes again after reconnect (#5831). A direct word skips the stale batch and goes live.
   if (full?.type === "message" && full.stale === true && !isDirectWord(full))
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
@@ -372,25 +363,25 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
           notify("info", keyed(d, ev));
         });
   const text = full === frame && !full?.addressed ? raw : JSON.stringify(full);
-  // В кольцо идёт и hello — каждой двери: сторож, прицепившийся позже, должен увидеть доказательство держания, а не только рабочие кадры.
+  // hello goes into every door's ring: a watchdog attaching later must see the proof of holding.
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text, full);
-  if (hello) Object.assign(H, { unheard: false, deafKey: null }); // слух доказан
+  if (hello) Object.assign(H, { unheard: false, deafKey: null }); // hearing proven
   if (hello) for (const w of [...H.helloWaiters]) w(full);
   const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
-  // Сторожам кадр комнаты «в пачку» — пачкой по окну, прерывающий — после накопленного (roomstack.ts).
+  // Watchdogs get batched room frames per window, an interrupting one after the batch (roomstack.ts).
   const toBatch = (b: ChannelEvent): void => (d.broadcast(b), notify("info", keyed(d, b)));
   if (msg && !notifiedClient() && batchForWatchdogs(d, text, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
   if (notifiedClient()) {
-    // pi и OpenCode: уведомление и есть доставка, и .seen пишется в миг
-    // уведомления — кадр в окне пачки (backlog.ts, #5140) ещё не отдан, и
-    // умерший в окне мост его не потеряет: платформа отдаст снова. Метятся все
-    // кадры окна, и не показанные пачкой: она называет их числом и адресом history.
+    // pi and OpenCode: the notification is the delivery, so .seen is written when it is sent;
+    // a frame in the batch window (backlog.ts, #5140) is not yet delivered and the platform
+    // re-sends it if the bridge dies. All window frames are marked, even those the batch
+    // names only by count and history address.
     const flushBacklog = (b: ChannelEvent): void => {
       for (const k of b.marks ?? []) noteSeen(seenPath, k, d.seen);
       notify("info", keyed(d, b));
@@ -405,12 +396,12 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   notify("info", keyed(d, ev));
 }
 
-/** Событие места другого графа несёт его ключ — клиент уведомлений знает, чьё оно (#5838). */
+/** An event of another graph's place carries its key so the notification client knows whose it is (#5838). */
 const keyed = (d: Door, ev: ChannelEvent): ChannelEvent =>
   d === H.door ? ev : { ...ev, key: d.key };
 
-// Обработчики сокета службы зовутся из его событий — область сессии, открывшей
-// сокет, им передаётся явно (shared/scope.ts): рантайм не обязан нести её сам.
+// Socket handlers get the opening session's scope explicitly (shared/scope.ts); the runtime
+// need not carry it across events.
 function openHolder(url: string, key: string): void {
   H.holder = holdSocket(
     bindAll<Parameters<typeof holdSocket>[0]>({
@@ -419,30 +410,29 @@ function openHolder(url: string, key: string): void {
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           const primary = held();
-          if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // сокет без стояния (окружение)
-          // hello называет места канала — их id и канонические графы (#5838).
+          if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // socket without a standing (env)
+          // hello names the channel's places: their ids and canonical graphs (#5838).
           if (full?.type === "hello") learnFromHello(full, primary);
-          // Кадр — двери своего места по to_standing_id; несопоставленный — основному со словом.
+          // A frame goes to its place's door by to_standing_id; an unmatched one to the primary with a note.
           const { door: d, note } = routeFrame(full?.type === "hello" ? null : full, primary);
           if (note) {
             log(note);
             d.broadcast({ kind: "note", text: note });
           }
           deliverTo(d, raw, frame, full);
-          if (full?.type === "hello") takeSpool(key, held, onFrame); // пришедшее уходящему демону (#6586)
+          if (full?.type === "hello") takeSpool(key, held, onFrame); // what reached the leaving daemon (#6586)
         });
       },
       onEvicted: (code) => {
         standingLog(`evicted ${key}: close ${code}`);
         H.evictedKey = key;
-        dropOwnHoldRecord(key, url); // адрес повернули — своя запись мертва, запись отнявшего цела
-        E.next?.(key, url, code); // слово об отъёме и ход дальше — evicted.ts
+        dropOwnHoldRecord(key, url); // address rotated: own record is dead, the evictor's stays
+        E.next?.(key, url, code); // evicted.ts
       },
       onDeadToken: (code) => {
         if (H.revokingOwn) {
-          // Своё снятие в полёте: 4001 пришёл раньше ответа revoke — это не
-          // смерть токена, а его закрытие; отпускаем тихо, иначе послушный агент
-          // пересоздаст только что снятое место (наблюдено в OpenCode и Codex).
+          // Own revoke in flight: 4001 outran the revoke answer, the token is closed, not dead;
+          // release quietly, else an obedient agent re-creates the place just revoked.
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
@@ -452,7 +442,7 @@ function openHolder(url: string, key: string): void {
           return;
         }
         if (H.closingOwn) {
-          // Своё close канала — то же, что своё снятие: 4001 обогнал ответ (#6634).
+          // Own channel close, like own revoke: 4001 outran the answer (#6634).
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
           );
@@ -462,8 +452,8 @@ function openHolder(url: string, key: string): void {
           return;
         }
         if (H.resuming > 0) {
-          // Протухшая запись держания: место у платформы уже мертво — не тревога,
-          // а тихий откат; iskron_stand займёт место заново connect-ом.
+          // Stale hold record, the place is already dead at the platform: a quiet rollback, not
+          // an alarm; the stand tool takes the place anew by connect.
           log(`hold record for ${key} is dead at the platform (close ${code}) — dropped`);
           releaseStanding(holdWords().resumeFailed(), true);
           return;
@@ -474,7 +464,7 @@ function openHolder(url: string, key: string): void {
         const ev: ChannelEvent = { kind: "dead", code, text };
         broadcast(ev);
         notify("error", ev);
-        Object.assign(H, { deafKey: key, deadPlaces: [...state.places] }); // привязка помнится, слуха нет (deaf.ts)
+        Object.assign(H, { deafKey: key, deadPlaces: [...state.places] }); // binding remembered, no hearing (deaf.ts)
         releaseStanding(holdWords().tokenDead(), true);
       },
       onServiceAlive: (version) => {
@@ -488,7 +478,7 @@ function openHolder(url: string, key: string): void {
         log(text);
         broadcast({ kind: "note", text });
       },
-      // Подвисание: сторожу под Monitor — строкой, будящей агента; pi и OpenCode показывают уведомление человеку, агента оно не будит (#5380).
+      // Hang: a line waking the agent for the Monitor watchdog; pi and OpenCode show the human a notification that does not wake the agent (#5380).
       onHung: (text) => {
         log(text);
         broadcast({ kind: "note", text });

@@ -1,3 +1,4 @@
+import { envName } from "../delivery/index.ts";
 import { now } from "./clock.ts";
 import { CFG } from "./config.ts";
 import { DeadGrantError, errorMessage, HoldOffError, TokenRefused } from "./errors.ts";
@@ -21,12 +22,11 @@ export interface AuthOptions {
   proactive?: boolean;
 }
 
-// Ход за токеном — один на грант (хранилище сервера), не на сессию: сессии
-// демона машины ждут одного хода, как прежде ждали вызовы одного моста.
+// One token round per grant (the server's store), not per session: daemon sessions share it.
 const authInFlight = new Map<string, { promise: Promise<Tokens>; interactive: boolean }>();
 
 // What a long hold says beside the login: the grant is intact and would come
-// back by itself — information, never an instruction to wait (#4794).
+// back by itself — information, never an instruction to wait (graph @nks/nks-dev, node #4794).
 function heldNote(until: number | null): string {
   if (until === null) return "the grant itself is whole";
   const minutes = Math.max(1, Math.round((until - now()) / 60_000));
@@ -35,7 +35,7 @@ function heldNote(until: number | null): string {
 
 // Returns fresh-enough tokens. Order: cached access token -> silent refresh ->
 // (only if allowed) the browser flow. No answer ever tells a human to come back
-// later (graph nks-dev: #4794): a hold shorter than a call is slept through
+// later (graph @nks/nks-dev, node #4794): a hold shorter than a call is slept through
 // here and a longer one is answered with the login; a refused grant is knocked
 // again, briefly, before a human is called in.
 export async function ensureAuth(
@@ -145,7 +145,7 @@ export async function ensureAuth(
       }
       if (!interactive)
         throw new Error(
-          "authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (ISKRON_BRIDGE_TOKEN, or the file <auth-dir>/token)",
+          `authorization required (no tokens, browser flow deferred) — or give the bridge a personal access token (${envName("BRIDGE_TOKEN")}, or the file <auth-dir>/token)`,
         );
       return await interactiveFlow(meta, s.tokens);
     } finally {

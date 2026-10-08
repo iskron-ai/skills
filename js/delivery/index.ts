@@ -37,3 +37,16 @@ export {
   VERDICT,
   type VerdictWords,
 } from "./words/rooms.ts";
+// part 5a
+export { BOARD_FORM } from "./patterns/board.ts";
+export { CASE_EXIT_CLOSED } from "./patterns/caseexit.ts";
+export { SERVER_CHOICE } from "./patterns/config.ts";
+export { NOTICE_MARK } from "./patterns/deliver.ts";
+export { ABSORB, type AbsorbWords } from "./words/absorb.ts";
+export { BACKLOG, type BacklogWords } from "./words/backlog.ts";
+export { CALL, type CallWords } from "./words/call.ts";
+export { DEAF, type DeafWords } from "./words/deaf.ts";
+export { DOOR, type DoorWords } from "./words/door.ts";
+export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
+export { HEARING, type HearingWords } from "./words/hearing.ts";
+export { HOOK, type HookWords } from "./words/hook.ts";

@@ -1,21 +1,16 @@
-// Пачка побудки — накопленное уходит одним событием, не по кадру (граф nks-dev: #5140).
-//
-// Два повода открыть окно: hello с pending > 0 (платформа отдаёт всё ожидавшее
-// разом, а плагин вкладывал каждый кадр отдельным ходом) и кадр самой платформы
-// (побудка: «подними голову, разбери инбокс» — с ней должно прийти и всё, что
-// пришло рядом). Пока окно открыто, живые кадры копятся; по его истечении —
-// одно событие kind=backlog с кадрами по received_at, телами (обрезанными,
-// как у лежалых) и указанием на history за остальным. Окно у каждого места
-// своё (door.ts, #5838): пачка одного графа метится в .seen своего места.
-import { envName } from "../delivery/index.ts";
+// Wake-up batch: what accumulates goes out as one event, not frame by frame
+// (graph @nks/nks-dev, nodes #5140, #5838). A window opens on hello with pending > 0
+// or on a platform frame; on expiry one kind=backlog event carries the frames by
+// received_at. Each seat has its own window (door.ts).
+import { BACKLOG, envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame, isDirectWord } from "../shared/channel.ts";
 import { caseCountLines, frameToText } from "../shared/frame-text.ts";
-import { L } from "../shared/lang.ts";
+import { words } from "../shared/lang.ts";
 import { type Marks, splitBatch } from "../shared/seen.ts";
 import { type ChannelEvent } from "./door.ts";
 
-/** Окно накопления; переменная — шов для проб, не ручка человека. */
+/** The variable is a seam for probes, not a human's knob. */
 const BACKLOG_MS = Number(process.env[envName("BRIDGE_BACKLOG_MS")]) || 1500;
 const BACKLOG_KEEP = 20;
 const BODY_CAP = 800;
@@ -23,21 +18,21 @@ const BODY_CAP = 800;
 const at = (f: Frame): string => (typeof f.received_at === "string" ? f.received_at : "");
 
 export class Backlog {
-  /** Все кадры окна — пачка показывает первые BACKLOG_KEEP, отданными метятся все (#5831). */
+  /** Shows the first BACKLOG_KEEP, marks all as given (graph @nks/nks-dev, node #5831). */
   private readonly all: Frame[] = [];
-  /** Прямые слова окна — ушли отдельно; шапка называет их числом. */
+  /** Direct words went out separately; the head only counts them. */
   private direct = 0;
   private pending = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private flush: ((ev: ChannelEvent) => void) | null = null;
 
-  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  /** The seat's marks: an event already in a turn is not repeated (seen.ts eventIn). */
   private readonly has: Marks;
   constructor(has: Marks) {
     this.has = has;
   }
 
-  /** Открыть окно — по hello с pending либо по кадру платформы; открытое не продлевается, только пополняется. */
+  /** An open window is not extended, only filled. */
   open(expected: number, emit: (ev: ChannelEvent) => void): void {
     this.pending = Math.max(this.pending, expected);
     this.flush = emit;
@@ -45,7 +40,7 @@ export class Backlog {
     this.timer = setTimeout(() => this.close(), BACKLOG_MS).unref();
   }
 
-  /** Отдать накопленное сейчас — при отпускании стояния: неотданное не теряется молча. */
+  /** On releasing the standing: nothing ungiven is lost silently. */
   flushNow(): void {
     if (!this.timer) return;
     clearTimeout(this.timer);
@@ -53,8 +48,8 @@ export class Backlog {
   }
 
   /**
-   * Положить живой кадр в пачку; false — окна нет или это прямое слово: кадр идёт
-   * своим путём, отдельно и целиком. Повтор id, уже лежащего в окне, не считается.
+   * false — no window, or a direct word that goes its own way whole.
+   * A repeated id already in the window is not counted.
    */
   note(frame: Frame): boolean {
     if (!this.timer) return false;
@@ -71,7 +66,6 @@ export class Backlog {
   private close(): void {
     this.timer = null;
     const all = this.all.splice(0);
-    // Событие — один раз, текстом или числом (seen.ts splitBatch); метки пачки — marks.
     const { shown, kept, keys } = splitBatch(all, BACKLOG_KEEP, this.has);
     const got = shown.sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0));
     const count = kept.length;
@@ -82,8 +76,8 @@ export class Backlog {
     const emit = this.flush;
     this.flush = null;
     if (!got.length || !emit) return;
-    // Закон #6574: адресованные месту — текстом, прочие записи дел — счётом
-    // по одному на дело; поручений отвечать конверт не несёт.
+    // Addressed to the seat as text, other case records counted per case
+    // (graph @nks/nks-dev, node #6574).
     const bodies = [
       ...caseCountLines(got),
       ...got
@@ -93,21 +87,7 @@ export class Backlog {
           return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
         }),
     ];
-    const cut = count > got.length;
-    const head = L(
-      `Побудка: кадров ${count}` +
-        (expected ? ` (ожидало в очереди: ${expected})` : "") +
-        (cut ? `, здесь первые ${got.length}, не вошло ${count - got.length}` : "") +
-        " — адресованные месту — текстом, прочие — счётом; " +
-        'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
-        (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
-      `Wake-up: ${count} frames` +
-        (expected ? ` (waiting in the queue: ${expected})` : "") +
-        (cut ? `, the first ${got.length} here, ${count - got.length} left out` : "") +
-        " — those addressed to the seat as text, the rest by count; " +
-        'in full and the rest — iskron_channel(action="history", view="log").' +
-        (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
-    );
+    const head = words(BACKLOG).head(count, expected, got.length, direct);
     emit({
       kind: "backlog",
       frames: got,

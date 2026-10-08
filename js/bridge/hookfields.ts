@@ -1,15 +1,15 @@
-// Хуки роли полями (граф nks-dev: #6637): webhooks[] ответа iskron_admin
-// list_webhooks и user_webhooks ключами api. url хука и секрет в поля не кладутся.
+// Role hooks as fields (graph @nks/nks-dev, node #6637): webhooks[] of the admin
+// list_webhooks and user_webhooks answer, by api keys. Hook url and secret stay out.
+import { tool } from "../delivery/index.ts";
 import { fallback, incomplete, is, isObj } from "./fields.ts";
 
-/** Хук роли — webhooks[] ответа list_webhooks и user_webhooks. */
 export interface Hook {
   id?: number;
   kind?: string;
   target_karta_seq?: number;
   active: boolean;
   reaches?: { standing?: string | null; you?: boolean }[];
-  /** будит ли хук место этой сессии — считает api */
+  /** Whether the hook wakes this session's seat — computed by the api. */
   reaches_you?: boolean;
 }
 
@@ -22,20 +22,20 @@ const hook = (v: unknown): Hook | null => {
     if (!Array.isArray(reaches)) return null;
     if (!reaches.every((r) => isObj(r) && is.strOrNull(r.standing) && is.bool(r.you))) return null;
   }
-  // «Будит ли меня» — только словом api: без reaches_you и reaches судить нечем.
+  // "Wakes me" is the api's word only: without reaches_you and reaches there is nothing to judge by.
   if (v.reaches_you === undefined && reaches === undefined) return null;
   return v as unknown as Hook;
 };
 
-/** webhooks[] списка хуков — все по форме, иначе null. */
+/** webhooks[] of a hook list — all well-formed, else null. */
 export function hooksField(sc: unknown, action = "list_webhooks"): Hook[] | null {
-  const what = `iskron_admin ${action}`;
+  const what = `${tool("admin")} ${action}`;
   if (!isObj(sc) || incomplete(sc) || sc.action !== action || !Array.isArray(sc.webhooks))
     return fallback(what, sc);
   const out = sc.webhooks.map(hook);
   return out.every((h) => h) ? (out as Hook[]) : fallback(what, sc);
 }
 
-/** Будит ли хук место этой сессии — reaches_you, иначе reaches[].you. */
+/** Whether the hook wakes this session's seat — reaches_you, else reaches[].you. */
 export const reachesYou = (h: Hook): boolean =>
   h.reaches_you ?? (h.reaches ?? []).some((r) => r.you === true);
