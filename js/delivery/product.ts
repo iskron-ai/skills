@@ -56,7 +56,6 @@ export const SERVER_URLS = {
 } as const;
 export const DEFAULT_SERVER_URL = SERVER_URLS.ru;
 
-// part 6
 /**
  * Код `node -e` единой формы записи моста-спутника: путь к дому из homedir, путь в
  * argv[1], импорт моста. Эталон: копии в ролевых файлах и delegation.md сверяет

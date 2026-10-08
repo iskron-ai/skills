@@ -4,8 +4,11 @@
 
 - Ядро импортирует слой одним путём — `../delivery/index.ts`; alias и define сборки нет, копии различаются содержимым этого каталога. Набор экспортов `index.ts` и есть контракт: недостающий экспорт — ошибка `make typecheck` в ядре.
 - Слой не импортирует исполняемое ядро; зависимость от типов ядра — `import type`.
+- Граница держится гейтом `make check-core` (`scripts/check-core.mjs`): ни в одном файле ядра — ни в коде, ни в комментарии, ни в пути — нет кириллицы, имени продукта (`PRODUCT` отсюда) и вызова `L(`. `README.md` компонентов ядра — документация этого репо, соседняя поставка их не копирует, и гейт их не читает.
+- Сосуществование двух сборок из одного ядра проверяет проба `js/tests/coexist.test.mjs`: копия ядра со своим `product.ts` собирается в другой мост.
 
 Файлы:
+- `index.ts` — набор экспортов слоя (контракт с ядром), по пути файла.
 - `version.ts` — `VERSION` (штампует release-please, `release-please-config.json`), `BUILD_MARK` и `CHANNEL_MARK`. Форма строки `export const CHANNEL_MARK: string = "<BUILD_MARK>:dev";` — часть контракта: `js/build.mjs` находит её регулярным выражением и в сборке выпуска заменяет `:dev` на `:release`.
 - `product.ts` — `PRODUCT` и выводимое из него: переменные окружения (`ENV_PREFIX`, `envName`), имя моста и дом (`BRIDGE_NAME`, `HOME_DIR`, `HOME_BRIDGE_FILE`), префиксы сокетов, pipes и реестров процесса (`RUNTIME_PREFIX`, `GLOBAL_PREFIX`), раскладка набора (`BRIDGE_SKILL`, `BRIDGE_FILE`, `SKILL_STAMP_FILE`, `PLUGIN_FILE`, `PLUGIN_COPY_FILE`, `SKILL_SET`), распознавание установки (`PLUGIN_NAME`, `SUB_ENTRY_PREFIX`, `CONNECTOR_PATTERN`), имена клиентов MCP (`CLIENTS`), адреса сервера (`SERVER_URLS`, `DEFAULT_SERVER_URL`).
 - `lang.ts` — языки поставки (`LANGS`, `Lang`), умолчание (`DEFAULT_LANG`) и правило языка по адресу сервера (`langOfServer`); язык сессии и выбор слова (`words`) держит ядро `shared/lang.ts`.
@@ -21,11 +24,12 @@
 - `words/handoff.ts` — слова передачи сокета преемнику демона (`HANDOFF`): кадр из спула месту рядом, которое не вернулось.
 - `words/hearing.ts` — слова о слухе места (`HEARING`): отказ «agent» без числа, кто слушает место, отказ сырого connect, mint, register.
 - `words/hook.ts` — слова шага хука инбокса роли в ответе стояния (`HOOK`); обрезанный ответ тула и граф канала — аргументами.
-- `patterns/board.ts` — формы прозы сервера о доске стояний и списке вебхуков (`BOARD_FORM`), двуязычные при любом языке сессии.
+- `patterns/board.ts` — формы прозы сервера о доске стояний и списке вебхуков (`BOARD_FORM`), двуязычные при любом языке сессии, и заголовок доски каналов на обоих языках (`BOARD_HEADER`).
+- `patterns/channel.ts` — проза сервера о канале на обоих языках: перечень action в схеме (`ACTION_LIST_RE`), отказы «места больше нет» (`SEAT_GONE_RE`) и «сессия не держит стояния» (`UNATTRIBUTED_RE`).
+- `patterns/satprobe.ts` — образцы прозы, которую разбирает проба моста-спутника (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`), двуязычно.
 - `patterns/caseexit.ts` — проза сервера об уже снятом месте в ответе revoke без данных отказа (`CASE_EXIT_CLOSED`), двуязычно.
 - `patterns/config.ts` — слово человека о выборе сервера (`SERVER_CHOICE`), двуязычно.
 - `patterns/deliver.ts` — метка строки отставания поставки в ответе тула (`NOTICE_MARK`), чтобы не дописать её дважды; двуязычно.
-- `protocol.ts` (часть 5b) — шаблоны прозы сервера на обоих языках (`ACTION_LIST_RE`, `SEAT_GONE_RE`, `UNATTRIBUTED_RE`) и заголовок доски каналов на обоих языках (`BOARD_HEADER`).
 - `words/stand.ts` — слова ответа iskron_stand (`STAND`): отказы, шапка, ход места, hello, стук; заголовок доски приходит аргументом (`BOARD_HEADER`).
 - `words/standmiss.ts` — почему вызов со status без karta не стал занятостью (`STAND_MISS`); список аргументов — готовой строкой.
 - `words/standtool.ts` — описание тула iskron_stand и его параметров (`STAND_TOOL`).
@@ -64,7 +68,7 @@
 - `words/doctor.ts` — слова `doctor` (`DOCTOR`): сборка, дом, сервер, грант, релиз, плагины харнесов, демон машины.
 - `words/doctorharness.ts` — слова `doctor` о харнесах (`HARNESS`): команда записи в PATH, второй путь мимо моста, отставание скиллов, записи mcp OpenCode.
 - `words/subagents.ts` — слова раздела «субагенты» `doctor` (`SUBAGENT`), метка строки-действия и формы записи спутника; эталон кода записи — `SATELLITE_CODE` в `product.ts`.
-- `words/satprobe.ts` — слова пробы моста-спутника (`SAT_PROBE`); образцы разбираемой ею прозы (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`) — в `protocol.ts`.
+- `words/satprobe.ts` — слова пробы моста-спутника (`SAT_PROBE`); образцы разбираемой ею прозы (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`) — в `patterns/satprobe.ts`.
 - `words/rituals.ts` — слова `check-rituals` (`RITUALS`); имя раздела хуков скилла бутстрапа — `HOOKS_SECTION` в `product.ts`.
 - `words/watchdog.ts` — слова сторожей (`WATCHDOG`): знак слуха, исходы, дверь Codex.
 - `words/plugin.ts` — слова, общие плагину OpenCode и расширению pi (`PLUGIN`): поиск и подъём моста, половина «канал».

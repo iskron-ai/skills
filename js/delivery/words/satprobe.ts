@@ -1,5 +1,5 @@
 // Слова пробы моста-спутника doctor (граф @nks/nks-dev, узел #6080); образцы прозы,
-// которую проба разбирает, — в protocol.ts (SAT_LOGIN_RE, SAT_OLD_FLAG_RE).
+// которую проба разбирает, — в patterns/satprobe.ts (SAT_LOGIN_RE, SAT_OLD_FLAG_RE).
 import type { Lang } from "../lang.ts";
 
 export interface SatProbeWords {

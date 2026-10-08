@@ -54,6 +54,17 @@ jobs:
       - name: Lint tool names and enum values against fixtures/surface.json
         run: make check-surface
 
+  core-boundary:
+    name: Bridge core names no delivery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: No Cyrillic, product name or L( in js/{bridge,shared,opencode,extension,watchdog,cli}
+        run: make check-core
+
   widgets-in-sync:
     name: Widgets skill matches its snapshot
     runs-on: ubuntu-latest
