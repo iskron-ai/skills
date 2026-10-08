@@ -101,8 +101,20 @@ export const isTact = (frame: Frame | null | undefined): boolean =>
  * вытесняет ждущий — так доставку держат pi и OpenCode (`onlyTacts`).
  */
 export function foldedTacts(all: readonly (Frame | null | undefined)[]): Set<Frame> {
-  return new Set(all.filter((f): f is Frame => isTact(f)).slice(0, -1));
+  const tacts = all.filter((f): f is Frame => isTact(f));
+  const last = tacts.reduce<Frame | null>((a, f) => (a && tactAt([a]) > tactAt([f]) ? a : f), null);
+  return new Set(tacts.filter((f) => f !== last));
 }
+
+/**
+ * Когда платформа приняла самый свежий такт среди `frames` (received_at; "" — не знаем):
+ * последний — по нему, а не по приходу: лежалая пачка приходит позже живого такта.
+ */
+export const tactAt = (frames: readonly Frame[] | undefined): string =>
+  (frames ?? [])
+    .filter(isTact)
+    .map((f) => (typeof f.received_at === "string" ? f.received_at : ""))
+    .reduce((a, b) => (b > a ? b : a), "");
 
 /** Пачка из одних тактов — её занятый ход держит до своего конца последней (#6569). */
 export const onlyTacts = (frames: readonly Frame[] | undefined): boolean =>

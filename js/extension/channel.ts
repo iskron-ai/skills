@@ -14,7 +14,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveryKeys, eventIn, isTact, onlyTacts } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, isTact, onlyTacts, tactAt } from "../shared/seen.ts";
 
 /** Окно свёртки неадресованных кадров дела; переменная — шов для проб. */
 const ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3_000;
@@ -97,7 +97,14 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     tact = null;
     if (t) sendBatch(t);
   }
+  /** Такт пачки принят платформой раньше ждущего — лежалая пачка приходит позже живого. */
+  function olderTact(ev: ChannelEvent): boolean {
+    const at = tactAt(ev.frames);
+    const was = tact ? tactAt(tact.frames) : "";
+    return !!at && !!was && at < was;
+  }
   function holdTact(ev: ChannelEvent): void {
+    if (olderTact(ev)) return; // ждущий новее — этот свёрнут
     tact = ev;
     tactPoll ??= setInterval(() => {
       if (ctxRef?.isIdle?.() !== false) releaseTact();
@@ -161,7 +168,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (!ev.text) return;
         // Такт внимания в занятый ход не входит: ждёт его конца, новый вытесняет ждущий (seen.ts foldedTacts).
         if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) return holdTact(ev);
-        if (ev.frames?.some(isTact)) tact = null;
+        if (ev.frames?.some(isTact) && !olderTact(ev)) tact = null;
         sendBatch(ev);
         return;
       case "evicted":

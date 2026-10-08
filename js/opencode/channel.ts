@@ -48,6 +48,8 @@ export interface Channel {
   taken(session: string, inbox?: string): void;
   /** Ход сессии занят (busy) или свободен — по session.status. */
   status(session: string, busy: boolean): void;
+  /** Сессию удалили: её ждущий такт входить некуда (tacts.ts). */
+  gone(session: string): void;
   /** Плагин останавливают: накопленное уходит сейчас, не умирает с ним. */
   stop(): void;
   /** Счёт записей, ждущих попутного промпта в корневую сессию `session`; null — их нет. */
@@ -254,6 +256,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
       if (on) tacts.busy(session);
       else this.taken(session);
     },
+    gone: tacts.gone,
     taken(session, inbox) {
       tacts.taken(session, inbox);
       let matched = false;

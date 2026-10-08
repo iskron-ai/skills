@@ -5,7 +5,7 @@
 // сказала busy и ещё не встала, либо промпт такта ждёт в её очереди невзятым (взятие
 // начинает ход — занят и дальше).
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { isTact, onlyTacts } from "../shared/seen.ts";
+import { isTact, onlyTacts, tactAt } from "../shared/seen.ts";
 import { type Say } from "./tools.ts";
 
 /**
@@ -30,6 +30,8 @@ export interface Tacts {
   busy(session: string): void;
   /** Промпт взят (`inbox`) или сессия встала (без id): вставшей — ждущий такт сейчас. */
   taken(session: string, inbox?: string): void;
+  /** Сессию удалили: она не занята, и её ждущему такту входить некуда. */
+  gone(session: string): void;
   /** Плагин останавливают: ждущие такты уходят сейчас. */
   stop(): void;
 }
@@ -79,12 +81,18 @@ export function setupTacts(
       const id = session ?? freshestRoot();
       if (!id || !ev.frames?.some(isTact)) return false;
       const prev = held.get(id);
+      const at = tactAt(ev.frames);
+      const was = prev ? tactAt(prev.ev.frames) : "";
+      const older = !!at && !!was && at < was; // лежалая пачка старше ждущего живого
       if (!onlyTacts(ev.frames) || !occupied(id)) {
-        if (prev) clearTimeout(prev.timer);
-        held.delete(id); // такт новее ждущего входит сейчас
+        if (prev && !older) {
+          clearTimeout(prev.timer);
+          held.delete(id); // такт новее ждущего входит сейчас
+        }
         put(session, child, ev, what);
         return true;
       }
+      if (older) return true; // ждущий новее — этот свёрнут
       const timer = prev?.timer ?? setTimeout(() => release(id), WAKE_HOLD_MS);
       (timer as { unref?: () => void }).unref?.();
       held.set(id, { session, child, ev, timer });
@@ -105,6 +113,11 @@ export function setupTacts(
       busy.delete(session);
       for (const [k, q] of queued) if (q.session === session) queued.delete(k);
       release(session);
+    },
+    gone(session) {
+      busy.delete(session);
+      clearTimeout(held.get(session)?.timer);
+      held.delete(session);
     },
     stop() {
       for (const id of [...held.keys()]) release(id);

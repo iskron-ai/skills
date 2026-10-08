@@ -183,6 +183,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            ch?.gone(id);
             void usage.flush(id).finally(() => {
               usage.forget(id);
               half.forget(id);

@@ -204,6 +204,37 @@ test("a stale burst of three tacts shows the last one and marks all", async () =
   for (const n of [1, 2, 3]) assert.ok(got.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
 });
 
+// Последний — по received_at платформы, не по приходу: лежалая копия приходит позже живой.
+test("the last tact is the one the platform took last, not the one that came last", () => {
+  const b = new Backlog(none);
+  let ev = null;
+  b.open(0, (e) => (ev = e));
+  b.note(tact(3, { received_at: "2026-10-08T03:00:00Z" }));
+  b.note(tact(1, { received_at: "2026-10-08T01:00:00Z" }));
+  b.flushNow();
+  assert.match(ev.text, /вахта 3/);
+  assert.doesNotMatch(ev.text, /вахта 1/, ev.text);
+});
+
+test("pi: a stale tact older than the one waiting for the busy turn does not replace it", async () => {
+  const sent = [];
+  const on = new Map();
+  let idle = false;
+  const deliver = piChannel({
+    on: (name, fn) => on.set(name, fn),
+    sendMessage: (m) => sent.push(m.content),
+  });
+  await on.get("session_start")?.({}, { isIdle: () => idle });
+  const burst = (f, kind = "backlog") => ({
+    data: { kind, frames: [f], marks: [f.id], text: f.body },
+  });
+  deliver(burst(tact(2, { received_at: "2026-10-08T02:00:00Z" })));
+  deliver(burst(tact(1, { received_at: "2026-10-08T01:00:00Z", stale: true }), "stale"));
+  idle = true;
+  await on.get("agent_end")();
+  assert.deepEqual(sent, ["Час на «вахта 2»"]);
+});
+
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];
   const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(m.content) });
