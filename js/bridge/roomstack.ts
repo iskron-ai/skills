@@ -9,6 +9,7 @@
 // без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
 // при этом получает каждый кадр (hold.ts).
 import { addressedToMine } from "../shared/addressed.ts";
+import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame } from "../shared/channel.ts";
 import { batchHead, foldAsides } from "../shared/frame-text.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -129,7 +130,8 @@ export function batchForWatchdogs(
 ): boolean {
   const rk = roomKind(frame);
   const f = rec(frame);
-  let human = (frame.origin ?? classifyOrigin(frame)) === "human";
+  // Строку вопроса от места человека раскладывает адресованность (asks.ts askFromPerson).
+  let human = (frame.origin ?? classifyOrigin(frame)) === "human" && !askFromPerson(frame);
   // Слово в две фазы (#5953): слово человека в полёте и обрыв идут по словарю,
   // в пачку; тело его слова — слово человека: отдельным событием, а само слово
   // в полёте из копящейся пачки вынимается — будит одно событие, и в нём текст.

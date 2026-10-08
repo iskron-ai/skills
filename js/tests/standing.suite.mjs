@@ -36,10 +36,14 @@ import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
+  ack,
   addressed,
   addressedBody,
   addressedInFlight,
   addressedLeft,
+  answer,
+  ask,
+  askWithdrawn,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -53,9 +57,11 @@ import {
   legacyRoom,
   ME,
   MY_KARTA,
+  myAnswer,
   nodeBound,
   nodeOp,
   progress,
+  reask,
   replyInFlight,
   roleInvite,
   roomFrame,
@@ -5243,6 +5249,198 @@ test("a reply to me in two phases across a bridge restart: the body is still kno
   assert.equal(r2.exit, 0, `the body of a word to me must wake after the restart: ${next.err}`);
   assert.ok(next.out.includes("ответ после перезапуска ЦЕЛ"), `the body as text:\n${next.out}`);
 });
+
+// A question in the case (#6867; the bridge's share — #6868, #6655): a question
+// to my role waits in the batch in words; the answer to it interrupts and the
+// waiting batch goes first.
+test("question kinds under the Monitor watchdog: a question to my role waits in words; the answer to my seat interrupts after it", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, ask(90));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("спрашивает роль"), `the question interrupted:\n${wd.out}`);
+  await sendRoom(fake, answer(91, 90, ME));
+  await waitFor(() => wd.out.includes("отвечает на [90]"), "the answer to be printed");
+  const flat = wd.out.replace(/\n/g, " ");
+  const q = flat.indexOf("спрашивает роль 🚚 Поставщик плитки");
+  assert.ok(q >= 0, `the question to me in words:\n${wd.out}`);
+  assert.ok(flat.indexOf("отвечает на [90]") > q, `the batch goes before the answer:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #6868: an answer to another's question is a count; an answer by another seat
+// of my role to the question asked of me closes it — in words, not waking, as
+// the ack to me; the answer to another seat does not fold into it.
+test("question kinds under the Monitor watchdog: another seat's answer to my question and an ack to me ride in words; an answer to another's question is a count", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, ask(90));
+  await sendRoom(fake, answer(91, 90, BORIS)); // my role's other seat answered the asker Boris
+  await sendRoom(fake, answer(96, 95, BORIS)); // a question I was never asked
+  // The other seat's answer told me my question is out: its later withdrawal is a count.
+  await sendRoom(fake, askWithdrawn(98, 90));
+  await sendRoom(fake, ack(97, 96, ME));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("отвечает на"), `an answer not to me interrupted:\n${wd.out}`);
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.match(flat, /записей 5, тебе 3/, wd.out);
+  assert.doesNotMatch(flat, /вопрос \[90\] снят/, `told twice:\n${wd.out}`);
+  assert.match(flat, /отвечает на \[90\]/, `the answer to my question in words:\n${wd.out}`);
+  assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
+  assert.doesNotMatch(flat, /отвечает на \[95\]/, `another's answer leaked:\n${wd.out}`);
+  // The seat's memory of questions grows by questions to me, not by others' lines.
+  const asks = readdirSync(join(dir, "standings"))
+    .filter((x) => x.endsWith(".asks"))
+    .map((x) => readFileSync(join(dir, "standings", x), "utf8"))
+    .join("");
+  assert.doesNotMatch(asks, /#95\n/, `another's question in the seat's memory:\n${asks}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #6868 and the fold of a key's lines (#6718): the question kinds and the
+// withdrawal of a question to me do not fold into a later line of the same key.
+test("question kinds under the Monitor watchdog: a question to me, its withdrawal and an ack do not fold into a later line of the key", async (t) => {
+  const { fake, dir, key } = await connected(t, {
+    env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 20_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const withdrawn = askWithdrawn(91, 90);
+  withdrawn.line.verdict = "partial";
+  await sendRoom(fake, ask(90));
+  await sendRoom(fake, withdrawn);
+  await sendRoom(fake, ack(92, 89, ME));
+  await sendRoom(
+    fake,
+    roomFrame("progress", {
+      entry_id: 93,
+      key: "выкат: сегодня?",
+      line: { done: "дальше", verdict: "ok" },
+    }),
+  );
+  await new Promise((r) => setTimeout(r, 1000));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.match(flat, /спрашивает роль/, `the question folded:\n${wd.out}`);
+  assert.match(flat, /вопрос \[90\] снят/, `the withdrawal folded:\n${wd.out}`);
+  assert.match(flat, /ответ \[89\] принят/, `the ack folded:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// The withdrawal of a question to me names only the ask's number: the exit
+// watchdog gets it in a new process, and the bridge may have restarted since
+// the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
+// A re-ask of another role on its key, answered or not, puts it out the same way:
+// the last line of the key is no longer my question (#6867, #6778).
+// The platform hands a frame again when the bridge died in its batch window: the
+// replayed withdrawal is still mine, though the first receipt put the question out.
+// The open question outlives the day of .seen: its memory is the seat's .asks.
+for (const [what, closer, words, answered, replayed, askAgain, evicted] of [
+  ["a withdrawn question", () => askWithdrawn(91, 90), "вопрос [90] снят", false, false],
+  [
+    "a question re-asked of another role",
+    () => ask(91, MY_KARTA + 1),
+    "[91] Алексей",
+    false,
+    false,
+  ],
+  [
+    "a question I answered, re-asked of another role,",
+    () => reask(91, MY_KARTA + 1, 89),
+    "[91] Алексей",
+    true,
+    false,
+  ],
+  [
+    "a replayed withdrawal of a question",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    true,
+  ],
+  // The question itself handed again does not put itself out.
+  [
+    "a withdrawal of a replayed question",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    false,
+    true,
+  ],
+  [
+    "a withdrawal of a question older than .seen keeps",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    false,
+    false,
+    true,
+  ],
+  // …and its replay after .seen let go of the first receipt.
+  [
+    "a withdrawal replayed after .seen let go",
+    () => askWithdrawn(91, 90),
+    "вопрос [90] снят",
+    false,
+    true,
+    false,
+    true,
+  ],
+])
+  test(`${what} to me across a bridge restart: the exit watchdog wakes on it in words`, async (t) => {
+    const { fake, dir, key, bridge } = await connected(t, {
+      env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" },
+    });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const first = runClient("watchdog-exit", dir, key, 15_000);
+    await waitFor(() => first.err.includes("hello"), "hello to be noted");
+    await sendRoom(fake, ask(90));
+    assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
+    assert.ok(first.out.includes("спрашивает роль"), `the question in words:\n${first.out}`);
+    // I answered the asker myself: my answer does not put the question out
+    if (answered) await sendRoom(fake, myAnswer(89, 90));
+    if (askAgain) await sendRoom(fake, ask(90)); // the platform hands the question again
+    if (replayed) await sendRoom(fake, closer()); // received, then the bridge dies in its window
+    await new Promise((r) => setTimeout(r, 300));
+    bridge.proc.kill("SIGKILL");
+    await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+    await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+    // A day of traffic later .seen no longer holds the question.
+    if (evicted)
+      for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".seen")))
+        writeFileSync(join(dir, "standings", f), "");
+    const second = startBridge(fake.mcpUrl, dir, { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" });
+    t.after(() => second.stop());
+    assert.ok((await second.call("initialize", 1, INIT)).result);
+    await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+    const st = await second.call("tools/call", 2, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!st.result?.isError, JSON.stringify(st));
+    await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+    const next = runClient("watchdog-exit", dir, key, 6000);
+    await waitFor(() => next.err.includes("hello"), "hello to be noted");
+    await sendRoom(fake, closer());
+    const r2 = await next.done;
+    assert.equal(r2.exit, 0, `${what} must wake after the restart: ${next.err}`);
+    assert.ok(next.out.includes(words), `${what} in words:\n${next.out}`);
+  });
 
 // A batch whose every frame was handed already (#6574): its head went out with
 // them and does not wait to ride before another's line.

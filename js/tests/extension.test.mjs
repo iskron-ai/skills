@@ -49,10 +49,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { BUILT_EXTENSION } from "./built.mjs";
 import {
+  ack,
   addressed,
   addressedBody,
   addressedInFlight,
   addressedLeft,
+  answer,
+  ask,
+  askWithdrawn,
   auto,
   body as bodyFrame,
   bodyAborted,
@@ -66,7 +70,10 @@ import {
   ME,
   ME_ID,
   MY_KARTA,
+  OTHER_KEY,
   progress,
+  reask,
+  roleCall,
   roleInvite,
   roomFrame,
   said,
@@ -874,6 +881,93 @@ test("room kinds: closing and records to me go by their way; the rest of the cas
     assert.match(count.msg.content, /^№7 «Стенд»: записей 7, тебе 0/);
     assert.ok(!count.msg.content.includes("слово со стопкой"), count.msg.content);
     assert.ok(!count.msg.content.includes("пробы зелёные"), count.msg.content);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A question in the case (Э1 contract, graph nks-dev #6866/#6867; the bridge's
+// share — #6868): the answer to my question and the platform's call of my role
+// wake now (#6655); a question to my role and an ack to me come in words with
+// the next turn; the same kinds for others are a count of the case.
+test("question kinds: the answer to my seat and a call of my role wake; a question and an ack to me follow up; others are a count", async () => {
+  const { events, env } = eventsEnv("question-kinds");
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    const mine = [
+      [ask(90), "followUp"],
+      [answer(91, 90), "steer"],
+      [ack(92, 91, ME), "followUp"],
+      [roleCall(93, "ownerless"), "steer"],
+      [roleCall(94, "answer_waiting"), "steer"],
+    ];
+    const echo = ask(99);
+    echo.line.author = { kind: "standing", standing: ME, name: "proba" };
+    // The memory of a question to me is the reader seat's and of its numbering (#6576):
+    // the same number withdrawn for another seat of the process, or in another count, is not mine.
+    const otherSeat = askWithdrawn(100, 90);
+    Object.assign(otherSeat, { to_standing: "@tester:other", to_standing_id: "id-other" });
+    const otherCount = { ...askWithdrawn(101, 90), numbering: "case" };
+    // The echo of my own answer to the question asked of me goes to the asker, not to me.
+    const myAnswer = answer(102, 90, BORIS);
+    myAnswer.line.author = { kind: "standing", standing: ME, name: "proba" };
+    myAnswer.provenance = { from_standing: ME, from_karta_seq: MY_KARTA, auth: "pat", via: "room" };
+    const rest = [
+      ask(95, MY_KARTA + 1, {}, OTHER_KEY),
+      answer(96, 95, BORIS),
+      ack(97, 96),
+      askWithdrawn(98, 95),
+      echo, // my own question to my own role is not a question to me
+      otherSeat,
+      otherCount,
+      myAnswer,
+      // After «accepted» the key's question is out: a new question on it is fresh, not a re-ask.
+      reask(103, MY_KARTA + 1, 91),
+      ask(104, MY_KARTA + 1),
+    ];
+    for (const f of [...mine.map(([f]) => f), ...rest]) push(events, frame(f));
+    await delay(1000);
+    assert.equal(rec.messages.length, mine.length + 1, JSON.stringify(rec.messages));
+    mine.forEach(([f, way], i) =>
+      assert.equal(
+        rec.messages[i].opts.deliverAs,
+        way,
+        `${f.event_kind} [${f.entry_id}] must go ${way}`,
+      ),
+    );
+    const [q, a, k, gone, waiting] = rec.messages.map((m) => m.msg.content);
+    assert.match(
+      q,
+      /спрашивает роль 🚚 Поставщик плитки \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
+    );
+    assert.match(a, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: yes; «после обеда»/);
+    assert.match(k, /ответ \[91\] принят: «выкатываю после обеда»/);
+    assert.match(
+      gone,
+      /платформа зовёт роль 🚚 Поставщик плитки в дело: место @aleksei:gone погасло/,
+    );
+    assert.match(waiting, /ответ ждёт приёма, спросившее место @aleksei:gone ушло/);
+    const count = rec.messages.at(-1);
+    assert.equal(count.opts.deliverAs, "nextTurn");
+    assert.match(count.msg.content, /^№7 «Стенд»: записей 10, тебе 0/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// One open question per key (#6867): a re-ask of me puts my earlier one out, so
+// after its withdrawal a fresh question to another role on the key is not mine.
+test("question kinds: a re-ask of me replaces my question on its key; after its withdrawal a fresh question to another is a count", async () => {
+  const { events, env } = eventsEnv("question-reask");
+  const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+  try {
+    for (const f of [ask(90), ask(92), askWithdrawn(93, 92), ask(94, MY_KARTA + 1)])
+      push(events, frame(f));
+    await delay(1000);
+    const words = rec.messages.map((m) => m.msg.content);
+    assert.equal(words.length, 4, JSON.stringify(words));
+    assert.match(words[2], /вопрос \[92\] снят/);
+    assert.match(words[3], /^№7 «Стенд»: записей 1, тебе 0/, "the fresh question is a count");
   } finally {
     await rec.stop();
   }

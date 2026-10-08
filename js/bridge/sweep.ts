@@ -49,6 +49,15 @@ export function sweepStale(authDir: string, mine: string): void {
         unlinkSync(p);
     } catch {}
   }
+  // Память вопросов места (.asks, askdisk.ts) живёт со своей .seen.
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".asks"))) {
+    const keyHash = f.split(".")[0];
+    if (keyHash === mineHash || existsSync(join(dir, `${keyHash}.key`))) continue;
+    if (existsSync(join(dir, `${basename(f, ".asks")}.seen`))) continue;
+    try {
+      unlinkSync(join(dir, f));
+    } catch {}
+  }
   // Записи держания старше срока простоя места — мертвы у платформы, стираются здесь.
   // Запись места, чей ключ лежит рядом, — не простой: место держат, и срок записи
   // считается от ухода его сокета (holdkeep.ts, #6649); мёртвый ключ уберёт проба ниже.

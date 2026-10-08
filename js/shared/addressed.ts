@@ -1,5 +1,7 @@
 // Адресованность записи дела месту читателя — закон доставки (граф nks-dev:
 // #6574): в ход текстом входит только адресованное, прочее — числом.
+import { closesMine, noteAsk, processAsks } from "./askmemory.ts";
+import { ASK_KINDS, askedMine, askFromPerson } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { addresseeOf, after, byKind, mineOf, myRole, obj, roomKind, str } from "./room-kinds.ts";
@@ -34,6 +36,30 @@ function rememberWord(key: string): void {
   }
 }
 
+/** Роды, гасящие вопрос мне (askmemory.ts). */
+const ASK_CLOSERS = new Set(["ask", "answer", "ack", "progress"]);
+/**
+ * Решение памяти вопросов о кадре — один раз на кадр: адресованность кадра
+ * спрашивают много раз (пачка, счёт, свёртка), а память кадр же и меняет.
+ * Первое решение помнится по id кадра.
+ */
+const askDecided = new Map<string, boolean>();
+function askMemory(f: Rec): boolean {
+  // Решил мост (bridge/addressmark.ts, память места на диске) — его addressed и есть ответ.
+  if (f.asks_decided === true) return false;
+  const id = str(f.id) || wordKeyOf(f as Frame);
+  const was = askDecided.get(id);
+  if (was !== undefined) return was;
+  const hit = closesMine(processAsks, f);
+  noteAsk(processAsks, f);
+  askDecided.set(id, hit);
+  for (const old of askDecided.keys()) {
+    if (askDecided.size <= WORDS_KEPT) break;
+    askDecided.delete(old);
+  }
+  return hit;
+}
+
 /**
  * Адресовано ли кадр места читателя — закон #6574: в ход текстом входит только
  * адресованное месту — слово ему (addressee), ответ на его запись
@@ -55,6 +81,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   const fields = obj(line.fields);
   const rk = roomKind(frame);
   if (rk?.aside) return false; // слово не мне (#6081): факт без тела
+  // Память вопросов мне — до всякого решения: «принята» мне гасит ключ, хоть и адресована выше.
+  const closesAsk = !!rk && ASK_CLOSERS.has(rk.kind) && askMemory(f);
   const mine = mineOf(f);
   const hit = (v: unknown): boolean => {
     const a = addresseeOf(v);
@@ -86,6 +114,10 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
   }
+  // Вопрос моей роли или моему месту (#6867); ответ и приём адресованы addressee — выше.
+  // Гасящее вопрос мне (снятие, ответ другого места, переспрос другому) — тоже.
+  if (rk?.kind === "ask" && askedMine(f, fields)) return true;
+  if (closesAsk || (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true)) return true;
   // Приглашение мне или его отзыв: ключ invite:<моё место>, приглашение роли — моей роли.
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
     if (mine.includes(after(str(line.key), "invite:"))) return true;
@@ -93,6 +125,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   }
   // Роды закрытия и возражения важны сами по себе; слово человека — всегда целиком.
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
+  // Роды вопроса — записи с адресатом (#6867): ответ человека чужому — не слово мне.
+  if ((rk && ASK_KINDS.has(rk.kind)) || askFromPerson(f)) return false;
   // Тело слова человека мост метит origin (roomstack.ts, #5953): провенанс тела его не несёт.
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
 }

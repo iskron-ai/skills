@@ -30,6 +30,7 @@
 // собственным стоянием (#5154), угадыванием она не выбирается.
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { addressedToMine } from "../shared/addressed.ts";
+import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -71,7 +72,13 @@ const PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 120_000
 function toPile(frame: Frame | null): boolean {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
-  if ((frame.origin ?? classifyOrigin(frame)) === "human" && !rk?.phase && !rk?.aside) return false;
+  if (
+    (frame.origin ?? classifyOrigin(frame)) === "human" &&
+    !rk?.phase &&
+    !rk?.aside &&
+    !askFromPerson(frame)
+  )
+    return false;
   return !addressedToMine(frame) || stackOf(frame) === "batch"; // адресованность — до стопки: слово в полёте запоминается
 }
 
