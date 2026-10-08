@@ -22,4 +22,13 @@ export {
   SKILL_STAMP_MASK,
   SUB_ENTRY_PREFIX,
 } from "./product.ts";
+export {
+  ID_PREFIX,
+  LOGGERS,
+  method,
+  serverProtocol,
+  STRUCTURED_CAPABILITY,
+  tool,
+  TOOL_PREFIX,
+} from "./protocol.ts";
 export { BUILD_MARK, CHANNEL_MARK, VERSION } from "./version.ts";

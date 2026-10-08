@@ -4,6 +4,7 @@
 // установленный набор скиллов той же тройкой, харнес и версия хоста (#6226).
 // attrs на поверхности заменяются целиком, поэтому мост всегда шлёт
 // полный свой набор: частичная запись стёрла бы его же признак сборки.
+import { BRIDGE_NAME } from "../delivery/index.ts";
 import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { VERSION } from "../shared/version.ts";
@@ -69,7 +70,7 @@ export function placeFields(place: Place = {}): {
     ...(CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {}),
     attrs: {
       ...extra,
-      build: { name: "iskron-bridge", version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
+      build: { name: BRIDGE_NAME, version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
       skills: skillsAttr(),
       ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),

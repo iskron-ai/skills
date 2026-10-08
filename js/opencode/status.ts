@@ -1,9 +1,10 @@
 // Текст тула iskron_bridge — что знает плагин о своём мосте: сборки, вход,
 // список тулов и сколько мостов живо. Отдельно от плагина: чистая сборка строк.
+import { tool } from "../delivery/index.ts";
 import { elsewhere } from "./login.ts";
 
 /** Служебный тул плагина: состояние моста, когда тулов iskron_* ещё нет. */
-export const STATUS_TOOL = "iskron_bridge";
+export const STATUS_TOOL = tool("bridge");
 
 /** Определение служебного тула для ctx.tool.transform: текст — в миг вызова. */
 export const statusTool = (text: () => string) => ({

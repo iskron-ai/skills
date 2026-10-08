@@ -1,6 +1,7 @@
 // Договор ведущих субагентов (leads.ts, граф nks-dev: #6625), слова о них родителю
 // и двери к контексту OpenCode, которыми они доходят: синтетика в сессию.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ответы SDK без схемы */
+import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
@@ -151,7 +152,7 @@ export function leadDoors(
       // Конец прогона — после слова родителю: неудача снятия места — отдельным словом (№147).
       const got: any = await slots
         .get(child)
-        ?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true })
+        ?.bridge.request(method("end"), {}, { timeoutMs: END_MS, service: true })
         .catch(() => null);
       return got?.ended ? (got.failed ?? []) : null;
     },

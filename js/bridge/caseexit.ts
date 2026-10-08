@@ -6,7 +6,7 @@
 // её join'ы; на конце прогона (session.ts, windDown) он выходит из них сам —
 // после отпуска сокета и .key, до revoke места, — тем же ходом iskron_case leave. Отказ не бьёт: дело
 // закроется сроком места и без нас, слово — в журнал моста.
-import { envName } from "../delivery/index.ts";
+import { envName, tool } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import { type Answer, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -28,7 +28,7 @@ const roomNo = (room: string): string => room.replace(/^[#№]\s*/, "");
 
 /** Успешный ход iskron_case прогона: join запоминает дело, leave снимает. */
 export function noteCaseEntry(name: unknown, args: unknown, reply: JsonRpcMessage): void {
-  if (reply.result?.isError || (name !== "iskron_case" && name !== "iskron_room")) return;
+  if (reply.result?.isError || (name !== tool("case") && name !== tool("room"))) return;
   const a = (args ?? {}) as Record<string, unknown>;
   if (a.action !== "join" && a.action !== "leave") return;
   const room = typeof a.room === "string" ? a.room.trim() : "";
@@ -61,7 +61,7 @@ export async function leaveJoinedCases(): Promise<void> {
   joined.clear();
   const leaves = cases.map(async (c) => {
     try {
-      const r = await call("iskron_case", { action: "leave", ...c });
+      const r = await call(tool("case"), { action: "leave", ...c });
       log(
         r.isError
           ? `could not leave case ${c.room} at the run's end: ${r.text.slice(0, 120)}`
@@ -97,7 +97,7 @@ export async function revokeSatellitePlaces(places: Standing[]): Promise<string[
   if (!places.length) return [];
   const failed = new Set(places.map((s) => s.name as string)); // снятое вычёркивается
   const revokes = places.map((s) =>
-    call("iskron_channel", { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
+    call(tool("channel"), { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
         // Уже снятое (4001 платформы, повтор после закрытого соединения) — тоже снято.
         if (!r.isError || alreadyClosed(r)) {

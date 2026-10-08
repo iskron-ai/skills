@@ -14,7 +14,7 @@
 //     (`iskron/check {key?, cwd}`): мёртвый мост поднимается заново и возвращает
 //     место, глухой переоткрывает сокет; мост, места не ведущий, из-под сторожа
 //     выходит — его простой снова считает жнец.
-import { envName } from "../delivery/index.ts";
+import { envName, method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { sleep } from "./bridge-io.ts";
 import type { LostEntry } from "./records.ts";
@@ -185,7 +185,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
         return "none";
       }
-      const r: any = await slot.bridge.request("iskron/resume", selector(slot), {
+      const r: any = await slot.bridge.request(method("resume"), selector(slot), {
         timeoutMs: 30_000,
       });
       const elsewhere = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
@@ -233,7 +233,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (slot.resume) await slot.resume;
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
     await doors.ready(slot);
-    const r: any = await slot.bridge.request("iskron/check", selector(slot), {
+    const r: any = await slot.bridge.request(method("check"), selector(slot), {
       timeoutMs: 30_000,
     });
     if (typeof r?.key === "string") slot.key = r.key;

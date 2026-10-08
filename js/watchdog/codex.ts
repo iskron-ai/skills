@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { CLIENTS, PRODUCT } from "../delivery/index.ts";
+import { CLIENTS, LOGGERS, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { type Frame } from "../shared/channel.ts";
@@ -128,7 +128,7 @@ export function runWatchdogCodex(argv: string[]): void {
       d.send({
         method: "turn/start",
         id: reqId,
-        params: { threadId, input: [{ type: "text", text }], turnTrigger: "iskron-channel" },
+        params: { threadId, input: [{ type: "text", text }], turnTrigger: LOGGERS.channel },
       });
       note(wd.frameSent(threadId));
     } catch (e) {

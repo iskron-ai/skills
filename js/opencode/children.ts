@@ -6,7 +6,7 @@
 // сказанный родителю ход уходят в маркер потери (keep.ts). Новый экземпляр поднимает
 // ребёнку мост тем же спутником и возвращает место по ключу — без слова ребёнку: его сессия ждёт дальше;
 // связка с родителем — parentID сессии (leads.ts). Не вернулось — конец со словом родителю.
-import { envName } from "../delivery/index.ts";
+import { envName, method } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leadwords.ts";
@@ -115,7 +115,7 @@ export function createChildren(d: ChildDoors) {
     await Promise.all(
       held.map((s) =>
         s.bridge
-          .request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true })
+          .request(method("suspend"), {}, { timeoutMs: PAUSE_MS, service: true })
           .catch(() => {}),
       ),
     );

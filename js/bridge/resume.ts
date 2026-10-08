@@ -13,7 +13,7 @@
 // `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает → сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
 // Мост, ведущий другое место (держит или запарковал), чужой записью не
 // занимается: holdStanding иного ключа убил бы ведомое.
-import { envName } from "../delivery/index.ts";
+import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
@@ -306,7 +306,7 @@ export async function resumeBy(
     }
     const lines = [back.word];
     if (register) {
-      const r = await callTool("iskron_channel", {
+      const r = await callTool(tool("channel"), {
         action: "register",
         realm: rec.realm,
         karta: rec.karta,
@@ -373,8 +373,8 @@ function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   return sel;
 }
 
-export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/resume";
-export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/check";
+export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === method("resume");
+export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === method("check");
 
 /**
  * `iskron/resume {key?, cwd?, session?}` — запрос плагина: вернуть своё место с диска.
@@ -421,7 +421,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
-  const board = await callTool("iskron_channel", { action: "list", realm: s.realm });
+  const board = await callTool(tool("channel"), { action: "list", realm: s.realm });
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = readBoard(board).entries.find(
@@ -446,7 +446,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       emit({
         jsonrpc: "2.0",
         method: "notifications/message",
-        params: { level: "warning", logger: "iskron-channel", data: { kind: "lost", text } },
+        params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text } },
       });
     }
     return reply(msg, {

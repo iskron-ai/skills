@@ -1,6 +1,7 @@
 // Ответ connect/mint и своё снятие — что мост берёт из проксируемых ответов
 // канала (граф nks-dev: #4233, #5033). Секрет сокета вырезается, держание
 // уходит в hold.ts; своё revoke отпускает место тихо (#5012).
+import { tool } from "../delivery/index.ts";
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import {
@@ -50,7 +51,7 @@ const hideAddresses = (text: string): string =>
  */
 export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel") return reply;
+  if (msg?.params?.name !== tool("channel")) return reply;
   if (a?.action !== "connect" && a?.action !== "mint") return reply;
   if (reply?.error || reply?.result?.isError) return reply;
   const text = replyText(reply);
@@ -82,7 +83,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
 /** Зовёт ли этот вызов revoke то стояние, которое ведёт мост. */
 function revokesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "revoke") return false;
+  if (msg?.params?.name !== tool("channel") || a?.action !== "revoke") return false;
   const s = state.standing;
   if (!s || besideKeyIn(a.realm)) return false; // место другого графа снимается одно (absorbRevokeReply)
   return names(a, s) && !otherRealm(a.realm, s.realm);
@@ -115,7 +116,7 @@ export function expectOwnRevoke(msg: JsonRpcMessage): void {
  */
 function closesOwn(msg: JsonRpcMessage): boolean {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "close") return false;
+  if (msg?.params?.name !== tool("channel") || a?.action !== "close") return false;
   const s = state.standing;
   return !!s && (!otherRealm(a.realm, s.realm) || !!besideKeyIn(a.realm)); // и граф места рядом — тот же канал
 }
@@ -126,14 +127,14 @@ function closesOwn(msg: JsonRpcMessage): boolean {
  * токен отпустился бы тихо словом «токен жив».
  */
 export function settleOwnRevoke(msg: JsonRpcMessage): void {
-  if (msg?.params?.name !== "iskron_channel") return;
+  if (msg?.params?.name !== tool("channel")) return;
   const action = msg.params.arguments?.action;
   if (action === "revoke") setRevokingOwn(false);
   if (action === "close") setClosingOwn(false);
 }
 
 export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
-  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "close")
+  if (msg?.params?.name !== tool("channel") || msg?.params?.arguments?.action !== "close")
     return reply;
   setClosingOwn(false);
   // 4001 обогнал ответ — место уже отпущено (hold.ts), отпускать нечего.
@@ -146,7 +147,7 @@ export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): Js
 }
 
 export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
-  if (msg?.params?.name !== "iskron_channel" || msg?.params?.arguments?.action !== "revoke")
+  if (msg?.params?.name !== tool("channel") || msg?.params?.arguments?.action !== "revoke")
     return reply;
   setRevokingOwn(false);
   const a = msg.params.arguments;

@@ -30,8 +30,9 @@ import { type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { envName } from "../delivery/index.ts";
+import { BRIDGE_NAME, envName } from "../delivery/index.ts";
 import { homeBridgePath } from "../shared/home.ts";
+import { escapeRe } from "../shared/regex.ts";
 import { runIn, type Scope } from "../shared/scope.ts";
 import { type SeamHello, writeFrame } from "../shared/seam.ts";
 import { ownPidAlive, seamRunDir, seamSocketPath } from "../shared/seam-entrance.ts";
@@ -71,6 +72,8 @@ export const ms = (name: string, dflt: number): number => {
   const v = Number(process.env[name]);
   return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
 };
+/** The stamp of a log line (streams.ts): `[<bridge> <time>] `. */
+const LOG_MARK = new RegExp(`\\[${escapeRe(BRIDGE_NAME)} [^\\]]*\\] `);
 /** Окно простоя: столько демон живёт после ухода последней сессии. */
 const IDLE_MS = ms(envName("BRIDGE_DAEMON_IDLE_MS"), 60_000);
 /** Как часто демон смотрит на домашнюю копию (дешёвая сверка по mtime). */
@@ -113,7 +116,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
       mkdirSync(run, { recursive: true, mode: 0o700 });
       rotateJournal(journalPath, JOURNAL_MAX);
       // Метка слова log ([iskron-bridge время]) журналу не нужна: время и сборка — в начале строки.
-      const text = line.trimEnd().replace(/\[iskron-bridge [^\]]*\] /, "");
+      const text = line.trimEnd().replace(LOG_MARK, "");
       appendFileSync(
         journalPath,
         `${new Date().toISOString()} pid=${process.pid} ${BUILD} ${text}\n`,

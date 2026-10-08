@@ -38,8 +38,16 @@ export function buildOfFile(path: string): string | null {
   }
 }
 
-/** Version declared in another copy's text, read as a string without running it. */
+/** A channel mark literal in a copy's text: `"<name>-build:dev"` or `"<name>-build:release"`. */
+const MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
+
+/**
+ * Version declared in another copy's text, read as a string without running it;
+ * null when unreadable or when the copy is another delivery's bridge (its channel
+ * mark names another build). A copy without a mark (old releases) is read as before.
+ */
 export function versionIn(text: string): string | null {
+  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
   return m ? m[1] : null;
 }

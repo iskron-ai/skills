@@ -5,6 +5,7 @@
 // своего графа. Поэтому сокет службы один (hold.ts), а здесь — места рядом с
 // тем, ради которого он взят: у каждого своя дверь для сторожа, своя запись
 // держания и своя строка в повторной регистрации (standing.ts).
+import { LOGGERS } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -118,7 +119,7 @@ const besideWord = (data: ChannelEvent): void =>
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
-    params: { level: "info", logger: "iskron-channel", data },
+    params: { level: "info", logger: LOGGERS.channel, data },
   });
 
 /** Канал сменил адреса (переоткрыт тем же местом): записи мест рядом — за ним. */

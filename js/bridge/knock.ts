@@ -1,7 +1,7 @@
 // Стук iskron_stand в место человека — по полному адресу с провода (stand.ts).
 // Правило #4342: один стук, повтор один раз не раньше чем через две минуты,
 // дальше — слово человеку.
-import { envName } from "../delivery/index.ts";
+import { envName, tool } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import { callTool as call, short } from "./call.ts";
 import { SW } from "./standwords.ts";
@@ -44,7 +44,7 @@ export async function knock(k: KnockAsk): Promise<string> {
   if (prior && waited < KNOCK_REPEAT_AFTER_MS)
     return SW.knockEarly(room, waited, KNOCK_REPEAT_AFTER_MS);
   if (!roomKarta) return SW.knockNoRole(room, realm);
-  const s = await call("iskron_channel", {
+  const s = await call(tool("channel"), {
     action: "send",
     realm,
     karta: roomKarta,

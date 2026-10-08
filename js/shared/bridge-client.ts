@@ -2,7 +2,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { basename } from "node:path";
 
-import { envName } from "../delivery/index.ts";
+import { envName, ID_PREFIX } from "../delivery/index.ts";
 import { L } from "./lang.ts";
 
 /**
@@ -24,7 +24,7 @@ export function bridgeRuntime(): { bin: string; env: NodeJS.ProcessEnv } {
 }
 
 /** Префикс id служебного хода клиента (строка запуска и т.п.): мост не считает его работой агента. */
-export const SERVICE_ID = "iskron-service-";
+export const SERVICE_ID = `${ID_PREFIX}service-`;
 
 /** Сколько мосту дают уйти самому после SIGTERM — дольше потолка публикации снятой занятости (3 с). */
 const STOP_GRACE_MS = 5000;

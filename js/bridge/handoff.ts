@@ -4,6 +4,7 @@
 // уходящий демон сокет не закрывает: держит его, пока преемник не откроет тот же
 // адрес и сервер не вытеснит старый кодом 4000, либо до предела; пришедшее за это
 // время — в спул (spool.ts). Предел вышел — сокет закрыт, как прежде, и занятость снята.
+import { LOGGERS } from "../delivery/index.ts";
 import { EVICTED_CODE, type Frame, type Holder } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { socketPathOf, spoolFilePathOf } from "../shared/standings.ts";
@@ -113,7 +114,7 @@ export function takeSpool(
     emit({
       jsonrpc: "2.0",
       method: "notifications/message",
-      params: { level: "info", logger: "iskron-channel", data: ev },
+      params: { level: "info", logger: LOGGERS.channel, data: ev },
     });
   });
 }

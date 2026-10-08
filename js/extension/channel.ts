@@ -10,7 +10,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { envName } from "../delivery/index.ts";
+import { envName, LOGGERS, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText } from "../shared/frame-text.ts";
@@ -42,7 +42,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   function loud(text: string, fatal = true) {
     if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
     pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal } },
+      { customType: LOGGERS.channel, content: text, display: true, details: { fatal } },
       { triggerTurn: true, deliverAs: "steer" },
     );
   }
@@ -65,7 +65,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     if (!got.length) return;
     pi.sendMessage(
       {
-        customType: "iskron-channel",
+        customType: LOGGERS.channel,
         content: [batchHead(got), ...batchLines(got)].join("\n"),
         display: true,
         details: { count: got.map((f) => f.id ?? null) },
@@ -78,7 +78,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   function sendBatch(ev: ChannelEvent): void {
     pi.sendMessage(
       {
-        customType: "iskron-channel",
+        customType: LOGGERS.channel,
         content: ev.text ?? "",
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true },
@@ -125,7 +125,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         if (frame?.type === "hello") {
           // setStatus — пара (ключ, текст); один аргумент кладёт строку в ключ
           // и оставляет её без текста, то есть невидимой.
-          if (ctxRef?.hasUI) ctxRef.ui.setStatus?.("iskron", "Искрон: канал слушает");
+          if (ctxRef?.hasUI) ctxRef.ui.setStatus?.(PRODUCT, "Искрон: канал слушает");
           return;
         }
         if (frame?.type === "status") return;
@@ -146,7 +146,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {
-            customType: "iskron-channel",
+            customType: LOGGERS.channel,
             content: frameToText(frame, raw),
             display: true,
             details: frame ?? { raw },

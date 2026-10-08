@@ -1,6 +1,7 @@
 // Чтение хуков роли для iskron_stand (hook.ts ставит, здесь — читается): список
 // хуков роли — полями webhooks[] (hookfields.ts), без них прозой сервера, — и
 // схема iskron_admin, объявляет ли она параметр channel.
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { FORM } from "./board.ts";
 import { callTool as call } from "./call.ts";
 import { hooksField, reachesYou } from "./hookfields.ts";
@@ -13,7 +14,7 @@ import { type JsonRpcMessage } from "./types.ts";
  * схему прочесть не удалось (tools/list отказал, пуст или тул на другой странице).
  */
 export async function adminParamNames(): Promise<Set<string> | null> {
-  const id = `iskron-bridge-admin-schema-${++state.reinitCounter}`;
+  const id = `${ID_PREFIX}bridge-admin-schema-${++state.reinitCounter}`;
   let got: JsonRpcMessage | null = null;
   try {
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
@@ -27,7 +28,7 @@ export async function adminParamNames(): Promise<Set<string> | null> {
   if (!Array.isArray(tools)) return null;
   const admin = (
     tools as { name?: string; inputSchema?: { properties?: Record<string, unknown> } }[]
-  ).find((t) => t?.name === "iskron_admin");
+  ).find((t) => t?.name === tool("admin"));
   if (!admin) return null; // тула на этой странице нет (список постраничный или урезан) — схема не прочтена
   return new Set(Object.keys(admin.inputSchema?.properties ?? {}));
 }
@@ -59,7 +60,7 @@ export async function readRoleHooks(
   karta: string,
   name: string,
 ): Promise<{ recognized: boolean; wakesMe: boolean; text: string }> {
-  const hooks = await call("iskron_admin", { action: "list_webhooks", realm, node_id: karta });
+  const hooks = await call(tool("admin"), { action: "list_webhooks", realm, node_id: karta });
   const fields = hooks.isError ? null : hooksField(hooks.structured);
   const read = fields
     ? { recognized: true, wakesMe: fields.some((h) => h.active && reachesYou(h)) }

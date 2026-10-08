@@ -3,6 +3,7 @@
 //   • место отняли (evicted.ts, #6706) — встать рядом на имя.N;
 //   • возврат места, чей сокет держит прежний мост этой же сессии (resume.ts, #6702), —
 //     взять его тем же суждением, что iskron_stand, без take.
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { serialized } from "./call.ts";
 import { wireEviction } from "./evicted.ts";
 import { wireTakeOwn } from "./resume.ts";
@@ -21,7 +22,7 @@ async function standAs(
     jsonrpc: "2.0",
     id,
     method: "tools/call",
-    params: { name: "iskron_stand", arguments: { realm, karta: String(karta), name, ...where } },
+    params: { name: tool("stand"), arguments: { realm, karta: String(karta), name, ...where } },
   });
   const text = ((r.result?.content ?? []) as { text?: string }[]).map((c) => c.text ?? "");
   return { ok: !r.result?.isError, text: text.join("\n") };
@@ -30,7 +31,7 @@ async function standAs(
 wireEviction((place, cwd) =>
   serialized(() =>
     standAs(
-      "iskron-bridge-evicted",
+      `${ID_PREFIX}bridge-evicted`,
       { ...place, name: baseOf(place.realm, place.karta, place.name ?? "") }, // основа, от которой место выбрано (#6706)
       cwd,
     ),
@@ -39,5 +40,5 @@ wireEviction((place, cwd) =>
 
 // Возврат уже идёт под serialized (deliver.ts): второй serialized ждал бы сам себя.
 wireTakeOwn(
-  async (rec, cwd) => (await standAs("iskron-bridge-resume", rec, cwd)).text.split("\n")[0],
+  async (rec, cwd) => (await standAs(`${ID_PREFIX}bridge-resume`, rec, cwd)).text.split("\n")[0],
 );

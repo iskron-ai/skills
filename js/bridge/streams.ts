@@ -1,5 +1,6 @@
 import { type Writable } from "node:stream";
 
+import { BRIDGE_NAME } from "../delivery/index.ts";
 import { currentScope, scoped } from "../shared/scope.ts";
 import { CFG } from "./config.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -67,7 +68,7 @@ export function writeTo(s: Stream | null | undefined, text: string): boolean {
 }
 
 export function log(msg: string): void {
-  const line = `[iskron-bridge ${new Date().toISOString()}] ${msg}\n`;
+  const line = `[${BRIDGE_NAME} ${new Date().toISOString()}] ${msg}\n`;
   const sink = currentScope().log ?? processLog;
   if (sink) sink(line);
   else writeTo(process.stderr, line);

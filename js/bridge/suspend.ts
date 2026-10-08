@@ -5,6 +5,7 @@
 // остановки: мост пишет запись паузы (pauserecord.ts) и уходит, не выходя из дел,
 // не снимая места и занятости. Мост нового экземпляра возвращает место по ключу
 // (`iskron/resume`, resume.ts) и принимает дела прогона — на своём конце он их и покинет.
+import { method, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { callTool as call } from "./call.ts";
 import { seedJoined } from "./caseexit.ts";
@@ -23,7 +24,7 @@ export { suspended } from "./pauserecord.ts";
 
 /** `iskron/suspend` — только спутнику, держащему место; ответ — ключ записи паузы. */
 export function localSuspend(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
-  if (msg?.method !== "iskron/suspend") return null;
+  if (msg?.method !== method("suspend")) return null;
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
   const s = state.standing;
   // Пауза передачи демона (pauserecord.ts), а харнес просит свою: она становится паузой
@@ -74,7 +75,7 @@ async function rearmForPause(
     ttl_seconds: PAUSE_TTL_S,
   };
   // Ответ connect берёт мост (absorb.ts): новый адрес — в H, отсюда — в запись паузы.
-  const connect = call("iskron_channel", args).then((r) => {
+  const connect = call(tool("channel"), args).then((r) => {
     if (!r.isError && H.currentUrl) P.turned = { url: H.currentUrl, statusUrl: H.currentStatusUrl };
     if (drained) {
       // Сессия ушла — сокет, открытый ответом, держит передача, а запись идёт за адресом.

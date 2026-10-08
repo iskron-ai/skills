@@ -8,6 +8,7 @@
 // @owner/slug с разрешением rN и слага; вызов без графа свободен, чужой владелец
 // того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
 // с просьбой полного адреса (#5838), не текст чужой потери.
+import { ID_PREFIX, LOGGERS, method, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -16,8 +17,7 @@ import { type JsonRpcMessage } from "./types.ts";
 export function placeWord(
   msg: JsonRpcMessage,
 ): { kind: string; key?: string; realm: string } | null {
-  if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
-    return null;
+  if (msg.method !== "notifications/message" || msg.params?.logger !== LOGGERS.channel) return null;
   const data = msg.params?.data as
     { kind?: unknown; key?: unknown; place?: { realm?: unknown } } | undefined;
   const realm = typeof data?.place?.realm === "string" ? data.place.realm.trim() : "";
@@ -35,7 +35,7 @@ let harnessSession: string | null = null;
 /** Запомнить сессию харнеса из его вызова; вызов — как есть. */
 export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
   const s = msg.params?.session;
-  if ((msg.method === "iskron/resume" || msg.method === "iskron/check") && typeof s === "string")
+  if ((msg.method === method("resume") || msg.method === method("check")) && typeof s === "string")
     harnessSession = s.trim() || harnessSession;
   return msg;
 }
@@ -44,7 +44,7 @@ export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
  * прежних выпусков): живого держателя такой возврат не отнимает, даже своей сессии, —
  * держать может мост, чей харнес ещё жив (resume.ts).
  */
-export const THIN_RESUME_ID = "iskron-thin-resume-";
+export const THIN_RESUME_ID = `${ID_PREFIX}thin-resume-`;
 /** Параметры возврата места в новой сессии демона: ключ и названная сессия харнеса. */
 const resumeParams = (key: string): { key: string; session?: string } =>
   harnessSession ? { key, session: harnessSession } : { key };
@@ -52,7 +52,7 @@ const resumeParams = (key: string): { key: string; session?: string } =>
 export const resumeCall = (key: string, n: number): JsonRpcMessage & { id: string } => ({
   jsonrpc: "2.0",
   id: `${THIN_RESUME_ID}${n}`,
-  method: "iskron/resume",
+  method: method("resume"),
   params: resumeParams(key),
 });
 
@@ -85,7 +85,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
         method: "notifications/message",
         params: {
           level: "warning",
-          logger: "iskron-channel",
+          logger: LOGGERS.channel,
           data: { kind: "lost", key: k, text },
         },
       });
@@ -136,7 +136,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
      * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
      */
     refusal(msg: JsonRpcMessage): string | null {
-      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
+      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === tool("stand"))
         return null;
       const r = msg.params?.arguments?.realm;
       if (typeof r !== "string" || !r.trim()) return null; // вызов без графа — не в потерянный граф
@@ -169,7 +169,7 @@ export function realmListAsk() {
         jsonrpc: "2.0",
         id: id(),
         method: "tools/call",
-        params: { name: "iskron_realm", arguments: { action: "list" } },
+        params: { name: tool("realm"), arguments: { action: "list" } },
       };
       asked.add(JSON.stringify(call.id));
       return call;

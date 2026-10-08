@@ -2,6 +2,7 @@
 // сессию: его зовёт уход (session.ts) или раньше — плагин OpenCode, кончая ведущего
 // субагента (`iskron/end`, дело №147): тогда исход снятия места доходит до родителя
 // словом, а уход его не повторяет.
+import { method } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { ownPidAlive } from "../shared/seam-entrance.ts";
@@ -94,7 +95,7 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
 
 /** `iskron/end` — только спутнику не на паузе: конец сейчас, ответ — что снять не удалось. */
 export function localEnd(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
-  if (msg?.method !== "iskron/end") return null;
+  if (msg?.method !== method("end")) return null;
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
   if (!CFG.satellite || suspended()) return Promise.resolve(answer({ ended: false }));
   return closeRun(L("конец прогона по слову плагина", "the run's end on the plugin's word"), false)

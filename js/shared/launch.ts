@@ -5,6 +5,7 @@
 // харнес сам родителя не знает (pi); в OpenCode родитель известен и хвост лишний.
 // По-английски: «start <graph> <role> <case №N> [from <seat>]»; слово о входе —
 // на языке поставки (shared/lang.ts).
+import { tool } from "../delivery/index.ts";
 import { L } from "./lang.ts";
 
 /** Что называет строка запуска: граф, роль, дело и, может быть, место запустившего. */
@@ -57,7 +58,7 @@ export async function enterCase(
   const stand: Record<string, unknown> = { realm: l.realm, karta: l.karta };
   if (satelliteOf) stand.satellite_of = satelliteOf;
   try {
-    await call("iskron_stand", stand);
+    await call(tool("stand"), stand);
   } catch (e) {
     const why = (e as Error).message;
     const join = `iskron_case(action="join", room="${room}")`;
@@ -71,7 +72,7 @@ export async function enterCase(
   }
   const place = placeName() || L("своим местом", "in a seat of its own");
   try {
-    await call("iskron_case", { action: "join", realm: l.realm, room });
+    await call(tool("case"), { action: "join", realm: l.realm, room });
   } catch (e) {
     const why = (e as Error).message;
     return L(

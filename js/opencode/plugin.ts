@@ -20,7 +20,7 @@
 // сличает её с поставкой.
 import type { Plugin } from "@opencode/plugin";
 
-import { PRODUCT } from "../delivery/index.ts";
+import { LOGGERS, PRODUCT } from "../delivery/index.ts";
 import { withWord } from "../shared/launch.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
@@ -43,7 +43,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Тоста у серверного плагина OpenCode 2 нет: слово человеку — stderr сервиса,
   // а то, что должно дойти до агента, идёт промптом в его сессию (channel.ts).
   const say: Say = (text, level) => {
-    process.stderr.write(`[iskron${level === "info" ? "" : "/" + level}] ${text}\n`);
+    process.stderr.write(`[${PRODUCT}${level === "info" ? "" : "/" + level}] ${text}\n`);
   };
 
   // Корневые сессии, которые плагин видел, и когда: субагент делит мост
@@ -251,7 +251,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // ребёнок, перенесённый в другой каталог, находит здесь корень (twins.ts).
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
-    lost: (s, text) => onChannel(s, { logger: "iskron-channel", data: { kind: "lost", text } }),
+    lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     holds: (r) => half.held(r),
     adopt: () => half.adopt(),
   });

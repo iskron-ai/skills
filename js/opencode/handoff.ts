@@ -3,6 +3,7 @@
 // (children.ts): пауза моста, маркер с меткой новой папки (ключ, место корня, дело, ход),
 // мост здесь гаснет. Ведущий не кончается — ни «КОНЧЕН», ни снятия места: экземпляр новой
 // папки возвращает место по ключу тем же спутником.
+import { method } from "../delivery/index.ts";
 import { authDir } from "./bridge-io.ts";
 import { PAUSE_MS } from "./children.ts";
 import type { Leads } from "./leadwords.ts";
@@ -31,7 +32,7 @@ export const createHandoff =
     handOver(
       session,
       s.bridge
-        .request("iskron/suspend", {}, { timeoutMs: PAUSE_MS, service: true })
+        .request(method("suspend"), {}, { timeoutMs: PAUSE_MS, service: true })
         .catch(() => {})
         .then(() => {
           writeLostMarker(authDir(), [s], to);

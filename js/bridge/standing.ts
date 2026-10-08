@@ -1,3 +1,4 @@
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
@@ -26,7 +27,7 @@ const SEAT_EXPIRED = (): string =>
 // seat we may take.
 export function noteStanding(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
   const a = msg?.params?.arguments;
-  if (msg?.params?.name !== "iskron_channel" || a?.action !== "register") return;
+  if (msg?.params?.name !== tool("channel") || a?.action !== "register") return;
   if (reply?.error || reply?.result?.isError) return;
   const place = rememberedPlace(a.realm, a.karta, a.name);
   const prim = state.standing;
@@ -124,7 +125,7 @@ export async function replayRegister(place: Standing | null): Promise<JsonRpcMes
 }
 
 async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | null> {
-  const id = `iskron-bridge-restanding-${++state.reinitCounter}`;
+  const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   await post(
     {
@@ -132,7 +133,7 @@ async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | nu
       id,
       method: "tools/call",
       params: {
-        name: "iskron_channel",
+        name: tool("channel"),
         arguments: { ...place, ...placeFields(place ?? {}), action: "register" },
       },
     },

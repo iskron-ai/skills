@@ -6,7 +6,7 @@
 // серверу (transport.ts). Исключение одно — место самого человека его словом, karta
 // «me» или «realm-owner»; номер 主-роли без имени отказывается и тогда (род роли здесь
 // не читается: проверка синхронна, owner.ts спрашивает сервер).
-import { envName } from "../delivery/index.ts";
+import { envName, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf } from "../shared/scope.ts";
 import { normKarta, normName } from "./names.ts";
@@ -23,7 +23,7 @@ const word = (action: string): string =>
 
 /** Вызов, занимающий место без имени, — отказ вслух вместо отправки; иначе null. */
 export function unnamedSeatRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
-  if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
+  if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
   const a = msg.params.arguments ?? {};
   const action = String(a.action);
   if (!SEAT_MOVES.has(action) || normName(a.name)) return null;
