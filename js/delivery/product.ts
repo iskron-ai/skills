@@ -60,7 +60,6 @@ export const SERVER_URLS: Readonly<Record<Lang, string>> = {
 };
 export const DEFAULT_SERVER_URL = SERVER_URLS[DEFAULT_LANG];
 
-// part 6
 /**
  * Код `node -e` единой формы записи моста-спутника: путь к дому из homedir, путь в
  * argv[1], импорт моста. Эталон: копии в ролевых файлах и delegation.md сверяет

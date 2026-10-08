@@ -4,15 +4,18 @@
 
 - Ядро импортирует слой одним путём — `../delivery/index.ts`; alias и define сборки нет, копии различаются содержимым этого каталога. Набор экспортов `index.ts` и есть контракт: недостающий экспорт — ошибка `make typecheck` в ядре.
 - Слой не импортирует исполняемое ядро; зависимость от типов ядра — `import type`.
+- Граница держится гейтом `make check-core` (`scripts/check-core.mjs`): ни в одном файле ядра — ни в коде, ни в комментарии, ни в пути — нет кириллицы, имени продукта (`PRODUCT` отсюда) и вызова `L(`. `README.md` компонентов ядра — документация этого репо, соседняя поставка их не копирует, и гейт их не читает.
+- Проба `js/tests/coexist.test.mjs`: из тех же файлов ядра со своим слоем собирается мост другого продукта — его справка, дом, переменные окружения и hello шва свои, наш шов его отвергает. Двух мостов разом в одной сессии она не поднимает; опись мест столкновения — #6815.
 
 Файлы:
+- `index.ts` — набор экспортов слоя (контракт с ядром), по пути файла.
 - `version.ts` — `VERSION` (штампует release-please, `release-please-config.json`), `BUILD_MARK` и `CHANNEL_MARK`. Форма строки `export const CHANNEL_MARK: string = "<BUILD_MARK>:dev";` — часть контракта: `js/build.mjs` находит её регулярным выражением и в сборке выпуска заменяет `:dev` на `:release`.
 - `product.ts` — `PRODUCT` и выводимое из него: переменные окружения (`ENV_PREFIX`, `envName`), имя моста и дом (`BRIDGE_NAME`, `HOME_DIR`, `HOME_BRIDGE_FILE`), префиксы сокетов, pipes и реестров процесса (`RUNTIME_PREFIX`, `GLOBAL_PREFIX`), раскладка набора (`BRIDGE_SKILL`, `BRIDGE_FILE`, `SKILL_STAMP_MASK` — маска отпечатка набора `*/<файл>` или `*/**`, `PLUGIN_FILE`, `PLUGIN_COPY_FILE`, `SKILL_SET`), распознавание установки (`PLUGIN_NAME`, `SUB_ENTRY_PREFIX`, `CONNECTOR_PATTERN`), имена клиентов MCP (`CLIENTS`), адреса сервера (`SERVER_URLS`, `DEFAULT_SERVER_URL`).
 - `lang.ts` — языки поставки (`LANGS`, `Lang`), умолчание (`DEFAULT_LANG`) и правило языка по адресу сервера (`langOfServer`); язык сессии и выбор слова (`words`) держит ядро `shared/lang.ts`.
 - `words/rooms.ts` — слова родов комнаты и короткого кадра (`ROOM`), записи платформы auto по code (`ROOM_AUTO`), связи дел по rel (`ROOM_REL`), вердикта строки (`VERDICT`); аргументы — готовые строки (`need`, `opt` ядра `shared/room-fields.ts`).
 - `words/asks.ts` — слова вопроса в деле (`ASK`): ask, answer, ack, снятие, зов роли платформой.
 - `words/hold.ts` — слова держателя сокета (`HOLD`); совет о мёртвом токене приходит аргументом.
-- `protocol.ts` — имена тулов (`TOOL_PREFIX`, `tool`), методы плагин↔мост (`method`), логгеры уведомлений (`LOGGERS`), префикс внутренних id (`ID_PREFIX`), ключ полей ответа (`STRUCTURED_CAPABILITY`, `<продукт>/structured`) — из имени продукта; ключ отказа api (`serverProtocol.refusal`) — своим значением, его подтверждает поверхность своего сервера.
+- `protocol.ts` — имена тулов (`TOOL_PREFIX`, `tool`), методы плагин↔мост (`method`), логгеры уведомлений (`LOGGERS`), префикс внутренних id (`ID_PREFIX`), метка продукта на тексте, который плагин вставляет в сессию (`FRAME_MARK`), ключ полей ответа (`STRUCTURED_CAPABILITY`, `<продукт>/structured`) — из имени продукта; ключ отказа api (`serverProtocol.refusal`) — своим значением, его подтверждает поверхность своего сервера.
 - `words/absorb.ts` — слова о впитанных ответах канала (`ABSORB`): вырезанные адреса сокета и статуса, отказ снять основное место канала, пока на нём стоят места других графов.
 - `words/backlog.ts` — шапка пачки побудки (`BACKLOG`): счёт кадров, ожидавших, не вошедших и прямых слов.
 - `words/call.ts` — слова вызова тула самим мостом (`CALL`): отказы правила одного места на мост и места рядом, совет о различии просимого и ведомого места, пустой ответ.
@@ -21,11 +24,12 @@
 - `words/handoff.ts` — слова передачи сокета преемнику демона (`HANDOFF`): кадр из спула месту рядом, которое не вернулось.
 - `words/hearing.ts` — слова о слухе места (`HEARING`): отказ «agent» без числа, кто слушает место, отказ сырого connect, mint, register.
 - `words/hook.ts` — слова шага хука инбокса роли в ответе стояния (`HOOK`); обрезанный ответ тула и граф канала — аргументами.
-- `patterns/board.ts` — формы прозы сервера о доске стояний и списке вебхуков (`BOARD_FORM`), двуязычные при любом языке сессии.
+- `patterns/board.ts` — формы прозы сервера о доске стояний и списке вебхуков (`BOARD_FORM`), двуязычные при любом языке сессии, и заголовок доски каналов на обоих языках (`BOARD_HEADER`).
+- `patterns/channel.ts` — проза сервера о канале на обоих языках: перечень action в схеме (`ACTION_LIST_RE`), отказы «места больше нет» (`SEAT_GONE_RE`) и «сессия не держит стояния» (`UNATTRIBUTED_RE`).
+- `patterns/satprobe.ts` — образцы прозы, которую разбирает проба моста-спутника (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`), двуязычно.
 - `patterns/caseexit.ts` — проза сервера об уже снятом месте в ответе revoke без данных отказа (`CASE_EXIT_CLOSED`), двуязычно.
 - `patterns/config.ts` — слово человека о выборе сервера (`SERVER_CHOICE`), двуязычно.
 - `patterns/deliver.ts` — метка строки отставания поставки в ответе тула (`NOTICE_MARK`), чтобы не дописать её дважды; двуязычно.
-- `protocol.ts` (часть 5b) — шаблоны прозы сервера на обоих языках (`ACTION_LIST_RE`, `SEAT_GONE_RE`, `UNATTRIBUTED_RE`) и заголовок доски каналов на обоих языках (`BOARD_HEADER`).
 - `words/stand.ts` — слова ответа iskron_stand (`STAND`): отказы, шапка, ход места, hello, стук; заголовок доски приходит аргументом (`BOARD_HEADER`).
 - `words/standmiss.ts` — почему вызов со status без karta не стал занятостью (`STAND_MISS`); список аргументов — готовой строкой.
 - `words/standtool.ts` — описание тула iskron_stand и его параметров (`STAND_TOOL`).
@@ -52,7 +56,7 @@
 - `words/statuspost.ts` — нудж обрезки строки занятости и отказы статусного адреса (`STATUS_POST`).
 - `words/unnamed.ts` — отказ занять место роли без имени (`UNNAMED`).
 - `words/usage.ts` — почему расход не лёг в attrs места (`USAGE`).
-- `patterns/launch.ts` — строка запуска с делом (`LAUNCH_LINE`), русская и английская форма при любом языке сессии.
+- `patterns/launch.ts` — строка запуска с делом (`LAUNCH_LINE`), русская и английская форма при любом языке сессии; первое слово строки — своё у поставки (`LAUNCH_WORD`).
 - `words/appserver.ts` — слова двери в тред Codex (`APPSERVER`).
 - `words/bridge-client.ts` — отказы клиента MCP к дочернему мосту и пустой ответ (`BRIDGE_CLIENT`).
 - `words/channel.ts` — слова держателя живого канала (`CHANNEL`): совет на мёртвом токене, подвисшее соединение, раскатка.
@@ -64,7 +68,7 @@
 - `words/doctor.ts` — слова `doctor` (`DOCTOR`): сборка, дом, сервер, грант, релиз, плагины харнесов, демон машины.
 - `words/doctorharness.ts` — слова `doctor` о харнесах (`HARNESS`): команда записи в PATH, второй путь мимо моста, отставание скиллов, записи mcp OpenCode.
 - `words/subagents.ts` — слова раздела «субагенты» `doctor` (`SUBAGENT`), метка строки-действия и формы записи спутника; эталон кода записи — `SATELLITE_CODE` в `product.ts`.
-- `words/satprobe.ts` — слова пробы моста-спутника (`SAT_PROBE`); образцы разбираемой ею прозы (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`) — в `protocol.ts`.
+- `words/satprobe.ts` — слова пробы моста-спутника (`SAT_PROBE`); образцы разбираемой ею прозы (`SAT_LOGIN_RE`, `SAT_OLD_FLAG_RE`) — в `patterns/satprobe.ts`.
 - `words/rituals.ts` — слова `check-rituals` (`RITUALS`); имя раздела хуков скилла бутстрапа — `HOOKS_SECTION` в `product.ts`.
 - `words/watchdog.ts` — слова сторожей (`WATCHDOG`): знак слуха, исходы, дверь Codex.
 - `words/plugin.ts` — слова, общие плагину OpenCode и расширению pi (`PLUGIN`): поиск и подъём моста, половина «канал».

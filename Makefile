@@ -1,9 +1,9 @@
-.PHONY: check deps validate check-bundles check-surface lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface widgets check-widgets hooks
+.PHONY: check deps validate check-bundles check-surface check-core lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface widgets check-widgets hooks
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
 # behavioural suites of the shipped code). Needs `make deps` once per clone.
-check: validate check-bundles check-surface check-widgets lint format-check typecheck check-js check-frozen test
+check: validate check-bundles check-surface check-widgets check-core lint format-check typecheck check-js check-frozen test
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
@@ -25,6 +25,11 @@ check-bundles:
 # Lint the corpus against the committed surface snapshot (offline, pure Node).
 check-surface:
 	@node scripts/check-surface.mjs
+
+# The bridge core names no delivery: no Cyrillic, no product name, no L( — in
+# text or path (offline, pure Node). A neighbouring delivery copies the core as is.
+check-core:
+	@node scripts/check-core.mjs
 
 # --- the JS ladder, over js/ (the single source of every shipped executable) ---
 lint:

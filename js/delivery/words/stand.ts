@@ -12,7 +12,7 @@ export interface StandWords {
   noModel: () => string;
   legacy: (address: string, realm: string, karta: string) => string;
   boardUnread: (text: string) => string;
-  /** own — заголовок доски на языке сессии, others — на прочих языках сервера (BOARD_HEADER, protocol.ts). */
+  /** own — заголовок доски на языке сессии, others — на прочих языках сервера (BOARD_HEADER, patterns/board.ts). */
   boardUnknown: (start: string, own: string, others: string) => string;
   boardAmbiguous: (n: number, name: string, karta: string) => string;
   boardCount: (declared: number, parsed: number) => string;

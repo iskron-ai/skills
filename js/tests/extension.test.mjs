@@ -47,6 +47,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_EXTENSION } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -144,7 +145,13 @@ function fakePi({ hasUI = true } = {}) {
       active.clear();
       for (const n of names) active.add(n);
     },
-    sendMessage: (msg, opts) => messages.push({ msg, opts }),
+    // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
+    // the probes read the content after it.
+    sendMessage: (msg, opts) => {
+      const marked = typeof msg?.content === "string" && msg.content.startsWith(`${FRAME_MARK} `);
+      const content = marked ? msg.content.slice(FRAME_MARK.length + 1) : msg?.content;
+      messages.push({ msg: marked ? { ...msg, content, marked } : msg, opts });
+    },
   };
   return {
     pi,
@@ -751,6 +758,7 @@ test("service frames raise no turn, a work frame does", async () => {
     assert.equal(msg.customType, "iskron-channel");
     // Who speaks is read off provenance, never off the body; the frame is short (#6081).
     assert.match(msg.content, /^svatantra\nпосмотри ветку$/);
+    assert.equal(msg.marked, true, "the frame carries the delivery's mark (#6815 item 3)");
 
     push(events, { kind: "frame", raw: "не JSON вовсе", frame: null });
     await delay(250);

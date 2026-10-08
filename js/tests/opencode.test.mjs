@@ -46,6 +46,7 @@ import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -193,8 +194,11 @@ function fakeCtx({
       },
       // OpenCode answers a prompt with its inbox item; the id comes back in
       // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
+      // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
+      // the probes read the text after it.
       prompt: async (o) => {
-        prompts.push(o);
+        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
+        prompts.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
         return inboxIds
           ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
           : {};
@@ -221,7 +225,8 @@ function fakeCtx({
       },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
-        synthetics.push(o);
+        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
+        synthetics.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
         return { id: `synthetic-${synthetics.length}`, type: "synthetic" };
       },
       // Session hooks: the probe runs "prompt" the way OpenCode does — awaited,
@@ -276,10 +281,14 @@ function fakeCtx({
       return e.effect;
     },
     /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
-    prompt: async (sessionID, text) => {
+    promptRaw: async (sessionID, text) => {
       const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
       return p.prompt.text;
+    },
+    /** The same, the delivery's mark on riding counts (#6815 item 3) taken off. */
+    async prompt(sessionID, text) {
+      return (await this.promptRaw(sessionID, text)).replace(`\n\n${FRAME_MARK} `, "\n\n");
     },
     emit: (ev) => {
       queue.push(ev);
@@ -1200,8 +1209,8 @@ test("the root's counts ride the root's next prompt, never a subagent's", async 
     assert.equal(rec.prompts.length, 0, "a count wakes no turn");
     const child = await rec.prompt("child", "бриф");
     assert.equal(child, "бриф", `the root's count rode into the subagent's prompt:\n${child}`);
-    const root = await rec.prompt("root", "go");
-    assert.match(root, /^go\n\n№7 «Стенд»: записей 1, тебе 0/, root);
+    const root = await rec.promptRaw("root", "go");
+    assert.match(root, /^go\n\n\[iskron\] №7 «Стенд»: записей 1, тебе 0/, root);
   } finally {
     await rec.stop();
   }
@@ -3021,6 +3030,7 @@ test("a parent moved with a satellite child: the old instance ends the child wit
     await until(() => A.synthetics.some((s) => s.sessionID === "root"), "the word in the parent");
     const toParent = A.synthetics.filter((s) => s.sessionID === "root");
     assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
+    assert.equal(toParent[0].marked, true, "the word to the parent carries the delivery's mark");
     assert.equal(toParent[0].resume, false, "it does not wake the parent");
     // queue в занятого родителя после его хода запускал ещё один ход (e2e: 14.217→14.229).
     assert.equal(toParent[0].delivery, "steer", "into the going turn, not one more after it");
@@ -3193,17 +3203,28 @@ test("list_changed in the SSE of the real bridge's answers reloads the plugin's 
 
 // ── commands ─────────────────────────────────────────────────────────────────
 
-test("every installed skill with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
+test("every skill of the delivery's set with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
   const dir = mkdtempSync(join(SANDBOX, "skills-"));
-  const skill = (id, head) => {
-    mkdirSync(join(dir, id));
-    const path = join(dir, id, "SKILL.md");
+  // Another delivery's set in its own root (#6815 item 5): its bridge skill carries its own bridge.
+  const other = mkdtempSync(join(SANDBOX, "other-skills-"));
+  const skill = (id, head, root = dir) => {
+    mkdirSync(join(root, id));
+    const path = join(root, id, "SKILL.md");
     writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
     return { id, name: id, description: `Дверь ${id}. Вторая фраза.`, path, content: "" };
   };
+  const carrier = (root, file) => {
+    const s = skill("establish-mcp", 'name: establish-mcp\ndescription: "мост"', root);
+    mkdirSync(join(root, "establish-mcp", "scripts"));
+    writeFileSync(join(root, "establish-mcp", "scripts", file), "");
+    return s;
+  };
   const skills = [
+    carrier(dir, "iskron.mjs"),
     skill("iskron", 'name: iskron\nslash: true\ndescription: "Дверь"'),
     skill("plain", 'name: plain\ndescription: "Без слеша"'),
+    carrier(other, "other.mjs"),
+    skill("alien", 'name: alien\nslash: true\ndescription: "Чужая дверь"', other),
     {
       id: "opencode",
       name: "opencode",
@@ -3214,7 +3235,11 @@ test("every installed skill with `slash: true` becomes a «/» command that load
   ];
   const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
   try {
-    assert.deepEqual([...rec.commands().keys()], ["iskron"]);
+    assert.deepEqual(
+      [...rec.commands().keys()],
+      ["iskron"],
+      "another delivery's skill is no command",
+    );
     const cmd = rec.commands().get("iskron");
     assert.equal(cmd.description, "Дверь iskron.");
     await cmd.execute({
@@ -6622,6 +6647,11 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
       assert.equal(rec.prompts[i].delivery, way, `${frame.id} must go ${way}`);
     }
     assert.match(rec.prompts[0].text, /^роль #48 \(@alari:sosed\)\n/);
+    assert.equal(
+      rec.prompts[0].marked,
+      true,
+      "the frame carries the delivery's mark (#6815 item 3)",
+    );
     assert.doesNotMatch(rec.prompts[0].text, /^№/, "a direct word is not a room word");
     assert.doesNotMatch(
       rec.prompts[1].text,

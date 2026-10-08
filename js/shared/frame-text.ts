@@ -1,4 +1,4 @@
-import { FRAME_TEXT, ROOM } from "../delivery/index.ts";
+import { FRAME_MARK, FRAME_TEXT, ROOM } from "../delivery/index.ts";
 import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { superseded } from "./keyfold.ts";
@@ -82,6 +82,9 @@ function tail(frame: Frame, withReply: boolean): string {
     parts.push(W().bodyRead(need(frame.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
+
+/** Text a plugin puts into the session: its first line carries the delivery's mark. */
+export const markFrame = (text: string): string => `${FRAME_MARK} ${text}`;
 
 /**
  * A standing frame, short, into the agent's turn — the same in pi, OpenCode and the

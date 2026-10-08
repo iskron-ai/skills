@@ -12,7 +12,8 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["node_modules"],
+    // Деревья гейта границы ядра — нарочно нарушающие куски, не модули.
+    ignores: ["node_modules", "tests/fixtures/core-gate/**"],
   },
   {
     files: ["**/*.{ts,mjs}"],

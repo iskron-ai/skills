@@ -174,10 +174,11 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Линт / формат / типы | `make lint`, `make format-check` (`make format` чинит), `make typecheck` (strict; расширение и плагин — против настоящих типов pi и OpenCode) |
 | Включить хук автосборки | `make hooks` (`core.hooksPath -> .githooks`) — не при занятом `core.hooksPath` (готчи #4522) |
 | Содержимое бандла | `unzip -l <name>.skill` |
-| Гейт CI локально | `make check` (= validate + check-bundles + check-surface + check-widgets + lint + format-check + typecheck + check-js + check-frozen + test) |
+| Гейт CI локально | `make check` (= validate + check-bundles + check-surface + check-widgets + check-core + lint + format-check + typecheck + check-js + check-frozen + test) |
 | Фронтматтер, обещанные файлы, имена скиллов | `make validate` (чистый Node) |
 | Сверить бандлы с исходниками | `make check-bundles` |
 | Сверить корпус со снимком поверхности | `make check-surface` (офлайн) |
+| Граница ядра моста | `make check-core` (офлайн, чистый Node): в `js/{bridge,shared,opencode,extension,watchdog,cli}` ни кириллицы, ни имени продукта, ни вызова `L(` — в тексте и в пути; `README.md` компонентов не в счёт |
 | Все пробы отгружаемого кода | `make test` (офлайн, против собранных выходов: фейк NKS + OAuth, подставные мост и сокет, фикстура роадмапа; CI — на Node 22; `make test-coverage` — с покрытием) |
 | Пробы по предметам | `make test-extension` (pi), `make test-opencode` (плагин OpenCode 2 против подставного контекста), `make test-codex` (структурная часть офлайн, тяжёлая — при валидаторе Codex), `make test-watchdog` (сторожа против фейка, закрывающего сокет кодом мёртвого токена), `make test-stand`, `make test-update` (под `ISKRON_BRIDGE_NO_UPDATE=1`) — все входят в `make test` |
 | Пробы моста под Bun OpenCode | `ISKRON_NODE=$(which opencode) BUN_BE_BUN=1 make test` — условие «Node не нужен» |
