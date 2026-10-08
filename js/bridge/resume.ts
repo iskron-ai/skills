@@ -17,7 +17,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { envName } from "../delivery/index.ts";
+import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
 import { sameDir as oneDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
@@ -339,7 +339,7 @@ export async function resumeBy(sel: ResumeSelector, register = true): Promise<Re
     }
     const lines = [back.word];
     if (register) {
-      const r = await callTool("iskron_channel", {
+      const r = await callTool(tool("channel"), {
         action: "register",
         realm: rec.realm,
         karta: rec.karta,
@@ -398,8 +398,8 @@ function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   return sel;
 }
 
-export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/resume";
-export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/check";
+export const isResumeCall = (msg: JsonRpcMessage): boolean => msg?.method === method("resume");
+export const isCheckCall = (msg: JsonRpcMessage): boolean => msg?.method === method("check");
 
 /** `iskron/resume {key?, cwd?, session?}` — запрос плагина: вернуть своё место с диска. */
 export async function runResume(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
@@ -441,7 +441,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
-  const board = await callTool("iskron_channel", { action: "list", realm: s.realm });
+  const board = await callTool(tool("channel"), { action: "list", realm: s.realm });
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = readBoard(board).entries.find(
@@ -466,7 +466,7 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       emit({
         jsonrpc: "2.0",
         method: "notifications/message",
-        params: { level: "warning", logger: "iskron-channel", data: { kind: "lost", text } },
+        params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text } },
       });
     }
     return reply(msg, {

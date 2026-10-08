@@ -1,6 +1,7 @@
 // Вызов тула сервера самим мостом — теми же вызовами, что и агент (stand.ts,
 // resume.ts): доска, connect, register. Ответ connect впитывается мостом так
 // же, как проксируемый (absorb.ts), а принятый register запоминается стоянием.
+import { tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
@@ -56,7 +57,7 @@ export async function resolveAgainstLed(realm: unknown): Promise<void> {
   const prim = state.standing;
   if (!prim || !ledKey() || String(realm ?? "").trim() === prim.realm) return;
   await resolveRealms([realm, prim.realm, ...state.places.map((p) => p.realm)], async () => {
-    const r = await callTool("iskron_realm", { action: "list" });
+    const r = await callTool(tool("realm"), { action: "list" });
     return r.isError ? null : r.text;
   });
 }
@@ -154,7 +155,7 @@ const refusal = (msg: JsonRpcMessage, text: string): JsonRpcMessage => ({
 
 /** Проксируемый connect/mint/register под другое место, когда мост ведёт своё, — отказ вслух вместо тихой подмены. */
 export function crossPlaceRefusal(msg: JsonRpcMessage): JsonRpcMessage | null {
-  if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
+  if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
   const a = msg.params.arguments ?? {};
   if (!["connect", "mint", "register"].includes(String(a.action))) return null;
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
@@ -204,17 +205,17 @@ async function ask(
 
 /** connect и mint места — под намерением до записи держания включительно (taking.ts). */
 export const callTool = (name: string, args: Record<string, unknown>): Promise<Answer> =>
-  name === "iskron_channel" ? takingSeat(args, () => answer(name, args)) : answer(name, args);
+  name === tool("channel") ? takingSeat(args, () => answer(name, args)) : answer(name, args);
 
 async function answer(name: string, args: Record<string, unknown>): Promise<Answer> {
   let { msg, got } = await ask(name, args);
   // Гонка открытия места (409 без rule, refusal.ts) — register ещё раз, один.
-  if (name === "iskron_channel" && args.action === "register" && openedConcurrently(got))
+  if (name === tool("channel") && args.action === "register" && openedConcurrently(got))
     ({ msg, got } = await ask(name, args));
   if (!got) return { text: L("ответа нет", "no reply"), isError: true };
   const structured = structuredOf(got);
   const refusal = refusalOf(got);
-  if (name === "iskron_channel") {
+  if (name === tool("channel")) {
     noteLocaleEcho(args, replyText(got), structured);
     if (args.action === "register") noteStanding(msg, got);
     if (args.action === "connect") got = absorbChannelReply(msg, got);

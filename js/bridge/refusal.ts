@@ -1,6 +1,7 @@
 // Отказ api как данные (граф nks-dev: #6637): `_meta["iskron/refusal"]` =
 // {rule, status, data} на отказе iskron_channel и iskron_admin — правило
 // ProblemDetail, его статус и data без секретов. Нет его — потребитель судит прозой.
+import { SERVER_PROTOCOL } from "../delivery/index.ts";
 import { is, isObj } from "./fields.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
@@ -13,7 +14,7 @@ export interface Refusal {
 
 /** `_meta["iskron/refusal"]` отказа по форме, иначе null. */
 export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
-  const r: unknown = reply?.result?._meta?.["iskron/refusal"];
+  const r: unknown = reply?.result?._meta?.[SERVER_PROTOCOL.refusal];
   if (!isObj(r) || !is.str(r.rule) || !is.num(r.status)) return null;
   return {
     ...(typeof r.rule === "string" ? { rule: r.rule } : {}),

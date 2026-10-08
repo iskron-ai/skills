@@ -11,6 +11,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
+import { BRIDGE_NAME, tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
@@ -82,8 +83,6 @@ const R = scoped(() => ({ again: false }));
 /** Имя места, которое ведёт мост, — для совета в отказе «стояние одно на мост». */
 const ledName = (): string => state.standing?.name ?? "";
 
-export { STAND_TOOL_NAME, standTool } from "./standtool.ts";
-
 const isDirectory = (p: string): boolean => {
   try {
     return isAbsolute(p) && statSync(p).isDirectory();
@@ -93,17 +92,17 @@ const isDirectory = (p: string): boolean => {
 };
 
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
-  msg?.method === "tools/call" && msg?.params?.name === "iskron_stand";
+  msg?.method === "tools/call" && msg?.params?.name === tool("stand");
 
 /** Место отняли (evicted.ts, #6706): встать рядом на имя.N тем же ходом, что iskron_stand с этим именем. */
 wireEviction(async (place, cwd) => {
   const r = await serialized(() =>
     runStand({
       jsonrpc: "2.0",
-      id: "iskron-bridge-evicted",
+      id: `${BRIDGE_NAME}-evicted`,
       method: "tools/call",
       params: {
-        name: "iskron_stand",
+        name: tool("stand"),
         arguments: {
           realm: place.realm,
           karta: String(place.karta),
@@ -230,10 +229,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
   const here = () => placeFields({ realm, karta, name }); // поля места — каждой регистрации (#5174)
   const register = () =>
-    call("iskron_channel", { action: "register", realm, karta, name, ...here() });
+    call(tool("channel"), { action: "register", realm, karta, name, ...here() });
 
   // 1. Доска — до любой перемены.
-  const board = await call("iskron_channel", { action: "list", realm });
+  const board = await call(tool("channel"), { action: "list", realm });
   if (board.isError) {
     lines.push(SW.boardUnread(short(board.text)));
     return done(true);
@@ -401,12 +400,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     Object.assign(args, here());
     if (typeof a.mute_siblings === "boolean") args.mute_siblings = a.mute_siblings;
     if (sat) args.ttl_seconds = SATELLITE_TTL_S; // приглашения спутнику не переживают прогон (#6001, условие а)
-    let c = await call("iskron_channel", args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
+    let c = await call(tool("channel"), args); // новый сокет держатель берёт сам и заново: кольцо кадров чистое
     if (sat && c.isError && ttlRefused(c)) {
       // Разброс окна держит контур; вне его — место всё же нужно прогону, окно — умолчание контура.
       extra.push(SW.ttlRefused(SATELLITE_TTL_S, short(c.text, 120)));
       delete args.ttl_seconds;
-      c = await call("iskron_channel", args);
+      c = await call(tool("channel"), args);
     }
     if (c.isError) {
       lines.push(SW.refused("connect", short(c.text)));

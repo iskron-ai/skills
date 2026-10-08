@@ -29,7 +29,7 @@
 import { createInterface } from "node:readline";
 import { PassThrough } from "node:stream";
 
-import { envName } from "../delivery/index.ts";
+import { envName, ID_PREFIX, method } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import {
   connectSeam,
@@ -144,7 +144,7 @@ export function thinMain(argv: string[]): void {
       }
       const f = flights.get(k);
       flights.delete(k);
-      if (f?.msg.method === "iskron/suspend" && msg.result?.suspended === true) paused = true;
+      if (f?.msg.method === method("suspend") && msg.result?.suspended === true) paused = true;
       if (word && f?.msg.method === "tools/call" && Array.isArray(msg.result?.content)) {
         msg.result.content.push({ type: "text", text: word });
         word = null;
@@ -197,7 +197,7 @@ export function thinMain(argv: string[]): void {
   // места — потеря держимого места открывается ответом iskron/resume, позже
   // точки переподхвата.
   const askRealms = () => {
-    const m = realmIds.ask(places.lostCount(), () => `iskron-thin-realms-${++replays}`);
+    const m = realmIds.ask(places.lostCount(), () => `${ID_PREFIX}thin-realms-${++replays}`);
     if (!m) return;
     if (mode === "daemon" && link) toDaemon(link, m);
     else if (mode === "local") toLocal(m);
@@ -261,7 +261,7 @@ export function thinMain(argv: string[]): void {
   const replay = (send: (m: JsonRpcMessage) => void) => {
     if (!initCopy || !initSent) return;
     if (!queue.some((m) => m.method === "initialize")) {
-      const id = `iskron-thin-replay-${++replays}`;
+      const id = `${ID_PREFIX}thin-replay-${++replays}`;
       replayIds.add(key(id));
       closeGate(key(id));
       send({ ...initCopy, id });
@@ -282,12 +282,12 @@ export function thinMain(argv: string[]): void {
     if (held && paused)
       log(`the session is new — its place ${held.key} is paused and waits on its pause record`);
     else if (held) {
-      const id = `iskron-thin-resume-${++replays}`;
+      const id = `${ID_PREFIX}thin-resume-${++replays}`;
       replayIds.add(key(id));
       resuming.set(key(id), held);
       closeGate(key(id));
       log(`the session is new — bringing its place ${held.key} back from the hold record`);
-      send({ jsonrpc: "2.0", id, method: "iskron/resume", params: { key: held.key } });
+      send({ jsonrpc: "2.0", id, method: method("resume"), params: { key: held.key } });
     }
   };
 

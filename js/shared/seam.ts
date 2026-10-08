@@ -28,7 +28,7 @@
 import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
 
-import { ENV_PREFIX, envName } from "../delivery/index.ts";
+import { ENV_PREFIX, envName, PRODUCT } from "../delivery/index.ts";
 
 /** Версия провода. Разные версии не говорят: демон отвечает refuse, тонкий мост идёт полным. */
 export const SEAM_PROTOCOL = 1;
@@ -54,6 +54,8 @@ export interface RpcMessage {
 export interface SeamHello {
   t: "hello";
   seam: number;
+  /** The thin bridge's delivery; absent from older thin bridges of this delivery. */
+  product?: string;
   /** Сборка тонкого моста, `vX.Y.Z+хеш`. */
   build: string;
   /** Путь файла тонкого моста — какой копией запустил харнес. */
@@ -206,6 +208,7 @@ export function helloFrame(o: {
   return {
     t: "hello",
     seam: SEAM_PROTOCOL,
+    product: PRODUCT,
     build: o.build,
     path: o.path,
     argv: o.argv,
@@ -224,6 +227,8 @@ export function checkHello(f: unknown): string | null {
   if (!h || h.t !== "hello") return "the first frame is not a hello";
   if (h.seam !== SEAM_PROTOCOL)
     return `seam protocol ${String(h.seam)} is not spoken here (this side speaks ${SEAM_PROTOCOL})`;
+  if (h.product !== undefined && h.product !== PRODUCT)
+    return `the thin bridge belongs to the delivery ${String(h.product)} (this side is ${PRODUCT})`;
   if (!Array.isArray(h.argv) || typeof h.cwd !== "string" || typeof h.pid !== "number")
     return "the hello lacks argv, cwd or pid";
   return null;

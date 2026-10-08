@@ -8,6 +8,7 @@
 // @owner/slug с разрешением rN и слага; вызов без графа свободен, чужой владелец
 // того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
 // с просьбой полного адреса (#5838), не текст чужой потери.
+import { LOGGERS, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -16,8 +17,7 @@ import { type JsonRpcMessage } from "./types.ts";
 export function placeWord(
   msg: JsonRpcMessage,
 ): { kind: string; key?: string; realm: string } | null {
-  if (msg.method !== "notifications/message" || msg.params?.logger !== "iskron-channel")
-    return null;
+  if (msg.method !== "notifications/message" || msg.params?.logger !== LOGGERS.channel) return null;
   const data = msg.params?.data as
     { kind?: unknown; key?: unknown; place?: { realm?: unknown } } | undefined;
   const realm = typeof data?.place?.realm === "string" ? data.place.realm.trim() : "";
@@ -55,7 +55,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
         method: "notifications/message",
         params: {
           level: "warning",
-          logger: "iskron-channel",
+          logger: LOGGERS.channel,
           data: { kind: "lost", key: k, text },
         },
       });
@@ -106,7 +106,7 @@ export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) =>
      * просьбой полного адреса (#5838): гадать нельзя, а пропустить — записать без автора.
      */
     refusal(msg: JsonRpcMessage): string | null {
-      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === "iskron_stand")
+      if (!lost.size || msg.method !== "tools/call" || msg.params?.name === tool("stand"))
         return null;
       const r = msg.params?.arguments?.realm;
       if (typeof r !== "string" || !r.trim()) return null; // вызов без графа — не в потерянный граф
@@ -139,7 +139,7 @@ export function realmListAsk() {
         jsonrpc: "2.0",
         id: id(),
         method: "tools/call",
-        params: { name: "iskron_realm", arguments: { action: "list" } },
+        params: { name: tool("realm"), arguments: { action: "list" } },
       };
       asked.add(JSON.stringify(call.id));
       return call;

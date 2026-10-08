@@ -18,6 +18,7 @@
 // setup входа не ждёт (тулы из прошлого списка сразу, служебный iskron_bridge
 // всегда), а список с сервера приходит фоном и подменяется через
 // ctx.tool.reload() — сколько бы ни длился вход человека.
+import { LOGGERS } from "../delivery/index.ts";
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import { createAdopt } from "./adopt.ts";
 import {
@@ -107,7 +108,7 @@ export async function setupTools(
       (line) => say(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
         if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
-        if (method !== "notifications/message" || params?.logger !== "iskron-channel") return;
+        if (method !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
         const kind = params?.data?.kind;
         // holding питается наблюдаемым событием — словом моста «держу» и hello,
         // а не attached локального сокета, которого у плагина нет (#5140).
@@ -133,7 +134,7 @@ export async function setupTools(
         const text =
           `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). ` +
           "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.";
-        const lost = { logger: "iskron-channel", data: { kind: "lost", text } };
+        const lost = { logger: LOGGERS.channel, data: { kind: "lost", text } };
         onChannel(slot.session, lost, !!slot.child); // слух ребёнка — слово только ему (#6625)
       },
       args,
@@ -155,9 +156,9 @@ export async function setupTools(
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
-      onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
+      onChannel(root, { logger: LOGGERS.channel, data: { kind: "resumed", text } }, !!child),
     lost: (root, text) =>
-      onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text } }),
+      onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,

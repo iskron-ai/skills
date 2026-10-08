@@ -1,8 +1,9 @@
 // Описание тула моста iskron_stand — то, что харнесс видит в tools/list
 // (moment.ts вставляет его в список сервера); исполняет тул stand.ts.
+import { tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 
-export const STAND_TOOL_NAME = "iskron_stand";
+export const STAND_TOOL_NAME = tool("stand");
 
 const str = (description: string) => ({ type: "string", description });
 

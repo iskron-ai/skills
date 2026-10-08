@@ -22,7 +22,7 @@ import { dirname } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { envName } from "../delivery/index.ts";
+import { envName, LOGGERS } from "../delivery/index.ts";
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { HARNESS_VERSION_ENV, PI_CLIENT, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
@@ -129,7 +129,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       (line) => notify(`Искрон/мост: ${line}`, "info"),
       (method, params) => {
         // Кадры стояния мост шлёт стандартным уведомлением с logger iskron-channel.
-        if (method === "notifications/message" && params?.logger === "iskron-channel") {
+        if (method === "notifications/message" && params?.logger === LOGGERS.channel) {
           const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
           if (typeof name === "string" && name) heldName = name;
           onChannel(params);

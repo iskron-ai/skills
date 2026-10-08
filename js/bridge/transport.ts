@@ -1,3 +1,4 @@
+import { BRIDGE_NAME } from "../delivery/index.ts";
 import { withFieldsAsked } from "../shared/fields.ts";
 import { lang } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -304,7 +305,7 @@ export async function reinitialize(): Promise<void> {
       log("upstream session lost — re-initializing transparently");
       state.sessionId = null;
       state.sessionToken = null;
-      const id = `iskron-bridge-reinit-${++state.reinitCounter}`;
+      const id = `${BRIDGE_NAME}-reinit-${++state.reinitCounter}`;
       let result: JsonRpcMessage | null = null;
       await post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
         if (m.id === id) result = m;

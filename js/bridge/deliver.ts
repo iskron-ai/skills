@@ -1,4 +1,4 @@
-import { envName } from "../delivery/index.ts";
+import { BRIDGE_NAME, envName, tool } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { scoped } from "../shared/scope.ts";
 import {
@@ -127,7 +127,7 @@ const H = scoped(() => ({ listing: 0 })); // своих tools/list харнес�
 onReinitialized(() => {
   if (H.listing > 0) return;
   return recheckTools(async () => {
-    const id = `iskron-bridge-tools-${++state.reinitCounter}`;
+    const id = `${BRIDGE_NAME}-tools-${++state.reinitCounter}`;
     let got: JsonRpcMessage | null = null;
     await post({ jsonrpc: "2.0", id, method: "tools/list", params: {} }, (m) => {
       if (m.id === id) got = m;
@@ -307,11 +307,11 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       heldReply = null;
       // Стояние одно на мост: connect/mint/register под другое место при ведомом
       // своём — отказ вслух, на сервер не уходит (#5154).
-      if (hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel")
+      if (hasId && msg.method === "tools/call" && msg.params?.name === tool("channel"))
         await resolveAgainstLed(msg.params.arguments?.realm); // графы сличаются в одной форме (#5838)
       // Мост-спутник: сырые ходы над местом — только своего .sub-N (satellite.ts).
       const satWord =
-        hasId && msg.method === "tools/call" && msg.params?.name === "iskron_channel"
+        hasId && msg.method === "tools/call" && msg.params?.name === tool("channel")
           ? satelliteChannelRefusal(msg.params.arguments ?? {})
           : null;
       const cross = satWord
@@ -332,7 +332,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       const takes =
         hasId &&
         msg.method === "tools/call" &&
-        msg.params?.name === "iskron_channel" &&
+        msg.params?.name === tool("channel") &&
         ["connect", "mint", "register"].includes(String(ch.action));
       // Граф своего места — его написанием (hearing.ts); место, которое слушает другая сессия,
       // сырым ходом не берётся и им не подписываются (#6706).
@@ -351,16 +351,16 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       expectOwnRevoke(msg); // закрытие 4001 обгонит ответ — мост должен знать, что снимает сам
       if (
         msg.method === "tools/call" &&
-        msg.params?.name === "iskron_channel" &&
+        msg.params?.name === tool("channel") &&
         msg.params.arguments
       )
         msg.params.arguments = withPlaceFields(msg.params.arguments); // поля места и в пяти вызовах (#5174)
       // Сырой connect или mint — под намерением до записи держания (taking.ts, #6706).
       endTaking =
-        msg.params?.name === "iskron_channel" ? beginTaking(msg.params.arguments ?? {}) : null;
+        msg.params?.name === tool("channel") ? beginTaking(msg.params.arguments ?? {}) : null;
       await post(msg, forward);
       const held = heldReply as JsonRpcMessage | null;
-      if (held && msg.params?.name === "iskron_channel" && msg.params.arguments)
+      if (held && msg.params?.name === tool("channel") && msg.params.arguments)
         noteLocaleEcho(msg.params.arguments, replyText(held), structuredOf(held));
       if (held) {
         if (state.standing && isUnattributed(held)) {

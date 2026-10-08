@@ -23,6 +23,7 @@ import {
   BRIDGE_NAME,
   BRIDGE_SKILL,
   envName,
+  LOGGERS,
   PLUGIN_COPY_FILE,
   PLUGIN_FILE,
   SKILL_SET,
@@ -360,7 +361,7 @@ export function tellNotice(notice: string): void {
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
-    params: { level: "warning", logger: "iskron-bridge", data: { kind: "stale", text: notice } },
+    params: { level: "warning", logger: LOGGERS.bridge, data: { kind: "stale", text: notice } },
   });
 }
 

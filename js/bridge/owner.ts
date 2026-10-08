@@ -7,7 +7,7 @@
 // Слово человека — настройка его окружения: ISKRON_BRIDGE_OWNER_ROLE=1 у моста
 // харнеса, не аргумент вызова агента. «me» и «realm-owner» — роль самого человека:
 // та же граница. Род не прочитался — отказ с причиной, не обход.
-import { envName } from "../delivery/index.ts";
+import { envName, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { callTool, short } from "./call.ts";
@@ -58,7 +58,7 @@ export async function ownerRefusal(realm: unknown, karta: unknown): Promise<stri
  * род не прочитан (строка — причина): отказ «повтори», без отката на прозу шапки узла.
  */
 async function ownersOf(realm: unknown, k: string): Promise<boolean | string> {
-  const s = await callTool("iskron_search", {
+  const s = await callTool(tool("search"), {
     realm,
     q: "",
     node_type: "karta",

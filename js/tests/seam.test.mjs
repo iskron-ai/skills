@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  checkHello,
   connectSeam,
   helloFrame,
   patShaOf,
@@ -397,4 +398,19 @@ test("a seam closed without bye ends the session after the grace; a reattach wit
     },
     { graceMs: 300 },
   );
+});
+
+test("the hello names its product: another delivery's thin bridge is refused, an older one without the name is not", () => {
+  const own = helloFrame({ build: "b", path: "/f", argv: [] });
+  assert.equal(own.product, "iskron", "the hello carries this delivery's product");
+  assert.equal(checkHello(own), null, "a hello of this product is accepted");
+  const { product: _, ...older } = own;
+  assert.equal(
+    checkHello(older),
+    null,
+    "a hello without product (an older thin bridge) is accepted",
+  );
+  const other = checkHello({ ...own, product: "other" });
+  assert.ok(other, "a hello of another product is refused");
+  assert.match(other, /other/);
 });

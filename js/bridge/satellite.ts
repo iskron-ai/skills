@@ -30,7 +30,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { envName } from "../delivery/index.ts";
+import { envName, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { isSatelliteOf, satelliteName, SUB_RE } from "../shared/satname.ts";
 import { scoped, sessionPid } from "../shared/scope.ts";
@@ -362,7 +362,7 @@ export async function satelliteGate(
         "Refused (bridge): the bridge derives the satellite's name — name, take and room do not go with satellite_of.",
       ),
     );
-  const b = await call("iskron_channel", { action: "list", realm });
+  const b = await call(tool("channel"), { action: "list", realm });
   if (b.isError)
     return refuse(
       L(
@@ -386,7 +386,7 @@ export async function satelliteGate(
     );
   // id места печатает только доска одной роли (list с karta), последней строкой под местом.
   if (!pick.callerId) {
-    const k = await call("iskron_channel", { action: "list", realm, karta: pick.callerKarta });
+    const k = await call(tool("channel"), { action: "list", realm, karta: pick.callerKarta });
     if (!k.isError)
       pick.callerId = readBoard(k).entries.find((e) => e.address === pick.caller)?.id ?? null;
   }

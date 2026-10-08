@@ -8,6 +8,7 @@
 // слушает никто, — не подписываться: доска не прочлась или читает его слушающим
 // (в окне сразу после ухода это может быть и свой закрытый сокет) — отказ
 // вслух; вернуть своё или встать рядом — iskron_stand. Отнятое (4000) — evicted.ts.
+import { tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { askedHearing } from "./hearing.ts";
 import { awaitHello, isParked, ledKey } from "./hold.ts";
@@ -27,9 +28,9 @@ const UNSIGNED = new Set(["list", "leave", "close", "revoke", "?"]);
  * подписывает (не вызов тула, iskron_stand, неподписывающий ход канала, нет графа).
  */
 export function signedRealm(msg: JsonRpcMessage): string | null {
-  if (msg?.method !== "tools/call" || msg.params?.name === "iskron_stand") return null;
+  if (msg?.method !== "tools/call" || msg.params?.name === tool("stand")) return null;
   const a = msg.params?.arguments ?? {};
-  if (msg.params?.name === "iskron_channel" && UNSIGNED.has(String(a.action))) return null;
+  if (msg.params?.name === tool("channel") && UNSIGNED.has(String(a.action))) return null;
   return typeof a.realm === "string" ? a.realm : null;
 }
 

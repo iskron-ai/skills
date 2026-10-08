@@ -11,7 +11,7 @@
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";
 
-import { envName } from "../delivery/index.ts";
+import { envName, ID_PREFIX } from "../delivery/index.ts";
 import { bindScope, newScope, runIn, type Scope } from "../shared/scope.ts";
 import { isSessionEnvKey, patShaOf } from "../shared/seam.ts";
 import { CFG, readArgs, setConfig } from "./config.ts";
@@ -142,7 +142,7 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
       }
       // Последняя работа агента (work.ts, хартбит места #6510): только вызов тула
       // агентом — не служебные ходы плагина (iskron/check, iskron/usage) и моста.
-      if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith("iskron-"))
+      if (msg.method === "tools/call" && !String(msg.id ?? "").startsWith(ID_PREFIX))
         noteAgentWork();
       // Конвейерный клиент (скрипт, сторож, отправитель из оболочки) шлёт
       // initialized и первый вызов, не дождавшись ответа на initialize; сервер без

@@ -6,11 +6,13 @@
 // пишущим тулам строку момента. Строка не пересказывает метод: она называет
 // скилл и три вещи, которые чаще всего теряются. Без ссылок на узлы графа —
 // у читающего харнеса графа может не быть.
+import { tool, TOOL_PREFIX } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
-import { STAND_TOOL_NAME, standTool } from "./stand.ts";
+import { escapeRe } from "../shared/regex.ts";
+import { STAND_TOOL_NAME, standTool } from "./standtool.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-const WRITE_TOOL = /^iskron_(add_[a-z_]+|batch)$/;
+const WRITE_TOOL = new RegExp(`^${escapeRe(TOOL_PREFIX)}(add_[a-z_]+|batch)$`);
 
 // Та же строка стоит в двери iskron (карта моментов).
 const jsonLine = (): string =>
@@ -47,7 +49,7 @@ export function annotateToolList(reply: JsonRpcMessage): void {
   // Строки моста — в НАЧАЛО описания: Claude Code режет описание тула до 2048
   // знаков, а описания пишущих тулов сервера длиннее — в хвосте строку не видно.
   for (const t of tools) {
-    if (t && t.name === "iskron_channel" && typeof t.description === "string") {
+    if (t && t.name === tool("channel") && typeof t.description === "string") {
       if (!t.description.includes(leaveLine()))
         t.description = `${leaveLine()}\n\n${t.description}`;
       if (!t.description.includes(statusLine()))

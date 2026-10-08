@@ -10,6 +10,7 @@
 // На конце мост ребёнка гасится (выход из дел и снятие места — его, bridge/session.ts),
 // итог — синтетикой родителю. Договор и слова — leadwords.ts.
 
+import { tool } from "../delivery/index.ts";
 import { createCascade } from "./cascade.ts";
 import * as W from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
@@ -117,16 +118,16 @@ export function createLeads(d: W.LeadDoors): W.Leads {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
+      const room = name === tool("case") || name === tool("room") ? roomNo(args.room) : null;
       if (args.action === "join" && room) l.room ??= room;
       if (args.action !== "leave") return;
-      if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
+      if (name === tool("channel")) leave(child, l, "ушёл с места по исходу");
       else if (room === "") leave(child, l, "ушёл из дел по исходу");
       else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
-      if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
+      if (name !== tool("channel") || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || (await l.parent) !== caller) continue;
         if (d.ownPlace(child)) return null; // не спутник — revoke идёт мостом запустившего как есть

@@ -2,16 +2,17 @@
 // корня (граф nks-dev: #6002): держит корень место — мост ребёнка поднимается с
 // --satellite, и его iskron_stand встаёт местом «место корня».sub-N в роли,
 // которую назвал агент (не назвал — роль корня).
+import { tool } from "../delivery/index.ts";
 import { takingArgs } from "../shared/busyargs.ts";
 import { isSatelliteOf } from "../shared/satname.ts";
 
 /** Тул моста, которому плагин подставляет директорию сессии (cwd) для вывода имени. */
-export const STAND_TOOL = "iskron_stand";
+export const STAND_TOOL = tool("stand");
 
 /** Вызов, чей успех означает: сессия стоит (мост держит место либо привязан к нему). */
 export function standsBy(name: string, args: Record<string, unknown>): boolean {
   if (name === STAND_TOOL) return true;
-  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
+  return name === tool("channel") && ["connect", "mint", "register"].includes(String(args.action));
 }
 
 /**

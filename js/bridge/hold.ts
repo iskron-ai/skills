@@ -12,6 +12,7 @@
 // Сокет один на канал, а канал держит места в нескольких графах (#5838):
 // места рядом с основным — places.ts, кадр идёт к двери места своего графа.
 // Занятость делатель пишет в файл рядом с сокетом (#4231); публикует мост.
+import { LOGGERS } from "../delivery/index.ts";
 import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
 import { deliveryKeys, noteSeen } from "../shared/seen.ts";
@@ -202,7 +203,7 @@ export function notify(level: "info" | "warning" | "error", data: ChannelEvent):
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
-    params: { level, logger: "iskron-channel", data },
+    params: { level, logger: LOGGERS.channel, data },
   });
 }
 

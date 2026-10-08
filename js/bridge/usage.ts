@@ -6,7 +6,7 @@
 // снимок уходит в обход порога перед уходом с места и перед его закрытием:
 // по закрытому месту запись — 404, и снимок после закрытия не ляжет.
 // Claude Code и Codex цифр не дают — их месту usage не пишется вовсе.
-import { envName } from "../delivery/index.ts";
+import { envName, method } from "../delivery/index.ts";
 import { HOSTED_CLIENTS } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -25,7 +25,7 @@ const FLUSH_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1_500;
 
 const U = scoped(() => ({ published: null as Usage | null, latest: null as Usage | null, at: 0 }));
 
-export const isUsageCall = (msg: JsonRpcMessage): boolean => msg?.method === "iskron/usage";
+export const isUsageCall = (msg: JsonRpcMessage): boolean => msg?.method === method("usage");
 
 /** Место, которому идёт расход: держимое, не оставленное уходом. */
 export function usagePlace(): Standing | null {

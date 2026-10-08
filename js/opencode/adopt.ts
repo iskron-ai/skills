@@ -5,6 +5,7 @@
 // его мост и снял место (OpenCode детей с родителем не переносит). Здесь его запись —
 // громкий отказ, не слот корня: она ушла бы местом родителя (граф nks-dev: #6550,
 // правила 1-2; #6361); его revoke отсюда не посылается — снимать уже нечего.
+import { tool } from "../delivery/index.ts";
 import type { Keeper } from "./keep.ts";
 import { takeLostMarker } from "./marker.ts";
 import type { Home, LostEntry } from "./records.ts";
@@ -54,7 +55,7 @@ export function createAdopt(d: AdoptDoors) {
     /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
     revoked(name: string, args: Record<string, unknown>): string | null {
       const s = String(args.standing ?? "").trim();
-      if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
+      if (name !== tool("channel") || args.action !== "revoke" || !s) return null;
       for (const n of moved.keys())
         if (s === n || s.endsWith(`:${n}`))
           return (

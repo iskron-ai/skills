@@ -10,6 +10,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
@@ -69,7 +70,7 @@ export async function seatRealm(given: unknown, asked: unknown): Promise<string>
   await resolveAgainstLed(realm); // графы сличаются в одной форме @owner/slug (#5838)
   if (!realm || !known.length || known.includes(realm)) return realm;
   await resolveRealms([realm, ...known], async () => {
-    const r = await call("iskron_realm", { action: "list" });
+    const r = await call(tool("realm"), { action: "list" });
     return r.isError ? null : r.text;
   });
   return known.find((r) => sameRealm(r, realm)) ?? realm;
@@ -129,7 +130,7 @@ export async function askedHearing(
   name: string,
 ): Promise<AskedHearing> {
   if (await heldLocallyByOther(realm, karta, name)) return "other";
-  const b = await call("iskron_channel", { action: "list", realm }).catch(() => null);
+  const b = await call(tool("channel"), { action: "list", realm }).catch(() => null);
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }
 
@@ -140,7 +141,7 @@ export async function askedHearing(
  * у чужого встанет рядом.
  */
 export async function rawSeatRefusal(msg: JsonRpcMessage): Promise<string | null> {
-  if (msg?.method !== "tools/call" || msg.params?.name !== "iskron_channel") return null;
+  if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
   const a = msg.params.arguments ?? {};
   const action = String(a.action);
   if (!["connect", "mint", "register"].includes(action)) return null;

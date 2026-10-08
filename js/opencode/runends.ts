@@ -3,15 +3,11 @@
 // экземпляра плагина, — и без пометки его следующий вызов ушёл бы мостом корня:
 // запись подписалась бы местом запустившего, а leave дела вывел бы из дела его
 // самого. Пометка живёт в памяти плагина до нового iskron_stand либо до удаления сессии.
+import { tool } from "../delivery/index.ts";
 import { type Place, STAND_TOOL } from "./satellite.ts";
 
 /** Тулы, которые кончившийся ребёнок ведёт мостом корня целиком: только читают. */
-const READ_TOOLS = new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search",
-]);
+const READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
 
 /**
  * Читающие действия тулов, у которых есть и пишущие: они ничего не подписывают
@@ -21,14 +17,14 @@ const READ_TOOLS = new Set([
  */
 const CASE_READS = new Set(["read", "history", "mine", "at"]);
 const READ_ACTIONS: Record<string, Set<string>> = {
-  iskron_case: CASE_READS,
-  iskron_room: CASE_READS, // прежнее имя тула дел
-  iskron_channel: new Set(["list", "sessions", "history"]),
-  iskron_realm: new Set(["list"]),
-  iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
-  iskron_me: new Set(["whoami", "orgs", "kartas", "usage"]),
-  iskron_history: new Set(["realm", "node", "delta"]),
-  iskron_admin: new Set([
+  [tool("case")]: CASE_READS,
+  [tool("room")]: CASE_READS, // прежнее имя тула дел
+  [tool("channel")]: new Set(["list", "sessions", "history"]),
+  [tool("realm")]: new Set(["list"]),
+  [tool("org")]: new Set(["list", "get", "realms", "list_members", "list_grants"]),
+  [tool("me")]: new Set(["whoami", "orgs", "kartas", "usage"]),
+  [tool("history")]: new Set(["realm", "node", "delta"]),
+  [tool("admin")]: new Set([
     "list_members",
     "access",
     "search_users",
@@ -59,7 +55,7 @@ export const readsOnly = (name: string, args: Record<string, unknown>, asks: boo
  * курсор КОРНЯ, и его новости ушли бы непрочитанными. Аргументы правятся на месте.
  */
 const asChildRead = (name: string, args: Record<string, unknown>): void => {
-  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+  if ((name === tool("case") || name === tool("room")) && args.action === "history")
     args.keep_cursor = true;
 };
 
@@ -69,10 +65,10 @@ const asChildRead = (name: string, args: Record<string, unknown>): void => {
  * но лишь у тула, объявившего action (asks, как в readsOnly): у прочих это вызов.
  */
 const IDENTITY: Record<string, Set<string> | "all"> = {
-  iskron_me: "all",
-  iskron_admin: new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  [tool("me")]: "all",
+  [tool("admin")]: new Set(["search_users", "access", "list_members", "user_webhooks"]),
   // Организации человека и членство в них — по описанию тула, все его чтения.
-  iskron_org: new Set(["list", "get", "realms", "list_members", "list_grants"]),
+  [tool("org")]: new Set(["list", "get", "realms", "list_members", "list_grants"]),
 };
 function identityRefusal(
   name: string,

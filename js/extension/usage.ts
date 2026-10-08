@@ -6,6 +6,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
 
 const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -36,7 +37,7 @@ export function setupUsage(pi: ExtensionAPI, live: () => Bridge | null): void {
     if (typeof model === "string" && model) p.model = model;
     if (typeof c?.tokens === "number") p.context = c.tokens;
     if (n(c?.contextWindow)) p.window = c.contextWindow;
-    await bridge.request("iskron/usage", p, { timeoutMs: 10_000 }).catch(() => {});
+    await bridge.request(method("usage"), p, { timeoutMs: 10_000 }).catch(() => {});
   });
 }
 

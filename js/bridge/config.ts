@@ -8,6 +8,8 @@ import {
   envName,
   HOME_DIR,
   SERVER_URLS,
+  tool,
+  TOOL_PREFIX,
 } from "../delivery/index.ts";
 import { setServerLang } from "../shared/lang.ts";
 import { envOf, scoped } from "../shared/scope.ts";
@@ -133,7 +135,7 @@ export function readArgs(argv: string[]): Config {
         log("--tools needs a comma-separated list of tool names");
         process.exit(2);
       }
-      cfg.tools = new Set(names.map((n) => (n.startsWith("iskron_") ? n : `iskron_${n}`)));
+      cfg.tools = new Set(names.map((n) => (n.startsWith(TOOL_PREFIX) ? n : tool(n))));
     } else if (a === "--auth-dir") cfg.authDir = argv[++i];
     else if (a === "--client-name") cfg.clientName = argv[++i];
     else if (a === "--no-browser") cfg.noBrowser = true;

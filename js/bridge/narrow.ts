@@ -14,6 +14,7 @@
 //
 // Выгрузка снимка поверхности (`make surface`, клиент export-surface) получает
 // сырой список: снимок — поверхность сервера, по нему фейк NKS режет аргументы.
+import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { SURFACE_CLIENT } from "../shared/clients.ts";
 import { L } from "../shared/lang.ts";
 import { CFG } from "./config.ts";
@@ -49,8 +50,8 @@ export function toolSet(): Set<string> | null {
  * через вход, этого сужения они не встречают.
  */
 const ownRealmList = (msg: JsonRpcMessage): boolean =>
-  String(msg.id ?? "").startsWith("iskron-thin-realms-") &&
-  msg.params?.name === "iskron_realm" &&
+  String(msg.id ?? "").startsWith(`${ID_PREFIX}thin-realms-`) &&
+  msg.params?.name === tool("realm") &&
   String(msg.params?.arguments?.action ?? "") === "list";
 
 /** Отказ вслух на вызов тула вне набора: харнес его не видел, но имя пришло. */
@@ -133,7 +134,7 @@ export function narrowToolList(reply: JsonRpcMessage): JsonRpcMessage {
   const fields = harnessAsksFields();
   const shown = (tools as Tool[])
     .filter((t) => !set || set.has(String(t?.name)))
-    .map((t) => (t?.name === "iskron_channel" ? channelForHarness(t) : t))
+    .map((t) => (t?.name === tool("channel") ? channelForHarness(t) : t))
     .map((t) => (fields || !t || !("outputSchema" in t) ? t : withoutSchema(t)));
   return { ...reply, result: { ...reply.result, tools: shown } };
 }

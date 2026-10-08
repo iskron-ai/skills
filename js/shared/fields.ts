@@ -6,8 +6,10 @@
 // просил он сам. Плагин OpenCode (поля — когда текста нет, bridge-client.ts
 // resultToContent) и расширение pi (details тула) объявляют ключ мосту.
 
+import { SERVER_PROTOCOL } from "../delivery/index.ts";
+
 /** Ключ capability полей ответа. */
-export const FIELDS_CAPABILITY = "iskron/structured";
+export const FIELDS_CAPABILITY = SERVER_PROTOCOL.fields;
 
 /** capabilities клиента моста, которому поля отдаются (плагин OpenCode, расширение pi). */
 export const FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };

@@ -7,6 +7,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
+import { tool } from "../delivery/index.ts";
 import { takingArgs } from "../shared/busyargs.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -92,7 +93,7 @@ function placeLabel(realm: string): string {
 
 /** action="status" — занятость ЭТОГО стояния. Возвращает null для всякого другого вызова. */
 export function localStatus(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
-  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
+  if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
   const a = msg.params?.arguments;
   if (a?.action !== "status") return null;
   const text = typeof a.text === "string" ? a.text : "";

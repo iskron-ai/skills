@@ -6,6 +6,7 @@
 // этого графа на живых сокетах, с to_standing_id места (#5838, слово
 // держателя API). Мост ходит к хукам тулом iskron_admin(action="add_webhook");
 // channel он передаёт, только если схема тула этот параметр объявляет.
+import { tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { callTool as call, short } from "./call.ts";
 import { adminParamNames, readRoleHooks } from "./hooklist.ts";
@@ -65,7 +66,7 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
         `${H}: не взведён — ${noAddress}, а тул iskron_admin(action="add_webhook") в этой поверхности параметра channel не объявляет; хук на канал (channel=self) взвести нечем — почта роли этого графа сокетом не приходит.`,
         `${H}: not armed — ${noAddress}, and iskron_admin(action="add_webhook") on this surface declares no channel parameter; nothing to arm a channel hook (channel=self) with — this graph's role mail does not come over the socket.`,
       );
-    const h = await call("iskron_admin", {
+    const h = await call(tool("admin"), {
       action: "add_webhook",
       realm,
       node_id: karta,
@@ -86,7 +87,7 @@ export async function armRoleHook(p: HookPlace): Promise<string> {
       `${H}: не взведён — входящий адрес стояния не прочитался.`,
       `${H}: not armed — the standing's incoming address did not read.`,
     );
-  const h = await call("iskron_admin", {
+  const h = await call(tool("admin"), {
     action: "add_webhook",
     realm,
     node_id: karta,

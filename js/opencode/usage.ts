@@ -6,7 +6,7 @@
 // сдвиг вызова на сервер (bridge/usage.ts). Конец прогона и удаление сессии
 // сбрасывают ждущий снимок сразу (flush) — до того, как мост уйдёт с местом.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { envName } from "../delivery/index.ts";
+import { envName, method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
 
 export interface UsagePayload {
@@ -79,7 +79,7 @@ export function createUsageFeed(opts: {
     if (ref && windows.has(ref)) p.window = windows.get(ref);
     await opts
       .bridgeOf(session)
-      ?.request("iskron/usage", p, { timeoutMs })
+      ?.request(method("usage"), p, { timeoutMs })
       .catch(() => {});
   };
   const flush = (session: string, timeoutMs = 10_000): Promise<void> => {

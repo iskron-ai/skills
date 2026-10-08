@@ -14,7 +14,7 @@
 //     место читалось бы слушающим при делателе, которого не разбудить;
 //     pi и OpenCode кадр получают уведомлением и глухими не бывают;
 //   • конец сессии: занятость снимается перед выходом (session.ts).
-import { envName } from "../delivery/index.ts";
+import { envName, LOGGERS, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { resolveAgainstLed, unresolvedRefusal } from "./call.ts";
@@ -167,7 +167,7 @@ export function returnToStanding(how: string): boolean {
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
-    params: { level: "info", logger: "iskron-channel", data: { kind: "note", text } },
+    params: { level: "info", logger: LOGGERS.channel, data: { kind: "note", text } },
   });
   return true;
 }
@@ -210,7 +210,7 @@ export function startDeafnessWatch(): void {
 
 /** action="leave" у iskron_channel — слово делателя, исполняет мост. */
 export function localLeave(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
-  if (msg?.method !== "tools/call" || msg?.params?.name !== "iskron_channel") return null;
+  if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
   if (msg.params?.arguments?.action !== "leave") return null;
   const realm: unknown = msg.params.arguments.realm;
   const answer = (text: string, isError = false): JsonRpcMessage => ({

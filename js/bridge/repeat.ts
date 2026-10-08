@@ -4,18 +4,14 @@
 // второй раз ничего не применит. Записи харнеса (iskron_case, iskron_add_*, update,
 // revoke, leave…) не повторяются: исход их — «неизвестен», как прежде (deliver.ts).
 // connect тоже: прочитанный сервером, он уже выдал место-адрес, и второй повернул бы его.
+import { BRIDGE_NAME, tool } from "../delivery/index.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 /** id собственных вызовов моста (call.ts) — не харнеса. */
-export const OWN_CALL_PREFIX = "iskron-bridge-call-";
+export const OWN_CALL_PREFIX = `${BRIDGE_NAME}-call-`;
 
 /** Тулы, которые только читают: повтор вызова ничего не меняет. */
-export const READ_TOOLS = new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search",
-]);
+export const READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
 
 /**
  * Действия, чей повтор безвреден: чтение доски и списка графов. register не здесь:
@@ -23,8 +19,8 @@ export const READ_TOOLS = new Set([
  * пропуск догоняет ensureStanding перед следующим вызовом.
  */
 const SAFE_ACTIONS: Record<string, Set<string>> = {
-  iskron_channel: new Set(["list"]),
-  iskron_realm: new Set(["list"]),
+  [tool("channel")]: new Set(["list"]),
+  [tool("realm")]: new Set(["list"]),
 };
 
 export function repeatable(msg: JsonRpcMessage): boolean {
@@ -46,7 +42,7 @@ export function repeatable(msg: JsonRpcMessage): boolean {
  */
 function ownPlaceEnd(msg: JsonRpcMessage, name: string, action: string): boolean {
   return (
-    name === "iskron_channel" &&
+    name === tool("channel") &&
     (action === "revoke" || action === "close") &&
     String(msg.id ?? "").startsWith(OWN_CALL_PREFIX)
   );
