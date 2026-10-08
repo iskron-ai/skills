@@ -167,7 +167,8 @@ export default {
       const push = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*git(?: -C \S+)* push`;
       // тихий пуш (-q/--quiet) не печатает «To <remote>» и по выводу неотличим от отказа: судит состояние git —
       // команда от начала строки через цельные кавычки, без <<, HEAD непуст и равен @{push}, ветка не main и не master;
-      // равенство могло стоять до команды — видимый отказ git в выводе (fatal:, error:, ! [rejected]) вето
+      // равенство могло стоять до команды — видимый отказ git в выводе (fatal:, error:, ! [rejected]) вето;
+      // вето читает весь вывод вызова: fatal:/error: соседней команды глушит и принятый тихий пуш
       let quiet = false;
       if (new RegExp(String.raw`^(?:${arg}[;&|(\n] *)*` + push + String.raw`(?=[ ;&|)\n]|$)(?!${arg} (?:-h|--help)(?:[ ;&|)\n]|$))` + arg + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`).test(cmd) && !cmd.includes("<<") &&
         !/^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m.test(out)) {

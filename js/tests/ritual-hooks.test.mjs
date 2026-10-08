@@ -649,6 +649,26 @@ for (const [name, cmd, given, wakes] of quietVeto) {
   });
 }
 
+// Claude Code hands the streams apart: the refusal arrives in stderr.
+test("quiet push, refs already equal: a refusal in stderr stays silent (claude)", () => {
+  const { a } = quietRepos();
+  const cmd = "git push -q nonexistent-remote; echo finished";
+  const r = spawnSync("bash", ["-c", cmd], { cwd: a, encoding: "utf8" });
+  assert.match(r.stderr, /^fatal:/);
+  const payload = JSON.stringify({
+    hook_event_name: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: { command: cmd },
+    tool_response: { stdout: r.stdout, stderr: r.stderr, exit_code: 0 },
+  });
+  const said = bashHooks
+    .map((h) =>
+      execFileSync("bash", ["-c", h.command], { input: payload, encoding: "utf8", cwd: a }),
+    )
+    .join("");
+  assert.equal(said.includes("Пуш"), false);
+});
+
 // text is not a command, whatever the state of git says
 for (const cmd of [
   'echo "note; git push -q origin x"',
