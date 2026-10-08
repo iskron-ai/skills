@@ -9,7 +9,7 @@ import { dirname } from "node:path";
 import { type Frame } from "../shared/channel.ts";
 import { L } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
-import { type Marks, seenIds, splitBatch } from "../shared/seen.ts";
+import { foldedTacts, type Marks, noteSeen, seenIds, splitBatch } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   privateDirProblem,
@@ -201,11 +201,16 @@ export class Door {
         // делателю то же кольцо второй раз — память доставленного у моста есть.
         // Доставленным кадр помечает отдавший его клиент (печатью, выходом) — файл читается заново.
         // Кадр, лежащий в копящейся пачке комнаты, придёт с ней, не отдельно. Событие —
-        // один раз, текстом или числом, и внутри повтора (seen.ts splitBatch).
+        // один раз, текстом или числом, и внутри повтора (seen.ts splitBatch). Такт, за
+        // которым в кольце идёт новее, свёрнут (#6569): отдавшего у него не будет — метит мост.
+        const folded = foldedTacts(this.ring.map((r) => r.frame));
+        for (const f of folded) if (f.id) noteSeen(this.seenPath, String(f.id), this.seen);
         const waiting = this.ring.filter(
           ({ frame }) =>
             frame?.type !== "message" ||
-            (!this.marks(String(frame.id ?? "")) && !this.roomBatch.holds(frame)),
+            (!folded.has(frame) &&
+              !this.marks(String(frame.id ?? "")) &&
+              !this.roomBatch.holds(frame)),
         );
         const msgs = waiting.flatMap(({ frame }) => (frame?.type === "message" ? [frame] : []));
         const kept = new Set<Frame | null>(splitBatch(msgs, Infinity, this.marks).kept);

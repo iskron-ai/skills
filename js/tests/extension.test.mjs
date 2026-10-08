@@ -118,8 +118,10 @@ function fakePi({ hasUI = true } = {}) {
   const messages = [];
   const notices = [];
   const statuses = [];
+  let idle = true; // ход агента не идёт — как ctx.isIdle() pi
   const ctx = {
     hasUI,
+    isIdle: () => idle,
     ui: {
       notify: (text, level) => notices.push({ text, level }),
       setStatus: (key, text) => statuses.push({ key, text }),
@@ -152,6 +154,10 @@ function fakePi({ hasUI = true } = {}) {
     notices,
     statuses,
     handlers,
+    /** Ход занят (true) или свободен — что вернёт ctx.isIdle(). */
+    busy(on) {
+      idle = !on;
+    },
     async fire(name, event = {}) {
       for (const fn of handlers.get(name) ?? []) await fn(event, ctx);
     },
@@ -745,6 +751,59 @@ test("service frames raise no turn, a work frame does", async () => {
     await delay(250);
     assert.equal(rec.messages.length, 2, "неразобранный кадр потерян");
     assert.match(rec.messages[1].msg.content, /не JSON вовсе/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #6569: the attention tact comes an hour apart, each its own id, and a turn busy for
+// hours let every one of them into pi's steer queue — they came one after another.
+// While the turn is busy a tact waits and the next replaces it; the end of the turn
+// brings one, the last. An idle agent gets it at once; other bursts are not held.
+test("attention tacts while the turn is busy: none enters it, its end brings one — the last", async () => {
+  const { events, env } = eventsEnv("tact");
+  const rec = await session(env);
+  const tact = (n) => {
+    const f = {
+      type: "message",
+      id: `tact-${n}`,
+      origin: "platform",
+      provenance: { via: "platform", wake: "look_up" },
+      body: `Час на «вахта ${n}» — подними голову`,
+    };
+    return { kind: "backlog", frames: [f], marks: [f.id], text: `Побудка: кадров 1\n\n${f.body}` };
+  };
+  try {
+    rec.busy(true);
+    for (const n of [1, 2, 3]) push(events, tact(n));
+    await delay(300);
+    assert.equal(rec.messages.length, 0, "a tact entered a busy turn");
+    await rec.fire("agent_end");
+    assert.equal(rec.messages.length, 1, "the end of the turn brings one tact");
+    assert.match(rec.messages[0].msg.content, /вахта 3/);
+    assert.equal(rec.messages[0].opts.triggerTurn, true);
+    await rec.fire("agent_end");
+    assert.equal(rec.messages.length, 1, "the tact was brought once");
+
+    rec.busy(false);
+    push(events, tact(4));
+    await delay(250);
+    assert.equal(rec.messages.length, 2, "an idle agent gets the tact at once");
+    assert.match(rec.messages[1].msg.content, /вахта 4/);
+
+    rec.busy(true);
+    push(events, { kind: "backlog", frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nслово" });
+    await delay(250);
+    assert.equal(rec.messages.length, 3, "a burst that is not a tact is not held");
+
+    // A tact that came while agent_end handlers still ran waits no next end: the turn is free.
+    push(events, tact(5));
+    await delay(250);
+    assert.equal(rec.messages.length, 3, "the tact waits the busy turn");
+    rec.busy(false);
+    await delay(1300);
+    assert.equal(rec.messages.length, 4, "a turn freed without agent_end still gets the tact");
+    assert.match(rec.messages[3].msg.content, /вахта 5/);
   } finally {
     await rec.stop();
   }

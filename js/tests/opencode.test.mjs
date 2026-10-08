@@ -1445,86 +1445,110 @@ test("a backlog burst — the wake with everything that waited — is one prompt
 
 // #6569: the attention tact sends one frame an hour, each its own id; the bridge
 // hands each on as a wake burst, and the plugin queued every one — a turn that ran
-// for hours let four of the same text pile up in OpenCode's queue and come one
-// after another. While a wake prompt waits untaken, the same platform word again
-// is not queued a second time; once it is taken, the next hour's word goes.
-test("a platform word that repeats one still waiting in the session's queue is not queued again; taken, the next one goes", async () => {
+// for hours let four of them pile up in OpenCode's queue and come one after another.
+// While the session's turn is busy a tact is not queued: it waits, the next one
+// replaces it, and the session going idle brings one — the last. Its provenance is
+// wake="look_up" (the api steward's word, not observed on the wire).
+const tactBurst = (n) => {
+  const f = {
+    type: "message",
+    id: `tact-${n}`,
+    origin: "platform",
+    provenance: { via: "platform", wake: "look_up" },
+    body: `Час на «вахта ${n}» — подними голову`,
+  };
+  return event("backlog", { frames: [f], marks: [f.id], text: `Побудка: кадров 1\n\n${f.body}` });
+};
+
+test("attention tacts while the session is busy are not queued: idle brings one — the last; other words are not held", async () => {
   const b = bridgeEnv("tact");
   const rec = await plugin(b.env, { inboxIds: true });
   try {
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "s-tact");
     const pid = pidOf(b.log);
-    const tact = (id, body) =>
-      event("backlog", {
-        frames: [
-          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body },
-        ],
-        text: `Побудка: кадров 1\n\n${body}`,
-      });
-    const HOUR = "Час на «вахта» — подними голову";
-    for (const id of ["t1", "t2", "t3", "t4"]) {
-      appendFileSync(`${b.events}.${pid}`, tact(id, HOUR));
-      await delay(150);
-    }
-    await until(() => rec.prompts.length >= 1, "the first tact prompt");
-    await delay(300);
-    assert.equal(rec.prompts.length, 1, "one tact word in the queue, not four");
-    assert.equal(rec.prompts[0].delivery, "queue");
-    appendFileSync(`${b.events}.${pid}`, tact("t5", "Час на «ревью» — подними голову"));
-    await until(() => rec.prompts.length === 2, "a different word goes");
-    // A burst shows only the first frames of its window, and the bridge has marked all of
-    // them delivered: one of more than a frame goes whole, or what it left out is lost.
+    rec.emit({ type: "session.status", data: { sessionID: "s-tact", status: { type: "busy" } } });
+    await delay(100);
+    for (const n of [1, 2, 3]) appendFileSync(`${b.events}.${pid}`, tactBurst(n));
+    await delay(400);
+    assert.equal(rec.prompts.length, 0, "a tact was queued into a busy session");
+    // A burst that is not a tact goes as before, busy or not.
     appendFileSync(
       `${b.events}.${pid}`,
-      event("backlog", {
-        frames: Array.from({ length: 20 }, (_, i) => ({
-          type: "message",
-          id: `w${i}`,
-          origin: "platform",
-          provenance: { via: "platform" },
-          body: HOUR,
-        })),
-        text: "Побудка: кадров 25, здесь первые 20, не вошло 5",
-      }),
+      event("backlog", { frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nслово" }),
     );
-    await until(() => rec.prompts.length === 3, "a burst of more than one frame goes whole");
-    // The same body from another case is another word: its prompt text differs, and it goes.
-    const caseWord = (id, room) =>
-      event("backlog", {
-        frames: [
-          {
-            type: "message",
-            id,
-            room,
-            origin: "platform",
-            provenance: { via: "room" },
-            body: "место покинуло дело",
-          },
-        ],
-        text: `Побудка: кадров 1\n\nзапись дела ${room} от платформы\nместо покинуло дело`,
-      });
-    appendFileSync(`${b.events}.${pid}`, caseWord("c1", "№5"));
-    await until(() => rec.prompts.length === 4, "the word of case №5");
-    appendFileSync(`${b.events}.${pid}`, caseWord("c2", "№7"));
-    await until(() => rec.prompts.length === 5, "the same body from case №7 goes too");
-    rec.emit({
-      type: "session.inbox.delivered",
-      data: { sessionID: "s-tact", inboxID: "inbox-1" },
-    });
-    await delay(100);
-    appendFileSync(`${b.events}.${pid}`, tact("t6", HOUR));
-    await until(() => rec.prompts.length === 6, "the next hour's word after the take");
+    await until(() => rec.prompts.length === 1, "the burst that is not a tact");
+    rec.emit({ type: "session.idle", data: { sessionID: "s-tact" } });
+    await until(() => rec.prompts.length === 2, "the tact at idle");
+    assert.match(rec.prompts[1].text, /вахта 3/);
+    assert.equal(rec.prompts[1].sessionID, "s-tact");
+    await delay(300);
+    assert.equal(rec.prompts.length, 2, "one tact at idle, not three");
   } finally {
     await rec.stop();
   }
 });
 
-// The take of a queued wake prompt is a signal OpenCode may never give: a word whose
-// prompt has waited untaken past its own bound no longer holds back the same word.
-// That bound is longer than the hour of the attention tact and than the case piles'
-// bound — a shorter one would let the next hour's word through, the very case.
-test("a platform word waiting untaken holds back the same word past the case piles' bound, up to its own", async () => {
+// A tact queued while the plugin did not know the turn was busy waits untaken in the
+// session's queue — the turn is busy: the next tacts wait behind it, the last one goes at idle.
+test("a tact waiting untaken in the session's queue holds back the next ones; idle brings the last", async () => {
+  const b = bridgeEnv("tact-queued");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact-q");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(1));
+    await until(() => rec.prompts.length === 1, "the first tact prompt");
+    assert.equal(rec.prompts[0].delivery, "queue");
+    for (const n of [2, 3]) appendFileSync(`${b.events}.${pid}`, tactBurst(n));
+    await delay(400);
+    assert.equal(rec.prompts.length, 1, "a tact queued behind one still untaken");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-tact-q", inboxID: "inbox-1" },
+    });
+    await delay(200);
+    assert.equal(rec.prompts.length, 1, "the take starts the turn — it is busy still");
+    rec.emit({ type: "session.idle", data: { sessionID: "s-tact-q" } });
+    await until(() => rec.prompts.length === 2, "the last tact at idle");
+    assert.match(rec.prompts[1].text, /вахта 3/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A taken tact prompt starts a turn: the session is busy till idle even when no
+// session.status reached the plugin, and the next tact waits for that idle.
+test("a tact taken from the queue makes the session busy without session.status; the next one waits for idle", async () => {
+  const b = bridgeEnv("tact-taken");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-tact-t");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(1));
+    await until(() => rec.prompts.length === 1, "the first tact prompt");
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-tact-t", inboxID: "inbox-1" },
+    });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(2));
+    await delay(400);
+    assert.equal(rec.prompts.length, 1, "a tact queued into the turn the first one started");
+    rec.emit({ type: "session.idle", data: { sessionID: "s-tact-t" } });
+    await until(() => rec.prompts.length === 2, "the tact at idle");
+    assert.match(rec.prompts[1].text, /вахта 2/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The end of a turn is a signal OpenCode may never give: a held tact waits for it no
+// longer than its own bound, counted from the first held — a newer tact does not
+// restart it. The bound is longer than the case piles' one.
+test("a tact held for a busy session goes past its own bound when no idle comes — the last one", async () => {
   const b = bridgeEnv("tact-silent");
   const rec = await plugin(
     { ...b.env, ISKRON_OPENCODE_PENDING_MS: 200, ISKRON_OPENCODE_WAKE_HOLD_MS: 1200 },
@@ -1534,23 +1558,18 @@ test("a platform word waiting untaken holds back the same word past the case pil
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "s-tact-silent");
     const pid = pidOf(b.log);
-    const HOUR = "Час на «вахта» — подними голову";
-    const tact = (id) =>
-      event("backlog", {
-        frames: [
-          { type: "message", id, origin: "platform", provenance: { via: "platform" }, body: HOUR },
-        ],
-        text: `Побудка: кадров 1\n\n${HOUR}`,
-      });
-    appendFileSync(`${b.events}.${pid}`, tact("t1"));
-    await until(() => rec.prompts.length === 1, "the first tact prompt");
-    await delay(400);
-    appendFileSync(`${b.events}.${pid}`, tact("t2"));
+    rec.emit({
+      type: "session.status",
+      data: { sessionID: "s-tact-silent", status: { type: "busy" } },
+    });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(1));
+    await delay(500);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(2));
     await delay(200);
-    assert.equal(rec.prompts.length, 1, "past the case piles' bound the repeat is still held back");
-    await delay(800);
-    appendFileSync(`${b.events}.${pid}`, tact("t3"));
-    await until(() => rec.prompts.length === 2, "the word after the bound, no take seen");
+    assert.equal(rec.prompts.length, 0, "past the case piles' bound the tact still waits");
+    await until(() => rec.prompts.length === 1, "the tact after its bound, no idle seen", 3000);
+    assert.match(rec.prompts[0].text, /вахта 2/);
   } finally {
     await rec.stop();
   }
