@@ -139,7 +139,7 @@ export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): Js
   setClosingOwn(false);
   // 4001 обогнал ответ — место уже отпущено (hold.ts), отпускать нечего.
   if (reply?.error || reply?.result?.isError || !closesOwn(msg)) return reply;
-  releaseStanding(holdWords.closedOwn(), true, false, true);
+  releaseStanding(holdWords().closedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log("channel closed by this session — released quietly, binding forgotten");
@@ -169,12 +169,12 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     // Место другого графа снято своим revoke: его дверь и запись — прочь, канал цел (#5838).
-    dropExtra(beside.door.key, holdWords.revokedOwn(), true, true);
+    dropExtra(beside.door.key, holdWords().revokedOwn(), true, true);
     return reply;
   }
   if (!revokesOwn(msg)) return reply;
   const name = state.standing?.name ?? "unnamed";
-  releaseStanding(holdWords.revokedOwn(), true, false, true);
+  releaseStanding(holdWords().revokedOwn(), true, false, true);
   state.standing = null;
   state.standingSession = null;
   log(`standing revoked by this session — released quietly, binding forgotten (${name})`);

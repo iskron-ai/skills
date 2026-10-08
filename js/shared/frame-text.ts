@@ -1,8 +1,12 @@
+import { ROOM } from "../delivery/index.ts";
 import { addressedToMine } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { superseded } from "./keyfold.ts";
-import { L } from "./lang.ts";
-import { phrase, roomKind } from "./room-kinds.ts";
+import { L, words as wordsOf } from "./lang.ts";
+import { need, opt } from "./room-fields.ts";
+import { roomKind } from "./room-kinds.ts";
+
+const W = () => wordsOf(ROOM);
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" ? (v as Rec) : {});
@@ -43,7 +47,7 @@ export const caseKey = (frame: Frame): string => caseOf(frame)?.room ?? "";
 function caseHead(frame: Frame, withZachin: boolean): string {
   const c = caseOf(frame);
   if (!c) return "";
-  const no = phrase("case", { room: c.room });
+  const no = W().case(need(c.room));
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
 
@@ -51,13 +55,13 @@ function caseHead(frame: Frame, withZachin: boolean): string {
 function whoOf(frame: Frame, withPlace: boolean): string {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  if (origin === "platform") return phrase("who_platform");
-  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase("who_graph");
+  if (origin === "platform") return W().whoPlatform();
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return phrase("who_human", { user: p.user }) + place;
+  if (origin === "human") return W().whoHuman(opt(" @", p.user)) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
-  return phrase(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
+  return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 
 /** Текст кадра: строка как есть, JSON-тело (событие графа) — одной строкой. */
@@ -72,10 +76,10 @@ function tail(frame: Frame, withReply: boolean): string {
   const f = frame as Rec;
   const parts: string[] = [];
   const to = idOf(f.in_reply_to) || idOf(frame.provenance?.in_reply_to);
-  if (withReply && to) parts.push(phrase("reply_to", { id: to }));
-  if (frame.stale === true) parts.push(phrase("stale"));
+  if (withReply && to) parts.push(W().replyTo(need(to)));
+  if (frame.stale === true) parts.push(W().stale());
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
-    parts.push(phrase("body_read", { how: frame.body_read }));
+    parts.push(W().bodyRead(need(frame.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 
@@ -100,7 +104,7 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
     const entry = idOf(f.entry_id) || idOf(line.entry_id);
     const words = rk
       ? rk.words
-      : phrase("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+      : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words.includes(rk.author) ? rk.author : "";
     const who = origin === "platform" ? "" : whoOf(frame, false);
     const by = [author, who].filter(Boolean).join(", ");

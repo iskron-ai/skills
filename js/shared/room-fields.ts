@@ -1,5 +1,5 @@
 // Поля кадра комнаты, общие словарю родов (room-kinds.ts) и родам вопроса
-// (asks.ts): чтение значений, своё место, своя роль, адресат, заполнение слов.
+// (asks.ts): чтение значений, своё место, своя роль, адресат, поля слов.
 
 export type Rec = Record<string, unknown>;
 export const obj = (v: unknown): Rec =>
@@ -10,14 +10,18 @@ export const str = (v: unknown): string =>
 export const after = (key: string, prefix: string): string =>
   key.startsWith(prefix) ? key.slice(prefix.length) : key;
 
-/** Слово с полями: `{имя}` — поле; `{; имя}` — необязательное, пустое уходит вместе с разделителем. */
-export function fill(template: string, v: Rec): string {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep: string, name: string) => {
-    const x = str(v[name]);
-    if (sep) return x ? sep + x : "";
-    return x || "?";
-  });
-}
+/** Required field of a word: the value, "?" when empty. */
+export const need = (v: unknown): string => str(v) || "?";
+
+/** Optional field of a word: separator and value, nothing when empty. */
+export const opt = (sep: string, v: unknown): string => {
+  const x = str(v);
+  return x ? sep + x : "";
+};
+
+/** The word of a dictionary for a value the server sends; an unknown value — undefined. */
+export const pick = <T extends object>(dict: T, key: string): T[keyof T] | undefined =>
+  Object.hasOwn(dict, key) ? dict[key as keyof T] : undefined;
 
 /** Своё стояние кадра для ключа invite — id места и его адрес: формат ключа (#5893 §4.2) ещё не подтверждён. */
 export const mineOf = (frame: Rec): string[] =>

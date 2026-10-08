@@ -9,7 +9,7 @@
 import { envName, method } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
-import type { Leads } from "./leadwords.ts";
+import type { Leads } from "./leaddoors.ts";
 import type { LostEntry } from "./records.ts";
 import type { Slot } from "./tools.ts";
 import { handedOver } from "./twins.ts";

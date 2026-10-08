@@ -122,15 +122,15 @@ async function yieldPlace(key: string, url: string, code: number): Promise<void>
   if (await takenBySession(key, url)) {
     if (ledKey() !== key) return; // за ожидание мост уже занял другое
     standingLog(`evicted ${key} by this session's new bridge — released quietly`);
-    releaseStanding(holdWords.takenBySession(), false, false, true);
+    releaseStanding(holdWords().takenBySession(), false, false, true);
     return;
   }
   // Спутник живёт прогоном и местом рядом не встаёт; безымянному месту нет основы имени.N.
   const name = s?.name ?? "";
   if (CFG.satellite || !s || !name || !beside)
-    return announceEvicted(code, holdWords.evicted(code));
+    return announceEvicted(code, holdWords().evicted(code));
   const base = baseOf(s.realm, s.karta, name); // место рядом отняли — следующее рядом с его основой, не proba.2.2
-  announceEvicted(code, holdWords.evictedBeside(code, name, base));
+  announceEvicted(code, holdWords().evictedBeside(code, name, base));
   F.failed = null;
   await besideAndSay(key, s, name, base, beside, [...state.places]);
 }
@@ -160,12 +160,12 @@ async function besideAndSay(
         text: e instanceof Error ? e.message : String(e),
       }));
       others.push(
-        holdWords.besideOther(`${x.name ?? ""} (${x.realm})`, !!again?.ok, again?.text ?? ""),
+        holdWords().besideOther(`${x.name ?? ""} (${x.realm})`, !!again?.ok, again?.text ?? ""),
       );
     }
   F.failed = r.ok ? null : { key, s, name, base, extras };
   const text = [
-    r.ok ? holdWords.besideDone(name, r.text) : holdWords.besideFailed(name, base, r.text),
+    r.ok ? holdWords().besideDone(name, r.text) : holdWords().besideFailed(name, base, r.text),
     ...others,
   ].join("\n");
   log(text);
@@ -224,7 +224,7 @@ export function evictedRefusal(msg: JsonRpcMessage): string | null {
   // Отъём закрывает весь канал: места других графов на нём глухи так же, как основное.
   const realm = signedRealm(msg);
   if (realm == null || [s, ...state.places].every((p) => otherRealm(realm, p.realm))) return null;
-  return holdWords.evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
+  return holdWords().evictedRefusal(s.name ?? "", baseOf(s.realm, s.karta, s.name ?? ""));
 }
 
 /** Чем встать рядом — iskron_stand (stand.ts), переданный сюда, чтобы не замкнуть импорты. */
