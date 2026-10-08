@@ -39,19 +39,33 @@ function openOn(store: AskStore, frame: Rec): string[] {
   return out;
 }
 
+/** Номер, который кадр гасит адресно: у снятия — withdraws, у ответа — его вопрос. */
+const namedOf = (frame: Rec): string => {
+  const kind = kindOf(frame);
+  if (kind === "progress") return str(obj(lineOf(frame).fields).withdraws);
+  if (kind === "answer") return str(lineOf(frame).refers_to) || str(frame.in_reply_to);
+  return "";
+};
+/** Мой вопрос с этим номером на ключе кадра открыт — проверка без перебора памяти. */
+const isOpen = (store: AskStore, frame: Rec, n: string): boolean => {
+  const k = `${baseOf(frame)}#${n}`;
+  return !!n && store.has(k) && !store.has(`off:${k}`);
+};
+
 /**
  * Кадр гасит мой открытый вопрос: снятие его номера, ответ на него, переспрос
- * другому на его ключе. Своя запись — эхо, гасить у меня нечего.
+ * другому на его ключе. Своя запись — эхо, гасить у меня нечего. Частые строки
+ * работы проверяются по номеру, перебор памяти — только у редких ask.
  */
 export function closesMine(store: AskStore, frame: Rec): boolean {
   if (byMe(frame) || !str(lineOf(frame).key)) return false;
-  const open = openOn(store, frame);
-  if (!open.length) return false;
   const kind = kindOf(frame);
-  if (kind === "progress") return open.includes(str(obj(lineOf(frame).fields).withdraws));
-  if (kind === "answer")
-    return open.includes(str(lineOf(frame).refers_to) || str(frame.in_reply_to));
-  return kind === "ask" && !askedMine(frame, obj(lineOf(frame).fields));
+  if (kind === "progress" || kind === "answer") return isOpen(store, frame, namedOf(frame));
+  return (
+    kind === "ask" &&
+    !askedMine(frame, obj(lineOf(frame).fields)) &&
+    openOn(store, frame).length > 0
+  );
 }
 
 /**
@@ -74,11 +88,10 @@ export function noteAsk(store: AskStore, frame: Rec): void {
     store.add(`${base}${own}`);
     return;
   }
-  if (kind === "progress" && str(fields.withdraws))
-    store.add(`off:${base}${str(fields.withdraws)}`);
-  else if (kind === "answer" && !byMe(frame)) {
-    const n = str(lineOf(frame).refers_to) || str(frame.in_reply_to);
-    if (n) store.add(`off:${base}${n}`);
+  // Пишется только гашение моего открытого вопроса: чужие снятия и ответы памяти не растят.
+  if (kind === "progress" || (kind === "answer" && !byMe(frame))) {
+    const n = namedOf(frame);
+    if (isOpen(store, frame, n)) store.add(`off:${base}${n}`);
   } else if ((kind === "ack" || kind === "ask") && !byMe(frame))
     for (const n of openOn(store, frame)) store.add(`off:${base}${n}`);
 }

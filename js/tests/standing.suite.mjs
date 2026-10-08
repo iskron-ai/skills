@@ -5299,6 +5299,12 @@ test("question kinds under the Monitor watchdog: another seat's answer to my que
   assert.match(flat, /отвечает на \[90\]/, `the answer to my question in words:\n${wd.out}`);
   assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
   assert.doesNotMatch(flat, /отвечает на \[95\]/, `another's answer leaked:\n${wd.out}`);
+  // The seat's memory of questions grows by questions to me, not by others' lines.
+  const asks = readdirSync(join(dir, "standings"))
+    .filter((x) => x.endsWith(".asks"))
+    .map((x) => readFileSync(join(dir, "standings", x), "utf8"))
+    .join("");
+  assert.doesNotMatch(asks, /#95\n/, `another's question in the seat's memory:\n${asks}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
