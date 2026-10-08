@@ -1803,13 +1803,14 @@ async function resumeOver(t, first, then, as = undefined) {
   await bridge.call("iskron/resume", { cwd, session: first });
   const stood = await bridge.call("tools/call", {
     name: "iskron_stand",
-    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd },
+    arguments: { realm: "nks-dev", karta: 931, name: "proba", cwd, status: "на вахте" },
   });
   assert.ok(!stood.result?.isError, standText(stood));
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", INIT)).result);
   const key = "proba--931--nks-dev";
+  fake.state.counts.status_posts = 0;
   const back = (await second.call("iskron/resume", { key, cwd, session: then }, as)).result;
   return { fake, back, key };
 }
@@ -1828,6 +1829,9 @@ test("iskron/resume: the seat a live former bridge of THIS session holds comes b
   assert.equal(back?.resumed, true, JSON.stringify(back));
   assert.equal(back?.key, key, JSON.stringify(back));
   assert.match(back.word, /своё место этой сессии — вернул/, back.word);
+  // Строка занятости той же сессии возвращается, как у возврата с диска (#5151).
+  assert.match(back.word, /занятость возвращена: на вахте/, back.word);
+  assert.equal(fake.state.counts.status_posts, 1, "the busy line is posted again");
   // Прежний мост, место потерявший, уступает своей сессии молча — рядом не встаёт.
   await new Promise((res) => setTimeout(res, 1500));
   const connects = fake.state.placeArgs.filter((p) => p.action === "connect").map((p) => p.name);

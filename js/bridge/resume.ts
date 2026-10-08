@@ -66,6 +66,28 @@ export function takeLapsed(): boolean {
   return was;
 }
 
+/** Строка занятости записи — обратно, если её сказала та же сессия; иначе стирается (#6017). */
+async function busyBack(rec: HoldRecord): Promise<string> {
+  if (!rec.status) return "";
+  const me = sessionOfBridge();
+  if (!me || rec.session !== me) {
+    rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
+    return L(
+      "; прежняя строка занятости не возвращена — скажи свою",
+      "; the former busy line is not restored — say your own",
+    );
+  }
+  // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
+  const st = await publishStatus(rec.status);
+  const kept = st.doing ?? rec.status; // легла строка из ответа, не из записи (дело №234 [139])
+  return st.ok
+    ? L(`; занятость возвращена: ${kept}`, `; busy line restored: ${kept}`)
+    : L(
+        `; занятость не возвращена: ${short(st.body)}`,
+        `; busy line not restored: ${short(st.body)}`,
+      );
+}
+
 /**
  * Вернуть с диска место, которое держал прежний мост этого каталога (#5061):
  * только когда его локальный сокет мёртв (живой держатель — не наше место) и
@@ -99,25 +121,7 @@ export async function resumeFromDisk(
     const hello = await awaitHello(4000);
     if (hello && holdsKey(key)) {
       const pending = Number(hello.pending) || 0;
-      const me = sessionOfBridge();
-      let busy = "";
-      if (rec.status && me && rec.session === me) {
-        // Своя строка той же сессии (например, снятая сторожем глухоты) — обратно.
-        const st = await publishStatus(rec.status);
-        const kept = st.doing ?? rec.status; // легла строка из ответа, не из записи (дело №234 [139])
-        busy = st.ok
-          ? L(`; занятость возвращена: ${kept}`, `; busy line restored: ${kept}`)
-          : L(
-              `; занятость не возвращена: ${short(st.body)}`,
-              `; busy line not restored: ${short(st.body)}`,
-            );
-      } else if (rec.status) {
-        rememberStatus(""); // строка прежнего держателя — не наша: в записи её больше нет
-        busy = L(
-          "; прежняя строка занятости не возвращена — скажи свою",
-          "; the former busy line is not restored — say your own",
-        );
-      }
+      const busy = await busyBack(rec);
       log(`standing resumed from disk (${key}), pending ${pending}`);
       standingLog(`resumed-from-disk ${key}: pending ${pending}`);
       return {
@@ -265,7 +269,14 @@ export async function resumeBy(
       const now = ledKey();
       if (now && holdsKey(now)) {
         const hello = await awaitHello(4000);
-        return { resumed: true, key: now, pending: Number(hello?.pending) || 0, word: said };
+        // Встал рядом (имя.N) — слово iskron_stand само называет место; строка записи — не его.
+        const busy = now === key ? await busyBack(rec) : "";
+        return {
+          resumed: true,
+          key: now,
+          pending: Number(hello?.pending) || 0,
+          word: busy ? said.replace(/\.$/, "") + busy : said,
+        };
       }
       skipped.push(resumeWords.ownNotTaken(key, short(said)));
       continue;
