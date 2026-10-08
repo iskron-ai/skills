@@ -26,6 +26,23 @@ export function placeWord(
     : null;
 }
 
+/**
+ * Сессия харнеса, которую плагин называет мосту (iskron/resume, iskron/check): тонкий
+ * мост помнит её и несёт в возврат места в новой сессии демона — без неё запись
+ * держания легла бы без сессии, и своё место сессия сочла бы чужим (#6702).
+ */
+let harnessSession: string | null = null;
+/** Запомнить сессию харнеса из его вызова; вызов — как есть. */
+export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
+  const s = msg.params?.session;
+  if ((msg.method === "iskron/resume" || msg.method === "iskron/check") && typeof s === "string")
+    harnessSession = s.trim() || harnessSession;
+  return msg;
+}
+/** Параметры возврата места в новой сессии демона: ключ и названная сессия харнеса. */
+export const resumeParams = (key: string): { key: string; session?: string } =>
+  harnessSession ? { key, session: harnessSession } : { key };
+
 export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) => void) {
   const live = new Map<string, string>();
   const lost = new Map<string, { realm: string; satellite: boolean; text: string }>();
