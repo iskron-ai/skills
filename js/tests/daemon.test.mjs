@@ -214,7 +214,7 @@ test("two sessions of one daemon at once keep their places, output, writes and s
       x.notifications.some((n) => JSON.stringify(n.params?.data ?? {}).includes("слово для A"));
     await waitFor("A to hear its frame", () => heard(a)).catch((e) => {
       throw new Error(
-        `${e.message}\n${textOf(ra)}\n${JSON.stringify(fake.state.webhooks)}\n${JSON.stringify(a.notifications)}\n${a.stderr}`,
+        `${e.message}\n${textOf(ra)}\n${JSON.stringify(fake.state.webhookCalls)}\n${JSON.stringify(a.notifications)}\n${a.stderr}`,
       );
     });
     await new Promise((r) => setTimeout(r, 300));

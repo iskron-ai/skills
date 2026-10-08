@@ -72,7 +72,7 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
       `на доске живо место прежнего имени ${address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
     boardUnread: (text) => `Отказано: доска не прочиталась — ${text}`,
     boardUnknown: (start, own, others) =>
-      `Отказано: форма доски не распознана — ни заголовка «${own}» («${others}»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук, хук) по догадке не делаю. Начало ответа: ${start}`,
+      `Отказано: форма доски не распознана — ни заголовка «${own}» («${others}»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук) по догадке не делаю. Начало ответа: ${start}`,
     boardAmbiguous: (n, name, karta) =>
       `Отказано: на доске ${n} места с именем ${name} у роли #${karta} — форма неоднозначна, состояние не определить.`,
     boardCount: (declared, parsed) =>
@@ -151,7 +151,7 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
       `a seat of the former name ${address} is alive on the board — cases and hooks may hold its address; remove it: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
     boardUnread: (text) => `Refused: the board did not read — ${text}`,
     boardUnknown: (start, own, others) =>
-      `Refused: the board's form is not recognized — no «${own}» («${others}») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock, hook) on a guess. The answer begins: ${start}`,
+      `Refused: the board's form is not recognized — no «${own}» («${others}») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock) on a guess. The answer begins: ${start}`,
     boardAmbiguous: (n, name, karta) =>
       `Refused: the board has ${n} seats named ${name} for role #${karta} — the form is ambiguous, the state cannot be told.`,
     boardCount: (declared, parsed) =>
