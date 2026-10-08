@@ -267,6 +267,31 @@ test("two sessions of one daemon at once keep their places, output, writes and s
   });
 });
 
+// list_changed in the SSE of a session's own answers (#6819) crosses the seam
+// to that session's harness — the one whose request carried it, not its neighbour.
+test("list_changed carried by one session's answers reaches its own harness through the daemon", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = bridge({}, []);
+    const b = bridge({}, []);
+    await Promise.all([handshake(a), handshake(b)]);
+    await Promise.all([a.request("tools/list"), b.request("tools/list")]);
+    const heard = (x) =>
+      x.notifications.filter((n) => n.method === "notifications/tools/list_changed").length;
+    await fake.control({ richTools: true, list_changed: true });
+    const r = await stand(a, { realm: "nks-dev", karta: 931, name: "place-a" });
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${a.stderr}`);
+    await waitFor("A to hear list_changed", () => heard(a) === 1);
+    assert.equal(heard(b), 0, "B's request carried nothing yet");
+    await b.request("tools/call", {
+      name: "iskron_channel",
+      arguments: { realm: "nks-dev", action: "list" },
+    });
+    await waitFor("B to hear list_changed", () => heard(b) === 1);
+    assert.equal(heard(a), 1, "A heard its change once");
+    assert.doesNotMatch(journalOf(dir), /emit outside of a session/);
+  });
+});
+
 // Exit from a case by outcome (#6573) is the session's: two satellites in one
 // daemon each leave only the cases their own run joined.
 test("two satellites of one daemon: the end of one run leaves its own cases, not the neighbour's", async () => {

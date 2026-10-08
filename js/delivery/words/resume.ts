@@ -20,6 +20,8 @@ export interface ResumeWords {
   byRecord: () => string;
   otherSeat: (key: string, led: string) => string;
   liveBridge: (key: string) => string;
+  /** Сокет держит прежний мост этой сессии, а взять место не вышло. */
+  ownNotTaken: (key: string, why: string) => string;
   noHello: (key: string) => string;
   stale: (key: string) => string;
   registerRefused: (text: string) => string;
@@ -71,6 +73,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     byRecord: () => "возврат по записи",
     otherSeat: (key, led) => `${key}: мост ведёт другое место ${led}`,
     liveBridge: (key) => `${key}: держит живой мост`,
+    ownNotTaken: (key, why) => `${key}: держит прежний мост этой сессии, взять не вышло — ${why}`,
     noHello: (key) =>
       `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
     stale: (key) => `${key}: запись протухла — место займёт ${via}`,
@@ -122,6 +125,8 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     byRecord: () => "return by record",
     otherSeat: (key, led) => `${key}: the bridge leads another seat ${led}`,
     liveBridge: (key) => `${key}: held by a live bridge`,
+    ownNotTaken: (key, why) =>
+      `${key}: a former bridge of this session holds it, taking it failed — ${why}`,
     noHello: (key) =>
       `${key}: hello did not come — the record is intact, the watchdog will repeat the return; if you do not wait — ${via}`,
     stale: (key) => `${key}: the record went stale — ${via} will take the seat`,
