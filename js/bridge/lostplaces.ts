@@ -39,9 +39,22 @@ export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
     harnessSession = s.trim() || harnessSession;
   return msg;
 }
+/**
+ * Начало id возврата места, который тонкий мост шлёт сам после смены демона (то же у
+ * прежних выпусков): живого держателя такой возврат не отнимает, даже своей сессии, —
+ * держать может мост, чей харнес ещё жив (resume.ts).
+ */
+export const THIN_RESUME_ID = "iskron-thin-resume-";
 /** Параметры возврата места в новой сессии демона: ключ и названная сессия харнеса. */
-export const resumeParams = (key: string): { key: string; session?: string } =>
+const resumeParams = (key: string): { key: string; session?: string } =>
   harnessSession ? { key, session: harnessSession } : { key };
+/** Возврат места в новой сессии демона — вызов тонкого моста номер n. */
+export const resumeCall = (key: string, n: number): JsonRpcMessage & { id: string } => ({
+  jsonrpc: "2.0",
+  id: `${THIN_RESUME_ID}${n}`,
+  method: "iskron/resume",
+  params: resumeParams(key),
+});
 
 export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) => void) {
   const live = new Map<string, string>();

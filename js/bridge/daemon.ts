@@ -22,9 +22,10 @@
 //                   держания (resume.ts), место спутника с живым мостом — по записи
 //                   паузы (suspend.ts); сокеты мест уходящий держит до вытеснения
 //                   преемником, пришедшее досылает ему спулом (handoff.ts), и уходит
-//   журнал          <каталог гранта>/run/daemon.log — слово демона и его сессий
+//   журнал          <каталог гранта>/run/daemon.log — слово демона и его сессий; переполненный
+//                   уходит в daemon.log.1, а не стирается (store.ts rotateJournal)
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +55,7 @@ import { beginHandover, beginSessionHandover } from "./holdstate.ts";
 import { pauseForHandover } from "./pauserecord.ts";
 import { endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
+import { rotateJournal } from "./store.ts";
 import { log, setProcessLog } from "./streams.ts";
 import { localSuspend, pauseSettled } from "./suspend.ts";
 import {
@@ -109,9 +111,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
   const journal = (line: string): void => {
     try {
       mkdirSync(run, { recursive: true, mode: 0o700 });
-      try {
-        if (statSync(journalPath).size > JOURNAL_MAX) unlinkSync(journalPath);
-      } catch {}
+      rotateJournal(journalPath, JOURNAL_MAX);
       // Метка слова log ([iskron-bridge время]) журналу не нужна: время и сборка — в начале строки.
       const text = line.trimEnd().replace(/\[iskron-bridge [^\]]*\] /, "");
       appendFileSync(

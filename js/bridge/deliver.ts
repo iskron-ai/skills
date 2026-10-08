@@ -1,6 +1,5 @@
 import { envName } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
-import { scoped } from "../shared/scope.ts";
 import {
   absorbChannelReply,
   absorbCloseReply,
@@ -41,7 +40,7 @@ import { loadServerCache, saveServerCache, sleep } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
 import { beginTaking } from "./taking.ts";
-import { noteServedTools, recheckTools } from "./toolsync.ts";
+import { harnessListing, noteServedTools, recheckTools, watchHarnessListing } from "./toolsync.ts";
 import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
@@ -123,9 +122,8 @@ const NET_BACKOFF_MS = (process.env[envName("BRIDGE_NET_BACKOFF_MS")] || "1000,2
 
 // Переоткрыв сессию, мост сверяет список тулов с отданным харнесу (#5405).
 // Свой tools/list харнеса в полёте — он и так получит свежий список: не спрашиваем дважды.
-const H = scoped(() => ({ listing: 0 })); // своих tools/list харнеса в полёте — у сессии
 onReinitialized(() => {
-  if (H.listing > 0) return;
+  if (harnessListing()) return;
   return recheckTools(async () => {
     const id = `iskron-bridge-tools-${++state.reinitCounter}`;
     let got: JsonRpcMessage | null = null;
@@ -191,12 +189,11 @@ function withNotice(reply: JsonRpcMessage): JsonRpcMessage {
 // Deliver one harness message upstream, with one auth retry and one session
 // retry. On final failure a request id is ALWAYS answered with an error.
 export async function deliver(msg: JsonRpcMessage): Promise<void> {
-  const listing = msg?.method === "tools/list";
-  if (listing) H.listing++;
+  const listed = msg?.method === "tools/list" ? watchHarnessListing(msg, emit) : null;
   try {
     await deliverOne(msg);
   } finally {
-    if (listing) H.listing--;
+    listed?.();
     settleOwnRevoke(msg);
   }
 }
@@ -242,7 +239,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       annotateToolList(m); // аннотированная форма — в общий кэш, полной
       if (m.result && !msg.params?.cursor) saveServerCache({ tools: m.result });
       m = narrowToolList(m); // харнесу — суженная копия, и отпечаток по ней (narrow.ts)
-      if (!msg.params?.cursor) noteServedTools(m.result);
+      if (!msg.params?.cursor) noteServedTools(m.result, msg);
     }
     if (isToolCall && hasId && m.id === msg.id) {
       heldReply = m;
