@@ -4,7 +4,15 @@
 // ядра собирается другой мост: свой префикс окружения, свой дом, чужой шов.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { after, before, test } from "node:test";
@@ -35,7 +43,9 @@ function rewriteDelivery() {
       .replaceAll("https://mcp.iskron.ai/", "https://mcp.example.com/")
       .replaceAll("ISKRON", "OTHER")
       .replaceAll("Iskron", "Other")
-      .replaceAll("iskron", "other");
+      .replaceAll("iskron", "other")
+      // The neighbour picks its own launch word (#6815 item 1).
+      .replace('LAUNCH_WORD = "start"', 'LAUNCH_WORD = "start-other"');
     writeFileSync(f, text);
   }
 }
@@ -124,4 +134,53 @@ test("the seam: the other thin bridge says hello as other, and this daemon refus
   assert.equal(hello.product, "other");
   assert.match(checkHello(hello) ?? "", /delivery other/);
   assert.equal(checkHello(helloFrame({ build: "x", path: "p", argv: [] })), null);
+});
+
+// Two deliveries' plugins in one process (#6815 items 1, 3, 5): each stands by its own
+// launch line, marks what it puts into the session, and lists only its own skills.
+test("two deliveries in one process: neither reads the other's launch line, frames or skills", async () => {
+  const load = async (entry) => {
+    const out = join(TMP, `${entry.replaceAll("/", "-")}.mjs`);
+    await bundle(entry, out);
+    return import(pathToFileURL(out).href);
+  };
+  const [mine, other] = [
+    {
+      launch: await import("../shared/launch.ts"),
+      frame: await import("../shared/frame-text.ts"),
+      cmds: await import("../opencode/commands.ts"),
+    },
+    {
+      launch: await load("shared/launch.ts"),
+      frame: await load("shared/frame-text.ts"),
+      cmds: await load("opencode/commands.ts"),
+    },
+  ];
+  const ours = "start @nks/nks-dev #931 дело №5";
+  const theirs = "start-other @acme/x #7 case #9";
+  assert.equal(mine.launch.parseLaunch(ours)?.no, "5");
+  assert.equal(mine.launch.parseLaunch(theirs), null, "this delivery reads the other's line");
+  assert.equal(other.launch.parseLaunch(theirs)?.no, "9");
+  assert.equal(other.launch.parseLaunch(ours), null, "the other delivery reads this line");
+
+  assert.match(mine.frame.markFrame("№7 «Стенд»"), /^\[iskron\] №7/);
+  assert.match(other.frame.markFrame("№7 «Стенд»"), /^\[other\] №7/);
+
+  const roots = join(TMP, "skills");
+  const listed = [];
+  for (const [root, bridge, door] of [
+    ["a", "iskron.mjs", "door-a"],
+    ["b", "other.mjs", "door-b"],
+  ]) {
+    for (const id of ["establish-mcp", door]) {
+      mkdirSync(join(roots, root, id, "scripts"), { recursive: true });
+      const path = join(roots, root, id, "SKILL.md");
+      writeFileSync(path, `---\nname: ${id}\nslash: true\ndescription: "x"\n---\n`);
+      listed.push({ id, path, description: id });
+    }
+    writeFileSync(join(roots, root, "establish-mcp", "scripts", bridge), "");
+  }
+  const ids = (m) => m.cmds.skillCommands(listed).map((c) => c.id);
+  assert.deepEqual(ids(mine), ["door-a", "establish-mcp"]);
+  assert.deepEqual(ids(other), ["door-b", "establish-mcp"]);
 });

@@ -15,6 +15,12 @@ export const method = (name: string): string => `${PRODUCT}/${name}`;
 /** Логгеры уведомлений MCP: кадры канала и слово самого моста. */
 export const LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME } as const;
 
+/**
+ * Метка продукта на кадре, который плагин вставляет в сессию (#6815 п. 3): кадры двух
+ * поставок в одной сессии различимы, и агент отвечает тулами своей.
+ */
+export const FRAME_MARK = `[${PRODUCT}]`;
+
 /** Префикс внутренних id JSON-RPC моста и его клиентов — по нему мост узнаёт свои вызовы. */
 export const ID_PREFIX = `${PRODUCT}-`;
 

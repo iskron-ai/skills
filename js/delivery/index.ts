@@ -34,6 +34,7 @@ export {
   SUB_ENTRY_PREFIX,
 } from "./product.ts";
 export {
+  FRAME_MARK,
   ID_PREFIX,
   LOGGERS,
   method,

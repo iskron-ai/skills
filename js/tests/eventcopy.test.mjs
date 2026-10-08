@@ -12,8 +12,15 @@ import { Backlog } from "../bridge/backlog.ts";
 import { marksOf, redundantCopy } from "../bridge/fanout.ts";
 import { RoomBatch } from "../bridge/roomstack.ts";
 import { StaleBurst } from "../bridge/stale.ts";
+import { FRAME_MARK } from "../delivery/protocol.ts";
 import { deliveryKeys } from "../shared/seen.ts";
 import { graphPosed, progress } from "./room-frames.mjs";
+
+/** pi's channel text without the delivery's mark it must carry (#6815 item 3). */
+const unmarked = (text) => {
+  assert.ok(text.startsWith(`${FRAME_MARK} `), text);
+  return text.slice(FRAME_MARK.length + 1);
+};
 
 process.env.ISKRON_OPENCODE_BATCH_MS = "50";
 process.env.ISKRON_PI_ASIDE_MS = "50";
@@ -222,7 +229,7 @@ test("pi: a stale tact older than the one waiting for the busy turn does not rep
   let idle = false;
   const deliver = piChannel({
     on: (name, fn) => on.set(name, fn),
-    sendMessage: (m) => sent.push(m.content),
+    sendMessage: (m) => sent.push(unmarked(m.content)),
   });
   await on.get("session_start")?.({}, { isIdle: () => idle });
   const burst = (f, kind = "backlog") => ({
@@ -237,7 +244,7 @@ test("pi: a stale tact older than the one waiting for the busy turn does not rep
 
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];
-  const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(m.content) });
+  const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(unmarked(m.content)) });
   deliver(frameEv(caseCopy()));
   deliver({
     data: { kind: "backlog", text: "пачка", frames: [inbox()], marks: deliveryKeys(inbox()) },

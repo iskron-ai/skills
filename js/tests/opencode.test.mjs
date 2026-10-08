@@ -46,6 +46,7 @@ import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -193,8 +194,11 @@ function fakeCtx({
       },
       // OpenCode answers a prompt with its inbox item; the id comes back in
       // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
+      // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
+      // the probes read the text after it.
       prompt: async (o) => {
-        prompts.push(o);
+        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
+        prompts.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
         return inboxIds
           ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
           : {};
@@ -3130,17 +3134,28 @@ test("stopping the plugin lets the real bridge clear the busy line before the ha
 
 // ── commands ─────────────────────────────────────────────────────────────────
 
-test("every installed skill with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
+test("every skill of the delivery's set with `slash: true` becomes a «/» command that loads the skill and hands over the human's words", async () => {
   const dir = mkdtempSync(join(SANDBOX, "skills-"));
-  const skill = (id, head) => {
-    mkdirSync(join(dir, id));
-    const path = join(dir, id, "SKILL.md");
+  // Another delivery's set in its own root (#6815 item 5): its bridge skill carries its own bridge.
+  const other = mkdtempSync(join(SANDBOX, "other-skills-"));
+  const skill = (id, head, root = dir) => {
+    mkdirSync(join(root, id));
+    const path = join(root, id, "SKILL.md");
     writeFileSync(path, `---\n${head}\n---\n# ${id}\n`);
     return { id, name: id, description: `Дверь ${id}. Вторая фраза.`, path, content: "" };
   };
+  const carrier = (root, file) => {
+    const s = skill("establish-mcp", 'name: establish-mcp\ndescription: "мост"', root);
+    mkdirSync(join(root, "establish-mcp", "scripts"));
+    writeFileSync(join(root, "establish-mcp", "scripts", file), "");
+    return s;
+  };
   const skills = [
+    carrier(dir, "iskron.mjs"),
     skill("iskron", 'name: iskron\nslash: true\ndescription: "Дверь"'),
     skill("plain", 'name: plain\ndescription: "Без слеша"'),
+    carrier(other, "other.mjs"),
+    skill("alien", 'name: alien\nslash: true\ndescription: "Чужая дверь"', other),
     {
       id: "opencode",
       name: "opencode",
@@ -3151,7 +3166,11 @@ test("every installed skill with `slash: true` becomes a «/» command that load
   ];
   const rec = await plugin({ ISKRON_BRIDGE_PATH: join(SANDBOX, "no-such-bridge.mjs") }, { skills });
   try {
-    assert.deepEqual([...rec.commands().keys()], ["iskron"]);
+    assert.deepEqual(
+      [...rec.commands().keys()],
+      ["iskron"],
+      "another delivery's skill is no command",
+    );
     const cmd = rec.commands().get("iskron");
     assert.equal(cmd.description, "Дверь iskron.");
     await cmd.execute({
@@ -6559,6 +6578,11 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
       assert.equal(rec.prompts[i].delivery, way, `${frame.id} must go ${way}`);
     }
     assert.match(rec.prompts[0].text, /^роль #48 \(@alari:sosed\)\n/);
+    assert.equal(
+      rec.prompts[0].marked,
+      true,
+      "the frame carries the delivery's mark (#6815 item 3)",
+    );
     assert.doesNotMatch(rec.prompts[0].text, /^№/, "a direct word is not a room word");
     assert.doesNotMatch(
       rec.prompts[1].text,
