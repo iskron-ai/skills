@@ -6,7 +6,10 @@
 //
 // Посреди живой HTTP-сессии сервер сам кладёт list_changed в SSE ответа на
 // каждый запрос с id, пока сессия не спросит tools/list (#6819): моста ли этот
-// запрос или харнеса — слово уходит харнесу, раз на смену, до его перечтения.
+// запрос или харнеса — слово уходит харнесу один раз, пока он не начал
+// перечитывать; вызов, ушедший до того, как его tools/list снял пометку,
+// может сказать ещё раз (#6817 допускает лишнее уведомление). Сужение --tools
+// здесь не судится: смена вне набора стоит харнесу перечтения суженной копии.
 import { createHash } from "node:crypto";
 
 import { scoped } from "../shared/scope.ts";
@@ -51,8 +54,8 @@ export function noteHarnessListing(msg: JsonRpcMessage): void {
 export const isListChanged = (m: JsonRpcMessage): boolean =>
   m?.method === LIST_CHANGED && (m.id === undefined || m.id === null);
 
-function tell(emit: (m: JsonRpcMessage) => void, why: string): void {
-  if (T.told) return; // харнес уже знает и ещё не перечёл — повтор ничего не добавит
+function tell(emit: (m: JsonRpcMessage) => void, why: string, again = false): void {
+  if (T.told && !again) return; // харнес уже знает и ещё не перечёл — повтор ничего не добавит
   T.told = true;
   log(`${why} — telling the harness (tools/list_changed)`);
   emit({ jsonrpc: "2.0", method: LIST_CHANGED });
@@ -79,5 +82,5 @@ export async function recheckTools(
   const fresh = toolsPrint((await ask().catch(() => null))?.result);
   if (!fresh || fresh === T.served) return;
   T.served = fresh;
-  tell(emit, "tool list changed under the re-opened session");
+  tell(emit, "tool list changed under the re-opened session", true); // разошёлся отпечаток — говорится всегда, как прежде
 }
