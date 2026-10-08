@@ -179,6 +179,7 @@ export async function startFakeNks(opts = {}) {
       connect: 0,
       list: 0,
       webhooks_added: 0,
+      webhooks_listed: 0,
       status_posts: 0,
       status_requests: 0, // every status POST that reached the server, answered or not
       ws_upgrades: 0,
@@ -210,7 +211,7 @@ export async function startFakeNks(opts = {}) {
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
-    webhooks: [], // { id, karta, url, active }
+    webhookCalls: [], // { action, node_id, realm } — ходы iskron_admin к хукам роли
     sends: [], // { karta, standing, text, bound }
     // Сокет стояния: connect выдаёт адрес ws на этом же сервере, апгрейд принимается,
     // hello уходит первым кадром; /control {ws_send, ws_close} гонит кадры и закрытия.
@@ -225,7 +226,7 @@ export async function startFakeNks(opts = {}) {
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
     evicted: new Set(), // вытесненные сокеты, ещё не закрытые: служба в них не пишет, но сервер они держат
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
-    structured: false, // /control {structured:true}: доска, register, connect и list_webhooks несут structuredContent (#6637)
+    structured: false, // /control {structured:true}: доска, register и connect несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
     lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
     structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
@@ -320,14 +321,13 @@ export async function startFakeNks(opts = {}) {
   // structuredContent рядом с прозой (#6637) — {action, …} ключами api, как их шлёт
   // nks-mcp (PR #408). Под garble проза заменена формой, которой мост не знает: поле
   // должно её перевесить.
-  // Неполные данные nks-mcp 0.104.1: "dropped" — первый ряд seats[]/webhooks[] выброшен
+  // Неполные данные nks-mcp 0.104.1: "dropped" — первый ряд seats[] выброшен
   // и dropped: 1; "incomplete" — остался {action, incomplete: true}.
   const damaged = (fields) => {
     if (st.fieldsDamage === "incomplete") return { action: fields.action, incomplete: true };
     if (st.fieldsDamage !== "dropped") return fields;
-    const key = Array.isArray(fields.seats) ? "seats" : "webhooks";
-    if (!Array.isArray(fields[key]) || !fields[key].length) return fields;
-    return { ...fields, [key]: fields[key].slice(1), dropped: 1 };
+    if (!Array.isArray(fields.seats) || !fields.seats.length) return fields;
+    return { ...fields, seats: fields.seats.slice(1), dropped: 1 };
   };
   const fielded = (result, whole, garbled) => {
     if (!st.structured || (st.structuredGate && !st.initAsked)) return result;
@@ -364,11 +364,6 @@ export async function startFakeNks(opts = {}) {
     ...(p.incoming ? { inbound: p.incoming } : {}),
     ...(p.realm ? { realm: slug(p.realm) } : {}),
   });
-  /** Имена мест канала этой сессии — кого «you» у хука. */
-  const sessionNames = (sid) =>
-    new Set(
-      [...(st.channels.get(st.standings.get(sid))?.places.values() ?? [])].map((p) => p.name),
-    );
 
   let base = null;
   const server = createServer(async (req, res) => {
@@ -495,12 +490,10 @@ export async function startFakeNks(opts = {}) {
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
-        "adminChannelSelf", // tools/list объявляет у iskron_admin параметр channel
         "rooms",
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
-        "hooksText",
-        "english", // доска и список хуков английской формой — предположенной, на .ai не наблюдённой (#6632 п.2)
+        "english", // доска английской формой — предположенной, на .ai не наблюдённой (#6632 п.2)
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
@@ -519,34 +512,6 @@ export async function startFakeNks(opts = {}) {
         if (k in patch) st[k] = patch[k];
       }
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
-      // Вимарша posed_to роли в графе: хук channel:self доставляет её внутри службы —
-      // в сокет каждого канала, где у роли есть место этого графа, с to_standing_id места.
-      if (patch.posed_to) {
-        const { realm, karta, text, id } = patch.posed_to;
-        const canon = slug(realm);
-        const armed = st.webhooks.some(
-          (w) => w.channel === "self" && w.realm === canon && w.karta === String(karta) && w.active,
-        );
-        for (const [chanId, c] of armed ? st.channels : []) {
-          const pl = c.places.get(canon);
-          if (!pl || pl.karta !== String(karta)) continue;
-          const frame = {
-            type: "message",
-            id: id ?? token("posed"),
-            received_at: new Date().toISOString(),
-            stale: false,
-            content_type: "text/plain",
-            body_chars: text.length,
-            to_standing_id: pl.standing_id,
-            to_standing: `@tester:${pl.name}`,
-            realm: canon,
-            karta_seq: Number(pl.karta),
-            body: text,
-          };
-          for (const sock of st.ws)
-            if (st.wsChans.get(sock) === chanId) sock.write(wsFrame(0x1, JSON.stringify(frame)));
-        }
-      }
       // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
       if (patch.ws_say) {
         const { name, text, id } = patch.ws_say;
@@ -573,17 +538,6 @@ export async function startFakeNks(opts = {}) {
         }
       }
       // Чужое живое место на доске — как если бы его держал мост другой сессии.
-      if (Array.isArray(patch.webhooks)) {
-        for (const w of patch.webhooks) {
-          const wakes = [...st.places.values()].find((pl) => pl.name === w.wakes);
-          st.webhooks.push({
-            id: 100 + st.webhooks.length,
-            karta: String(w.karta),
-            url: wakes?.incoming ?? "http://x/none",
-            active: true,
-          });
-        }
-      }
       if (Array.isArray(patch.places)) {
         for (const pl of patch.places) {
           st.places.set(`${pl.karta}:${pl.name}`, {
@@ -933,48 +887,30 @@ export async function startFakeNks(opts = {}) {
             jsonrpc: "2.0",
             id: msg.id,
             result: {
-              tools: st.adminChannelSelf
+              tools: st.richTools
                 ? [
-                    // Схема тула хуков объявляет channel — хук на канал ({"channel":"self"}).
                     {
-                      name: "iskron_admin",
-                      description: "Администрирование: хуки роли.",
-                      inputSchema: {
-                        type: "object",
-                        properties: {
-                          action: { type: "string" },
-                          realm: { type: "string" },
-                          node_id: { type: "string" },
-                          url: { type: "string" },
-                          channel: { type: "string" },
-                        },
-                      },
+                      name: "iskron_orient",
+                      description: "Войдите в граф.",
+                      inputSchema: { type: "object" },
+                    },
+                    {
+                      name: "iskron_add_vimarsha",
+                      description: "Создай вопрошание.",
+                      inputSchema: { type: "object" },
+                    },
+                    {
+                      name: "iskron_batch",
+                      description: "Атомарная дельта.",
+                      inputSchema: { type: "object" },
+                    },
+                    {
+                      name: "iskron_channel",
+                      description: "Живой канал роли.",
+                      inputSchema: { type: "object" },
                     },
                   ]
-                : st.richTools
-                  ? [
-                      {
-                        name: "iskron_orient",
-                        description: "Войдите в граф.",
-                        inputSchema: { type: "object" },
-                      },
-                      {
-                        name: "iskron_add_vimarsha",
-                        description: "Создай вопрошание.",
-                        inputSchema: { type: "object" },
-                      },
-                      {
-                        name: "iskron_batch",
-                        description: "Атомарная дельта.",
-                        inputSchema: { type: "object" },
-                      },
-                      {
-                        name: "iskron_channel",
-                        description: "Живой канал роли.",
-                        inputSchema: { type: "object" },
-                      },
-                    ]
-                  : [{ name: "nks_orient" }],
+                : [{ name: "nks_orient" }],
             },
           },
           extra,
@@ -1614,147 +1550,22 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
-      // Хуки роли: list_webhooks печатает по строке на хук с тем, кого он будит;
-      // add_webhook кладёт новый — так мост видит, стоит ли уже хук на его стояние.
+      // Хуки роли мост не взводит и не читает (#6973): фейк только считает ходы
+      // iskron_admin к ним — проба видит, что их не было. Список отвечает пустым
+      // наблюдённой формой: мост, который хук взводит, дошёл бы до add_webhook.
       if (msg.method === "tools/call" && msg.params?.name === "iskron_admin") {
         const a = msg.params.arguments ?? {};
-        if (a.action === "list_webhooks") {
-          if (typeof st.hooksText === "string") {
-            return json(
-              res,
-              200,
-              {
-                jsonrpc: "2.0",
-                id: msg.id,
-                result: { content: [{ type: "text", text: st.hooksText }] },
-              },
-              extra,
-            );
-          }
-          const mine = st.webhooks.filter(
-            (w) => String(w.karta) === String(a.node_id) && (!w.realm || w.realm === slug(a.realm)),
-          );
-          const en = st.english === true;
-          const wakesOf = (w) =>
-            w.channel === "self"
-              ? [...st.places.values()].find(
-                  (p) => p.karta === w.karta && p.realm != null && slug(p.realm) === w.realm,
-                )
-              : [...st.places.values()].find((p) => p.incoming === w.url);
-          // Как у api: kind и кого хук достаёт; «you» — место канала этой сессии; url не отдаётся.
-          const mineNames = sessionNames(sid);
-          const webhooks = mine.map((w) => {
-            const wakes = wakesOf(w);
-            const reaches = wakes
-              ? [{ standing: `@tester:${wakes.name}`, you: mineNames.has(wakes.name) }]
-              : [];
-            return {
-              id: w.id,
-              kind: w.channel === "self" ? "channel" : "url",
-              ...(w.channel === "self" ? { target_karta_seq: Number(w.karta) } : {}),
-              active: w.active,
-              reaches,
-              reaches_you: reaches.some((r) => r.you),
-            };
-          });
-          const hooksGarbled = `Haken: ${webhooks.length}`;
-          // Пустой список поверхность печатает без заголовка — наблюдено на mcp.iskron.ru.
-          if (!mine.length)
-            return json(
-              res,
-              200,
-              {
-                jsonrpc: "2.0",
-                id: msg.id,
-                result: fielded(
-                  {
-                    content: [
-                      {
-                        type: "text",
-                        text: en
-                          ? `No webhooks registered for #${a.node_id}.`
-                          : `Для #${a.node_id} вебхуки не зарегистрированы.`,
-                      },
-                    ],
-                  },
-                  { action: "list_webhooks", webhooks },
-                  hooksGarbled,
-                ),
-              },
-              extra,
-            );
-          const lines = [`${en ? "Webhooks for" : "Вебхуки для"} #${a.node_id} (${mine.length}):`];
-          for (const w of mine) {
-            const wakes = wakesOf(w);
-            const state = en ? (w.active ? "active" : "paused") : w.active ? "активен" : "пауза";
-            lines.push(`  #${w.id} → doer:#${w.karta} — ${state} [minimal]`);
-            const who = wakes ? `@tester:${wakes.name}` : en ? "nobody" : "никого";
-            lines.push(`     ${en ? "wakes now" : "будит сейчас"} (${wakes ? 1 : 0}): ${who}`);
-          }
+        if (a.action === "add_webhook" || a.action === "list_webhooks") {
+          const add = a.action === "add_webhook";
+          st.counts[add ? "webhooks_added" : "webhooks_listed"]++;
+          st.webhookCalls.push({ action: a.action, node_id: a.node_id, realm: a.realm });
+          const text = add
+            ? `Вебхук #${100 + st.counts.webhooks_added} создан`
+            : `Для #${a.node_id} вебхуки не зарегистрированы.`;
           return json(
             res,
             200,
-            {
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: fielded(
-                { content: [{ type: "text", text: lines.join("\n") }] },
-                { action: "list_webhooks", webhooks },
-                hooksGarbled,
-              ),
-            },
-            extra,
-          );
-        }
-        if (a.action === "add_webhook") {
-          // Нулевой срок — ход update_webhook («0 снимает срок»); на добавлении контур его отвергает — слово архитектора в #5380, текст отказа здесь условный.
-          if (a.ttl_seconds === 0)
-            return json(
-              res,
-              200,
-              {
-                jsonrpc: "2.0",
-                id: msg.id,
-                result: {
-                  isError: true,
-                  content: [{ type: "text", text: "Отказано (422): ttl_seconds must be positive" }],
-                },
-              },
-              extra,
-            );
-          st.counts.webhooks_added++;
-          const id = 100 + st.webhooks.length;
-          // {"channel":"self"} — хук на канал: доставка внутри службы местам роли этого графа (#5838).
-          if (a.channel === "self") {
-            st.webhooks.push({
-              id,
-              karta: String(a.node_id),
-              channel: "self",
-              realm: slug(a.realm),
-              active: true,
-            });
-            return json(
-              res,
-              200,
-              {
-                jsonrpc: "2.0",
-                id: msg.id,
-                result: {
-                  content: [{ type: "text", text: `Вебхук #${id} создан → канал (self)` }],
-                },
-              },
-              extra,
-            );
-          }
-          st.webhooks.push({ id, karta: String(a.node_id), url: a.url, active: true });
-          return json(
-            res,
-            200,
-            {
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: { content: [{ type: "text", text: `Вебхук #${id} создан → ${a.url}` }] },
-            },
+            { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
             extra,
           );
         }

@@ -21,12 +21,11 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
   ru: {
     description: () =>
       "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место " +
-      "(connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим " +
-      "адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает " +
-      "имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале " +
+      "(connect и register; только register, если сокет уже держит этот мост), при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает " +
+      "имя, команду сторожа, число ожидавших кадров и расписку стука. Очередь роли — iskron_orient(focus=роль) на входе и по поводу; кадр — адресату и участникам дела. Место в другом графе встаёт рядом на том же канале " +
       "(register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа " +
       "командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) " +
-      'лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. ' +
+      'лишь ставит строку занятости — без доски, connect, register и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. ' +
       "Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
     realm: () => "Адрес графа: @owner/slug или rN.",
     karta: () =>
@@ -45,7 +44,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     repeatKnock: () =>
       "Осознанный повтор стука в то же место человека: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
     satelliteOf: () =>
-      "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются.",
+      "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется); место живёт прогоном. name, take и room с ним не передаются.",
     status: () =>
       "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает.",
     cwd: () =>
@@ -54,12 +53,11 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
   en: {
     description: () =>
       "[bridge] Take a standing in one call: the bridge reads the board, derives the name (machine.repo.model), takes the seat " +
-      "(connect and register; only register if this bridge already holds the socket), arms the role's inbox hook with its own incoming " +
-      "address, with room knocks a join frame into the human's seat by the full address from the wire (a repeat — only repeat_knock=true, once, no sooner than 2 minutes) and returns " +
-      "the name, the watchdog command, the number of waiting frames, the hook state and the knock receipt. A seat in another graph stands beside on the same channel " +
+      "(connect and register; only register if this bridge already holds the socket), with room knocks a join frame into the human's seat by the full address from the wire (a repeat — only repeat_knock=true, once, no sooner than 2 minutes) and returns " +
+      "the name, the watchdog command, the number of waiting frames and the knock receipt. Read the role queue with iskron_orient(focus=role) on entry and when occasion calls; frames go to the addressee and case participants. A seat in another graph stands beside on the same channel " +
       "(register): the session hears all its graphs, and a write in each is signed by that graph's seat. Then — start the watchdog " +
       "with the command from the reply and wait. It is also the busyness move: on a seat this bridge already holds, a call with realm and status (karta and name — the same or omitted; with model, room or take it is a seat-taking and a check) " +
-      'only sets the busyness line — no board, connect, register, hook or knock; an empty status clears; the former iskron_channel(action="status") is kept for compatibility. ' +
+      'only sets the busyness line — no board, connect, register or knock; an empty status clears; the former iskron_channel(action="status") is kept for compatibility. ' +
       "The bridge executes the tool; if it is not in the session, the tools go past the bridge or the bridge is an old build (doctor will say), stand by the standing skill.",
     realm: () => "Graph address: @owner/slug or rN.",
     karta: () =>
@@ -78,7 +76,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     repeatKnock: () =>
       "A deliberate repeat of the knock at the same human seat: allowed once and no sooner than 2 minutes after the first; without it a repeated call sends no second join.",
     satelliteOf: () =>
-      "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat @handle:name from the brief. The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited), without a role inbox hook; the seat lives for the run. name, take and room are not passed with it.",
+      "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat @handle:name from the brief. The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited); the seat lives for the run. name, take and room are not passed with it.",
     status: () =>
       "The seat's busyness, up to 64 characters: on taking — the first line; on a seat this bridge already holds — the main way to update busyness (the call sets only it); an empty string clears.",
     cwd: () =>
