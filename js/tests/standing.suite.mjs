@@ -2824,9 +2824,10 @@ test("iskron/resume does not offer back a pre-session place whose socket a live 
 
 // The session's own record — stood by it — while a live bridge of another process
 // holds its socket (two plugin instances reloaded at once, graph nks-dev: #6626):
-// the resume takes nothing and names the place as held elsewhere, so the plugin
-// tells the session the return failed instead of leaving it to think it stands.
-test("iskron/resume of the session's own place whose socket a live bridge holds names it as held elsewhere", async (t) => {
+// the hearing watchdog's check takes nothing and names the place as held elsewhere —
+// two bridges of one session would pull the seat at every tick. The plugin's resume
+// of a new bridge takes it back as iskron_stand would (#6702; stand.test.mjs).
+test("iskron/check of the session's own place whose socket a live bridge holds names it as held elsewhere", async (t) => {
   const { fake, dir, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const cwd = mkdtempSync(join(tmpdir(), "iskron-elsewhere-"));
@@ -2838,7 +2839,7 @@ test("iskron/resume of the session's own place whose socket a live bridge holds 
   const next = startBridge(fake.mcpUrl, dir);
   t.after(() => next.stop());
   assert.ok((await next.call("initialize", 1, INIT)).result);
-  const r = await next.call("iskron/resume", 2, { cwd, session: "ses-1" });
+  const r = await next.call("iskron/check", 2, { cwd, session: "ses-1" });
   assert.equal(r.result?.resumed, false, JSON.stringify(r));
   assert.deepEqual(r.result.elsewhere, ["proba--931--nks-dev"], r.result.word);
   assert.equal(fake.state.ws.size, 1, "the live holder keeps its socket");
