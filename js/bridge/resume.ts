@@ -39,6 +39,7 @@ import {
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
+import { signHeldRecord } from "./holdkeep.ts";
 import {
   type HoldRecord,
   keyOf,
@@ -394,6 +395,7 @@ const selectorOf = (msg: JsonRpcMessage): ResumeSelector => ({
 function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   const sel = selectorOf(msg);
   noteHarnessSession(sel.session);
+  signHeldRecord();
   return sel;
 }
 
