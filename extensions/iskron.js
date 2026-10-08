@@ -682,7 +682,7 @@ var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.6.0";
+var VERSION = "7.7.0";
 var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
 var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
 function buildOf(selfUrl) {
@@ -736,6 +736,22 @@ var never = new Promise(() => {
 var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
 var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
 var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+
+// js/bridge/toolsync.ts
+var T = scoped(() => ({
+  served: null,
+  // у сессии харнеса — свой список
+  told: false,
+  // list_changed сказан, а харнес списка ещё не перечёл
+  inFlight: 0,
+  // tools/list харнеса в полёте (любые страницы)
+  listing: /* @__PURE__ */ new WeakSet(),
+  // tools/list харнеса (первая страница) в полёте
+  heldBack: /* @__PURE__ */ new WeakSet(),
+  // …в чьём ответе сервер сказал list_changed
+  live: /* @__PURE__ */ new WeakSet()
+  // …на который харнесу ушёл живой список сервера
+}));
 
 // js/bridge/transport.ts
 var state = scoped(() => ({
