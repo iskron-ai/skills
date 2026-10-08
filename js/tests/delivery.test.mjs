@@ -40,7 +40,8 @@ test("release-please stamps the version in the delivery layer and nowhere else i
 test("the built bridge carries the delivery layer's version and dev channel mark", () => {
   const version = /^export const VERSION = "([^"]+)"/m.exec(source)[1];
   const mark = /^export const CHANNEL_MARK: string = "([^"]+)";$/m.exec(source)[1];
-  assert.match(mark, /:dev$/);
+  const name = /^export const BUILD_MARK = "([^"]+)";$/m.exec(source)[1];
+  assert.equal(mark, `${name}:dev`);
   const plugin = JSON.parse(read(".claude-plugin/plugin.json"));
   assert.equal(version, plugin.version);
   const bridge = readFileSync(BUILT_BRIDGE, "utf8");

@@ -4,5 +4,11 @@
 // выпуска буквально (граф @nks/nks-dev, узел #6650).
 export const VERSION = "7.4.1"; // x-release-please-version
 
-/** Метка канала сборки: `<имя>-build:dev`; сборка выпуска вшивает `:release` на место `:dev`. */
+/** Имя метки канала: другие копии узнаются по `"<имя>:release"` и `"<имя>:dev"` в их тексте. */
+export const BUILD_MARK = "iskron-build";
+
+/**
+ * Метка канала этой сборки — `BUILD_MARK` и `:dev`; сборка выпуска вшивает `:release`.
+ * Форма строки — часть контракта: js/build.mjs находит её регулярным выражением.
+ */
 export const CHANNEL_MARK: string = "iskron-build:dev";

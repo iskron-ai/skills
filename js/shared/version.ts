@@ -4,20 +4,18 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { CHANNEL_MARK, VERSION } from "../delivery/index.ts";
+import { BUILD_MARK, CHANNEL_MARK, VERSION } from "../delivery/index.ts";
 
 export { VERSION };
-
-const MARK_NAME = CHANNEL_MARK.slice(0, CHANNEL_MARK.lastIndexOf(":"));
 
 /** This build is a release: the only kind the machine's home trusts as a newer bridge (graph @nks/nks-dev, node #6650). */
 export const releaseBuild = (): boolean => CHANNEL_MARK.endsWith(":release");
 /** Another copy's text is a release build. The mark is assembled at runtime so its letters appear in an output only when the release build stamped them. */
 export const releaseBuildIn = (text: string): boolean =>
-  text.includes(`"${[MARK_NAME, "release"].join(":")}"`);
+  text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
 /** Another copy's text is an explicit dev build. A copy without a mark (releases before 7.2.8) is neither. */
 export const devBuildIn = (text: string): boolean =>
-  text.includes(`"${[MARK_NAME, "dev"].join(":")}"`);
+  text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
 
 /** Build string `vX.Y.Z+hash` for the file whose `import.meta.url` is passed. */
 export function buildOf(selfUrl: string): string {
