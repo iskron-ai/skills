@@ -21,9 +21,8 @@ const FLUSH_STOP_MS = 5_000;
 type Stream = Writable;
 const deadStreams = new WeakSet<Stream>();
 
-// Куда сессия моста пишет харнесу. Полный мост — stdout процесса; сессия,
-// которой stdio подано потоками (session.ts: тонкий мост в запасном ходе,
-// демон машины), — свой поток, в своей области (shared/scope.ts).
+// Where a bridge session writes to the harness: the process's stdout for the full
+// bridge; a session given stdio as streams (session.ts) has its own, per scope.
 const out = scoped(() => ({ stream: null as Stream | null }));
 const sessionStream = (): Stream => out.stream ?? process.stdout;
 
@@ -31,8 +30,8 @@ export function setSessionOutput(s: Stream): void {
   out.stream = s;
 }
 
-// Слово процесса без stderr (демон машины): его журнал. Сессия демона пишет
-// своё слово в свою область — демон отдаёт его тонкому мосту и в журнал.
+// A process without stderr (the machine daemon) logs to its journal; a daemon session
+// logs into its own scope.
 let processLog: ((line: string) => void) | null = null;
 export function setProcessLog(fn: (line: string) => void): void {
   processLog = fn;
@@ -46,11 +45,10 @@ export function guardStream(s: Stream | null | undefined): void {
   if (s) s.on("error", () => deadStreams.add(s));
 }
 
-// Последняя запись в stdout не влезла в буфер: перед выходом ждать надо drain,
-// а не колбэк пустой записи — под Bun он приходит прежде, чем байты дошли до
-// читателя (замерено: 300 КБ при остановленном читателе — колбэк сразу, drain
-// через 0.7 с, когда читатель проснулся). Флаг честен и под Node: write()
-// возвращает false ровно тогда, когда буфер перерос highWaterMark.
+// The last write did not fit the buffer: wait for drain before exit, not for an empty
+// write's callback — under Bun that fires before the bytes reach the reader (measured:
+// 300 KB to a stopped reader, callback at once, drain 0.7 s later). Under Node write()
+// returns false exactly when the buffer passed highWaterMark.
 const backlogged = new WeakSet<Stream>();
 
 export function writeTo(s: Stream | null | undefined, text: string): boolean {
@@ -79,7 +77,7 @@ export function debug(msg: string): void {
 }
 
 export function emit(msg: JsonRpcMessage): void {
-  // Демон вне сессии харнеса не пишет никому: слово, потерявшее свою область, — в журнал, не в пустоту.
+  // The daemon outside a harness session writes to nobody: a word without its scope goes to the journal.
   if (!out.stream && processLog)
     return processLog(`emit outside of a session, dropped: ${JSON.stringify(msg).slice(0, 200)}\n`);
   writeTo(sessionStream(), JSON.stringify(msg) + "\n");
@@ -93,7 +91,7 @@ export function emit(msg: JsonRpcMessage): void {
 // spot arrives as 65536 bytes; drained first, it arrives whole.
 export function flushStdout(out: Stream = sessionStream()): Promise<void> {
   return new Promise((resolve) => {
-    // Не по writableLength: под Bun он не ведётся, и слив кончался бы до записи.
+    // Not by writableLength: Bun does not keep it, and the flush would end before the write.
     if (!canWrite(out)) return resolve();
     // A pipe whose reader is gone never drains, so the drain callback never
     // fires — and an exit path that waits on it does not exit at all. The

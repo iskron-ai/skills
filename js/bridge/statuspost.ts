@@ -1,25 +1,25 @@
-// POST строки занятости на названный статусный адрес — лист без зависимостей от
-// держания: его зовут и status.ts, и handoff.ts (занятость места, которое преемник
-// не взял), а hold.ts → handoff.ts → status.ts → hold.ts замкнулось бы в цикл.
-import { L } from "../shared/lang.ts";
+// POST of the busyness line to a named status address — a leaf free of the holding:
+// status.ts and handoff.ts both call it, and hold.ts → handoff.ts → status.ts → hold.ts
+// would close a cycle.
+import { STATUS_POST } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
 
-/** Исход POST занятости; code — HTTP-код отказа поверхности, когда он был. */
+/** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
   ok: boolean;
   body: string;
   code?: number;
-  /** Строка, которую сервер принял: doing ответа; без него при обрезке — выведенная правилом, иначе нет (легла отправленная). */
+  /** The line the server took: the reply's doing; without it, on trimming, the one the rule derives. */
   doing?: string;
-  /** Строка принята обрезанной (warnings[] trimmed_to_limit). */
+  /** Taken trimmed (warnings[] trimmed_to_limit). */
   trimmed?: StatusTrim;
 }
 
 /**
- * Строка занятости длиннее предела ложится обрезанной по слову, полный текст —
- * в истории места (граф nks-dev: #6729, нудж #6730; дело №234): ответ POST — 200
- * {doing, doing_at, warnings?}, элемент warnings — {code: trimmed_to_limit, message}
- * (дело №234 [139]). doing — принятая строка, message — слово сервера агенту.
+ * A line over the limit lands trimmed at a word, the full text in the seat's history
+ * (graph @nks/nks-dev, nodes #6729, #6730): the POST answers 200 {doing, doing_at,
+ * warnings?}, a warning is {code: trimmed_to_limit, message}.
  */
 export interface StatusTrim {
   doing: string;
@@ -27,36 +27,35 @@ export interface StatusTrim {
 }
 
 const TRIMMED = "trimmed_to_limit";
-/** Предел строки api 0.108.0 — только для вывода принятой строки, когда ответ её не назвал. */
+/** The api 0.108.0 line limit — only to derive the taken line when the reply does not name it. */
 const LIMIT = 64;
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" ? (v as Obj) : {});
 
 /**
- * Строка, какой сервер её кладёт, — запасной путь, когда ответ doing не несёт
- * (сервер до api 0.108.0): по слову до max знаков с «…» (дело №234 [22], #6729).
+ * The line as the server lays it — the fallback when the reply carries no doing
+ * (a server before api 0.108.0): at a word, up to max chars with "…" (#6729).
  */
 export function trimToWord(text: string, max: number): string {
   const chars = [...text];
   const head = chars.slice(0, max - 1).join("");
-  // Знак за головой — пробел: голова кончается словом целиком.
+  // A space right after the head: the head ends on a whole word.
   const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
   return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
 }
 
 /**
- * Принятая строка и обрезка из тела удачного ответа. Принятая — doing верхнего
- * уровня; ответ без doing (тело не JSON или сервер до api 0.108.0) — отправленная,
- * а при предупреждении trimmed_to_limit — выведенная правилом: отправленная за
- * принятую не выдаётся и в держание не ложится.
+ * The taken line and the trimming from a successful reply's body. Without doing,
+ * the sent line — or, under trimmed_to_limit, the derived one: the sent line is
+ * never passed off as the taken one.
  */
 function acceptedIn(body: string, sent: string): Pick<StatusOutcome, "doing" | "trimmed"> {
   let parsed: Obj = {};
   try {
     parsed = obj(JSON.parse(body));
   } catch {
-    /* прежний сервер: тело не JSON */
+    /* an older server: the body is not JSON */
   }
   const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
   const w = obj(warnings.find((x) => obj(x).code === TRIMMED));
@@ -67,17 +66,13 @@ function acceptedIn(body: string, sent: string): Pick<StatusOutcome, "doing" | "
   return { doing, trimmed: { doing, message } };
 }
 
-/** Нудж обрезки агенту: слово сервера; без него — что обрезано; ход — переназвать коротко. */
+/** The trimming nudge to the agent: the server's word, otherwise what was trimmed. */
 export function trimNudge(t: StatusTrim): string {
-  if (t.message)
-    return L(`строка обрезана сервером: ${t.message}`, `the server trimmed the line: ${t.message}`);
-  return L(
-    "сервер обрезал строку; полный текст — в истории места, переназови короче",
-    "the server trimmed the line; the full text is in the seat's history, rename it shorter",
-  );
+  if (t.message) return words(STATUS_POST).trimmedBy(t.message);
+  return words(STATUS_POST).trimmed();
 }
 
-/** Тот же POST на названный адрес — для выхода, когда стояние уже отпущено, а адрес снят до этого. */
+/** The same POST to a named address — for the exit, when the standing is already released. */
 export async function publishStatusTo(
   url: string,
   text: string,
@@ -94,39 +89,18 @@ export async function publishStatusTo(
     });
   let res: Response;
   try {
-    // Строка занятости ставится, а не копится, — повтор безвреден. Один и только на
-    // закрытом соединении (keep-alive из пула, закрытый сервером): ответ поверхности не повторяется.
+    // The line is set, not accumulated, so a repeat is harmless — one, and only on a
+    // connection closed under the request; a surface reply is not repeated.
     res = await post().catch((e: unknown) => {
       if (!closedUnder(e) || signal.aborted) throw e;
       return post();
     });
   } catch (e) {
-    return {
-      ok: false,
-      body: L(
-        `Отказано (мост): статусный адрес не ответил — ${(e as Error).message}`,
-        `Refused (bridge): the status address did not answer — ${(e as Error).message}`,
-      ),
-    };
+    return { ok: false, body: words(STATUS_POST).noAnswer((e as Error).message) };
   }
   const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404)
-    return {
-      ok: false,
-      code: 404,
-      body: L(
-        `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
-        `Refused (404) by the surface: ${body || "no body"} — this seat address no longer addresses: another holder's connect may have turned it, or another instance of the same session's bridge may have held it. Whose it is now, the bridge cannot know from here.`,
-      ),
-    };
+  if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
   if (!res.ok)
-    return {
-      ok: false,
-      code: res.status,
-      body: L(
-        `Отказано (${res.status}) поверхностью: ${body || "без тела"}`,
-        `Refused (${res.status}) by the surface: ${body || "no body"}`,
-      ),
-    };
+    return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
   return { ok: true, body, ...acceptedIn(body, text) };
 }

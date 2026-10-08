@@ -1,13 +1,6 @@
-// Кадр комнаты по словарю родов — у моста (граф nks-dev: #5851). Клиенты
-// уведомлений (pi, OpenCode) решают путь кадра сами; сторожам (Claude Code под
-// Monitor, Codex, сторож выхода) пачку копит мост: кадр с event_kind рода
-// «в пачку» — и всякая запись дела, не адресованная месту (#6574), — ложится
-// в пачку своей двери и уходит по окну, по полной пачке или перед прерывающим
-// кадром — порядок цел. Пачка уходит залпом обычных событий frame с меткой
-// batch за строкой-шапкой note (at: 0) — счёт по делам с указателем, строки
-// ниже — только адресованные месту. Слово человека в пачку не ложится. Кадр
-// без event_kind словарь не трогает: он идёт сразу, как прежде. Кольцо двери
-// при этом получает каждый кадр (hold.ts).
+// Room frames by the kinds dictionary, batched for watchdogs by the bridge
+// (graph @nks/nks-dev, nodes #5851, #6574): a batch leaves by window, when full,
+// or before an interrupting frame, as a note head (at: 0) and frames marked batch.
 import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
@@ -19,9 +12,9 @@ import { type ChannelEvent, type Door } from "./door.ts";
 import { HumanWords, idOf, isWordOf } from "./humanwords.ts";
 import { log } from "./streams.ts";
 
-/** Окно пачки; переменная — шов для проб, не ручка человека. */
+/** The variable is a seam for probes, not a human knob. */
 const ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 60_000;
-/** Полная пачка уходит сразу, не дожидаясь окна: кадр не отбрасывается никогда. */
+/** A full batch leaves at once: no frame is ever dropped. */
 const ROOM_BATCH_CAP = 20;
 
 const rec = (v: unknown): Record<string, unknown> =>
@@ -39,10 +32,10 @@ export class RoomBatch {
     this.timer ??= setTimeout(() => this.flushNow(), ROOM_BATCH_MS).unref();
   }
 
-  /** Слова человека в полёте: их тело — слово человека, не кадр пачки. */
+  /** Human words in flight: their body is the human's word, not a batch frame. */
   readonly humanWords = new HumanWords();
 
-  /** Вынуть из копящейся пачки слово в полёте, чей текст пришёл: отдан он будет своим телом. */
+  /** Take a word in flight out of the pending batch once its body came. */
   dropWord(body: Frame, word: string, dropped: (frame: Frame) => void): void {
     for (let i = this.held.length - 1; i >= 0; i--) {
       if (!isWordOf(this.held[i].frame, body, word)) continue;
@@ -55,15 +48,12 @@ export class RoomBatch {
     }
   }
 
-  /** Лежит ли кадр в копящейся пачке — кольцо не отдаёт его прицепившемуся отдельно (door.ts). */
+  /** A batched frame is not handed out separately by the ring (door.ts). */
   holds(frame: Frame | null): boolean {
     return !!frame && this.held.some((h) => h.frame === frame);
   }
 
-  /**
-   * Отдать накопленное сейчас: по окну, по полной пачке, перед прерывающим (`carrier` —
-   * он идёт следом текстом), при отпускании. Событие — один раз (seen.ts splitBatch).
-   */
+  /** Flush now; `carrier` — the interrupting frame that follows as text (seen.ts splitBatch). */
   flushNow(carrier?: Frame | null): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -76,14 +66,13 @@ export class RoomBatch {
     if (out.length) emitBatch(out, emit);
   }
 
-  /** `has` — метки места: событие, уже вошедшее в ход, пачка не повторяет (seen.ts eventIn). */
+  /** The seat's marks: an event already in the turn is not repeated (seen.ts eventIn). */
   private readonly has: Marks;
   constructor(has: Marks) {
     this.has = has;
   }
 }
 
-/** Пачка залпом: шапка note (at: 0) и кадры с меткой batch. */
 export function emitBatch(
   got: { raw: string; frame: Frame }[],
   emit: (ev: ChannelEvent) => void,
@@ -110,19 +99,19 @@ export function emitBatch(
   );
 }
 
-/** Запись дела, не адресованная месту (#6574): сторожам — только пачкой, счётом. */
+/** A case record not addressed to the seat goes to watchdogs only counted in a batch (graph @nks/nks-dev, node #6574). */
 export function countOnly(frame: Frame | null): frame is Frame {
   return frame?.type === "message" && !!byKind(frame) && !addressedToMine(frame);
 }
 
-/** Род, мосту неизвестный, — строкой в лог моста: новый род должен быть замечен. */
+/** An unknown kind is logged so it gets noticed. */
 export function noteRoomKind(frame: Frame): void {
   const rk = roomKind(frame);
   if (rk && !rk.known)
     log(`room frame ${String(frame.id ?? "?")}: ${rk.words} — batched, not interrupting`);
 }
 
-/** Кадр-сообщение для сторожей: true — лёг в пачку и сейчас не рассылается; false — идёт сейчас, после накопленного. */
+/** true — batched, not sent now; false — sent now, after the pending batch. */
 export function batchForWatchdogs(
   d: Door,
   raw: string,
@@ -131,28 +120,23 @@ export function batchForWatchdogs(
 ): boolean {
   const rk = roomKind(frame);
   const f = rec(frame);
-  // Строку вопроса от места человека раскладывает адресованность (asks.ts askFromPerson).
+  // An ask from a person's seat is routed by addressing (asks.ts askFromPerson).
   let human = (frame.origin ?? classifyOrigin(frame)) === "human" && !askFromPerson(frame);
-  // Слово в две фазы (#5953): слово человека в полёте и обрыв идут по словарю,
-  // в пачку; тело его слова — слово человека: отдельным событием, а само слово
-  // в полёте из копящейся пачки вынимается — будит одно событие, и в нём текст.
+  // Two-phase word (graph @nks/nks-dev, node #5953): the body wakes one event, the word in flight leaves the batch.
   if (rk?.kind === "said" && rk.phase === "pending" && human)
     d.roomBatch.humanWords.remember(frame);
   if (rk?.kind === "body") {
     const word = idOf(rec(f.line).refers_to ?? f.in_reply_to);
     if (d.roomBatch.humanWords.forget(frame, word) && rk.phase !== "aborted") {
       human = true;
-      frame.origin = "human"; // шапка кадра называет человека, а не место его моста
+      frame.origin = "human"; // the frame head names the human, not their bridge's seat
       d.roomBatch.dropWord(frame, word, (said) => {
         for (const k of deliveryKeys(said)) noteSeen(d.seenPath, k, d.seen);
       });
     }
   }
-  // Слово человека в пачку не ложится: какая бы ни была стопка, оно идёт сейчас.
-  // Кроме адресного не мне (#6081): оно и от человека — фактом в пачку.
-  // Неадресованное месту дело — в пачку при любой стопке (#6574): текстом в ход
-  // идёт только адресованное, прочее уходит счётом в шапке. Адресованность — до
-  // стопки: слово в полёте запоминается ею, и его тело узнаётся по нему.
+  // A human's word goes now unless addressed to another (graph @nks/nks-dev, node #6081);
+  // anything not addressed to the seat is batched (graph @nks/nks-dev, node #6574).
   if (
     (!human || rk?.phase || rk?.aside) &&
     byKind(frame) &&

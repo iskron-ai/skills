@@ -1,5 +1,7 @@
 import { createServer, type ServerResponse } from "node:http";
 
+import { CALLBACK } from "../../delivery/index.ts";
+import { words } from "../../shared/lang.ts";
 import { errorMessage } from "../errors.ts";
 import { log } from "../streams.ts";
 
@@ -76,9 +78,7 @@ export function bindCallback(port: number): Promise<Callback> {
           },
           (e: unknown) => {
             res.writeHead(502, { "content-type": "text/html; charset=utf-8" });
-            res.end(
-              `<h3>iskron-bridge: the sign-in page could not be reached (${esc(errorMessage(e))}) — reload this page.</h3>`,
-            );
+            res.end(words(CALLBACK).loginUnreachable(esc(errorMessage(e))));
           },
         );
         return;
@@ -93,20 +93,10 @@ export function bindCallback(port: number): Promise<Callback> {
       // held response is exactly what makes them unsure. Hand the older tab a
       // line of its own rather than silently dropping its response: an
       // abandoned one spins until the browser gives up on it.
-      if (browser) {
-        tellBrowser("iskron-bridge: another tab is finishing this login — you can close this one.");
-      }
+      if (browser) tellBrowser(words(CALLBACK).anotherTab());
       browser = res;
-      if (err) tellBrowser(`iskron-bridge: authorization failed (${esc(err)})`);
-      else {
-        setTimeout(
-          () =>
-            tellBrowser(
-              "iskron-bridge: the code arrived and the exchange is still running — watch the agent.",
-            ),
-          PAGE_HOLD_MS,
-        ).unref();
-      }
+      if (err) tellBrowser(words(CALLBACK).refused(esc(err)));
+      else setTimeout(() => tellBrowser(words(CALLBACK).stillRunning()), PAGE_HOLD_MS).unref();
       deliver({ code: u.searchParams.get("code"), state: u.searchParams.get("state"), err });
     });
 
@@ -118,12 +108,10 @@ export function bindCallback(port: number): Promise<Callback> {
         port,
         report: (failure) =>
           tellBrowser(
-            failure
-              ? `iskron-bridge: authorization failed (${esc(failure)}) — nothing was stored; the agent has the details.`
-              : "iskron-bridge: authenticated — you can close this tab.",
+            failure ? words(CALLBACK).failed(esc(failure)) : words(CALLBACK).authenticated(),
           ),
         close: () => {
-          tellBrowser("iskron-bridge: the login was abandoned — nothing was stored.");
+          tellBrowser(words(CALLBACK).abandoned());
           server.close();
         },
         serveLogin: (key, fn) => {
@@ -132,7 +120,7 @@ export function bindCallback(port: number): Promise<Callback> {
         },
         // No deadline by default: the login lives as long as the bridge holding
         // it, so a human who comes back to the tab late still lands it (graph
-        // nks-dev: #4721). A bridge left by its harness bounds the wait itself.
+        // @nks/nks-dev, node #4721). A bridge left by its harness bounds the wait itself.
         waitForCode: (expectedState, timeoutMs = 0) =>
           new Promise<string>((res, rej) => {
             const timer =
@@ -148,9 +136,7 @@ export function bindCallback(port: number): Promise<Callback> {
             // login's own state does (#4794).
             const settle = (v: Arrival): boolean => {
               if (v.state !== expectedState) {
-                tellBrowser(
-                  "iskron-bridge: this page belongs to a login that is over — open the link the agent gave you.",
-                );
+                tellBrowser(words(CALLBACK).loginOver());
                 return false;
               }
               if (timer) clearTimeout(timer);

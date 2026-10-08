@@ -1,106 +1,34 @@
-// Описание тула моста iskron_stand — то, что харнесс видит в tools/list
-// (moment.ts вставляет его в список сервера); исполняет тул stand.ts.
-import { tool } from "../delivery/index.ts";
-import { L } from "../shared/lang.ts";
+// The bridge's stand tool as the harness sees it in tools/list (moment.ts inserts it
+// into the server's list); stand.ts executes it.
+import { STAND_TOOL, tool } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 
 export const STAND_TOOL_NAME = tool("stand");
 
 const str = (description: string) => ({ type: "string", description });
 
-export const standTool = () => ({
-  name: STAND_TOOL_NAME,
-  description: L(
-    "[мост] Занять стояние одним вызовом: мост читает доску, выводит имя (машина.репо.модель), занимает место " +
-      "(connect и register; только register, если сокет уже держит этот мост), взводит хук инбокса роли своим входящим " +
-      "адресом, при room стучит кадром join в место человека по полному адресу с провода (повтор — только repeat_knock=true, один раз, не раньше чем через 2 минуты) и возвращает " +
-      "имя, команду сторожа, число ожидавших кадров, состояние хука и расписку стука. Место в другом графе встаёт рядом на том же канале " +
-      "(register): сессия слышит все свои графы, и запись в каждом подписана местом этого графа. Дальше — запустить сторожа " +
-      "командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) " +
-      'лишь ставит строку занятости — без доски, connect, register, хука и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. ' +
-      "Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
-    "[bridge] Take a standing in one call: the bridge reads the board, derives the name (machine.repo.model), takes the seat " +
-      "(connect and register; only register if this bridge already holds the socket), arms the role's inbox hook with its own incoming " +
-      "address, with room knocks a join frame into the human's seat by the full address from the wire (a repeat — only repeat_knock=true, once, no sooner than 2 minutes) and returns " +
-      "the name, the watchdog command, the number of waiting frames, the hook state and the knock receipt. A seat in another graph stands beside on the same channel " +
-      "(register): the session hears all its graphs, and a write in each is signed by that graph's seat. Then — start the watchdog " +
-      "with the command from the reply and wait. It is also the busyness move: on a seat this bridge already holds, a call with realm and status (karta and name — the same or omitted; with model, room or take it is a seat-taking and a check) " +
-      'only sets the busyness line — no board, connect, register, hook or knock; an empty status clears; the former iskron_channel(action="status") is kept for compatibility. ' +
-      "The bridge executes the tool; if it is not in the session, the tools go past the bridge or the bridge is an old build (doctor will say), stand by the standing skill.",
-  ),
-  inputSchema: {
-    type: "object",
-    properties: {
-      realm: str(L("Адрес графа: @owner/slug или rN.", "Graph address: @owner/slug or rN.")),
-      karta: str(
-        L(
-          "Роль агента (#N из AGENTS.md или строки запуска). Нужна, чтобы занять место; для занятости на держимом месте её можно опустить.",
-          "The agent's role (#N from AGENTS.md or the launch line). Needed to take a seat; for busyness on a held seat it may be omitted.",
-        ),
-      ),
-      name: str(
-        L(
-          "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model.",
-          "Your own half of the standing's name; without it machine.repo.model is derived — the model from the model parameter.",
-        ),
-      ),
-      room: str(
-        L(
-          "Адрес места человека @handle:name (его даёт окно человека); мост стучит туда join, чтобы встать рядом с человеком.",
-          "The human's seat address @handle:name (the human's window gives it); the bridge knocks a join there to stand beside the human.",
-        ),
-      ),
-      model: str(
-        L(
-          "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
-          "The model the agent runs on (id or name, for example claude-opus-5 or opus-5) — the third part of the derived name; without it the name is machine.repo.",
-        ),
-      ),
-      mute_siblings: {
-        type: "boolean",
-        description: L(
-          "Не слышать эхо других стояний той же роли.",
-          "Do not hear the echo of other standings of the same role.",
-        ),
+export const standTool = () => {
+  const w = words(STAND_TOOL);
+  return {
+    name: STAND_TOOL_NAME,
+    description: w.description(),
+    inputSchema: {
+      type: "object",
+      properties: {
+        realm: str(w.realm()),
+        karta: str(w.karta()),
+        name: str(w.name()),
+        room: str(w.room()),
+        model: str(w.model()),
+        mute_siblings: { type: "boolean", description: w.muteSiblings() },
+        take: { type: "boolean", description: w.take() },
+        room_karta: str(w.roomKarta()),
+        repeat_knock: { type: "boolean", description: w.repeatKnock() },
+        satellite_of: str(w.satelliteOf()),
+        status: str(w.status()),
+        cwd: str(w.cwd()),
       },
-      take: {
-        type: "boolean",
-        description: L(
-          "Сознательный переход: вытеснить живого держателя ДРУГОЙ сессии — только по слову человека (без take имя, выведенное или явное, которое держит другая сессия, встаёт рядом на имя.N со слухом; своё место, которое держит прежний мост этой же сессии харнесса, мост возвращает сам — take не нужен); либо сменить место этого моста в графе (в графе одно место на мост: другая роль или другое имя без take — отказ вслух, прежнее место остаётся на доске без слуха). Место в другом графе take не требует — оно встаёт рядом.",
-          "A deliberate move: to displace a live holder of ANOTHER session — only on the human's word (without take a name, derived or explicit, that another session holds stands beside on name.N with hearing; the bridge takes back by itself a seat a former bridge of this same harness session holds — no take needed); or to change this bridge's seat in a graph (one seat per bridge in a graph: another role or another name without take is a refusal aloud, the former seat stays on the board without hearing). A seat in another graph does not need take — it stands beside.",
-        ),
-      },
-      room_karta: str(
-        L(
-          "Роль человека, чьё это место (#N), если места нет на доске; обычно роль человека, приславшего адрес места.",
-          "The role of the human whose seat it is (#N) if the seat is not on the board; usually the role of the human who sent the seat address.",
-        ),
-      ),
-      repeat_knock: {
-        type: "boolean",
-        description: L(
-          "Осознанный повтор стука в то же место человека: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
-          "A deliberate repeat of the knock at the same human seat: allowed once and no sooner than 2 minutes after the first; without it a repeated call sends no second join.",
-        ),
-      },
-      satellite_of: str(
-        L(
-          "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется), без хука инбокса роли; место живёт прогоном. name, take и room с ним не передаются.",
-          "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat @handle:name from the brief. The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited), without a role inbox hook; the seat lives for the run. name, take and room are not passed with it.",
-        ),
-      ),
-      status: str(
-        L(
-          "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает.",
-          "The seat's busyness, up to 64 characters: on taking — the first line; on a seat this bridge already holds — the main way to update busyness (the call sets only it); an empty string clears.",
-        ),
-      ),
-      cwd: str(
-        L(
-          "Директория сессии харнесса, существующий абсолютный каталог — из неё выводится репо для имени (git toplevel, в связанном ворктри — основной копии, иначе её basename) и читаются ветки при поиске мест прежнего имени, когда мост запущен не из рабочей копии; плагин OpenCode подставляет её сам. Без неё — cwd моста; несуществующая или относительная — отказ вслух.",
-          "The harness session's directory, an existing absolute path — the repo for the name is derived from it (git toplevel, in a linked worktree — of the main copy, otherwise its basename) and branches are read when looking for seats of the former name, when the bridge is not started from the working copy; the OpenCode plugin supplies it itself. Without it — the bridge's cwd; a nonexistent or relative one is a refusal aloud.",
-        ),
-      ),
+      required: ["realm"], // karta only takes a seat; busyness on a held seat goes without it (graph @nks/nks-dev, node #6509)
     },
-    required: ["realm"], // karta — только для занятия места; занятость на держимом месте без неё (#6509)
-  },
-});
+  };
+};

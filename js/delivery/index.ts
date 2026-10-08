@@ -50,3 +50,36 @@ export { DOOR, type DoorWords } from "./words/door.ts";
 export { HANDOFF, type HandoffWords } from "./words/handoff.ts";
 export { HEARING, type HearingWords } from "./words/hearing.ts";
 export { HOOK, type HookWords } from "./words/hook.ts";
+// part 5b
+export { ACTION_LIST_RE, BOARD_HEADER, SEAT_GONE_RE, UNATTRIBUTED_RE } from "./protocol.ts";
+export { LEAVE, type LeaveWords } from "./words/leave.ts";
+export { LISTEN, type ListenWords } from "./words/listen.ts";
+export { LOST, type LostWords } from "./words/lostplaces.ts";
+export { MOMENT, type MomentWords } from "./words/moment.ts";
+export { NAMES, type NameWords } from "./words/names.ts";
+export { NARROW, type NarrowWords } from "./words/narrow.ts";
+export {
+  CALLBACK,
+  type CallbackWords,
+  DEVICE_CLIENT,
+  type DeviceClientWords,
+} from "./words/oauth.ts";
+export { OWNER, type OwnerWords } from "./words/owner.ts";
+export { PLACES, type PlacesWords } from "./words/places.ts";
+export { REALMS, type RealmsWords } from "./words/realms.ts";
+export { RELEASES, type ReleasesWords } from "./words/releases.ts";
+export { RESUME, type ResumeWords } from "./words/resume.ts";
+export { RUN_END, type RunEndWords } from "./words/runend.ts";
+export { SATELLITE, type SatelliteWords } from "./words/satellite.ts";
+export { SEPARATE, type SeparateWords } from "./words/separate.ts";
+export { STAND, type StandWords } from "./words/stand.ts";
+export { STANDING, type StandingWords } from "./words/standing.ts";
+export { STAND_MISS, type StandMissWords } from "./words/standmiss.ts";
+export { STAND_TOOL, type StandToolWords } from "./words/standtool.ts";
+export { STATUS, type StatusWords } from "./words/status.ts";
+export { STATUS_POST, type StatusPostWords } from "./words/statuspost.ts";
+export { SUSPEND, type SuspendWords } from "./words/suspend.ts";
+export { THIN, type ThinWords } from "./words/thin.ts";
+export { UNNAMED, type UnnamedWords } from "./words/unnamed.ts";
+export { UPDATE, type UpdateWords } from "./words/update.ts";
+export { USAGE, type UsageWords } from "./words/usage.ts";

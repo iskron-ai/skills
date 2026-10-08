@@ -1,8 +1,8 @@
-// Набор скиллов, УСТАНОВЛЕННЫЙ у держателя в миг занятия места, — attrs.skills
-// (граф nks-dev: #6226, форма — #6211): не тексты, загруженные в контекст сессии.
-// version — версия файла моста внутри набора, не работающего моста: build и
-// skills расходятся ровно тогда, когда мост обновился, а набор нет. stamp —
-// 8 hex, различает наборы внутри версии.
+// The skill set INSTALLED at the holder when it takes a seat — attrs.skills (graph
+// @nks/nks-dev, nodes #6226, #6211 for the shape), not the texts loaded into the session.
+// version — the bridge file's version inside the set, not the running bridge: build and
+// skills differ exactly when the bridge updated and the set did not. stamp — 8 hex,
+// tells sets apart within a version.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -15,19 +15,19 @@ import { currentScope, envOf } from "../shared/scope.ts";
 import { skillLock } from "../shared/skilllock.ts";
 import { versionIn } from "../shared/version.ts";
 
-/** Корень набора окружением: домашняя копия лежит вне набора и узнаёт его только так. */
+/** The set root by env: the home copy lies outside the set and learns it only this way. */
 export { SKILLS_ROOT_ENV };
 const SET = SKILL_SET;
 const BRIDGE_IN_SET = join(BRIDGE_SKILL, "scripts", BRIDGE_FILE);
 
-// Окружение и файл — моста харнеса (shared/scope.ts): у сессии демона машины
-// набор узнаётся по тонкому мосту, которым запустил харнес, а не по демону.
+// Env and file of the harness's bridge (shared/scope.ts): a daemon session learns the set
+// from the thin bridge the harness started, not from the daemon.
 const env = (k: string): string => envOf(k)?.trim() ?? "";
 
 /**
- * Каталог, в котором лежат скиллы набора (`<корень>/<скилл>/SKILL.md`), или null.
- * Порядок: окружение; раскладка собственного файла (…/establish-mcp/scripts/);
- * корень плагина Claude Code; плоская установка ~/.agents/skills.
+ * The directory holding the set's skills (`<root>/<skill>/SKILL.md`), or null.
+ * Order: env; own file layout (…/<bridge skill>/scripts/); the Claude Code plugin root;
+ * the flat install ~/.agents/skills.
  */
 export function skillsRoot(
   self = currentScope().origin?.path || fileURLToPath(import.meta.url),
@@ -46,9 +46,9 @@ export function skillsRoot(
 const sha8 = (h: ReturnType<typeof createHash>): string => h.digest("hex").slice(0, 8);
 
 /**
- * Плоская установка: источник набора — source записи establish-mcp в
- * локе там, где его кладёт npx skills (shared/skilllock.ts; она несёт мост; граф nks-dev: #6226), без
- * неё — SET; stamp — свёртка skillFolderHash записей этого источника.
+ * Flat install: the set source is the source of the bridge skill's entry in the lock where
+ * npx skills puts it (shared/skilllock.ts; graph @nks/nks-dev, node #6226), else SET;
+ * stamp folds skillFolderHash of that source's entries.
  */
 function lockSet(root: string): { name: string; stamp: string | null } {
   const skills = skillLock(root, env("XDG_STATE_HOME"));
@@ -62,7 +62,7 @@ function lockSet(root: string): { name: string; stamp: string | null } {
   return { name, stamp: lines.length ? sha8(createHash("sha256").update(lines.join(""))) : null };
 }
 
-/** Плагин и всякий другой корень: хеш SKILL.md каждого скилла корня, по порядку имён. */
+/** Plugin and any other root: hash of each skill's stamp file, in name order. */
 function treeStamp(root: string): string | null {
   const h = createHash("sha256");
   let n = 0;
@@ -87,7 +87,7 @@ function treeStamp(root: string): string | null {
   return n ? sha8(h) : null;
 }
 
-/** attrs.skills — читается заново при каждом занятии: обновлённый набор виден следующим. */
+/** attrs.skills — read anew at every seat taking: an updated set shows on the next one. */
 export function skillsAttr(): { name: string; version: string; stamp?: string } {
   const root = skillsRoot();
   if (!root) return { name: SET, version: "unknown" };
@@ -95,7 +95,7 @@ export function skillsAttr(): { name: string; version: string; stamp?: string } 
   try {
     version = versionIn(readFileSync(join(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
   } catch {
-    /* файл моста исчез между поиском и чтением — версия неизвестна */
+    /* the bridge file vanished between search and read — version unknown */
   }
   const lock = lockSet(root);
   const stamp = lock.stamp ?? treeStamp(root);

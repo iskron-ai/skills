@@ -1,10 +1,7 @@
-// Намерение занять место (граф nks-dev: решение #6706): connect или mint места
-// идут под ним до записи держания включительно. Свой — в памяти моста: 4000,
-// обогнавший ответ своего connect, — поворот адреса этим же мостом, не отъём.
-// Мост названной сессии пишет его и файлом: прежний мост той же сессии, получив
-// 4000, по нему знает, что место берёт своя сессия, и ждёт исхода её connect —
-// записи держания с новым адресом либо стёртого намерения, — а не времени:
-// медленный connect не делает из своего места два.
+// The intent to take a seat (graph @nks/nks-dev, node #6706): connect or mint runs
+// under it through the hold record. In memory, a 4000 ahead of the own connect's reply
+// is this bridge turning the address, not an eviction; on file, an earlier bridge of
+// the same session waits for that connect's outcome rather than for time.
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -31,7 +28,7 @@ const alive = (pid: number): boolean => {
   }
 };
 
-/** Сессия, чей мост сейчас занимает место; намерение умершего процесса — не в счёт. */
+/** The session whose bridge is taking the seat now; a dead process's intent does not count. */
 export function takerOf(key: string): string | null {
   try {
     const t = JSON.parse(readFileSync(pathOf(key), "utf8")) as Taking;
@@ -41,10 +38,10 @@ export function takerOf(key: string): string | null {
   }
 }
 
-/** Свои connect и mint в полёте: ключ места → исход. */
+/** Own connects and mints in flight: seat key → outcome. */
 const OWN = scoped(() => new Map<string, Promise<void>>());
 
-/** Свой connect или mint этого места в полёте — его исход; нет — null. */
+/** The outcome of an own connect or mint of this seat in flight; none — null. */
 export const ownTaking = (key: string): Promise<void> | null => OWN.get(key) ?? null;
 
 function writeIntent(key: string): () => void {
@@ -55,7 +52,7 @@ function writeIntent(key: string): () => void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, JSON.stringify({ session, pid: process.pid }) + "\n", { mode: 0o600 });
   } catch {
-    return () => {}; // не записалось — прежний мост сочтёт отнявшего другим и встанет рядом
+    return () => {}; // not written: the earlier bridge takes the taker for another and stands beside
   }
   return () => {
     try {
@@ -64,10 +61,7 @@ function writeIntent(key: string): () => void {
   };
 }
 
-/**
- * Намерение под connect или mint места из args — до вызова; возвращает, чем его
- * снять по исходу (после записи держания). Повторное снятие ничего не делает.
- */
+/** The intent for a connect or mint in args, before the call; returns its idempotent release. */
 export function beginTaking(args: Record<string, unknown>): () => void {
   const action = String(args.action);
   const realm = typeof args.realm === "string" ? args.realm.trim() : "";
@@ -88,7 +82,7 @@ export function beginTaking(args: Record<string, unknown>): () => void {
   };
 }
 
-/** Ход fn под намерением (beginTaking). */
+/** Run fn under the intent (beginTaking). */
 export async function takingSeat<T>(
   args: Record<string, unknown>,
   fn: () => Promise<T>,

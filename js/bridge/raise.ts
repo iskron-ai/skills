@@ -1,5 +1,5 @@
-// Подъём демона машины тонким мостом (thin.ts): отсоединённо, под замком выборов
-// в личном каталоге шва, копией новее из своей и домашней.
+// The thin bridge raises the machine daemon (thin.ts): detached, under the election
+// lock in the seam's run dir, by the newer of its own and the home copy.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ import { VERSION, versionIn } from "../shared/version.ts";
 import { log } from "./streams.ts";
 import { updatesDisabled } from "./update.ts";
 
-/** Замок подъёма, чей хозяин жив, но держит его дольше, — брошен. */
+/** A raise lock held longer than this by a live owner counts as abandoned. */
 const RAISE_STALE_MS = 15_000;
 
 export const SELF = (() => {
@@ -25,9 +25,8 @@ export const SELF = (() => {
 })();
 
 /**
- * Какой копией поднимать демон: названной переменной, иначе самой новой из
- * своей и домашней — демон, поднятый старой копией, тут же передал бы места
- * новой. Под ISKRON_BRIDGE_NO_UPDATE дом не читается (пробы).
+ * The daemon entry: the named variable, else the newer of own and home copy (an older
+ * daemon would hand seats over at once). With updates disabled home is not read (probes).
  */
 function daemonEntry(): string {
   const named = process.env[envName("BRIDGE_DAEMON_ENTRY")]?.trim();
@@ -43,17 +42,17 @@ function daemonEntry(): string {
 
 export type Raise =
   | { kind: "raising"; release(): void; failed: Promise<{ code: number | null; why: string }> }
-  | { kind: "other" } // поднимает другой — ждём его демона
-  | { kind: "fault"; why: string }; // замка не взять — ждать нечего
+  | { kind: "other" } // another raises it — wait for its daemon
+  | { kind: "fault"; why: string }; // the lock cannot be taken — nothing to wait for
 
-/** Поднять демон отсоединённо под замком выборов. */
+/** Raise the daemon detached under the election lock. */
 export function raiseDaemon(authDir: string): Raise {
   const lock = takeFileLock(seamRaiseLockPath(authDir), RAISE_STALE_MS);
   if (!lock.held) return lock.fault ? { kind: "fault", why: lock.fault } : { kind: "other" };
   const entry = daemonEntry();
   log(`no bridge daemon for ${authDir} — raising one: ${entry} daemon`);
   try {
-    // Демону — окружение сессии, токен и основа процесса, не всё окружение харнеса.
+    // The daemon gets the session env, token and process basics, not the whole harness env.
     const child = spawn(process.execPath, [entry, "daemon", "--auth-dir", authDir], {
       detached: true,
       stdio: "ignore",

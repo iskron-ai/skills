@@ -1,23 +1,21 @@
-// Ключи attrs.usage места (граф nks-dev: #6401): каждый необязателен, числа —
-// целые токены. Снимок без единой цифры и без модели — не снимок: такого usage
-// у места нет вовсе, а не нули.
+// The seat's attrs.usage keys (graph @nks/nks-dev, node #6401): each optional, numbers
+// are whole tokens. A snapshot with no number and no model is no usage at all, not zeros.
 
 export interface Usage {
-  /** Токенов потрачено сессией. */
+  /** Tokens spent by the session. */
   tokens?: number;
   input?: number;
   output?: number;
   cache_read?: number;
   cache_write?: number;
-  /** Модель последнего шага — как её называет харнес. */
+  /** The last step's model, as the harness names it. */
   model?: string;
-  /** Токенов в окне контекста сейчас. */
+  /** Tokens in the context window now. */
   context?: number;
-  /** Размер окна модели. */
   window?: number;
-  /** context / window, целые проценты. */
+  /** context / window, whole percent. */
   percent?: number;
-  /** Когда снято, ISO. */
+  /** When taken, ISO. */
   at: string;
 }
 
@@ -26,7 +24,7 @@ const SPENT = ["tokens", "input", "output", "cache_read", "cache_write"] as cons
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.round(v) : undefined;
 
-/** Снимок из параметров `iskron/usage`; null — ни цифры, ни модели. */
+/** A snapshot from the usage method's params; null — no number and no model. */
 export function usageOf(p: Record<string, unknown>): Usage | null {
   const u: Omit<Usage, "at"> = {};
   for (const k of SPENT) {
@@ -42,7 +40,7 @@ export function usageOf(p: Record<string, unknown>): Usage | null {
   return Object.keys(u).length ? { ...u, at: new Date().toISOString() } : null;
 }
 
-/** Сдвиг, ради которого стоит вызова на сервер: 5 п.п. окна, 10% потраченного, другие окно или модель. */
+/** A shift worth a server call: 5 points of the window, 10% of spent, another window or model. */
 export function moved(a: Usage | null, b: Usage): boolean {
   if (!a) return true;
   if (a.percent !== undefined && b.percent !== undefined && Math.abs(b.percent - a.percent) >= 5)
