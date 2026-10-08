@@ -8,7 +8,7 @@
 // @owner/slug с разрешением rN и слага; вызов без графа свободен, чужой владелец
 // того же слага — другой граф, а имя, не разрешённое против потерянных, — отказ
 // с просьбой полного адреса (#5838), не текст чужой потери.
-import { LOGGERS, tool } from "../delivery/index.ts";
+import { LOGGERS, method, tool } from "../delivery/index.ts";
 import { L } from "../shared/lang.ts";
 import { learnRealmList, realmRelation, sameRealm, unresolvedWord } from "./realms.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -25,6 +25,23 @@ export function placeWord(
     ? { kind: data.kind, key: typeof data.key === "string" ? data.key : undefined, realm }
     : null;
 }
+
+/**
+ * Сессия харнеса, которую плагин называет мосту (iskron/resume, iskron/check): тонкий
+ * мост помнит её и несёт в возврат места в новой сессии демона — без неё запись
+ * держания легла бы без сессии, и своё место сессия сочла бы чужим (#6702).
+ */
+let harnessSession: string | null = null;
+/** Запомнить сессию харнеса из его вызова; вызов — как есть. */
+export function seeSession(msg: JsonRpcMessage): JsonRpcMessage {
+  const s = msg.params?.session;
+  if ((msg.method === method("resume") || msg.method === method("check")) && typeof s === "string")
+    harnessSession = s.trim() || harnessSession;
+  return msg;
+}
+/** Параметры возврата места в новой сессии демона: ключ и названная сессия харнеса. */
+export const resumeParams = (key: string): { key: string; session?: string } =>
+  harnessSession ? { key, session: harnessSession } : { key };
 
 export function lostPlaces(say: (m: JsonRpcMessage) => void, log: (m: string) => void) {
   const live = new Map<string, string>();

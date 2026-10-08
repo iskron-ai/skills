@@ -16,7 +16,7 @@
 //                   помнится: настоящий ответ, пришедший после, харнесу не идёт. Затем
 //                   переподхват по id локальной сессии; сессия новая — initialize
 //                   переигрывается, место сессии возвращается по записи держания
-//                   (запрос iskron/resume с его ключом), и вызовы харнеса ждут этих
+//                   (iskron/resume с его ключом и сессией харнеса), и вызовы ждут этих
 //                   ходов (спутник на паузе места не берёт); не вернулось — уведомление
 //                   lost и отказ вслух каждого вызова тула в его граф, кроме
 //                   iskron_stand
@@ -48,7 +48,7 @@ import { syntheticError } from "./deliver.ts";
 import { fullBridgeSigint, installCrashWords, startEngine } from "./engine.ts";
 import { NOT_SENT, UNKNOWN } from "./errors.ts";
 import { markFallback } from "./fallback.ts";
-import { lostPlaces, placeWord, realmListAsk } from "./lostplaces.ts";
+import { lostPlaces, placeWord, realmListAsk, resumeParams, seeSession } from "./lostplaces.ts";
 import { type Raise, raiseDaemon, SELF } from "./raise.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sleep } from "./store.ts";
@@ -287,7 +287,7 @@ export function thinMain(argv: string[]): void {
       resuming.set(key(id), held);
       closeGate(key(id));
       log(`the session is new — bringing its place ${held.key} back from the hold record`);
-      send({ jsonrpc: "2.0", id, method: method("resume"), params: { key: held.key } });
+      send({ jsonrpc: "2.0", id, method: method("resume"), params: resumeParams(held.key) });
     }
   };
 
@@ -455,7 +455,7 @@ export function thinMain(argv: string[]): void {
       cancelled.delete(key(msg.id)); // и прежняя отмена этого id — не о нём
       flights.set(key(msg.id), { id: msg.id, msg, acked: false });
     }
-    dispatch(msg);
+    dispatch(seeSession(msg)); // сессия, названная плагином, — в возврат места (lostplaces.ts)
   });
 
   const leave = (why: string): Promise<void> => (leaving ??= windDown(why));

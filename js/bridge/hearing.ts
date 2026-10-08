@@ -11,13 +11,22 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { tool } from "../delivery/index.ts";
+import { sameDir } from "../shared/canon.ts";
 import { L } from "../shared/lang.ts";
+import { sessionCwd } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { type Board, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import { type AskedHearing, callTool as call, resolveAgainstLed } from "./call.ts";
+import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { doors, holdsStanding, isParked, ledKey, localSocketPathOf, wasEvicted } from "./hold.ts";
-import { holdRecordsNamed, keyOf, readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
+import {
+  type HoldRecord,
+  holdRecordsNamed,
+  keyOf,
+  readHoldRecord,
+  sessionOfBridge,
+} from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { resolveRealms, sameRealm } from "./realms.ts";
@@ -106,30 +115,64 @@ function keysNamed(realm: string, name: string): string[] {
 }
 
 /**
- * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
- * этой сессии (её запись держания), другой — или никто (сокета нет).
+ * Запись без сессии этого харнесса из этого каталога: её держатель сессии не назвал
+ * (возврат с диска до слова плагина, запись прежней сборки) — для названной сессии
+ * харнесса место своё, а не другой живой сессии (#6702). Живой мост названной сессии
+ * подписывает запись, как только сессию ему назовут (resume.ts); плагин называет
+ * сессию мосту при его подъёме, до первого вызова тула (opencode/keep.ts), — живой
+ * держатель без сессии в таком харнессе — сирота возврата, а не чья-то вахта.
  */
-export async function localHolder(key: string): Promise<"self" | "session" | "other" | null> {
+export const unsignedHere = (rec: HoldRecord, cwd: string): boolean =>
+  !rec.session && !rec.left && rec.client === harnessName() && sameDir(rec.cwd, cwd);
+
+/**
+ * Кто держит живой локальный сокет места: сама дверь этого моста, прежний мост
+ * этой сессии (её запись держания, либо запись без сессии харнесса и каталога `cwd`
+ * у названной сессии), другой — или никто (сокета нет). Харнесс без имён сессий
+ * своим считает только сокет этого моста: живой прежний мост той же папки — чужой.
+ */
+export async function localHolder(
+  key: string,
+  cwd?: string,
+): Promise<"self" | "session" | "other" | null> {
   if (!(await localSocketAlive(localSocketPathOf(key)))) return null;
   if (doors().some((d) => d.key === key && d.ownsSocket)) return "self";
   const me = sessionOfBridge();
-  return me && readHoldRecord(key, true)?.session === me ? "session" : "other";
+  const rec = me ? readHoldRecord(key, true) : null;
+  if (!rec) return "other";
+  return rec.session === me || (cwd != null && unsignedHere(rec, cwd)) ? "session" : "other";
 }
 
-/** Живой локальный сокет места держит мост другой сессии. */
-async function heldLocallyByOther(realm: string, karta: string, name: string): Promise<boolean> {
-  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)])
-    if ((await localHolder(key)) === "other") return true;
-  return false;
+/** Живой локальный сокет места держит мост другой сессии, прежний мост этой — или никто. */
+async function heldLocally(
+  realm: string,
+  karta: string,
+  name: string,
+  cwd: string,
+): Promise<"other" | "session" | null> {
+  let own = false;
+  for (const key of isSentinel(karta) ? keysNamed(realm, name) : [keyOf(realm, karta, name)]) {
+    const h = await localHolder(key, cwd);
+    if (h === "other") return "other";
+    own ||= h === "session";
+  }
+  return own ? "session" : null;
 }
 
-/** Кто слушает место: другая сессия, никто или мост не знает. */
+/**
+ * Кто слушает место: другая сессия, никто или мост не знает. Суждение то же, что у
+ * iskron_stand (separate.ts): каталог — названный вызовом, иначе каталог стояния
+ * или сессии; сокет прежнего моста этой сессии — своё, доска читает слушающим его (#6702).
+ */
 export async function askedHearing(
   realm: string,
   karta: string,
   name: string,
+  cwd: string = H.standCwd ?? sessionCwd(),
 ): Promise<AskedHearing> {
-  if (await heldLocallyByOther(realm, karta, name)) return "other";
+  const local = await heldLocally(realm, karta, name, cwd);
+  if (local === "other") return "other";
+  if (local === "session") return "free";
   const b = await call(tool("channel"), { action: "list", realm }).catch(() => null);
   return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name);
 }

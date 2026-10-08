@@ -10,8 +10,7 @@
 //     плагина OpenCode. Сессия, не стоявшая на месте, по одному каталогу его не
 //     получает (#6017), а строка занятости прежнего держателя не публикуется
 //     заново: это его слово о его работе, и свежая отметка выдала бы её за текущую.
-// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает →
-// сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
+// `iskron/check {key?, cwd?}` — сторож плагина: держим — доска; не слушает → сокет переоткрывается; запарковано → возврат на место; не ведём — возврат.
 // Мост, ведущий другое место (держит или запарковал), чужой записью не
 // занимается: holdStanding иного ключа убил бы ведомое.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -40,6 +39,7 @@ import {
   rememberStatus,
   resumeStanding,
 } from "./hold.ts";
+import { signHeldRecord } from "./holdkeep.ts";
 import {
   type HoldRecord,
   keyOf,
@@ -395,6 +395,7 @@ const selectorOf = (msg: JsonRpcMessage): ResumeSelector => ({
 function selectorFrom(msg: JsonRpcMessage): ResumeSelector {
   const sel = selectorOf(msg);
   noteHarnessSession(sel.session);
+  signHeldRecord();
   return sel;
 }
 

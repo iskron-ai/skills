@@ -211,7 +211,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   if (led && a.take !== true) {
     // Просимое место слушает другая сессия — take=true не советуется: вытеснить её — словом человека (#6706).
     // Доска не прочлась — мост не знает, кто слушает, и take=true не советует тоже.
-    const hearing = await askedHearing(realm, karta, name);
+    const hearing = await askedHearing(realm, karta, name, cwd);
     lines.push(otherPlaceWord(led, keyOf(realm, karta, name), name === ledName(), hearing));
     return done(true);
   }
