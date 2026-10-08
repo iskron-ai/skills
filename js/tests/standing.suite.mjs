@@ -4589,6 +4589,74 @@ test("a case record carrying the event_id of a delivered inbox frame is dropped;
   await wd.done;
 });
 
+// #6569: такт внимания приходит раз в час, у каждого свой id; пока делатель занят и сторож
+// не взведён, такты копились в кольце, и каждый взвод уходил на старшем — четыре кадра
+// одного такта подряд. Кольцо отдаёт последний такт, прежние свёрнуты и помечены отданными.
+// Провенанс такта — wake="look_up" (слово стюарда api, на проводе не наблюдён).
+const tact = (n) =>
+  JSON.stringify({
+    type: "message",
+    id: `tact-${n}`,
+    provenance: { via: "platform", wake: "look_up" },
+    body: `Час на «вахта ${n}» — подними голову`,
+  });
+const tactsInRing = async (fake) => {
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  for (const n of [1, 2, 3]) await fake.control({ ws_send: tact(n) });
+  await new Promise((r) => setTimeout(r, 300));
+};
+
+test("tacts that waited in the ring: the exit watchdog leaves on the last, the next arm gets none of the earlier", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await tactsInRing(fake);
+  const first = runClient("watchdog-exit", dir, key);
+  assert.equal((await first.done).exit, 0, first.err);
+  assert.match(first.out, /вахта 3/);
+  assert.doesNotMatch(first.out, /вахта [12]/, `an earlier tact woke the doer:\n${first.out}`);
+  for (const n of [1, 2, 3]) await waitSeen(standings, `tact-${n}`);
+  const second = runClient("watchdog-exit", dir, key, 4000);
+  await waitFor(() => second.err.includes("слушаю стояние"), "the second arm to attach");
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(second.proc.exitCode, null, `an earlier tact woke the next arm:\n${second.out}`);
+  second.proc.kill("SIGKILL");
+  await second.done;
+});
+
+test("tacts that waited in the ring: the Monitor watchdog prints the last only", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await tactsInRing(fake);
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("вахта 3"), "the last tact");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.doesNotMatch(wd.out, /вахта [12]/, `an earlier tact was printed:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("tacts that waited in the ring: the Codex watchdog puts the last only into the thread", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await tactsInRing(fake);
+  const home = codexHome(t);
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-9",
+  });
+  await waitFor(() => readFileSync(log, "utf8").includes("вахта 3"), "the last tact in the thread");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.doesNotMatch(
+    readFileSync(log, "utf8"),
+    /вахта [12]/,
+    "an earlier tact entered the thread",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 part("rooms");
 // A word in two phases (#5893 §4.5b): the batch carries them by count (#6574);
 // a body to me still reaches the Monitor watchdog at once, whole.
