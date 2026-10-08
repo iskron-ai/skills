@@ -181,7 +181,9 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
-    // Joined and left — fields.standing, else the author; a role call by cause — fields.karta (graph @nks/nks-dev, node #6870).
+    // Observed live: the invite key carries the id, the invitee's name is in the line fields (standing/karta with name).
+    // Joined and left — fields.standing (a timed-out leave is written by the platform, api 0.89.6), else the author;
+    // a role call by cause — fields.karta (graph @nks/nks-dev, node #6870).
     who:
       kind === "joined" || kind === "left"
         ? whoOf({ standing: fields.standing }) || byWhom

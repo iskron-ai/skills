@@ -44,6 +44,14 @@ for (const file of FILES) {
             "function",
             `${file} ${name}.${l}.${k} is not a function`,
           );
+      // An English word speaks no Russian (graph @nks/nks-dev, node #6633): every
+      // word called with Latin placeholders gives no Cyrillic.
+      if (!LANGS.includes("en")) continue;
+      for (const k of keys) {
+        const fn = dict.en[k];
+        const out = String(fn(...Array.from({ length: fn.length }, (_, i) => `x${i}`)));
+        assert.doesNotMatch(out, /\p{Script=Cyrillic}/u, `${file} ${name}.en.${k}: ${out}`);
+      }
     }
   });
 }

@@ -75,6 +75,7 @@ export function leadDoors(
     say,
     ownPlace: (child) => ownPlace(slots.get(child)),
     async close(child) {
+      // Ends the run after the word to the parent; a failed seat release is a separate word.
       await flush(child).catch(() => {});
       const got: any = await slots
         .get(child)
