@@ -2,7 +2,7 @@
 // A seat held by a previous bridge of THIS harness session is own and returned; one held by
 // another session is theirs — stand beside on `name.N`. "Held" is read positively: a live
 // local socket not held by this bridge, or the board listening and no own record of this session.
-import { SEPARATE, type SeparateWords } from "../delivery/index.ts";
+import { type Kin, SEPARATE, type SeparateWords } from "../delivery/index.ts";
 import { sameDir } from "../shared/canon.ts";
 import { words } from "../shared/lang.ts";
 import { type AskedHearing } from "./call.ts";
@@ -53,11 +53,13 @@ export async function ownByRecord(
 }
 
 /**
- * `kin` — a live holder of the own name: the same role by key, the same account by this
- * grant home (a live local socket or a record of another session); the board alone proves
- * neither the account nor that it is alive here — `taken` (graph @nks/nks-dev, node #6976).
+ * Another holder under the same role (the key): `live` and `record` — of this grant home,
+ * so of the same account; `board` — the board alone, the account unproven; `taken` — a name
+ * known taken, no holder known (graph @nks/nks-dev, node #6976).
  */
-type Holder = "mine" | "session" | "kin" | "taken" | "free" | "unknown";
+type Holder = "mine" | "session" | NonNullable<Kin> | "taken" | "free" | "unknown";
+const isTaken = (h: Holder): h is NonNullable<Kin> | "taken" =>
+  h === "live" || h === "record" || h === "board" || h === "taken";
 
 /** What the board knows of the seat under a name (hearing.ts). */
 export type BoardHearing = (name: string) => AskedHearing;
@@ -73,17 +75,17 @@ async function holderOf(
   // and right after leaving the board still reads it listening.
   await heardOnReturn(); // a return without hello is no own seat with hearing: released (leave.ts)
   if (holdsStanding(realm, karta, name) || isParked(realm, karta, name)) return "mine";
-  if (wasEvicted(realm, karta, name)) return "taken"; // another holder took it (close 4000)
+  if (wasEvicted(realm, karta, name)) return "board"; // another holder took it (close 4000)
   const key = keyOf(realm, karta, name);
   if (ledKey() === key) return "mine"; // own seat in the socket reopen window
   const local = await localHolder(key, cwd);
-  if (local) return local === "self" ? "mine" : local === "session" ? "session" : "kin";
+  if (local) return local === "self" ? "mine" : local === "session" ? "session" : "live";
   // Another named session's record: its bridge returns the seat itself.
-  if (theirsByRecord(key)) return "kin";
+  if (theirsByRecord(key)) return "record";
   // Board says listening and no live local holder: only this session's record proves it own.
   const h = hearing(name);
   if (h === "unknown") return "unknown";
-  return h === "other" && !(await ownByRecord(realm, karta, name, cwd)) ? "taken" : "free";
+  return h === "other" && !(await ownByRecord(realm, karta, name, cwd)) ? "board" : "free";
 }
 
 /** A fresh, unreleased record of another named session (graph @nks/nks-dev, nodes #6706, #6702). */
@@ -92,9 +94,9 @@ export function theirsByRecord(key: string): boolean {
   return !!rec?.session && !rec.left && rec.session !== sessionOfBridge();
 }
 
-/** kin — base is held by a live holder of the own name (#6976). */
+/** kin — who holds base when the choice is a seat beside (#6976). */
 export type PlaceChoice =
-  { name: string; own: boolean; kin?: boolean; note: string | null } | { refusal: string };
+  { name: string; own: boolean; kin?: Kin; note: string | null } | { refusal: string };
 
 /**
  * Where to stand under base: base itself if free or own, otherwise the first free
@@ -115,16 +117,16 @@ export async function placeFor(
     taken.has(name) ? "taken" : await holderOf(realm, karta, name, hearing, cwd);
   const first = await holder(base);
   if (first === "unknown") return { refusal: sep().unknown(base) };
-  const kin = first === "kin";
-  if (first !== "taken" && !kin) {
+  if (!isTaken(first)) {
     const own = first === "session";
     return { name: base, own, note: own ? sep().ownSession(base) : null };
   }
+  const kin = first === "taken" ? null : first;
   for (let n = 2; n <= 99; n++) {
     const cand = suffixed(root, n);
     if (cand === base) continue;
     const h = await holder(cand);
-    if (h === "taken" || h === "kin") continue;
+    if (isTaken(h)) continue;
     if (h === "unknown") return { refusal: sep().unknown(cand) };
     const own = h === "session";
     return { name: cand, own, kin, note: sep().beside(base, cand, own, kin) };
@@ -160,7 +162,9 @@ export async function seatFor(
     if (resumed)
       return {
         choice:
-          at === base ? choice : { ...choice, note: sep().beside(base, at, true, !!choice.kin) },
+          at === base
+            ? choice
+            : { ...choice, note: sep().beside(base, at, true, choice.kin ?? null) },
         resumed,
       };
     taken.add(at);

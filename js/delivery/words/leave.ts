@@ -51,7 +51,7 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
     refusedOther: (realm, led, ledRealm) =>
       `Отказано (мост): в графе ${realm} этот мост места не держит — уходить неоткуда; его место ${led} в графе ${ledRealm} не тронуто.`,
     refusedNamed: (standing, led) =>
-      `Отказано (мост): ${standing} — не место этого моста, вызов не отправлен; leave отпускает только место этого моста${led ? ` (${led}, не тронуто)` : " (сейчас он места не держит)"}; лишнее место своей учётки снимает revoke(karta, standing=${standing}).`,
+      `Отказано (мост): ${standing} — не место этого моста, вызов не отправлен; leave отпускает только место этого моста${led ? ` (${led}, не тронуто)` : " (сейчас он места не держит)"}; лишнее место своей учётки снимает revoke(karta, standing=${standing}) — только словом человека: revoke уничтожает входящий адрес и хуки места.`,
   },
   en: {
     notHolding: () => "the bridge holds no seat — nothing to leave",
@@ -78,6 +78,6 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
     refusedOther: (realm, led, ledRealm) =>
       `Refused (bridge): this bridge holds no seat in the graph ${realm} — nothing to leave; its seat ${led} in the graph ${ledRealm} is untouched.`,
     refusedNamed: (standing, led) =>
-      `Refused (bridge): ${standing} is not this bridge's seat, the call was not sent; leave releases only this bridge's seat${led ? ` (${led}, untouched)` : " (it holds no seat now)"}; a spare seat of your own account is removed by revoke(karta, standing=${standing}).`,
+      `Refused (bridge): ${standing} is not this bridge's seat, the call was not sent; leave releases only this bridge's seat${led ? ` (${led}, untouched)` : " (it holds no seat now)"}; a spare seat of your own account is removed by revoke(karta, standing=${standing}) — only on the human's word: revoke destroys the seat's incoming address and hooks.`,
   },
 };

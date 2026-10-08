@@ -167,7 +167,8 @@ function namesOwnSeat(standing: string): boolean {
   if (!s) return false;
   const address = H.door?.address ?? null;
   if (standing === ledKey() || standing === address) return true;
-  if (standing.startsWith("@") && address) return false;
+  // A full address is judged by the own address only: unknown, `@other:name` is no proof (fail closed).
+  if (standing.startsWith("@")) return false;
   return !!s.name && nameOf(standing) === s.name;
 }
 

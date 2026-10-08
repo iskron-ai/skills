@@ -669,12 +669,17 @@ test("iskron_stand: an explicit name another holder listens on is left alone —
   assert.match(text, /стояние (?:@tester:)?proba\.2 — роль #931/, text);
   assert.match(
     text,
-    /место proba держит другая сессия — .*встаю рядом на proba\.2 со слухом/,
+    /место proba держит другая сессия той же роли — .*встаю рядом на proba\.2 со слухом/,
     text,
   );
-  // Одна доска не доказывает ни учётки, ни жизни здесь — вытеснение словом человека (#6976).
-  assert.match(text, /вытеснить ту сессию \(take=true\) — только словом человека/, text);
-  assert.doesNotMatch(text, /твоего имени|iskron_channel\(action="send"/, text);
+  // Одна доска учётки не доказывает (#6976): роль та же, учётку сверяет делатель — та же —
+  // проба словом, другая — вытеснение только словом человека.
+  assert.match(
+    text,
+    /учётку держателя сверь по доске с адресом своего места: та же — спроси её словом — iskron_channel\(action="send", standing=proba,.*; другая — вытеснить ту сессию \(take=true\) только словом человека/,
+    text,
+  );
+  assert.doesNotMatch(text, /твоего имени/, text);
   assert.doesNotMatch(text, /только register|по памяти|атрибуция/, text);
   assert.match(text, /Слушать: .*node "/, "the seat beside is heard here");
   assert.match(text, /hello получен/, text);
@@ -1286,7 +1291,11 @@ test("English surface: a place the English board reads listening under another h
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "chuzhoe" },
   });
-  assert.match(textOf(other), /another session holds the seat chuzhoe/, textOf(other));
+  assert.match(
+    textOf(other),
+    /another session of the same role holds the seat chuzhoe .*check the holder's account on the board/,
+    textOf(other),
+  );
   assert.match(textOf(other), /standing beside as chuzhoe\.2 with hearing/, textOf(other));
   assert.equal(
     fake.state.placeArgs.filter((p) => p.action === "connect").at(-1)?.name,
@@ -1913,7 +1922,7 @@ test("iskron_channel leave naming another seat is refused aloud and leaves the b
       name: "iskron_channel",
       arguments: { realm: "nks-dev", action: "leave", standing },
     });
-  for (const standing of ["@tester:proba-old", "proba.3"]) {
+  for (const standing of ["@tester:proba-old", "proba.3", "@other:proba"]) {
     const other = await leave(standing);
     const text = textOf(other);
     assert.ok(other.result?.isError, text);
@@ -1923,7 +1932,7 @@ test("iskron_channel leave naming another seat is refused aloud and leaves the b
       ),
       text,
     );
-    assert.ok(text.includes(`revoke(karta, standing=${standing})`), text);
+    assert.ok(text.includes(`revoke(karta, standing=${standing}) — только словом человека`), text);
   }
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(fake.state.ws.size, 1, "the bridge's own seat keeps its socket");
@@ -1997,7 +2006,14 @@ const backByRecord = (r, seat = "proba") => {
 };
 
 test("iskron_stand: the board reads a stopped holder of ANOTHER session listening — the bridge stands beside with hearing, never «register only»", async (t) => {
-  besideHeard((await stoppedHolder(t, "ses-1", "ses-2")).r);
+  const { r } = await stoppedHolder(t, "ses-1", "ses-2");
+  besideHeard(r);
+  // Запись другой сессии этого дома — своё имя, но жизнь не доказана: проба скажет (#6976).
+  assert.match(
+    standText(r),
+    /другая сессия твоего имени \(та же роль, та же учётка; её мост здесь не отвечает — жива ли, скажет проба\) — .*молчит — iskron_stand\(name=proba, take=true\)/,
+    standText(r),
+  );
 });
 
 test("iskron_stand: the board reads a stopped holder of THIS session listening — the seat is taken back by its record with hearing", async (t) => {
