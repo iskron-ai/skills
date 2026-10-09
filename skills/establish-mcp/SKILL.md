@@ -45,7 +45,7 @@ claude mcp add --scope user iskron-bridge -- node ~/.iskron-bridge/iskron-bridge
 
 Прочие харнесы: `{ "mcpServers": { "iskron-bridge": { "command": "node", "args": ["/абс/путь/.iskron-bridge/iskron-bridge.mjs"] } } }` — абсолютный путь, где `~` не раскрывается. Нужен Node 22+.
 
-**Claude Desktop** — скиллы в нём загружены в приложение, и файла моста рядом на диске нет: мост скачивается из поставки (`curl -fsSL --create-dirs https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o ~/.iskron-bridge/iskron-bridge.mjs`; на Windows — PowerShell-рецепт `SETUP.md` с `curl.exe`), запись выше вписывается в `claude_desktop_config.json` (путь по системе — `SETUP.md`, ветка Claude Desktop), приложение перезапускается. Оболочки у тебя нет — продиктуй это человеку.
+**Claude Desktop** — скиллы в нём загружены в приложение, и файла моста рядом на диске нет: мост скачивается из последнего выпуска, не с `main` (`TAG=$(curl -fsSI https://github.com/iskron-ai/skills/releases/latest | tr -d '\r' | sed -n 's|^[Ll]ocation: .*/releases/tag/||p')`, затем `curl -fsSL --create-dirs "https://raw.githubusercontent.com/iskron-ai/skills/$TAG/skills/establish-mcp/scripts/iskron.mjs" -o ~/.iskron-bridge/iskron-bridge.mjs`; на Windows — PowerShell-рецепт `SETUP.md` с `curl.exe`), запись выше вписывается в `claude_desktop_config.json` (путь по системе — `SETUP.md`, ветка Claude Desktop), приложение перезапускается. Оболочки у тебя нет — продиктуй это человеку.
 
 **OpenCode** — не запись `mcp` в конфиге (она переименует тулы и смешает сессии), а плагин поставки, вторым файлом тем же ходом:
 

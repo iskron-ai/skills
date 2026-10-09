@@ -81,10 +81,11 @@ pi install git:github.com/iskron-ai/skills
 `~/.claude/skills/`), а тулы и канал приносит **плагин из поставки** — шаг 2, ветка
 OpenCode.
 
-**Claude Desktop** — скиллы загружает человек: каждый `<имя>.skill` из корня этого
-репозитория (`https://github.com/iskron-ai/skills`, или
-`https://raw.githubusercontent.com/iskron-ai/skills/main/<имя>.skill`) — в разделе
-скиллов настроек Claude Desktop, по одному файлу. Мост для него из скиллов не
+**Claude Desktop** — скиллы загружает человек: каждый `<имя>.skill` из корня
+последнего выпуска (`https://github.com/iskron-ai/skills/releases/latest` называет
+тег, файлы — `https://raw.githubusercontent.com/iskron-ai/skills/<тег>/<имя>.skill`;
+команды тега — шаг 2, ветка Claude Desktop) — в разделе скиллов настроек Claude
+Desktop, по одному файлу. Мост для него из скиллов не
 берётся: файл моста кладётся на диск отдельно и регистрируется stdio-записью — шаг 2,
 «Как поднять мост», ветка Claude Desktop. Нет у тебя оболочки — продиктуй человеку
 оба шага и жди.
@@ -267,19 +268,22 @@ cp "$src" ~/.iskron-bridge/iskron-bridge.mjs && echo "скопирован из 
 ищем в обоих местах и берём первое попавшееся.
 
 **Claude Desktop** скиллов на диск не кладёт (они загружены в приложение, шаг 1), и
-`find` выше ничего не найдёт: мост берётся прямо из поставки — `main` несёт сборку
-последнего выпуска, дальше мост обновляет себя сам (раздел 3):
+`find` выше ничего не найдёт: мост берётся из последнего выпуска — его тег называет
+переадресация `releases/latest`, как это делает сам мост; дальше мост обновляет себя
+сам (раздел 3):
 
 ```sh
+TAG=$(curl -fsSI https://github.com/iskron-ai/skills/releases/latest | tr -d '\r' | sed -n 's|^[Ll]ocation: .*/releases/tag/||p')
 mkdir -p ~/.iskron-bridge
-curl -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o ~/.iskron-bridge/iskron-bridge.mjs
+curl -fsSL "https://raw.githubusercontent.com/iskron-ai/skills/$TAG/skills/establish-mcp/scripts/iskron.mjs" -o ~/.iskron-bridge/iskron-bridge.mjs
 ```
 
 На Windows — PowerShell (`curl` там — псевдоним `Invoke-WebRequest`, поэтому `curl.exe`):
 
 ```powershell
+$tag = (curl.exe -fsSI https://github.com/iskron-ai/skills/releases/latest | Select-String '/releases/tag/([^/\s]+)').Matches[0].Groups[1].Value
 New-Item -ItemType Directory -Force "$HOME\.iskron-bridge" | Out-Null
-curl.exe -fsSL https://raw.githubusercontent.com/iskron-ai/skills/main/skills/establish-mcp/scripts/iskron.mjs -o "$HOME\.iskron-bridge\iskron-bridge.mjs"
+curl.exe -fsSL "https://raw.githubusercontent.com/iskron-ai/skills/$tag/skills/establish-mcp/scripts/iskron.mjs" -o "$HOME\.iskron-bridge\iskron-bridge.mjs"
 (Get-Command node).Source    # абсолютный путь к node — для command записи ниже
 ```
 
