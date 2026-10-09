@@ -1,3 +1,614 @@
+// js/delivery/lang.ts
+var LANGS = ["ru", "en"];
+var DEFAULT_LANG = "ru";
+function langOfServer(url) {
+  try {
+    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
+  } catch {
+    return "ru";
+  }
+}
+
+// js/delivery/patterns/launch.ts
+var LAUNCH_WORD = "start";
+var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var LAUNCH_LINE = new RegExp(
+  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
+  "imu"
+);
+
+// js/delivery/product.ts
+var PRODUCT = "iskron";
+var UPPER = PRODUCT.toUpperCase();
+var ENV_PREFIX = `${UPPER}_`;
+var envName = (suffix) => `${ENV_PREFIX}${suffix}`;
+var BRIDGE_NAME = `${PRODUCT}-bridge`;
+var HOME_DIR = `.${BRIDGE_NAME}`;
+var HOME_BRIDGE_FILE = `${BRIDGE_NAME}.mjs`;
+var GLOBAL_PREFIX = `__${PRODUCT}`;
+var BRIDGE_SKILL = "establish-mcp";
+var BRIDGE_FILE = `${PRODUCT}.mjs`;
+var PLUGIN_COPY_FILE = `${PRODUCT}.js`;
+var SUB_ENTRY_PREFIX = `${PRODUCT}-sub`;
+var CLIENTS = {
+  opencode: `opencode-${PRODUCT}`,
+  pi: `pi-${PRODUCT}`,
+  doctor: `${PRODUCT}-doctor`,
+  watchdog: `${PRODUCT}-watchdog`
+};
+var SERVER_URLS = {
+  ru: "https://mcp.iskron.ru/",
+  en: "https://mcp.iskron.ai/"
+};
+var DEFAULT_SERVER_URL = SERVER_URLS[DEFAULT_LANG];
+
+// js/delivery/protocol.ts
+var TOOL_PREFIX = `${PRODUCT}_`;
+var tool = (name) => `${TOOL_PREFIX}${name}`;
+var method = (name) => `${PRODUCT}/${name}`;
+var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
+var FRAME_MARK = `[${PRODUCT}]`;
+var ID_PREFIX = `${PRODUCT}-`;
+var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+
+// js/delivery/version.ts
+var VERSION = "7.8.0";
+var BUILD_MARK = "iskron-build";
+
+// js/delivery/words/asks.ts
+var ASK = {
+  ru: {
+    ask: (author, to, toPlace, key, done, form, advice) => `${author} спрашивает роль ${to}${toPlace} [${key}]: «${done}»${form}${advice}`,
+    place: (place) => `(место ${place})`,
+    yesNo: () => "ответ: да или нет (yes | no)",
+    free: () => "ответ своим текстом",
+    choice: (options) => `варианты: ${options}`,
+    advice: (option, why) => `рекомендация: ${option}${why}`,
+    answer: (author, refersTo, reply) => `${author} отвечает на [${refersTo}]: ${reply}`,
+    ack: (refersTo, reply, author) => `ответ [${refersTo}] принят${reply} · ${author}`,
+    withdrawn: (withdraws, key, done, verdict, author) => `вопрос [${withdraws}] снят: [${key}] [${done}] = ${verdict} · ${author}`,
+    inviteOwnerless: (who, standing) => `платформа зовёт роль ${who} в дело: место ${standing} погасло, его строки ничьи`,
+    inviteAnswerWaiting: (who, standing) => `платформа зовёт роль ${who} в дело: ответ ждёт приёма, спросившее место ${standing} ушло`
+  },
+  en: {
+    ask: (author, to, toPlace, key, done, form, advice) => `${author} asks the role ${to}${toPlace} [${key}]: “${done}”${form}${advice}`,
+    place: (place) => `(seat ${place})`,
+    yesNo: () => "answer: yes or no (yes | no)",
+    free: () => "answer in your own words",
+    choice: (options) => `options: ${options}`,
+    advice: (option, why) => `recommended: ${option}${why}`,
+    answer: (author, refersTo, reply) => `${author} answers [${refersTo}]: ${reply}`,
+    ack: (refersTo, reply, author) => `answer [${refersTo}] accepted${reply} · ${author}`,
+    withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
+    inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
+    inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
+  }
+};
+
+// js/delivery/words/bridge-client.ts
+var BRIDGE_CLIENT = {
+  ru: {
+    failedToStart: (message) => `мост не запустился: ${message}`,
+    exited: (code, signal, why) => `мост вышел (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; последнее от моста: ${lines}`,
+    aborted: () => "вызов отменён",
+    noAnswer: (method2, ms, why) => `${method2}: нет ответа за ${ms} мс${why}`,
+    noWrites: () => "мост не принимает запись",
+    sessionClosed: () => "сессия закрыта",
+    emptyAnswer: () => "(пустой ответ)"
+  },
+  en: {
+    failedToStart: (message) => `the bridge failed to start: ${message}`,
+    exited: (code, signal, why) => `the bridge exited (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; last from the bridge: ${lines}`,
+    aborted: () => "call aborted",
+    noAnswer: (method2, ms, why) => `${method2}: no answer in ${ms} ms${why}`,
+    noWrites: () => "the bridge does not accept writes",
+    sessionClosed: () => "session closed",
+    emptyAnswer: () => "(empty answer)"
+  }
+};
+
+// js/delivery/words/frame-text.ts
+var FRAME_TEXT = {
+  ru: {
+    frame: (id) => `кадр ${id}`,
+    yoursBelow: () => ` — адресованные строками ниже; `,
+    noneYours: () => ` — адресованных месту нет; `,
+    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
+    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    inFull: (cases) => `целиком — ${cases || `${tool("channel")}(action="history")`}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  },
+  en: {
+    frame: (id) => `frame ${id}`,
+    yoursBelow: () => ` — yours in the lines below; `,
+    noneYours: () => ` — none of them yours; `,
+    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
+    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    inFull: (cases) => `in full — ${cases || `${tool("channel")}(action="history")`}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  }
+};
+var CASE_LINE = {
+  ru: {
+    platform: () => "платформа",
+    quote: (s) => `«${s}»`
+  },
+  en: {
+    platform: () => "platform",
+    quote: (s) => `“${s}”`
+  }
+};
+
+// js/delivery/words/launch.ts
+var LAUNCH = {
+  ru: {
+    notSeated: (why, no, join9) => `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${no}: ${join9}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+    ownSeat: () => "своим местом",
+    notEntered: (place, no, why) => `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
+    entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`
+  },
+  en: {
+    notSeated: (why, no, join9) => `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${no}: ${join9}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`,
+    ownSeat: () => "in a seat of its own",
+    notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
+    entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
+  }
+};
+
+// js/delivery/words/leads.ts
+var act = (action) => action ? ` (${action})` : "";
+var keptRu = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
+var keptEn = (who, place) => `child ${who} stood not as a satellite (${place}) — the seat is not revoked, the bridge is not down`;
+var LEAD = {
+  ru: {
+    cancelled: () => "его ход отменён в OpenCode (человеком или запустившим)",
+    cancelledRefusal: () => "её ход отменён в OpenCode",
+    cascade: (who) => `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`,
+    placeEvicted: () => "его место-спутник вытеснено другим держателем",
+    placeClosed: () => "его место-спутник отозвано не через запустившего или закрыто платформой (4001)",
+    placeEvictedRefusal: () => "её место-спутник вытеснено другим держателем",
+    placeClosedRefusal: () => "её место-спутник отозвано или закрыто платформой (4001)",
+    end: (who, why, done, said) => `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
+${said || "(текста он не оставил — смотри его дело)"}`,
+    endKept: (who, kept2) => `${keptRu(who, kept2)}; снять его — iskron_channel(action="revoke", standing="${kept2}"), только словом человека. `,
+    endPlain: () => "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ",
+    keptLine: keptRu,
+    keptSaid: (who, place) => `Искрон: ${keptRu(who, place)}`,
+    unrevokedUnknown: (who) => `Искрон: мост субагента ${who} погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke").`,
+    unrevoked: (who, places, first) => `Искрон: у субагента ${who} место не снято (сеть): ${places} — сними iskron_channel(action="revoke", standing="${first}").`,
+    turn: (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`,
+    notice: (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`,
+    release: (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`,
+    released: () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.",
+    away: (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:
+${last || "(текста он не оставил — смотри его дело)"}`,
+    lost: (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`,
+    tellDone: (sessionID) => `Искрон: слово о субагенте вложено в сессию ${sessionID}`,
+    tellFailed: (sessionID, message) => `Искрон: слово о субагенте не вложилось в ${sessionID}: ${message}`,
+    sessionOf: (child) => `сессии ${child}`,
+    noParent: (text) => `${text}
+(родителя плагин не знает — итог некому)`,
+    notDown: (who, message) => `Искрон: мост субагента ${who} не погашен после итога — ${message}`,
+    leftSeat: () => "ушёл с места по исходу",
+    leftCases: () => "ушёл из дел по исходу",
+    leftCase: (room) => `вышел из дела №${room} по исходу`,
+    releasedByLauncher: () => "отпущен словом запустившего",
+    deleted: () => "сессия субагента удалена",
+    reloadUnreadable: () => "перезагрузка плагина, сессия субагента не читается",
+    reloadNoKey: () => "перезагрузка плагина, ключа места нет",
+    reloadNotBack: () => "перезагрузка плагина, место-спутник по ключу не вернулось",
+    identity: (name, action) => `Отказано (плагин): ${name}${act(action)} — личность человека, а у дочерней сессии нет своего места: мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.`,
+    writeUnderParent: (name, of) => `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.`,
+    writeNoParent: () => `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`,
+    finalRefusal: (why, name) => `Отказано (плагин): ${why} — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`,
+    releasedChild: () => "запустивший отпустил эту дочернюю сессию",
+    endedChild: () => "эта дочерняя сессия кончена",
+    endedSatellite: () => "эта дочерняя сессия кончена, её место-спутник отпущено",
+    launcherSeat: () => "<место запустившего>",
+    endedRefusal: (why, name, action, of) => `Отказано (плагин): ${why} — ${name}${act(action)} пошёл бы мостом и местом запустившего. Встань заново: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори вызов.`,
+    ask: (who, what) => `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. Ты ответить не можешь, и никакое слово субагенту его не разблокирует. Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.`,
+    more: (n2) => ` и ещё ${n2}`,
+    action: () => "действие",
+    interrupt: (who, reason) => `Искрон: ход субагента ${who} прерван (${reason}).`
+  },
+  en: {
+    cancelled: () => "its turn was cancelled in OpenCode (by the human or the launcher)",
+    cancelledRefusal: () => "its turn was cancelled in OpenCode",
+    cascade: (who) => `Iskron: the turn of subagent ${who} was cut by the cancel of your turn — it has not ended: it holds its seat and cases and waits for frames of its case. To go on — a word into its case; to release it — iskron_channel(action="revoke", standing="${who}").`,
+    placeEvicted: () => "its satellite seat was evicted by another holder",
+    placeClosed: () => "its satellite seat was revoked not through the launcher or closed by the platform (4001)",
+    placeEvictedRefusal: () => "its satellite seat was evicted by another holder",
+    placeClosedRefusal: () => "its satellite seat was revoked or closed by the platform (4001)",
+    end: (who, why, done, said) => `Iskron: subagent ${who} ENDED — ${why}. This is the end of the errand, not a turn: ${done}The outcome is its last word:
+${said || "(it left no text — see its case)"}`,
+    endKept: (who, kept2) => `${keptEn(who, kept2)}; to revoke it — iskron_channel(action="revoke", standing="${kept2}"), only on the human's word. `,
+    endPlain: () => "the subagent's bridge goes down: it leaves its cases, its seat is revoked (if it is not, I will say so separately). ",
+    keptLine: keptEn,
+    keptSaid: (who, place) => `Iskron: ${keptEn(who, place)}`,
+    unrevokedUnknown: (who) => `Iskron: the bridge of subagent ${who} is down; whether it revoked its seat it did not answer: if it is left on the board — revoke it with iskron_channel(action="revoke").`,
+    unrevoked: (who, places, first) => `Iskron: subagent ${who}'s seat was not revoked (network): ${places} — revoke it with iskron_channel(action="revoke", standing="${first}").`,
+    turn: (place) => `Iskron: subagent ${place} handed over a turn, not the errand — it goes on and waits for frames of its case; the outcome lands here at its end. To release it earlier — iskron_channel(action="revoke", standing="${place}").`,
+    notice: (child, place) => `Iskron: the OpenCode notice <subagent sessionID="${child}" state="completed"> is the end of a TURN of subagent ${place}, not of the errand: it is a lead, stands on its own seat and waits for frames of its case. Do not count it finished — the outcome lands here with the word «ENDED» at its end. To release it earlier — iskron_channel(action="revoke", standing="${place}").`,
+    release: (who) => `Iskron: subagent ${who} is released — its bridge is down: it leaves its cases and revokes its seat itself; the outcome landed here as a synthetic message.`,
+    released: () => "Iskron: the launcher released you — the errand is over, the seat is revoked, you are taken out of the cases; standing again is not possible, write nothing more into the graph or cases.",
+    away: (who, last) => `Iskron: subagent ${who} was taken down by the parent's move to another folder — the errand here ended not by its outcome, there will be no «ENDED»: its bridge goes down: it leaves its cases, its seat is revoked; its session stayed in the previous folder. Its last word:
+${last || "(it left no text — see its case)"}`,
+    lost: (who, why) => `Iskron: subagent ${who} is taken down — ${why}. The seat without a bridge goes with the channel's term, its cases with the seat's term; there is no outcome, its turn is in its session.`,
+    tellDone: (sessionID) => `Iskron: the word about the subagent was delivered into session ${sessionID}`,
+    tellFailed: (sessionID, message) => `Iskron: the word about the subagent was not delivered into ${sessionID}: ${message}`,
+    sessionOf: (child) => `of session ${child}`,
+    noParent: (text) => `${text}
+(the plugin does not know the parent — nobody to give the outcome to)`,
+    notDown: (who, message) => `Iskron: the bridge of subagent ${who} was not put down after the outcome — ${message}`,
+    leftSeat: () => "left its seat by the outcome",
+    leftCases: () => "left its cases by the outcome",
+    leftCase: (room) => `left case №${room} by the outcome`,
+    releasedByLauncher: () => "released on the launcher's word",
+    deleted: () => "the subagent's session was deleted",
+    reloadUnreadable: () => "plugin reload, the subagent's session is unreadable",
+    reloadNoKey: () => "plugin reload, no seat key",
+    reloadNotBack: () => "plugin reload, the satellite seat did not return by its key",
+    identity: (name, action) => `Refused (plugin): ${name}${act(action)} is the human's identity, and the child session has no seat of its own: it does not get it through the root's bridge. The graph and cases can be read; who you are — ask the launcher.`,
+    writeUnderParent: (name, of) => `Refused (plugin): a child session writes only with its own satellite seat — ${name} would go under the parent's seat ${of}. Stand: iskron_stand(realm, karta, satellite_of="${of}"), then repeat; reading works as is.`,
+    writeNoParent: () => "Refused (plugin): a child session writes only with its own satellite seat, and the parent's seat is unknown — the root holds no seat. It cannot have a seat of its own; reading works as is, writing — by a word to the launcher.",
+    finalRefusal: (why, name) => `Refused (plugin): ${why} — the errand is over, the seat is revoked; ${name} goes neither with its seat nor with the launcher's, and standing again is not possible.`,
+    releasedChild: () => "the launcher released this child session",
+    endedChild: () => "this child session has ended",
+    endedSatellite: () => "this child session has ended, its satellite seat is released",
+    launcherSeat: () => "<the launcher's seat>",
+    endedRefusal: (why, name, action, of) => `Refused (plugin): ${why} — ${name}${act(action)} would go with the launcher's bridge and seat. Stand again: iskron_stand(realm, karta, satellite_of="${of}"), then repeat the call.`,
+    ask: (who, what) => `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. You cannot answer it, and no message to the subagent unblocks it. Tell the human what is waiting and where: only they can answer or cancel the subagent's turn.`,
+    more: (n2) => ` and ${n2} more`,
+    action: () => "action",
+    interrupt: (who, reason) => `Iskron: the turn of subagent ${who} was interrupted (${reason}).`
+  }
+};
+
+// js/delivery/words/opencode.ts
+var OPENCODE = {
+  ru: {
+    channelDown: (message) => `Искрон: канал не встал — ${message}`,
+    launchDown: (message) => `Искрон: строка запуска не встала — ${message}`,
+    noticeDown: (message) => `Искрон: пометка хода субагента не встала — ${message}`,
+    commandsDown: (message) => `Искрон: команды скиллов не встали — ${message}`,
+    noPermissionHooks: () => "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
+    skillReadsDown: (message) => `Искрон: чтение файлов скиллов поставки не открылось — ${message}`,
+    hearingLost: (hhmm2, message) => `Искрон: слух потерян в ${hhmm2} — мост стояния вышел (${message}). Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.`,
+    fromCache: () => "из прошлого списка",
+    fromServer: () => "с сервера",
+    cached: (n2) => `Искрон: тулов из прошлого списка: ${n2}; сверю с сервером.`,
+    raised: (n2) => `Искрон: мост поднят, тулов в сессии: ${n2} (с сервера).`,
+    died: (message) => `Искрон: мост умер (${message}) — поднимаю новый.`,
+    builds: (bridge, plugin) => `сборка: мост ${bridge}, плагин ${plugin}`,
+    unreadable: () => "не читается",
+    serverChanged: (n2) => `Искрон: сервер сменил тулы — в сессии теперь ${n2}.`,
+    idleShort: (idle, watch) => `ISKRON_BRIDGE_IDLE_MS (${idle}) не длиннее такта сторожа слуха (${watch}): слот может быть сжат прежде возврата места`,
+    statusDescription: () => "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
+    statusBridge: (path) => `мост: ${path}`,
+    statusLoginPending: (open, elsewhere2) => `вход: НЕ ВЫПОЛНЕН — ${open}. Адрес локальный: ${elsewhere2} (скилл establish-mcp).`,
+    openInBrowser: (url) => `открой в браузере ${url}`,
+    finishInBrowser: () => "заверши вход в браузере",
+    statusLoginDone: () => "вход: есть, сервер отвечает",
+    statusLoginWaiting: () => "вход: мост ещё не ответил (рукопожатие идёт)",
+    statusTools: (n2, source) => `тулов iskron_*: ${n2} (${source})`,
+    statusBridges: (live, sessions) => `мостов живых: ${live}, сессий с мостом: ${sessions}`,
+    commandHead: (id) => `Загрузи скилл \`${id}\` инструментом \`skill\` (id: \`${id}\`) и действуй строго по нему. Это набрал человек, а не ты; его слова — ниже.
+
+`,
+    commandsCount: (n2) => `Искрон: команд «/» по скиллам поставки: ${n2}.`,
+    frame: () => "кадр",
+    frameId: (id) => `кадр ${id}`,
+    frameNoId: () => "кадр без id",
+    caseBatch: (n2) => `пачка дела (${n2})`,
+    staleBatch: () => "пачка лежалых кадров",
+    wakeBatch: (n2) => `пачка побудки (${n2})`,
+    resumedLabel: () => "слово о возвращённом месте",
+    tact: () => "такт внимания",
+    tactWaits: () => "Искрон: такт внимания ждёт конца хода сессии",
+    tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
+    childGone: (frame, id, text) => `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
+    sessionClosed: (id, frame) => `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
+    nowhere: (frame, text) => `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` + text,
+    delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
+    notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
+    held: (key) => `Искрон: мост держит стояние ${key}`,
+    released: (key, text) => `Искрон: мост отпустил стояние ${key} — ${text}`
+  },
+  en: {
+    channelDown: (message) => `Iskron: the channel did not come up — ${message}`,
+    launchDown: (message) => `Iskron: the launch line did not come up — ${message}`,
+    noticeDown: (message) => `Iskron: the subagent turn note did not come up — ${message}`,
+    commandsDown: (message) => `Iskron: the skill commands did not come up — ${message}`,
+    noPermissionHooks: () => "Iskron: this OpenCode has no permission hooks — files of the delivery's skills outside the working copy are read with an ask.",
+    skillReadsDown: (message) => `Iskron: reading the delivery's skill files did not open — ${message}`,
+    hearingLost: (hhmm2, message) => `Iskron: hearing lost at ${hhmm2} — the standing's bridge exited (${message}). The hearing watchdog raises the bridge and returns the seat from disk; if you will not wait — iskron_stand.`,
+    fromCache: () => "from the previous list",
+    fromServer: () => "from the server",
+    cached: (n2) => `Iskron: tools from the previous list: ${n2}; checking with the server.`,
+    raised: (n2) => `Iskron: the bridge is up, tools in the session: ${n2} (from the server).`,
+    died: (message) => `Iskron: the bridge died (${message}) — raising a new one.`,
+    builds: (bridge, plugin) => `build: bridge ${bridge}, plugin ${plugin}`,
+    unreadable: () => "unreadable",
+    serverChanged: (n2) => `Iskron: the server changed its tools — now ${n2} in the session.`,
+    idleShort: (idle, watch) => `ISKRON_BRIDGE_IDLE_MS (${idle}) is not longer than the hearing watchdog's tact (${watch}): a slot may be reaped before its seat returns`,
+    statusDescription: () => "State of the Iskron bridge in this OpenCode session: whether sign-in is done, the authorization address, how many iskron_* tools are up. Call it when there are no iskron_* tools or they answer with a sign-in refusal.",
+    statusBridge: (path) => `bridge: ${path}`,
+    statusLoginPending: (open, elsewhere2) => `sign-in: NOT DONE — ${open}. The address is local: ${elsewhere2} (the establish-mcp skill).`,
+    openInBrowser: (url) => `open ${url} in a browser`,
+    finishInBrowser: () => "finish the sign-in in the browser",
+    statusLoginDone: () => "sign-in: done, the server answers",
+    statusLoginWaiting: () => "sign-in: the bridge has not answered yet (handshake in progress)",
+    statusTools: (n2, source) => `iskron_* tools: ${n2} (${source})`,
+    statusBridges: (live, sessions) => `live bridges: ${live}, sessions with a bridge: ${sessions}`,
+    commandHead: (id) => `Load the skill \`${id}\` with the \`skill\` tool (id: \`${id}\`) and act strictly by it. The human typed this, not you; their words are below.
+
+`,
+    commandsCount: (n2) => `Iskron: «/» commands from the delivery's skills: ${n2}.`,
+    frame: () => "frame",
+    frameId: (id) => `frame ${id}`,
+    frameNoId: () => "frame without id",
+    caseBatch: (n2) => `case batch (${n2})`,
+    staleBatch: () => "batch of stale frames",
+    wakeBatch: (n2) => `wake-up batch (${n2})`,
+    resumedLabel: () => "word about the returned seat",
+    tact: () => "attention tact",
+    tactWaits: () => "Iskron: the attention tact waits for the end of the session's turn",
+    tactWaitsFolded: () => "Iskron: the attention tact waits for the end of the session's turn — the previous waiting one is folded",
+    childGone: (frame, id, text) => `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; the frame stays in the standing's history (iskron_channel history); the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
+    sessionClosed: (id, frame) => `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
+    nowhere: (frame, text) => `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; the frame stays in the standing's history — ` + text,
+    delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
+    notDelivered: (frame, id, message) => `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
+    held: (key) => `Iskron: the bridge holds the standing ${key}`,
+    released: (key, text) => `Iskron: the bridge released the standing ${key} — ${text}`
+  }
+};
+
+// js/delivery/words/opencode-keep.ts
+var OPENCODE_KEEP = {
+  ru: {
+    resumed: (key) => `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`,
+    resumedOwn: (key) => `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`,
+    elsewhere: (keys) => `Искрон: возврат места ${keys} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`,
+    notBack: (place, why) => `Искрон: место ${place} с диска не вернулось: ${why}. Сторож слуха повторит возврат один раз; не ждёшь — iskron_stand.`,
+    noKeyNoDir: () => "ни ключа места, ни каталога сессии",
+    noAnswer: () => "мост не ответил",
+    legacy: (word2) => `Искрон: ${word2}.`,
+    sessionResumed: (root, word2) => `Искрон: сессия ${root} — ${word2}`,
+    resumeFailed: (root, message) => `Искрон: возврат места сессии ${root} не удался — ${message}`,
+    retryFailed: (place, why) => `Искрон: место ${place} не вернулось и на повторе сторожа: ${why}. Сам сторож его больше не поднимает — займи место iskron_stand.`,
+    noWhy: () => "мост не сказал почему",
+    watchResumed: (root, word2) => `Искрон: сторож слуха вернул место сессии ${root} — ${word2}`,
+    watchReopened: (root, word2) => `Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${word2}`,
+    watchFailed: (root, message) => `Искрон: сторож слуха сессии ${root} — ${message}`,
+    keepaliveTitle: () => "iskron: каталог держит место",
+    noRemove: (title) => `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${title}» не удаляются и копятся дочерними у места; продление идёт`,
+    cap: (max, title) => `Искрон: неудалённых служебных сессий продления больше ${max} — старшие больше не повторяю, удали дочерние «${title}» руками`,
+    notCreated: (message) => `Искрон: каталог не продлён — служебная сессия не создана: ${message}`,
+    noId: (answer, title) => `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удали её руками`,
+    notRemoved: (id) => `Искрон: каталог продлён, служебная сессия ${id} не удалена — повторю на следующем такте`,
+    tickFailed: (message) => `Искрон: такт продления каталога сорвался — ${message}`,
+    lostWord: (hhmm2, where) => `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.`,
+    movedWhy: (name) => `поручение этой дочерней сессии кончено переносом родителя в другую папку: её место${name ? ` ${name}` : ""} снято, мост погашен; запись отсюда ушла бы местом родителя`,
+    revokedMoved: (name) => `Искрон: ${name} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`,
+    twinUp: (dir) => `Искрон: экземпляр каталога ${dir} поднят заново — место вернул он`,
+    markerUntaken: (seconds) => `за ${seconds} с маркер его мест никто не взял`,
+    unloaded: (dir, named, why) => `Искрон: каталог ${dir} выгружен с местом (${named}) и не поднят — ${why}`,
+    thisSession: () => "этой сессии",
+    seatLost: (key, dir, why) => `Искрон: место ${key} отпущено — экземпляр плагина каталога ${dir} выгружен и не поднялся (${why}). Верни место: iskron_stand.`,
+    movedAway: (session, dir) => `Искрон: сессия ${session} перенесена в ${dir} — её место отпускаю экземпляру той папки`,
+    takenFromNew: (session) => `Искрон: место сессии ${session} занято из её новой папки — она перенесена`,
+    parentMoved: () => `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.`,
+    farRefusal: () => "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя не держит ни один экземпляр плагина этого процесса OpenCode — родитель в другом процессе либо места не держит. Спутником отсюда не встать; читать можно и так, писать — словом запустившему.",
+    elsewhereDevice: (device) => `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token`,
+    elsewhereTunnel: (why) => (why ? `${why}; ` : "") + "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token",
+    needLoginError: (open, elsewhere2) => `Искрон: нужен вход в граф — ${open} и повтори вызов. Адрес локальный для машины OpenCode: ${elsewhere2} (скилл establish-mcp).`,
+    openAndFinish: (url) => `открой ${url} и заверши его`,
+    finishItInBrowser: () => "заверши его в браузере",
+    needLogin: (open, elsewhere2) => `Искрон: нужен вход — ${open}; адрес локальный: ${elsewhere2}. Тулы iskron_* поднимутся после входа сами.`,
+    codeUntil: (link, until) => `${link} (код действует до ${until} UTC)`
+  },
+  en: {
+    resumed: (key) => `Iskron: the bridge came up and returned the seat ${key} itself — by its own holding record (the session's directory or the previous seat's key), without your move. Check the name against the one derived for this session: if it is someone else's, release it with iskron_channel(action="leave") (the channel stays; the platform rejects a revoke of the seat that founded the channel) and take your own with one iskron_stand; a write that already went out on this move — check it by its author in the node's history: a word under someone else's name lands on another seat, and the bridge answers with success.`,
+    resumedOwn: (key) => `Iskron: the bridge came up and returned the seat ${key} itself — your own, this session stood on it; without your move.`,
+    elsewhere: (keys) => `Iskron: returning the seat ${keys} from disk failed — its socket is held by another live bridge, not the one serving this session now: hearing and the busy line here hold no seat. Call iskron_stand with this name, no take needed: the seat of this same session's previous bridge the bridge returns itself, it does not touch another session's seat and stands beside on name.N with hearing.`,
+    notBack: (place, why) => `Iskron: the seat ${place} did not return from disk: ${why}. The hearing watchdog retries the return once; if you will not wait — iskron_stand.`,
+    noKeyNoDir: () => "neither a seat key nor a session directory",
+    noAnswer: () => "the bridge did not answer",
+    legacy: (word2) => `Iskron: ${word2}.`,
+    sessionResumed: (root, word2) => `Iskron: session ${root} — ${word2}`,
+    resumeFailed: (root, message) => `Iskron: returning the seat of session ${root} failed — ${message}`,
+    retryFailed: (place, why) => `Iskron: the seat ${place} did not return on the watchdog's retry either: ${why}. The watchdog no longer raises it by itself — take the seat with iskron_stand.`,
+    noWhy: () => "the bridge did not say why",
+    watchResumed: (root, word2) => `Iskron: the hearing watchdog returned the seat of session ${root} — ${word2}`,
+    watchReopened: (root, word2) => `Iskron: the hearing watchdog reopened the socket of session ${root} — ${word2}`,
+    watchFailed: (root, message) => `Iskron: the hearing watchdog of session ${root} — ${message}`,
+    keepaliveTitle: () => "iskron: the directory holds a seat",
+    noRemove: (title) => `Iskron: the OpenCode sessions context has no remove — keepalive service sessions «${title}» are not removed and pile up as children of the seat; the keepalive goes on`,
+    cap: (max, title) => `Iskron: more than ${max} keepalive service sessions are not removed — no longer retrying the oldest, remove the children «${title}» by hand`,
+    notCreated: (message) => `Iskron: the directory was not kept alive — the service session was not created: ${message}`,
+    noId: (answer, title) => `Iskron: the directory was kept alive, but the service session's id was not parsed from the create answer (${answer}) — it stays a child session of the seat «${title}», remove it by hand`,
+    notRemoved: (id) => `Iskron: the directory was kept alive, the service session ${id} was not removed — retrying on the next tact`,
+    tickFailed: (message) => `Iskron: the directory keepalive tact failed — ${message}`,
+    lostWord: (hhmm2, where) => `Iskron: hearing was lost at ${hhmm2} — the plugin was stopped (restart, directory eviction) with a holding bridge: ${where}. The seat returns from disk by itself; the waiting frames come as a batch. If it did not return — iskron_stand.`,
+    movedWhy: (name) => `this child session's errand ended with the parent's move to another folder: its seat${name ? ` ${name}` : ""} is revoked, the bridge is down; a write from here would go under the parent's seat`,
+    revokedMoved: (name) => `Iskron: ${name} is a subagent ended by the parent's move: the previous instance put its bridge down and revoked its seat, the outcome reached the parent as the word «moved»; no revoke is needed and none was sent.`,
+    twinUp: (dir) => `Iskron: the instance of directory ${dir} was raised again — it returned the seat`,
+    markerUntaken: (seconds) => `nobody took the marker of its seats within ${seconds} s`,
+    unloaded: (dir, named, why) => `Iskron: directory ${dir} was unloaded with a seat (${named}) and not raised — ${why}`,
+    thisSession: () => "of this session",
+    seatLost: (key, dir, why) => `Iskron: the seat ${key} was released — the plugin instance of directory ${dir} was unloaded and did not come up (${why}). Return the seat: iskron_stand.`,
+    movedAway: (session, dir) => `Iskron: session ${session} was moved to ${dir} — releasing its seat to that folder's instance`,
+    takenFromNew: (session) => `Iskron: the seat of session ${session} was taken from its new folder — it was moved`,
+    parentMoved: () => "Refused (plugin): this session's parent was moved to another folder — its errand ended with the move, the parent's bridge is not raised here, and it has no seat of its own; this session's work goes on without the graph, or by a word to the launcher.",
+    farRefusal: () => "Refused (plugin): this child session was moved to a different directory than its parent, and the parent's seat is held by no plugin instance of this OpenCode process — the parent is in another process or holds no seat. No standing as a satellite from here; reading works as is, writing — by a word to the launcher.",
+    elsewhereDevice: (device) => `from another device (a phone will do) — ${device}; or a personal token in ~/.iskron-bridge/token`,
+    elsewhereTunnel: (why) => (why ? `${why}; ` : "") + "from another machine — ssh -L <port>:127.0.0.1:<port>, or a personal token in ~/.iskron-bridge/token",
+    needLoginError: (open, elsewhere2) => `Iskron: sign-in to the graph is needed — ${open} and repeat the call. The address is local to the OpenCode machine: ${elsewhere2} (the establish-mcp skill).`,
+    openAndFinish: (url) => `open ${url} and finish it`,
+    finishItInBrowser: () => "finish it in the browser",
+    needLogin: (open, elsewhere2) => `Iskron: sign-in needed — ${open}; the address is local: ${elsewhere2}. The iskron_* tools come up by themselves after sign-in.`,
+    codeUntil: (link, until) => `${link} (the code is valid until ${until} UTC)`
+  }
+};
+
+// js/delivery/words/plugin.ts
+var PLUGIN = {
+  ru: {
+    noBridge: (tried) => "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + tried + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
+    bridgeLine: (line) => `Искрон/мост: ${line}`,
+    notRaised: (message) => `Искрон: мост не поднялся — ${message}`,
+    refusalNoText: (name) => `${name}: отказ без текста`,
+    relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
+    listening: () => "Искрон: канал слушает",
+    dead: (code) => `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    evicted: (code) => `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`,
+    alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
+    note: (text) => `Искрон: ${text}`
+  },
+  en: {
+    noBridge: (tried) => "Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: " + tried + ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
+    bridgeLine: (line) => `Iskron/bridge: ${line}`,
+    notRaised: (message) => `Iskron: the bridge did not come up — ${message}`,
+    refusalNoText: (name) => `${name}: refusal without text`,
+    relistFailed: (message) => `Iskron: the tool list was not reread after the change on the server — ${message}`,
+    listening: () => "Iskron: the channel is listening",
+    dead: (code) => `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true) — only on the human's word.`,
+    alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
+    note: (text) => `Iskron: ${text}`
+  }
+};
+
+// js/delivery/words/rooms.ts
+var ROOM = {
+  ru: {
+    said: (author) => `слово от ${author}`,
+    saidPending: (author) => `слово от ${author} в полёте — текст придёт следом`,
+    aside: (author, addressee, word2) => `${author} → ${addressee}: слово [${word2}]`,
+    asideRun: (author, addressee, count, word2) => `${author} → ${addressee}: ${count} (последнее [${word2}])`,
+    asideBody: (author, addressee, word2) => `${author} → ${addressee}: текст слова [${word2}]`,
+    messages: (n2) => {
+      const m10 = n2 % 10;
+      const m100 = n2 % 100;
+      const w = m10 === 1 && m100 !== 11 ? "слово" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "слова" : "слов";
+      return `${n2} ${w}`;
+    },
+    body: (refersTo, author) => `текст слова [${refersTo}] от ${author}`,
+    bodyAborted: (refersTo) => `слово [${refersTo}] оборвано автором`,
+    bodyLapsed: (refersTo) => `слово [${refersTo}] оборвано платформой по сроку`,
+    closing: (author, endsAt, evidence) => `ведущий ${author} предлагает закрыть дело до ${endsAt}${evidence ? `; свидетельства: ${evidence}` : ""}`,
+    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId}) (прежнее имя iskron_room)`,
+    closingNot: () => "возражать не тебе",
+    closed: (reason) => `дело закрыто: ${reason}`,
+    objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
+    lateObjection: (author) => `${author} возразил после закрытия`,
+    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    opened: (author) => `дело открыл ${author}`,
+    joined: (who) => `вошёл ${who}`,
+    left: (who, reason) => `вышел ${who}${reason ? `; причина: ${reason}` : ""}`,
+    invite: (author, who) => `${author} зовёт ${who} в дело`,
+    withdraw: (author) => `приглашение отозвано, отзывает ${author}`,
+    node: (seq, name, realm, reasoning) => `в деле узел #${seq} ${name} (${realm})${reasoning}`,
+    nodeUpdated: (seq, name, reasoning) => `узел #${seq} ${name} обновлён${reasoning}`,
+    nodeDeleted: (seq, name, reasoning) => `узел #${seq} ${name} удалён${reasoning}`,
+    nodeUndeleted: (seq, name, reasoning) => `узел #${seq} ${name} восстановлен${reasoning}`,
+    link: (room, rel) => `дело связано с №${room} (${rel})`,
+    auto: (code, room) => `запись платформы ${code} о деле №${room}`,
+    unknown: (kind) => `род ${kind} мосту неизвестен`,
+    case: (room) => `№${room}`,
+    replyTo: (id) => `в ответ на [${id}]`,
+    stale: () => "лежалый",
+    bodyRead: (how) => `тело: ${how}`,
+    whoHuman: (user) => `человек${user}`,
+    whoRole: (karta) => `роль #${karta}`,
+    whoSibling: (karta) => `брат по роли #${karta}`,
+    whoPlatform: () => "платформа — побудка",
+    whoGraph: () => "событие графа",
+    legacy: (kind, stack) => `род ${kind}${stack ? `, стопка ${stack}` : ""}`
+  },
+  en: {
+    said: (author) => `message from ${author}`,
+    saidPending: (author) => `message from ${author} in flight — the text follows`,
+    aside: (author, addressee, word2) => `${author} → ${addressee}: message [${word2}]`,
+    asideRun: (author, addressee, count, word2) => `${author} → ${addressee}: ${count} (last [${word2}])`,
+    asideBody: (author, addressee, word2) => `${author} → ${addressee}: text of message [${word2}]`,
+    messages: (n2) => `${n2} ${n2 === 1 ? "message" : "messages"}`,
+    body: (refersTo, author) => `text of message [${refersTo}] from ${author}`,
+    bodyAborted: (refersTo) => `message [${refersTo}] cut off by its author`,
+    bodyLapsed: (refersTo) => `message [${refersTo}] cut off by the platform on its deadline`,
+    closing: (author, endsAt, evidence) => `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
+    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
+    closingNot: () => "the objection is not yours to make",
+    closed: (reason) => `case closed: ${reason}`,
+    objection: (author, reason) => `${author} objects to closing: ${reason}`,
+    lateObjection: (author) => `${author} objected after the close`,
+    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    opened: (author) => `case opened by ${author}`,
+    joined: (who) => `entered ${who}`,
+    left: (who, reason) => `left ${who}${reason ? `; reason: ${reason}` : ""}`,
+    invite: (author, who) => `${author} invites ${who} to the case`,
+    withdraw: (author) => `invitation withdrawn by ${author}`,
+    node: (seq, name, realm, reasoning) => `node #${seq} ${name} (${realm}) in the case${reasoning}`,
+    nodeUpdated: (seq, name, reasoning) => `node #${seq} ${name} updated${reasoning}`,
+    nodeDeleted: (seq, name, reasoning) => `node #${seq} ${name} deleted${reasoning}`,
+    nodeUndeleted: (seq, name, reasoning) => `node #${seq} ${name} restored${reasoning}`,
+    link: (room, rel) => `case linked to case №${room} (${rel})`,
+    auto: (code, room) => `platform record ${code} about case №${room}`,
+    unknown: (kind) => `kind ${kind} is unknown to the bridge`,
+    case: (room) => `case №${room}`,
+    replyTo: (id) => `in reply to [${id}]`,
+    stale: () => "stale",
+    bodyRead: (how) => `body: ${how}`,
+    whoHuman: (user) => `human${user}`,
+    whoRole: (karta) => `role #${karta}`,
+    whoSibling: (karta) => `sibling of role #${karta}`,
+    whoPlatform: () => "platform — a wake-up",
+    whoGraph: () => "graph event",
+    legacy: (kind, stack) => `kind ${kind}${stack ? ` · ${stack}` : ""}`
+  }
+};
+var ROOM_AUTO = {
+  ru: {
+    child_opened: (room) => `дочернее дело №${room} открыто`,
+    child_closing: (room) => `дочернее дело №${room} закрывается`,
+    child_closed: (room) => `дочернее дело №${room} закрыто`,
+    child_late_objection: (room) => `позднее возражение в дочернем деле №${room}`
+  },
+  en: {
+    child_opened: (room) => `child case №${room} opened`,
+    child_closing: (room) => `child case №${room} is closing`,
+    child_closed: (room) => `child case №${room} closed`,
+    child_late_objection: (room) => `late objection in child case №${room}`
+  }
+};
+var ROOM_REL = {
+  ru: {
+    parent: () => "дочернее к нему",
+    child: () => "родительское к нему",
+    continues: () => "продолжает его"
+  },
+  en: {
+    parent: () => "its child",
+    child: () => "its parent",
+    continues: () => "continues it"
+  }
+};
+var VERDICT = {
+  ru: { ok: () => "ok", partial: () => "частично", bad: () => "slop" },
+  en: { ok: () => "ok", partial: () => "partial", bad: () => "slop" }
+};
+
+// js/delivery/words/status.ts
+var TAKE_PATH_RU = 'iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
+var TAKE_PATH_EN = `iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
+var TWO_ENTRIES_RU = "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.";
+var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
+var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
+var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
+
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -50,85 +661,34 @@ function envOf(k) {
 // js/shared/standings.ts
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
-var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
+var defaultAuthDir = () => join(homedir(), HOME_DIR);
+var authDirFromEnv = () => envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
 
 // js/shared/lang.ts
-function langOfUrl(url) {
-  try {
-    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
-  } catch {
-    return "ru";
-  }
-}
+var isLang = (v) => LANGS.includes(v ?? "");
 function forcedLang() {
-  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
-  return v === "en" || v === "ru" ? v : null;
+  const v = envOf(envName("BRIDGE_LANG"))?.trim().toLowerCase();
+  return isLang(v) ? v : null;
 }
 function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
-  if (fromEnv) return langOfUrl(fromEnv);
+  const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
+  if (fromEnv) return langOfServer(fromEnv);
   try {
     const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
-    if (text) return langOfUrl(text);
+    if (text) return langOfServer(text);
   } catch {
   }
-  return "ru";
+  return DEFAULT_LANG;
 }
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
-var L = (ru, en) => lang() === "en" ? en : ru;
-
-// js/shared/launch.ts
-var LINE = /^[ \t]*start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:[ \t]+(?:от|from)[ \t]+(@\S+))?(?=\s|$)/imu;
-function parseLaunch(text) {
-  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
-  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
-}
-function withWord(text, word) {
-  const m = LINE.exec(text);
-  if (!m) return `${text}
-${word}`;
-  const nl = text.indexOf("\n", m.index);
-  return nl < 0 ? `${text}
-${word}` : `${text.slice(0, nl)}
-${word}${text.slice(nl)}`;
-}
-async function enterCase(l, call, satelliteOf, placeName) {
-  const room = `#${l.no}`;
-  const stand = { realm: l.realm, karta: l.karta };
-  if (satelliteOf) stand.satellite_of = satelliteOf;
-  try {
-    await call("iskron_stand", stand);
-  } catch (e) {
-    const why = e.message;
-    const join9 = `iskron_case(action="join", room="${room}")`;
-    return L(
-      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join9}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
-      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join9}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
-    );
-  }
-  const place = placeName() || L("своим местом", "in a seat of its own");
-  try {
-    await call("iskron_case", { action: "join", realm: l.realm, room });
-  } catch (e) {
-    const why = e.message;
-    return L(
-      `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${why}. Место остаётся.`,
-      `Iskron: seated ${place}; did not enter case №${l.no} — ${why}. The seat stays.`
-    );
-  }
-  return L(
-    `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`,
-    `Iskron: seated ${place}, entered case №${l.no} — retell the brief as your first message in the case.`
-  );
-}
+var words = (dict) => dict[lang()];
 
 // js/shared/channel.ts
-var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
-var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
+var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
+var FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
@@ -157,13 +717,12 @@ function isDirectWord(frame) {
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
-function fill(template, v) {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep2, name) => {
-    const x = str(v[name]);
-    if (sep2) return x ? sep2 + x : "";
-    return x || "?";
-  });
-}
+var need = (v) => str(v) || "?";
+var opt = (sep2, v) => {
+  const x = str(v);
+  return x ? sep2 + x : "";
+};
+var pick = (dict, key) => Object.hasOwn(dict, key) ? dict[key] : void 0;
 var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 function myRole(frame, fields) {
   const ka = obj(fields.karta);
@@ -186,37 +745,11 @@ function addresseeOf(v) {
 }
 
 // js/shared/asks.ts
-var ASK_WORDS = {
-  ask: "{author} спрашивает роль {to}{ to_place} [{key}]: «{done}»{; form}{; advice}",
-  ask_place: "(место {place})",
-  ask_yes_no: "ответ: да или нет (yes | no)",
-  ask_free: "ответ своим текстом",
-  ask_choice: "варианты: {options}",
-  ask_advice: "рекомендация: {option}{ — why}",
-  answer: "{author} отвечает на [{refers_to}]: {reply}",
-  ack: "ответ [{refers_to}] принят{: reply} · {author}",
-  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
-  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
-  // Зов роли платформой по погасшему месту: cause — почему зовут.
-  invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
-  invite_answer_waiting: "платформа зовёт роль {who} в дело: ответ ждёт приёма, спросившее место {standing} ушло"
-};
-var ASK_WORDS_EN = {
-  ask: "{author} asks the role {to}{ to_place} [{key}]: “{done}”{; form}{; advice}",
-  ask_place: "(seat {place})",
-  ask_yes_no: "answer: yes or no (yes | no)",
-  ask_free: "answer in your own words",
-  ask_choice: "options: {options}",
-  ask_advice: "recommended: {option}{ — why}",
-  answer: "{author} answers [{refers_to}]: {reply}",
-  ack: "answer [{refers_to}] accepted{: reply} · {author}",
-  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
-  invite_ownerless: "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
-  invite_answer_waiting: "the platform calls the role {who} to the case: an answer awaits acceptance, the asking seat {standing} has left"
-};
 var ASK_KINDS = /* @__PURE__ */ new Set(["ask", "answer", "ack"]);
-var askWord = (key) => (lang() === "en" ? ASK_WORDS_EN : ASK_WORDS)[key];
-var phrase = (key, values = {}) => fill(askWord(key) ?? "", values);
+var INVITE_CAUSES = {
+  ownerless: "inviteOwnerless",
+  answer_waiting: "inviteAnswerWaiting"
+};
 var toOf = (fields) => obj(fields.to);
 var byMe = (frame) => {
   const mine = mineOf(frame);
@@ -247,32 +780,60 @@ function addressedMine(frame) {
   const mine = mineOf(frame);
   return !!to && to.addr.some((a) => mine.includes(a));
 }
-var quote = (s) => s ? L(`«${s}»`, `“${s}”`) : "";
+var quote = (s) => s ? words(CASE_LINE).quote(s) : "";
 function formOf(fields) {
+  const W4 = words(ASK);
   const form = str(fields.form);
-  if (form === "yes_no") return phrase("ask_yes_no");
-  if (form === "free") return phrase("ask_free");
+  if (form === "yes_no") return W4.yesNo();
+  if (form === "free") return W4.free();
   if (form !== "choice" || !Array.isArray(fields.options)) return "";
   const options = fields.options.map((o) => {
     const x = obj(o);
     const ctx = str(x.context);
     return `${str(x.id)} ${quote(str(x.label))}${ctx ? ` (${ctx})` : ""}`;
   }).join(", ");
-  return phrase("ask_choice", { options });
+  return W4.choice(need(options));
 }
 function askValues(kind, line, fields) {
   if (kind !== "ask")
     return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
+  const W4 = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
   const place = addresseeOf(to.standing)?.label ?? "";
   const rec3 = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
-    to_place: place ? phrase("ask_place", { place }) : "",
+    to_place: place ? W4.place(need(place)) : "",
     form: formOf(fields),
-    advice: str(rec3.option) || str(rec3.why) ? phrase("ask_advice", { option: str(rec3.option) || "—", why: rec3.why }) : ""
+    advice: str(rec3.option) || str(rec3.why) ? W4.advice(need(str(rec3.option) || "—"), opt(" — ", rec3.why)) : ""
   };
+}
+function askText(kind, cause, v) {
+  const W4 = words(ASK);
+  const invite = cause ? pick(INVITE_CAUSES, cause) : void 0;
+  if (invite) return W4[invite](need(v.who), need(v.standing));
+  if (kind === "progress" && str(v.withdraws))
+    return W4.withdrawn(
+      need(v.withdraws),
+      need(v.key),
+      need(v.done),
+      need(v.verdict),
+      need(v.author)
+    );
+  if (kind === "ask")
+    return W4.ask(
+      need(v.author),
+      need(v.to),
+      opt(" ", v.to_place),
+      need(v.key),
+      need(v.done),
+      opt("; ", v.form),
+      opt("; ", v.advice)
+    );
+  if (kind === "answer") return W4.answer(need(v.author), need(v.refers_to), need(v.reply));
+  if (kind === "ack") return W4.ack(need(v.refers_to), opt(": ", v.reply), need(v.author));
+  return void 0;
 }
 
 // js/shared/numbering.ts
@@ -343,134 +904,10 @@ var processAsks = {
 };
 
 // js/shared/room-kinds.ts
-var WORDS = {
-  said: "слово от {author}",
-  said_pending: "слово от {author} в полёте — текст придёт следом",
-  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
-  aside: "{author} → {addressee}: слово [{word}]",
-  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
-  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
-  aside_body: "{author} → {addressee}: текст слова [{word}]",
-  word_one: "слово",
-  word_few: "слова",
-  word_many: "слов",
-  body: "текст слова [{refers_to}] от {author}",
-  body_aborted: "слово [{refers_to}] оборвано автором",
-  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
-  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
-  closing_not: "возражать не тебе",
-  closed: "дело закрыто: {reason}",
-  objection: "{author} возражает против закрытия: {reason}",
-  late_objection: "{author} возразил после закрытия",
-  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "дело открыл {author}",
-  joined: "вошёл {who}",
-  left: "вышел {who}{; причина: reason}",
-  invite: "{author} зовёт {who} в дело",
-  withdraw: "приглашение отозвано, отзывает {author}",
-  node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
-  node_updated: "узел #{seq} {name} обновлён{; reasoning}",
-  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
-  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
-  link: "дело связано с №{room} ({rel})",
-  auto: "запись платформы {code} о деле №{room}",
-  unknown: "род {kind} мосту неизвестен",
-  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
-  case: "№{room}",
-  reply_to: "в ответ на [{id}]",
-  stale: "лежалый",
-  body_read: "тело: {how}",
-  who_human: "человек{ @user}",
-  who_role: "роль #{karta}",
-  who_sibling: "брат по роли #{karta}",
-  who_platform: "платформа — побудка",
-  who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}"
-};
-var WORDS_EN = {
-  said: "message from {author}",
-  said_pending: "message from {author} in flight — the text follows",
-  aside: "{author} → {addressee}: message [{word}]",
-  aside_run: "{author} → {addressee}: {count} (last [{word}])",
-  aside_body: "{author} → {addressee}: text of message [{word}]",
-  word_one: "message",
-  word_few: "messages",
-  word_many: "messages",
-  body: "text of message [{refers_to}] from {author}",
-  body_aborted: "message [{refers_to}] cut off by its author",
-  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
-  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
-  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
-  closing_not: "the objection is not yours to make",
-  closed: "case closed: {reason}",
-  objection: "{author} objects to closing: {reason}",
-  late_objection: "{author} objected after the close",
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "case opened by {author}",
-  joined: "entered {who}",
-  left: "left {who}{; reason: reason}",
-  invite: "{author} invites {who} to the case",
-  withdraw: "invitation withdrawn by {author}",
-  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
-  node_updated: "node #{seq} {name} updated{; reasoning}",
-  node_deleted: "node #{seq} {name} deleted{; reasoning}",
-  node_undeleted: "node #{seq} {name} restored{; reasoning}",
-  link: "case linked to case №{room} ({rel})",
-  auto: "platform record {code} about case №{room}",
-  unknown: "kind {kind} is unknown to the bridge",
-  case: "case №{room}",
-  reply_to: "in reply to [{id}]",
-  stale: "stale",
-  body_read: "body: {how}",
-  who_human: "human{ @user}",
-  who_role: "role #{karta}",
-  who_sibling: "sibling of role #{karta}",
-  who_platform: "platform — a wake-up",
-  who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}"
-};
-var AUTO_WORDS = {
-  child_opened: "дочернее дело №{room} открыто",
-  child_closing: "дочернее дело №{room} закрывается",
-  child_closed: "дочернее дело №{room} закрыто",
-  child_late_objection: "позднее возражение в дочернем деле №{room}"
-};
-var AUTO_WORDS_EN = {
-  child_opened: "child case №{room} opened",
-  child_closing: "child case №{room} is closing",
-  child_closed: "child case №{room} closed",
-  child_late_objection: "late objection in child case №{room}"
-};
-var REL_WORDS = {
-  parent: "дочернее к нему",
-  child: "родительское к нему",
-  continues: "продолжает его"
-};
-var REL_WORDS_EN = {
-  parent: "its child",
-  child: "its parent",
-  continues: "continues it"
-};
-var VERDICT_WORDS = {
-  ok: "ok",
-  partial: "частично",
-  bad: "slop"
-};
-var VERDICT_WORDS_EN = {
-  ok: "ok",
-  partial: "partial",
-  bad: "slop"
-};
-var words = () => lang() === "en" ? WORDS_EN : WORDS;
-var phrase2 = (key, values = {}) => fill(words()[key] ?? "", values);
-var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
-var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
-  updated: "node_updated",
-  deleted: "node_deleted",
-  undeleted: "node_undeleted"
+  updated: "nodeUpdated",
+  deleted: "nodeDeleted",
+  undeleted: "nodeUndeleted"
 };
 var RULES = {
   said: "stack",
@@ -480,8 +917,7 @@ var RULES = {
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
-  // Толчок по ожиданию (#6655): прерывает только ответ ждавшему; вопрос мне,
-  // «принята» и снятие — пачкой, текстом как адресованные (#6868).
+  // Only the answer to the waiting seat interrupts (graph @nks/nks-dev, nodes #6655, #6868).
   ask: "batch",
   answer: "addressed",
   ack: "batch",
@@ -492,7 +928,7 @@ var RULES = {
   withdraw: "batch",
   node: "batch",
   link: "batch",
-  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
+  // (graph @nks/nks-dev, node #4925)
   auto: "batch"
 };
 function authorOf(author) {
@@ -501,7 +937,7 @@ function authorOf(author) {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? L("платформа", "platform") : "?";
+  return a.kind === "platform" ? words(CASE_LINE).platform() : "?";
 }
 function roomOf(v) {
   const r = obj(v);
@@ -514,12 +950,51 @@ function whoOf(fields) {
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
 }
-function wordsCount(n2) {
-  const W = words();
-  const m10 = n2 % 10;
-  const m100 = n2 % 100;
-  const w = lang() === "en" ? n2 === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
-  return `${n2} ${w}`;
+function kindText(kind, v, f, pending, aborted) {
+  const W4 = words(ROOM);
+  const n2 = (k) => need(v[k]);
+  const lapsed = obj(obj(f.line).author).kind === "platform";
+  if (pending) return W4.saidPending(n2("author"));
+  if (aborted) return lapsed ? W4.bodyLapsed(n2("refers_to")) : W4.bodyAborted(n2("refers_to"));
+  if (kind === "auto")
+    return pick(words(ROOM_AUTO), str(v.code))?.(n2("room")) ?? W4.auto(n2("code"), n2("room"));
+  const ask = askText(kind, str(v.cause), v);
+  if (ask !== void 0) return ask;
+  const reasoning = opt("; ", v.reasoning);
+  const op = kind === "node" ? pick(NODE_OPS, str(v.op)) : void 0;
+  if (op) return W4[op](n2("seq"), n2("name"), reasoning);
+  switch (kind) {
+    case "said":
+      return W4.said(n2("author"));
+    case "body":
+      return W4.body(n2("refers_to"), n2("author"));
+    case "closing":
+      return W4.closing(n2("author"), n2("ends_at"), str(v.evidence));
+    case "closed":
+      return W4.closed(n2("reason"));
+    case "objection":
+      return W4.objection(n2("author"), n2("reason"));
+    case "late_objection":
+      return W4.lateObjection(n2("author"));
+    case "progress":
+      return W4.progress(n2("key"), n2("done"), n2("verdict"), opt(" — ", v.note), n2("author"));
+    case "opened":
+      return W4.opened(n2("author"));
+    case "joined":
+      return W4.joined(n2("who"));
+    case "left":
+      return W4.left(n2("who"), str(v.reason));
+    case "invite":
+      return W4.invite(n2("author"), n2("who"));
+    case "withdraw":
+      return W4.withdraw(n2("author"));
+    case "node":
+      return W4.node(n2("seq"), n2("name"), n2("realm"), reasoning);
+    case "link":
+      return W4.link(n2("room"), n2("rel"));
+    default:
+      return "";
+  }
 }
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
@@ -538,82 +1013,72 @@ function roomKind(frame) {
   );
   const values = {
     kind,
+    cause,
     author: byWhom,
     key,
     done: line.done,
-    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
+    verdict: pick(words(VERDICT), str(line.verdict))?.() ?? line.verdict,
     note: line.note,
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
-    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
-    // Ответ и приём (#6867) — так же: refers_to строки, in_reply_to конверта.
     refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
-    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
-    // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
-    // Зов роли (#6870) — роль по имени из fields.karta, погасшее место — fields.gone_standing.
+    // Observed live: the invite key carries the id, the invitee's name is in the line fields (standing/karta with name).
+    // Joined and left — fields.standing (a timed-out leave is written by the platform, api 0.89.6), else the author;
+    // a role call by cause — fields.karta (graph @nks/nks-dev, node #6870).
     who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
     standing: str(fields.gone_standing) || addresseeOf(fields.gone_standing)?.label,
     ...ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {},
     room: roomOf(fields.room) || after(key, "link:"),
-    rel: relWords()[str(fields.rel)] ?? fields.rel,
+    rel: pick(words(ROOM_REL), str(fields.rel))?.() ?? fields.rel,
     code: fields.code,
+    op: fields.op,
     seq: node.seq,
     name: node.name,
     realm: node.realm,
-    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
+    // A node delta's reasoning is the record's body, not a field (graph @nks/nks-dev, node #6070).
     reasoning: kind === "node" ? line.done || f.body : void 0,
     withdraws: fields.withdraws
   };
+  const W4 = words(ROOM);
   const rule = RULES[kind];
   const author = str(values.author);
   if (!rule)
     return {
       kind,
       rule: "batch",
-      words: fill(words().unknown, values),
+      words: W4.unknown(need(kind)),
       author,
       phase: null,
       known: false
     };
-  const W = words();
-  const word = kind === "said" || kind === "body";
-  const withheld = word && f.body_withheld === true;
-  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  const word2 = kind === "said" || kind === "body";
+  const withheld = word2 && f.body_withheld === true;
+  const to = word2 ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
   if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
-    const id = counts ? values.entry_id : values.refers_to;
-    const run = (n2) => fill(n2 === 0 ? W.aside_body : n2 > 1 ? W.aside_run : W.aside, {
-      ...values,
-      word: id,
-      addressee: to.label,
-      count: wordsCount(n2)
-    });
+    const id = need(counts ? values.entry_id : values.refers_to);
+    const by = need(values.author);
+    const addressee = need(to.label);
+    const run = (n2) => n2 === 0 ? W4.asideBody(by, addressee, id) : n2 > 1 ? W4.asideRun(by, addressee, W4.messages(n2), id) : W4.aside(by, addressee, id);
     const aside = { pair, counts, run };
     const words2 = run(counts ? 1 : 0);
     return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : cause && askWord(`invite_${cause}`) ? askWord(`invite_${cause}`) : kind === "progress" && str(fields.withdraws) ? askWord("ask_withdrawn") : ASK_KINDS.has(kind) ? askWord(kind) : (
-    // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
-  );
-  let text = fill(wordsOf ?? "", values);
+  let text = kindText(kind, values, f, pending, aborted);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
+    text += "; " + (mayI ? W4.closingMay(need(values.entry_id)) : W4.closingNot());
   }
-  const stack = rule === "stack" ? (
-    // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
-    f.stack === "defer" ? "batch" : "interrupt"
-  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
+  const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
@@ -673,13 +1138,12 @@ function addressedToMine(frame) {
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
   if (rk?.kind === "body") {
-    const word = obj(f.word);
-    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
+    const word2 = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word2.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
       return true;
   } else if (
-    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
-    // important на конверте или в полях строки. Слово в полёте запоминается —
-    // его тело придёт второй фазой без этих признаков.
+    // A word to me, a reply to my record (#5954), marked important; a word in flight
+    // is remembered, since its body comes as a second phase without these marks.
     hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
   ) {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
@@ -694,6 +1158,210 @@ function addressedToMine(frame) {
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   if (rk && ASK_KINDS.has(rk.kind) || askFromPerson(f)) return false;
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
+}
+
+// js/shared/keyfold.ts
+var rec = (v) => v && typeof v === "object" ? v : {};
+var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+function superseded(frames) {
+  const last = /* @__PURE__ */ new Map();
+  const out2 = /* @__PURE__ */ new Set();
+  frames.forEach((f, i) => {
+    const r = f;
+    const line = rec(r.line);
+    const key = typeof line.key === "string" ? line.key : "";
+    if (line.kind !== "progress" || !key || line.verdict === "bad" || addressedToMine(f)) return;
+    const k = `${idOf(rec(r.room).id) || idOf(rec(r.room).seq)}|${key}`;
+    const e = Number(r.entry_id ?? line.entry_id);
+    const at = Number.isFinite(e) ? e : i;
+    const was = last.get(k);
+    if (!was) return void last.set(k, { frame: f, at });
+    if (at >= was.at) {
+      out2.add(was.frame);
+      last.set(k, { frame: f, at });
+    } else out2.add(f);
+  });
+  return out2;
+}
+
+// js/shared/frame-text.ts
+var W = () => words(ROOM);
+var T = () => words(FRAME_TEXT);
+var rec2 = (v) => v && typeof v === "object" ? v : {};
+var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
+var ZACHIN = 40;
+function casesOf(frames) {
+  const by = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const key = caseKey(f) || idOf2(f.id) || "?";
+    const got = by.get(key);
+    if (got) got.push(f);
+    else by.set(key, [f]);
+  }
+  return [...by.values()];
+}
+function caseOf(frame) {
+  const f = frame;
+  const room = rec2(f.room);
+  const n2 = idOf2(room.seq) || idOf2(room.id);
+  if (!n2) return null;
+  const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
+  const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
+  const realm = idOf2(room.realm) || idOf2(f.realm);
+  return { room: n2, zachin, realm };
+}
+var caseKey = (frame) => caseOf(frame)?.room ?? "";
+function caseHead(frame, withZachin) {
+  const c = caseOf(frame);
+  if (!c) return "";
+  const no = W().case(need(c.room));
+  return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
+}
+function whoOf2(frame, withPlace) {
+  const p = frame.provenance ?? {};
+  const origin = frame.origin ?? classifyOrigin(frame);
+  if (origin === "platform") return W().whoPlatform();
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
+  const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
+  if (origin === "human") return W().whoHuman(opt(" @", p.user)) + place;
+  const karta = p.from_karta_seq;
+  if (karta == null) return p.from_standing ?? "";
+  return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
+}
+function textOf(frame) {
+  if (roomKind(frame)?.aside) return "";
+  const b = frame.body;
+  return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
+}
+function tail(frame, withReply) {
+  const f = frame;
+  const parts = [];
+  const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
+  if (withReply && to) parts.push(W().replyTo(need(to)));
+  if (frame.stale === true) parts.push(W().stale());
+  if (typeof frame.body_read === "string" && frame.body_read !== "history")
+    parts.push(W().bodyRead(need(frame.body_read)));
+  return parts.length ? `, ${parts.join(", ")}` : "";
+}
+var markFrame = (text) => `${FRAME_MARK} ${text}`;
+function frameToText(frame, raw) {
+  if (!frame) return raw;
+  const f = frame;
+  const origin = frame.origin ?? classifyOrigin(frame);
+  const text = textOf(frame);
+  const c = caseOf(frame);
+  if (c) {
+    if (!addressedToMine(frame)) return caseCountLine([frame]);
+    const rk = roomKind(frame);
+    const line = rec2(f.line);
+    const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
+    const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
+    const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
+    const who = origin === "platform" ? "" : whoOf2(frame, false);
+    const by = [author, who].filter(Boolean).join(", ");
+    const withReply = rk?.kind !== "body";
+    const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
+    const lines2 = [head];
+    if (text && !words2.includes(text.trim())) lines2.push(text);
+    return lines2.join("\n");
+  }
+  const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
+  if (text) lines.push(text);
+  return lines.join("\n");
+}
+var BATCH_TEXT = 160;
+function batchLine(frame, run, withZachin = true) {
+  const f = frame;
+  const rk = roomKind(frame);
+  const head = caseHead(frame, withZachin);
+  const pre = head ? `${head} ` : "";
+  if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
+  const line = rec2(f.line);
+  const e = f.entry_id ?? line.entry_id ?? f.id;
+  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
+  const words2 = rk?.words ?? T().frame(typeof f.id === "string" ? f.id : "?");
+  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
+  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
+  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  const dup = !!text && words2.includes(text);
+  return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
+}
+function batchLines(frames) {
+  const seen = /* @__PURE__ */ new Set();
+  return frames.flatMap((f) => {
+    if (!addressedToMine(f)) return [];
+    const key = caseKey(f);
+    const first = !seen.has(key);
+    seen.add(key);
+    return [batchLine(f, void 0, first)];
+  });
+}
+function caseCountLine(frames) {
+  const c = frames.length ? caseOf(frames[0]) : null;
+  if (!c) return "";
+  const mineN = frames.filter((f) => addressedToMine(f)).length;
+  const gone = superseded(frames).size;
+  const head = caseHead(frames[0], true);
+  const yours = mineN ? T().yoursBelow() : T().noneYours();
+  const n2 = frames.length - gone;
+  return T().count(head, n2, mineN) + (gone ? T().supersededLines(gone) : "") + yours + batchPointer(frames) + ".";
+}
+function caseCountLines(frames) {
+  return casesOf(frames).map(caseCountLine).filter(Boolean);
+}
+function batchHead(frames) {
+  return caseCountLines(frames).join("\n");
+}
+function batchPointer(frames) {
+  const since = /* @__PURE__ */ new Map();
+  for (const frame of frames) {
+    const f = frame;
+    const room = f.room ?? {};
+    const line = f.line ?? {};
+    const n2 = room.seq ?? room.id;
+    const e = Number(f.entry_id ?? line.entry_id);
+    if (typeof n2 !== "number" && typeof n2 !== "string" || !Number.isFinite(e)) continue;
+    const realm = room.realm ?? f.realm;
+    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n2 === "number" ? String(n2) : JSON.stringify(n2)}`;
+    since.set(args, Math.min(since.get(args) ?? e, e));
+  }
+  return T().inFull([...since].map(([args, e]) => T().caseHistory(args, e - 1)).join("; "));
+}
+
+// js/shared/launch.ts
+var LINE = LAUNCH_LINE;
+function parseLaunch(text) {
+  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
+  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
+}
+function withWord(text, word2) {
+  const m = LINE.exec(text);
+  if (!m) return `${text}
+${word2}`;
+  const nl = text.indexOf("\n", m.index);
+  return nl < 0 ? `${text}
+${word2}` : `${text.slice(0, nl)}
+${word2}${text.slice(nl)}`;
+}
+async function enterCase(l, call, satelliteOf, placeName) {
+  const W4 = words(LAUNCH);
+  const room = `#${l.no}`;
+  const stand = { realm: l.realm, karta: l.karta };
+  if (satelliteOf) stand.satellite_of = satelliteOf;
+  try {
+    await call(tool("stand"), stand);
+  } catch (e) {
+    const why = e.message;
+    const join9 = `${tool("case")}(action="join", room="${room}")`;
+    return W4.notSeated(why, l.no, join9);
+  }
+  const place = placeName() || W4.ownSeat();
+  try {
+    await call(tool("case"), { action: "join", realm: l.realm, room });
+  } catch (e) {
+    return W4.notEntered(place, l.no, e.message);
+  }
+  return W4.entered(place, l.no);
 }
 
 // js/shared/seen.ts
@@ -726,21 +1394,19 @@ var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.recei
 var onlyTacts = (frames) => !!frames?.length && frames.every(isTact);
 
 // js/shared/clients.ts
-var OPENCODE_CLIENT = "opencode-iskron";
-var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
-var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
-var BRIDGE_SKILL = "establish-mcp";
-var BRIDGE_FILE = "iskron.mjs";
+var OPENCODE_CLIENT = CLIENTS.opencode;
+var PI_CLIENT = CLIENTS.pi;
+var HARNESS_VERSION_ENV = envName("HARNESS_VERSION");
+var SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
 
 // js/shared/fields.ts
-var FIELDS_CAPABILITY = "iskron/structured";
+var FIELDS_CAPABILITY = STRUCTURED_CAPABILITY;
 var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.7.0";
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -758,7 +1424,9 @@ function buildOfFile(path) {
     return null;
   }
 }
+var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
 function versionIn(text) {
+  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
   return m ? m[1] : null;
 }
@@ -770,9 +1438,7 @@ var BUILD = buildOf(import.meta.url);
 var out = scoped(() => ({ stream: null }));
 
 // js/bridge/config.ts
-var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
-var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
-var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+var PRODUCTION_URLS = new Set(LANGS.map((l) => strip(SERVER_URLS[l])));
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
@@ -787,35 +1453,43 @@ var REGISTRATION_REUSE_MS = 45 * 6e4;
 
 // js/bridge/oauth/pacing.ts
 var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 >= 0);
-var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
-var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
-var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
+var DEAD_RECHECK_MS = pauses(process.env[envName("BRIDGE_DEAD_RECHECK_MS")], "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env[envName("BRIDGE_IN_CALL_WAIT_MS")]) || 1e4;
+var ORPHAN_FLOW_MS = Number(process.env[envName("BRIDGE_ORPHAN_FLOW_MS")]) || 5 * 6e4;
 
 // js/bridge/oauth/device.ts
-var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
-var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
+var SLOW_DOWN_MS = Number(process.env[envName("BRIDGE_DEVICE_SLOW_DOWN_MS")]) || 5e3;
+var REISSUE_PAUSE_MS = Number(process.env[envName("BRIDGE_DEVICE_REISSUE_MS")]) || 3e4;
 var never = new Promise(() => {
 });
 
 // js/bridge/oauth/flow.ts
-var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
-var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
-var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+var CLAIM_WAIT_MS = Number(process.env[envName("BRIDGE_CLAIM_WAIT_MS")]) || 15e3;
+var LANDED_POLL_MS = Number(process.env[envName("BRIDGE_LANDED_POLL_MS")]) || 2e3;
+var RELEASE_GAP_MS = Number(process.env[envName("BRIDGE_RELEASE_GAP_MS")]) || 0;
+
+// js/bridge/repeat.ts
+var OWN_CALL_PREFIX = `${ID_PREFIX}bridge-call-`;
+var READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
+var SAFE_ACTIONS = {
+  [tool("channel")]: /* @__PURE__ */ new Set(["list"]),
+  [tool("realm")]: /* @__PURE__ */ new Set(["list"])
+};
 
 // js/bridge/toolsync.ts
-var T = scoped(() => ({
+var T2 = scoped(() => ({
   served: null,
-  // у сессии харнеса — свой список
+  // each harness session has its own list
   told: false,
-  // list_changed сказан, а харнес списка ещё не перечёл
+  // list_changed said, and the harness has not reread yet
   inFlight: 0,
-  // tools/list харнеса в полёте (любые страницы)
+  // the harness's tools/list in flight (any page)
   listing: /* @__PURE__ */ new WeakSet(),
-  // tools/list харнеса (первая страница) в полёте
+  // the harness's tools/list (first page) in flight
   heldBack: /* @__PURE__ */ new WeakSet(),
-  // …в чьём ответе сервер сказал list_changed
+  // …in whose answer the server said list_changed
   live: /* @__PURE__ */ new WeakSet()
-  // …на который харнесу ушёл живой список сервера
+  // …answered to the harness with the server's live list
 }));
 
 // js/shared/satname.ts
@@ -865,178 +1539,11 @@ var state = scoped(() => ({
 }));
 var reinit = scoped(() => ({ inFlight: null }));
 
-// js/shared/keyfold.ts
-var rec = (v) => v && typeof v === "object" ? v : {};
-var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-function superseded(frames) {
-  const last = /* @__PURE__ */ new Map();
-  const out2 = /* @__PURE__ */ new Set();
-  frames.forEach((f, i) => {
-    const r = f;
-    const line = rec(r.line);
-    const key = typeof line.key === "string" ? line.key : "";
-    if (line.kind !== "progress" || !key || line.verdict === "bad" || addressedToMine(f)) return;
-    const k = `${idOf(rec(r.room).id) || idOf(rec(r.room).seq)}|${key}`;
-    const e = Number(r.entry_id ?? line.entry_id);
-    const at = Number.isFinite(e) ? e : i;
-    const was = last.get(k);
-    if (!was) return void last.set(k, { frame: f, at });
-    if (at >= was.at) {
-      out2.add(was.frame);
-      last.set(k, { frame: f, at });
-    } else out2.add(f);
-  });
-  return out2;
-}
-
-// js/shared/frame-text.ts
-var rec2 = (v) => v && typeof v === "object" ? v : {};
-var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
-var ZACHIN = 40;
-function casesOf(frames) {
-  const by = /* @__PURE__ */ new Map();
-  for (const f of frames) {
-    const key = caseKey(f) || idOf2(f.id) || "?";
-    const got = by.get(key);
-    if (got) got.push(f);
-    else by.set(key, [f]);
-  }
-  return [...by.values()];
-}
-function caseOf(frame) {
-  const f = frame;
-  const room = rec2(f.room);
-  const n2 = idOf2(room.seq) || idOf2(room.id);
-  if (!n2) return null;
-  const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
-  const zachin = z.length > ZACHIN ? z.slice(0, ZACHIN).join("") + "…" : z.join("");
-  const realm = idOf2(room.realm) || idOf2(f.realm);
-  return { room: n2, zachin, realm };
-}
-var caseKey = (frame) => caseOf(frame)?.room ?? "";
-function caseHead(frame, withZachin) {
-  const c = caseOf(frame);
-  if (!c) return "";
-  const no = phrase2("case", { room: c.room });
-  return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
-}
-function whoOf2(frame, withPlace) {
-  const p = frame.provenance ?? {};
-  const origin = frame.origin ?? classifyOrigin(frame);
-  if (origin === "platform") return phrase2("who_platform");
-  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase2("who_graph");
-  const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return phrase2("who_human", { user: p.user }) + place;
-  const karta = p.from_karta_seq;
-  if (karta == null) return p.from_standing ?? "";
-  return phrase2(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
-}
-function textOf(frame) {
-  if (roomKind(frame)?.aside) return "";
-  const b = frame.body;
-  return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
-}
-function tail(frame, withReply) {
-  const f = frame;
-  const parts = [];
-  const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
-  if (withReply && to) parts.push(phrase2("reply_to", { id: to }));
-  if (frame.stale === true) parts.push(phrase2("stale"));
-  if (typeof frame.body_read === "string" && frame.body_read !== "history")
-    parts.push(phrase2("body_read", { how: frame.body_read }));
-  return parts.length ? `, ${parts.join(", ")}` : "";
-}
-function frameToText(frame, raw) {
-  if (!frame) return raw;
-  const f = frame;
-  const origin = frame.origin ?? classifyOrigin(frame);
-  const text = textOf(frame);
-  const c = caseOf(frame);
-  if (c) {
-    if (!addressedToMine(frame)) return caseCountLine([frame]);
-    const rk = roomKind(frame);
-    const line = rec2(f.line);
-    const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
-    const words2 = rk ? rk.words : phrase2("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
-    const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
-    const who = origin === "platform" ? "" : whoOf2(frame, false);
-    const by = [author, who].filter(Boolean).join(", ");
-    const withReply = rk?.kind !== "body";
-    const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
-    const lines2 = [head];
-    if (text && !words2.includes(text.trim())) lines2.push(text);
-    return lines2.join("\n");
-  }
-  const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
-  if (text) lines.push(text);
-  return lines.join("\n");
-}
-var BATCH_TEXT = 160;
-function batchLine(frame, run, withZachin = true) {
-  const f = frame;
-  const rk = roomKind(frame);
-  const head = caseHead(frame, withZachin);
-  const pre = head ? `${head} ` : "";
-  if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
-  const line = rec2(f.line);
-  const e = f.entry_id ?? line.entry_id ?? f.id;
-  const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
-  const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
-  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
-  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
-  const dup = !!text && words2.includes(text);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
-}
-function batchLines(frames) {
-  const seen = /* @__PURE__ */ new Set();
-  return frames.flatMap((f) => {
-    if (!addressedToMine(f)) return [];
-    const key = caseKey(f);
-    const first = !seen.has(key);
-    seen.add(key);
-    return [batchLine(f, void 0, first)];
-  });
-}
-function caseCountLine(frames) {
-  const c = frames.length ? caseOf(frames[0]) : null;
-  if (!c) return "";
-  const mineN = frames.filter((f) => addressedToMine(f)).length;
-  const gone = superseded(frames).size;
-  const head = caseHead(frames[0], true);
-  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
-  const n2 = frames.length - gone;
-  return L(`${head}: записей ${n2}, тебе ${mineN}`, `${head}: ${n2} records, yours ${mineN}`) + (gone ? L(`, сменённых строк ключа ${gone}`, `, ${gone} superseded lines of a key`) : "") + yours + batchPointer(frames) + ".";
-}
-function caseCountLines(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean);
-}
-function batchHead(frames) {
-  return caseCountLines(frames).join("\n");
-}
-function batchPointer(frames) {
-  const since = /* @__PURE__ */ new Map();
-  for (const frame of frames) {
-    const f = frame;
-    const room = f.room ?? {};
-    const line = f.line ?? {};
-    const n2 = room.seq ?? room.id;
-    const e = Number(f.entry_id ?? line.entry_id);
-    if (typeof n2 !== "number" && typeof n2 !== "string" || !Number.isFinite(e)) continue;
-    const realm = room.realm ?? f.realm;
-    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n2 === "number" ? String(n2) : JSON.stringify(n2)}`;
-    since.set(args, Math.min(since.get(args) ?? e, e));
-  }
-  const whole = L("целиком — ", "in full — ");
-  if (!since.size) return `${whole}iskron_channel(action="history")`;
-  return whole + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ");
-}
-
 // js/bridge/backlog.ts
-var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+var BACKLOG_MS = Number(process.env[envName("BRIDGE_BACKLOG_MS")]) || 1500;
 
 // js/bridge/roomstack.ts
-var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
+var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
@@ -1048,37 +1555,37 @@ var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
-  /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+  /** session dir the place is taken from (stand cwd), kept in the hold record for cwd resume (resume.ts) */
   standCwd: null,
   holder: null,
-  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  /** last service sign of a socket released by parkStanding; the record lifetime counts from it (holdkeep.ts) */
   heardAt: 0,
-  /** дверь основного места — того, ради которого взят сокет */
+  /** door of the primary place, the one the socket was taken for */
   door: null,
   currentKey: null,
   currentUrl: null,
   currentStatusUrl: null,
-  /** ключ места, отнятого у этого моста закрытием 4000 */
+  /** key of the place taken from this bridge by close 4000 */
   evictedKey: null,
-  /** прицепившийся после — узнаёт, а не молчит */
+  /** told to a client attaching later */
   evictedEvent: null,
-  /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
+  /** left the place: service socket closed, key and addresses kept (leave.ts) */
   parked: false,
-  /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
+  /** socket reopened on the same address without this opening's hello yet: another may have rotated it (deaf.ts) */
   unheard: false,
-  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  /** key of a place whose socket was released but binding remembered, until hello proves hearing (deaf.ts) */
   deafKey: null,
-  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  /** places of other graphs on the channel at the 4001: the server remembers the binding, no hearing (deaf.ts) */
   deadPlaces: [],
   attachHooks: [],
   helloWaiters: /* @__PURE__ */ new Set(),
-  /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
+  /** disk resumes in flight: a dead token during one is a stale record, not an alarm */
   resuming: 0,
-  /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
+  /** own revoke in flight (absorb.ts): close 4001 outruns the revoke answer */
   revokingOwn: false,
-  /** своё close канала в полёте (absorb.ts): закрытие 4001 обгонит ответ, как у revoke (#6634) */
+  /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
   closingOwn: false,
-  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
   handingOver: null
 }));
 
@@ -1090,21 +1597,22 @@ var R = scoped(() => ({ listing: null }));
 var extras = scoped(() => /* @__PURE__ */ new Map());
 
 // js/bridge/spool.ts
-var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
+var W2 = () => words(BRIDGE_CLIENT);
 function bridgeRuntime() {
-  const own = process.env.ISKRON_NODE?.trim();
+  const own = process.env[envName("NODE")]?.trim();
   if (own) return { bin: own, env: process.env };
   if (process.versions?.bun)
     return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
-var SERVICE_ID = "iskron-service-";
+var SERVICE_ID = `${ID_PREFIX}service-`;
 var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
@@ -1127,11 +1635,11 @@ var Bridge = class {
     this.onDie = onDie;
     this.args = args;
   }
-  /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
+  /** The bridge exited or failed to start — calls to it are refused with this. */
   get failure() {
     return this.dead;
   }
-  /** env — поверх рантайма: версия хоста для attrs.harness_version (#6226). */
+  /** env — over the runtime's: host version for attrs.harness_version (#6226). */
   start(env = {}) {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin, ...this.args], {
@@ -1154,31 +1662,11 @@ var Bridge = class {
         this.onLog(line);
       }
     });
-    proc.on(
-      "error",
-      (e) => this.die(
-        new Error(
-          L(`мост не запустился: ${e.message}`, `the bridge failed to start: ${e.message}`)
-        )
-      )
-    );
-    proc.on(
-      "exit",
-      (code, signal) => this.die(
-        new Error(
-          L(
-            `мост вышел (code=${code}, signal=${signal})${this.why()}`,
-            `the bridge exited (code=${code}, signal=${signal})${this.why()}`
-          )
-        )
-      )
-    );
+    proc.on("error", (e) => this.die(new Error(W2().failedToStart(e.message))));
+    proc.on("exit", (code, signal) => this.die(new Error(W2().exited(code, signal, this.why()))));
   }
   why() {
-    return this.tail.length ? L(
-      `; последнее от моста: ${this.tail.slice(-3).join(" | ")}`,
-      `; last from the bridge: ${this.tail.slice(-3).join(" | ")}`
-    ) : "";
+    return this.tail.length ? W2().lastFromBridge(this.tail.slice(-3).join(" | ")) : "";
   }
   die(e) {
     if (this.dead) return;
@@ -1220,11 +1708,11 @@ var Bridge = class {
       else waiter.resolve(msg.result);
     }
   }
-  notify(method, params) {
+  notify(method2, params) {
     if (this.dead || !this.proc?.stdin?.writable) return;
-    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: method2, params }) + "\n");
   }
-  request(method, params, opts = {}) {
+  request(method2, params, opts = {}) {
     if (this.dead) return Promise.reject(this.dead);
     const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
@@ -1237,36 +1725,27 @@ var Bridge = class {
       const resolve6 = settle(res);
       const reject = settle(rej);
       function onAbort() {
-        reject(new Error(L("вызов отменён", "call aborted")));
+        reject(new Error(W2().aborted()));
       }
       this.pending.set(id, { resolve: resolve6, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
       }
-      if (opts.timeoutMs) {
+      const ms = opts.timeoutMs;
+      if (ms) {
         timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(
-            new Error(
-              L(
-                `${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`,
-                `${method}: no answer in ${opts.timeoutMs} ms${this.why()}`
-              )
-            )
-          );
-        }, opts.timeoutMs);
+          reject(new Error(W2().noAnswer(method2, ms, this.why())));
+        }, ms);
         timer.unref?.();
       }
-      if (!this.proc?.stdin?.writable)
-        return reject(
-          new Error(L("мост не принимает запись", "the bridge does not accept writes"))
-        );
-      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      if (!this.proc?.stdin?.writable) return reject(new Error(W2().noWrites()));
+      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: method2, params }) + "\n");
     });
   }
   stop() {
-    this.die(new Error(L("сессия закрыта", "session closed")));
+    this.die(new Error(W2().sessionClosed()));
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.killed || proc.exitCode !== null) return;
@@ -1315,7 +1794,7 @@ function resultToContent(result) {
   return [
     {
       type: "text",
-      text: structured ? JSON.stringify(structured) : L("(пустой ответ)", "(empty answer)")
+      text: structured ? JSON.stringify(structured) : W2().emptyAnswer()
     }
   ];
 }
@@ -1460,20 +1939,19 @@ function takeLostMarker(authDir2, home) {
   if (!entries.length) return null;
   const when = new Date(at);
   const hhmm2 = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
-  const word = (of) => {
+  const word2 = (of) => {
     const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
-    return where ? `Искрон: слух был потерян в ${hhmm2} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само; ожидавшие кадры придут пачкой. Не вернулось — iskron_stand.` : null;
+    return where ? words(OPENCODE_KEEP).lostWord(hhmm2, where) : null;
   };
   return {
-    text: word(entries),
-    // журналу — все
+    text: word2(entries),
+    // the log gets all
     entries,
-    wordFor: (s) => word(entries.filter((e) => e.session === s))
+    wordFor: (s) => word2(entries.filter((e) => e.session === s))
   };
 }
 
 // js/opencode/adopt.ts
-var movedWhy = (name) => `поручение этой дочерней сессии кончено переносом родителя в другую папку: её место${name ? ` ${name}` : ""} снято, мост погашен; запись отсюда ушла бы местом родителя`;
 function createAdopt(d) {
   const moved = /* @__PURE__ */ new Map();
   function take(entries) {
@@ -1483,16 +1961,15 @@ function createAdopt(d) {
       if (!e.moved) void d.back(e);
       else {
         if (e.name) moved.set(e.name, e.session);
-        d.endKid(e.session, e.of ?? null, movedWhy(e.name));
+        d.endKid(e.session, e.of ?? null, words(OPENCODE_KEEP).movedWhy(e.name ?? ""));
       }
     }
   }
   return {
     take,
     /**
-     * Маркер, положенный после загрузки этого экземпляра, — взять: перенос сессии сюда при
-     * живом экземпляре либо остановка прежнего, кончившаяся позже нашей загрузки (ребёнок без
-     * своего слота спросит — иначе он ушёл бы мостом корня, astra на 7.2.6).
+     * A marker laid after this instance loaded — take it: a session moved here into a live
+     * instance, or a previous one's stop that ended after our load.
      */
     now() {
       const lost = takeLostMarker(d.authDir(), d.home);
@@ -1500,13 +1977,12 @@ function createAdopt(d) {
       take(lost.entries);
       void d.keeper.resumeLost(lost.entries, lost.wordFor);
     },
-    /** revoke места ребёнка, кончённого переносом родителя: ответ плагина вместо вызова. */
+    /** A revoke of a child ended by the parent's move: the plugin's answer instead of a call. */
     revoked(name, args) {
       const s = String(args.standing ?? "").trim();
-      if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
+      if (name !== tool("channel") || args.action !== "revoke" || !s) return null;
       for (const n2 of moved.keys())
-        if (s === n2 || s.endsWith(`:${n2}`))
-          return `Искрон: ${n2} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`;
+        if (s === n2 || s.endsWith(`:${n2}`)) return words(OPENCODE_KEEP).revokedMoved(n2);
       return null;
     }
   };
@@ -1528,7 +2004,7 @@ import { join as join6, resolve as resolve3 } from "node:path";
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join4 } from "node:path";
-var homeBridgePath = () => join4(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
+var homeBridgePath = () => join4(homedir2(), HOME_DIR, HOME_BRIDGE_FILE);
 
 // js/opencode/devicewait.ts
 import { readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
@@ -1538,7 +2014,7 @@ function deviceOf(message) {
   const link = /from another device: (\S+)/.exec(message)?.[1];
   if (!link) return /no sign-in by code: (.+?) — or give the bridge/.exec(message)?.[1] ?? null;
   const until = UNTIL.exec(message)?.[1];
-  return until ? `${link} (код действует до ${until} UTC)` : link;
+  return until ? words(OPENCODE_KEEP).codeUntil(link, until) : link;
 }
 function loginStamp(dir) {
   try {
@@ -1565,14 +2041,14 @@ function codeWatch(dir, message) {
 }
 
 // js/opencode/bridge-io.ts
-var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
-var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 2e3);
+var HANDSHAKE_MS = Number(process.env[envName("MCP_HANDSHAKE_MS")] || 6e5);
+var AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 2e3);
 var retryPause = (n2) => Math.min(AUTH_POLL_MS * 2 ** n2, 6e4);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function findBridge() {
   const tried = [];
-  const env = process.env.ISKRON_BRIDGE_PATH?.trim();
+  const env = process.env[envName("BRIDGE_PATH")]?.trim();
   if (env) tried.push(resolve3(env));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
@@ -1585,10 +2061,11 @@ function findBridge() {
   return { path: null, tried };
 }
 function buildsLine(bridgePath, pluginUrl) {
-  return `сборка: мост ${buildOfFile(bridgePath) ?? "не читается"}, плагин ${buildOf(pluginUrl)}`;
+  const W4 = words(OPENCODE);
+  return W4.builds(buildOfFile(bridgePath) ?? W4.unreadable(), buildOf(pluginUrl));
 }
 function authDir() {
-  return process.env.ISKRON_BRIDGE_AUTH_DIR || join6(homedir3(), ".iskron-bridge");
+  return process.env[envName("BRIDGE_AUTH_DIR")] || join6(homedir3(), HOME_DIR);
 }
 function cachePath() {
   return join6(authDir(), "opencode-tools.json");
@@ -1630,7 +2107,7 @@ async function handshake(b, onLogin, onReady) {
         {
           protocolVersion: PROTOCOL,
           capabilities: FIELDS_CAPABILITIES,
-          // поля ответа — и этому клиенту (#6637)
+          // answer fields — for this client too (#6637)
           clientInfo: { name: OPENCODE_CLIENT, version: "1" }
         },
         { timeoutMs: Math.max(1, deadline - Date.now()) }
@@ -1671,18 +2148,25 @@ async function refreshToolList(b, state2, reload, say, live) {
     const list = await listTools(b);
     if (!live() || JSON.stringify(list) === JSON.stringify(state2.listed)) return;
     state2.listed = list;
-    state2.source = "с сервера";
+    state2.source = words(OPENCODE).fromServer();
     writeCache(list);
     await reload();
-    say(`Искрон: сервер сменил тулы — в сессии теперь ${list.length}.`, "info");
+    say(words(OPENCODE).serverChanged(list.length), "info");
   } catch (e) {
     if (!live()) return;
-    say(
-      `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
-      "warning"
-    );
+    say(words(PLUGIN).relistFailed(e.message), "warning");
   }
 }
+
+// js/opencode/leadwords.ts
+var SUMMARY_MAX = 4e3;
+var W3 = () => words(LEAD);
+var endWord = (who, why, last, kept2) => {
+  const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
+  return W3().end(who, why, kept2 ? W3().endKept(who, kept2) : W3().endPlain(), said);
+};
+var unrevokedWord = (who, failed) => failed === null ? W3().unrevokedUnknown(who) : W3().unrevoked(who, failed.join(", "), String(failed[0]));
+var awayWord = (who, last) => W3().away(who, last.slice(0, SUMMARY_MAX));
 
 // js/shared/canon.ts
 import { realpathSync } from "node:fs";
@@ -1698,10 +2182,10 @@ function canonDir(p) {
 }
 
 // js/opencode/twins.ts
-var WAKE_MS = Number(process.env.ISKRON_WAKE_MS) || 15e3;
+var WAKE_MS = Number(process.env[envName("WAKE_MS")]) || 15e3;
 var PAUSE_MS = Math.min(1e3, WAKE_MS / 5);
-var registry = () => globalThis.__iskronTwins ??= /* @__PURE__ */ new Set();
-var handing = () => globalThis.__iskronHanding ??= /* @__PURE__ */ new Map();
+var registry = () => globalThis[`${GLOBAL_PREFIX}Twins`] ??= /* @__PURE__ */ new Set();
+var handing = () => globalThis[`${GLOBAL_PREFIX}Handing`] ??= /* @__PURE__ */ new Map();
 function handOver(session, p) {
   handing().set(session, p);
   void p.finally(() => handing().get(session) === p && handing().delete(session));
@@ -1721,6 +2205,7 @@ var folderOf = (h) => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
 var sameSpelling = (a, b) => a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
 var sleep3 = (ms) => new Promise((r) => setTimeout(r, ms));
 function createTwins(ctx, home, d) {
+  const W4 = words(OPENCODE_KEEP);
   let gone = false;
   const me = {
     home,
@@ -1749,30 +2234,24 @@ function createTwins(ctx, home, d) {
     if (!why) {
       await sleep3(WAKE_MS);
       if (!markerWaits(authDir(), h)) {
-        d.say(`Искрон: экземпляр каталога ${h.directory} поднят заново — место вернул он`, "info");
+        d.say(W4.twinUp(h.directory), "info");
         return;
       }
-      why = `за ${Math.round(WAKE_MS / 1e3)} с маркер его мест никто не взял`;
+      why = W4.markerUntaken(Math.round(WAKE_MS / 1e3));
     }
     if (gone) return;
     const named = roots.map((e) => e.key ?? e.session).join(", ");
-    d.say(
-      `Искрон: каталог ${h.directory} выгружен с местом (${named}) и не поднят — ${why}`,
-      "error"
-    );
+    d.say(W4.unloaded(h.directory, named, why), "error");
     for (const e of roots)
-      d.lost(
-        e.session,
-        `Искрон: место ${e.key ?? "этой сессии"} отпущено — экземпляр плагина каталога ${h.directory} выгружен и не поднялся (${why}). Верни место: iskron_stand.`
-      );
+      d.lost(e.session, W4.seatLost(e.key ?? W4.thisSession(), h.directory, why));
   }
   return {
-    /** Экземпляр останавливается — из реестра, будить его некому и незачем. */
+    /** The instance stops — out of the registry, nobody to wake it and no need. */
     leave() {
       gone = true;
       registry().delete(me);
     },
-    /** Остановка с местами entries (маркер лёг): живой близнец будит это написание. */
+    /** A stop with seats entries (the marker landed): a live twin wakes this spelling. */
     left(entries) {
       if (!home || !entries.length) return;
       const live = [...registry()].filter((t) => t.home);
@@ -1783,9 +2262,9 @@ function createTwins(ctx, home, d) {
 }
 
 // js/opencode/children.ts
-var BACK_MS = Number(process.env.ISKRON_CHILD_BACK_MS) || 15e3;
+var BACK_MS = Number(process.env[envName("CHILD_BACK_MS")]) || 15e3;
 var BACK_TRIES = 4;
-var BACK_PAUSE_MS = Number(process.env.ISKRON_CHILD_BACK_PAUSE_MS) || 1e3;
+var BACK_PAUSE_MS = Number(process.env[envName("CHILD_BACK_PAUSE_MS")]) || 1e3;
 var PAUSE_MS2 = 1500;
 function createChildren(d) {
   const coming = /* @__PURE__ */ new Map();
@@ -1810,12 +2289,8 @@ function createChildren(d) {
     d.leads.back(e.session, e);
     const ready = (async () => {
       if (!await d.exists(e.session))
-        return void await d.leads.fail(
-          e.session,
-          "перезагрузка плагина, сессия субагента не читается"
-        );
-      if (!e.key)
-        return void await d.leads.fail(e.session, "перезагрузка плагина, ключа места нет");
+        return void await d.leads.fail(e.session, W3().reloadUnreadable());
+      if (!e.key) return void await d.leads.fail(e.session, W3().reloadNoKey());
       return childSlot(e.session, null, e);
     })();
     coming.set(e.session, ready);
@@ -1828,8 +2303,7 @@ function createChildren(d) {
       }
       if (await own.resume === "elsewhere") break;
     }
-    if (!own.holding)
-      await d.leads.fail(e.session, "перезагрузка плагина, место-спутник по ключу не вернулось");
+    if (!own.holding) await d.leads.fail(e.session, W3().reloadNotBack());
   }
   async function pause() {
     const held = [...d.slots.values()].filter(
@@ -1841,7 +2315,7 @@ function createChildren(d) {
     }
     await Promise.all(
       held.map(
-        (s) => s.bridge.request("iskron/suspend", {}, { timeoutMs: PAUSE_MS2, service: true }).catch(() => {
+        (s) => s.bridge.request(method("suspend"), {}, { timeoutMs: PAUSE_MS2, service: true }).catch(() => {
         })
       )
     );
@@ -1883,7 +2357,7 @@ var createHandoff = (d) => (session, to, home) => {
   [s.room, s.noted, s.last] = [was.room, was.noted, was.last];
   handOver(
     session,
-    s.bridge.request("iskron/suspend", {}, { timeoutMs: PAUSE_MS2, service: true }).catch(() => {
+    s.bridge.request(method("suspend"), {}, { timeoutMs: PAUSE_MS2, service: true }).catch(() => {
     }).then(() => {
       writeLostMarker(authDir(), [s], to);
       d.forget(session);
@@ -1918,6 +2392,7 @@ function lockPlaces(root, stateHome = process.env.XDG_STATE_HOME) {
     places.push(join7(dirname(dirname(root)), "skills-lock.json"));
   return places;
 }
+var hasSkillLock = (root, stateHome = process.env.XDG_STATE_HOME) => lockPlaces(root, stateHome).some((p) => existsSync(p));
 function skillLock(root, stateHome = process.env.XDG_STATE_HOME) {
   const place = lockPlaces(root, stateHome).find((p) => existsSync(p));
   if (!place) return null;
@@ -1988,14 +2463,17 @@ async function skillDirs(ctx) {
     if (dir && basename3(dir) === id) listed.push({ id, dir });
   }
   const sets = /* @__PURE__ */ new Map();
+  const lockless = /* @__PURE__ */ new Set();
   for (const s of list) {
     const root = bridgeRoot(s);
     const c = root ? canon2(root) : null;
-    if (c) sets.set(c, skillLock(c));
+    if (!c) continue;
+    sets.set(c, skillLock(c));
+    if (!hasSkillLock(c)) lockless.add(c);
   }
   return listed.filter(({ id, dir }) => {
     const lock = sets.get(dirname2(dir));
-    if (!lock) return false;
+    if (!lock) return id === BRIDGE_SKILL && lockless.has(dirname2(dir));
     const source = lock[BRIDGE_SKILL]?.source;
     return typeof source === "string" && lock[id]?.source === source;
   }).map(({ dir }) => dir);
@@ -2053,10 +2531,10 @@ function reached(call, resources, base) {
   return out2.length ? out2 : null;
 }
 async function setupSkillReads(ctx) {
-  const { permission, tool } = ctx;
-  if (typeof permission?.hook !== "function" || typeof tool?.hook !== "function") return false;
+  const { permission, tool: tool2 } = ctx;
+  if (typeof permission?.hook !== "function" || typeof tool2?.hook !== "function") return false;
   const calls = /* @__PURE__ */ new Map();
-  await tool.hook("execute.before", (t) => {
+  await tool2.hook("execute.before", (t) => {
     if (typeof t?.id !== "string" || typeof t?.tool !== "string") return;
     const was = calls.get(t.id);
     const clash = was && (was.tool !== t.tool || was.session !== t.sessionID);
@@ -2124,16 +2602,15 @@ async function sessionDirectory(ctx, sessionID) {
 }
 
 // js/opencode/keep.ts
-var WATCH_MS = Number(process.env.ISKRON_BRIDGE_WATCH_MS || 5 * 6e4);
-var PATIENCE_MS = Number(process.env.ISKRON_RESUME_PATIENCE_MS || 1e4);
+var WATCH_MS = Number(process.env[envName("BRIDGE_WATCH_MS")] || 5 * 6e4);
+var PATIENCE_MS = Number(process.env[envName("RESUME_PATIENCE_MS")] || 1e4);
 var STEP_MS = 500;
 function resumedWord(key, own = false) {
-  if (own)
-    return `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`;
-  return `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`;
+  return own ? words(OPENCODE_KEEP).resumedOwn(key) : words(OPENCODE_KEEP).resumed(key);
 }
-var elsewhereWord = (keys) => `Искрон: возврат места ${keys.join(", ")} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`;
+var elsewhereWord = (keys) => words(OPENCODE_KEEP).elsewhere(keys.join(", "));
 function createKeeper(doors) {
+  const W4 = words(OPENCODE_KEEP);
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
   const marked = /* @__PURE__ */ new Map();
@@ -2143,10 +2620,7 @@ function createKeeper(doors) {
     const place = mark.key ?? mark.dir ?? root;
     roots.add(root);
     retrying.set(root, place);
-    doors.tell(
-      root,
-      `Искрон: место ${place} с диска не вернулось: ${why}. Сторож слуха повторит возврат один раз; не ждёшь — iskron_stand.`
-    );
+    doors.tell(root, W4.notBack(place, why));
   }
   function selector(slot) {
     const session = slot.session ? { session: slot.session } : {};
@@ -2171,37 +2645,34 @@ function createKeeper(doors) {
       if (stopped) return "none";
       if (!slot.dir && !slot.key || slot.child && !slot.key) {
         marked.delete(root);
-        if (mark) notBack(root, mark, "ни ключа места, ни каталога сессии");
+        if (mark) notBack(root, mark, W4.noKeyNoDir());
         return "none";
       }
-      const r = await slot.bridge.request("iskron/resume", selector(slot), {
+      const r = await slot.bridge.request(method("resume"), selector(slot), {
         timeoutMs: 3e4
       });
       const elsewhere2 = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
       if (!r?.resumed && elsewhere2 && !final) return "elsewhere";
       marked.delete(root);
       if (!r?.resumed) {
-        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : "мост не ответил");
+        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : W4.noAnswer());
         else if (elsewhere2) {
           if (!quiet) doors.tell(root, elsewhereWord(elsewhere2), slot.child);
         } else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
-          doors.tell(root, `Искрон: ${r.word}.`, slot.child);
+          doors.tell(root, W4.legacy(r.word), slot.child);
         return elsewhere2 ? "elsewhere" : "none";
       }
       slot.holding = true;
       slot.stood = true;
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
-      doors.say(`Искрон: сессия ${root} — ${r.word}`, "info");
+      doors.say(W4.sessionResumed(root, r.word), "info");
       if (typeof r.key === "string" && !quiet)
         doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
-      doors.say(
-        `Искрон: возврат места сессии ${root} не удался — ${e.message}`,
-        "warning"
-      );
+      doors.say(W4.resumeFailed(root, e.message), "warning");
       if (mark && !stopped) notBack(root, mark, e.message);
       return "none";
     }
@@ -2211,7 +2682,7 @@ function createKeeper(doors) {
     if (slot.resume) await slot.resume;
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
     await doors.ready(slot);
-    const r = await slot.bridge.request("iskron/check", selector(slot), {
+    const r = await slot.bridge.request(method("check"), selector(slot), {
       timeoutMs: 3e4
     });
     if (typeof r?.key === "string") slot.key = r.key;
@@ -2221,27 +2692,20 @@ function createKeeper(doors) {
       roots.delete(root);
       const place = retrying.get(root);
       if (place && !r?.resumed)
-        doors.tell(
-          root,
-          `Искрон: место ${place} не вернулось и на повторе сторожа: ${r?.word ?? "мост не сказал почему"}. Сам сторож его больше не поднимает — займи место iskron_stand.`,
-          slot.child
-        );
+        doors.tell(root, W4.retryFailed(place, r?.word ?? W4.noWhy()), slot.child);
     }
     retrying.delete(root);
     if (r?.resumed) {
-      doors.say(`Искрон: сторож слуха вернул место сессии ${root} — ${r.word}`, "info");
+      doors.say(W4.watchResumed(root, r.word), "info");
       if (typeof r.key === "string")
         doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
-    } else if (r?.reopened)
-      doors.say(`Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${r.word}`, "warning");
+    } else if (r?.reopened) doors.say(W4.watchReopened(root, r.word), "warning");
     else if (r?.stuck) doors.say(r.word, "error");
   }
   const timer = setInterval(() => {
     if (stopped) return;
     for (const root of roots)
-      void check(root).catch(
-        (e) => doors.say(`Искрон: сторож слуха сессии ${root} — ${e.message}`, "warning")
-      );
+      void check(root).catch((e) => doors.say(W4.watchFailed(root, e.message), "warning"));
   }, WATCH_MS);
   timer.unref?.();
   return {
@@ -2259,8 +2723,8 @@ function createKeeper(doors) {
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
         if (!await doors.exists(e.session)) continue;
-        const word = wordFor(e.session);
-        if (word) doors.lost(e.session, word);
+        const word2 = wordFor(e.session);
+        if (word2) doors.lost(e.session, word2);
         await doors.slotFor(e.session, false);
       }
     },
@@ -2283,17 +2747,19 @@ function createKeeper(doors) {
 
 // js/opencode/keepalive.ts
 var EVERY_MS = (() => {
-  const v = process.env.ISKRON_KEEPALIVE_MS;
+  const v = process.env[envName("KEEPALIVE_MS")];
   return v === void 0 || v === "" ? 50 * 6e4 : Number(v) || 0;
 })();
 var DURABLE = /^session\.(execution\.(started|succeeded|failed|interrupted)|(step|text|reasoning|compaction)\.(started|ended|failed)|tool\.(called|success|failed|input\.(started|ended))|shell\.(started|ended)|skill\.activated|instructions\.updated|message\.content\.updated|usage\.recorded|retry\.scheduled)$/;
 var LEFTOVER_MAX = 20;
-var KEEPALIVE_TITLE = "iskron: каталог держит место";
+var keepaliveTitle = () => words(OPENCODE_KEEP).keepaliveTitle();
 var holdersOf = (slots) => [...slots].filter((x) => x.holding && x.session).sort((a, b) => Number(!!a.child) - Number(!!b.child)).map((x) => x.session);
 function createKeepAlive(ctx, d) {
   if (EVERY_MS <= 0) return { onEvent() {
   }, stop() {
   } };
+  const W4 = words(OPENCODE_KEEP);
+  const title = keepaliveTitle();
   let last = Date.now();
   let busy = false;
   const leftover = /* @__PURE__ */ new Set();
@@ -2302,11 +2768,7 @@ function createKeepAlive(ctx, d) {
   async function removeOnce(id) {
     const fn = ctx.session.remove;
     if (typeof fn !== "function") {
-      if (!noRemoveSaid)
-        d.say(
-          `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${KEEPALIVE_TITLE}» не удаляются и копятся дочерними у места; продление идёт`,
-          "error"
-        );
+      if (!noRemoveSaid) d.say(W4.noRemove(title), "error");
       noRemoveSaid = true;
       return false;
     }
@@ -2322,27 +2784,20 @@ function createKeepAlive(ctx, d) {
     if (leftover.size <= LEFTOVER_MAX) return;
     const oldest = leftover.values().next().value;
     leftover.delete(oldest);
-    if (!capSaid)
-      d.say(
-        `Искрон: неудалённых служебных сессий продления больше ${LEFTOVER_MAX} — старшие больше не повторяю, удали дочерние «${KEEPALIVE_TITLE}» руками`,
-        "error"
-      );
+    if (!capSaid) d.say(W4.cap(LEFTOVER_MAX, title), "error");
     capSaid = true;
   }
   async function touch(session) {
     let s;
     try {
-      s = await ctx.session.create({ parentID: session, title: KEEPALIVE_TITLE });
+      s = await ctx.session.create({ parentID: session, title });
     } catch (e) {
-      d.say(`Искрон: каталог не продлён — служебная сессия не создана: ${e.message}`);
+      d.say(W4.notCreated(e.message));
       return null;
     }
     const id = s?.id ?? s?.data?.id;
     if (typeof id === "string") return id;
-    d.say(
-      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${JSON.stringify(s ?? null).slice(0, 160)}) — она останется дочерней сессией места «${KEEPALIVE_TITLE}», удали её руками`,
-      "error"
-    );
+    d.say(W4.noId(JSON.stringify(s ?? null).slice(0, 160), title), "error");
     return null;
   }
   async function tidy(fresh) {
@@ -2350,10 +2805,7 @@ function createKeepAlive(ctx, d) {
     if (!fresh) return;
     if (await removeOnce(fresh) || await removeOnce(fresh)) return;
     remember(fresh);
-    if (!noRemoveSaid)
-      d.say(
-        `Искрон: каталог продлён, служебная сессия ${fresh} не удалена — повторю на следующем такте`
-      );
+    if (!noRemoveSaid) d.say(W4.notRemoved(fresh));
   }
   async function tick() {
     let fresh = null;
@@ -2368,7 +2820,7 @@ function createKeepAlive(ctx, d) {
     () => {
       if (busy) return;
       busy = true;
-      void tick().catch((e) => d.say(`Искрон: такт продления каталога сорвался — ${e.message}`)).finally(() => busy = false);
+      void tick().catch((e) => d.say(W4.tickFailed(e.message))).finally(() => busy = false);
     },
     Math.max(50, Math.min(6e4, EVERY_MS / 5))
   );
@@ -2396,10 +2848,10 @@ var unset = (v) => v == null || v === false || v === "";
 var takingArgs = (args) => Object.keys(args).filter((k) => !STATUS_ONLY_ARGS.has(k) && !unset(args[k]));
 
 // js/opencode/satellite.ts
-var STAND_TOOL = "iskron_stand";
+var STAND_TOOL2 = tool("stand");
 function standsBy(name, args) {
-  if (name === STAND_TOOL) return true;
-  return name === "iskron_channel" && ["connect", "mint", "register"].includes(String(args.action));
+  if (name === STAND_TOOL2) return true;
+  return name === tool("channel") && ["connect", "mint", "register"].includes(String(args.action));
 }
 var busyOnly = (args) => typeof args.status === "string" && takingArgs(args).length === 0;
 function ownPlace(slot) {
@@ -2444,8 +2896,47 @@ function createLauncher(d) {
   };
 }
 
+// js/opencode/leaddoors.ts
+var END_MS = 5e3;
+function leadDoors(ctx, say, flush, end, slots) {
+  return {
+    say,
+    ownPlace: (child) => ownPlace(slots.get(child)),
+    async close(child) {
+      await flush(child).catch(() => {
+      });
+      const got = await slots.get(child)?.bridge.request(method("end"), {}, { timeoutMs: END_MS, service: true }).catch(() => null);
+      return got?.ended ? got.failed ?? [] : null;
+    },
+    seal: (child) => end(child, null),
+    async end(child) {
+      end(child);
+    },
+    async parentOf(child) {
+      const s = await ctx.session.get({ sessionID: child });
+      return s?.parentID ?? s?.data?.parentID ?? null;
+    },
+    tell: teller(ctx, say)
+  };
+}
+function teller(ctx, say) {
+  return async (sessionID, text, wake) => {
+    const s = ctx.session;
+    const delivery = "steer";
+    text = markFrame(text);
+    try {
+      if (typeof s.synthetic === "function")
+        await s.synthetic({ sessionID, text, delivery, resume: wake });
+      else await s.prompt({ sessionID, text, delivery, resume: wake });
+      say(W3().tellDone(sessionID), "info");
+    } catch (e) {
+      say(W3().tellFailed(sessionID, e.message), "error");
+    }
+  };
+}
+
 // js/opencode/cascade.ts
-var WINDOW_MS = Number(process.env.ISKRON_CASCADE_MS) || 3e3;
+var WINDOW_MS = Number(process.env[envName("CASCADE_MS")]) || 3e3;
 function createCascade() {
   const cut = /* @__PURE__ */ new Map();
   return {
@@ -2470,69 +2961,6 @@ function createCascade() {
   };
 }
 
-// js/opencode/leadwords.ts
-var CANCELLED = "его ход отменён в OpenCode (человеком или запустившим)";
-var CANCELLED_REFUSAL = "её ход отменён в OpenCode";
-var cascadeWord = (who) => `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`;
-var placeGone = (kind) => kind === "evicted" ? "его место-спутник вытеснено другим держателем" : "его место-спутник отозвано не через запустившего или закрыто платформой (4001)";
-var placeGoneRefusal = (kind) => kind === "evicted" ? "её место-спутник вытеснено другим держателем" : "её место-спутник отозвано или закрыто платформой (4001)";
-var END_MS = 5e3;
-var SUMMARY_MAX = 4e3;
-var endWord = (who, why, last, kept2) => {
-  const said = last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}…` : last;
-  const done = kept2 ? `${keptLine(who, kept2)}; снять его — iskron_channel(action="revoke", standing="${kept2}"), только словом человека. ` : "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ";
-  return `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово:
-${said || "(текста он не оставил — смотри его дело)"}`;
-};
-var unrevokedWord = (who, failed) => failed === null ? `Искрон: мост субагента ${who} погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke").` : `Искрон: у субагента ${who} место не снято (сеть): ${failed.join(", ")} — сними iskron_channel(action="revoke", standing="${failed[0]}").`;
-var keptLine = (who, place) => `ребёнок ${who} стоял не спутником (${place}) — место не снято, мост не погашен`;
-var turnWord = (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
-var noticeWord = (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`;
-var releaseWord = (who) => `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`;
-var releasedWord = () => "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.";
-var awayWord = (who, last) => `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:
-${last.slice(0, SUMMARY_MAX) || "(текста он не оставил — смотри его дело)"}`;
-var lostWord = (who, why) => `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`;
-function leadDoors(ctx, say, flush, end, slots) {
-  return {
-    say,
-    ownPlace: (child) => ownPlace(slots.get(child)),
-    async close(child) {
-      await flush(child).catch(() => {
-      });
-      const got = await slots.get(child)?.bridge.request("iskron/end", {}, { timeoutMs: END_MS, service: true }).catch(() => null);
-      return got?.ended ? got.failed ?? [] : null;
-    },
-    seal: (child) => end(child, null),
-    // мост не гасится
-    async end(child) {
-      end(child);
-    },
-    async parentOf(child) {
-      const s = await ctx.session.get({ sessionID: child });
-      return s?.parentID ?? s?.data?.parentID ?? null;
-    },
-    tell: teller(ctx, say)
-  };
-}
-function teller(ctx, say) {
-  return async (sessionID, text, wake) => {
-    const s = ctx.session;
-    const delivery = "steer";
-    try {
-      if (typeof s.synthetic === "function")
-        await s.synthetic({ sessionID, text, delivery, resume: wake });
-      else await s.prompt({ sessionID, text, delivery, resume: wake });
-      say(`Искрон: слово о субагенте вложено в сессию ${sessionID}`, "info");
-    } catch (e) {
-      say(
-        `Искрон: слово о субагенте не вложилось в ${sessionID}: ${e.message}`,
-        "error"
-      );
-    }
-  };
-}
-
 // js/opencode/leads.ts
 var roomNo = (room) => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 var names = (place, child, s) => s === child || !!place?.name && (s === place.name || s.endsWith(`:${place.name}`));
@@ -2541,7 +2969,7 @@ function createLeads(d) {
   const gone = /* @__PURE__ */ new Map();
   const over = /* @__PURE__ */ new Set();
   const cascade = createCascade();
-  const who = (l, child) => l.place?.name ?? `сессии ${child}`;
+  const who = (l, child) => l.place?.name ?? W3().sessionOf(child);
   const parentOf = (child) => d.parentOf(child).catch(() => null);
   async function finish(child, why, ended = true, wake = true, kind = "end") {
     const l = leads.get(child);
@@ -2549,27 +2977,21 @@ function createLeads(d) {
     leads.delete(child);
     over.add(child);
     const kept2 = ended && kind === "end" ? d.ownPlace(child) : null;
-    if (kept2) d.say(`Искрон: ${keptLine(who(l, child), kept2)}`, "warning");
+    if (kept2) d.say(W3().keptSaid(who(l, child), kept2), "warning");
     if (ended && !kept2) d.seal(child);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const tell = async (text, wakes) => {
       if (parent) await d.tell(parent, text, wakes);
-      else d.say(`${text}
-(родителя плагин не знает — итог некому)`, "warning");
+      else d.say(W3().noParent(text), "warning");
     };
     await tell(
-      kind === "lost" ? lostWord(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept2),
+      kind === "lost" ? W3().lost(who(l, child), why) : kind === "away" ? awayWord(who(l, child), last) : endWord(who(l, child), why, last, kept2),
       wake
     );
     if (!ended || kept2) return;
     const failed = await d.close(child).catch(() => null);
-    await d.end(child).catch(
-      (e) => d.say(
-        `Искрон: мост субагента ${who(l, child)} не погашен после итога — ${e.message}`,
-        "warning"
-      )
-    );
+    await d.end(child).catch((e) => d.say(W3().notDown(who(l, child), e.message), "warning"));
     if (kind !== "lost" && (failed === null || failed.length))
       await tell(unrevokedWord(who(l, child), failed), false);
   }
@@ -2593,23 +3015,23 @@ function createLeads(d) {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === "iskron_case" || name === "iskron_room" ? roomNo(args.room) : null;
+      const room = name === tool("case") || name === tool("room") ? roomNo(args.room) : null;
       if (args.action === "join" && room) l.room ??= room;
       if (args.action !== "leave") return;
-      if (name === "iskron_channel") leave(child, l, "ушёл с места по исходу");
-      else if (room === "") leave(child, l, "ушёл из дел по исходу");
-      else if (room && room === l.room) leave(child, l, `вышел из дела №${l.room} по исходу`);
+      if (name === tool("channel")) leave(child, l, W3().leftSeat());
+      else if (room === "") leave(child, l, W3().leftCases());
+      else if (room && room === l.room) leave(child, l, W3().leftCase(l.room));
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
-      if (name !== "iskron_channel" || args.action !== "revoke" || !s) return null;
+      if (name !== tool("channel") || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
         if (!names(l.place, child, s) || await l.parent !== caller) continue;
         if (d.ownPlace(child)) return null;
         gone.set(child, void 0);
-        await finish(child, "отпущен словом запустившего");
-        await d.tell(child, releasedWord(), false);
-        return releaseWord(who(l, child));
+        await finish(child, W3().releasedByLauncher());
+        await d.tell(child, W3().released(), false);
+        return W3().release(who(l, child));
       }
       return null;
     },
@@ -2617,8 +3039,9 @@ function createLeads(d) {
     goneWhy: (child) => gone.get(child),
     heard(child, kind, place) {
       if ((kind === "evicted" || kind === "dead") && leads.has(child) && !d.ownPlace(child)) {
-        gone.set(child, placeGoneRefusal(kind));
-        void finish(child, placeGone(kind), true, false);
+        const evicted = kind === "evicted";
+        gone.set(child, evicted ? W3().placeEvictedRefusal() : W3().placeClosedRefusal());
+        void finish(child, evicted ? W3().placeEvicted() : W3().placeClosed(), true, false);
         return true;
       }
       if (gone.has(child)) return true;
@@ -2669,11 +3092,11 @@ function createLeads(d) {
             if (!leads.has(child)) return;
             if (byParent) {
               const p = await l.parent;
-              if (p) await d.tell(p, cascadeWord(who(l, child)), false);
+              if (p) await d.tell(p, W3().cascade(who(l, child)), false);
               return;
             }
-            gone.set(child, CANCELLED_REFUSAL);
-            await finish(child, CANCELLED, true, false);
+            gone.set(child, W3().cancelledRefusal());
+            await finish(child, W3().cancelled(), true, false);
           });
           return;
         case "session.execution.succeeded":
@@ -2683,11 +3106,11 @@ function createLeads(d) {
           if (l.noted) return;
           l.noted = true;
           void l.parent.then(async (p) => {
-            if (p && leads.has(child)) await d.tell(p, turnWord(l.place?.name ?? child), false);
+            if (p && leads.has(child)) await d.tell(p, W3().turn(l.place?.name ?? child), false);
           });
           return;
         case "session.deleted":
-          return void finish(child, "сессия субагента удалена", false);
+          return void finish(child, W3().deleted(), false);
       }
     }
   };
@@ -2695,9 +3118,11 @@ function createLeads(d) {
 
 // js/opencode/login.ts
 function elsewhere(device) {
-  return device && /^https?:/.test(device) ? `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token` : (device ? `${device}; ` : "") + "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token";
+  const W4 = words(OPENCODE_KEEP);
+  return device && /^https?:/.test(device) ? W4.elsewhereDevice(device) : W4.elsewhereTunnel(device ?? "");
 }
 function createLogin(say) {
+  const W4 = words(OPENCODE_KEEP);
   let pending = false;
   let url = null;
   let device = null;
@@ -2712,8 +3137,9 @@ function createLogin(say) {
     return { promise, cancel: () => waiters.delete(waiter) };
   }
   function error() {
+    const O = words(OPENCODE);
     return new Error(
-      `Искрон: нужен вход в граф — ${url ? `открой в браузере ${url}` : "заверши вход в браузере"} и повтори вызов. Адрес локальный для машины OpenCode: ${elsewhere(device)} (скилл establish-mcp).`
+      W4.needLoginError(url ? O.openInBrowser(url) : O.finishInBrowser(), elsewhere(device))
     );
   }
   return {
@@ -2734,7 +3160,7 @@ function createLogin(say) {
       url = next;
       device = nextDevice;
       say(
-        `Искрон: нужен вход — ${next ? `открой ${next} и заверши его` : "заверши его в браузере"}; адрес локальный: ${elsewhere(device)}. Тулы iskron_* поднимутся после входа сами.`,
+        W4.needLogin(next ? W4.openAndFinish(next) : W4.finishItInBrowser(), elsewhere(device)),
         "warning"
       );
     },
@@ -2761,8 +3187,9 @@ function createLogin(say) {
 }
 
 // js/opencode/moves.ts
-var ADOPT_MS = Number(process.env.ISKRON_MOVE_ADOPT_MS) || 1e3;
+var ADOPT_MS = Number(process.env[envName("MOVE_ADOPT_MS")]) || 1e3;
 function createMoves(ctx) {
+  const W4 = words(OPENCODE_KEEP);
   const home = homeOf(ctx);
   const directoryOf = (sessionID) => sessionDirectory(ctx, sessionID);
   const exists = (sessionID) => Promise.resolve().then(() => ctx.session.get({ sessionID })).then(
@@ -2784,10 +3211,7 @@ function createMoves(ctx) {
       const kids = [...d.slots.values()].filter((k) => k.child && of && k.satelliteOf?.name === of);
       const away = [{ ...root, dir: to.directory }, ...kids].map((x) => ({ ...x, moved: true }));
       writeLostMarker(authDir(), away, to);
-      d.say(
-        `Искрон: сессия ${s} перенесена в ${to.directory} — её место отпускаю экземпляру той папки`,
-        "info"
-      );
+      d.say(W4.movedAway(s, to.directory), "info");
       left.add(s);
       for (const k of kids) if (k.session) void d.away(k.session);
       return d.forget(s);
@@ -2799,16 +3223,12 @@ function createMoves(ctx) {
   function relay(on, say) {
     return (s, params, child) => {
       if (params?.data?.kind !== "evicted" || !home || !s || child) return on(s, params, child);
-      void ours(s).then(
-        (mine) => mine ? on(s, params, child) : say(`Искрон: место сессии ${s} занято из её новой папки — она перенесена`, "info")
-      );
+      void ours(s).then((mine) => mine ? on(s, params, child) : say(W4.takenFromNew(s), "info"));
     };
   }
   function guard(root, session) {
     if (root === session || !left.has(root)) return;
-    throw new Error(
-      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.`
-    );
+    throw new Error(W4.parentMoved());
   }
   async function farRoot(root) {
     const held = heldInProcess(root);
@@ -2816,28 +3236,23 @@ function createMoves(ctx) {
     const dir = home ? await directoryOf(root) : null;
     return home && dir && dir !== home.directory ? "foreign" : null;
   }
-  const farRefusal = async (root) => root && await farRoot(root) === "foreign" ? "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя не держит ни один экземпляр плагина этого процесса OpenCode — родитель в другом процессе либо места не держит. Спутником отсюда не встать; читать можно и так, писать — словом запустившему." : null;
+  const farRefusal = async (root) => root && await farRoot(root) === "foreign" ? W4.farRefusal() : null;
   return { home, directoryOf, exists, ours, moved, relay, guard, farRoot, farRefusal };
 }
 
 // js/opencode/runends.ts
-var READ_TOOLS = /* @__PURE__ */ new Set([
-  "iskron_look",
-  "iskron_orient",
-  "iskron_search",
-  "iskron_semantic_search"
-]);
+var READ_TOOLS2 = new Set(["look", "orient", "search", "semantic_search"].map(tool));
 var CASE_READS = /* @__PURE__ */ new Set(["read", "history", "mine", "at"]);
 var READ_ACTIONS = {
-  iskron_case: CASE_READS,
-  iskron_room: CASE_READS,
-  // прежнее имя тула дел
-  iskron_channel: /* @__PURE__ */ new Set(["list", "sessions", "history"]),
-  iskron_realm: /* @__PURE__ */ new Set(["list"]),
-  iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"]),
-  iskron_me: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
-  iskron_history: /* @__PURE__ */ new Set(["realm", "node", "delta"]),
-  iskron_admin: /* @__PURE__ */ new Set([
+  [tool("case")]: CASE_READS,
+  [tool("room")]: CASE_READS,
+  // the case tool's former name
+  [tool("channel")]: /* @__PURE__ */ new Set(["list", "sessions", "history"]),
+  [tool("realm")]: /* @__PURE__ */ new Set(["list"]),
+  [tool("org")]: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"]),
+  [tool("me")]: /* @__PURE__ */ new Set(["whoami", "orgs", "kartas", "usage"]),
+  [tool("history")]: /* @__PURE__ */ new Set(["realm", "node", "delta"]),
+  [tool("admin")]: /* @__PURE__ */ new Set([
     "list_members",
     "access",
     "search_users",
@@ -2852,24 +3267,24 @@ var declaresAction = (inputSchema) => {
 };
 var readsOnly = (name, args, asks) => {
   const action = String(args.action ?? "");
-  return READ_TOOLS.has(name) || asks && action === "?" || !!READ_ACTIONS[name]?.has(action);
+  return READ_TOOLS2.has(name) || asks && action === "?" || !!READ_ACTIONS[name]?.has(action);
 };
 var asChildRead = (name, args) => {
-  if ((name === "iskron_case" || name === "iskron_room") && args.action === "history")
+  if ((name === tool("case") || name === tool("room")) && args.action === "history")
     args.keep_cursor = true;
 };
 var IDENTITY = {
-  iskron_me: "all",
-  iskron_admin: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"]),
-  // Организации человека и членство в них — по описанию тула, все его чтения.
-  iskron_org: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"])
+  [tool("me")]: "all",
+  [tool("admin")]: /* @__PURE__ */ new Set(["search_users", "access", "list_members", "user_webhooks"]),
+  // The human's organizations and membership — by the tool's description, all its reads.
+  [tool("org")]: /* @__PURE__ */ new Set(["list", "get", "realms", "list_members", "list_grants"])
 };
 function identityRefusal(name, args, asks) {
   const action = String(args.action ?? "");
   const of = IDENTITY[name];
   if (!of || asks && action === "?") return null;
   if (of !== "all" && !of.has(action)) return null;
-  return `Отказано (плагин): ${name}${action ? ` (${action})` : ""} — личность человека, а у дочерней сессии нет своего места: мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.`;
+  return W3().identity(name, action);
 }
 function childWriteRefusal(of, name, args, asks) {
   const notYours = identityRefusal(name, args, asks);
@@ -2878,7 +3293,7 @@ function childWriteRefusal(of, name, args, asks) {
     asChildRead(name, args);
     return null;
   }
-  return of ? `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником — ${name} ушёл бы местом родителя ${of}. Встань: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори; читать можно и так.` : `Отказано (плагин): дочерняя сессия пишет только своим местом-спутником, а место родителя неизвестно — корень места не держит. Своего места ей не завести; читать можно и так, писать — словом запустившему.`;
+  return of ? W3().writeUnderParent(name, of) : W3().writeNoParent();
 }
 function createRunEnds() {
   const ended = /* @__PURE__ */ new Map();
@@ -2901,48 +3316,53 @@ function createRunEnds() {
     },
     guard(session, name, args, asks) {
       const final = released.has(session);
-      if ((final || sealed.has(session)) && !READ_TOOLS.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
+      if ((final || sealed.has(session)) && !READ_TOOLS2.has(name) && !READ_ACTIONS[name]?.has(String(args.action ?? "")))
         throw new Error(
-          `Отказано (плагин): ${whys.get(session) ?? (final ? "запустивший отпустил эту дочернюю сессию" : "эта дочерняя сессия кончена")} — поручение кончено, место снято; ${name} не пойдёт ни её местом, ни местом запустившего, и встать снова нельзя.`
+          W3().finalRefusal(
+            whys.get(session) ?? (final ? W3().releasedChild() : W3().endedChild()),
+            name
+          )
         );
-      if (!ended.has(session) || name === STAND_TOOL || READ_TOOLS.has(name)) return;
+      if (!ended.has(session) || name === STAND_TOOL2 || READ_TOOLS2.has(name)) return;
       const action = String(args.action ?? "");
       if (asks && action === "?" || READ_ACTIONS[name]?.has(action)) return;
-      const of = ended.get(session)?.name ?? "<место запустившего>";
+      const of = ended.get(session)?.name ?? W3().launcherSeat();
       throw new Error(
-        `Отказано (плагин): ${whys.get(session) ?? "эта дочерняя сессия кончена, её место-спутник отпущено"} — ${name}${action ? ` (${action})` : ""} пошёл бы мостом и местом запустившего. Встань заново: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори вызов.`
+        W3().endedRefusal(whys.get(session) ?? W3().endedSatellite(), name, action, of)
       );
     }
   };
 }
 
 // js/opencode/slot.ts
-var IDLE_MS = Number(process.env.ISKRON_BRIDGE_IDLE_MS || 30 * 6e4);
+var IDLE_MS = Number(process.env[envName("BRIDGE_IDLE_MS")] || 30 * 6e4);
 if (IDLE_MS <= WATCH_MS)
-  process.stderr.write(
-    `[iskron/warning] ISKRON_BRIDGE_IDLE_MS (${IDLE_MS}) не длиннее такта сторожа слуха (${WATCH_MS}): слот может быть сжат прежде возврата места
-`
-  );
-var REAP_MS = Number(process.env.ISKRON_BRIDGE_REAP_MS || 6e4);
+  process.stderr.write(`[${PRODUCT}/warning] ${words(OPENCODE).idleShort(IDLE_MS, WATCH_MS)}
+`);
+var REAP_MS = Number(process.env[envName("BRIDGE_REAP_MS")] || 6e4);
 
 // js/opencode/status.ts
-var STATUS_TOOL = "iskron_bridge";
+var STATUS_TOOL = tool("bridge");
 var statusTool = (text) => ({
   name: STATUS_TOOL,
-  description: "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- схема входа SDK без типа
+  description: words(OPENCODE).statusDescription(),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's input schema has no type
   input: { type: "object", properties: {}, additionalProperties: false },
   async execute() {
     return { content: text() };
   }
 });
 function statusLines(path, builds, login, state2, sessions, spare) {
+  const W4 = words(OPENCODE);
   return [
-    `мост: ${path}`,
+    W4.statusBridge(path),
     builds,
-    login.loginPending ? `вход: НЕ ВЫПОЛНЕН — ${login.loginUrl ? `открой в браузере ${login.loginUrl}` : "заверши вход в браузере"}. Адрес локальный: ${elsewhere(login.loginDevice)} (скилл establish-mcp).` : state2.serverSeen ? "вход: есть, сервер отвечает" : "вход: мост ещё не ответил (рукопожатие идёт)",
-    `тулов iskron_*: ${state2.listed.length} (${state2.source})`,
-    `мостов живых: ${sessions + spare}, сессий с мостом: ${sessions}`
+    login.loginPending ? W4.statusLoginPending(
+      login.loginUrl ? W4.openInBrowser(login.loginUrl) : W4.finishInBrowser(),
+      elsewhere(login.loginDevice)
+    ) : state2.serverSeen ? W4.statusLoginDone() : W4.statusLoginWaiting(),
+    W4.statusTools(state2.listed.length, state2.source),
+    W4.statusBridges(sessions + spare, sessions)
   ].join("\n");
 }
 
@@ -2950,12 +3370,11 @@ function statusLines(path, builds, login, state2, sessions, spare) {
 var hhmm = () => (/* @__PURE__ */ new Date()).toTimeString().slice(0, 5);
 async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => {
 }) {
+  const W4 = words(OPENCODE);
+  const P = words(PLUGIN);
   const found = findBridge();
   if (!found.path) {
-    say(
-      "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + found.tried.join(", ") + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
-      "error"
-    );
+    say(P.noBridge(found.tried.join(", ")), "error");
     return idleHalf();
   }
   const path = found.path;
@@ -2982,10 +3401,10 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     };
     slot.bridge = new Bridge(
       path,
-      (line) => say(`Искрон/мост: ${line}`, "info"),
-      (method, params) => {
-        if (method === "notifications/tools/list_changed") return void relist(slot.bridge);
-        if (method !== "notifications/message" || params?.logger !== "iskron-channel") return;
+      (line) => say(P.bridgeLine(line), "info"),
+      (method2, params) => {
+        if (method2 === "notifications/tools/list_changed") return void relist(slot.bridge);
+        if (method2 !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
         const kind = params?.data?.kind;
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
@@ -2999,8 +3418,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       (e) => {
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
-        const text = `Искрон: слух потерян в ${hhmm()} — мост стояния вышел (${e.message}). Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.`;
-        const lost2 = { logger: "iskron-channel", data: { kind: "lost", text } };
+        const text = W4.hearingLost(hhmm(), e.message);
+        const lost2 = { logger: LOGGERS.channel, data: { kind: "lost", text } };
         onChannel(slot.session, lost2, !!slot.child);
       },
       args
@@ -3017,8 +3436,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
   const keeper = createKeeper({
     say,
-    tell: (root, text, child) => onChannel(root, { logger: "iskron-channel", data: { kind: "resumed", text } }, !!child),
-    lost: (root, text) => onChannel(root, { logger: "iskron-channel", data: { kind: "lost", text } }),
+    tell: (root, text, child) => onChannel(root, { logger: LOGGERS.channel, data: { kind: "resumed", text } }, !!child),
+    lost: (root, text) => onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
@@ -3107,7 +3526,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
   reaper.unref?.();
   const state2 = {
     listed: readCache() ?? [],
-    source: "из прошлого списка",
+    source: W4.fromCache(),
     serverSeen: false
   };
   const relist = (b) => b && refreshToolList(
@@ -3133,19 +3552,18 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       editor.add({
         name,
         description: String(t.description ?? ""),
-        // JSON Schema сервера без паспорта диалекта — той же срезкой, что у pi.
         input: toParameters(t.inputSchema),
-        async execute(input, tool) {
-          const word = await leads.release(String(tool.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
-          if (word) return { content: word };
-          await children.settled(String(tool.sessionID));
-          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks);
-          const slot = await slotFor(String(tool.sessionID));
-          const no = slot.session !== tool.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks) : null;
+        async execute(input, tool2) {
+          const word2 = await leads.release(String(tool2.sessionID), name, input ?? {}) ?? adopt.revoked(name, input ?? {});
+          if (word2) return { content: word2 };
+          await children.settled(String(tool2.sessionID));
+          runEnds.guard(String(tool2.sessionID), name, input ?? {}, asks);
+          const slot = await slotFor(String(tool2.sessionID));
+          const no = slot.session !== tool2.sessionID && !standsBy(name, input ?? {}) ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks) : null;
           if (no) throw new Error(no);
           slot.busy++;
           try {
-            return await callThrough(slot, name, input, String(tool.sessionID));
+            return await callThrough(slot, name, input, String(tool2.sessionID));
           } finally {
             slot.busy--;
             slot.lastCall = Date.now();
@@ -3167,21 +3585,20 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot);
     }
-    const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
-    if (name === STAND_TOOL && !args.cwd) {
+    const busy = name === STAND_TOOL2 && asSatellite(args, slot.satelliteOf, !!slot.place);
+    if (name === STAND_TOOL2 && !args.cwd) {
       const dir = slot.dir ??= await directoryOf(slot.session ?? sessionID);
       if (dir) args.cwd = dir;
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
-    if (result?.isError) throw new Error(textOf2(result) || `${name}: отказ без текста`);
+    if (result?.isError) throw new Error(textOf2(result) || P.refusalNoText(name));
     if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID);
     if (slot.child && slot.satelliteOf && slot.session === sessionID)
       leads.called(sessionID, name, args, slot.place);
     return { content: textOf2(result) };
   }
-  if (state2.listed.length)
-    say(`Искрон: тулов из прошлого списка: ${state2.listed.length}; сверю с сервером.`, "info");
+  if (state2.listed.length) say(W4.cached(state2.listed.length), "info");
   spare = spawn2();
   let first = spare;
   let [misses, deaths] = [0, 0];
@@ -3194,16 +3611,15 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         state2.serverSeen = true;
         const same = JSON.stringify(list) === JSON.stringify(state2.listed);
         state2.listed = list;
-        state2.source = "с сервера";
+        state2.source = W4.fromServer();
         writeCache(list);
         if (!same) await ctx.tool.reload();
-        say(`Искрон: мост поднят, тулов в сессии: ${list.length} (с сервера).`, "info");
+        say(W4.raised(list.length), "info");
         return;
       } catch (e) {
         if (stopped) return;
         if (first.bridge.failure) {
-          if (first.session === null)
-            say(`Искрон: мост умер (${e.message}) — поднимаю новый.`, "warning");
+          if (first.session === null) say(W4.died(e.message), "warning");
           if (spare === first) spare = null;
           first = spare ?? spawn2();
           spare = first;
@@ -3220,7 +3636,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     rootOf,
     childSlot(sessionID, root) {
       if (!slots.get(root)?.place)
-        throw new Error(childWriteRefusal(null, STAND_TOOL, {}, false) ?? "");
+        throw new Error(childWriteRefusal(null, STAND_TOOL2, {}, false) ?? "");
       return children.childSlot(sessionID, slots.get(root));
     },
     async call(slot, name, args, sessionID) {
@@ -3256,7 +3672,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
     adopt: adoptNow,
-    // Ребёнок-спутник, перенесённый один, едет своим спутником в новую папку (handoff.ts, #6695).
+    // A satellite child moved alone goes as its own satellite to the new folder (handoff.ts, #6695).
     moved: (s, to) => handoff(s, to, home) || mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
     async stop() {
       stopped = true;
@@ -3278,8 +3694,9 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
 }
 
 // js/opencode/tacts.ts
-var WAKE_HOLD_MS = Number(process.env.ISKRON_OPENCODE_WAKE_HOLD_MS) || 6 * 36e5;
+var WAKE_HOLD_MS = Number(process.env[envName("OPENCODE_WAKE_HOLD_MS")]) || 6 * 36e5;
 function setupTacts(send, takenEarly, freshestRoot, say) {
+  const W4 = words(OPENCODE);
   const busy = /* @__PURE__ */ new Set();
   const queued = /* @__PURE__ */ new Map();
   const held = /* @__PURE__ */ new Map();
@@ -3299,7 +3716,7 @@ function setupTacts(send, takenEarly, freshestRoot, say) {
     if (!t) return;
     held.delete(id);
     clearTimeout(t.timer);
-    put(t.session, t.child, t.ev, "такт внимания");
+    put(t.session, t.child, t.ev, W4.tact());
   }
   return {
     offer(session, child, ev, what) {
@@ -3321,10 +3738,7 @@ function setupTacts(send, takenEarly, freshestRoot, say) {
       const timer = prev?.timer ?? setTimeout(() => release(id), WAKE_HOLD_MS);
       timer.unref?.();
       held.set(id, { session, child, ev, timer });
-      say(
-        `Искрон: такт внимания ждёт конца хода сессии${prev ? " — прежний ждущий свёрнут" : ""}`,
-        "info"
-      );
+      say(prev ? W4.tactWaitsFolded() : W4.tactWaits(), "info");
       return true;
     },
     busy(session) {
@@ -3349,9 +3763,9 @@ function setupTacts(send, takenEarly, freshestRoot, say) {
 }
 
 // js/opencode/channel.ts
-var CASE_BATCH_MS = Number(process.env.ISKRON_OPENCODE_BATCH_MS) || 5e3;
+var CASE_BATCH_MS = Number(process.env[envName("OPENCODE_BATCH_MS")]) || 5e3;
 var CASE_BATCH_CAP = 20;
-var PENDING_MAX_MS = Number(process.env.ISKRON_OPENCODE_PENDING_MS) || 12e4;
+var PENDING_MAX_MS = Number(process.env[envName("OPENCODE_PENDING_MS")]) || 12e4;
 function toPile(frame) {
   if (!frame || frame.type !== "message" || isDirectWord(frame)) return false;
   const rk = roomKind(frame);
@@ -3362,6 +3776,8 @@ function toPile(frame) {
 var RIDERS_MAX = 500;
 var MARKS_KEPT = 500;
 function setupChannel(ctx, say, freshestRoot) {
+  const W4 = words(OPENCODE);
+  const P = words(PLUGIN);
   async function accepting(id) {
     try {
       const info = await ctx.session.get({ sessionID: id });
@@ -3370,38 +3786,29 @@ function setupChannel(ctx, say, freshestRoot) {
       return false;
     }
   }
-  async function deliver(session, text, frame = "кадр", delivery = "steer", child = false) {
+  async function deliver(session, text, frame = W4.frame(), delivery = "steer", child = false) {
     let id = session;
     if (child && (!id || !await accepting(id))) {
-      say(
-        `Искрон: ${frame} на место дочерней сессии ${id ?? "?"}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text.slice(0, 120)}`,
-        "error"
-      );
+      say(W4.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
       return null;
     }
     if (id && !await accepting(id)) {
-      say(
-        `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
-        "warning"
-      );
+      say(W4.sessionClosed(id, frame), "warning");
       id = null;
     }
     id ??= freshestRoot();
     if (id && id !== session && !await accepting(id)) id = null;
     if (!id) {
-      say(
-        `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` + text.slice(0, 120),
-        "error"
-      );
+      say(W4.nowhere(frame, text.slice(0, 120)), "error");
       return null;
     }
     try {
-      const r = await ctx.session.prompt({ sessionID: id, text, delivery });
-      say(`Искрон: ${frame} вложен в сессию ${id}`, "info");
+      const r = await ctx.session.prompt({ sessionID: id, text: markFrame(text), delivery });
+      say(W4.delivered(frame, id), "info");
       const inbox = r?.id ?? r?.data?.id;
       return { session: id, inbox: typeof inbox === "string" ? inbox : null };
     } catch (e) {
-      say(`Искрон: ${frame} не вложился в сессию ${id}: ${e.message}`, "error");
+      say(W4.notDelivered(frame, id, e.message), "error");
       return null;
     }
   }
@@ -3440,7 +3847,7 @@ function setupChannel(ctx, say, freshestRoot) {
       batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
       ...batchLines(frames)
     ].join("\n");
-    void deliver(p.session, text, `пачка дела (${frames.length})`, "queue", p.child).then((got) => {
+    void deliver(p.session, text, W4.caseBatch(frames.length), "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
       if (p.held.length) schedule(p);
@@ -3479,7 +3886,7 @@ function setupChannel(ctx, say, freshestRoot) {
   }
   function loud(session, text, child = false) {
     say(text, "error");
-    void deliver(session, text, "кадр", "steer", child);
+    void deliver(session, text, W4.frame(), "steer", child);
   }
   return {
     status(session, on) {
@@ -3521,7 +3928,7 @@ function setupChannel(ctx, say, freshestRoot) {
       switch (ev.kind) {
         case "frame": {
           const frame = ev.frame ?? null;
-          if (frame?.type === "hello") return say("Искрон: канал слушает", "info");
+          if (frame?.type === "hello") return say(P.listening(), "info");
           if (frame?.type === "status") return;
           if (frame && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
@@ -3529,29 +3936,25 @@ function setupChannel(ctx, say, freshestRoot) {
           void deliver(
             session,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
-            `кадр ${frame?.id ?? "без id"}`,
+            frame?.id != null ? W4.frameId(String(frame.id)) : W4.frameNoId(),
             "steer",
             child
           );
           return;
         }
-        // Слово моста ребёнка — только ему (child): корню оно не адресовано (#6625).
+        // A child's bridge word goes only to it (child): it is not the root's (#6625).
         case "dead":
-          loud(
-            session,
-            `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
-            child
-          );
+          loud(session, P.dead(String(ev.code)), child);
           return;
         case "stale":
           noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
-          if (ev.text && !tact(session, child, ev, "пачка лежалых кадров"))
-            void deliver(session, ev.text, "пачка лежалых кадров", "queue", child);
+          if (ev.text && !tact(session, child, ev, W4.staleBatch()))
+            void deliver(session, ev.text, W4.staleBatch(), "queue", child);
           return;
         case "backlog":
           noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
           if (ev.text) {
-            const what = `пачка побудки (${ev.frames?.length ?? 0})`;
+            const what = W4.wakeBatch(ev.frames?.length ?? 0);
             if (!tact(session, child, ev, what))
               void deliver(session, ev.text, what, "queue", child);
           }
@@ -3562,31 +3965,23 @@ function setupChannel(ctx, say, freshestRoot) {
         case "resumed":
           if (ev.text) {
             say(ev.text, "warning");
-            void deliver(session, ev.text, "слово о возвращённом месте", "steer", child);
+            void deliver(session, ev.text, W4.resumedLabel(), "steer", child);
           }
           return;
         case "held":
-          say(`Искрон: мост держит стояние ${ev.key ?? ""}`, "info");
+          say(W4.held(ev.key ?? ""), "info");
           return;
         case "released":
-          say(`Искрон: мост отпустил стояние ${ev.key ?? ""} — ${ev.text ?? ""}`, "warning");
+          say(W4.released(ev.key ?? "", ev.text ?? ""), "warning");
           return;
         case "evicted":
-          loud(
-            session,
-            `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`,
-            child
-          );
+          loud(session, P.evicted(String(ev.code)), child);
           return;
         case "alive":
-          loud(
-            session,
-            `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
-            child
-          );
+          loud(session, P.alive(ev.version ?? ""), child);
           return;
         case "note":
-          if (ev.text) say(`Искрон: ${ev.text}`, "warning");
+          if (ev.text) say(P.note(ev.text), "warning");
           return;
         default:
           return;
@@ -3596,7 +3991,8 @@ function setupChannel(ctx, say, freshestRoot) {
 }
 
 // js/opencode/commands.ts
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync7, realpathSync as realpathSync4 } from "node:fs";
+import { dirname as dirname3 } from "node:path";
 function slashOf(markdown) {
   if (!markdown.startsWith("---")) return false;
   const end = markdown.indexOf("\n---", 3);
@@ -3605,18 +4001,33 @@ function slashOf(markdown) {
   return /^slash:\s*true\s*$/m.test(head);
 }
 function commandText(id, args) {
-  return `Загрузи скилл \`${id}\` инструментом \`skill\` (id: \`${id}\`) и действуй строго по нему. Это набрал человек, а не ты; его слова — ниже.
-
-` + args.trim();
+  return words(OPENCODE).commandHead(id) + args.trim();
 }
-async function listSkills(ctx) {
-  const res = await ctx.skill.list();
-  const list = Array.isArray(res) ? res : res?.data ?? [];
+var canon3 = (p) => {
+  try {
+    return realpathSync4(p);
+  } catch {
+    return null;
+  }
+};
+function skillCommands(list) {
+  const roots = /* @__PURE__ */ new Map();
+  for (const s of list) {
+    const root = bridgeRoot(s);
+    const c = root ? canon3(root) : null;
+    if (!c) continue;
+    const source = skillLock(c)?.[BRIDGE_SKILL]?.source;
+    roots.set(c, typeof source === "string" ? source : null);
+  }
   const out2 = [];
   for (const s of list) {
     const id = String(s?.id ?? "");
     const path = typeof s?.path === "string" ? s.path : null;
     if (!id || !path) continue;
+    const root = canon3(dirname3(dirname3(path)));
+    if (!root || !roots.has(root)) continue;
+    const source = roots.get(root);
+    if (source && skillLock(root)?.[id]?.source !== source) continue;
     let text;
     try {
       text = readFileSync7(path, "utf8");
@@ -3627,6 +4038,10 @@ async function listSkills(ctx) {
     out2.push({ id, description: snippet(String(s?.description ?? "")) });
   }
   return out2.sort((a, b) => a.id.localeCompare(b.id));
+}
+async function listSkills(ctx) {
+  const res = await ctx.skill.list();
+  return skillCommands(Array.isArray(res) ? res : res?.data ?? []);
 }
 async function setupCommands(ctx, say) {
   const state2 = { commands: await listSkills(ctx) };
@@ -3646,8 +4061,7 @@ async function setupCommands(ctx, say) {
       });
     }
   });
-  if (state2.commands.length)
-    say(`Искрон: команд «/» по скиллам поставки: ${state2.commands.length}.`, "info");
+  if (state2.commands.length) say(words(OPENCODE).commandsCount(state2.commands.length), "info");
   return {
     async refresh() {
       const next = await listSkills(ctx);
@@ -3674,12 +4088,12 @@ function annotate(req, nameOf) {
       if (!child || seen.has(child)) continue;
       seen.add(child);
       const name = nameOf(child);
-      if (name) req.system.push({ type: "text", text: noticeWord(child, name) });
+      if (name) req.system.push({ type: "text", text: W3().notice(child, name) });
     }
 }
 
 // js/opencode/usage.ts
-var DEBOUNCE_MS = Number(process.env.ISKRON_USAGE_DEBOUNCE_MS || 1e4);
+var DEBOUNCE_MS = Number(process.env[envName("USAGE_DEBOUNCE_MS")] || 1e4);
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
 var spent = (t) => n(t?.input) + n(t?.output) + n(t?.reasoning) + n(t?.cache?.write);
 var inWindow = (t) => n(t?.input) + n(t?.cache?.read) + n(t?.cache?.write);
@@ -3714,7 +4128,7 @@ function createUsageFeed(opts) {
     if (!u) return;
     const { ref, ...p } = u;
     if (ref && windows.has(ref)) p.window = windows.get(ref);
-    await opts.bridgeOf(session)?.request("iskron/usage", p, { timeoutMs }).catch(() => {
+    await opts.bridgeOf(session)?.request(method("usage"), p, { timeoutMs }).catch(() => {
     });
   };
   const flush = (session, timeoutMs = 1e4) => {
@@ -3763,7 +4177,7 @@ function createUsageFeed(opts) {
       bySession.set(session, u);
       schedule(session);
     },
-    // Ждущего снимка нет — дождаться ушедшего: мост не уходит с местом раньше его ответа.
+    // No pending snapshot — wait for the one in flight: the bridge does not leave the seat before its answer.
     flush: (session) => timers.has(session) ? flush(session, 3e3) : inFlight.get(session) ?? Promise.resolve(),
     forget(session) {
       clearTimeout(timers.get(session));
@@ -3779,30 +4193,25 @@ function createUsageFeed(opts) {
 }
 
 // js/opencode/waits.ts
-var WAIT_MS = Number(process.env.ISKRON_PERMISSION_WAIT_MS) || 2e4;
+var WAIT_MS = Number(process.env[envName("PERMISSION_WAIT_MS")]) || 2e4;
 var RESOURCES = 3;
 var RESOURCE_MAX = 160;
-var askWord2 = (who, action, resources) => {
+var toldInProcess = () => globalThis[`${GLOBAL_PREFIX}ChildWordsTold`] ??= /* @__PURE__ */ new Set();
+var askWord = (who, action, resources) => {
   const cut = resources.slice(0, RESOURCES).map((r) => {
     const one = r.replace(/\s+/g, " ").trim();
     return one.length > RESOURCE_MAX ? `${one.slice(0, RESOURCE_MAX)}…` : one;
   });
   const n2 = resources.length - RESOURCES;
-  const more = n2 > 0 ? L(` и ещё ${n2}`, ` and ${n2} more`) : "";
+  const more = n2 > 0 ? W3().more(n2) : "";
   const what = cut.length ? `${action}: ${cut.join("; ")}${more}` : action;
-  return L(
-    `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. Ты ответить не можешь, и никакое слово субагенту его не разблокирует. Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.`,
-    `Iskron: subagent ${who} is waiting for a permission: ${what}. Only the human can answer this request — in the window of the subagent's session ${who}. You cannot answer it, and no message to the subagent unblocks it. Tell the human what is waiting and where: only they can answer or cancel the subagent's turn.`
-  );
+  return W3().ask(who, what);
 };
-var interruptWord = (who, reason) => L(
-  `Искрон: ход субагента ${who} прерван (${reason}).`,
-  `Iskron: the turn of subagent ${who} was interrupted (${reason}).`
-);
+var interruptWord = (who, reason) => W3().interrupt(who, reason);
 function createWaits(ctx, d) {
   const home = homeOf(ctx);
   const answered = /* @__PURE__ */ new Set();
-  const told = /* @__PURE__ */ new Set();
+  const told = toldInProcess();
   const once = (key) => {
     if (told.has(key)) return false;
     told.add(key);
@@ -3828,11 +4237,7 @@ function createWaits(ctx, d) {
     const kid = await childOf(sessionID, ev);
     if (!kid || answered.has(id) || !once(id)) return;
     const list = Array.isArray(resources) ? resources.map(String) : [];
-    await d.tell(
-      kid.parent,
-      askWord2(kid.who, String(action ?? L("действие", "action")), list),
-      true
-    );
+    await d.tell(kid.parent, askWord(kid.who, String(action ?? W3().action()), list), true);
   }
   async function interrupted(ev) {
     const { sessionID, reason } = ev?.data ?? {};
@@ -3867,8 +4272,9 @@ function createWaits(ctx, d) {
 
 // js/opencode/plugin.ts
 async function setup(ctx) {
+  const W4 = words(OPENCODE);
   const say = (text, level) => {
-    process.stderr.write(`[iskron${level === "info" ? "" : "/" + level}] ${text}
+    process.stderr.write(`[${PRODUCT}${level === "info" ? "" : "/" + level}] ${text}
 `);
   };
   const roots = /* @__PURE__ */ new Map();
@@ -3915,49 +4321,45 @@ async function setup(ctx) {
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
-    say(`Искрон: канал не встал — ${e.message}`, "error");
+    say(W4.channelDown(e.message), "error");
   }
   let half = idleHalf();
   let flushUsage = (_s) => Promise.resolve();
   try {
     half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s));
   } catch (e) {
-    say(`Искрон: мост не поднялся — ${e.message}`, "error");
+    say(words(PLUGIN).notRaised(e.message), "error");
   }
   try {
     await ctx.session.hook("prompt", async (p) => {
-      const word = await half.launch(String(p.sessionID), p.prompt.text);
-      if (word) p.prompt.text = withWord(p.prompt.text, word);
+      const word2 = await half.launch(String(p.sessionID), p.prompt.text);
+      if (word2) p.prompt.text = withWord(p.prompt.text, word2);
       const sid = String(p.sessionID);
       const counts = await rootOf(sid) === sid ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}
 
-${counts}`;
+${markFrame(counts)}`;
     });
   } catch (e) {
-    say(`Искрон: строка запуска не встала — ${e.message}`, "error");
+    say(W4.launchDown(e.message), "error");
   }
   try {
     for (const hook of ["context", "compaction"])
       await ctx.session.hook(hook, (req) => annotate(req, (s) => half.leadOf(s)));
   } catch (e) {
-    say(`Искрон: пометка хода субагента не встала — ${e.message}`, "error");
+    say(W4.noticeDown(e.message), "error");
   }
   let commands = { refresh: async () => {
   } };
   try {
     commands = await setupCommands(ctx, say);
   } catch (e) {
-    say(`Искрон: команды скиллов не встали — ${e.message}`, "error");
+    say(W4.commandsDown(e.message), "error");
   }
   try {
-    if (!await setupSkillReads(ctx))
-      say(
-        "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
-        "warning"
-      );
+    if (!await setupSkillReads(ctx)) say(W4.noPermissionHooks(), "warning");
   } catch (e) {
-    say(`Искрон: чтение файлов скиллов поставки не открылось — ${e.message}`, "error");
+    say(W4.skillReadsDown(e.message), "error");
   }
   const usage = createUsageFeed({
     listModels: () => ctx.model.list(),
@@ -3995,7 +4397,7 @@ ${counts}`;
             break;
           case "session.created": {
             if (!id) break;
-            if (ev.data?.title === KEEPALIVE_TITLE) break;
+            if (ev.data?.title === keepaliveTitle()) break;
             const parent = ev.data?.parentID;
             if (typeof parent === "string")
               void rootOf(parent).then((root) => {
@@ -4005,7 +4407,7 @@ ${counts}`;
             else void rootOf(id);
             break;
           }
-          // Сессию перенесли в другую папку (#6550 п.3): место — экземпляру её новой локации.
+          // Moved to another folder (#6550 item 3): the seat goes to the instance of its new location.
           case "session.moved": {
             const loc = ev.data?.location;
             const to = typeof loc?.directory === "string" ? { directory: loc.directory, workspace: loc.workspaceID ?? null } : null;
@@ -4015,7 +4417,6 @@ ${counts}`;
           case "skill.updated":
             void commands.refresh();
             break;
-          // Очередь сессии сдвинулась: ждущая пачка дела уходит одним промптом.
           case "session.inbox.delivered":
           case "session.inbox.cancelled":
             if (id && typeof ev.data?.inboxID === "string") ch?.taken(id, ev.data.inboxID);
@@ -4023,13 +4424,12 @@ ${counts}`;
           case "session.idle":
             if (id) ch?.taken(id);
             break;
-          // Занят ли ход — ждёт ли такт внимания его конца (channel.ts, #6569); retry — тоже ход.
+          // Whether a turn is busy — the attention tact waits for its end (channel.ts, #6569); retry is a turn too.
           case "session.status":
             if (id && typeof ev.data?.status?.type === "string")
               ch?.status(id, ev.data.status.type !== "idle");
             break;
-          // Конец хода — не конец субагента (#6625): ребёнок ждёт кадров своего дела,
-          // кончает его явный акт (leads.ts). Здесь — лишь ждущий снимок расхода.
+          // A turn's end is not a subagent's end (#6625): only a pending usage snapshot here.
           case "session.execution.succeeded":
           case "session.execution.failed":
             if (id) void usage.flush(id);
@@ -4043,7 +4443,7 @@ ${counts}`;
   })();
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
-    lost: (s, text) => onChannel(s, { logger: "iskron-channel", data: { kind: "lost", text } }),
+    lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     holds: (r) => half.held(r),
     adopt: () => half.adopt()
   });
@@ -4057,7 +4457,7 @@ ${counts}`;
     twins.left(await half.stop() || []);
   };
 }
-var plugin_default = { id: "iskron", setup };
+var plugin_default = { id: PRODUCT, setup };
 export {
   plugin_default as default
 };

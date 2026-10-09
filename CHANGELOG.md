@@ -1,5 +1,23 @@
 # Changelog
 
+## [7.8.0](https://github.com/iskron-ai/skills/compare/v7.7.0...v7.8.0) (2026-10-09)
+
+
+### Features
+
+* **bridge:** тулы, методы, логгеры, id и ключи сервера — из слоя поставки; шов и versionIn узнают продукт ([#391](https://github.com/iskron-ai/skills/issues/391)) ([e777734](https://github.com/iskron-ai/skills/commit/e7777340b1de645756a322ba0a750121a840a11c))
+* **iskron:** ожидание карточкой — ack и исполнение, переспрос и агенту, строки на ключ карточки до ack нет ([#420](https://github.com/iskron-ai/skills/issues/420)) ([86dfea9](https://github.com/iskron-ai/skills/commit/86dfea9127f1a570c5552f723074117390e405f3))
+* **opencode:** английская поверхность плагина OpenCode и pi; слова о детях — только о своих ([#402](https://github.com/iskron-ai/skills/issues/402)) ([7b00af8](https://github.com/iskron-ai/skills/commit/7b00af8be618b2221e551b8e6357826657ad6ea6))
+* **skills:** make agent waits visible through ask cards ([#416](https://github.com/iskron-ai/skills/issues/416)) ([17cd1e3](https://github.com/iskron-ai/skills/commit/17cd1e32f213a4371f9fa2247e969385f63af479))
+* **skills:** подхватывать своё имя после пробы держателю ([#415](https://github.com/iskron-ai/skills/issues/415)) ([fddc9b3](https://github.com/iskron-ai/skills/commit/fddc9b3a841206f987a27898b674e3c533e43627))
+
+
+### Bug Fixes
+
+* **bridge:** stop arming role inbox webhooks ([#417](https://github.com/iskron-ai/skills/issues/417)) ([7c2b0fc](https://github.com/iskron-ai/skills/commit/7c2b0fce9c6172b37e3884e601b0b334d5177169))
+* **bridge:** своё имя — проба брату словом, чужое — словом человека; leave с чужим standing — отказ ([#419](https://github.com/iskron-ai/skills/issues/419)) ([b1f2691](https://github.com/iskron-ai/skills/commit/b1f26918f4b3b3a68ebad6f3c5442e60f8f41af6))
+* **skills:** читать дела с досок ролей и мест ([#418](https://github.com/iskron-ai/skills/issues/418)) ([29b3f4a](https://github.com/iskron-ai/skills/commit/29b3f4ab87b0dd7e949c058febf6ed285ebaef50))
+
 ## [7.7.0](https://github.com/iskron-ai/skills/compare/v7.6.0...v7.7.0) (2026-10-08)
 
 
