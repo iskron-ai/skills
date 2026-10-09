@@ -858,6 +858,8 @@ const fj = [
   ["fj pr merge --help", "", false],
   ['fj pr merge 12 -m "x" -h', "", false],
   ['fj pr merge 12 -m "x" --help', "", false],
+  ["fj pr merge 12 --auto", "", false],
+  ["fj pr merge 12 --disable-auto", "", false],
   ["fj pr merge 12", "Error: merge failed: not mergeable", false],
   ["fj pr merge 12 --method squash", "error: 405 Method Not Allowed", false],
   // fj's refusal as the live fj v0.6.0 prints it (`fj pr merge` of a missing PR, code 1)
@@ -872,7 +874,8 @@ test("iskronify template defs judge another forge's merge by outcome", () => {
     .find((l) => l.startsWith("def a:") && l.includes('"gh pr merge"'));
   assert.ok(merge, "merge filter line present in hooks.md");
   const defs = merge.slice(0, merge.indexOf("; held and (") + 2);
-  const filter = defs + 'held and ran("fj pr merge"; "-h|--help"; "Merged PR #")';
+  const filter =
+    defs + 'held and ran("fj pr merge"; "-h|--help|--auto|--disable-auto"; "Merged PR #")';
   for (const [command, output, wakes] of fj) {
     const payload = JSON.stringify({ tool_input: { command }, tool_response: { stdout: output } });
     let ran = true;
