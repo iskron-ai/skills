@@ -88,9 +88,25 @@ jobs:
           # The floor the shipped file claims (global WebSocket): the suites run
           # here so the claim stays proven, not on whatever is newest.
           node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: js/package-lock.json
+      # The npm cache (graph @nks/nks-dev, node #6988): keyed by the lock file, saved only
+      # here, only on main and only on a miss; release-please's bundle-sync only restores.
+      # The key and path are setup-node's own, so the entries it saved stay readable.
+      - name: npm cache key
+        id: npm-cache-key
+        run: |
+          echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+          echo "key=node-cache-$RUNNER_OS-$(node -p process.arch)-npm-${{ hashFiles('js/package-lock.json') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: npm-cache
+        with:
+          path: ${{ steps.npm-cache-key.outputs.dir }}
+          key: ${{ steps.npm-cache-key.outputs.key }}
       - run: make deps
+      - if: github.ref == 'refs/heads/main' && steps.npm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.npm-cache-key.outputs.dir }}
+          key: ${{ steps.npm-cache-key.outputs.key }}
       - run: make lint
       - run: make format-check
       - run: make typecheck

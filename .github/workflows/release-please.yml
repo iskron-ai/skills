@@ -41,8 +41,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: js/package-lock.json
+      # Restore only: CI's js job is the one that saves this cache (node #6988).
+      - name: npm cache key
+        id: npm-cache-key
+        run: |
+          echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+          echo "key=node-cache-$RUNNER_OS-$(node -p process.arch)-npm-${{ hashFiles('js/package-lock.json') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.npm-cache-key.outputs.dir }}
+          key: ${{ steps.npm-cache-key.outputs.key }}
       - run: make deps
       # The committed outputs are written only here, as the release build (the release
       # channel stamped in): every install channel takes main, and only such a bridge
