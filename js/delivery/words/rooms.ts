@@ -80,7 +80,7 @@ export const ROOM: Readonly<Record<Lang, RoomWords>> = {
     closing: (author, endsAt, evidence) =>
       `ведущий ${author} предлагает закрыть дело до ${endsAt}${evidence ? `; свидетельства: ${evidence}` : ""}`,
     closingMay: (entryId) =>
-      `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId}) (прежнее имя iskron_room)`,
+      `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "возражать не тебе",
     closed: (reason) => `дело закрыто: ${reason}`,
     objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
@@ -124,7 +124,7 @@ export const ROOM: Readonly<Record<Lang, RoomWords>> = {
     closing: (author, endsAt, evidence) =>
       `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
     closingMay: (entryId) =>
-      `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
+      `you may object — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "the objection is not yours to make",
     closed: (reason) => `case closed: ${reason}`,
     objection: (author, reason) => `${author} objects to closing: ${reason}`,

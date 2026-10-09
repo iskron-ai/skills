@@ -6128,10 +6128,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
       p1.text,
       /ведущий Алексей \(@aleksei:probe\) предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/,
     );
-    assert.match(
-      p1.text,
-      /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
-    );
+    assert.match(p1.text, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
     assert.match(p1.text, /^№7 «Стенд» \[50\] /, "the case and the entry lead");
     assert.match(
       p1.text,

@@ -5726,10 +5726,7 @@ test("watchdog-codex: progress starts no turn; closing carries the batch count i
     second,
   );
   assert.match(second, /предлагает закрыть дело/);
-  assert.match(
-    second,
-    /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
-  );
+  assert.match(second, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
