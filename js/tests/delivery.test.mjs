@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { HOME_BRIDGE_FILE, HOME_DIR, PRODUCT, SATELLITE_CODE } from "../delivery/product.ts";
 import { serverProtocol, STRUCTURED_CAPABILITY } from "../delivery/protocol.ts";
 import { versionIn } from "../shared/version.ts";
-import { BUILT_BRIDGE, REPO } from "./built.mjs";
+import { BUILT_BRIDGE, BUILT_CHANNEL, REPO } from "./built.mjs";
 
 const SOURCE = "js/delivery/version.ts";
 const read = (rel) => readFileSync(join(REPO, rel), "utf8");
@@ -40,7 +40,7 @@ test("release-please stamps the version in the delivery layer and nowhere else i
   assert.deepEqual(stamped, [join(REPO, SOURCE)]);
 });
 
-test("the built bridge carries the delivery layer's version and dev channel mark", () => {
+test("the built bridge carries the delivery layer's version and its build's channel mark", () => {
   const version = /^export const VERSION = "([^"]+)"/m.exec(source)[1];
   const mark = /^export const CHANNEL_MARK: string = "([^"]+)";$/m.exec(source)[1];
   const name = /^export const BUILD_MARK = "([^"]+)";$/m.exec(source)[1];
@@ -49,7 +49,8 @@ test("the built bridge carries the delivery layer's version and dev channel mark
   assert.equal(version, plugin.version);
   const bridge = readFileSync(BUILT_BRIDGE, "utf8");
   assert.match(bridge, new RegExp(`^var VERSION = "${version.replaceAll(".", "\\.")}";`, "m"));
-  assert.ok(bridge.includes(`"${mark}"`), `the dev bridge must carry ${mark}`);
+  const built = `${name}:${BUILT_CHANNEL}`;
+  assert.ok(bridge.includes(`"${built}"`), `the ${BUILT_CHANNEL} bridge must carry ${built}`);
 });
 
 test("versionIn does not read another delivery's bridge: its channel mark names another build", () => {

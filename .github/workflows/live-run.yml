@@ -1,0 +1,29 @@
+name: Live run
+
+# The release PR ships the bridge to every client on every machine, and CI has no
+# OAuth: the probes run against the release build, the connection itself only by a
+# live run — with a human or on a test stand (graph @nks/nks-dev, node #4309). The
+# steward puts the live-run label after the run and a cold verifier; without it
+# this job is red and the release PR does not merge. Its own workflow, so a label
+# change reruns only this guard, not the whole CI.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  live-run:
+    name: Live run of the release build (label live-run)
+    if: startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - name: The release PR carries the live-run label
+        env:
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'live-run') }}
+        run: |
+          if [ "$LABELLED" = "true" ]; then exit 0; fi
+          echo "::error title=No live run::Нет метки live-run. Прогони выход выпуска этой ветки живым соединением против mcp.iskron.ru (с человеком или на тестовом стенде) и переход с прошлого выпуска — AGENTS.md, «Git-воркфлоу», пункт «Живой прогон моста до релиза»: https://github.com/${{ github.repository }}/blob/main/AGENTS.md#git-воркфлоу. После прогона и вердикта холодного верификатора стюард ставит метку live-run — джоб перезапустится сам."
+          exit 1
