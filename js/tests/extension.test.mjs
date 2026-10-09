@@ -884,10 +884,7 @@ test("room kinds: closing and records to me go by their way; the rest of the cas
     );
     const text = rec.messages[0].msg.content;
     assert.match(text, /предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/);
-    assert.match(
-      text,
-      /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\) \(прежнее имя iskron_room\)/,
-    );
+    assert.match(text, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
     const count = rec.messages.at(-1);
     assert.equal(count.opts.deliverAs, "nextTurn");
     assert.equal(count.opts.triggerTurn, false, "the count does not wake");
