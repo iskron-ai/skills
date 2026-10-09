@@ -31,11 +31,13 @@
 Вставь этот промпт в агента, которым уже пользуешься (Claude Code, Cursor, Codex, Claude Desktop):
 
 ```
-Установи мне скиллы iskron: скачай https://raw.githubusercontent.com/iskron-ai/skills/main/SETUP.md
-и выполни все шаги автономно, спросив мой токен, когда понадобится.
+Установи мне скиллы iskron каналом своего харнесса: в Claude Code — плагин
+(`claude plugin marketplace add iskron-ai/skills`, затем `claude plugin install iskron@iskron`),
+в OpenCode и Codex — их плагин из той же поставки, иначе плоско —
+`npx skills add iskron-ai/skills --all --global`. Затем выполни «/iskron подключи граф».
 ```
 
-[`SETUP.md`](SETUP.md) — установщик, исполняемый агентом: обычный markdown, можно прочесть заранее. Ручные пути ниже — по харнессу.
+Граф подключает скилл `establish-mcp` из поставленных — по слову «/iskron подключи граф». [`SETUP.md`](SETUP.md) — справочник путей по харнессам, его читают, а не скачивают на исполнение. Ручные пути ниже — по харнессу.
 
 ### Claude Code
 
