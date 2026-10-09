@@ -5966,6 +5966,9 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   assert.ok(!left.result?.isError, leftText);
   assert.match(leftText, /busyness cleared/, leftText);
   assert.doesNotMatch(leftText, CYRILLIC, leftText);
+  // The return is a fresh connect only once the leave has closed the socket; before that the
+  // stand is a busyness update on a held seat and says nothing about hearing (#7008).
+  await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
   const back = await bridge.call("tools/call", 6, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", status: "back" },
