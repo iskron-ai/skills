@@ -103,7 +103,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.8.0";
+var VERSION = "7.8.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -173,11 +173,21 @@ var BACKLOG = {
   }
 };
 
+// js/delivery/words/take.ts
+var TAKE = {
+  ru: {
+    rule: () => "своё имя (та же роль, та же учётка) — сам, когда держатель молчит 5 минут на пробу словом (iskron_channel send); чужое (другая роль или учётка) — только словом человека"
+  },
+  en: {
+    rule: () => "your own name (the same role, the same account) — by yourself when the holder stays silent 5 minutes to a probe by word (iskron_channel send); another's (another role or account) — only on the human's word"
+  }
+};
+
 // js/delivery/words/call.ts
 var CALL = {
   ru: {
     sameNamePrefix: () => "то же имя под другой ролью; ",
-    heardAdvice: (other, asked, led) => `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true) — только по слову человека`,
+    heardAdvice: (other, asked, led) => `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true): ${TAKE.ru.rule()}`,
     sameKeysAdvice: () => "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
     sameNameAdvice: () => "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
     takeOtherAdvice: () => "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
@@ -188,7 +198,7 @@ var CALL = {
   },
   en: {
     sameNamePrefix: () => "the same name under another role; ",
-    heardAdvice: (other, asked, led) => `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true) — only on the human's word`,
+    heardAdvice: (other, asked, led) => `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true): ${TAKE.en.rule()}`,
     sameKeysAdvice: () => "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
     sameNameAdvice: () => "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
     takeOtherAdvice: () => "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
@@ -604,8 +614,8 @@ var HOLD = {
     resumeFailed: () => "возврат с диска не удался",
     tokenDead: () => "токен мёртв",
     parked: (reason) => `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`,
-    evicted: (code) => `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; записи в этот граф мост не отправит, пока не встанешь своим местом — его подписью они легли бы; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека`,
-    evictedBeside: (code, name, base) => `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли (${name}), слушает другой держатель; его место не перехватываю и им не подписываюсь — встаю рядом на ${base}.N со слухом сам; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом; вытеснить ту сессию (take=true) — только словом человека`,
+    evicted: (code) => `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; записи в этот граф мост не отправит, пока не встанешь своим местом — его подписью они легли бы; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true): ${TAKE.ru.rule()}`,
+    evictedBeside: (code, name, base) => `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли (${name}), слушает другой держатель; его место не перехватываю и им не подписываюсь — встаю рядом на ${base}.N со слухом сам; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом; вытеснить ту сессию (take=true): ${TAKE.ru.rule()}`,
     besideDone: (name, said2) => `Искрон: место ${name} отняли (4000) — мост встал рядом своим местом со слухом. ${said2}`,
     besideFailed: (name, base, said2) => `Искрон: место ${name} отняли (4000), встать рядом мост не смог — слуха нет: ${said2} Ход — iskron_stand с name=${base} без take: мост встанет рядом на ${base}.N со слухом.`,
     evictedRefusal: (name, base) => `Отказано (мост): место ${name} отняли (4000), его слушает другой держатель, а встать рядом мост пока не смог — запись легла бы под его подписью; вызов не отправлен. Ход — iskron_stand с name=${base} без take: мост встанет рядом на ${base}.N со слухом; затем повтори вызов.`,
@@ -621,8 +631,8 @@ var HOLD = {
     resumeFailed: () => "resume from disk failed",
     tokenDead: () => "token dead",
     parked: (reason) => `the bridge left the seat (${reason}) — socket closed, seat intact; to return use the watchdog or iskron_stand`,
-    evicted: (code) => `DOER: close ${code} — the seat was taken, another holder is listening; the bridge sends no writes into this graph until you stand on your own seat — they would go under its signature; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word`,
-    evictedBeside: (code, name, base) => `DOER: close ${code} — the seat ${name} was taken, another holder is listening; not taking it over and not signing with it — standing beside as ${base}.N with hearing myself; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command; evicting that session (take=true) — only on the human's word`,
+    evicted: (code) => `DOER: close ${code} — the seat was taken, another holder is listening; the bridge sends no writes into this graph until you stand on your own seat — they would go under its signature; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true): ${TAKE.en.rule()}`,
+    evictedBeside: (code, name, base) => `DOER: close ${code} — the seat ${name} was taken, another holder is listening; not taking it over and not signing with it — standing beside as ${base}.N with hearing myself; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command; evicting that session (take=true): ${TAKE.en.rule()}`,
     besideDone: (name, said2) => `Iskron: the seat ${name} was taken (4000) — the bridge stood beside on its own seat with hearing. ${said2}`,
     besideFailed: (name, base, said2) => `Iskron: the seat ${name} was taken (4000), and the bridge could not stand beside — no hearing: ${said2} The move — iskron_stand with name=${base} without take: the bridge stands beside as ${base}.N with hearing.`,
     evictedRefusal: (name, base) => `Refused (bridge): the seat ${name} was taken (4000), another holder listens on it, and the bridge could not stand beside yet — the write would go under its signature; the call was not sent. The move — iskron_stand with name=${base} without take: the bridge stands beside as ${base}.N with hearing; then repeat the call.`,
@@ -882,7 +892,7 @@ var RESUME = {
     boardUnread: (text) => `доска не прочиталась — ${text}`,
     noSeatOnBoard: () => "своего места на доске нет",
     listening: () => "слушаю",
-    gaveUp: (key, limit) => `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true — только словом человека.`,
+    gaveUp: (key, limit) => `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true: ${TAKE.ru.rule()}.`,
     deafBoard: () => "доска не читает слушающим",
     reopened: (pending2) => pending2 === null ? "сокет переоткрыт, hello за 4 с не пришёл" : `сокет переоткрыт: ожидало кадров — ${pending2}`,
     busyRestored: (kept2) => `; занятость возвращена: ${kept2}`,
@@ -917,7 +927,7 @@ var RESUME = {
     boardUnread: (text) => `the board could not be read — ${text}`,
     noSeatOnBoard: () => "the own seat is not on the board",
     listening: () => "listening",
-    gaveUp: (key, limit) => `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true — only on the human's word.`,
+    gaveUp: (key, limit) => `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true: ${TAKE.en.rule()}.`,
     deafBoard: () => "the board does not read it as listening",
     reopened: (pending2) => pending2 === null ? "the socket is reopened, hello did not come in 4 s" : `the socket is reopened: frames waiting — ${pending2}`,
     busyRestored: (kept2) => `; busy line restored: ${kept2}`,
@@ -981,7 +991,7 @@ var ROOM = {
     bodyAborted: (refersTo) => `слово [${refersTo}] оборвано автором`,
     bodyLapsed: (refersTo) => `слово [${refersTo}] оборвано платформой по сроку`,
     closing: (author, endsAt, evidence) => `ведущий ${author} предлагает закрыть дело до ${endsAt}${evidence ? `; свидетельства: ${evidence}` : ""}`,
-    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId}) (прежнее имя iskron_room)`,
+    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "возражать не тебе",
     closed: (reason) => `дело закрыто: ${reason}`,
     objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
@@ -1021,7 +1031,7 @@ var ROOM = {
     bodyAborted: (refersTo) => `message [${refersTo}] cut off by its author`,
     bodyLapsed: (refersTo) => `message [${refersTo}] cut off by the platform on its deadline`,
     closing: (author, endsAt, evidence) => `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
-    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
+    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "the objection is not yours to make",
     closed: (reason) => `case closed: ${reason}`,
     objection: (author, reason) => `${author} objects to closing: ${reason}`,
@@ -1184,13 +1194,13 @@ var HOLDER_EN = {
 var SEPARATE = {
   ru: {
     ownSession: (base) => `место ${base} держал прежний мост этой же сессии харнесса (перезапуск или компакшн) — своё место этой сессии, мост вернул его сам`,
-    beside: (base, name, own, kin) => `место ${base} держит ${kin ? HOLDER_RU[kin] : "другая сессия"} — её место не трогаю и им не подписываюсь; встаю рядом на ${name} со слухом${own ? " (его держал прежний мост этой же сессии — вернул сам)" : ""}: это своё место, кадры по нему идут сюда; ` + (kin === "board" ? `учётку держателя сверь по доске с адресом своего места: та же — ${probeRu(base)}; другая — вытеснить ту сессию (take=true) только словом человека` : kin ? probeRu(base) : "вытеснить ту сессию (take=true) — только словом человека"),
+    beside: (base, name, own, kin) => `место ${base} держит ${kin ? HOLDER_RU[kin] : "другая сессия"} — её место не трогаю и им не подписываюсь; встаю рядом на ${name} со слухом${own ? " (его держал прежний мост этой же сессии — вернул сам)" : ""}: это своё место, кадры по нему идут сюда; ` + (kin === "board" ? `учётку держателя сверь по доске с адресом своего места: та же — ${probeRu(base)}; другая — вытеснить ту сессию (take=true) только словом человека` : kin ? probeRu(base) : `вытеснить ту сессию (take=true): ${TAKE.ru.rule()}`),
     unknown: (name) => `Отказано (мост): доска разобрана не целиком — слушает ли место ${name} другая сессия, мост не знает; вслепую не встаю и take=true не советую. Повтори, когда доска прочтётся, либо назови другое name.`,
     noFree: (base) => `Отказано (мост): место ${base} держит другая сессия, и все места рядом ${base}.2…99 заняты — подписываться чужим местом без слуха мост не станет; прибери погасшие места либо назови другое name.`
   },
   en: {
     ownSession: (base) => `the seat ${base} was held by a former bridge of this same harness session (a restart or a compaction) — this session's own seat, the bridge took it back itself`,
-    beside: (base, name, own, kin) => `${kin ? HOLDER_EN[kin] : "another session"} holds the seat ${base} — leaving its seat alone and not signing with it; standing beside as ${name} with hearing${own ? " (a former bridge of this same session held it — taken back)" : ""}: it is this session's own seat, its frames come here; ` + (kin === "board" ? `check the holder's account on the board against your own seat's address: the same — ${probeEn(base)}; another — evicting that session (take=true) only on the human's word` : kin ? probeEn(base) : "evicting that session (take=true) — only on the human's word"),
+    beside: (base, name, own, kin) => `${kin ? HOLDER_EN[kin] : "another session"} holds the seat ${base} — leaving its seat alone and not signing with it; standing beside as ${name} with hearing${own ? " (a former bridge of this same session held it — taken back)" : ""}: it is this session's own seat, its frames come here; ` + (kin === "board" ? `check the holder's account on the board against your own seat's address: the same — ${probeEn(base)}; another — evicting that session (take=true) only on the human's word` : kin ? probeEn(base) : `evicting that session (take=true): ${TAKE.en.rule()}`),
     unknown: (name) => `Refused (bridge): the board was not read in full — the bridge does not know whether another session listens on the seat ${name}; not standing blind and not advising take=true. Repeat when the board reads, or pass another name.`,
     noFree: (base) => `Refused (bridge): another session holds the seat ${base}, and every seat beside ${base}.2…99 is taken — the bridge will not sign with another's seat without hearing; clear the dead seats or pass another name.`
   }
@@ -1377,8 +1387,8 @@ var STAND_TOOL = {
 };
 
 // js/delivery/words/status.ts
-var TAKE_PATH_RU = 'iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
-var TAKE_PATH_EN = `iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
+var TAKE_PATH_RU = `iskron_stand с take=true (${TAKE.ru.rule()}) переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа`;
+var TAKE_PATH_EN = `iskron_stand with take=true (${TAKE.en.rule()}) moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
 var TWO_ENTRIES_RU = "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.";
 var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
 var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
@@ -1390,7 +1400,7 @@ var STATUS = {
     busyLine: (label, line, nudge) => `занятость ${label}: ${line || "(снята)"}${nudge}`,
     placeDerived: (place) => `${place} (адрес выведен, hello его не называл)`,
     placeUnnamed: (name) => `места${name ? ` «${name}»` : ""} (адреса @handle:name ещё нет — hello не пришёл)`,
-    evictedWhy: () => "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+    evictedWhy: () => `слух у другого держателя — вернуть его iskron_stand с take=true: ${TAKE.ru.rule()}`,
     reopeningWhy: () => "сокет переоткрывается — строка опубликована, слух вернётся сам",
     noSeatId: (key) => `Отказано (мост): id места ${key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
     takePath: () => TAKE_PATH_RU,
@@ -1405,7 +1415,7 @@ var STATUS = {
     busyLine: (label, line, nudge) => `busyness ${label}: ${line || "(cleared)"}${nudge}`,
     placeDerived: (place) => `${place} (address derived, hello did not name it)`,
     placeUnnamed: (name) => `of the seat${name ? ` «${name}»` : ""} (no @handle:name address yet — hello has not come)`,
-    evictedWhy: () => "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
+    evictedWhy: () => `the hearing is with another holder — take it back by iskron_stand with take=true: ${TAKE.en.rule()}`,
     reopeningWhy: () => "the socket is reopening — the line is published, the hearing comes back by itself",
     noSeatId: (key) => `Refused (bridge): the bridge does not yet know the id of the seat ${key} (hello did not name it) — without it the line would land on all seats of the channel; repeat iskron_stand for this graph.`,
     takePath: () => TAKE_PATH_EN,

@@ -52,7 +52,7 @@ var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 
 // js/delivery/version.ts
-var VERSION = "7.8.0";
+var VERSION = "7.8.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -106,6 +106,16 @@ var BRIDGE_CLIENT = {
     noWrites: () => "the bridge does not accept writes",
     sessionClosed: () => "session closed",
     emptyAnswer: () => "(empty answer)"
+  }
+};
+
+// js/delivery/words/take.ts
+var TAKE = {
+  ru: {
+    rule: () => "своё имя (та же роль, та же учётка) — сам, когда держатель молчит 5 минут на пробу словом (iskron_channel send); чужое (другая роль или учётка) — только словом человека"
+  },
+  en: {
+    rule: () => "your own name (the same role, the same account) — by yourself when the holder stays silent 5 minutes to a probe by word (iskron_channel send); another's (another role or account) — only on the human's word"
   }
 };
 
@@ -213,7 +223,7 @@ var PLUGIN = {
     relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
     listening: () => "Искрон: канал слушает",
     dead: (code) => `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
-    evicted: (code) => `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`,
+    evicted: (code) => `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true): ${TAKE.ru.rule()}.`,
     alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
     note: (text) => `Искрон: ${text}`
   },
@@ -225,7 +235,7 @@ var PLUGIN = {
     relistFailed: (message) => `Iskron: the tool list was not reread after the change on the server — ${message}`,
     listening: () => "Iskron: the channel is listening",
     dead: (code) => `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
-    evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true) — only on the human's word.`,
+    evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true): ${TAKE.en.rule()}.`,
     alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
     note: (text) => `Iskron: ${text}`
   }
@@ -249,7 +259,7 @@ var ROOM = {
     bodyAborted: (refersTo) => `слово [${refersTo}] оборвано автором`,
     bodyLapsed: (refersTo) => `слово [${refersTo}] оборвано платформой по сроку`,
     closing: (author, endsAt, evidence) => `ведущий ${author} предлагает закрыть дело до ${endsAt}${evidence ? `; свидетельства: ${evidence}` : ""}`,
-    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId}) (прежнее имя iskron_room)`,
+    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "возражать не тебе",
     closed: (reason) => `дело закрыто: ${reason}`,
     objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
@@ -289,7 +299,7 @@ var ROOM = {
     bodyAborted: (refersTo) => `message [${refersTo}] cut off by its author`,
     bodyLapsed: (refersTo) => `message [${refersTo}] cut off by the platform on its deadline`,
     closing: (author, endsAt, evidence) => `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
-    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
+    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId})`,
     closingNot: () => "the objection is not yours to make",
     closed: (reason) => `case closed: ${reason}`,
     objection: (author, reason) => `${author} objects to closing: ${reason}`,
@@ -351,8 +361,8 @@ var VERDICT = {
 };
 
 // js/delivery/words/status.ts
-var TAKE_PATH_RU = 'iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
-var TAKE_PATH_EN = `iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
+var TAKE_PATH_RU = `iskron_stand с take=true (${TAKE.ru.rule()}) переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа`;
+var TAKE_PATH_EN = `iskron_stand with take=true (${TAKE.en.rule()}) moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
 var TWO_ENTRIES_RU = "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.";
 var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
 var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
