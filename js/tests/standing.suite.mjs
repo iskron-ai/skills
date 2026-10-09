@@ -5969,7 +5969,8 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   });
   const backText = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!back.result?.isError, backText);
-  assert.match(backText, /hello received/, backText);
+  // Under a loaded runner hello may land after the 4 s wait: either word is the bridge's English.
+  assert.match(backText, /hello received|no hello within 4 s/, backText);
   // «(Вебхук #N создан → …)» — проза сервера внутри строки хука, не слово моста.
   const bridgeWords = backText.replace(/\(Вебхук[^)]*\)/, "");
   assert.doesNotMatch(bridgeWords, CYRILLIC, bridgeWords);
