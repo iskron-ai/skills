@@ -1,6 +1,7 @@
 // Слова вызова тула самим мостом (граф @nks/nks-dev, узлы #5154, #5838, #6706):
 // отказы правила одного места на мост и места рядом, пустой ответ.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 export interface CallWords {
   /** Приставка совета, когда имя то же, а роль другая. */
@@ -21,7 +22,7 @@ export const CALL: Readonly<Record<Lang, CallWords>> = {
   ru: {
     sameNamePrefix: () => "то же имя под другой ролью; ",
     heardAdvice: (other, asked, led) =>
-      `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true) — только по слову человека`,
+      `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true): ${TAKE.ru.rule()}`,
     sameKeysAdvice: () =>
       "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
     sameNameAdvice: () =>
@@ -40,7 +41,7 @@ export const CALL: Readonly<Record<Lang, CallWords>> = {
   en: {
     sameNamePrefix: () => "the same name under another role; ",
     heardAdvice: (other, asked, led) =>
-      `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true) — only on the human's word`,
+      `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true): ${TAKE.en.rule()}`,
     sameKeysAdvice: () =>
       "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
     sameNameAdvice: () =>

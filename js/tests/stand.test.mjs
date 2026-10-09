@@ -928,12 +928,17 @@ test("iskron_stand refusal «already leads another seat»: no take=true advice w
 
 // Where the bridge does not know who hears the asked seat — the board did not
 // read, or a bare connect/register/mint that reads no board — the refusal stays
-// neutral: this bridge's own seat, the move beside, take=true only on the human's word.
+// neutral: this bridge's own seat, the move beside, take=true by the take rule — own
+// name after a silent probe, another's only on the human's word (#6976, #7194).
 const neutralRefusal = (text, led) => {
   assert.match(text, /уже ведёт место/, text);
   assert.match(text, new RegExp(`своё место этого моста — ${led}`), text);
   assert.match(text, /встать рядом — iskron_stand без name/, text);
-  assert.match(text, /take=true\) — только по слову человека/, text);
+  assert.match(
+    text,
+    /отнять место \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека/,
+    text,
+  );
   assert.doesNotMatch(text, /iskron_stand с take=true/, text);
 };
 

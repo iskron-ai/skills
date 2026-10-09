@@ -1,6 +1,7 @@
 // Слова выбора места (граф @nks/nks-dev, узел #6706): своё место прежнего моста
 // сессии, место рядом и отказы, когда встать некуда или доска не прочлась.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 /**
  * Кто держит base, когда мост встал рядом (#6976): live — живой мост другой сессии этого
@@ -47,7 +48,7 @@ export const SEPARATE: Readonly<Record<Lang, SeparateWords>> = {
         ? `учётку держателя сверь по доске с адресом своего места: та же — ${probeRu(base)}; другая — вытеснить ту сессию (take=true) только словом человека`
         : kin
           ? probeRu(base)
-          : "вытеснить ту сессию (take=true) — только словом человека"),
+          : `вытеснить ту сессию (take=true): ${TAKE.ru.rule()}`),
     unknown: (name) =>
       `Отказано (мост): доска разобрана не целиком — слушает ли место ${name} другая сессия, мост не знает; вслепую не встаю и take=true не советую. Повтори, когда доска прочтётся, либо назови другое name.`,
     noFree: (base) =>
@@ -62,7 +63,7 @@ export const SEPARATE: Readonly<Record<Lang, SeparateWords>> = {
         ? `check the holder's account on the board against your own seat's address: the same — ${probeEn(base)}; another — evicting that session (take=true) only on the human's word`
         : kin
           ? probeEn(base)
-          : "evicting that session (take=true) — only on the human's word"),
+          : `evicting that session (take=true): ${TAKE.en.rule()}`),
     unknown: (name) =>
       `Refused (bridge): the board was not read in full — the bridge does not know whether another session listens on the seat ${name}; not standing blind and not advising take=true. Repeat when the board reads, or pass another name.`,
     noFree: (base) =>

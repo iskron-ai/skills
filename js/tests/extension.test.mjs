@@ -1215,7 +1215,7 @@ test("a stale burst enters the turn once, with its bodies", async () => {
 
 // An eviction ends the holding but not the standing: the doer is told in the
 // turn what happened and what brings the hearing back (#5033).
-test("an eviction is loud: the bridge stands beside by itself, take=true only on the human's word", async () => {
+test("an eviction is loud: the bridge stands beside by itself, take=true by the own-name rule", async () => {
   const { events, env } = eventsEnv("evicted");
   const rec = await session(env);
   try {
@@ -1227,7 +1227,7 @@ test("an eviction is loud: the bridge stands beside by itself, take=true only on
     assert.match(rec.messages[0].msg.content, /Мост сам встаёт рядом на имя\.N со слухом/);
     assert.match(
       rec.messages[0].msg.content,
-      /Вытеснить ту сессию \(take=true\) — только словом человека/,
+      /Вытеснить ту сессию \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\./,
     );
     assert.ok(!/токен мёртв/.test(rec.messages[0].msg.content), "an eviction is not a dead token");
   } finally {

@@ -1346,7 +1346,7 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   }
 });
 
-test("an eviction is loud in OpenCode: a prompt into the holder's session — the bridge stands beside by itself, take=true on the human's word", async () => {
+test("an eviction is loud in OpenCode: a prompt into the holder's session — the bridge stands beside by itself, take=true by the own-name rule", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);
   try {
@@ -1360,7 +1360,11 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session — th
     assert.equal(rec.prompts[0].sessionID, "s-evicted");
     assert.match(rec.prompts[0].text, /место отняли/);
     assert.match(rec.prompts[0].text, /Мост сам встаёт рядом на имя\.N со слухом/);
-    assert.match(rec.prompts[0].text, /Вытеснить ту сессию \(take=true\) — только словом человека/);
+    // Своё имя — сам по молчанию пробы, чужое — словом человека (#6976, #7194).
+    assert.match(
+      rec.prompts[0].text,
+      /Вытеснить ту сессию \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\./,
+    );
   } finally {
     await rec.stop();
   }
