@@ -9,7 +9,8 @@ name: CI
 # built from js/ and held to a production ladder: lint, format, strict types
 # (the extension against pi's real types), the committed outputs being the release
 # build (every install channel takes main), and the behavioural suites against a
-# dev build of the tree. Those failures (a dead callback
+# dev build of the tree — on the release PR also against the release build it
+# ships. Those failures (a dead callback
 # listener, a burnt refresh grant, a watchdog that holds a dead token in
 # silence) are invisible to the agent and land on a human.
 
@@ -127,3 +128,31 @@ jobs:
         run: sudo sysctl -w net.ipv4.ip_local_port_range="44000 60999"
       - name: Behavioural suites against the dev build of js/ in dist/dev (fake NKS + OAuth, fake bridge, fake socket)
         run: make test-coverage
+
+  # The release PR (graph @nks/nks-dev, node #4309): what ships is the release build that
+  # release-please's bundle-sync commits into the branch, and its push is a synchronize of
+  # this PR — so this runs on the head that carries those outputs. The same suites, against
+  # the committed outputs at the workspace root (the layout of dist/dev) instead of dist/dev.
+  release-build:
+    name: Release build — behaviour of the committed outputs
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: npm cache key
+        id: npm-cache-key
+        run: |
+          echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+          echo "key=node-cache-$RUNNER_OS-$(node -p process.arch)-npm-${{ hashFiles('js/package-lock.json') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.npm-cache-key.outputs.dir }}
+          key: ${{ steps.npm-cache-key.outputs.key }}
+      - run: make deps
+      - name: Ephemeral ports off the callback rungs
+        run: sudo sysctl -w net.ipv4.ip_local_port_range="44000 60999"
+      - name: Behavioural suites against the committed release outputs
+        run: ISKRON_BUILT_DIR="$GITHUB_WORKSPACE" make test
