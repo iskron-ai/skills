@@ -36,6 +36,10 @@ const surfacesPath =
 const templatePath =
   process.env.ISKRON_HOOKS_TEMPLATE ?? join(root, "skills", "iskronify", "references", "hooks.md");
 
+// Taken from the live fj v0.6.0: `fj pr merge 999999` prints this on stderr, code 1.
+const fjRefusal =
+  "Error: not found: The target couldn't be found.\n\nLocation:\n    src/prs.rs:1418:21";
+
 // [command, output, wakes push?, wakes merge?]
 const cases = [
   // the defect: help exits 0 and used to wake the merge ritual
@@ -75,6 +79,7 @@ const cases = [
     false,
   ],
   ["git checkout main && git pull", "", false, true],
+  ["fj pr merge 12 && git checkout main && git pull", fjRefusal, false, false],
   ["echo gh pr merge", "gh pr merge", false, false],
   // push: the same rule
   ["git add -A && git commit -m x && git push -u origin feat/x", "", true, false],
@@ -855,6 +860,9 @@ const fj = [
   ['fj pr merge 12 -m "x" --help', "", false],
   ["fj pr merge 12", "Error: merge failed: not mergeable", false],
   ["fj pr merge 12 --method squash", "error: 405 Method Not Allowed", false],
+  // fj's refusal as the live fj v0.6.0 prints it (`fj pr merge` of a missing PR, code 1)
+  ["fj pr merge 12", fjRefusal, false],
+  ["fj pr merge 12 | tail", "remote: Error: nothing wrong here\nMerged PR #12", true],
 ];
 
 test("iskronify template defs judge another forge's merge by outcome", () => {

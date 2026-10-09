@@ -213,7 +213,7 @@ export default {
         }
       }
       // видимый отказ мержа — вето на побудку мержа; маркера успеха не требует: gh вне терминала успех не печатает
-      const held = !/^(?:error:|fatal:|GraphQL:|X )|not mergeable|merge failed/m.test(out);
+      const held = !/^(?:[Ee]rror:|fatal:|GraphQL:|X )|not mergeable|merge failed/m.test(out);
       const note = !refused && !tagCmd && (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet)
         ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа."
         : held && (ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
