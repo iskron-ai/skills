@@ -1,3 +1,363 @@
+// js/delivery/lang.ts
+var LANGS = ["ru", "en"];
+var DEFAULT_LANG = "ru";
+function langOfServer(url) {
+  try {
+    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
+  } catch {
+    return "ru";
+  }
+}
+
+// js/delivery/patterns/launch.ts
+var LAUNCH_WORD = "start";
+var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var LAUNCH_LINE = new RegExp(
+  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
+  "imu"
+);
+
+// js/delivery/product.ts
+var PRODUCT = "iskron";
+var UPPER = PRODUCT.toUpperCase();
+var ENV_PREFIX = `${UPPER}_`;
+var envName = (suffix) => `${ENV_PREFIX}${suffix}`;
+var BRIDGE_NAME = `${PRODUCT}-bridge`;
+var HOME_DIR = `.${BRIDGE_NAME}`;
+var HOME_BRIDGE_FILE = `${BRIDGE_NAME}.mjs`;
+var GLOBAL_PREFIX = `__${PRODUCT}`;
+var BRIDGE_SKILL = "establish-mcp";
+var BRIDGE_FILE = `${PRODUCT}.mjs`;
+var PLUGIN_COPY_FILE = `${PRODUCT}.js`;
+var SUB_ENTRY_PREFIX = `${PRODUCT}-sub`;
+var CLIENTS = {
+  opencode: `opencode-${PRODUCT}`,
+  pi: `pi-${PRODUCT}`,
+  doctor: `${PRODUCT}-doctor`,
+  watchdog: `${PRODUCT}-watchdog`
+};
+var SERVER_URLS = {
+  ru: "https://mcp.iskron.ru/",
+  en: "https://mcp.iskron.ai/"
+};
+var DEFAULT_SERVER_URL = SERVER_URLS[DEFAULT_LANG];
+
+// js/delivery/protocol.ts
+var TOOL_PREFIX = `${PRODUCT}_`;
+var tool = (name) => `${TOOL_PREFIX}${name}`;
+var method = (name) => `${PRODUCT}/${name}`;
+var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
+var FRAME_MARK = `[${PRODUCT}]`;
+var ID_PREFIX = `${PRODUCT}-`;
+var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+
+// js/delivery/version.ts
+var VERSION = "7.8.0";
+var BUILD_MARK = "iskron-build";
+
+// js/delivery/words/asks.ts
+var ASK = {
+  ru: {
+    ask: (author, to, toPlace, key, done, form, advice) => `${author} спрашивает роль ${to}${toPlace} [${key}]: «${done}»${form}${advice}`,
+    place: (place) => `(место ${place})`,
+    yesNo: () => "ответ: да или нет (yes | no)",
+    free: () => "ответ своим текстом",
+    choice: (options) => `варианты: ${options}`,
+    advice: (option, why) => `рекомендация: ${option}${why}`,
+    answer: (author, refersTo, reply) => `${author} отвечает на [${refersTo}]: ${reply}`,
+    ack: (refersTo, reply, author) => `ответ [${refersTo}] принят${reply} · ${author}`,
+    withdrawn: (withdraws, key, done, verdict, author) => `вопрос [${withdraws}] снят: [${key}] [${done}] = ${verdict} · ${author}`,
+    inviteOwnerless: (who, standing) => `платформа зовёт роль ${who} в дело: место ${standing} погасло, его строки ничьи`,
+    inviteAnswerWaiting: (who, standing) => `платформа зовёт роль ${who} в дело: ответ ждёт приёма, спросившее место ${standing} ушло`
+  },
+  en: {
+    ask: (author, to, toPlace, key, done, form, advice) => `${author} asks the role ${to}${toPlace} [${key}]: “${done}”${form}${advice}`,
+    place: (place) => `(seat ${place})`,
+    yesNo: () => "answer: yes or no (yes | no)",
+    free: () => "answer in your own words",
+    choice: (options) => `options: ${options}`,
+    advice: (option, why) => `recommended: ${option}${why}`,
+    answer: (author, refersTo, reply) => `${author} answers [${refersTo}]: ${reply}`,
+    ack: (refersTo, reply, author) => `answer [${refersTo}] accepted${reply} · ${author}`,
+    withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
+    inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
+    inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
+  }
+};
+
+// js/delivery/words/bridge-client.ts
+var BRIDGE_CLIENT = {
+  ru: {
+    failedToStart: (message) => `мост не запустился: ${message}`,
+    exited: (code, signal, why) => `мост вышел (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; последнее от моста: ${lines}`,
+    aborted: () => "вызов отменён",
+    noAnswer: (method2, ms, why) => `${method2}: нет ответа за ${ms} мс${why}`,
+    noWrites: () => "мост не принимает запись",
+    sessionClosed: () => "сессия закрыта",
+    emptyAnswer: () => "(пустой ответ)"
+  },
+  en: {
+    failedToStart: (message) => `the bridge failed to start: ${message}`,
+    exited: (code, signal, why) => `the bridge exited (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; last from the bridge: ${lines}`,
+    aborted: () => "call aborted",
+    noAnswer: (method2, ms, why) => `${method2}: no answer in ${ms} ms${why}`,
+    noWrites: () => "the bridge does not accept writes",
+    sessionClosed: () => "session closed",
+    emptyAnswer: () => "(empty answer)"
+  }
+};
+
+// js/delivery/words/frame-text.ts
+var FRAME_TEXT = {
+  ru: {
+    frame: (id) => `кадр ${id}`,
+    yoursBelow: () => ` — адресованные строками ниже; `,
+    noneYours: () => ` — адресованных месту нет; `,
+    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
+    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    inFull: (cases) => `целиком — ${cases || `${tool("channel")}(action="history")`}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  },
+  en: {
+    frame: (id) => `frame ${id}`,
+    yoursBelow: () => ` — yours in the lines below; `,
+    noneYours: () => ` — none of them yours; `,
+    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
+    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    inFull: (cases) => `in full — ${cases || `${tool("channel")}(action="history")`}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  }
+};
+var CASE_LINE = {
+  ru: {
+    platform: () => "платформа",
+    quote: (s) => `«${s}»`
+  },
+  en: {
+    platform: () => "platform",
+    quote: (s) => `“${s}”`
+  }
+};
+
+// js/delivery/words/launch.ts
+var LAUNCH = {
+  ru: {
+    notSeated: (why, no, join4) => `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${no}: ${join4}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+    ownSeat: () => "своим местом",
+    notEntered: (place, no, why) => `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
+    entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`
+  },
+  en: {
+    notSeated: (why, no, join4) => `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${no}: ${join4}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`,
+    ownSeat: () => "in a seat of its own",
+    notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
+    entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
+  }
+};
+
+// js/delivery/words/pi.ts
+var PI = {
+  ru: {
+    broken: (list) => `Искрон: не встало — ${list}`,
+    channelPart: (message) => `канал: ${message}`,
+    toolsPart: (message) => `тулы: ${message}`,
+    needLogin: (message) => `Искрон: нужен вход — ${message}`,
+    notUp: (name) => `${name}: мост не поднят в этой сессии`,
+    calling: (name) => `Искрон: ${name}…`,
+    stillWaiting: (name, seconds) => `Искрон: ${name} — ещё жду, ${seconds} с`,
+    serverChanged: (n2) => `Искрон: сервер сменил тулы — в сессии зарегистрировано ${n2}.`,
+    server: () => "сервер",
+    raised: (server, version, n2) => `Искрон: мост поднят (${server} ${version}), тулов в сессии: ${n2}.`,
+    raisedSignedIn: (server, version, n2) => `Искрон: мост поднят (${server} ${version}), тулов в сессии: ${n2} — вход состоялся.`,
+    launchNoBridge: (no) => `Искрон: строка запуска — мост не поднят, в дело №${no} не вошёл.`,
+    stillRaising: () => "Искрон: мост ещё поднимается — тулы iskron_* появятся, как только ответит.",
+    versionUnreadable: () => "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
+    homeNewer: (home, packaged) => `Искрон: дома мост ${home}, в поставке ${packaged} — домашний новее, не трогаю.`,
+    noVersion: () => "версия не читается",
+    replacedSame: (version) => `Искрон: мост дома заменён на привезённый поставкой — версия та же (${version}), байты другие. Грант не тронут.`,
+    updated: (was, version) => `Искрон: мост дома обновлён ${was} → ${version}. Грант не тронут, он лежит рядом отдельными файлами.`,
+    replaceFailed: (was, version, message) => `Искрон: мост дома ${was}, в поставке ${version}, заменить не вышло (${message}). Работаю тем, что есть.`
+  },
+  en: {
+    broken: (list) => `Iskron: did not come up — ${list}`,
+    channelPart: (message) => `channel: ${message}`,
+    toolsPart: (message) => `tools: ${message}`,
+    needLogin: (message) => `Iskron: sign-in needed — ${message}`,
+    notUp: (name) => `${name}: the bridge is not up in this session`,
+    calling: (name) => `Iskron: ${name}…`,
+    stillWaiting: (name, seconds) => `Iskron: ${name} — still waiting, ${seconds} s`,
+    serverChanged: (n2) => `Iskron: the server changed its tools — ${n2} registered in the session.`,
+    server: () => "server",
+    raised: (server, version, n2) => `Iskron: the bridge is up (${server} ${version}), tools in the session: ${n2}.`,
+    raisedSignedIn: (server, version, n2) => `Iskron: the bridge is up (${server} ${version}), tools in the session: ${n2} — sign-in done.`,
+    launchNoBridge: (no) => `Iskron: launch line — the bridge is not up, did not enter case №${no}.`,
+    stillRaising: () => "Iskron: the bridge is still coming up — the iskron_* tools appear as soon as it answers.",
+    versionUnreadable: () => "Iskron: the delivery carries a bridge, but its version is unreadable — leaving the home copy alone.",
+    homeNewer: (home, packaged) => `Iskron: the home bridge is ${home}, the delivery's is ${packaged} — the home one is newer, leaving it alone.`,
+    noVersion: () => "version unreadable",
+    replacedSame: (version) => `Iskron: the home bridge was replaced with the one the delivery brought — same version (${version}), different bytes. The grant is untouched.`,
+    updated: (was, version) => `Iskron: the home bridge was updated ${was} → ${version}. The grant is untouched, it lies beside it in separate files.`,
+    replaceFailed: (was, version, message) => `Iskron: the home bridge is ${was}, the delivery's is ${version}, replacing it failed (${message}). Working with what there is.`
+  }
+};
+
+// js/delivery/words/plugin.ts
+var PLUGIN = {
+  ru: {
+    noBridge: (tried) => "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + tried + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
+    bridgeLine: (line) => `Искрон/мост: ${line}`,
+    notRaised: (message) => `Искрон: мост не поднялся — ${message}`,
+    refusalNoText: (name) => `${name}: отказ без текста`,
+    relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
+    listening: () => "Искрон: канал слушает",
+    dead: (code) => `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    evicted: (code) => `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`,
+    alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
+    note: (text) => `Искрон: ${text}`
+  },
+  en: {
+    noBridge: (tried) => "Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: " + tried + ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
+    bridgeLine: (line) => `Iskron/bridge: ${line}`,
+    notRaised: (message) => `Iskron: the bridge did not come up — ${message}`,
+    refusalNoText: (name) => `${name}: refusal without text`,
+    relistFailed: (message) => `Iskron: the tool list was not reread after the change on the server — ${message}`,
+    listening: () => "Iskron: the channel is listening",
+    dead: (code) => `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true) — only on the human's word.`,
+    alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
+    note: (text) => `Iskron: ${text}`
+  }
+};
+
+// js/delivery/words/rooms.ts
+var ROOM = {
+  ru: {
+    said: (author) => `слово от ${author}`,
+    saidPending: (author) => `слово от ${author} в полёте — текст придёт следом`,
+    aside: (author, addressee, word2) => `${author} → ${addressee}: слово [${word2}]`,
+    asideRun: (author, addressee, count, word2) => `${author} → ${addressee}: ${count} (последнее [${word2}])`,
+    asideBody: (author, addressee, word2) => `${author} → ${addressee}: текст слова [${word2}]`,
+    messages: (n2) => {
+      const m10 = n2 % 10;
+      const m100 = n2 % 100;
+      const w = m10 === 1 && m100 !== 11 ? "слово" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "слова" : "слов";
+      return `${n2} ${w}`;
+    },
+    body: (refersTo, author) => `текст слова [${refersTo}] от ${author}`,
+    bodyAborted: (refersTo) => `слово [${refersTo}] оборвано автором`,
+    bodyLapsed: (refersTo) => `слово [${refersTo}] оборвано платформой по сроку`,
+    closing: (author, endsAt, evidence) => `ведущий ${author} предлагает закрыть дело до ${endsAt}${evidence ? `; свидетельства: ${evidence}` : ""}`,
+    closingMay: (entryId) => `ты можешь возразить — iskron_case(action="object", in_reply_to=${entryId}) (прежнее имя iskron_room)`,
+    closingNot: () => "возражать не тебе",
+    closed: (reason) => `дело закрыто: ${reason}`,
+    objection: (author, reason) => `${author} возражает против закрытия: ${reason}`,
+    lateObjection: (author) => `${author} возразил после закрытия`,
+    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    opened: (author) => `дело открыл ${author}`,
+    joined: (who) => `вошёл ${who}`,
+    left: (who, reason) => `вышел ${who}${reason ? `; причина: ${reason}` : ""}`,
+    invite: (author, who) => `${author} зовёт ${who} в дело`,
+    withdraw: (author) => `приглашение отозвано, отзывает ${author}`,
+    node: (seq, name, realm, reasoning) => `в деле узел #${seq} ${name} (${realm})${reasoning}`,
+    nodeUpdated: (seq, name, reasoning) => `узел #${seq} ${name} обновлён${reasoning}`,
+    nodeDeleted: (seq, name, reasoning) => `узел #${seq} ${name} удалён${reasoning}`,
+    nodeUndeleted: (seq, name, reasoning) => `узел #${seq} ${name} восстановлен${reasoning}`,
+    link: (room, rel) => `дело связано с №${room} (${rel})`,
+    auto: (code, room) => `запись платформы ${code} о деле №${room}`,
+    unknown: (kind) => `род ${kind} мосту неизвестен`,
+    case: (room) => `№${room}`,
+    replyTo: (id) => `в ответ на [${id}]`,
+    stale: () => "лежалый",
+    bodyRead: (how) => `тело: ${how}`,
+    whoHuman: (user) => `человек${user}`,
+    whoRole: (karta) => `роль #${karta}`,
+    whoSibling: (karta) => `брат по роли #${karta}`,
+    whoPlatform: () => "платформа — побудка",
+    whoGraph: () => "событие графа",
+    legacy: (kind, stack) => `род ${kind}${stack ? `, стопка ${stack}` : ""}`
+  },
+  en: {
+    said: (author) => `message from ${author}`,
+    saidPending: (author) => `message from ${author} in flight — the text follows`,
+    aside: (author, addressee, word2) => `${author} → ${addressee}: message [${word2}]`,
+    asideRun: (author, addressee, count, word2) => `${author} → ${addressee}: ${count} (last [${word2}])`,
+    asideBody: (author, addressee, word2) => `${author} → ${addressee}: text of message [${word2}]`,
+    messages: (n2) => `${n2} ${n2 === 1 ? "message" : "messages"}`,
+    body: (refersTo, author) => `text of message [${refersTo}] from ${author}`,
+    bodyAborted: (refersTo) => `message [${refersTo}] cut off by its author`,
+    bodyLapsed: (refersTo) => `message [${refersTo}] cut off by the platform on its deadline`,
+    closing: (author, endsAt, evidence) => `the lead ${author} proposes to close the case by ${endsAt}${evidence ? `; evidence: ${evidence}` : ""}`,
+    closingMay: (entryId) => `you may object — iskron_case(action="object", in_reply_to=${entryId}) (former name iskron_room)`,
+    closingNot: () => "the objection is not yours to make",
+    closed: (reason) => `case closed: ${reason}`,
+    objection: (author, reason) => `${author} objects to closing: ${reason}`,
+    lateObjection: (author) => `${author} objected after the close`,
+    progress: (key, done, verdict, note, author) => `[${key}] [${done}] = ${verdict}${note} · ${author}`,
+    opened: (author) => `case opened by ${author}`,
+    joined: (who) => `entered ${who}`,
+    left: (who, reason) => `left ${who}${reason ? `; reason: ${reason}` : ""}`,
+    invite: (author, who) => `${author} invites ${who} to the case`,
+    withdraw: (author) => `invitation withdrawn by ${author}`,
+    node: (seq, name, realm, reasoning) => `node #${seq} ${name} (${realm}) in the case${reasoning}`,
+    nodeUpdated: (seq, name, reasoning) => `node #${seq} ${name} updated${reasoning}`,
+    nodeDeleted: (seq, name, reasoning) => `node #${seq} ${name} deleted${reasoning}`,
+    nodeUndeleted: (seq, name, reasoning) => `node #${seq} ${name} restored${reasoning}`,
+    link: (room, rel) => `case linked to case №${room} (${rel})`,
+    auto: (code, room) => `platform record ${code} about case №${room}`,
+    unknown: (kind) => `kind ${kind} is unknown to the bridge`,
+    case: (room) => `case №${room}`,
+    replyTo: (id) => `in reply to [${id}]`,
+    stale: () => "stale",
+    bodyRead: (how) => `body: ${how}`,
+    whoHuman: (user) => `human${user}`,
+    whoRole: (karta) => `role #${karta}`,
+    whoSibling: (karta) => `sibling of role #${karta}`,
+    whoPlatform: () => "platform — a wake-up",
+    whoGraph: () => "graph event",
+    legacy: (kind, stack) => `kind ${kind}${stack ? ` · ${stack}` : ""}`
+  }
+};
+var ROOM_AUTO = {
+  ru: {
+    child_opened: (room) => `дочернее дело №${room} открыто`,
+    child_closing: (room) => `дочернее дело №${room} закрывается`,
+    child_closed: (room) => `дочернее дело №${room} закрыто`,
+    child_late_objection: (room) => `позднее возражение в дочернем деле №${room}`
+  },
+  en: {
+    child_opened: (room) => `child case №${room} opened`,
+    child_closing: (room) => `child case №${room} is closing`,
+    child_closed: (room) => `child case №${room} closed`,
+    child_late_objection: (room) => `late objection in child case №${room}`
+  }
+};
+var ROOM_REL = {
+  ru: {
+    parent: () => "дочернее к нему",
+    child: () => "родительское к нему",
+    continues: () => "продолжает его"
+  },
+  en: {
+    parent: () => "its child",
+    child: () => "its parent",
+    continues: () => "continues it"
+  }
+};
+var VERDICT = {
+  ru: { ok: () => "ok", partial: () => "частично", bad: () => "slop" },
+  en: { ok: () => "ok", partial: () => "partial", bad: () => "slop" }
+};
+
+// js/delivery/words/status.ts
+var TAKE_PATH_RU = 'iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
+var TAKE_PATH_EN = `iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
+var TWO_ENTRIES_RU = "Если место — твоё и держит его мост этой же сессии (в ней две записи iskron, плагинная и пользовательская), зови status тем же набором тулов, которым звал iskron_stand: передача не нужна.";
+var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
+var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
+var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
+
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -50,40 +410,34 @@ function envOf(k) {
 // js/shared/standings.ts
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-var defaultAuthDir = () => join(homedir(), ".iskron-bridge");
-var authDirFromEnv = () => envOf("ISKRON_BRIDGE_AUTH_DIR")?.trim() || defaultAuthDir();
+var defaultAuthDir = () => join(homedir(), HOME_DIR);
+var authDirFromEnv = () => envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
 
 // js/shared/lang.ts
-function langOfUrl(url) {
-  try {
-    return /\.ai\.?$/i.test(new URL(url).hostname) ? "en" : "ru";
-  } catch {
-    return "ru";
-  }
-}
+var isLang = (v) => LANGS.includes(v ?? "");
 function forcedLang() {
-  const v = envOf("ISKRON_BRIDGE_LANG")?.trim().toLowerCase();
-  return v === "en" || v === "ru" ? v : null;
+  const v = envOf(envName("BRIDGE_LANG"))?.trim().toLowerCase();
+  return isLang(v) ? v : null;
 }
 function resolve2() {
   const forced = forcedLang();
   if (forced) return forced;
-  const fromEnv = envOf("ISKRON_BRIDGE_URL")?.trim();
-  if (fromEnv) return langOfUrl(fromEnv);
+  const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
+  if (fromEnv) return langOfServer(fromEnv);
   try {
     const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
-    if (text) return langOfUrl(text);
+    if (text) return langOfServer(text);
   } catch {
   }
-  return "ru";
+  return DEFAULT_LANG;
 }
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
-var L = (ru, en) => lang() === "en" ? en : ru;
+var words = (dict) => dict[lang()];
 
 // js/shared/channel.ts
-var SILENT_FLOOR_MS = Number(process.env.ISKRON_CHANNEL_SILENT_FLOOR_MS) || 6e4;
-var FLAP_PAUSES_MS = (process.env.ISKRON_CHANNEL_FLAP_MS || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
+var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
+var FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
 function classifyOrigin(frame, myKarta) {
   const p = frame.provenance ?? {};
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
@@ -101,13 +455,12 @@ function classifyOrigin(frame, myKarta) {
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
 var str = (v) => typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
 var after = (key, prefix) => key.startsWith(prefix) ? key.slice(prefix.length) : key;
-function fill(template, v) {
-  return template.replace(/\{([^\w{}]*)(\w+)\}/g, (_m, sep, name) => {
-    const x = str(v[name]);
-    if (sep) return x ? sep + x : "";
-    return x || "?";
-  });
-}
+var need = (v) => str(v) || "?";
+var opt = (sep, v) => {
+  const x = str(v);
+  return x ? sep + x : "";
+};
+var pick = (dict, key) => Object.hasOwn(dict, key) ? dict[key] : void 0;
 var mineOf = (frame) => [str(frame.to_standing_id), str(frame.to_standing)].filter(Boolean);
 function myRole(frame, fields) {
   const ka = obj(fields.karta);
@@ -130,37 +483,11 @@ function addresseeOf(v) {
 }
 
 // js/shared/asks.ts
-var ASK_WORDS = {
-  ask: "{author} спрашивает роль {to}{ to_place} [{key}]: «{done}»{; form}{; advice}",
-  ask_place: "(место {place})",
-  ask_yes_no: "ответ: да или нет (yes | no)",
-  ask_free: "ответ своим текстом",
-  ask_choice: "варианты: {options}",
-  ask_advice: "рекомендация: {option}{ — why}",
-  answer: "{author} отвечает на [{refers_to}]: {reply}",
-  ack: "ответ [{refers_to}] принят{: reply} · {author}",
-  // Снятие — progress роли спросившего на ключе вопроса с fields.withdraws.
-  ask_withdrawn: "вопрос [{withdraws}] снят: [{key}] [{done}] = {verdict} · {author}",
-  // Зов роли платформой по погасшему месту: cause — почему зовут.
-  invite_ownerless: "платформа зовёт роль {who} в дело: место {standing} погасло, его строки ничьи",
-  invite_answer_waiting: "платформа зовёт роль {who} в дело: ответ ждёт приёма, спросившее место {standing} ушло"
-};
-var ASK_WORDS_EN = {
-  ask: "{author} asks the role {to}{ to_place} [{key}]: “{done}”{; form}{; advice}",
-  ask_place: "(seat {place})",
-  ask_yes_no: "answer: yes or no (yes | no)",
-  ask_free: "answer in your own words",
-  ask_choice: "options: {options}",
-  ask_advice: "recommended: {option}{ — why}",
-  answer: "{author} answers [{refers_to}]: {reply}",
-  ack: "answer [{refers_to}] accepted{: reply} · {author}",
-  ask_withdrawn: "question [{withdraws}] withdrawn: [{key}] [{done}] = {verdict} · {author}",
-  invite_ownerless: "the platform calls the role {who} to the case: the seat {standing} is gone, its lines are nobody's",
-  invite_answer_waiting: "the platform calls the role {who} to the case: an answer awaits acceptance, the asking seat {standing} has left"
-};
 var ASK_KINDS = /* @__PURE__ */ new Set(["ask", "answer", "ack"]);
-var askWord = (key) => (lang() === "en" ? ASK_WORDS_EN : ASK_WORDS)[key];
-var phrase = (key, values = {}) => fill(askWord(key) ?? "", values);
+var INVITE_CAUSES = {
+  ownerless: "inviteOwnerless",
+  answer_waiting: "inviteAnswerWaiting"
+};
 var toOf = (fields) => obj(fields.to);
 var byMe = (frame) => {
   const mine = mineOf(frame);
@@ -191,32 +518,60 @@ function addressedMine(frame) {
   const mine = mineOf(frame);
   return !!to && to.addr.some((a) => mine.includes(a));
 }
-var quote = (s) => s ? L(`«${s}»`, `“${s}”`) : "";
+var quote = (s) => s ? words(CASE_LINE).quote(s) : "";
 function formOf(fields) {
+  const W3 = words(ASK);
   const form = str(fields.form);
-  if (form === "yes_no") return phrase("ask_yes_no");
-  if (form === "free") return phrase("ask_free");
+  if (form === "yes_no") return W3.yesNo();
+  if (form === "free") return W3.free();
   if (form !== "choice" || !Array.isArray(fields.options)) return "";
   const options = fields.options.map((o) => {
     const x = obj(o);
     const ctx = str(x.context);
     return `${str(x.id)} ${quote(str(x.label))}${ctx ? ` (${ctx})` : ""}`;
   }).join(", ");
-  return phrase("ask_choice", { options });
+  return W3.choice(need(options));
 }
 function askValues(kind, line, fields) {
   if (kind !== "ask")
     return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
+  const W3 = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
   const place = addresseeOf(to.standing)?.label ?? "";
   const rec3 = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
-    to_place: place ? phrase("ask_place", { place }) : "",
+    to_place: place ? W3.place(need(place)) : "",
     form: formOf(fields),
-    advice: str(rec3.option) || str(rec3.why) ? phrase("ask_advice", { option: str(rec3.option) || "—", why: rec3.why }) : ""
+    advice: str(rec3.option) || str(rec3.why) ? W3.advice(need(str(rec3.option) || "—"), opt(" — ", rec3.why)) : ""
   };
+}
+function askText(kind, cause, v) {
+  const W3 = words(ASK);
+  const invite = cause ? pick(INVITE_CAUSES, cause) : void 0;
+  if (invite) return W3[invite](need(v.who), need(v.standing));
+  if (kind === "progress" && str(v.withdraws))
+    return W3.withdrawn(
+      need(v.withdraws),
+      need(v.key),
+      need(v.done),
+      need(v.verdict),
+      need(v.author)
+    );
+  if (kind === "ask")
+    return W3.ask(
+      need(v.author),
+      need(v.to),
+      opt(" ", v.to_place),
+      need(v.key),
+      need(v.done),
+      opt("; ", v.form),
+      opt("; ", v.advice)
+    );
+  if (kind === "answer") return W3.answer(need(v.author), need(v.refers_to), need(v.reply));
+  if (kind === "ack") return W3.ack(need(v.refers_to), opt(": ", v.reply), need(v.author));
+  return void 0;
 }
 
 // js/shared/numbering.ts
@@ -287,134 +642,10 @@ var processAsks = {
 };
 
 // js/shared/room-kinds.ts
-var WORDS = {
-  said: "слово от {author}",
-  said_pending: "слово от {author} в полёте — текст придёт следом",
-  // Адресное слово не мне (#6081): факт без тела; череда одной пары — одной строкой.
-  aside: "{author} → {addressee}: слово [{word}]",
-  aside_run: "{author} → {addressee}: {count} (последнее [{word}])",
-  // Тело адресного слова не мне без самого слова в пачке — продолжение, не новое слово.
-  aside_body: "{author} → {addressee}: текст слова [{word}]",
-  word_one: "слово",
-  word_few: "слова",
-  word_many: "слов",
-  body: "текст слова [{refers_to}] от {author}",
-  body_aborted: "слово [{refers_to}] оборвано автором",
-  body_lapsed: "слово [{refers_to}] оборвано платформой по сроку",
-  closing: "ведущий {author} предлагает закрыть дело до {ends_at}{; свидетельства: evidence}",
-  closing_may: 'ты можешь возразить — iskron_case(action="object", in_reply_to={entry_id}) (прежнее имя iskron_room)',
-  closing_not: "возражать не тебе",
-  closed: "дело закрыто: {reason}",
-  objection: "{author} возражает против закрытия: {reason}",
-  late_objection: "{author} возразил после закрытия",
-  // Строка гроссбуха — ровно «[было] [сделал] = вердикт», примечание к не-ok, автор хвостом (норма владельца).
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "дело открыл {author}",
-  joined: "вошёл {who}",
-  left: "вышел {who}{; причина: reason}",
-  invite: "{author} зовёт {who} в дело",
-  withdraw: "приглашение отозвано, отзывает {author}",
-  node: "в деле узел #{seq} {name} ({realm}){; reasoning}",
-  node_updated: "узел #{seq} {name} обновлён{; reasoning}",
-  node_deleted: "узел #{seq} {name} удалён{; reasoning}",
-  node_undeleted: "узел #{seq} {name} восстановлен{; reasoning}",
-  link: "дело связано с №{room} ({rel})",
-  auto: "запись платформы {code} о деле №{room}",
-  unknown: "род {kind} мосту неизвестен",
-  // Короткий кадр (frame-text.ts): дело, кто говорит, ответ — без сырого конверта.
-  case: "№{room}",
-  reply_to: "в ответ на [{id}]",
-  stale: "лежалый",
-  body_read: "тело: {how}",
-  who_human: "человек{ @user}",
-  who_role: "роль #{karta}",
-  who_sibling: "брат по роли #{karta}",
-  who_platform: "платформа — побудка",
-  who_graph: "событие графа",
-  legacy: "род {kind}{, стопка stack}"
-};
-var WORDS_EN = {
-  said: "message from {author}",
-  said_pending: "message from {author} in flight — the text follows",
-  aside: "{author} → {addressee}: message [{word}]",
-  aside_run: "{author} → {addressee}: {count} (last [{word}])",
-  aside_body: "{author} → {addressee}: text of message [{word}]",
-  word_one: "message",
-  word_few: "messages",
-  word_many: "messages",
-  body: "text of message [{refers_to}] from {author}",
-  body_aborted: "message [{refers_to}] cut off by its author",
-  body_lapsed: "message [{refers_to}] cut off by the platform on its deadline",
-  closing: "the lead {author} proposes to close the case by {ends_at}{; evidence: evidence}",
-  closing_may: 'you may object — iskron_case(action="object", in_reply_to={entry_id}) (former name iskron_room)',
-  closing_not: "the objection is not yours to make",
-  closed: "case closed: {reason}",
-  objection: "{author} objects to closing: {reason}",
-  late_objection: "{author} objected after the close",
-  progress: "[{key}] [{done}] = {verdict}{ — note} · {author}",
-  opened: "case opened by {author}",
-  joined: "entered {who}",
-  left: "left {who}{; reason: reason}",
-  invite: "{author} invites {who} to the case",
-  withdraw: "invitation withdrawn by {author}",
-  node: "node #{seq} {name} ({realm}) in the case{; reasoning}",
-  node_updated: "node #{seq} {name} updated{; reasoning}",
-  node_deleted: "node #{seq} {name} deleted{; reasoning}",
-  node_undeleted: "node #{seq} {name} restored{; reasoning}",
-  link: "case linked to case №{room} ({rel})",
-  auto: "platform record {code} about case №{room}",
-  unknown: "kind {kind} is unknown to the bridge",
-  case: "case №{room}",
-  reply_to: "in reply to [{id}]",
-  stale: "stale",
-  body_read: "body: {how}",
-  who_human: "human{ @user}",
-  who_role: "role #{karta}",
-  who_sibling: "sibling of role #{karta}",
-  who_platform: "platform — a wake-up",
-  who_graph: "graph event",
-  legacy: "kind {kind}{ · stack}"
-};
-var AUTO_WORDS = {
-  child_opened: "дочернее дело №{room} открыто",
-  child_closing: "дочернее дело №{room} закрывается",
-  child_closed: "дочернее дело №{room} закрыто",
-  child_late_objection: "позднее возражение в дочернем деле №{room}"
-};
-var AUTO_WORDS_EN = {
-  child_opened: "child case №{room} opened",
-  child_closing: "child case №{room} is closing",
-  child_closed: "child case №{room} closed",
-  child_late_objection: "late objection in child case №{room}"
-};
-var REL_WORDS = {
-  parent: "дочернее к нему",
-  child: "родительское к нему",
-  continues: "продолжает его"
-};
-var REL_WORDS_EN = {
-  parent: "its child",
-  child: "its parent",
-  continues: "continues it"
-};
-var VERDICT_WORDS = {
-  ok: "ok",
-  partial: "частично",
-  bad: "slop"
-};
-var VERDICT_WORDS_EN = {
-  ok: "ok",
-  partial: "partial",
-  bad: "slop"
-};
-var words = () => lang() === "en" ? WORDS_EN : WORDS;
-var phrase2 = (key, values = {}) => fill(words()[key] ?? "", values);
-var autoWords = () => lang() === "en" ? AUTO_WORDS_EN : AUTO_WORDS;
-var relWords = () => lang() === "en" ? REL_WORDS_EN : REL_WORDS;
 var NODE_OPS = {
-  updated: "node_updated",
-  deleted: "node_deleted",
-  undeleted: "node_undeleted"
+  updated: "nodeUpdated",
+  deleted: "nodeDeleted",
+  undeleted: "nodeUndeleted"
 };
 var RULES = {
   said: "stack",
@@ -424,8 +655,7 @@ var RULES = {
   objection: "interrupt",
   late_objection: "interrupt",
   invite: "mine",
-  // Толчок по ожиданию (#6655): прерывает только ответ ждавшему; вопрос мне,
-  // «принята» и снятие — пачкой, текстом как адресованные (#6868).
+  // Only the answer to the waiting seat interrupts (graph @nks/nks-dev, nodes #6655, #6868).
   ask: "batch",
   answer: "addressed",
   ack: "batch",
@@ -436,7 +666,7 @@ var RULES = {
   withdraw: "batch",
   node: "batch",
   link: "batch",
-  // Запись платформы о связанном деле: признака прерывания у неё нет (#4925).
+  // (graph @nks/nks-dev, node #4925)
   auto: "batch"
 };
 function authorOf(author) {
@@ -445,7 +675,7 @@ function authorOf(author) {
   const standing = str(a.standing);
   if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
-  return a.kind === "platform" ? L("платформа", "platform") : "?";
+  return a.kind === "platform" ? words(CASE_LINE).platform() : "?";
 }
 function roomOf(v) {
   const r = obj(v);
@@ -458,12 +688,51 @@ function whoOf(fields) {
   const addr = str(st.standing);
   return name && addr ? `${name} (${addr})` : name || addr;
 }
-function wordsCount(n2) {
-  const W = words();
-  const m10 = n2 % 10;
-  const m100 = n2 % 100;
-  const w = lang() === "en" ? n2 === 1 ? W.word_one : W.word_many : m10 === 1 && m100 !== 11 ? W.word_one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? W.word_few : W.word_many;
-  return `${n2} ${w}`;
+function kindText(kind, v, f, pending, aborted) {
+  const W3 = words(ROOM);
+  const n2 = (k) => need(v[k]);
+  const lapsed = obj(obj(f.line).author).kind === "platform";
+  if (pending) return W3.saidPending(n2("author"));
+  if (aborted) return lapsed ? W3.bodyLapsed(n2("refers_to")) : W3.bodyAborted(n2("refers_to"));
+  if (kind === "auto")
+    return pick(words(ROOM_AUTO), str(v.code))?.(n2("room")) ?? W3.auto(n2("code"), n2("room"));
+  const ask = askText(kind, str(v.cause), v);
+  if (ask !== void 0) return ask;
+  const reasoning = opt("; ", v.reasoning);
+  const op = kind === "node" ? pick(NODE_OPS, str(v.op)) : void 0;
+  if (op) return W3[op](n2("seq"), n2("name"), reasoning);
+  switch (kind) {
+    case "said":
+      return W3.said(n2("author"));
+    case "body":
+      return W3.body(n2("refers_to"), n2("author"));
+    case "closing":
+      return W3.closing(n2("author"), n2("ends_at"), str(v.evidence));
+    case "closed":
+      return W3.closed(n2("reason"));
+    case "objection":
+      return W3.objection(n2("author"), n2("reason"));
+    case "late_objection":
+      return W3.lateObjection(n2("author"));
+    case "progress":
+      return W3.progress(n2("key"), n2("done"), n2("verdict"), opt(" — ", v.note), n2("author"));
+    case "opened":
+      return W3.opened(n2("author"));
+    case "joined":
+      return W3.joined(n2("who"));
+    case "left":
+      return W3.left(n2("who"), str(v.reason));
+    case "invite":
+      return W3.invite(n2("author"), n2("who"));
+    case "withdraw":
+      return W3.withdraw(n2("author"));
+    case "node":
+      return W3.node(n2("seq"), n2("name"), n2("realm"), reasoning);
+    case "link":
+      return W3.link(n2("room"), n2("rel"));
+    default:
+      return "";
+  }
 }
 function roomKind(frame) {
   if (!frame || typeof frame !== "object") return null;
@@ -482,82 +751,72 @@ function roomKind(frame) {
   );
   const values = {
     kind,
+    cause,
     author: byWhom,
     key,
     done: line.done,
-    verdict: (lang() === "en" ? VERDICT_WORDS_EN : VERDICT_WORDS)[str(line.verdict)] ?? line.verdict,
+    verdict: pick(words(VERDICT), str(line.verdict))?.() ?? line.verdict,
     note: line.note,
     ends_at: fields.ends_at,
     evidence: Array.isArray(fields.evidence) ? fields.evidence.map(str).join(", ") : "",
     entry_id: line.entry_id ?? f.entry_id,
-    // Слово, которому body несёт текст или обрыв: refers_to строки, иначе in_reply_to конверта.
-    // Ответ и приём (#6867) — так же: refers_to строки, in_reply_to конверта.
     refers_to: str(line.refers_to) || str(f.in_reply_to) || str(obj(f.word).entry_id),
     reason: fields.reason,
     target: after(key, "invite:"),
-    // Ключ несёт id; имя приглашённого — в полях строки (наблюдено на бою: standing/karta с name).
-    // Вошедший и ушедший — место fields.standing (уход по сроку пишет платформа, api 0.89.6), иначе автор.
-    // Зов роли (#6870) — роль по имени из fields.karta, погасшее место — fields.gone_standing.
+    // Observed live: the invite key carries the id, the invitee's name is in the line fields (standing/karta with name).
+    // Joined and left — fields.standing (a timed-out leave is written by the platform, api 0.89.6), else the author;
+    // a role call by cause — fields.karta (graph @nks/nks-dev, node #6870).
     who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
     standing: str(fields.gone_standing) || addresseeOf(fields.gone_standing)?.label,
     ...ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {},
     room: roomOf(fields.room) || after(key, "link:"),
-    rel: relWords()[str(fields.rel)] ?? fields.rel,
+    rel: pick(words(ROOM_REL), str(fields.rel))?.() ?? fields.rel,
     code: fields.code,
+    op: fields.op,
     seq: node.seq,
     name: node.name,
     realm: node.realm,
-    // reasoning дельты узла — тело записи node (line.done, body кадра), не поле (слово api, #6070).
+    // A node delta's reasoning is the record's body, not a field (graph @nks/nks-dev, node #6070).
     reasoning: kind === "node" ? line.done || f.body : void 0,
     withdraws: fields.withdraws
   };
+  const W3 = words(ROOM);
   const rule = RULES[kind];
   const author = str(values.author);
   if (!rule)
     return {
       kind,
       rule: "batch",
-      words: fill(words().unknown, values),
+      words: W3.unknown(need(kind)),
       author,
       phase: null,
       known: false
     };
-  const W = words();
-  const word = kind === "said" || kind === "body";
-  const withheld = word && f.body_withheld === true;
-  const to = word ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  const word2 = kind === "said" || kind === "body";
+  const withheld = word2 && f.body_withheld === true;
+  const to = word2 ? addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
   if (to && !addresseeLeft && (withheld || mine.length && !to.addr.some((a) => mine.includes(a)))) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
-    const id = counts ? values.entry_id : values.refers_to;
-    const run = (n2) => fill(n2 === 0 ? W.aside_body : n2 > 1 ? W.aside_run : W.aside, {
-      ...values,
-      word: id,
-      addressee: to.label,
-      count: wordsCount(n2)
-    });
+    const id = need(counts ? values.entry_id : values.refers_to);
+    const by = need(values.author);
+    const addressee = need(to.label);
+    const run = (n2) => n2 === 0 ? W3.asideBody(by, addressee, id) : n2 > 1 ? W3.asideRun(by, addressee, W3.messages(n2), id) : W3.aside(by, addressee, id);
     const aside = { pair, counts, run };
     const words2 = run(counts ? 1 : 0);
     return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
   const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind === "body" && fields.aborted === true;
-  const wordsOf = pending ? W.said_pending : aborted ? obj(line.author).kind === "platform" ? W.body_lapsed : W.body_aborted : kind === "auto" ? autoWords()[str(values.code)] ?? W.auto : cause && askWord(`invite_${cause}`) ? askWord(`invite_${cause}`) : kind === "progress" && str(fields.withdraws) ? askWord("ask_withdrawn") : ASK_KINDS.has(kind) ? askWord(kind) : (
-    // op узла (bound | updated | deleted | undeleted): без op и bound — прежнее слово.
-    kind === "node" && NODE_OPS[str(fields.op)] ? W[NODE_OPS[str(fields.op)]] : W[kind]
-  );
-  let text = fill(wordsOf ?? "", values);
+  let text = kindText(kind, values, f, pending, aborted);
   if (kind === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    text += "; " + fill(mayI ? W.closing_may : W.closing_not, values);
+    text += "; " + (mayI ? W3.closingMay(need(values.entry_id)) : W3.closingNot());
   }
-  const stack = rule === "stack" ? (
-    // Стопка решает у said и body; слово без стопки — прежним путём, вставкой.
-    f.stack === "defer" ? "batch" : "interrupt"
-  ) : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
+  const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? mine.includes(str(values.target)) || myRole(f, fields) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
 }
@@ -617,13 +876,12 @@ function addressedToMine(frame) {
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
   if (rk?.kind === "body") {
-    const word = obj(f.word);
-    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
+    const word2 = obj(f.word);
+    if (f.addressed === true || hit(f.addressee) || str(obj(obj(word2.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
       return true;
   } else if (
-    // Слово мне, ответ на мою запись (#5954), помеченное важным: род слова
-    // important на конверте или в полях строки. Слово в полёте запоминается —
-    // его тело придёт второй фазой без этих признаков.
+    // A word to me, a reply to my record (#5954), marked important; a word in flight
+    // is remembered, since its body comes as a second phase without these marks.
     hit(f.addressee) || hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"
   ) {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
@@ -670,21 +928,21 @@ var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.recei
 var onlyTacts = (frames) => !!frames?.length && frames.every(isTact);
 
 // js/shared/clients.ts
-var PI_CLIENT = "pi-iskron";
-var HARNESS_VERSION_ENV = "ISKRON_HARNESS_VERSION";
-var SKILLS_ROOT_ENV = "ISKRON_SKILLS_ROOT";
+var OPENCODE_CLIENT = CLIENTS.opencode;
+var PI_CLIENT = CLIENTS.pi;
+var HARNESS_VERSION_ENV = envName("HARNESS_VERSION");
+var SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
 
 // js/shared/fields.ts
-var FIELDS_CAPABILITY = "iskron/structured";
+var FIELDS_CAPABILITY = STRUCTURED_CAPABILITY;
 var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var VERSION = "7.7.0";
-var releaseBuildIn = (text) => text.includes(`"${["iskron-build", "release"].join(":")}"`);
-var devBuildIn = (text) => text.includes(`"${["iskron-build", "dev"].join(":")}"`);
+var releaseBuildIn = (text) => text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
+var devBuildIn = (text) => text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -693,7 +951,9 @@ function buildOf(selfUrl) {
     return `v${VERSION}`;
   }
 }
+var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
 function versionIn(text) {
+  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
   const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
   return m ? m[1] : null;
 }
@@ -705,9 +965,7 @@ var BUILD = buildOf(import.meta.url);
 var out = scoped(() => ({ stream: null }));
 
 // js/bridge/config.ts
-var DEFAULT_SERVER_URL = "https://mcp.iskron.ru/";
-var ENGLISH_SERVER_URL = "https://mcp.iskron.ai/";
-var PRODUCTION_URLS = new Set([DEFAULT_SERVER_URL, ENGLISH_SERVER_URL].map(strip));
+var PRODUCTION_URLS = new Set(LANGS.map((l) => strip(SERVER_URLS[l])));
 function strip(url) {
   return url.replace(/\/+$/, "");
 }
@@ -722,35 +980,43 @@ var REGISTRATION_REUSE_MS = 45 * 6e4;
 
 // js/bridge/oauth/pacing.ts
 var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 >= 0);
-var DEAD_RECHECK_MS = pauses(process.env.ISKRON_BRIDGE_DEAD_RECHECK_MS, "1000,2000");
-var IN_CALL_WAIT_MS = Number(process.env.ISKRON_BRIDGE_IN_CALL_WAIT_MS) || 1e4;
-var ORPHAN_FLOW_MS = Number(process.env.ISKRON_BRIDGE_ORPHAN_FLOW_MS) || 5 * 6e4;
+var DEAD_RECHECK_MS = pauses(process.env[envName("BRIDGE_DEAD_RECHECK_MS")], "1000,2000");
+var IN_CALL_WAIT_MS = Number(process.env[envName("BRIDGE_IN_CALL_WAIT_MS")]) || 1e4;
+var ORPHAN_FLOW_MS = Number(process.env[envName("BRIDGE_ORPHAN_FLOW_MS")]) || 5 * 6e4;
 
 // js/bridge/oauth/device.ts
-var SLOW_DOWN_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_SLOW_DOWN_MS) || 5e3;
-var REISSUE_PAUSE_MS = Number(process.env.ISKRON_BRIDGE_DEVICE_REISSUE_MS) || 3e4;
+var SLOW_DOWN_MS = Number(process.env[envName("BRIDGE_DEVICE_SLOW_DOWN_MS")]) || 5e3;
+var REISSUE_PAUSE_MS = Number(process.env[envName("BRIDGE_DEVICE_REISSUE_MS")]) || 3e4;
 var never = new Promise(() => {
 });
 
 // js/bridge/oauth/flow.ts
-var CLAIM_WAIT_MS = Number(process.env.ISKRON_BRIDGE_CLAIM_WAIT_MS) || 15e3;
-var LANDED_POLL_MS = Number(process.env.ISKRON_BRIDGE_LANDED_POLL_MS) || 2e3;
-var RELEASE_GAP_MS = Number(process.env.ISKRON_BRIDGE_RELEASE_GAP_MS) || 0;
+var CLAIM_WAIT_MS = Number(process.env[envName("BRIDGE_CLAIM_WAIT_MS")]) || 15e3;
+var LANDED_POLL_MS = Number(process.env[envName("BRIDGE_LANDED_POLL_MS")]) || 2e3;
+var RELEASE_GAP_MS = Number(process.env[envName("BRIDGE_RELEASE_GAP_MS")]) || 0;
+
+// js/bridge/repeat.ts
+var OWN_CALL_PREFIX = `${ID_PREFIX}bridge-call-`;
+var READ_TOOLS = new Set(["look", "orient", "search", "semantic_search"].map(tool));
+var SAFE_ACTIONS = {
+  [tool("channel")]: /* @__PURE__ */ new Set(["list"]),
+  [tool("realm")]: /* @__PURE__ */ new Set(["list"])
+};
 
 // js/bridge/toolsync.ts
 var T = scoped(() => ({
   served: null,
-  // у сессии харнеса — свой список
+  // each harness session has its own list
   told: false,
-  // list_changed сказан, а харнес списка ещё не перечёл
+  // list_changed said, and the harness has not reread yet
   inFlight: 0,
-  // tools/list харнеса в полёте (любые страницы)
+  // the harness's tools/list in flight (any page)
   listing: /* @__PURE__ */ new WeakSet(),
-  // tools/list харнеса (первая страница) в полёте
+  // the harness's tools/list (first page) in flight
   heldBack: /* @__PURE__ */ new WeakSet(),
-  // …в чьём ответе сервер сказал list_changed
+  // …in whose answer the server said list_changed
   live: /* @__PURE__ */ new WeakSet()
-  // …на который харнесу ушёл живой список сервера
+  // …answered to the harness with the server's live list
 }));
 
 // js/bridge/transport.ts
@@ -816,6 +1082,8 @@ function superseded(frames) {
 }
 
 // js/shared/frame-text.ts
+var W = () => words(ROOM);
+var T2 = () => words(FRAME_TEXT);
 var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
@@ -843,19 +1111,19 @@ var caseKey = (frame) => caseOf(frame)?.room ?? "";
 function caseHead(frame, withZachin) {
   const c = caseOf(frame);
   if (!c) return "";
-  const no = phrase2("case", { room: c.room });
+  const no = W().case(need(c.room));
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
 function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin = frame.origin ?? classifyOrigin(frame);
-  if (origin === "platform") return phrase2("who_platform");
-  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return phrase2("who_graph");
+  if (origin === "platform") return W().whoPlatform();
+  if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return phrase2("who_human", { user: p.user }) + place;
+  if (origin === "human") return W().whoHuman(opt(" @", p.user)) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
-  return phrase2(origin === "sibling" ? "who_sibling" : "who_role", { karta }) + place;
+  return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 function textOf(frame) {
   if (roomKind(frame)?.aside) return "";
@@ -866,12 +1134,13 @@ function tail(frame, withReply) {
   const f = frame;
   const parts = [];
   const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
-  if (withReply && to) parts.push(phrase2("reply_to", { id: to }));
-  if (frame.stale === true) parts.push(phrase2("stale"));
+  if (withReply && to) parts.push(W().replyTo(need(to)));
+  if (frame.stale === true) parts.push(W().stale());
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
-    parts.push(phrase2("body_read", { how: frame.body_read }));
+    parts.push(W().bodyRead(need(frame.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
+var markFrame = (text) => `${FRAME_MARK} ${text}`;
 function frameToText(frame, raw) {
   if (!frame) return raw;
   const f = frame;
@@ -883,7 +1152,7 @@ function frameToText(frame, raw) {
     const rk = roomKind(frame);
     const line = rec2(f.line);
     const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
-    const words2 = rk ? rk.words : phrase2("legacy", { kind: f.kind, stack: typeof f.stack === "string" ? f.stack : "" });
+    const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
     const who = origin === "platform" ? "" : whoOf2(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
@@ -907,7 +1176,7 @@ function batchLine(frame, run, withZachin = true) {
   const line = rec2(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words2 = rk?.words ?? `${L("кадр", "frame")} ${typeof f.id === "string" ? f.id : "?"}`;
+  const words2 = rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?");
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
   const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
@@ -930,9 +1199,9 @@ function caseCountLine(frames) {
   const mineN = frames.filter((f) => addressedToMine(f)).length;
   const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
-  const yours = mineN ? L(` — адресованные строками ниже; `, ` — yours in the lines below; `) : L(` — адресованных месту нет; `, ` — none of them yours; `);
+  const yours = mineN ? T2().yoursBelow() : T2().noneYours();
   const n2 = frames.length - gone;
-  return L(`${head}: записей ${n2}, тебе ${mineN}`, `${head}: ${n2} records, yours ${mineN}`) + (gone ? L(`, сменённых строк ключа ${gone}`, `, ${gone} superseded lines of a key`) : "") + yours + batchPointer(frames) + ".";
+  return T2().count(head, n2, mineN) + (gone ? T2().supersededLines(gone) : "") + yours + batchPointer(frames) + ".";
 }
 function caseCountLines(frames) {
   return casesOf(frames).map(caseCountLine).filter(Boolean);
@@ -953,16 +1222,14 @@ function batchPointer(frames) {
     const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n2 === "number" ? String(n2) : JSON.stringify(n2)}`;
     since.set(args, Math.min(since.get(args) ?? e, e));
   }
-  const whole = L("целиком — ", "in full — ");
-  if (!since.size) return `${whole}iskron_channel(action="history")`;
-  return whole + [...since].map(([args, e]) => `iskron_case(${args}, since=${e - 1})`).join("; ");
+  return T2().inFull([...since].map(([args, e]) => T2().caseHistory(args, e - 1)).join("; "));
 }
 
 // js/bridge/backlog.ts
-var BACKLOG_MS = Number(process.env.ISKRON_BRIDGE_BACKLOG_MS) || 1500;
+var BACKLOG_MS = Number(process.env[envName("BRIDGE_BACKLOG_MS")]) || 1500;
 
 // js/bridge/roomstack.ts
-var ROOM_BATCH_MS = Number(process.env.ISKRON_BRIDGE_ROOM_BATCH_MS) || 6e4;
+var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
@@ -974,37 +1241,37 @@ var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
-  /** Каталог сессии, из которого занимается место (cwd в iskron_stand), — в запись держания, для возврата по каталогу (resume.ts). */
+  /** session dir the place is taken from (stand cwd), kept in the hold record for cwd resume (resume.ts) */
   standCwd: null,
   holder: null,
-  /** последний знак службы сокета, отпущенного уходом (parkStanding), — срок записи держания от него (holdkeep.ts) */
+  /** last service sign of a socket released by parkStanding; the record lifetime counts from it (holdkeep.ts) */
   heardAt: 0,
-  /** дверь основного места — того, ради которого взят сокет */
+  /** door of the primary place, the one the socket was taken for */
   door: null,
   currentKey: null,
   currentUrl: null,
   currentStatusUrl: null,
-  /** ключ места, отнятого у этого моста закрытием 4000 */
+  /** key of the place taken from this bridge by close 4000 */
   evictedKey: null,
-  /** прицепившийся после — узнаёт, а не молчит */
+  /** told to a client attaching later */
   evictedEvent: null,
-  /** ушёл с места: сокет службы закрыт, ключ и адреса целы (leave.ts) */
+  /** left the place: service socket closed, key and addresses kept (leave.ts) */
   parked: false,
-  /** сокет открыт заново тем же адресом (возврат, обрыв), а hello этого открытия ещё нет: адрес мог повернуть другой (deaf.ts) */
+  /** socket reopened on the same address without this opening's hello yet: another may have rotated it (deaf.ts) */
   unheard: false,
-  /** ключ места, чей сокет мост отпустил, а привязку помнит (мёртвый токен, переоткрытие без hello), пока hello не докажет слух снова (deaf.ts) */
+  /** key of a place whose socket was released but binding remembered, until hello proves hearing (deaf.ts) */
   deafKey: null,
-  /** места других графов того же канала на миг 4001: сервер их привязку помнит, слуха нет (deaf.ts) */
+  /** places of other graphs on the channel at the 4001: the server remembers the binding, no hearing (deaf.ts) */
   deadPlaces: [],
   attachHooks: [],
   helloWaiters: /* @__PURE__ */ new Set(),
-  /** возвратов с диска в полёте: мёртвый токен при них — протухшая запись, не тревога */
+  /** disk resumes in flight: a dead token during one is a stale record, not an alarm */
   resuming: 0,
-  /** своё снятие в полёте (absorb.ts): закрытие 4001 обгонит ответ revoke */
+  /** own revoke in flight (absorb.ts): close 4001 outruns the revoke answer */
   revokingOwn: false,
-  /** своё close канала в полёте (absorb.ts): закрытие 4001 обгонит ответ, как у revoke (#6634) */
+  /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
   closingOwn: false,
-  /** демон гаснет, а тонкий мост этой сессии жив: он вернёт место новому демону (daemon.ts, #6485) */
+  /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
   handingOver: null
 }));
 
@@ -1016,13 +1283,14 @@ var R = scoped(() => ({ listing: null }));
 var extras = scoped(() => /* @__PURE__ */ new Map());
 
 // js/bridge/spool.ts
-var HANDOFF_MS = Number(process.env.ISKRON_BRIDGE_DAEMON_HANDOFF_MS) || 12e3;
+var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
 
 // js/extension/channel.ts
-var ASIDE_MS = Number(process.env.ISKRON_PI_ASIDE_MS) || 3e3;
+var ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3e3;
 var TACT_POLL_MS = 1e3;
 function setupChannel(pi) {
+  const P = words(PLUGIN);
   let ctxRef = null;
   pi.on("session_start", async (_event, ctx) => {
     ctxRef = ctx;
@@ -1033,7 +1301,7 @@ function setupChannel(pi) {
   function loud(text, fatal = true) {
     if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
     pi.sendMessage(
-      { customType: "iskron-channel", content: text, display: true, details: { fatal } },
+      { customType: LOGGERS.channel, content: markFrame(text), display: true, details: { fatal } },
       { triggerTurn: true, deliverAs: "steer" }
     );
   }
@@ -1051,8 +1319,8 @@ function setupChannel(pi) {
     if (!got.length) return;
     pi.sendMessage(
       {
-        customType: "iskron-channel",
-        content: [batchHead(got), ...batchLines(got)].join("\n"),
+        customType: LOGGERS.channel,
+        content: markFrame([batchHead(got), ...batchLines(got)].join("\n")),
         display: true,
         details: { count: got.map((f) => f.id ?? null) }
       },
@@ -1062,8 +1330,8 @@ function setupChannel(pi) {
   function sendBatch(ev) {
     pi.sendMessage(
       {
-        customType: "iskron-channel",
-        content: ev.text ?? "",
+        customType: LOGGERS.channel,
+        content: markFrame(ev.text ?? ""),
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true }
       },
@@ -1101,7 +1369,7 @@ function setupChannel(pi) {
         const frame = ev.frame ?? null;
         const raw = ev.raw ?? "";
         if (frame?.type === "hello") {
-          if (ctxRef?.hasUI) ctxRef.ui.setStatus?.("iskron", "Искрон: канал слушает");
+          if (ctxRef?.hasUI) ctxRef.ui.setStatus?.(PRODUCT, P.listening());
           return;
         }
         if (frame?.type === "status") return;
@@ -1116,8 +1384,8 @@ function setupChannel(pi) {
         const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {
-            customType: "iskron-channel",
-            content: frameToText(frame, raw),
+            customType: LOGGERS.channel,
+            content: markFrame(frameToText(frame, raw)),
             display: true,
             details: frame ?? { raw }
           },
@@ -1126,9 +1394,7 @@ function setupChannel(pi) {
         return;
       }
       case "dead":
-        loud(
-          `Искрон: канал закрыт кодом ${ev.code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`
-        );
+        loud(P.dead(String(ev.code)));
         return;
       case "stale":
       case "backlog":
@@ -1139,18 +1405,13 @@ function setupChannel(pi) {
         sendBatch(ev);
         return;
       case "evicted":
-        loud(
-          `Искрон: канал закрыт кодом ${ev.code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.`
-        );
+        loud(P.evicted(String(ev.code)));
         return;
       case "alive":
-        loud(
-          `Искрон: сокет рвут, а служба отвечает (${ev.version ?? ""}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
-          false
-        );
+        loud(P.alive(ev.version ?? ""), false);
         return;
       case "note":
-        if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(`Искрон: ${ev.text}`, "warning");
+        if (ctxRef?.hasUI && ev.text) ctxRef.ui.notify(P.note(ev.text), "warning");
         return;
       case "attached":
       case "held":
@@ -1169,15 +1430,16 @@ import { dirname as dirname2 } from "node:path";
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
 import { basename } from "node:path";
+var W2 = () => words(BRIDGE_CLIENT);
 function bridgeRuntime() {
-  const own = process.env.ISKRON_NODE?.trim();
+  const own = process.env[envName("NODE")]?.trim();
   if (own) return { bin: own, env: process.env };
   if (process.versions?.bun)
     return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
-var SERVICE_ID = "iskron-service-";
+var SERVICE_ID = `${ID_PREFIX}service-`;
 var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
@@ -1200,11 +1462,11 @@ var Bridge = class {
     this.onDie = onDie;
     this.args = args;
   }
-  /** Мост вышел или не запустился — вызовы к нему отвергаются этим отказом. */
+  /** The bridge exited or failed to start — calls to it are refused with this. */
   get failure() {
     return this.dead;
   }
-  /** env — поверх рантайма: версия хоста для attrs.harness_version (#6226). */
+  /** env — over the runtime's: host version for attrs.harness_version (#6226). */
   start(env = {}) {
     const rt = bridgeRuntime();
     const proc = spawn(rt.bin, [this.bin, ...this.args], {
@@ -1227,31 +1489,11 @@ var Bridge = class {
         this.onLog(line);
       }
     });
-    proc.on(
-      "error",
-      (e) => this.die(
-        new Error(
-          L(`мост не запустился: ${e.message}`, `the bridge failed to start: ${e.message}`)
-        )
-      )
-    );
-    proc.on(
-      "exit",
-      (code, signal) => this.die(
-        new Error(
-          L(
-            `мост вышел (code=${code}, signal=${signal})${this.why()}`,
-            `the bridge exited (code=${code}, signal=${signal})${this.why()}`
-          )
-        )
-      )
-    );
+    proc.on("error", (e) => this.die(new Error(W2().failedToStart(e.message))));
+    proc.on("exit", (code, signal) => this.die(new Error(W2().exited(code, signal, this.why()))));
   }
   why() {
-    return this.tail.length ? L(
-      `; последнее от моста: ${this.tail.slice(-3).join(" | ")}`,
-      `; last from the bridge: ${this.tail.slice(-3).join(" | ")}`
-    ) : "";
+    return this.tail.length ? W2().lastFromBridge(this.tail.slice(-3).join(" | ")) : "";
   }
   die(e) {
     if (this.dead) return;
@@ -1293,11 +1535,11 @@ var Bridge = class {
       else waiter.resolve(msg.result);
     }
   }
-  notify(method, params) {
+  notify(method2, params) {
     if (this.dead || !this.proc?.stdin?.writable) return;
-    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: method2, params }) + "\n");
   }
-  request(method, params, opts = {}) {
+  request(method2, params, opts = {}) {
     if (this.dead) return Promise.reject(this.dead);
     const id = opts.service ? `${SERVICE_ID}${this.nextId++}` : this.nextId++;
     return new Promise((res, rej) => {
@@ -1310,36 +1552,27 @@ var Bridge = class {
       const resolve4 = settle(res);
       const reject = settle(rej);
       function onAbort() {
-        reject(new Error(L("вызов отменён", "call aborted")));
+        reject(new Error(W2().aborted()));
       }
       this.pending.set(id, { resolve: resolve4, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
       }
-      if (opts.timeoutMs) {
+      const ms = opts.timeoutMs;
+      if (ms) {
         timer = setTimeout(() => {
           this.pending.delete(id);
-          reject(
-            new Error(
-              L(
-                `${method}: нет ответа за ${opts.timeoutMs} мс${this.why()}`,
-                `${method}: no answer in ${opts.timeoutMs} ms${this.why()}`
-              )
-            )
-          );
-        }, opts.timeoutMs);
+          reject(new Error(W2().noAnswer(method2, ms, this.why())));
+        }, ms);
         timer.unref?.();
       }
-      if (!this.proc?.stdin?.writable)
-        return reject(
-          new Error(L("мост не принимает запись", "the bridge does not accept writes"))
-        );
-      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      if (!this.proc?.stdin?.writable) return reject(new Error(W2().noWrites()));
+      this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method: method2, params }) + "\n");
     });
   }
   stop() {
-    this.die(new Error(L("сессия закрыта", "session closed")));
+    this.die(new Error(W2().sessionClosed()));
     const proc = this.proc;
     this.proc = null;
     if (!proc || proc.killed || proc.exitCode !== null) return;
@@ -1388,54 +1621,45 @@ function resultToContent(result) {
   return [
     {
       type: "text",
-      text: structured ? JSON.stringify(structured) : L("(пустой ответ)", "(empty answer)")
+      text: structured ? JSON.stringify(structured) : W2().emptyAnswer()
     }
   ];
 }
 
 // js/shared/launch.ts
-var LINE = /^[ \t]*start\s+(\S+)\s+(\S+)\s+(?:(?:дело|case)\s+)?[№#]\s?(\d+)(?:[ \t]+(?:от|from)[ \t]+(@\S+))?(?=\s|$)/imu;
+var LINE = LAUNCH_LINE;
 function parseLaunch(text) {
   const [, realm, karta, no, of] = LINE.exec(text) ?? [];
   return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
 }
-function withWord(text, word) {
+function withWord(text, word2) {
   const m = LINE.exec(text);
   if (!m) return `${text}
-${word}`;
+${word2}`;
   const nl = text.indexOf("\n", m.index);
   return nl < 0 ? `${text}
-${word}` : `${text.slice(0, nl)}
-${word}${text.slice(nl)}`;
+${word2}` : `${text.slice(0, nl)}
+${word2}${text.slice(nl)}`;
 }
 async function enterCase(l, call, satelliteOf, placeName) {
+  const W3 = words(LAUNCH);
   const room = `#${l.no}`;
   const stand = { realm: l.realm, karta: l.karta };
   if (satelliteOf) stand.satellite_of = satelliteOf;
   try {
-    await call("iskron_stand", stand);
+    await call(tool("stand"), stand);
   } catch (e) {
     const why = e.message;
-    const join4 = `iskron_case(action="join", room="${room}")`;
-    return L(
-      `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${l.no}: ${join4}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
-      `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${l.no}: ${join4}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`
-    );
+    const join4 = `${tool("case")}(action="join", room="${room}")`;
+    return W3.notSeated(why, l.no, join4);
   }
-  const place = placeName() || L("своим местом", "in a seat of its own");
+  const place = placeName() || W3.ownSeat();
   try {
-    await call("iskron_case", { action: "join", realm: l.realm, room });
+    await call(tool("case"), { action: "join", realm: l.realm, room });
   } catch (e) {
-    const why = e.message;
-    return L(
-      `Искрон: встал ${place}; в дело №${l.no} не вошёл — ${why}. Место остаётся.`,
-      `Iskron: seated ${place}; did not enter case №${l.no} — ${why}. The seat stays.`
-    );
+    return W3.notEntered(place, l.no, e.message);
   }
-  return L(
-    `Искрон: встал ${place}, вошёл в дело №${l.no} — первым словом перескажи бриф в деле.`,
-    `Iskron: seated ${place}, entered case №${l.no} — retell the brief as your first message in the case.`
-  );
+  return W3.entered(place, l.no);
 }
 
 // js/extension/home-copy.ts
@@ -1454,9 +1678,10 @@ import { fileURLToPath as fileURLToPath2 } from "node:url";
 // js/shared/home.ts
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
-var homeBridgePath = () => join3(homedir2(), ".iskron-bridge", "iskron-bridge.mjs");
+var homeBridgePath = () => join3(homedir2(), HOME_DIR, HOME_BRIDGE_FILE);
 
 // js/extension/home-copy.ts
+var BRIDGE_PATH_ENV = envName("BRIDGE_PATH");
 function newer(a, b) {
   const pa = a.split(".").map(Number), pb = b.split(".").map(Number);
   if (pa.length !== 3 || pb.length !== 3 || [...pa, ...pb].some((n2) => !Number.isInteger(n2)))
@@ -1469,14 +1694,15 @@ function packagedBridgePath() {
     dirname(fileURLToPath2(import.meta.url)),
     "..",
     "skills",
-    "establish-mcp",
+    BRIDGE_SKILL,
     "scripts",
-    "iskron.mjs"
+    BRIDGE_FILE
   );
 }
 function refreshHomeBridge(notify, canSpeak) {
-  if (process.env.ISKRON_BRIDGE_PATH?.trim()) return;
+  if (process.env[BRIDGE_PATH_ENV]?.trim()) return;
   if (!canSpeak) return;
+  const W3 = words(PI);
   let packagedPath;
   try {
     packagedPath = packagedBridgePath();
@@ -1492,10 +1718,7 @@ function refreshHomeBridge(notify, canSpeak) {
   }
   const vPackaged = versionIn(packaged.toString("utf8"));
   if (!vPackaged) {
-    notify(
-      "Искрон: в поставке мост есть, но его версия не читается — домашнюю копию не трогаю.",
-      "warning"
-    );
+    notify(W3.versionUnreadable(), "warning");
     return;
   }
   if (!releaseBuildIn(packaged.toString("utf8"))) return;
@@ -1508,32 +1731,23 @@ function refreshHomeBridge(notify, canSpeak) {
   if (home.equals(packaged)) return;
   const vHome = versionIn(home.toString("utf8"));
   if (vHome && newer(vHome, vPackaged) > 0) {
-    notify(
-      `Искрон: дома мост ${vHome}, в поставке ${vPackaged} — домашний новее, не трогаю.`,
-      "warning"
-    );
+    notify(W3.homeNewer(vHome, vPackaged), "warning");
     return;
   }
   if (vHome === vPackaged && !devBuildIn(home.toString("utf8"))) return;
-  const was = vHome ?? "версия не читается";
+  const was = vHome ?? W3.noVersion();
   const tmp = `${homePath}.tmp-${process.pid}`;
   try {
     writeFileSync(tmp, packaged);
     chmodSync(tmp, 493);
     renameSync(tmp, homePath);
-    notify(
-      vHome === vPackaged ? `Искрон: мост дома заменён на привезённый поставкой — версия та же (${vPackaged}), байты другие. Грант не тронут.` : `Искрон: мост дома обновлён ${was} → ${vPackaged}. Грант не тронут, он лежит рядом отдельными файлами.`,
-      "info"
-    );
+    notify(vHome === vPackaged ? W3.replacedSame(vPackaged) : W3.updated(was, vPackaged), "info");
   } catch (e) {
     try {
       unlinkSync(tmp);
     } catch {
     }
-    notify(
-      `Искрон: мост дома ${was}, в поставке ${vPackaged}, заменить не вышло (${e.message}). Работаю тем, что есть.`,
-      "warning"
-    );
+    notify(W3.replaceFailed(was, vPackaged, e.message), "warning");
   }
 }
 function findBridge() {
@@ -1542,9 +1756,8 @@ function findBridge() {
     if (!p) return;
     tried.push(p);
   };
-  push(
-    process.env.ISKRON_BRIDGE_PATH?.trim() ? resolve3(process.env.ISKRON_BRIDGE_PATH.trim()) : null
-  );
+  const named = process.env[BRIDGE_PATH_ENV]?.trim();
+  push(named ? resolve3(named) : null);
   try {
     push(packagedBridgePath());
   } catch {
@@ -1586,21 +1799,21 @@ function setupUsage(pi, live) {
     if (typeof model === "string" && model) p.model = model;
     if (typeof c?.tokens === "number") p.context = c.tokens;
     if (n(c?.contextWindow)) p.window = c.contextWindow;
-    await bridge.request("iskron/usage", p, { timeoutMs: 1e4 }).catch(() => {
+    await bridge.request(method("usage"), p, { timeoutMs: 1e4 }).catch(() => {
     });
   });
 }
 
 // js/extension/tools.ts
-var READY_WAIT_MS = Number(process.env.ISKRON_MCP_READY_WAIT_MS || 2e4);
-var HANDSHAKE_MS = Number(process.env.ISKRON_MCP_HANDSHAKE_MS || 6e5);
+var READY_WAIT_MS = Number(process.env[envName("MCP_READY_WAIT_MS")] || 2e4);
+var HANDSHAKE_MS = Number(process.env[envName("MCP_HANDSHAKE_MS")] || 6e5);
 var TICK_MS = 15e3;
-var AUTH_POLL_MS = Number(process.env.ISKRON_MCP_AUTH_POLL_MS || 3e3);
+var AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 3e3);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function textOrThrow(name, result) {
   const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
-  if (result?.isError) throw new Error(text || `${name}: отказ без текста`);
+  if (result?.isError) throw new Error(text || words(PLUGIN).refusalNoText(name));
   return text;
 }
 async function hostEnv() {
@@ -1619,6 +1832,8 @@ async function hostEnv() {
 }
 var callVia = (b) => async (name, args) => textOrThrow(name, await b.request("tools/call", { name, arguments: args }, { service: true }));
 function setupBridge(pi, onChannel) {
+  const W3 = words(PI);
+  const P = words(PLUGIN);
   let bridge = null;
   const offByUs = /* @__PURE__ */ new Set();
   const known = /* @__PURE__ */ new Set();
@@ -1631,23 +1846,20 @@ function setupBridge(pi, onChannel) {
     refreshHomeBridge(notify, canSpeak);
     const found = findBridge();
     if (!found.path) {
-      notify(
-        "Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: " + found.tried.join(", ") + ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
-        "error"
-      );
+      notify(P.noBridge(found.tried.join(", ")), "error");
       return;
     }
     const env = await hostEnv();
     const b = new Bridge(
       found.path,
-      (line) => notify(`Искрон/мост: ${line}`, "info"),
-      (method, params) => {
-        if (method === "notifications/message" && params?.logger === "iskron-channel") {
+      (line) => notify(P.bridgeLine(line), "info"),
+      (method2, params) => {
+        if (method2 === "notifications/message" && params?.logger === LOGGERS.channel) {
           const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
           if (typeof name === "string" && name) heldName = name;
           onChannel(params);
         }
-        if (method === "notifications/tools/list_changed") void relist(b);
+        if (method2 === "notifications/tools/list_changed") void relist(b);
       },
       void 0,
       args
@@ -1670,7 +1882,7 @@ function setupBridge(pi, onChannel) {
           if (!toldLogin || links !== toldLinks) {
             toldLogin = true;
             toldLinks = links;
-            notify(`Искрон: нужен вход — ${message}`, "warning");
+            notify(W3.needLogin(message), "warning");
           }
           await new Promise((r) => setTimeout(r, AUTH_POLL_MS));
         }
@@ -1682,7 +1894,7 @@ function setupBridge(pi, onChannel) {
         {
           protocolVersion: PROTOCOL,
           capabilities: FIELDS_CAPABILITIES,
-          // поля ответа — и этому клиенту (#6637)
+          // answer fields — for this client too (#6637)
           clientInfo: { name: PI_CLIENT, version: "1" }
         },
         { timeoutMs: HANDSHAKE_MS }
@@ -1704,25 +1916,25 @@ function setupBridge(pi, onChannel) {
     if (bridge !== b) return b.stop();
     function registerAll(list) {
       for (const t of list) known.add(String(t.name));
-      for (const tool of list) {
-        const name = String(tool.name);
+      for (const tool2 of list) {
+        const name = String(tool2.name);
         pi.registerTool({
           name,
           label: name,
-          description: String(tool.description ?? ""),
-          promptSnippet: snippet(String(tool.description ?? "")),
-          parameters: toParameters(tool.inputSchema),
+          description: String(tool2.description ?? ""),
+          promptSnippet: snippet(String(tool2.description ?? "")),
+          parameters: toParameters(tool2.inputSchema),
           async execute(_toolCallId, params, signal, onUpdate, _c) {
             const live = bridge;
-            if (!live) throw new Error(`${name}: мост не поднят в этой сессии`);
+            if (!live) throw new Error(W3.notUp(name));
             const started = Date.now();
-            onUpdate?.({ content: [{ type: "text", text: `Искрон: ${name}…` }], details: {} });
+            onUpdate?.({ content: [{ type: "text", text: W3.calling(name) }], details: {} });
             const tick = setInterval(() => {
               onUpdate?.({
                 content: [
                   {
                     type: "text",
-                    text: `Искрон: ${name} — ещё жду, ${Math.round((Date.now() - started) / 1e3)} с`
+                    text: W3.stillWaiting(name, Math.round((Date.now() - started) / 1e3))
                   }
                 ],
                 details: {}
@@ -1734,7 +1946,7 @@ function setupBridge(pi, onChannel) {
                 "tools/call",
                 { name, arguments: params ?? {} },
                 { signal }
-                // потолка нет: первый вызов может уйти в браузер к человеку
+                // no ceiling: the first call may go to the human's browser
               );
               if (result?.isError) textOrThrow(name, result);
               const content = resultToContent(result);
@@ -1773,13 +1985,10 @@ function setupBridge(pi, onChannel) {
             .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n2) => !dropped.includes(n2)), ...back])
           ]);
         tools.splice(0, tools.length, ...fresh);
-        notify(`Искрон: сервер сменил тулы — в сессии зарегистрировано ${fresh.length}.`, "info");
+        notify(W3.serverChanged(fresh.length), "info");
       } catch (e) {
         if (bridge !== from) return;
-        notify(
-          `Искрон: список тулов после смены на сервере не перечитан — ${e.message}`,
-          "warning"
-        );
+        notify(P.relistFailed(e.message), "warning");
       }
     }
     const listed = new Set(tools.map((t) => String(t.name)));
@@ -1793,14 +2002,12 @@ function setupBridge(pi, onChannel) {
         .../* @__PURE__ */ new Set([...pi.getActiveTools().filter((n2) => !gone.includes(n2)), ...returned])
       ]);
     const server = init?.serverInfo;
-    notify(
-      `Искрон: мост поднят (${server?.name ?? "сервер"} ${server?.version ?? ""}), тулов в сессии: ${tools.length}${toldLogin ? " — вход состоялся" : ""}.`,
-      "info"
-    );
+    const raised = toldLogin ? W3.raisedSignedIn : W3.raised;
+    notify(raised(server?.name ?? W3.server(), server?.version ?? "", tools.length), "info");
   }
   let raising = Promise.resolve();
   const raiseLoud = (args = []) => raise(args).catch((e) => {
-    notify(`Искрон: мост не поднялся — ${e.message}`, "error");
+    notify(P.notRaised(e.message), "error");
     bridge?.stop();
     bridge = null;
   });
@@ -1810,7 +2017,7 @@ function setupBridge(pi, onChannel) {
     prompted = true;
     const l = parseLaunch(event.text);
     if (!l) return { action: "continue" };
-    const of = l.of ?? (process.env.ISKRON_SATELLITE_OF?.trim() || null);
+    const of = l.of ?? (process.env[envName("SATELLITE_OF")]?.trim() || null);
     if (of && !satellite) {
       bridge?.stop();
       bridge = null;
@@ -1818,8 +2025,8 @@ function setupBridge(pi, onChannel) {
     }
     await raising;
     const live = bridge;
-    const word = live ? await enterCase(l, callVia(live), of, () => heldName) : `Искрон: строка запуска — мост не поднят, в дело №${l.no} не вошёл.`;
-    return { action: "transform", text: withWord(event.text, word) };
+    const word2 = live ? await enterCase(l, callVia(live), of, () => heldName) : W3.launchNoBridge(String(l.no));
+    return { action: "transform", text: withWord(event.text, word2) };
   });
   pi.on("session_start", async (_event, ctx) => {
     notify = ctx.hasUI ? (t, l) => ctx.ui.notify(t, l ?? "info") : () => {
@@ -1839,12 +2046,7 @@ function setupBridge(pi, onChannel) {
       work,
       new Promise((r) => {
         const t = setTimeout(() => {
-          if (!done) {
-            notify(
-              "Искрон: мост ещё поднимается — тулы iskron_* появятся, как только ответит.",
-              "info"
-            );
-          }
+          if (!done) notify(W3.stillRaising(), "info");
           r();
         }, READY_WAIT_MS);
         t.unref?.();
@@ -1858,26 +2060,26 @@ function setupBridge(pi, onChannel) {
   });
 }
 
-// js/extension/iskron.ts
-function iskron_default(pi) {
+// js/extension/main.ts
+function main_default(pi) {
   const broken = [];
   pi.on("session_start", async (_event, ctx) => {
     if (!broken.length || !ctx.hasUI) return;
-    ctx.ui.notify(`Искрон: не встало — ${broken.join("; ")}`, "error");
+    ctx.ui.notify(words(PI).broken(broken.join("; ")), "error");
   });
   let onChannel = () => {
   };
   try {
     onChannel = setupChannel(pi);
   } catch (e) {
-    broken.push(`канал: ${e instanceof Error ? e.message : String(e)}`);
+    broken.push(words(PI).channelPart(e instanceof Error ? e.message : String(e)));
   }
   try {
     setupBridge(pi, (params) => onChannel(params));
   } catch (e) {
-    broken.push(`тулы: ${e instanceof Error ? e.message : String(e)}`);
+    broken.push(words(PI).toolsPart(e instanceof Error ? e.message : String(e)));
   }
 }
 export {
-  iskron_default as default
+  main_default as default
 };
