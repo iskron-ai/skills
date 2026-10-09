@@ -2,7 +2,7 @@
 // release-please при мерже релизного PR (аннотация ниже, файл в extra-files); руками
 // не трогать. Метку канала сборки читает js/build.mjs отсюда и заменяет в выходе
 // выпуска буквально (граф @nks/nks-dev, узел #6650).
-export const VERSION = "7.8.0"; // x-release-please-version
+export const VERSION = "7.8.1"; // x-release-please-version
 
 /** Имя метки канала: другие копии узнаются по `"<имя>:release"` и `"<имя>:dev"` в их тексте. */
 export const BUILD_MARK = "iskron-build";
