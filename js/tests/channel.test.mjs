@@ -76,7 +76,8 @@ for (const code of DEAD_TOKEN_CODES) {
 // 4000 is superseded, not dead — and no cue to reopen: the same address would evict
 // the new holder, and it us (seen live after a daemon handover: two bridges of one
 // session in ping-pong). The holder yields to onEvicted at once, never to
-// onDeadToken; taking the place back (take=true) is the human's word (#5033, #6550).
+// onDeadToken; taking the place back (take=true) — own name after a silent probe,
+// another's on the human's word (#5033, #6550, #6976).
 test("a 4000 close does not reopen: the holder yields to onEvicted at once, not onDeadToken", async () => {
   sockets.length = 0;
   const dead = [];

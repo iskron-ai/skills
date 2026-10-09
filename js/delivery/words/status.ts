@@ -1,6 +1,7 @@
 // Слова занятости стояния (граф @nks/nks-dev, узлы #6509, #5395): строка
 // занятости, отказы без статусного адреса и путь передачи слуха целиком.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 export interface StatusWords {
   /** label — место (placeDerived/placeUnnamed либо адрес); nudge — с ведущим «; » либо пустая. */
@@ -24,12 +25,12 @@ export interface StatusWords {
 }
 
 const TAKE_PATH_RU =
-  "iskron_stand с take=true — только по слову человека — переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, " +
+  `iskron_stand с take=true (${TAKE.ru.rule()}) переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, ` +
   "и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 " +
   "(вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello " +
   '(справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа';
 const TAKE_PATH_EN =
-  "iskron_stand with take=true — only on the human's word — moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, " +
+  `iskron_stand with take=true (${TAKE.en.rule()}) moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, ` +
   "and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 " +
   "(the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello " +
   '(help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer';
@@ -52,7 +53,7 @@ export const STATUS: Readonly<Record<Lang, StatusWords>> = {
     placeUnnamed: (name) =>
       `места${name ? ` «${name}»` : ""} (адреса @handle:name ещё нет — hello не пришёл)`,
     evictedWhy: () =>
-      "слух у другого держателя — вернуть его iskron_stand с take=true только по слову человека",
+      `слух у другого держателя — вернуть его iskron_stand с take=true: ${TAKE.ru.rule()}`,
     reopeningWhy: () => "сокет переоткрывается — строка опубликована, слух вернётся сам",
     noSeatId: (key) =>
       `Отказано (мост): id места ${key} у моста ещё не известен (hello его не назвал) — без него строка легла бы на все места канала; повтори iskron_stand этого графа.`,
@@ -73,7 +74,7 @@ export const STATUS: Readonly<Record<Lang, StatusWords>> = {
     placeUnnamed: (name) =>
       `of the seat${name ? ` «${name}»` : ""} (no @handle:name address yet — hello has not come)`,
     evictedWhy: () =>
-      "the hearing is with another holder — take it back by iskron_stand with take=true only on the human's word",
+      `the hearing is with another holder — take it back by iskron_stand with take=true: ${TAKE.en.rule()}`,
     reopeningWhy: () =>
       "the socket is reopening — the line is published, the hearing comes back by itself",
     noSeatId: (key) =>

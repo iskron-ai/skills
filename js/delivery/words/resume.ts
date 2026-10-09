@@ -1,6 +1,7 @@
 // Слова возврата места (граф @nks/nks-dev, узел #6080): возврат, проверка слуха и
 // отказы — агенту. Списки ядро склеивает само и отдаёт строкой.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 export interface ResumeWords {
   failed: () => string;
@@ -91,7 +92,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     listening: () => "слушаю",
     gaveUp: (key, limit) =>
       `Искрон: доска читает место ${key} не слушающим и после ${limit} переоткрытий сокета — ` +
-      `больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true — только словом человека.`,
+      `больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true: ${TAKE.ru.rule()}.`,
     deafBoard: () => "доска не читает слушающим",
     reopened: (pending) =>
       pending === null
@@ -145,7 +146,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     listening: () => "listening",
     gaveUp: (key, limit) =>
       `Iskron: the board reads the seat ${key} as not listening and after ${limit} socket reopenings — ` +
-      `I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true — only on the human's word.`,
+      `I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true: ${TAKE.en.rule()}.`,
     deafBoard: () => "the board does not read it as listening",
     reopened: (pending) =>
       pending === null

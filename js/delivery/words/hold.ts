@@ -1,6 +1,7 @@
 // Слова держателя сокета (граф @nks/nks-dev, узел #6080): то, что он говорит
 // делателю и пишет причиной снятия.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 export interface HoldWords {
   newSocket: () => string;
@@ -38,9 +39,10 @@ export const HOLD: Readonly<Record<Lang, HoldWords>> = {
       `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`,
     evicted: (code) =>
       `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли, слушает другой держатель; ` +
-      "записи в этот граф мост не отправит, пока не встанешь своим местом — его подписью они легли бы; слух здесь — iskron_stand без name встанет рядом на имя.N; отбить место (take=true) — только словом человека",
+      "записи в этот граф мост не отправит, пока не встанешь своим местом — его подписью они легли бы; слух здесь — iskron_stand без name встанет рядом на имя.N; " +
+      `отбить место (take=true): ${TAKE.ru.rule()}`,
     evictedBeside: (code, name, base) =>
-      `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли (${name}), слушает другой держатель; его место не перехватываю и им не подписываюсь — встаю рядом на ${base}.N со слухом сам; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом; вытеснить ту сессию (take=true) — только словом человека`,
+      `ДЕЛАТЕЛЬ: закрытие ${code} — место отняли (${name}), слушает другой держатель; его место не перехватываю и им не подписываюсь — встаю рядом на ${base}.N со слухом сам; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом; вытеснить ту сессию (take=true): ${TAKE.ru.rule()}`,
     besideDone: (name, said) =>
       `Искрон: место ${name} отняли (4000) — мост встал рядом своим местом со слухом. ${said}`,
     besideFailed: (name, base, said) =>
@@ -69,9 +71,10 @@ export const HOLD: Readonly<Record<Lang, HoldWords>> = {
       `the bridge left the seat (${reason}) — socket closed, seat intact; to return use the watchdog or iskron_stand`,
     evicted: (code) =>
       `DOER: close ${code} — the seat was taken, another holder is listening; ` +
-      "the bridge sends no writes into this graph until you stand on your own seat — they would go under its signature; to listen here, iskron_stand without name stands beside on name.N; to retake the seat (take=true) — only on the human's word",
+      "the bridge sends no writes into this graph until you stand on your own seat — they would go under its signature; to listen here, iskron_stand without name stands beside on name.N; " +
+      `to retake the seat (take=true): ${TAKE.en.rule()}`,
     evictedBeside: (code, name, base) =>
-      `DOER: close ${code} — the seat ${name} was taken, another holder is listening; not taking it over and not signing with it — standing beside as ${base}.N with hearing myself; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command; evicting that session (take=true) — only on the human's word`,
+      `DOER: close ${code} — the seat ${name} was taken, another holder is listening; not taking it over and not signing with it — standing beside as ${base}.N with hearing myself; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command; evicting that session (take=true): ${TAKE.en.rule()}`,
     besideDone: (name, said) =>
       `Iskron: the seat ${name} was taken (4000) — the bridge stood beside on its own seat with hearing. ${said}`,
     besideFailed: (name, base, said) =>

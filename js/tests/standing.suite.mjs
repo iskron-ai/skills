@@ -90,6 +90,9 @@ const INIT = {
   clientInfo: { name: "standing-probe", version: "0" },
 };
 const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba" };
+// The take rule of a taken seat (#6976, #7194): own name after a silent probe, another's on the human's word.
+const TAKE_RULE_RU =
+  /iskron_stand с take=true \(своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\)/;
 
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir, extraEnv = {}) {
@@ -1253,7 +1256,7 @@ test("status on a second bridge names the live holder and the whole handover pat
   assert.ok(said.includes(key), `the refusal names the held place:\n${said}`);
   assert.match(said, /держат живые мосты/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /только по слову человека/, said);
+  assert.match(said, TAKE_RULE_RU, said);
   assert.match(said, /очередь места connect не трогает/, said);
   assert.equal(fake.state.status, "первый", "the refused line changes nothing");
   assert.equal(fake.state.ws.size, 1, "the refusal takes no socket");
@@ -1277,7 +1280,7 @@ test("a turned status address is refused with the whole handover path", async (t
   const said = r.result.content[0].text;
   assert.match(said, /404/, said);
   assert.match(said, /тем же набором тулов/, said);
-  assert.match(said, /только по слову человека/, said);
+  assert.match(said, TAKE_RULE_RU, said);
   assert.match(said, /очередь места connect не трогает/, said);
 });
 
@@ -5963,6 +5966,9 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   assert.ok(!left.result?.isError, leftText);
   assert.match(leftText, /busyness cleared/, leftText);
   assert.doesNotMatch(leftText, CYRILLIC, leftText);
+  // The return is a fresh connect only once the leave has closed the socket; before that the
+  // stand is a busyness update on a held seat and says nothing about hearing (#7008).
+  await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
   const back = await bridge.call("tools/call", 6, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", status: "back" },

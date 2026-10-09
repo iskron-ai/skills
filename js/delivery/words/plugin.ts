@@ -1,6 +1,7 @@
 // Слова, общие плагину OpenCode и расширению pi (граф @nks/nks-dev, узел #6806 п.7):
 // поиск и подъём моста, половина «канал» — слух, мёртвый токен, отъём места.
 import type { Lang } from "../lang.ts";
+import { TAKE } from "./take.ts";
 
 export interface PluginWords {
   /** tried — кандидаты через запятую. */
@@ -34,7 +35,8 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
       ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
     evicted: (code) =>
       `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. ` +
-      "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true) — только словом человека.",
+      "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. " +
+      `Вытеснить ту сессию (take=true): ${TAKE.ru.rule()}.`,
     alive: (version) =>
       `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; ` +
       "не пройдёт — спроси о токене.",
@@ -56,7 +58,8 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
       ", then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.",
     evicted: (code) =>
       `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. ` +
-      "The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true) — only on the human's word.",
+      "The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. " +
+      `Evicting that session (take=true): ${TAKE.en.rule()}.`,
     alive: (version) =>
       `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; ` +
       "if it fails, ask about the token.",
