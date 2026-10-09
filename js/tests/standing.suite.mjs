@@ -5969,8 +5969,13 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   });
   const backText = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!back.result?.isError, backText);
-  // Under a loaded runner hello may land after the 4 s wait: either word is the bridge's English.
-  assert.match(backText, /hello received|no hello within 4 s/, backText);
+  // The proof-of-hearing line depends on timing, not language: hello may land after the 4 s wait,
+  // or the socket the leave closed is still held when stand registers again — every form is English.
+  assert.match(
+    backText,
+    /hello received|no hello within 4 s|This bridge holds the socket \(hello came when the socket opened\)/,
+    backText,
+  );
   // «(Вебхук #N создан → …)» — проза сервера внутри строки хука, не слово моста.
   const bridgeWords = backText.replace(/\(Вебхук[^)]*\)/, "");
   assert.doesNotMatch(bridgeWords, CYRILLIC, bridgeWords);
