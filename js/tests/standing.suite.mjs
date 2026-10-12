@@ -5966,8 +5966,6 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   assert.ok(!left.result?.isError, leftText);
   assert.match(leftText, /busyness cleared/, leftText);
   assert.doesNotMatch(leftText, CYRILLIC, leftText);
-  // The return is a fresh connect only once the leave has closed the socket; before that the
-  // stand is a busyness update on a held seat and says nothing about hearing (#7008).
   await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
   const back = await bridge.call("tools/call", 6, {
     name: "iskron_stand",
@@ -5975,11 +5973,13 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   });
   const backText = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!back.result?.isError, backText);
-  // The proof-of-hearing line depends on timing, not language: hello may land after the 4 s wait,
-  // or the socket the leave closed is still held when stand registers again — every form is English.
+  // This probe holds the language, not the path: the stand after the leave is a fresh connect
+  // (hello, or none within 4 s), a register on a held socket, or — when the deafness watch has
+  // already returned the seat — a busyness update only. That last race is the bridge's own
+  // (graph @nks/nks-dev, node #7008); every form is English.
   assert.match(
     backText,
-    /hello received|no hello within 4 s|This bridge holds the socket \(hello came when the socket opened\)/,
+    /hello received|no hello within 4 s|This bridge holds the socket \(hello came when the socket opened\)|^busyness \S+: back$/m,
     backText,
   );
   // «(Вебхук #N создан → …)» — проза сервера внутри строки хука, не слово моста.
