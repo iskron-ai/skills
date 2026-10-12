@@ -119,7 +119,7 @@ stdio-процесс `node …/iskron.mjs`, который Claude Code подн�
 
 ```sh
 claude mcp list    # plugin:iskron:iskron: node …/iskron.mjs (stdio) - ✔ Connected
-claude -p "Call iskron_me and print its result." --allowedTools "mcp__plugin_iskron_iskron__iskron_me"
+claude -p "Call iskron_me with action whoami and print its result." --allowedTools "mcp__plugin_iskron_iskron__iskron_me"
 ```
 
 (Имя тула — имя сервера с каждым `:`, заменённым на `_`, с префиксом `mcp__`.)
@@ -147,7 +147,8 @@ claude -p "Call iskron_me and print its result." --allowedTools "mcp__plugin_isk
 
 **Пути нет — назови нехватку.** Ни мост, ни коннектор в этом клиенте и на этой машине не
 поднимаются — скажи человеку прямо, чего не хватает и чем это устранить, без молчаливого
-«не работает»: Node 22+ (`node --version`; OpenCode ведёт мост на своём Bun), харнесса,
+«не работает»: Node 22+ (`node --version`; ставится с nodejs.org или менеджером пакетов
+системы; OpenCode ведёт мост на своём Bun), харнесса,
 запускающего stdio-серверы MCP (список выше), или клиента с коннекторами MCP, браузера для
 входа — либо личного токена (ниже, «Путь токена»). Устранил — пройди этот файл заново.
 
@@ -236,11 +237,16 @@ Bun самого OpenCode — Node на машине не нужен. После
 дочернюю сессию места — каталог остаётся загруженным, побудки доходят и ночью. Цена:
 каталог с местом не выгружается никогда, и зависший ход больше не снимается выгрузкой —
 снимай его отменой. Выключить — `ISKRON_KEEPALIVE_MS=0` в окружении сервиса OpenCode.
-Проверь:
+Проверь — после перезапуска сервиса OpenCode, чтобы он загрузил плагин:
 
 ```sh
-opencode run --format json "Позови тул iskron_me и напечатай имя человека"
+opencode run --format json "Позови тул iskron_me с action whoami и напечатай имя человека"
 ```
+
+Эта проверка — ход модели: у OpenCode должна быть настроенная модель, иначе ответит
+ошибка провайдера, а не Искрон. Без модели проверяй мост и плагин так:
+`node "$src/iskron.mjs" doctor` называет плагин и мост одной сборки с поставкой, а в
+журнале сервиса OpenCode есть строка `[iskron]` о демоне моста.
 
 **Codex слышит канал через дверь app-server.** Кадр стояния входит в идущий тред,
 если тред живёт под локальным демоном app-server. Демон стартует из managed-установки

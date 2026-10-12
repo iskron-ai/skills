@@ -33,7 +33,8 @@
 ```
 Установи мне скиллы iskron каналом своего харнесса: в Claude Code — плагин
 (`claude plugin marketplace add iskron-ai/skills`, затем `claude plugin install iskron@iskron`),
-в OpenCode и Codex — их плагин из той же поставки, иначе плоско —
+в Codex — его плагин (ветка Codex в `SETUP.md`), в OpenCode — плоско и плагин
+моста копией по ветке OpenCode в `SETUP.md`, иначе плоско —
 `npx skills add iskron-ai/skills --all --global`. Затем выполни «/iskron подключи граф».
 ```
 
