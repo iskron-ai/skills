@@ -4755,6 +4755,47 @@ for (const action of ["revoke", "close"])
     assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
   });
 
+// Review of #7504: a frame for the seat beside waited for the Codex door to open, the seat was
+// taken off by another meanwhile, and its turn/start still went out once the door opened —
+// the doer woke. The seat beside taken off cancels what waits for the door; nothing goes out.
+test("#7504: a seat beside taken off while its frame waits for a slow Codex door — no turn/start after the door opens", async (t) => {
+  const { fake, dir, keyB, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const home = mkdtempSync(join(tmpdir(), "cxd-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+    { upgradeDelayMs: 1200 },
+  );
+  t.after(() => door.stop());
+  const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+    env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const w = { out: "", err: "" };
+  proc.stdout.on("data", (c) => (w.out += c));
+  proc.stderr.on("data", (c) => (w.err += c));
+  t.after(() => proc.kill("SIGKILL"));
+  await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+  const idB = idOf(DRUGOY, "proba-b");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "b-slow", to_standing_id: idB, body: "к B" }),
+  });
+  await pause(200); // the frame waits for the door's upgrade
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+  });
+  await pause(2000); // the upgrade answered long ago
+  assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+  assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+});
+
 test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
   for (const [reason, who] of [
     ["", /снято \(владельцем или другой сессией\)/],
