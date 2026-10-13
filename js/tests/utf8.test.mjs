@@ -1,11 +1,11 @@
-// Black-box wire probes (граф @nks/nks-dev, узел #7567): both stdio routes,
-// raw buffers at the harness boundary, not reserialized parsed answers.
+// Black-box wire probes (граф @nks/nks-dev, узел #7567): raw buffers at the harness boundary.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
