@@ -6,5 +6,5 @@
 - Слова подкоманд — в слое поставки (`js/delivery/words/`: `cli.ts`, `doctor.ts`, `doctorharness.ts`, `subagents.ts`, `satprobe.ts`, `rituals.ts`); ядро берёт их через `words()` (граф @nks/nks-dev, узел #6806).
 - `update.ts` — `update`: свежий релиз в дом.
 - `use.ts` — `use`: постоянный выбор адреса сервера.
-- `status.ts`, `statusdisk.ts` — `status [--json]`: снимок сессий и мест демона без открытия сессии; отдельно мосты мимо демона и записи диска без живого держателя. Слова — `js/delivery/words/machinestatus.ts`.
+- `status.ts`, `statusdisk.ts` — `status [--json]`: снимок сессий, их установленного набора скиллов и мест демона без открытия сессии; отдельно мосты мимо демона и записи диска без живого держателя. Слова — `js/delivery/words/machinestatus.ts`.
 - `rituals.ts` (слова и исход), `ritualprobe.ts` (подставной ctx OpenCode с двумя каталогами), `ritualcalls.ts` (вызовы тулов для хуков) — `check-rituals`: подписка плагинов ритуалов `.opencode/plugins/*` на поток событий не пишет в сессии чужих каталогов, хуки тулов не ломаются в своей (граф @nks/nks-dev, узлы #6686, #5048). Пробы — `js/tests/ritual-scope.test.mjs`; `scripts/check-ritual-scope.mjs` зовёт ту же подкоманду из dev-сборки.

@@ -7,6 +7,7 @@ import { sessionOfBridge } from "./holdrecord.ts";
 import { placeFields } from "./placefields.ts";
 import { extraPlaces } from "./places.ts";
 import { type BridgeSession } from "./session.ts";
+import { skillsAttr } from "./skillset.ts";
 import { state } from "./transport.ts";
 
 export function sessionSnapshot(
@@ -21,6 +22,7 @@ export function sessionSnapshot(
     thin_pid,
     attached,
     build,
+    skills: skillsAttr(),
     cwd: engine.origin?.cwd ?? "",
     harness: harnessName(),
     harness_session: sessionOfBridge(),
