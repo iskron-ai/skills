@@ -15,14 +15,19 @@ const W = scoped(() => ({
   announced: new Map<string, Skills>(),
   checkedAt: 0,
   disk: "",
+  installed: undefined as Skills | undefined,
+  pending: false,
 }));
 const key = (p: Partial<Standing>): string =>
   `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
 export const announcedSkills = (p: Partial<Standing>): Skills | undefined =>
   W.announced.get(key(p));
 /** One decision for tool refresh and usage publication, against accepted declarations. */
-export const skillsNeedRegister = (p: Partial<Standing>): boolean =>
-  skillsRefreshAllowed() && JSON.stringify(announcedSkills(p)) !== JSON.stringify(skillsAttr());
+export function skillsNeedRegister(p: Partial<Standing>): boolean {
+  if (!skillsRefreshAllowed()) return false;
+  checkInstalled();
+  return JSON.stringify(announcedSkills(p)) !== JSON.stringify(W.installed);
+}
 export function noteSkills(p: Partial<Standing>, skills: unknown): void {
   const s = safeSkills(skills);
   if (s) W.announced.set(key(p), s);
@@ -56,15 +61,22 @@ function diskVersion(): string {
     .join("|");
 }
 /** At most once a minute per session, on a tool call; hashing only after mtime changes. */
-export function skillsCheckDue(): boolean {
-  if (!skillsRefreshAllowed()) return false;
+function checkInstalled(): void {
+  if (!skillsRefreshAllowed()) return;
   const gap = Number(process.env[envName("SKILLS_GAP_MS")]) || 60_000;
-  if (Date.now() - W.checkedAt < gap) return false;
+  if (W.installed && Date.now() - W.checkedAt < gap) return;
   W.checkedAt = Date.now();
   const disk = diskVersion();
-  if (disk === W.disk) return false;
+  if (disk === W.disk) return;
   W.disk = disk;
-  return true;
+  W.installed = skillsAttr();
+  W.pending = true;
+}
+export function skillsCheckDue(): boolean {
+  checkInstalled();
+  const due = W.pending;
+  W.pending = false;
+  return due;
 }
 export function retrySkillsCheck(): void {
   W.disk = "";

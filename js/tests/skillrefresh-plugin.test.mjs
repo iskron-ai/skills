@@ -21,7 +21,7 @@ test("removed plugin root cannot switch to a flat set and reports the missing ro
     const logs = [];
     scope.log = (line) => logs.push(line);
     rmSync(root, { recursive: true });
-    assert.equal(skillsRoot(), root);
+    assert.equal(skillsRoot(), null);
     assert.equal(skillsAttr().version, "unknown");
     assert.ok(logs.some((line) => /skills.*missing|missing.*skills/.test(line)));
   });

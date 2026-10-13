@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { BRIDGE_FILE, BRIDGE_SKILL, SKILL_SET, SKILL_STAMP_MASK } from "../delivery/index.ts";
 import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
-import { currentScope, envOf } from "../shared/scope.ts";
+import { currentScope, envOf, scoped } from "../shared/scope.ts";
 import { skillLock } from "../shared/skilllock.ts";
 import { versionIn } from "../shared/version.ts";
 import { log } from "./streams.ts";
@@ -25,19 +25,31 @@ const BRIDGE_IN_SET = join(BRIDGE_SKILL, "scripts", BRIDGE_FILE);
 // from the thin bridge the harness started, not from the daemon.
 const env = (k: string): string => envOf(k)?.trim() ?? "";
 
-/** Skills directory: explicit root, loaded plugin, own layout, then flat installation. */
+const R = scoped(() => ({ identity: "", root: null as string | null, missing: "" }));
+
+/** Skills directory: explicit root, own layout, loaded plugin, then flat installation. */
 export function skillsRoot(
   self = currentScope().origin?.path || fileURLToPath(import.meta.url),
 ): string | null {
   const plugin = env("CLAUDE_PLUGIN_ROOT");
   const explicit = env(SKILLS_ROOT_ENV);
-  // An identified set must not fall through to another installation when removed.
-  if (explicit) return resolve(explicit);
-  if (plugin) return resolve(plugin, "skills");
-  if (self.includes("/plugins/cache/")) return resolve(dirname(self), "..", "..");
-  const candidates = [resolve(dirname(self), "..", ".."), join(homedir(), ".agents", "skills")];
-  for (const c of candidates) if (c && existsSync(join(c, BRIDGE_IN_SET))) return resolve(c);
-  return null;
+  const identity = JSON.stringify([explicit, self, plugin]);
+  if (identity !== R.identity) {
+    R.identity = identity;
+    R.root = null;
+  }
+  const exists = (root: string): boolean => existsSync(join(root, BRIDGE_IN_SET));
+  // Keep the identified installation when it disappears; never borrow another set.
+  if (!R.root) {
+    const candidates = [
+      explicit && resolve(explicit),
+      resolve(dirname(self), "..", ".."),
+      plugin && resolve(plugin, "skills"),
+      join(homedir(), ".agents", "skills"),
+    ];
+    R.root = candidates.find((c) => c && exists(c)) || null;
+  }
+  return R.root && exists(R.root) ? R.root : null;
 }
 
 /** Versioned plugin updates do not identify the set loaded by a live harness session. */
@@ -135,6 +147,11 @@ export function treeStamp(root: string, mask: string = SKILL_STAMP_MASK): string
 /** attrs.skills — read anew for every connect/register and machine snapshot. */
 export function skillsAttr(): { name: string; version: string; stamp?: string } {
   const root = skillsRoot();
+  const missing = !root ? R.root || "unidentified" : "";
+  if (missing !== R.missing) {
+    R.missing = missing;
+    if (missing) log(`installed skills root is missing: ${missing}; not selecting another set`);
+  }
   if (!root) return { name: SET, version: "unknown" };
   let version = "unknown";
   try {
