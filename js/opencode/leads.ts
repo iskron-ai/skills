@@ -1,11 +1,12 @@
 // A lead subagent (graph @nks/nks-dev, node #6625; #6550, rule 4): a child session that stood
 // on its own seat lives until its errand's outcome, not until its turn's end. Its end is an
-// explicit act: leaving by the outcome (leave of its errand case — the first it joined —,
-// leaving all cases, or channel leave), the launcher's revoke of its seat, a cancel of its own
-// turn in OpenCode (not a parent's cancel that cut it by cascade — cascade.ts), the session's
-// deletion. No idle ceiling: waiting for a human is not neglect. A plugin reload is no end:
-// the child returns (children.ts). At the end the child's bridge goes down, the outcome goes
-// to the parent as a synthetic message. Contract — leaddoors.ts, words — leadwords.ts.
+// explicit act: leaving by the outcome (leave of the last case it is in, #7234; leaving all
+// cases, or channel leave), the launcher's revoke of its seat, the session's deletion. Esc of
+// its turn only interrupts the turn (#7493, the owner's word in №607 [41]); a parent's cancel
+// that cut it by cascade is a word to the parent (cascade.ts). No idle ceiling: waiting for a
+// human is not neglect. A plugin reload is no end: the child returns (children.ts). At the end
+// the child's bridge goes down, the outcome goes to the parent as a synthetic message, and
+// nothing reaches the child's session any more (#7505). Contract — leaddoors.ts, words — leadwords.ts.
 
 import { tool } from "../delivery/index.ts";
 import { createCascade } from "./cascade.ts";
@@ -16,7 +17,7 @@ import { type Place, standsBy } from "./satellite.ts";
 interface Lead {
   parent: Promise<string | null>;
   place?: Place;
-  room?: string; // the errand case — its number without a sign
+  rooms: Set<string>; // the cases it is in — numbers without a sign; leaving the last is the outcome
   running?: boolean;
   noted?: boolean;
   leaving?: string; // leaving said mid-turn — the end waits for the turn's end and its text
@@ -24,12 +25,16 @@ interface Lead {
 }
 
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
+/** The snapshot keeps the cases as one string, numbers by commas — a former single number reads as one. */
+const roomsOf = (room: string | null | undefined): Set<string> =>
+  new Set((room ?? "").split(",").map(roomNo).filter(Boolean));
+const roomsText = (l: Lead | undefined): string | null => [...(l?.rooms ?? [])].join(",") || null;
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
 
 export function createLeads(d: LeadDoors): Leads {
   const leads = new Map<string, Lead>();
-  // Finally ended: released by the launcher (no reason), cancelled, taken down by the platform — with a reason.
+  // Finally ended: released by the launcher (no reason), taken down by the platform — with a reason.
   const gone = new Map<string, string | undefined>();
   const over = new Set<string>(); // ended by any end, until they stand again
   const cascade = createCascade();
@@ -39,8 +44,9 @@ export function createLeads(d: LeadDoors): Leads {
   /**
    * The end: the outcome to the parent, then the bridge ends its run and goes down (ended).
    * The outcome wakes and goes steer: OpenCode's own synthetic on the child's quiet wakes the
-   * parent first, and a queued word would land only after its turn. A cancel, an unreturned
-   * seat (lost) and the parent's move (away — no "ended") do not wake.
+   * parent first, and a queued word would land only after its turn. A seat taken down by the
+   * platform, an unreturned seat (lost) and the parent's move (away — no "ended") do not wake.
+   * own — the launcher's revoke follows by its own bridge: no correction word here.
    */
   async function finish(
     child: string,
@@ -48,7 +54,8 @@ export function createLeads(d: LeadDoors): Leads {
     ended = true,
     wake = true,
     kind: "end" | "lost" | "away" = "end",
-  ) {
+    own = false,
+  ): Promise<void> {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
@@ -77,7 +84,7 @@ export function createLeads(d: LeadDoors): Leads {
     // synthetic and the parent woke twice (№147). A failed release is a correction that does not wake.
     const failed = await d.close(child).catch(() => null);
     await d.end(child).catch((e: Error) => d.say(W().notDown(who(l, child), e.message), "warning"));
-    if (kind !== "lost" && (failed === null || failed.length))
+    if (kind !== "lost" && !own && (failed === null || failed.length))
       await tell(unrevokedWord(who(l, child), failed), false);
   }
 
@@ -87,7 +94,7 @@ export function createLeads(d: LeadDoors): Leads {
   }
 
   function stood(child: string): Lead {
-    const l = leads.get(child) ?? { parent: parentOf(child) };
+    const l = leads.get(child) ?? { parent: parentOf(child), rooms: new Set<string>() };
     leads.set(child, l);
     over.delete(child);
     return l;
@@ -105,11 +112,12 @@ export function createLeads(d: LeadDoors): Leads {
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
       const room = name === tool("case") ? roomNo(args.room) : null;
-      if (args.action === "join" && room) l.room ??= room;
+      if (args.action === "join" && room) l.rooms.add(room);
       if (args.action !== "leave") return;
       if (name === tool("channel")) leave(child, l, W().leftSeat());
       else if (room === "") leave(child, l, W().leftCases());
-      else if (room && room === l.room) leave(child, l, W().leftCase(l.room));
+      // The outcome is leaving the last case it is in, not the first it joined (#7234).
+      else if (room && l.rooms.delete(room) && !l.rooms.size) leave(child, l, W().leftCase(room));
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
@@ -118,12 +126,14 @@ export function createLeads(d: LeadDoors): Leads {
         if (!names(l.place, child, s) || (await l.parent) !== caller) continue;
         if (d.ownPlace(child)) return null; // not a satellite — the revoke goes by the launcher's bridge as is
         gone.set(child, undefined);
-        await finish(child, W().releasedByLauncher());
-        await d.tell(child, W().released(), false);
-        return W().release(who(l, child));
+        const place = l.place ?? null;
+        // No word into the child (#7505): anything laid there would wake it for a turn.
+        await finish(child, W().releasedByLauncher(), true, true, "end", true);
+        return { word: W().release(who(l, child)), place };
       }
       return null;
     },
+    ended: (child) => over.has(child) || gone.has(child) || !!leads.get(child)?.leaving,
     released: (child) => gone.has(child),
     goneWhy: (child) => gone.get(child),
     heard(child, kind, place) {
@@ -149,7 +159,7 @@ export function createLeads(d: LeadDoors): Leads {
     },
     back(child, was) {
       const l = stood(child);
-      if (was.room) l.room = was.room;
+      for (const r of roomsOf(was.room)) l.rooms.add(r);
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke by name before "held"
@@ -158,12 +168,12 @@ export function createLeads(d: LeadDoors): Leads {
     away: (child) => finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
-      return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
+      return { room: roomsText(l), noted: !!l?.noted, last: l?.last };
     },
     handoff(child) {
       const l = leads.get(child);
       leads.delete(child); // neither "ended" nor over: the lead lives in the new folder's instance
-      return { room: l?.room ?? null, noted: !!l?.noted, last: l?.last };
+      return { room: roomsText(l), noted: !!l?.noted, last: l?.last };
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {
@@ -180,18 +190,15 @@ export function createLeads(d: LeadDoors): Leads {
           return;
         case "session.execution.interrupted":
           l.running = false;
-          // A cancel of the child's own turn (reason "user") is an end without waking; shutdown,
-          // superseded, inactivity are no cancel. The same "user" by a parent's cancel — a cut turn (cascade.ts).
+          // A leave said in the turn ends it at the turn's end, an interrupted one too.
+          if (l.leaving) return void finish(child, l.leaving);
+          // Esc of the child's own turn (reason "user") only interrupts the turn, the errand lives
+          // (#7493, №607 [41]); shutdown, superseded, inactivity are no cancel either. The same
+          // "user" by a parent's cancel — a cut turn, a word to the parent (cascade.ts).
           if (ev.data?.reason !== "user") return;
           void cascade.byParent(l.parent, Date.now()).then(async (byParent) => {
-            if (!leads.has(child)) return;
-            if (byParent) {
-              const p = await l.parent;
-              if (p) await d.tell(p, W().cascade(who(l, child)), false);
-              return;
-            }
-            gone.set(child, W().cancelledRefusal());
-            await finish(child, W().cancelled(), true, false);
+            const p = byParent && leads.has(child) ? await l.parent : null;
+            if (p) await d.tell(p, W().cascade(who(l, child)), false);
           });
           return;
         case "session.execution.succeeded":

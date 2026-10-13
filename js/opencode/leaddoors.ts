@@ -10,10 +10,15 @@ import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
 import type { Say } from "./tools.ts";
 
 export interface Leads {
-  /** A child's successful call through its bridge: stood — a lead; first case entered — its errand; leaving by outcome — the end. */
+  /** A child's successful call through its bridge: stood — a lead; cases entered — its errand; leaving the last — the end. */
   called(child: string, name: string, args: Record<string, unknown>, place?: Place | null): void;
-  /** The launcher's revoke naming its lead's seat; null — not this case. */
-  release(caller: string, name: string, args: Record<string, unknown>): Promise<string | null>;
+  /**
+   * The launcher's revoke naming its lead's seat ends the child; null — not this case. The
+   * launcher's own revoke follows by its bridge (tools.ts): the seat goes on the platform.
+   */
+  release(caller: string, name: string, args: Record<string, unknown>): Promise<Released | null>;
+  /** Ended or ending by any end: nothing is laid into its session any more (#7505). */
+  ended(child: string): boolean;
   /** Released by the launcher — may not stand again. */
   released(child: string): boolean;
   /** Finally ended not by the launcher — the reason to refuse the child; otherwise undefined. */
@@ -35,7 +40,14 @@ export interface Leads {
   onEvent(ev: any): void;
 }
 
+/** A lead ended by its launcher's revoke: the word and its seat. */
+export interface Released {
+  word: string;
+  place: Place | null;
+}
+
 export interface Snapshot {
+  /** The cases the lead is in — numbers by commas. */
   room: string | null;
   noted: boolean;
   last?: string;

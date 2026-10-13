@@ -4153,40 +4153,32 @@ test("the end of a child's turn ends nothing: its bridge lives, a frame of its c
   }
 });
 
-// A cancelled child (the human or the parent stopped its run in OpenCode) is ended like a
-// revoke by its launcher: «КОНЧЕН» to the parent without waking it, the place goes —
-// not kept reopening its socket — and it cannot stand again. Other interruptions
-// (shutdown, superseded) are no end.
-test("a lead child whose run is interrupted by the user is ended without waking the parent and cannot stand again; a superseded run is no end", async () => {
+// Esc of a lead child's own turn only interrupts the turn (#7493, the owner's word in №607
+// [41]): the errand lives — no «КОНЧЕН», its bridge, place and cases stay, a frame of its case
+// still wakes it. Other interruptions (shutdown, superseded) are no end either.
+test("a lead child whose own turn is interrupted by the user (Esc) lives on: the turn is cut, not the errand", async () => {
   const { b, rec, childPid } = await leadChild("lead-cancel", { ISKRON_CASCADE_MS: 400 });
   try {
-    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
-    rec.emit({
-      type: "session.execution.interrupted",
-      data: { sessionID: "child", reason: "superseded" },
-    });
-    await delay(300);
-    assert.ok(alive(childPid), "a superseded run is not a cancel");
-    assert.equal(ends(rec).length, 0);
+    for (const reason of ["superseded", "user"]) {
+      rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+      rec.emit({ type: "session.execution.interrupted", data: { sessionID: "child", reason } });
+    }
+    await delay(900); // past the cascade window: no parent's cancel came
+    assert.ok(alive(childPid), "the child's bridge lives past its Esc");
+    assert.equal(ends(rec).length, 0, "Esc is no end");
     assert.ok(
-      !rec.synthetics.some((s) => /прерван \(superseded\)/.test(s.text)),
-      "a lead's interruption is leads.ts's to word, not the word of a child without a place",
+      !rec.synthetics.some((s) => /прерван/.test(s.text)),
+      "a lead's own interruption is no word to the parent",
     );
-    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
-    rec.emit({
-      type: "session.execution.interrupted",
-      data: { sessionID: "child", reason: "user" },
-    });
-    await until(() => !alive(childPid), "the cancelled child's bridge to go");
-    await until(() => ends(rec).length === 1, "the end in the parent");
-    assert.match(ends(rec)[0].text, /отменён в OpenCode[\s\S]*место снимается/);
-    assert.equal(ends(rec)[0].resume, false, "a cancel does not wake the parent");
-    const bridges = pidsOf(b.log).length;
-    await assert.rejects(
-      rec.call("iskron_stand", { realm: "nks-dev" }, "child"),
-      /ход отменён в OpenCode — поручение кончено/,
+    await rec.call("iskron_case", { realm: "nks-dev", action: "say", room: "#7" }, "child");
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("frame", { frame: frame("сосед ответил"), raw: "" }),
     );
-    assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the cancelled child");
+    await until(
+      () => rec.prompts.some((p) => p.sessionID === "child" && /сосед ответил/.test(p.text)),
+      "the frame waking the child after its Esc",
+    );
   } finally {
     await rec.stop();
   }
@@ -5332,7 +5324,11 @@ test("a child's case leave without a room ends it", async () => {
   }
 });
 
-test("the launcher's revoke of its child's place ends the child for good: the plugin answers, the root's bridge revokes nothing, the parent gets the end, the child one word, and it cannot stand again", async () => {
+// #7505: the plugin answered «отпущен» while the seat stayed on the board «живой · слушает» —
+// taken off only by a second revoke with the role. The child ends first (its bridge leaves its
+// cases and revokes), then the launcher's own revoke goes to the platform by the launcher's
+// bridge with the seat's role: one word takes the seat off. Nothing is laid into the child.
+test("the launcher's revoke of its child's place ends the child for good: the child's end, then the launcher's revoke with the role on the platform; no word into the child, and it cannot stand again", async () => {
   const { b, rec, rootPid, childPid, sent } = await leadChild("lead-release");
   try {
     rec.emit({ type: "session.text.ended", data: { sessionID: "child", text: "наполовину" } });
@@ -5342,20 +5338,24 @@ test("the launcher's revoke of its child's place ends the child for good: the pl
       { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
       "root",
     );
-    assert.match(word.content, /отпущен/);
     await until(() => !alive(childPid), "the child's bridge to go on the launcher's word");
     assert.ok(alive(rootPid), "the launcher's bridge stays");
-    assert.ok(
-      !sent().some((c) => c.pid === rootPid && c.arguments.action === "revoke"),
-      "the root's bridge sent no revoke of the child's place",
+    const revokes = sent().filter((c) => c.pid === rootPid && c.arguments.action === "revoke");
+    assert.equal(revokes.length, 1, "the launcher's revoke went to the platform once");
+    assert.deepEqual(
+      [revokes[0].arguments.standing, revokes[0].arguments.karta],
+      [`@me:${SUB}`, ROOT_PLACE.karta],
+      "the revoke names the seat and its role",
     );
+    assert.match(word.content, /отпущен[\s\S]*место снято/);
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /отпущен словом запустившего[\s\S]*наполовину/);
-    await until(() => rec.synthetics.some((s) => s.sessionID === "child"), "the child's word");
-    const toChild = rec.synthetics.filter((s) => s.sessionID === "child");
-    assert.equal(toChild.length, 1, "one word to the child");
-    assert.match(toChild[0].text, /отпустил тебя/);
-    assert.equal(toChild[0].resume, false, "the word does not wake the child");
+    await delay(200);
+    assert.deepEqual(
+      [...rec.prompts, ...rec.synthetics].filter((p) => p.sessionID === "child"),
+      [],
+      "no word into the released child — it would wake it",
+    );
     const bridges = pidsOf(b.log).length;
     await assert.rejects(
       rec.call("iskron_stand", { realm: "nks-dev" }, "child"),
@@ -5365,6 +5365,114 @@ test("the launcher's revoke of its child's place ends the child for good: the pl
     assert.equal(pidsOf(b.log).length, bridges, "no bridge raised for the released child");
     await delay(300);
     assert.equal(ends(rec).length, 1, "it is not a lead again");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("the launcher's revoke the platform refuses is a loud refusal of the launcher's call, not «отпущен»", async () => {
+  const { b, rec, childPid } = await leadChild("lead-release-refused");
+  try {
+    writeFileSync(`${b.reply}.iskron_channel`, "__ERROR__403 нет права на это место");
+    await assert.rejects(
+      rec.call("iskron_channel", { realm: "nks-dev", action: "revoke", standing: SUB }, "root"),
+      /место НЕ снято[\s\S]*403 нет права/,
+    );
+    await until(() => !alive(childPid), "the child is ended all the same");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #7505 (1): the child handed in its outcome and left its case; the launcher's word sent in the
+// middle of its work and held until its turn's end went into its session and woke it — it came
+// back with the same seat into the case. From the leave on, nothing goes into the child's session:
+// not a frame, a case pile, a wake-up or stale batch, nor a tact held for its busy turn.
+test("an ended lead is woken by nothing: frames, piles, batches and a held tact after its leave go to the journal", async () => {
+  const { b, rec, childPid } = await leadChild("lead-ended-quiet", {}, ROOT_PLACE, SUB);
+  const own = (p) => p.sessionID === "child";
+  try {
+    rec.emit({ type: "session.status", data: { sessionID: "child", status: { type: "busy" } } });
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    await delay(100);
+    appendFileSync(`${b.events}.${childPid}`, tactBurst(1)); // waits for the busy turn's end
+    await delay(200);
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "child");
+    for (const e of [
+      event("frame", { frame: frame("слово запустившего посреди работы"), raw: "" }),
+      event("frame", { frame: addressed(601, ME, "defer"), raw: "" }),
+      event("backlog", { frames: [{ id: "w1" }], text: "Побудка: кадров 1\n\nслово" }),
+      event("stale", { text: "лежалое слово" }),
+    ])
+      appendFileSync(`${b.events}.${childPid}`, e);
+    await delay(BATCH_MS * 4);
+    rec.emit({ type: "session.text.ended", data: { sessionID: "child", text: "Итог: готово." } });
+    rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
+    rec.emit({ type: "session.idle", data: { sessionID: "child" } });
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await delay(300);
+    assert.deepEqual(
+      [...rec.prompts, ...rec.synthetics].filter(own),
+      [],
+      "nothing laid into the ended child",
+    );
+    assert.match(rec.said(), /не вложен — субагент сессии child кончен/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #7505 (3): a word of the launcher to its working lead, with a stack that would hold it for
+// the next turn, entered only after the child's outcome. It steers the running turn; the same
+// stack from anyone else still goes the pile's way.
+test("the launcher's word to its lead mid-turn steers the turn whatever its stack; another's addressed word keeps the pile", async () => {
+  const { b, rec, childPid } = await leadChild("lead-steer-word");
+  const launcher = { kind: "standing", standing: `@me:${ROOT_PLACE.name}`, name: "запустивший" };
+  const said = (entry_id, author, body) =>
+    roomFrame("said", {
+      entry_id,
+      key: "said",
+      stack: "defer",
+      author,
+      envelope: { addressee: ME },
+      body,
+    });
+  try {
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("frame", { frame: said(611, launcher, "поправка запустившего"), raw: "" }),
+    );
+    await until(() => rec.prompts.some((p) => /поправка запустившего/.test(p.text)), "the word");
+    const word = rec.prompts.find((p) => /поправка запустившего/.test(p.text));
+    assert.deepEqual([word.sessionID, word.delivery], ["child", "steer"]);
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("frame", { frame: said(612, undefined, "слово соседа"), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 2, "the neighbour's pile");
+    assert.equal(rec.prompts[1].delivery, "queue", "another's deferred word keeps the pile");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #7234: the child of two cases was ended by leaving the first it joined, mid-errand.
+test("a lead child in two cases is not ended by leaving the first — only by leaving the last", async () => {
+  const { rec, childPid } = await leadChild("lead-two-cases");
+  try {
+    for (const room of ["#77", "#80"])
+      await rec.call("iskron_case", { realm: "nks-dev", action: "join", room }, "child");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    await delay(300);
+    assert.ok(alive(childPid), "leaving the first of two cases is no outcome");
+    assert.equal(ends(rec).length, 0);
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "#80" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go with its last case");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    assert.match(ends(rec)[0].text, /вышел из дела №80 по исходу/);
   } finally {
     await rec.stop();
   }
