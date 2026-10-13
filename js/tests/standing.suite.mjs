@@ -556,30 +556,24 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
 });
 
 // #7440: the owner took the seat off (4001 with a reason) — the watchdog's last line is the
-// stop word and it leaves with 0; a watchdog started after the stop says it at once, without
-// waiting for a socket that will not come.
-test("the owner's 4001 ends the watchdog with the stop word and exit 0; a later watchdog says it at once", async (t) => {
-  const { fake, dir, bridge, key } = await connected(t);
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  const wd = runClient("watchdog", dir, key);
-  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
-  const r = await wd.done;
-  assert.equal(r.exit, 0, `the stop is no alarm: ${wd.out}${wd.err}`);
-  assert.match(wd.out, /снято \(человеком\) — стоп: место не занимай/);
-  assert.doesNotMatch(wd.out, /токен мёртв|connect/);
-  await waitFor(
-    () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
-    "the stop notification",
-  );
-  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
-  for (const kind of ["watchdog", "watchdog-exit"]) {
-    const late = runClient(kind, dir, key);
-    const lr = await late.done;
-    assert.equal(lr.exit, 0, `${kind} after the stop: ${late.out}${late.err}`);
-    assert.match(late.out, /стоп: место не занимай/, kind);
-  }
-});
+// stop word and it leaves with 0, for both watchdogs.
+for (const kind of ["watchdog", "watchdog-exit"])
+  test(`the owner's 4001 ends ${kind} with the stop word and exit 0`, async (t) => {
+    const { fake, dir, bridge, key } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const wd = runClient(kind, dir, key);
+    await waitFor(() => (wd.out + wd.err).includes("слушаю стояние"), "the watchdog to attach");
+    await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `the stop is no alarm: ${wd.out}${wd.err}`);
+    assert.match(wd.out, /снято \(человеком\) — ты остановлен: работу кончи, место не занимай/);
+    assert.doesNotMatch(wd.out, /токен мёртв|connect/);
+    await waitFor(
+      () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+      "the stop notification",
+    );
+    assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  });
 
 // Своё close или revoke отпускает место словом моста (released), не уходом:
 // сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
@@ -773,7 +767,7 @@ test("watchdog-codex on the owner's 4001: no turn/start, the stop word, exit 0",
   await fake.control({ ws_close: 4001, ws_close_reason: "revoked:self" });
   const r = await wd.done;
   assert.equal(r.exit, 0, `the stop is no alarm: ${wd.err}`);
-  assert.match(wd.err, /снято \(сессией той же учётки\) — стоп/);
+  assert.match(wd.err, /снято \(сессией той же учётки\) — ты остановлен/);
   assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "the stop wakes no thread");
 });
 
@@ -2031,7 +2025,7 @@ test("a return by record refused with 4001 is the owner's stop: no connect after
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(st.result?.isError, said);
-  assert.match(said, /место proba снято .* — стоп: место не занимай/, said);
+  assert.match(said, /место proba снято .* — ты остановлен: работу кончи, место не занимай/, said);
   assert.equal(fake.state.counts.connect, 1, "the stop is not answered by connect");
   assert.ok(
     !second.notifications.some((n) => n.params?.data?.kind === "dead"),

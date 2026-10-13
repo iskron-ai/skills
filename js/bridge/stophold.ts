@@ -1,20 +1,53 @@
-// A foreign close 4001 on the held socket (graph @nks/nks-dev, nodes #7439, #7440): the owner
-// took the seat off. The stop mark goes to disk (stopped.ts), every door and the notification
-// client hear the stop word, and the seat is released with its records and binding forgotten,
-// as on an own revoke — nothing reconnects: the mark refuses every return. Wired into hold.ts
-// at load (session.ts) so the holder does not import the mark's writer back.
+// The owner took a seat off (graph @nks/nks-dev, nodes #7439, #7440, #7493): the agent and
+// its seat have one life, so taking the seat off ends the agent. A close 4001 the session did
+// not expect as its own revoke or close — or a standing_ended frame naming the main seat — is
+// the stop: every door and the notification client hear the stop word, the seat is released
+// with its record and binding forgotten, and no automatic path takes it again (none has a
+// record or a binding left; a move under way when it came says the stop word, stoppedSince).
+// The name stays free: an explicit call of the stand tool stands as usual. A standing_ended frame for a
+// seat beside forgets only that seat, waking nobody. Wired into hold.ts at load (session.ts).
+import { STOP, type StopWho } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { broadcast, type ChannelEvent, forgetSeat, notify } from "./hold.ts";
-import { H, whenStopped } from "./holdstate.ts";
-import { markStopped, stopWord } from "./stopped.ts";
+import { type Frame, H, whenStopped } from "./holdstate.ts";
+import { dropExtra, extraPlaces } from "./places.ts";
+import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 
-whenStopped((key, code, reason) => {
-  const s = state.standing;
-  const text = s ? markStopped(s, key, code, reason, H.door?.address) : stopWord("", reason);
+const whoOf = (reason: string): StopWho =>
+  reason === "revoked:person" ? "person" : reason === "revoked:self" ? "self" : "other";
+
+const stopWord = (name: string, reason: string): string => words(STOP).stopped(name, whoOf(reason));
+
+function stopAgent(key: string, how: string, reason: string): void {
+  const text = stopWord(state.standing?.name ?? "", reason);
   log(text);
-  const ev: ChannelEvent = { kind: "stopped", key, code, text, ...(reason ? { reason } : {}) };
+  standingLog(`stopped ${key}: ${how}${reason ? ` (${reason})` : ""}`);
+  H.stopped = { n: H.stopped.n + 1, key, text };
+  const ev: ChannelEvent = { kind: "stopped", key, text, ...(reason ? { reason } : {}) };
   broadcast(ev);
   notify("error", ev);
   forgetSeat(text);
-});
+}
+
+/** One seat of a live channel taken off (api: standing_ended {standing_id, by}). */
+function seatEnded(key: string, frame: Frame): void {
+  const id = typeof frame.standing_id === "string" ? frame.standing_id : "";
+  const reason = typeof frame.by === "string" ? `revoked:${frame.by}` : "";
+  const beside = id ? extraPlaces().find((p) => p.door.standingId === id) : undefined;
+  if (beside) {
+    const text = stopWord(beside.standing.name ?? "", reason);
+    log(`${text} — that seat beside is forgotten, the rest are held`);
+    return dropExtra(beside.door.key, text, true, true);
+  }
+  const main = H.door?.standingId;
+  // An id that names neither seat: with seats beside it may be one whose id the bridge never learnt.
+  if (id && (main ? main !== id : extraPlaces().length > 0))
+    return log(`standing_ended for seat ${id}, not one this bridge knows — ignored`);
+  stopAgent(key, "standing_ended", reason);
+}
+
+whenStopped((key, code, reason, ended) =>
+  ended ? seatEnded(key, ended) : stopAgent(key, `close ${code}`, reason),
+);

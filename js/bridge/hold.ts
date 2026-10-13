@@ -35,7 +35,6 @@ import {
 } from "./places.ts";
 import { otherRealm, sameRealm } from "./realms.ts";
 import { batchForWatchdogs, noteRoomKind } from "./roomstack.ts";
-import { stopOf } from "./stopped.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -334,8 +333,6 @@ function expectHello(): void {
 /** Return to the place left: same address, socket reopened. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
-  const s = state.standing;
-  if (s && stopOf(s.realm, s.karta, s.name)) return false; // taken off while away: no return (#7439)
   H.parked = false;
   expectHello();
   openHolder(H.currentUrl, H.currentKey);
@@ -419,6 +416,7 @@ function openHolder(url: string, key: string): void {
       onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
+          if (full?.type === "standing_ended") return E.stop?.(key, 0, "", full); // one seat taken off (stophold.ts)
           const primary = held();
           if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // socket without a standing (env)
           // hello names the channel's places: their ids and canonical graphs (#5838).

@@ -1342,15 +1342,14 @@ for (const busy of [true, false])
           type: "session.status",
           data: { sessionID: "s-stop", status: { type: "busy" } },
         });
-      const text =
-        "место proba снято (человеком) — стоп: место не занимай, работу не продолжай; встать снова — только по слову человека: iskron_stand(take=true)";
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
       appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
       await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
       assert.deepEqual(rec.interrupts[0], { sessionID: "s-stop", resume: false });
       await until(() => rec.synthetics.length === 1, "the stop word in the session");
       assert.equal(rec.synthetics[0].sessionID, "s-stop");
       assert.equal(rec.synthetics[0].resume, false, "the stop word starts no turn");
-      assert.match(rec.synthetics[0].text, /снято \(человеком\) — стоп/);
+      assert.match(rec.synthetics[0].text, /снято \(человеком\) — ты остановлен/);
       assert.match(rec.said(), /\[iskron\/error\] Искрон: место proba снято/, "the human hears it");
       // A tact after the stop (a late batch) still goes by its own path; the stop itself prompts nothing.
       await delay(300);

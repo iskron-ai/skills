@@ -51,10 +51,6 @@ export function runWatchdogCodex(argv: string[]): void {
     process.exit(2);
   }
   const target = resolveStanding(argv);
-  if ("stopped" in target) {
-    note(target.stopped); // taken off by its owner (#7439): no turn, exit 0
-    process.exit(0);
-  }
   if ("error" in target) {
     note(doer(target.error));
     process.exit(2);

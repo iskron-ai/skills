@@ -7,7 +7,6 @@ import { CFG } from "./config.ts";
 import { closedUnder, errorCode, errorMessage, UpstreamError } from "./errors.ts";
 import { loginPublished } from "./oauth/flow.ts";
 import { repeatable } from "./repeat.ts";
-import { noteServerStop, stoppedSeatRefusal } from "./stoprefusal.ts";
 import { loadStore, saveServerCache } from "./store.ts";
 import { debug, emit, log } from "./streams.ts";
 import { heardListChanged, isListChanged } from "./toolsync.ts";
@@ -117,10 +116,9 @@ const TLS_REFUSALS = new Set([
 // except tools/list_changed, which goes to the harness whoever asked (toolsync.ts, #6819).
 export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => void): Promise<void> {
   const onMessage = (m: JsonRpcMessage): void =>
-    isListChanged(m) ? heardListChanged(msg, emit) : heard(noteServerStop(msg, m));
-  // A seat move the bridge never sends: unnamed (unnamed.ts) or onto a stopped seat (stopped.ts).
-  const refused = unnamedSeatRefusal(msg) ?? stoppedSeatRefusal(msg);
-  if (refused) return void heard(refused);
+    isListChanged(m) ? heardListChanged(msg, emit) : heard(m);
+  const unnamed = unnamedSeatRefusal(msg);
+  if (unnamed) return void onMessage(unnamed);
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",

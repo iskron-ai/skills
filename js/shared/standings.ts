@@ -78,10 +78,6 @@ export const holdFilePathOf = (authDir: string, key: string): string =>
 export const baseFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.base`);
 
-/** Stop mark (0600): the seat was taken off by its owner, no return without the human's word (graph @nks/nks-dev, node #7439). */
-export const stopFilePathOf = (authDir: string, key: string): string =>
-  join(standingsDirOf(authDir), `${hashOf(key)}.stop`);
-
 /** Intent to take the seat (0600): lies while the bridge's connect is in flight (graph @nks/nks-dev, node #6706). */
 export const takingFilePathOf = (authDir: string, key: string): string =>
   join(standingsDirOf(authDir), `${hashOf(key)}.taking`);

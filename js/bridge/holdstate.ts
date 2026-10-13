@@ -39,12 +39,20 @@ export const H = scoped(() => ({
   closingOwn: false,
   /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
   handingOver: null as string | null,
+  /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
+  stopped: { n: 0, key: "", text: "" },
 }));
+
+/** The stop word if the seat `key` was taken off by its owner since the count `before` (stopsNow); otherwise null. */
+export const stoppedSince = (before: number, key: string): string | null =>
+  H.stopped.n !== before && H.stopped.key === key ? H.stopped.text : null;
+export const stopsNow = (): number => H.stopped.n;
 
 /** Next step after eviction (evicted.ts) and after the owner's stop (stophold.ts): set once at load, one per process for all sessions. */
 export const E: {
   next: ((key: string, url: string, code: number) => void) | null;
-  stop: ((key: string, code: number, reason: string) => void) | null;
+  /** close 4001 not the session's own; or a standing_ended frame (`ended`) naming a seat of the channel */
+  stop: ((key: string, code: number, reason: string, ended?: Frame) => void) | null;
 } = {
   next: null,
   stop: null,
@@ -52,7 +60,7 @@ export const E: {
 export function whenEvicted(fn: (key: string, url: string, code: number) => void): void {
   E.next = fn;
 }
-export function whenStopped(fn: (key: string, code: number, reason: string) => void): void {
+export function whenStopped(fn: NonNullable<(typeof E)["stop"]>): void {
   E.stop = fn;
 }
 

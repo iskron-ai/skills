@@ -864,12 +864,15 @@ for (const busy of [true, false])
     const rec = await session(env);
     try {
       rec.busy(busy);
-      const text = "место proba снято (человеком) — стоп: место не занимай, работу не продолжай";
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
       push(events, { kind: "stopped", code: 4001, text });
       await delay(250);
       assert.equal(rec.aborts.length, busy ? 1 : 0, "only a running turn is aborted");
       assert.equal(rec.notices.at(-1).level, "error");
-      assert.match(rec.notices.at(-1).text, /Искрон: место proba снято \(человеком\) — стоп/);
+      assert.match(
+        rec.notices.at(-1).text,
+        /Искрон: место proba снято \(человеком\) — ты остановлен/,
+      );
       assert.equal(rec.messages.length, 1, "the stop word is in the history");
       assert.equal(rec.messages[0].opts.triggerTurn, false, "the stop raises no turn");
       assert.doesNotMatch(rec.messages[0].msg.content, /connect/);

@@ -47,6 +47,7 @@ import {
   wasEvicted,
 } from "./hold.ts";
 import { keyOf, noteSeatBase } from "./holdrecord.ts";
+import { stoppedSince, stopsNow } from "./holdstate.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
@@ -70,7 +71,6 @@ import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from 
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
-import { standStopGate } from "./stopped.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { readLatest, staleNotice } from "./update.ts";
@@ -99,6 +99,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const statusOnly = await standStatusOnly(msg);
   if ("reply" in statusOnly) return statusOnly.reply;
   const a = msg.params?.arguments ?? {};
+  const stopsBefore = stopsNow(); // an owner's 4001 met by this call's own return ends it (#7439)
   let realm = typeof a.realm === "string" ? a.realm.trim() : "";
   let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
@@ -156,12 +157,6 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const base = sat ? "" : name; // base of a seat beside: the derived or explicit name (#6706)
   realm = await seatRealm(realm, name); // one graph form (#5838); own seat keeps its spelling (hearing.ts)
   karta = seatKarta(realm, karta, name); // "agent" — the own seat's role, before any check (hearing.ts)
-  // A seat its owner took off stays down; take=true is the human's word that lifts the stop (stopped.ts, #7439).
-  const stopped = standStopGate(realm, karta, name, a.take === true);
-  if (stopped) {
-    lines.push(stopped);
-    return done(true);
-  }
   // The bridge already stands on a separate seat of this name — go there (#5407); take=true calls the name itself.
   const led0 = state.standing && !otherRealm(state.standing.realm, realm) ? state.standing : null;
   // The bridge remembers the base of a seat beside (#6706); it cannot be guessed from the name's
@@ -310,10 +305,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     !theirsByRecord(keyOf(realm, karta, name));
   const resumed =
     byRecord ?? (fresh && !listensElsewhere ? await resumeFromDisk(realm, karta, name) : null);
-  // The return by record met the owner's 4001: the stop word, no connect after it.
-  const stoppedOnReturn = resumed ? null : standStopGate(realm, karta, name, false);
-  if (stoppedOnReturn) {
-    lines.push(stoppedOnReturn);
+  // The return by record met the owner's 4001: the agent is stopped — the stop word, no connect after it (#7439).
+  const stopped = stoppedSince(stopsBefore, keyOf(realm, karta, name));
+  if (stopped) {
+    lines.push(stopped);
     return done(true);
   }
   const extra: string[] = []; // lines after the answer's header
@@ -347,6 +342,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // another session turned the address meanwhile, the socket is refused and released —
     // the same call again picks a seat beside (#6706).
     await heardOnReturn(); // no hello — the address may have turned: socket released (leave.ts)
+    const stoppedBack = stoppedSince(stopsBefore, keyOf(realm, karta, name)); // the return met the owner's 4001
+    if (stoppedBack) {
+      lines.push(stoppedBack);
+      return done(true);
+    }
     if (!holdsStanding(realm, karta, name) && !R.again) {
       R.again = true;
       try {

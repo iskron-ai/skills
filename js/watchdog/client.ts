@@ -13,7 +13,6 @@ import { setLang } from "../shared/lang.ts";
 import { deliveryKeys, eventIn, type Marks, seenIds } from "../shared/seen.ts";
 import { staleBatch } from "../shared/stalebatch.ts";
 import { authDirFromEnv, socketPathOf, standingsDirOf } from "../shared/standings.ts";
-import { readStopMarks, stopMarkOf } from "../shared/stopmark.ts";
 import { wd } from "./words.ts";
 
 // The bridge may come up a little after the watchdog, a seat may return after a daemon
@@ -44,21 +43,12 @@ export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
   return out;
 }
 
-/**
- * Which standing to listen to: the named one, or the only one the bridge holds. A seat its
- * owner took off (stop mark, shared/stopmark.ts, #7439) gives the stop word: the watchdog
- * says it and leaves with 0 — nothing to wait for and nobody to wake.
- */
-export function resolveStanding(
-  argv: string[],
-): Resolved | { error: string } | { stopped: string } {
+/** Which standing to listen to: the named one, or the only one the bridge holds. */
+export function resolveStanding(argv: string[]): Resolved | { error: string } {
   const { key, authDir } = parseWatchdogArgs(argv);
   const dir = standingsDirOf(authDir);
   const pathFor = (k: string) => socketPathOf(authDir, k);
-  if (key) {
-    const mark = stopMarkOf(authDir, key);
-    return mark ? { stopped: mark.text } : { key, path: pathFor(key), authDir };
-  }
+  if (key) return { key, path: pathFor(key), authDir };
   // Readable keys lie next to the sockets as <hash>.key files.
   const held = existsSync(dir)
     ? readdirSync(dir)
@@ -74,8 +64,9 @@ export function resolveStanding(
     : [];
   if (held.length === 1) return { key: held[0], path: pathFor(held[0]), authDir };
   if (held.length === 0) {
-    const last = readStopMarks(authDir).sort((a, b) => b.at - a.at)[0];
-    return last ? { stopped: last.text } : { error: wd().noHeld() };
+    return {
+      error: wd().noHeld(),
+    };
   }
   return {
     error: wd().severalHeld(held.join(", ")),

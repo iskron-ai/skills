@@ -43,10 +43,6 @@ const note = (s: string): void => {
 
 export function runWatchdogExit(argv: string[]): void {
   const target = resolveStanding(argv);
-  if ("stopped" in target) {
-    wake(target.stopped); // taken off by its owner (#7439): the stop word, exit 0
-    process.exit(0);
-  }
   if ("error" in target) {
     note(doer(target.error));
     process.exit(2);
