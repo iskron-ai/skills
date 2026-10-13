@@ -226,7 +226,7 @@ export async function startFakeNks(opts = {}) {
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
     evicted: new Set(), // вытесненные сокеты, ещё не закрытые: служба в них не пишет, но сервер они держат
-    richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
+    richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки того, что мост приписывает и чего нет
     structured: false, // /control {structured:true}: доска, register и connect несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
     lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым

@@ -1511,29 +1511,19 @@ test("a frame delivered under the Monitor watchdog does not wake an exit watchdo
   assert.ok(again.out.includes("второй") && !again.out.includes("первый"), again.out);
 });
 
-test("tools/list carries the writing-moment line on write tools only", async (t) => {
+// The bridge adds no writing-moment line: the server's own line carries it (graph nks-dev: #7557).
+test("tools/list passes write and read tool descriptions byte for byte; only the channel tool gains the bridge's lines", async (t) => {
   const { bridge, fake } = await connected(t);
   await fake.control({ richTools: true });
   const list = await bridge.call("tools/list", 4, {});
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x.description]));
-  assert.ok(
-    byName.iskron_add_vimarsha?.includes("[мост] Момент скилла writing"),
-    "add tool lacks the line",
-  );
-  assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
-  // Строка моста и строка writing в карте моментов двери iskron — одна строка.
-  const door = readFileSync(join(HERE, "..", "..", "skills", "iskron", "SKILL.md"), "utf8");
-  const row = door.match(/^\| перед `iskron_add_\*`[^|]*\| \*\*writing\*\*: (.+) \|$/m)?.[1];
-  assert.ok(row, "the door's moment map lacks the writing row");
-  assert.ok(
-    byName.iskron_add_vimarsha.includes(`Момент скилла writing: ${row}`),
-    "the bridge's writing-moment line drifted from the door's moment map",
-  );
-  assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
-  assert.ok(
-    byName.iskron_channel?.includes('action="status"'),
-    "the channel tool must announce the bridge's own status action",
-  );
+  assert.equal(byName.iskron_add_vimarsha, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch, "Атомарная дельта.");
+  assert.equal(byName.iskron_orient, "Войдите в граф.");
+  const channel = byName.iskron_channel ?? "";
+  assert.ok(channel.startsWith("[мост] Занятость"), "the busyness line leads the channel tool");
+  assert.match(channel, /\[мост\] action="leave"/, "the leave line stands on the channel tool");
+  assert.ok(channel.endsWith("\n\nЖивой канал роли."), "the server's description follows whole");
 });
 
 test("watchdog with nothing held tells the doer to name itself with iskron_stand", async () => {
