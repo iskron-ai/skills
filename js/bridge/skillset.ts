@@ -1,4 +1,4 @@
-// The skill set INSTALLED at the holder, reread for each register — attrs.skills (graph
+// The skill set INSTALLED at the holder, read by the disk watcher and snapshots (graph
 // @nks/nks-dev, nodes #6226, #6211 for the shape), not the texts loaded into the session.
 // version — the bridge file's version inside the set, not the running bridge: build and
 // skills differ exactly when the bridge updated and the set did not. stamp — 8 hex,
@@ -150,7 +150,7 @@ export function treeStamp(root: string, mask: string = SKILL_STAMP_MASK): string
   return n ? sha8(h) : null;
 }
 
-/** attrs.skills — read anew for every connect/register and machine snapshot. */
+/** Raw installed set; seat writes use the watcher's settled value (skillwatch.ts). */
 export function skillsAttr(): { name: string; version: string; stamp?: string } {
   const root = skillsRoot();
   const missing = !root ? R.root || "unidentified" : "";

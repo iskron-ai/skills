@@ -11,6 +11,7 @@ import { skillsAttr, skillsRefreshAllowed, skillsRoot, skillsUnavailable } from 
 import { type Standing } from "./transport.ts";
 
 type Skills = NonNullable<ReturnType<typeof safeSkills>>;
+type Place = { realm?: unknown; karta?: unknown; name?: unknown };
 const W = scoped(() => ({
   announced: new Map<string, Skills>(),
   checkedAt: 0,
@@ -20,10 +21,14 @@ const W = scoped(() => ({
   missingChecks: 0,
   unsettled: false,
 }));
-const key = (p: Partial<Standing>): string =>
-  `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
-export const announcedSkills = (p: Partial<Standing>): Skills | undefined =>
-  W.announced.get(key(p));
+const key = (p: Place): string => `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
+export const announcedSkills = (p: Place): Skills | undefined => W.announced.get(key(p));
+/** All seat writes share the watcher's settled set, not an installation in flight. */
+export function installedSkills(p: Place): Skills {
+  if (!skillsRefreshAllowed()) return skillsAttr();
+  checkInstalled();
+  return W.installed ?? announcedSkills(p) ?? skillsAttr();
+}
 /** One decision for tool refresh and usage publication, against successfully answered sends. */
 export function skillsNeedRegister(p: Partial<Standing>): boolean {
   if (!skillsRefreshAllowed()) return false;
@@ -71,8 +76,8 @@ function checkInstalled(): void {
   W.checkedAt = Date.now();
   const disk = diskVersion();
   const missing = skillsUnavailable();
-  W.missingChecks = missing === "root" ? W.missingChecks + 1 : 0;
-  W.unsettled = missing === "bridge" || (missing === "root" && W.missingChecks < 2);
+  W.missingChecks = missing ? W.missingChecks + 1 : 0;
+  W.unsettled = !!missing && W.missingChecks < 2;
   if (W.unsettled) return;
   if (disk === W.disk) return;
   W.disk = disk;

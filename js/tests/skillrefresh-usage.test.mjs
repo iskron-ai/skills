@@ -14,12 +14,12 @@ test("usage does not register skills again after refresh already declared them",
       params: { tokens: 100, context: 10, window: 100 },
     };
     await runUsage(msg);
-    writeFileSync(join(root, "establish-mcp", "SKILL.md"), "after");
-    await refreshSkills();
-    const count = calls.length;
     const now = Date.now;
     Date.now = () => now() + 120_000;
     try {
+      writeFileSync(join(root, "establish-mcp", "SKILL.md"), "after");
+      await refreshSkills();
+      const count = calls.length;
       assert.equal((await runUsage(msg)).result.pushed, false);
       assert.equal(calls.length, count);
     } finally {
