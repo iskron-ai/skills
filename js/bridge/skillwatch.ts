@@ -23,10 +23,10 @@ const W = scoped(() => ({
 }));
 const key = (p: Place): string => `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
 export const announcedSkills = (p: Place): Skills | undefined => W.announced.get(key(p));
-/** All seat writes share the watcher's settled set, not an installation in flight. */
-export function installedSkills(p: Place): Skills {
+/** Seat writes share the absence guard; explicit moves bypass the background window. */
+export function installedSkills(p: Place, fresh = true): Skills {
   if (!skillsRefreshAllowed()) return skillsAttr();
-  checkInstalled();
+  checkInstalled(fresh);
   return W.installed ?? announcedSkills(p) ?? skillsAttr();
 }
 /** One decision for tool refresh and usage publication, against successfully answered sends. */
@@ -68,11 +68,11 @@ function diskVersion(): string {
     .map(modified)
     .join("|");
 }
-/** At most once a minute per session, on a tool call; hashing only after mtime changes. */
-function checkInstalled(): void {
+/** Background checks are once a minute; explicit moves check now. Hash after mtime changes. */
+function checkInstalled(fresh = false): void {
   if (!skillsRefreshAllowed()) return;
   const gap = Number(process.env[envName("SKILLS_GAP_MS")]) || 60_000;
-  if (W.checkedAt && Date.now() - W.checkedAt < gap) return;
+  if (!fresh && W.checkedAt && Date.now() - W.checkedAt < gap) return;
   W.checkedAt = Date.now();
   const disk = diskVersion();
   const missing = skillsUnavailable();

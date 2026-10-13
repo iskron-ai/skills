@@ -40,7 +40,7 @@ export function usagePlace(): Standing | null {
 /** register of the seat with the last snapshot; true — attrs taken. */
 async function publish(place: Standing, u: Usage): Promise<boolean> {
   U.at = Date.now();
-  const got = await replayRegister(place);
+  const got = await replayRegister(place, false);
   const ok = !!got && !got.error && !got.result?.isError;
   if (ok) {
     U.published = u;
