@@ -33,6 +33,7 @@ import { READ_TOOLS } from "./repeat.ts";
 import { isCheckCall, isResumeCall, runCheck, runResume } from "./resume.ts";
 import { localEnd } from "./runend.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
+import { refreshSkills } from "./skillrefresh.ts";
 import { isStandCall, runStand } from "./stand.ts";
 import { ensureStanding, isUnattributed, noteStanding, replyText } from "./standing.ts";
 import { localStatus } from "./status.ts";
@@ -277,6 +278,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         });
         return;
       }
+      if (msg.method === "tools/call") await refreshSkills();
       if (isStand) {
         // The bridge's own tool: board, seat, knock — by the agent's calls, in one move.
         emit(withNotice(await serialized(() => runStand(msg))));

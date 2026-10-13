@@ -92,17 +92,25 @@ function render(s: StatusSnapshot): string {
     const stamp = skills
       ? ` · skills=${printable(skills.name)} ${printable(skills.version)}${skills.stamp ? `+${printable(skills.stamp)}` : ""}`
       : "";
+    const installed = session.installed_skills;
+    const diskStamp = installed
+      ? ` · installed_skills=${printable(installed.name)} ${printable(installed.version)}${installed.stamp ? `+${printable(installed.stamp)}` : ""}`
+      : "";
     lines.push(
-      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w.attached() : w.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}`,
+      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w.attached() : w.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}${diskStamp}${session.skills_mismatch ? " · skills_mismatch" : ""}`,
     );
     for (const p of session.places) {
+      const declared = p.skills;
+      const declaration = declared
+        ? ` · skills=${printable(declared.name)} ${printable(declared.version)}${declared.stamp ? `+${printable(declared.stamp)}` : ""}`
+        : "";
       const mode = p.satellite_of
         ? `${w.satellite()} ${printable(p.satellite_of)}`
         : p.primary
           ? w.primary()
           : w.beside();
       lines.push(
-        `    ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} ${mode} · ${p.listening ? w.listening() : w.silent()} · ${w.lastWork()}: ${printable(p.last_work_at ?? w.unknown())}${p.usage ? ` · usage=${JSON.stringify(p.usage)}` : ""}`,
+        `    ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} ${mode} · ${p.listening ? w.listening() : w.silent()} · ${w.lastWork()}: ${printable(p.last_work_at ?? w.unknown())}${p.usage ? ` · usage=${JSON.stringify(p.usage)}` : ""}${declaration}${p.skills_mismatch ? " · skills_mismatch" : ""}`,
       );
     }
   }
@@ -123,10 +131,11 @@ export async function runStatus(args: string[]): Promise<void> {
     process.env[envName("BRIDGE_AUTH_DIR")] ||
     defaultAuthDir();
   setLang(args[args.indexOf("--lang") + 1]);
+  const inspected = await machine(authDir);
   const snapshot = {
-    ...(await machine(authDir)),
+    ...inspected,
     fallback: fallbackSnapshot(authDir),
-    disk_only: await diskPlaces(authDir),
+    disk_only: await diskPlaces(authDir, inspected.sessions),
   };
   process.stdout.write(
     args.includes("--json") ? JSON.stringify(snapshot, null, 2) + "\n" : render(snapshot),

@@ -1,12 +1,9 @@
 // Read-only local records: a file alone is not a live seat (#7494, graph @nks/nks-dev).
 import { readdirSync, readFileSync } from "node:fs";
-import { connect } from "node:net";
 import { join } from "node:path";
 
 import { readFallbacks } from "../bridge/fallback.ts";
-import { keyOf } from "../bridge/holdrecord.ts";
-import { record, text } from "../shared/snapshot.ts";
-import { socketPathOf } from "../shared/standings.ts";
+import { record, type SessionSnapshot, text } from "../shared/snapshot.ts";
 
 export interface DiskPlace {
   name: string;
@@ -20,19 +17,10 @@ export interface FallbackSnapshot {
   build: string;
   cwd: string;
 }
-const answers = (path: string): Promise<boolean> =>
-  new Promise((resolve) => {
-    const socket = connect(path);
-    const done = (alive: boolean): void => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(alive);
-    };
-    const timer = setTimeout(() => done(false), 250);
-    socket.once("connect", () => done(true));
-    socket.once("error", () => done(false));
-  });
-export async function diskPlaces(authDir: string): Promise<DiskPlace[]> {
+export async function diskPlaces(
+  authDir: string,
+  sessions: SessionSnapshot[] = [],
+): Promise<DiskPlace[]> {
   const dir = join(authDir, "standings");
   let names: string[];
   try {
@@ -48,8 +36,17 @@ export async function diskPlaces(authDir: string): Promise<DiskPlace[]> {
         const p = record(JSON.parse(readFileSync(join(dir, n), "utf8")));
         if (!text(p.name) || !text(p.realm) || !["string", "number"].includes(typeof p.karta))
           return null;
-        const key = text(p.key) || keyOf(text(p.realm), p.karta as string | number, text(p.name));
-        if (await answers(socketPathOf(authDir, key))) return null;
+        if (
+          sessions.some((s) =>
+            s.places.some(
+              (held) =>
+                held.name === p.name &&
+                held.realm === p.realm &&
+                String(held.karta) === String(p.karta),
+            ),
+          )
+        )
+          return null;
         return {
           name: text(p.name),
           realm: text(p.realm),

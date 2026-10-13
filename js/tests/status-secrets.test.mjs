@@ -49,7 +49,7 @@ test("status reports disk records and live fallback without secrets when no daem
       } else
         assert.match(
           r.stdout,
-          args.includes("en") ? /record, not a live place/ : /запись, не живое место/,
+          args.includes("en") ? /record, liveness unknown/ : /запись, живость неизвестна/,
         );
     }
   } finally {
