@@ -537,11 +537,11 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  await fake.control({ ws_close: 4001 });
+  await fake.control({ ws_close: 4002 });
   const r = await wd.done;
-  assert.notEqual(r.exit, null, "the watchdog is still alive after a 4001 close");
-  assert.notEqual(r.exit, 0, "the watchdog exited 0 on a dead token");
-  assert.match(wd.out, /токен мёртв/);
+  assert.notEqual(r.exit, null, "the watchdog is still alive after a 4002 close");
+  assert.notEqual(r.exit, 0, "the watchdog exited 0 on a dead seat");
+  assert.match(wd.out, /4002 — место погасло по простою/);
   await waitFor(
     () =>
       bridge.notifications.some(
@@ -554,6 +554,26 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
     "the local socket to be withdrawn",
   );
 });
+
+// #7440: the owner took the seat off (4001 with a reason) — the watchdog's last line is the
+// stop word and it leaves with 0, for both watchdogs.
+for (const kind of ["watchdog", "watchdog-exit"])
+  test(`the owner's 4001 ends ${kind} with the stop word and exit 0`, async (t) => {
+    const { fake, dir, bridge, key } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const wd = runClient(kind, dir, key);
+    await waitFor(() => (wd.out + wd.err).includes("слушаю стояние"), "the watchdog to attach");
+    await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `the stop is no alarm: ${wd.out}${wd.err}`);
+    assert.match(wd.out, /снято \(человеком\) — ты остановлен: работу кончи, место не занимай/);
+    assert.doesNotMatch(wd.out, /токен мёртв|connect/);
+    await waitFor(
+      () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+      "the stop notification",
+    );
+    assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  });
 
 // Своё close или revoke отпускает место словом моста (released), не уходом:
 // сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
@@ -722,11 +742,33 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
     1,
     "hello must not wake the thread",
   );
-  // A dead token is loud through the same door, and the watchdog leaves non-zero.
-  await fake.control({ ws_close: 4001 });
+  // A dead seat is loud through the same door, and the watchdog leaves non-zero.
+  await fake.control({ ws_close: 4002 });
   const r = await wd.done;
-  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
-  assert.match(wd.err, /токен мёртв/);
+  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead seat");
+  assert.match(wd.err, /погасло по простою/);
+});
+
+// #7440: the owner's stop starts no turn in the Codex thread; the watchdog says it and leaves 0.
+test("watchdog-codex on the owner's 4001: no turn/start, the stop word, exit 0", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-42",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:self" });
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the stop is no alarm: ${wd.err}`);
+  assert.match(wd.err, /снято \(сессией той же учётки\) — ты остановлен/);
+  assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "the stop wakes no thread");
 });
 
 // A frame put into the Codex thread is delivered (#5428): the fallback exit
@@ -1724,7 +1766,7 @@ for (const [what, after] of [
   ["the door closes", (sock) => setTimeout(() => sock.destroy(), 100)],
   [
     "a dead token comes",
-    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4001, text: "токен мёртв" }) + "\n"),
+    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4002, text: "токен мёртв" }) + "\n"),
   ],
 ]) {
   test(`${what} before the ring the bridge named is out: the watchdog says so and exits 1`, async (t) => {
@@ -1928,8 +1970,8 @@ test("a stale hold record is dropped quietly: no dead-token alarm, the place is 
   const path = join(standings, hold);
   bridge.proc.kill("SIGKILL");
   await waitFor(() => fake.state.ws.size === 0, "the socket to close");
-  // The platform no longer knows the token: the socket is refused with 4001 on open.
-  await fake.control({ ws_refuse: 4001 }); // one refusal: the resume dies, the connect after it is served
+  // The seat went out at the platform: the socket is refused with 4002 on open (4001 is the owner's stop, #7439).
+  await fake.control({ ws_refuse: 4002 }); // one refusal: the resume dies, the connect after it is served
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
@@ -1966,6 +2008,31 @@ test("a stale hold record is dropped quietly: no dead-token alarm, the place is 
   assert.equal(fake.state.counts.connect, 3);
 });
 
+// #7440: the seat was taken off while no bridge held it — the return by record meets 4001.
+// That is the owner's stop, not a stale record: no connect after it, the stop word instead.
+test("a return by record refused with 4001 is the owner's stop: no connect after it, the stop word", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_refuse: 4001 });
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(st.result?.isError, said);
+  assert.match(said, /место proba снято .* — ты остановлен: работу кончи, место не занимай/, said);
+  assert.equal(fake.state.counts.connect, 1, "the stop is not answered by connect");
+  assert.ok(
+    !second.notifications.some((n) => n.params?.data?.kind === "dead"),
+    "a stop is no dead token",
+  );
+});
+
 test("a dead token forgets the hold record; a live holder's place is not taken from disk", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -1980,14 +2047,14 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!/возврат места с диска/.test(said), `a live holder keeps its place:\n${said}`);
   assert.match(said, /встаю рядом на proba\.2/, said);
-  await fake.control({ ws_close: 4001 });
+  await fake.control({ ws_close: 4002 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "the dead token to reach the harness",
   );
-  // 4001 too is answered by connect: mint answers 409 once the channel is back (#5189).
+  // 4002 is answered by the stand tool; never mint — it answers 409 once the channel is back (#5189).
   const dead = bridge.notifications.find((n) => n.params?.data?.kind === "dead").params.data.text;
-  assert.match(dead, /зови connect/, dead);
+  assert.match(dead, /погасло по простою.*iskron_stand тем же именем/, dead);
   assert.doesNotMatch(dead, /mint/, dead);
   await waitFor(
     () => !readdirSync(standings).some((f) => f.endsWith(".hold")),

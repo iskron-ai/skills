@@ -130,6 +130,7 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     closeCodeDelayMs: 0, // close: the HTTP answer goes out first, the 4001 close this much later
+    endedFrame: false, // revoke/close: a standing_ended frame per seat instead of the 4001 close (api 0.121.0); close: "beside-first"
     statusDelayMs: 0,
     statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
     mcpDrop: 0, // the same for this many next MCP POSTs
@@ -446,8 +447,11 @@ export async function startFakeNks(opts = {}) {
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
+        // ws_close_reason: причина закрытия (#7492 — «revoked:person», «revoked:self»).
+        const why = Buffer.from(String(patch.ws_close_reason ?? ""));
         for (const sock of st.ws) {
-          sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
+          const code = Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff]);
+          sock.write(wsFrame(0x8, Buffer.concat([code, why])));
           setTimeout(() => sock.end(), 200).unref();
         }
       }
@@ -480,6 +484,7 @@ export async function startFakeNks(opts = {}) {
         "mcpHangMs",
         "revokeReplyDelayMs",
         "closeCodeDelayMs",
+        "endedFrame",
         "accessTtl",
         "refreshDelayMs",
         "reuseDetection",
@@ -1307,6 +1312,24 @@ export async function startFakeNks(opts = {}) {
           }
           for (const sock of st.ws) {
             if (st.wsChans.get(sock) !== chan) continue;
+            if (st.endedFrame) {
+              // endedFrame: each seat's end goes as a standing_ended frame, the socket stays;
+              // "beside-first" — the seats beside before the main one.
+              const seats = [...c.places.values()];
+              if (st.endedFrame === "beside-first") seats.reverse();
+              for (const p of seats)
+                sock.write(
+                  wsFrame(
+                    0x1,
+                    JSON.stringify({
+                      type: "standing_ended",
+                      standing_id: p.standing_id,
+                      by: "self",
+                    }),
+                  ),
+                );
+              continue;
+            }
             const shut = () => {
               sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
               setTimeout(() => sock.end(), 100).unref();
@@ -1366,10 +1389,37 @@ export async function startFakeNks(opts = {}) {
               [...c.places.values()].some((p) => p.name === name),
             )?.[0];
           const places = st.channels.get(chan)?.places;
+          const endedIds = [];
           for (const [r, p] of places ?? [])
-            if (p.name === name && (!places.has(slug(a.realm)) || r === slug(a.realm)))
+            if (p.name === name && (!places.has(slug(a.realm)) || r === slug(a.realm))) {
+              endedIds.push(p.standing_id);
               places.delete(r);
+            }
           const empty = !st.channels.get(chan)?.places.size;
+          // endedFrame: the seat's end goes as a standing_ended frame before the answer, the socket stays.
+          if (st.endedFrame) {
+            for (const sock of st.ws)
+              if (st.wsChans.get(sock) === chan)
+                for (const id of endedIds)
+                  sock.write(
+                    wsFrame(
+                      0x1,
+                      JSON.stringify({ type: "standing_ended", standing_id: id, by: "self" }),
+                    ),
+                  );
+            if (st.revokeReplyDelayMs)
+              await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: `Место «${name}» снято.` }] },
+              },
+              extra,
+            );
+          }
           // As the real surface: only the revoked place's socket is closed — the
           // socket of another place the same bridge holds stays up (#5154).
           for (const sock of st.ws) {

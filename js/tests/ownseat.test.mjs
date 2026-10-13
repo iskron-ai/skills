@@ -253,7 +253,8 @@ test("left by word, then another machine's session stood there: iskron_stand by 
     "proba",
   );
   await until(() => fake.state.places.get("931:proba")?.listening === true, "b2 hears proba");
-  await fake.control({ ws_refuse: 4001 }); // connect b2 повернул адрес
+  // connect b2 повернул адрес: апгрейд по старому — 404, как у контура (4001 — стоп владельца, #7439)
+  await fake.control({ turned_404: true });
   const before = placeArgs(fake, "register").length;
   const s1 = await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd });
   const regs = placeArgs(fake, "register").slice(before);

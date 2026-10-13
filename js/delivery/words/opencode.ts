@@ -47,6 +47,10 @@ export interface OpencodeWords {
   childGone: (frame: string, id: string, text: string) => string;
   sessionClosed: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
+  halted: (frame: string, id: string) => string;
+  haltUnwritten: (id: string, message: string) => string;
+  /** kept — the record could not be rewritten as lifted either. */
+  haltUnlifted: (id: string, message: string, kept: boolean) => string;
   delivered: (frame: string, id: string) => string;
   notDelivered: (frame: string, id: string, message: string) => string;
   held: (key: string) => string;
@@ -109,6 +113,15 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` +
       text,
+    halted: (frame, id) =>
+      `Искрон: ${frame} не вложен — сессия ${id} остановлена снятием места, до нового явного занятия места она не будится`,
+    haltUnwritten: (id, message) =>
+      `Искрон: остановка сессии ${id} не записана на диск (${message}) — запрет держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
+    haltUnlifted: (id, message, kept) =>
+      `Искрон: сессия ${id} снова на месте, запрет снят, но запись остановки на диске не удалена (${message}) — ` +
+      (kept
+        ? "переписать её снятой тоже не вышло: после перезагрузки плагина сессия снова будет считаться остановленной"
+        : "она переписана как снятая"),
     delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
@@ -172,6 +185,15 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; the frame stays in the standing's history — ` +
       text,
+    halted: (frame, id) =>
+      `Iskron: ${frame} not delivered — session ${id} was stopped by taking its seat off; it is not woken until it takes a seat again explicitly`,
+    haltUnwritten: (id, message) =>
+      `Iskron: the stop of session ${id} was not written to disk (${message}) — only the live plugin instances of this process keep the ban, it will not survive a reload`,
+    haltUnlifted: (id, message, kept) =>
+      `Iskron: session ${id} holds a seat again and its ban is lifted, but the stop's record on disk was not removed (${message}) — ` +
+      (kept
+        ? "rewriting it as lifted failed too: after a plugin reload the session will count as stopped again"
+        : "it is rewritten as lifted"),
     delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
     notDelivered: (frame, id, message) =>
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,

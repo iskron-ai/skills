@@ -24,7 +24,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { BUILT_BRIDGE } from "./built.mjs";
+import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import { progress } from "./room-frames.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -2196,9 +2198,10 @@ test("one's own close answered before its 4001 releases quietly by the answer, n
 });
 
 // Своё close или revoke, упавшие сами (ответа нет), не оставляют пометки «своё в
-// полёте»: иначе следующий настоящий мёртвый токен отпускался тихо словом «токен жив».
+// полёте»: иначе следующее настоящее снятие места отпускалось тихо словом «токен жив».
+// Чужой 4001 — стоп владельца (#7439): слово стопа, не «зови connect».
 for (const action of ["close", "revoke"])
-  test(`a failed own ${action} leaves no mark: a later real 4001 is a dead token that calls connect`, async (t) => {
+  test(`a failed own ${action} leaves no mark: a later real 4001 is the owner's stop`, async (t) => {
     const { fake, bridge } = await ready(t);
     const args = { realm: "nks-dev", karta: 931, name: "proba" };
     assert.ok(
@@ -2212,12 +2215,13 @@ for (const action of ["close", "revoke"])
     assert.ok(failed.result?.isError || failed.error, JSON.stringify(failed));
     await fake.control({ mcpDrop: 0, ws_close: 4001 });
     await new Promise((r) => setTimeout(r, 600));
-    const dead = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "dead");
+    const stop = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "stopped");
     assert.match(
-      dead?.text ?? "",
-      /зови connect/,
-      `a real dead token is announced:\n${bridge.stderr}`,
+      stop?.text ?? "",
+      /proba снято .* ты остановлен/,
+      `the stop is announced:\n${bridge.stderr}`,
     );
+    assert.doesNotMatch(stop?.text ?? "", /connect/, "a stop never calls connect");
   });
 
 test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
@@ -2336,8 +2340,8 @@ const waitUntil = async (check, what, ms = 8000) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A bridge standing in graph A, then in graph B; returns what the cases read. */
-async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}) {
-  const { fake, dir, bridge } = await ready(t, init);
+async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}, env = {}) {
+  const { fake, dir, bridge } = await ready(t, init, env);
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const a = await stand(A);
   assert.ok(!a.result?.isError, textOf(a));
@@ -4498,4 +4502,313 @@ test("outputSchema rides tools/list to a harness that asked for fields through t
   assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
   assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
+});
+
+// ── the owner's stop (graph nks-dev: #7439, #7440, #7493) ───────────────────
+// A foreign close 4001 is the owner taking the seat off, not a dead token: the agent and its
+// seat have one life, so the bridge lets the seat go with its record and binding, says
+// «ты остановлен» and no automatic path takes it again — not the plugin's return or hearing
+// check, not a new bridge of the same home. The name stays free: an explicit iskron_stand
+// stands as usual. api 0.121.0 sends standing_ended for one seat of a live channel instead.
+const STOP_KEY = "proba--931--nks-dev";
+const sayStop = /место proba снято \(человеком\) — ты остановлен: работу кончи, место не занимай/;
+const stoppedEv = (bridge) =>
+  bridge.notifications.find((n) => n.params?.data?.kind === "stopped")?.params.data;
+
+test("#7440: the owner's 4001 stops the doer — no second connect or held on any automatic path; the name stays free", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const stand = (b, a) => b.call("tools/call", { name: "iskron_stand", arguments: a });
+  assert.ok(!(await stand(bridge, args)).result?.isError);
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, sayStop);
+  assert.doesNotMatch(stoppedEv(bridge).text, /connect|take/, "a stop calls for no move");
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+  const journal = () => readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal(), /stopped proba--931--nks-dev: close 4001 \(revoked:person\)/);
+  // The plugin's return and hearing check by key, a new bridge of the same home: no return.
+  for (const m of ["iskron/resume", "iskron/check"]) {
+    const r = await bridge.call(m, { key: STOP_KEY });
+    assert.notEqual(r.result?.resumed, true, `${m}: ${JSON.stringify(r.result)}`);
+  }
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", INIT)).result);
+  const back = await next.call("iskron/resume", { key: STOP_KEY, cwd: process.cwd() });
+  assert.notEqual(back.result?.resumed, true, JSON.stringify(back.result));
+  assert.equal(fake.state.counts.connect, 1, "no automatic path took the stopped seat");
+  assert.equal(journal().match(/ held /g)?.length, 1, journal());
+  // The name is free: the human's explicit iskron_stand stands as usual.
+  const again = await stand(next, args);
+  assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(fake.state.counts.connect, 2);
+});
+
+// Review of #7440: releasing the seat flushed the open batch, so a wake reached the session
+// after the stop word and woke the stopped agent again. On the stop the batch is dropped.
+test("#7440: a batch the bridge still holds is dropped on the owner's 4001, not given after the stop word", async (t) => {
+  const { fake, dir, bridge } = await ready(
+    t,
+    { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+    { ISKRON_BRIDGE_BACKLOG_MS: "3000" },
+  );
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  for (const id of ["w1", "w2"])
+    await fake.control({ ws_send: JSON.stringify({ id, type: "message", body: `кадр ${id}` }) });
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  await new Promise((r) => setTimeout(r, 3500));
+  const kinds = bridge.notifications.map((n) => n.params?.data?.kind).filter(Boolean);
+  const after = kinds.slice(kinds.indexOf("stopped"));
+  assert.ok(
+    !after.some((k) => ["backlog", "frame", "stale", "resumed"].includes(k)),
+    `nothing wakes the session after the stop: ${after}`,
+  );
+  assert.ok(!kinds.includes("backlog"), `the held batch is not given at all: ${kinds}`);
+  const journal = readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal, /stopped proba--931--nks-dev: 2 undelivered frame\(s\) dropped/, journal);
+});
+
+test("#7440: standing_ended for the main seat is the same stop as the owner's 4001", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  const id = [...fake.state.channels.values()][0].places.values().next().value.standing_id;
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: id, by: "person" }),
+  });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, sayStop);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+});
+
+// Review of #7440: standing_ended for the main seat outran the answer of the session's own
+// revoke or close and was read as the owner's stop — the quiet release became a stopped session.
+for (const action of ["revoke", "close"])
+  test(`#7440: standing_ended outrunning the answer of one's own ${action} is a quiet release, not a stop`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ endedFrame: true, revokeReplyDelayMs: 600 });
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: "nks-dev", karta: 931, standing: "proba" }
+          : { action, realm: "nks-dev" },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+    assert.match(
+      bridge.stderr,
+      /by this session — released quietly.*standing_ended arrived before the answer/,
+      bridge.stderr,
+    );
+  });
+
+test("#7440: standing_ended for a seat beside forgets that seat only — the main seat holds, no stop, no wake", async (t) => {
+  const { fake, bridge, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const before = bridge.notifications.length;
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "standing_ended",
+      standing_id: idOf(DRUGOY, "proba-b"),
+      by: "self",
+    }),
+  });
+  await until(
+    () => /that seat beside is forgotten/.test(bridge.stderr),
+    "the seat beside forgotten",
+  );
+  assert.match(bridge.stderr, /место proba-b снято \(сессией той же учётки\)/);
+  const after = bridge.notifications.slice(before).map((n) => n.params?.data?.kind);
+  assert.ok(
+    !after.some((k) => ["stopped", "released", "dead", "lost", "frame"].includes(k)),
+    `${after}`,
+  );
+  assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
+  assert.equal(fake.state.counts.connect, 1);
+});
+
+// Review of #7440: the seat beside taken off by another came to its watchdog as the session's
+// own release, and watchdog-codex put the count it had piled up into the thread — the end of
+// a seat beside woke the doer. Each watchdog of that seat falls silent: no turn, no line, no exit.
+for (const sub of ["watchdog-codex", "watchdog", "watchdog-exit"])
+  test(`#7504: standing_ended for a seat beside — its ${sub} wakes nobody and stays, the piled-up count unput`, async (t) => {
+    const { fake, dir, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, sub, keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    const before = w.out;
+    await fake.control({
+      ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+    });
+    await pause(1500);
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+    assert.equal(w.out, before, `no line to the doer:\n${w.out}`);
+    assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+  });
+
+// Review of #7504: standing_ended for a seat beside outran the answer of the session's own
+// revoke of that seat, or of its own close of the channel, and was read as another's taking it
+// off — the seat's watchdog fell silent instead of leaving with exit 0, watchdog-codex kept
+// the count it had piled up. The control, another's taking it off, is the #7504 probe above.
+for (const action of ["revoke", "close"])
+  test(`#7504: standing_ended for a seat beside outrunning the answer of one's own ${action} — its watchdog-codex puts the count and leaves with exit 0`, async (t) => {
+    const { fake, dir, bridge, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    await fake.control({
+      endedFrame: action === "close" ? "beside-first" : true,
+      revokeReplyDelayMs: 1500,
+    });
+    const own = bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: DRUGOY, karta: 48, standing: "proba-b" }
+          : { action, realm: NKS },
+    });
+    // Before the answer: the frame alone must already end the seat as the session's own.
+    await waitUntil(() => proc.exitCode !== null, `the watchdog to leave:\n${w.out}${w.err}`);
+    assert.equal(proc.exitCode, 0, `one's own release, not another's:\n${w.out}${w.err}`);
+    assert.match(readFileSync(log, "utf8"), /turn\/start/, "the piled-up count is put");
+    const r = await own;
+    assert.ok(!r.result?.isError, textOf(r));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+  });
+
+// Review of #7504: a frame for the seat beside waited for the Codex door to open, the seat was
+// taken off by another meanwhile, and its turn/start still went out once the door opened —
+// the doer woke. The seat beside taken off cancels what waits for the door; nothing goes out.
+test("#7504: a seat beside taken off while its frame waits for a slow Codex door — no turn/start after the door opens", async (t) => {
+  const { fake, dir, keyB, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const home = mkdtempSync(join(tmpdir(), "cxd-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+    { upgradeDelayMs: 1200 },
+  );
+  t.after(() => door.stop());
+  const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+    env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const w = { out: "", err: "" };
+  proc.stdout.on("data", (c) => (w.out += c));
+  proc.stderr.on("data", (c) => (w.err += c));
+  t.after(() => proc.kill("SIGKILL"));
+  await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+  const idB = idOf(DRUGOY, "proba-b");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "b-slow", to_standing_id: idB, body: "к B" }),
+  });
+  await pause(200); // the frame waits for the door's upgrade
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+  });
+  await pause(2000); // the upgrade answered long ago
+  assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+  assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+});
+
+test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
+  for (const [reason, who] of [
+    ["", /снято \(владельцем или другой сессией\)/],
+    ["revoked:self", /снято \(сессией той же учётки\)/],
+  ]) {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ ws_close: 4001, ws_close_reason: reason });
+    await until(() => stoppedEv(bridge), "the stop word");
+    assert.match(stoppedEv(bridge).text, who, reason);
+  }
 });

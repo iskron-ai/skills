@@ -13,6 +13,8 @@ export interface PluginWords {
   relistFailed: (message: string) => string;
   listening: () => string;
   dead: (code: number | string) => string;
+  /** text — слово стопа моста (снятие места владельцем, #7439): человеку, без хода сессии. */
+  stopped: (text: string) => string;
   evicted: (code: number | string) => string;
   alive: (version: string) => string;
   note: (text: string) => string;
@@ -31,8 +33,11 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
       `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
     listening: () => "Искрон: канал слушает",
     dead: (code) =>
-      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` +
-      ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
+      String(code) === "4002"
+        ? "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем."
+        : `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect")` +
+          ", затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.",
+    stopped: (text) => `Искрон: ${text}`,
     evicted: (code) =>
       `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. ` +
       "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. " +
@@ -54,8 +59,11 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
       `Iskron: the tool list was not reread after the change on the server — ${message}`,
     listening: () => "Iskron: the channel is listening",
     dead: (code) =>
-      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect")` +
-      ", then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.",
+      String(code) === "4002"
+        ? "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name."
+        : `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect")` +
+          ", then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.",
+    stopped: (text) => `Iskron: ${text}`,
     evicted: (code) =>
       `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. ` +
       "The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. " +
