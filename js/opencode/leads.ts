@@ -12,11 +12,13 @@
 import { tool } from "../delivery/index.ts";
 import { createCascade } from "./cascade.ts";
 import type { LeadDoors, Leads } from "./leaddoors.ts";
+import type { Up } from "./leadframes.ts";
 import { awayWord, endWord, unrevokedWord, W } from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
 
 interface Lead {
   parent: Promise<string | null>;
+  up?: Up; // the parent once known — its launcher (leadframes.ts)
   place?: Place;
   moves: number; // its case joins and leaves: the platform's answer to an earlier leave is stale
   running?: boolean;
@@ -33,7 +35,8 @@ export function createLeads(d: LeadDoors): Leads {
   const leads = new Map<string, Lead>();
   // Finally ended: released by the launcher (no reason), taken down by the platform — with a reason.
   const gone = new Map<string, string | undefined>();
-  const over = new Set<string>(); // ended by any end, until they stand again
+  // Ended by any end, until they stand again: seen by every instance and after a reload (leadends.ts).
+  const over = d.ends;
   const cascade = createCascade();
   const who = (l: Lead, child: string): string => l.place?.name ?? W().sessionOf(child);
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
@@ -57,7 +60,7 @@ export function createLeads(d: LeadDoors): Leads {
     const l = leads.get(child);
     if (!l) return;
     leads.delete(child);
-    over.add(child);
+    over.end(child);
     // The end takes down only the child's satellite: a plain seat that stood instead stays.
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(W().keptSaid(who(l, child), kept), "warning");
@@ -108,10 +111,18 @@ export function createLeads(d: LeadDoors): Leads {
     else d.say(W().noParent(text), "warning");
   }
 
-  function stood(child: string): Lead {
-    const l = leads.get(child) ?? { parent: parentOf(child), moves: 0 };
+  /** lift — an explicit stand: an end of the session's in any instance goes; a reload's return is none. */
+  function stood(child: string, lift = true): Lead {
+    let l = leads.get(child);
+    if (!l) {
+      const n: Lead = { parent: parentOf(child), moves: 0 };
+      void n.parent.then(async (p) => {
+        if (p) n.up = { id: p, root: !(await parentOf(p)) };
+      });
+      l = n;
+    }
     leads.set(child, l);
-    over.delete(child);
+    if (lift) over.lift(child);
     return l;
   }
 
@@ -150,7 +161,7 @@ export function createLeads(d: LeadDoors): Leads {
       }
       return null;
     },
-    ended: (child) => over.has(child) || gone.has(child) || !!leads.get(child)?.leaving,
+    ended: (child) => gone.has(child) || !!leads.get(child)?.leaving || over.has(child),
     released: (child) => gone.has(child),
     goneWhy: (child) => gone.get(child),
     heard(child, kind, place) {
@@ -166,8 +177,7 @@ export function createLeads(d: LeadDoors): Leads {
       }
       if (gone.has(child)) return true;
       if (kind === "held") {
-        over.delete(child); // stood again — a lead again
-        touch(stood(child), place);
+        touch(stood(child), place); // stood again — a lead again
         return false;
       }
       if (over.has(child)) return true; // ended by any end — no channel words to it
@@ -175,7 +185,7 @@ export function createLeads(d: LeadDoors): Leads {
       return false;
     },
     back(child, was) {
-      const l = stood(child);
+      const l = stood(child, false);
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke by name before "held"
@@ -192,10 +202,13 @@ export function createLeads(d: LeadDoors): Leads {
       return { noted: !!l?.noted, last: l?.last };
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
+    upOf: (child) => leads.get(child)?.up ?? null,
     onEvent(ev) {
       cascade.note(ev); // interruptions of all sessions: the lead's parent too (cascade.ts)
       const child: unknown = ev?.data?.sessionID;
       const l = typeof child === "string" ? leads.get(child) : undefined;
+      // No session — no end record either, whichever instance ended it.
+      if (ev?.type === "session.deleted" && typeof child === "string" && !l) over.lift(child);
       if (!l || typeof child !== "string") return;
       switch (ev.type) {
         case "session.execution.started":
@@ -228,7 +241,8 @@ export function createLeads(d: LeadDoors): Leads {
           });
           return;
         case "session.deleted":
-          return void finish(child, W().deleted(), false);
+          void finish(child, W().deleted(), false); // its end is laid at once, and goes with the session
+          return over.lift(child);
       }
     },
   };

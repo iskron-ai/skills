@@ -4,7 +4,10 @@
 import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { markFrame } from "../shared/frame-text.ts";
+import { authDir } from "./bridge-io.ts";
 import { casesLeft } from "./casesleft.ts";
+import { createEnds, type Ends } from "./leadends.ts";
+import type { Up } from "./leadframes.ts";
 import { W } from "./leadwords.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
@@ -38,6 +41,8 @@ export interface Leads {
   handoff(child: string): Snapshot;
   /** Seat name of a live lead (no seat — the session id); not a lead — null. */
   nameOf(child: string): string | null;
+  /** A live lead's parent session, once known; otherwise null. */
+  upOf(child: string): Up | null;
   onEvent(ev: any): void;
 }
 
@@ -70,6 +75,8 @@ export interface LeadDoors {
   end(child: string): Promise<void>;
   /** The child's seat name when it is not its satellite; satellite or no seat — null. */
   ownPlace(child: string): string | null;
+  /** Ended leads of every instance of the process, past a reload (leadends.ts). */
+  ends: Ends;
 }
 
 /** The end of a run by the child's bridge — no longer than this. */
@@ -106,6 +113,11 @@ export function leadDoors(
     },
     parentOf: (child) => parentOf(ctx, child),
     tell: teller(ctx, say, closed),
+    ends: createEnds(
+      authDir,
+      (s, message) => say(W().endUnwritten(s, message), "warning"),
+      (s, message) => say(W().endUnlifted(s, message), "warning"),
+    ),
   };
 }
 

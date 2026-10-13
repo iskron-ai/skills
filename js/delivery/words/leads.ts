@@ -31,6 +31,8 @@ export interface LeadWords {
   sessionOf: (child: string) => string;
   noParent: (text: string) => string;
   noLiveAncestor: (text: string) => string;
+  endUnwritten: (sessionID: string, message: string) => string;
+  endUnlifted: (sessionID: string, message: string) => string;
   notDown: (who: string, message: string) => string;
   leftSeat: () => string;
   leftCases: () => string;
@@ -112,6 +114,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     noParent: (text) => `${text}\n(родителя плагин не знает — итог некому)`,
     noLiveAncestor: (text) =>
       `${text}\n(родитель и все предки кончены или остановлены — слово не вложено никому, оно здесь)`,
+    endUnwritten: (sessionID, message) =>
+      `Искрон: конец субагента сессии ${sessionID} не записан на диск (${message}) — его держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
+    endUnlifted: (sessionID, message) =>
+      `Искрон: субагент сессии ${sessionID} встал снова, но запись его конца на диске не снята (${message}) — после перезагрузки плагина он снова будет считаться кончившимся`,
     notDown: (who, message) => `Искрон: мост субагента ${who} не погашен после итога — ${message}`,
     leftSeat: () => "ушёл с места по исходу",
     leftCases: () => "ушёл из дел по исходу",
@@ -200,6 +206,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `${text}\n(the plugin does not know the parent — nobody to give the outcome to)`,
     noLiveAncestor: (text) =>
       `${text}\n(the parent and every ancestor are ended or stopped — the word went into no session, it is here)`,
+    endUnwritten: (sessionID, message) =>
+      `Iskron: the end of the subagent of session ${sessionID} was not written to disk (${message}) — only this process's live plugin instances keep it, a reload will lose it`,
+    endUnlifted: (sessionID, message) =>
+      `Iskron: the subagent of session ${sessionID} stood again, but the record of its end was not removed from disk (${message}) — after a plugin reload it will count as ended again`,
     notDown: (who, message) =>
       `Iskron: the bridge of subagent ${who} was not put down after the outcome — ${message}`,
     leftSeat: () => "left its seat by the outcome",

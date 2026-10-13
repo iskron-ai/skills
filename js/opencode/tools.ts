@@ -38,6 +38,7 @@ import { createKeeper } from "./keep.ts";
 import { holdersOf } from "./keepalive.ts";
 import { createLauncher } from "./launch.ts";
 import { type Closed, leadDoors } from "./leaddoors.ts";
+import { launcherSeat } from "./leadframes.ts";
 import { createLeads } from "./leads.ts";
 import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
@@ -457,7 +458,7 @@ export async function setupTools(
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
     ended: (s) => leads.ended(s),
-    launcherOf: (s) => (leads.nameOf(s) ? (slots.get(s)?.satelliteOf?.name ?? null) : null),
+    launcherOf: (s) => launcherSeat(leads.upOf(s), slots, slots.get(s)?.satelliteOf?.name),
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
