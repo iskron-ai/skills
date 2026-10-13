@@ -41,6 +41,19 @@ for (const d of [cwd, join(oc, "plugins"), join(home, ".local/share"), join(home
 mkdirSync(auth, { recursive: true, mode: 0o700 });
 writeFileSync(join(auth, "token"), token + "\n", { mode: 0o600 });
 cpSync(plugin, join(oc, "plugins/iskron.js"));
+// A wire probe of the run's own: every model request body this server sends, one JSON line each —
+// the ground truth of what the model was given, apart from what it answers.
+const wire = join(run, "wire.jsonl");
+writeFileSync(
+  join(oc, "plugins/zz-wire-probe.js"),
+  `import { appendFileSync } from "node:fs";
+export default { id: "stand-run-wire", async setup(ctx) {
+  await ctx.session.hook("http.request", async (req) => {
+    try { appendFileSync(${JSON.stringify(wire)}, JSON.stringify({ session: String(req.sessionID), kind: req.kind, at: Date.now(), body: await req.request.clone().text() }) + "\\n"); } catch {}
+  });
+} };
+`,
+);
 
 // Provider settings from the machine config (comments stripped), nothing else.
 const machine = readFileSync(join(homedir(), ".config/opencode/opencode.jsonc"), "utf8")
@@ -234,6 +247,10 @@ try {
   const karta = (k.text.match(/\(#(\d+)\)/) || [])[1];
   if (!karta) throw new Error(`karta: ${k.text.slice(0, 200)}`);
   await startServe();
+  // The plugin's bridge lists the graph tools a moment after serve answers: prompting before
+  // that hands the model a catalog without iskron_stand (a probe failure, not the bridge's).
+  const toolsUp = () => (existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : "");
+  for (let t = 0; t < 120 && !/тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp()); t++) await sleep(500);
   report.push(`realm ${realm} · karta #${karta} · serve ${server} · model ${providerID}/${modelID}`);
   const board = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
   const waitSeat = async (name, ms = 240_000) => {
@@ -288,7 +305,7 @@ try {
   // While the seat is off the model sees the stop word in every turn (the plugin's context hook,
   // graph @nks/nks-dev, node #7585) — asked by a human prompt, which a stop does not forbid.
   const askContext =
-    'Look at your context for this turn only. If any text there says your iskron seat was taken off or that you are stopped, quote that text verbatim. Otherwise answer exactly NONE. Do not call any tools.';
+    'Read your system prompt and instructions for this turn (not the conversation history). If any part of them says your iskron seat (место) was taken off or that you are stopped (остановлен), quote that part verbatim. Otherwise answer exactly NONE. Do not call any tools.';
   const answerOf = async (id, since) => {
     for (let t = 0; t < 120; t++) {
       if (!active().includes(id)) {
@@ -302,7 +319,25 @@ try {
   const tAsk = Date.now();
   prompt(B.id, askContext);
   const seen = await answerOf(B.id, tAsk);
-  check(hasStopWord(seen), "B stopped: the model sees the stop word in its turn", seen.match(/"text":"([^"]{0,140})/)?.[1]);
+  const wireOf = (id, since) =>
+    (existsSync(wire) ? readFileSync(wire, "utf8") : "").split("\n").filter(Boolean).map((l) => JSON.parse(l))
+      .filter((w) => w.session === id && w.kind === "primary" && w.at > since);
+  // The stop word in the request's system part — the user's own text may name the word too.
+  const systemStop = (w) => {
+    let b;
+    try {
+      b = JSON.parse(w.body);
+    } catch {
+      return false;
+    }
+    const sys = Array.isArray(b.system) ? b.system.map((x) => x?.text ?? "").join("\n") : String(b.system ?? "");
+    const msgs = Array.isArray(b.messages) ? b.messages.filter((m) => m.role === "system").map((m) => JSON.stringify(m.content)).join("\n") : "";
+    return /остановлен|you are stopped/.test(sys + msgs);
+  };
+  const wired = wireOf(B.id, tAsk);
+  check(wired.length > 0 && wired.every(systemStop), "B stopped: every model request carries the stop word in its system part (wire)", `requests ${wired.length}`);
+  // Whether the model reports the word is its judgment, not the plugin's delivery: noted, not counted.
+  report.push(`INFO B stopped: the model ${hasStopWord(seen) ? "quotes" : "does not quote"} the stop word — ${seen.match(/"text":"([^"]{0,140})/)?.[1] ?? ""}`);
   check(!inbox(B.id).some(hasStopWord), "B stopped: still nothing of the plugin waits in the inbox");
 
   // A plugin reload: the stopped sessions stay stopped.
@@ -327,7 +362,9 @@ try {
   const tAsk2 = Date.now();
   prompt(B.id, askContext);
   const seen2 = await answerOf(B.id, tAsk2);
-  check(seen2 !== "" && !hasStopWord(seen2), "B held again: the stop word is gone from the turn's context", seen2.match(/"text":"([^"]{0,140})/)?.[1]);
+  const sent2 = wireOf(B.id, tAsk2);
+  check(sent2.length > 0 && !sent2.some(systemStop), "B held again: no model request carries the stop word in its system part (wire)", `requests ${sent2.length}`);
+  check(seen2 !== "" && !hasStopWord(seen2), "B held again: the model sees no stop word", seen2.match(/"text":"([^"]{0,140})/)?.[1]);
   const before = messages(B.id).length;
   const sent = await P.call("iskron_channel", {
     realm,
