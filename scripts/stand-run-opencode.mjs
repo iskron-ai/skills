@@ -282,9 +282,28 @@ try {
   check(assistantAfter(messages(B.id), quietFrom) === 0, "B: no new model turn after the stop");
   check(!seatId(await board(), nameA) && !seatId(await board(), nameB), "board: both seats gone");
   for (const [n, id] of [["A", A.id], ["B", B.id]]) {
-    check(messages(id).some(hasStopWord), `${n}: the stop word is in the session's history, without a turn`);
     check(!inbox(id).some(hasStopWord), `${n}: the stop word does not wait in the session's inbox to wake it`, JSON.stringify(inbox(id)).slice(0, 160));
   }
+
+  // While the seat is off the model sees the stop word in every turn (the plugin's context hook,
+  // graph @nks/nks-dev, node #7585) — asked by a human prompt, which a stop does not forbid.
+  const askContext =
+    'Look at your context for this turn only. If any text there says your iskron seat was taken off or that you are stopped, quote that text verbatim. Otherwise answer exactly NONE. Do not call any tools.';
+  const answerOf = async (id, since) => {
+    for (let t = 0; t < 120; t++) {
+      if (!active().includes(id)) {
+        const got = messages(id).filter((x) => (x.type ?? x.role) === "assistant" && Number(x?.time?.created ?? 0) > since);
+        if (got.length) return JSON.stringify(got[got.length - 1]);
+      }
+      await sleep(1000);
+    }
+    return "";
+  };
+  const tAsk = Date.now();
+  prompt(B.id, askContext);
+  const seen = await answerOf(B.id, tAsk);
+  check(hasStopWord(seen), "B stopped: the model sees the stop word in its turn", seen.match(/"text":"([^"]{0,140})/)?.[1]);
+  check(!inbox(B.id).some(hasStopWord), "B stopped: still nothing of the plugin waits in the inbox");
 
   // A plugin reload: the stopped sessions stay stopped.
   await stopServe();
@@ -304,7 +323,11 @@ try {
   check(await waitSeat(nameB), "B: explicit stand takes the name again");
   for (let t = 0; t < 120 && active().includes(B.id); t++) await sleep(1000);
   await sleep(10_000);
-  check(!messages(B.id).some((x) => Number(x?.time?.created ?? 0) > tStand && hasStopWord(x)), "B: no stale stop word after the explicit stand");
+  check(!messages(B.id).some((x) => Number(x?.time?.created ?? 0) > tStand && (x.type ?? x.role) !== "assistant" && hasStopWord(x)), "B: no stale stop word after the explicit stand");
+  const tAsk2 = Date.now();
+  prompt(B.id, askContext);
+  const seen2 = await answerOf(B.id, tAsk2);
+  check(seen2 !== "" && !hasStopWord(seen2), "B held again: the stop word is gone from the turn's context", seen2.match(/"text":"([^"]{0,140})/)?.[1]);
   const before = messages(B.id).length;
   const sent = await P.call("iskron_channel", {
     realm,
