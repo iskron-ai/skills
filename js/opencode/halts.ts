@@ -5,11 +5,12 @@
 // on globalThis, shared by the process's live instances like the twins' (twins.ts), and on disk
 // next to the plugin's other records (marker.ts) for the instance after a reload. A refused write
 // is loud: the live instances still keep the ban, a reload would lose it. The record is the
-// session's id and the time, no secret; the session's deletion removes it. A new held lifts the
+// session's id, the time and the stop's id, no secret; the session's deletion removes it. A new held lifts the
 // ban in the registry always, the stops recorded up to it, not a later one; a refused removal of
-// the record is loud and rewrites it as lifted, so a reload reads no ban either.
+// the record is loud and rewrites it as lifted, so a reload reads no ban either. Each stop has an
+// id of its own: what a stop has already cut does not count for the next stop over the chain.
 /* eslint-disable @typescript-eslint/no-explicit-any -- the process registry lives on globalThis */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -20,6 +21,8 @@ export interface Halts {
   held(session: string | null): void;
   /** The session or any of its ancestors is stopped. */
   halted(session: string): boolean;
+  /** The ids of the stops over the session and its ancestors; null — none. */
+  stopOf(session: string): string | null;
   /** The session was deleted: its stop goes. */
   gone(session: string): void;
 }
@@ -35,19 +38,27 @@ const stops = (): Set<string> =>
  */
 const lifted = (): Map<string, number> =>
   ((globalThis as any)[`${GLOBAL_PREFIX}LiftedAt`] ??= new Map<string, number>());
+/** The id of each stop in the registry. */
+const ids = (): Map<string, string> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}StopIds`] ??= new Map<string, string>());
 
 const code = (e: unknown): string | undefined => (e as NodeJS.ErrnoException).code;
 
 /**
- * The record bans: present, not rewritten as lifted, and newer than a held lifted at `since`;
- * one unreadable bans, as before.
+ * The id of the stop the record bans by: present, not rewritten as lifted, and newer than a held
+ * lifted at `since`; one unreadable bans, as before. null — no ban.
  */
-function recorded(file: string, since: number | undefined): boolean {
+function recorded(file: string, since: number | undefined): string | null {
   try {
-    const r = JSON.parse(readFileSync(file, "utf8")) as { at?: string; lifted?: string };
-    return !r.lifted && !(since !== undefined && Date.parse(r.at ?? "") <= since);
+    const r = JSON.parse(readFileSync(file, "utf8")) as {
+      at?: string;
+      lifted?: string;
+      id?: string;
+    };
+    if (r.lifted || (since !== undefined && Date.parse(r.at ?? "") <= since)) return null;
+    return r.id ?? r.at ?? "?";
   } catch (e) {
-    return code(e) !== "ENOENT";
+    return code(e) === "ENOENT" ? null : "?";
   }
 }
 
@@ -62,10 +73,11 @@ export function createHalts(
   unwritten: (session: string, message: string) => void,
   unlifted: (session: string, message: string, kept: boolean) => void,
 ): Halts {
-  const marked = (s: string): boolean =>
-    stops().has(s) || recorded(fileOf(dir(), s), lifted().get(s));
+  const marked = (s: string): string | null =>
+    stops().has(s) ? (ids().get(s) ?? "?") : recorded(fileOf(dir(), s), lifted().get(s));
   const drop = (s: string): void => {
     stops().delete(s);
+    ids().delete(s);
     lifted().set(s, Date.now());
     const file = fileOf(dir(), s);
     try {
@@ -82,13 +94,25 @@ export function createHalts(
       unlifted(s, (e as Error).message, kept);
     }
   };
+  function stopOf(session: string): string | null {
+    const found: string[] = [];
+    const seen = new Set<string>();
+    for (let s: string | undefined = session; s && !seen.has(s); s = parentOf(s)) {
+      const id = marked(s);
+      if (id !== null) found.push(id);
+      seen.add(s);
+    }
+    return found.length ? found.join(" ") : null;
+  }
   return {
     stop(session) {
+      const id = randomUUID();
       stops().add(session);
+      ids().set(session, id);
       lifted().delete(session);
       try {
         mkdirSync(dir(), { recursive: true, mode: 0o700 });
-        const record = JSON.stringify({ session, at: new Date().toISOString() });
+        const record = JSON.stringify({ session, at: new Date().toISOString(), id });
         writeFileSync(fileOf(dir(), session), record, { mode: 0o600 });
       } catch (e) {
         unwritten(session, (e as Error).message);
@@ -96,14 +120,8 @@ export function createHalts(
     },
     held: (session) => void (session && drop(session)),
     gone: drop,
-    halted(session) {
-      const seen = new Set<string>();
-      for (let s: string | undefined = session; s && !seen.has(s); s = parentOf(s)) {
-        if (marked(s)) return true;
-        seen.add(s);
-      }
-      return false;
-    },
+    halted: (session) => stopOf(session) !== null,
+    stopOf,
   };
 }
 

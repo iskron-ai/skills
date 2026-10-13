@@ -241,6 +241,9 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       if (!parents.has(s)) await rootOf(s); // the parent chain of a child this instance has not walked yet
       if (ch?.halt(s)) half.halt(s);
     }
+    // A descendant without a seat here — its satellite taken down by an earlier stop — is cut by
+    // each new stop over its chain all the same (#7440 item 2).
+    for (const s of parents.keys()) ch?.halt(s);
   }
   const sweeper = setInterval(() => void sweep(), SWEEP_MS);
   sweeper.unref?.();

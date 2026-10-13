@@ -262,11 +262,12 @@ export function setupChannel(
     piles.delete(key);
   }
 
-  const stops = new Map<string, number>(); // the session's stop generation: each held starts the next
-  const stopOf = (id: string): number => stops.get(id) ?? 0;
-  const cutDone = new Map<string, number>(); // the generation whose turn is cut
-  const cutting = new Map<string, number>(); // the generation whose interrupt is in flight
-  const cutFails = new Map<string, number>(); // refused interrupts of the current generation
+  // A cut belongs to the stops over the session's chain (halts.ts stopOf): a new stop of the
+  // session or of any ancestor cuts it anew.
+  const stopOf = (id: string): string | null => halts.stopOf(id);
+  const cutDone = new Map<string, string>(); // the stops whose turn is cut
+  const cutting = new Map<string, string>(); // the stops whose interrupt is in flight
+  const cutFails = new Map<string, [string, number]>(); // refused interrupts of those stops
   const retries = new Set<ReturnType<typeof setTimeout>>();
   /**
    * A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once
@@ -278,7 +279,7 @@ export function setupChannel(
    */
   function cut(id: string): void {
     const gen = stopOf(id);
-    if (cutDone.get(id) === gen || cutting.get(id) === gen) return;
+    if (gen === null || cutDone.get(id) === gen || cutting.get(id) === gen) return;
     for (const k of ["child", "root"]) dropPile(`${k}:${id}`);
     tacts.gone(id);
     if (cutting.has(id)) return; // the previous stop's interrupt is in flight: this one follows it
@@ -295,8 +296,9 @@ export function setupChannel(
         },
         (e: Error) => {
           if (stopOf(id) !== gen) return;
-          const n = (cutFails.get(id) ?? 0) + 1;
-          cutFails.set(id, n);
+          const was = cutFails.get(id);
+          const n = (was?.[0] === gen ? was[1] : 0) + 1;
+          cutFails.set(id, [gen, n]);
           say(W.notDelivered(W.frame(), id, e.message), n < CUT_TRIES ? "warning" : "error");
           if (n >= CUT_TRIES) return void cutDone.set(id, gen);
           const t = setTimeout(() => {
@@ -309,7 +311,7 @@ export function setupChannel(
       )
       .finally(() => {
         cutting.delete(id);
-        if (stopOf(id) !== gen && halts.halted(id)) cut(id);
+        if (stopOf(id) !== gen) cut(id);
       });
   }
 
@@ -346,7 +348,6 @@ export function setupChannel(
     gone(session) {
       tacts.gone(session);
       halts.gone(session);
-      stops.delete(session);
       cutDone.delete(session);
       cutFails.delete(session);
     },
@@ -444,10 +445,10 @@ export function setupChannel(
           return;
         case "held":
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
-          if (session) {
-            stops.set(session, stopOf(session) + 1);
-            cutDone.delete(session);
-            cutFails.delete(session);
+          // The marks of the session's cuts go with it, its descendants' too.
+          for (const s of session ? [session, ...descendantsOf(session, parents)] : []) {
+            cutDone.delete(s);
+            cutFails.delete(s);
           }
           say(W.held(ev.key ?? ""), "info");
           return;

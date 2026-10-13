@@ -4656,6 +4656,113 @@ test("a second stop after a held while the first stop's interrupt is unanswered 
   }
 });
 
+// Review of #7440, ninth round: the root's held renewed the stop of the root only — its child's
+// turn stayed marked cut, and the root's second stop did not interrupt the child. A cut belongs
+// to the stops over the session's chain: each new stop of an ancestor interrupts every descendant.
+const STOP_TEXT = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+const heldWords = (rec, key) => rec.said().split(`мост держит стояние ${key}`).length - 1;
+
+test("the root's second stop after its held interrupts its child's turn again", async () => {
+  const calls = join(SANDBOX, "stop-chain.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stop-chain", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root-c", location: { directory: "/work/root" } },
+      { id: "child-c", parentID: "root-c", location: { directory: "/work/root" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    rec.emit({ type: "session.created", data: { sessionID: "child-c", parentID: "root-c" } });
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-c");
+    const pid = pidOf(b.log);
+    await rootHolds(rec, b, { pid });
+    const stop = () =>
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("stopped", { code: 4001, key: "k", text: STOP_TEXT }),
+      );
+    stop();
+    await until(() => rec.interrupts.length === 2, "the first stop's interrupts");
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
+    await until(() => heldWords(rec, "k-root") === 2, "the root's held again");
+    stop();
+    await until(() => rec.interrupts.length >= 4, "the second stop's interrupts", 3000).catch(
+      () => {},
+    );
+    await delay(300);
+    assert.deepEqual(
+      rec.interrupts.map((i) => i.sessionID),
+      ["root-c", "child-c", "root-c", "child-c"],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The same across instances: the root in one folder, the child and its own child in another. The
+// first stop took the child's satellite down for good, so the second stop finds no seat of it
+// there — the child's and the grandchild's turns are interrupted all the same.
+test("the root's second stop after its held interrupts its descendants' turns again in another instance", async () => {
+  const calls = join(SANDBOX, "stop-chain-two.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stop-chain-two", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root-t", location: LOC_A },
+    { id: "child-t", parentID: "root-t", location: LOC_B },
+    { id: "grand-t", parentID: "child-t", location: LOC_B },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    B.emit({ type: "session.created", data: { sessionID: "child-t", parentID: "root-t" } });
+    B.emit({ type: "session.created", data: { sessionID: "grand-t", parentID: "child-t" } });
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-t");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child-t");
+    const childPid = callsIn(calls).at(-1).pid;
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => heldWords(B, "k-sub") === 1, "the child's held word");
+    const stop = () =>
+      appendFileSync(
+        `${b.events}.${rootPid}`,
+        event("stopped", { code: 4001, key: "k", text: STOP_TEXT }),
+      );
+    stop();
+    await until(
+      () => B.interrupts.length === 2,
+      "the first stop's interrupts in the child's instance",
+    );
+    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
+    await until(() => heldWords(A, "k-root") === 2, "the root's held again");
+    stop();
+    await until(() => A.interrupts.length === 2, "the second stop's interrupt of the root");
+    await until(() => B.interrupts.length >= 4, "the second stop's interrupts", 3000).catch(
+      () => {},
+    );
+    await delay(300);
+    const got = B.interrupts.map((i) => i.sessionID);
+    assert.deepEqual(
+      A.interrupts.map((i) => i.sessionID),
+      ["root-t", "root-t"],
+    );
+    assert.deepEqual(
+      [got.slice(0, 2).sort(), got.slice(2).sort()],
+      [
+        ["child-t", "grand-t"],
+        ["child-t", "grand-t"],
+      ],
+      `each stop interrupts the child and the grandchild once: ${got}`,
+    );
+  } finally {
+    await B.stop();
+    await A.stop();
+  }
+});
+
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
 // end's word says the place is being taken down; the child's bridge ends its run after it
 // (iskron/end), and places not revoked come as a correction — not a second «КОНЧЕН», not waking.
