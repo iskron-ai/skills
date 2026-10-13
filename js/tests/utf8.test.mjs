@@ -6,7 +6,6 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
