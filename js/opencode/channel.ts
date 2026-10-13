@@ -3,7 +3,8 @@
 // The session's bridge holds the standing socket; the plugin puts a frame into the agent's
 // session as a prompt (ctx.session.prompt). steer enters the running turn at the next step,
 // queue waits for the turn's end, one prompt per turn: a live frame and a loud word go steer,
-// or frames lagged by hours (#5233). Wake-up and stale batches go queue: not urgent.
+// or frames lagged by hours (#5233). Wake-up and stale batches go queue: not urgent — but a
+// wake-up batch carrying the launcher's word to its lead steers, as the word alone would (#7505).
 // Case frames for the pile go queue too, one prompt per pile: a head of counts per case and
 // below it only lines addressed to the seat (#6574). While the pile's previous prompt is not
 // taken, new frames gather here and leave as one when OpenCode says it took it; a pile of counts
@@ -438,7 +439,11 @@ export function setupChannel(
           // A wake-up with the backlog — one prompt per pile, queued: steered mid-turn it would cut the doer's work (#5140).
           if (ev.text) {
             const what = W.wakeBatch(ev.frames?.length ?? 0);
-            if (!tact(session, child, ev, what))
+            // The launcher's word gathered into the window steers its lead's turn, the batch with it (#7505).
+            const launcher = child ? leads.launcherOf(session ?? "") : null;
+            if (ev.frames?.some((f) => fromLauncher(f, launcher)))
+              void deliver(session, ev.text, what, "steer", child);
+            else if (!tact(session, child, ev, what))
               void deliver(session, ev.text, what, "queue", child);
           }
           return;

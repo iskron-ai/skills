@@ -47,6 +47,7 @@ import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { Backlog } from "../bridge/backlog.ts";
 import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
@@ -5528,18 +5529,20 @@ test("an ended lead is woken by nothing: frames, piles, batches and a held tact 
 // #7505 (3): a word of the launcher to its working lead, with a stack that would hold it for
 // the next turn, entered only after the child's outcome. It steers the running turn; the same
 // stack from anyone else still goes the pile's way.
+const launcher = { kind: "standing", standing: `@me:${ROOT_PLACE.name}`, name: "запустивший" };
+/** A deferred case word addressed to the lead; author — its launcher, or undefined for another. */
+const said = (entry_id, author, body) =>
+  roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack: "defer",
+    author,
+    envelope: { addressee: ME },
+    body,
+  });
+
 test("the launcher's word to its lead mid-turn steers the turn whatever its stack; another's addressed word keeps the pile", async () => {
   const { b, rec, childPid } = await leadChild("lead-steer-word");
-  const launcher = { kind: "standing", standing: `@me:${ROOT_PLACE.name}`, name: "запустивший" };
-  const said = (entry_id, author, body) =>
-    roomFrame("said", {
-      entry_id,
-      key: "said",
-      stack: "defer",
-      author,
-      envelope: { addressee: ME },
-      body,
-    });
   try {
     rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
     appendFileSync(
@@ -5555,6 +5558,53 @@ test("the launcher's word to its lead mid-turn steers the turn whatever its stac
     );
     await until(() => rec.prompts.length === 2, "the neighbour's pile");
     assert.equal(rec.prompts[1].delivery, "queue", "another's deferred word keeps the pile");
+  } finally {
+    await rec.stop();
+  }
+});
+
+/** The bridge's own wake-up window (backlog.ts) closed over the frames — its event as the bridge writes it. */
+function wakeBatch(frames) {
+  const window = new Backlog(() => false);
+  let out = null;
+  window.open(frames.length, (ev) => (out = ev));
+  for (const f of frames) window.note(f);
+  window.flushNow();
+  return event("backlog", out);
+}
+
+// Review of №652, round 4 (P1): the launcher's word gathered with another's frame into the
+// bridge's wake-up window left as a queued batch — after the lead's turn, able to wake it past
+// its end. A batch with the launcher's word steers the running turn whole; a batch of others'
+// frames stays queued; an ended lead gets neither.
+test("a wake-up batch with the launcher's word steers its lead's turn; others' batch is queued; an ended lead gets none", async () => {
+  const { b, rec, childPid } = await leadChild("lead-steer-batch");
+  const own = () => rec.prompts.filter((p) => p.sessionID === "child");
+  try {
+    rec.emit({ type: "session.status", data: { sessionID: "child", status: { type: "busy" } } });
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      wakeBatch([
+        said(621, undefined, "слово соседа"),
+        said(622, launcher, "поправка запустившего"),
+      ]),
+    );
+    await until(() => own().length === 1, "the batch with the launcher's word");
+    assert.match(own()[0].text, /поправка запустившего/);
+    assert.match(own()[0].text, /слово соседа/, "the batch goes whole");
+    assert.equal(own()[0].delivery, "steer", "the launcher's word in a batch steers the turn");
+    appendFileSync(`${b.events}.${childPid}`, wakeBatch([said(623, undefined, "ещё сосед")]));
+    await until(() => own().length === 2, "the batch of others' frames");
+    assert.equal(own()[1].delivery, "queue", "a batch without the launcher's word stays queued");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "child");
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      wakeBatch([said(624, launcher, "поздняя поправка"), said(625, undefined, "поздний сосед")]),
+    );
+    await until(() => /не вложен — субагент сессии child кончен/.test(rec.said()), "the journal");
+    await delay(300);
+    assert.equal(own().length, 2, "nothing laid into the ended lead");
   } finally {
     await rec.stop();
   }
