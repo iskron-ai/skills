@@ -4546,6 +4546,37 @@ test("#7440: the owner's 4001 stops the doer — no second connect or held on an
   assert.equal(fake.state.counts.connect, 2);
 });
 
+// Review of #7440: releasing the seat flushed the open batch, so a wake reached the session
+// after the stop word and woke the stopped agent again. On the stop the batch is dropped.
+test("#7440: a batch the bridge still holds is dropped on the owner's 4001, not given after the stop word", async (t) => {
+  const { fake, dir, bridge } = await ready(
+    t,
+    { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+    { ISKRON_BRIDGE_BACKLOG_MS: "3000" },
+  );
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  for (const id of ["w1", "w2"])
+    await fake.control({ ws_send: JSON.stringify({ id, type: "message", body: `кадр ${id}` }) });
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  await new Promise((r) => setTimeout(r, 3500));
+  const kinds = bridge.notifications.map((n) => n.params?.data?.kind).filter(Boolean);
+  const after = kinds.slice(kinds.indexOf("stopped"));
+  assert.ok(
+    !after.some((k) => ["backlog", "frame", "stale", "resumed"].includes(k)),
+    `nothing wakes the session after the stop: ${after}`,
+  );
+  assert.ok(!kinds.includes("backlog"), `the held batch is not given at all: ${kinds}`);
+  const journal = readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal, /stopped proba--931--nks-dev: 2 undelivered frame\(s\) dropped/, journal);
+});
+
 test("#7440: standing_ended for the main seat is the same stop as the owner's 4001", async (t) => {
   const { fake, bridge } = await ready(t);
   const args = { realm: "nks-dev", karta: 931, name: "proba" };

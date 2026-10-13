@@ -1351,14 +1351,34 @@ for (const busy of [true, false])
       assert.equal(rec.synthetics[0].resume, false, "the stop word starts no turn");
       assert.match(rec.synthetics[0].text, /снято \(человеком\) — ты остановлен/);
       assert.match(rec.said(), /\[iskron\/error\] Искрон: место proba снято/, "the human hears it");
-      // A tact after the stop (a late batch) still goes by its own path; the stop itself prompts nothing.
-      await delay(300);
-      assert.equal(rec.prompts.length, 0, "the stop wakes no turn");
+      // Nothing of the channel wakes the stopped session afterwards: no frame, batch, tact,
+      // stale burst, resumed or loud word — until it stands again by an explicit call (held).
+      const late = [
+        event("frame", { frame: { type: "message", id: "late-1", body: "после стопа" } }),
+        tactBurst(9),
+        event("backlog", { frames: [{ id: "b1" }], marks: ["b1"], text: "Побудка: кадров 1" }),
+        event("stale", { frames: [{ id: "s1" }], text: "Лежалых кадров: 1" }),
+        event("resumed", { text: "место возвращено" }),
+        event("evicted", { code: 4000, text: "отняли" }),
+      ];
+      for (const e of late) appendFileSync(`${b.events}.${pid}`, e);
+      await delay(400);
+      assert.equal(rec.prompts.length, 0, `the stop wakes no turn: ${JSON.stringify(rec.prompts)}`);
+      assert.equal(rec.synthetics.length, 1, "only the stop word lies in the session");
       assert.doesNotMatch(
         [...rec.prompts, ...rec.synthetics].map((p) => p.text).join("\n"),
         /connect/,
         "a stop never calls connect",
       );
+      assert.match(rec.said(), /не вложен — сессия s-stop остановлена снятием места/);
+      appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("frame", { frame: { type: "message", id: "after-stand", body: "снова на месте" } }),
+      );
+      await until(() => rec.prompts.length === 1, "delivery after an explicit stand");
+      assert.equal(rec.prompts[0].sessionID, "s-stop");
+      assert.match(rec.prompts[0].text, /снова на месте/);
     } finally {
       await rec.stop();
     }

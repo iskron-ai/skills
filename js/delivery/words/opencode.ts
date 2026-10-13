@@ -47,6 +47,7 @@ export interface OpencodeWords {
   childGone: (frame: string, id: string, text: string) => string;
   sessionClosed: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
+  halted: (frame: string, id: string) => string;
   delivered: (frame: string, id: string) => string;
   notDelivered: (frame: string, id: string, message: string) => string;
   held: (key: string) => string;
@@ -109,6 +110,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` +
       text,
+    halted: (frame, id) =>
+      `Искрон: ${frame} не вложен — сессия ${id} остановлена снятием места, до нового явного занятия места она не будится`,
     delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
@@ -172,6 +175,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; the frame stays in the standing's history — ` +
       text,
+    halted: (frame, id) =>
+      `Iskron: ${frame} not delivered — session ${id} was stopped by taking its seat off; it is not woken until it takes a seat again explicitly`,
     delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
     notDelivered: (frame, id, message) =>
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,

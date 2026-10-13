@@ -23,6 +23,7 @@ import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-t
 import { words } from "../shared/lang.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
+import { createHalts } from "./halts.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -85,9 +86,15 @@ const MARKS_KEPT = 500;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- bridge notifications without a schema */
 
-export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string | null): Channel {
+export function setupChannel(
+  ctx: Context,
+  say: Say,
+  freshestRoot: () => string | null,
+  rootOf: (session: string) => string | undefined = () => undefined,
+): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
+  const halts = createHalts(rootOf);
   /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
     try {
@@ -120,6 +127,10 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     if (id && id !== session && !(await accepting(id))) id = null;
     if (!id) {
       say(W.nowhere(frame, text.slice(0, 120)), "error");
+      return null;
+    }
+    if (halts.halted(id)) {
+      say(W.halted(frame, id), "warning");
       return null;
     }
     try {
@@ -231,7 +242,8 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
   /**
    * The owner took the seat off (#7439): the session's running turn is interrupted, its piles
    * and waiting tact are dropped, and the stop word goes to the human and into the session
-   * as a message that starts no turn. Nothing of this session wakes it afterwards.
+   * as a message that starts no turn. Nothing of this session or its children reaches it
+   * afterwards until it stands again by an explicit call (halts.ts).
    */
   function stopped(session: string | null, text: string, child: boolean): void {
     say(text, "error");
@@ -240,6 +252,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     if (p?.timer) clearTimeout(p.timer);
     piles.delete(own);
     if (!session) return;
+    halts.stop(session);
     tacts.gone(session);
     const s = ctx.session as any;
     const failed = (e: Error) => say(W.notDelivered(W.frame(), session, e.message), "warning");
@@ -342,6 +355,7 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
           }
           return;
         case "held":
+          halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
           say(W.held(ev.key ?? ""), "info");
           return;
         case "released":

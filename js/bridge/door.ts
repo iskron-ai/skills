@@ -266,6 +266,11 @@ export class Door {
     this.roomBatch.flushNow();
   }
 
+  /** The owner's stop (stophold.ts): unsent batches are dropped, not flushed; how many frames. */
+  dropBatches(): number {
+    return this.backlog.drop() + this.roomBatch.drop();
+  }
+
   /**
    * Close the door: clients, server, key and socket files. Idempotent. A seat's
    * delivered memory stays: a new bridge gets the same queue again (#5831); sweep.ts

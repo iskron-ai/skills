@@ -876,6 +876,19 @@ for (const busy of [true, false])
       assert.equal(rec.messages.length, 1, "the stop word is in the history");
       assert.equal(rec.messages[0].opts.triggerTurn, false, "the stop raises no turn");
       assert.doesNotMatch(rec.messages[0].msg.content, /connect/);
+      // Nothing of the channel raises a turn afterwards — until an explicit stand (held).
+      rec.busy(false);
+      push(events, { kind: "frame", frame: { type: "message", id: "late-1", body: "после" } });
+      push(events, { kind: "backlog", frames: [{ id: "b1" }], marks: ["b1"], text: "Побудка" });
+      push(events, { kind: "stale", frames: [{ id: "s1" }], text: "Лежалых кадров: 1" });
+      push(events, { kind: "evicted", code: 4000, text: "отняли" });
+      await delay(250);
+      assert.equal(rec.messages.length, 1, `no word after the stop: ${rec.messages.length}`);
+      push(events, { kind: "held", key: "k" });
+      push(events, { kind: "frame", frame: { type: "message", id: "again", body: "снова" } });
+      await delay(250);
+      assert.equal(rec.messages.length, 2, "delivery after an explicit stand");
+      assert.equal(rec.messages[1].opts.triggerTurn, true);
     } finally {
       await rec.stop();
     }

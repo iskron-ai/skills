@@ -115,8 +115,12 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   pi.on("agent_end", async () => releaseTact());
 
   // The owner took the seat off (#7439): the running turn is aborted, what waited is dropped,
-  // and the stop word goes to the human and into the history — without raising a turn.
+  // and the stop word goes to the human and into the history — without raising a turn. Nothing
+  // else of the channel reaches the session until a new "held", which after a stop only an
+  // explicit call of the stand tool brings (bridge stophold.ts).
+  let halted = false;
   function stopped(text: string): void {
+    halted = true;
     if (tactPoll) clearInterval(tactPoll);
     tactPoll = null;
     tact = null;
@@ -139,6 +143,8 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   return (params: any) => {
     const ev = params?.data as ChannelEvent | undefined;
     if (!ev || typeof ev !== "object") return;
+    if (ev.kind === "held") halted = false;
+    if (halted && ev.kind !== "stopped") return;
     switch (ev.kind) {
       case "frame": {
         const frame = ev.frame ?? null;

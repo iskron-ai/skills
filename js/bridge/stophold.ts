@@ -1,13 +1,15 @@
 // The owner took a seat off (graph @nks/nks-dev, nodes #7439, #7440, #7493): the agent and
 // its seat have one life, so taking the seat off ends the agent. A close 4001 the session did
 // not expect as its own revoke or close — or a standing_ended frame naming the main seat — is
-// the stop: every door and the notification client hear the stop word, the seat is released
+// the stop: every door and the notification client hear the stop word, unsent batches are
+// dropped to the journal (flushed, they would wake the stopped agent), the seat is released
 // with its record and binding forgotten, and no automatic path takes it again (none has a
 // record or a binding left; a move under way when it came says the stop word, stoppedSince).
 // The name stays free: an explicit call of the stand tool stands as usual. A standing_ended frame for a
 // seat beside forgets only that seat, waking nobody. Wired into hold.ts at load (session.ts).
 import { STOP, type StopWho } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import { type Door } from "./door.ts";
 import { broadcast, type ChannelEvent, forgetSeat, notify } from "./hold.ts";
 import { type Frame, H, whenStopped } from "./holdstate.ts";
 import { dropExtra, extraPlaces } from "./places.ts";
@@ -20,10 +22,17 @@ const whoOf = (reason: string): StopWho =>
 
 const stopWord = (name: string, reason: string): string => words(STOP).stopped(name, whoOf(reason));
 
+/** What a stopped seat had not given yet stays in the journal, not in the session: it would wake the agent. */
+function dropUnsent(key: string, doors: (Door | null | undefined)[]): void {
+  const n = doors.reduce((sum, d) => sum + (d?.dropBatches() ?? 0), 0);
+  if (n) standingLog(`stopped ${key}: ${n} undelivered frame(s) dropped, not given`);
+}
+
 function stopAgent(key: string, how: string, reason: string): void {
   const text = stopWord(state.standing?.name ?? "", reason);
   log(text);
   standingLog(`stopped ${key}: ${how}${reason ? ` (${reason})` : ""}`);
+  dropUnsent(key, [H.door, ...extraPlaces().map((p) => p.door)]);
   H.stopped = { n: H.stopped.n + 1, key, text };
   const ev: ChannelEvent = { kind: "stopped", key, text, ...(reason ? { reason } : {}) };
   broadcast(ev);
@@ -39,6 +48,7 @@ function seatEnded(key: string, frame: Frame): void {
   if (beside) {
     const text = stopWord(beside.standing.name ?? "", reason);
     log(`${text} — that seat beside is forgotten, the rest are held`);
+    dropUnsent(beside.door.key, [beside.door]);
     return dropExtra(beside.door.key, text, true, true);
   }
   const main = H.door?.standingId;

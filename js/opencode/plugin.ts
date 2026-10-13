@@ -83,7 +83,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
   try {
-    const c0 = setupChannel(ctx, say, freshestRoot);
+    const c0 = setupChannel(ctx, say, freshestRoot, (s) => roots.get(s));
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
