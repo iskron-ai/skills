@@ -5455,6 +5455,37 @@ test("the launcher's revoke the platform refuses is a loud refusal of the launch
   }
 });
 
+// Review of №652 (P2): any refusal saying «не найден» passed for a seat already off — a missing
+// role or graph too. Only the api's word about the seat itself (404 without a rule, 410,
+// standing_not_held) is «already off»; the rest is a loud «место НЕ снято».
+test("the launcher's revoke refused for a missing role is loud — «не найден» prose is no seat already off; only the seat's own refusal is", async () => {
+  const { b, rec } = await leadChild("lead-release-role-missing");
+  try {
+    writeFileSync(
+      `${b.reply}.iskron_channel`,
+      "__REFUSAL__404 karta_not_found Роль #931 не найдена",
+    );
+    await assert.rejects(
+      rec.call("iskron_channel", { realm: "nks-dev", action: "revoke", standing: SUB }, "root"),
+      /место НЕ снято[\s\S]*Роль #931 не найдена/,
+    );
+  } finally {
+    await rec.stop();
+  }
+  const gone = await leadChild("lead-release-seat-gone");
+  try {
+    writeFileSync(`${gone.b.reply}.iskron_channel`, "__REFUSAL__404 - Место не найдено");
+    const word = await gone.rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: SUB },
+      "root",
+    );
+    assert.match(word.content, /отпущен[\s\S]*место снято/);
+  } finally {
+    await gone.rec.stop();
+  }
+});
+
 // #7505 (1): the child handed in its outcome and left its case; the launcher's word sent in the
 // middle of its work and held until its turn's end went into its session and woke it — it came
 // back with the same seat into the case. From the leave on, nothing goes into the child's session:
@@ -5543,6 +5574,33 @@ test("a lead child in two cases is not ended by leaving the first — only by le
     await until(() => !alive(childPid), "the child's bridge to go with its last case");
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /вышел из дела №80 по исходу/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Review of №652 (P1): the cases were keyed by number alone — №77 of two graphs was one case,
+// and leaving it in one graph ended the errand in the other. A case is (graph, number).
+test("a lead child in case №77 of two graphs is not ended by leaving it in one — only by leaving both", async () => {
+  const { rec, childPid } = await leadChild("lead-two-graphs");
+  try {
+    await rec.call("iskron_case", { action: "join", room: "#77" }, "child"); // the seat's graph
+    await rec.call(
+      "iskron_case",
+      { realm: "@nks/methodology", action: "join", room: "77" },
+      "child",
+    );
+    await rec.call("iskron_case", { realm: "@nks/nks-dev", action: "leave", room: "№77" }, "child");
+    await delay(300);
+    assert.ok(alive(childPid), "leaving №77 of one graph is no outcome while №77 of another lives");
+    assert.equal(ends(rec).length, 0);
+    await rec.call(
+      "iskron_case",
+      { realm: "@nks/methodology", action: "leave", room: "#77" },
+      "child",
+    );
+    await until(() => !alive(childPid), "the child's bridge to go with its last case");
+    await until(() => ends(rec).length === 1, "the end in the parent");
   } finally {
     await rec.stop();
   }

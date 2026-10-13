@@ -4,9 +4,22 @@
 // by the launcher's bridge, the seat's role filled in. One word of the launcher takes the seat
 // off the board whatever the child's bridge managed; a seat already gone counts as taken off,
 // any other refusal is a loud refusal of the launcher's call, not a quiet "released".
-import { CASE_EXIT_CLOSED } from "../delivery/index.ts";
+import { refusalOf } from "../bridge/refusal.ts";
+import type { JsonRpcMessage } from "../bridge/types.ts";
 import type { Released } from "./leaddoors.ts";
 import { W } from "./leadwords.ts";
+
+/**
+ * The seat is already off only by the api's refusal data (tools.ts carries it on the throw):
+ * standing_not_held, 410, or 404 without a rule — as the bridge's caseexit.ts. A missing role
+ * or graph, a refusal without data, any prose — the seat is NOT taken off.
+ */
+const seatGone = (e: unknown): boolean => {
+  const r = refusalOf({ result: (e as { result?: unknown }).result } as JsonRpcMessage);
+  return (
+    !!r && (r.rule === "standing_not_held" || r.status === 410 || (r.status === 404 && !r.rule))
+  );
+};
 
 export async function revokeAsLauncher(
   freed: Released,
@@ -23,8 +36,8 @@ export async function revokeAsLauncher(
     await call(full);
     return freed.word;
   } catch (e) {
+    if (seatGone(e)) return freed.word;
     const why = (e as Error).message;
-    if (CASE_EXIT_CLOSED.test(why)) return freed.word;
     throw new Error(W().unreleased(p?.name ?? String(args.standing ?? ""), why), { cause: e });
   }
 }

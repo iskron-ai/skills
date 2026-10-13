@@ -17,7 +17,7 @@ import { type Place, standsBy } from "./satellite.ts";
 interface Lead {
   parent: Promise<string | null>;
   place?: Place;
-  rooms: Set<string>; // the cases it is in — numbers without a sign; leaving the last is the outcome
+  rooms: Set<string>; // the cases it is in — "realm#number" (caseKey); leaving the last is the outcome
   running?: boolean;
   noted?: boolean;
   leaving?: string; // leaving said mid-turn — the end waits for the turn's end and its text
@@ -25,9 +25,30 @@ interface Lead {
 }
 
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
-/** The snapshot keeps the cases as one string, numbers by commas — a former single number reads as one. */
+/** A case is its graph and its number: №77 of two graphs is two cases (#7234). */
+const caseKey = (realm: unknown, room: unknown): string =>
+  `${String(realm ?? "").trim()}#${roomNo(room)}`;
+const keyParts = (k: string): [string, string] => {
+  const i = k.lastIndexOf("#");
+  return [k.slice(0, i), k.slice(i + 1)];
+};
+// Two spellings of one kind (@owner/slug, rN, bare slug) that differ are surely two graphs;
+// mixed kinds may name one graph — the same number there is the same case, as in the bridge's caseexit.ts.
+const spelling = (r: string): string => (r.startsWith("@") ? "@" : /^r\d+$/.test(r) ? "r" : "slug");
+const sameCase = (a: string, b: string): boolean => {
+  const [ra, na] = keyParts(a);
+  const [rb, nb] = keyParts(b);
+  return na === nb && (!ra || !rb || ra === rb || spelling(ra) !== spelling(rb));
+};
+/** The snapshot keeps the cases as one string, keys by commas — a former bare number reads as a case of no graph. */
 const roomsOf = (room: string | null | undefined): Set<string> =>
-  new Set((room ?? "").split(",").map(roomNo).filter(Boolean));
+  new Set(
+    (room ?? "")
+      .split(",")
+      .map((s) => (s.includes("#") ? keyParts(s.trim()) : ["", s]))
+      .filter(([, n]) => roomNo(n))
+      .map(([r, n]) => caseKey(r, n)),
+  );
 const roomsText = (l: Lead | undefined): string | null => [...(l?.rooms ?? [])].join(",") || null;
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
@@ -112,12 +133,21 @@ export function createLeads(d: LeadDoors): Leads {
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
       const room = name === tool("case") ? roomNo(args.room) : null;
-      if (args.action === "join" && room) l.rooms.add(room);
+      // The call's graph, by default the graph of the child's seat.
+      const key = room ? caseKey(String(args.realm ?? "").trim() || l.place?.realm, room) : null;
+      const same = key ? [...l.rooms].filter((k) => sameCase(k, key)) : [];
+      if (args.action === "join" && key) {
+        for (const k of same) l.rooms.delete(k);
+        l.rooms.add(key);
+      }
       if (args.action !== "leave") return;
       if (name === tool("channel")) leave(child, l, W().leftSeat());
       else if (room === "") leave(child, l, W().leftCases());
       // The outcome is leaving the last case it is in, not the first it joined (#7234).
-      else if (room && l.rooms.delete(room) && !l.rooms.size) leave(child, l, W().leftCase(room));
+      else if (room && same.length) {
+        for (const k of same) l.rooms.delete(k);
+        if (!l.rooms.size) leave(child, l, W().leftCase(room));
+      }
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
