@@ -449,6 +449,16 @@ export async function setupTools(
     moved: (s, to) =>
       handoff(s, to, home) ||
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
+    children: () =>
+      [...slots.values()].flatMap((x) => (x.child && x.holding && x.session ? [x.session] : [])),
+    halt(child) {
+      const slot = slots.get(child);
+      if (!slot?.child || !slot.holding) return;
+      slot.holding = false;
+      keeper.forget(child);
+      // A lead ends as by the launcher's revoke — its bridge takes the seat off; any other child's bridge goes down with it.
+      if (!(slot.satelliteOf && leads.heard(child, "stopped", slot.place))) forget(child);
+    },
     async stop() {
       stopped = true;
       clearInterval(reaper);

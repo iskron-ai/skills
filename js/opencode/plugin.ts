@@ -24,11 +24,14 @@ import { teller } from "./leaddoors.ts";
 import { annotate } from "./notice.ts";
 import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";
-import { createTwins } from "./twins.ts";
+import { createTwins, sweepAll } from "./twins.ts";
 import { createUsageFeed } from "./usage.ts";
 import { createWaits } from "./waits.ts";
 
 export type Context = Plugin.Context;
+
+/** How often an instance looks for its children under a stop it was not told of (another server, a reload). */
+const SWEEP_MS = 5_000;
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 
@@ -86,7 +89,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
   try {
-    const c0 = setupChannel(ctx, say, freshestRoot, parents);
+    // The owner's stop goes by seats (#7440): every instance of the process takes its children's seats down.
+    const c0 = setupChannel(ctx, say, freshestRoot, parents, () => sweepAll());
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
@@ -230,16 +234,29 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     }
   })();
 
+  // A child holding a seat under a stopped session (the stop on disk, halts.ts) — another instance's,
+  // another server's, or before a reload — goes down as by its own 4001: its turn cut, its seat taken off.
+  async function sweep(): Promise<void> {
+    for (const s of half.children()) {
+      if (!parents.has(s)) await rootOf(s); // the parent chain of a child this instance has not walked yet
+      if (ch?.halt(s)) half.halt(s);
+    }
+  }
+  const sweeper = setInterval(() => void sweep(), SWEEP_MS);
+  sweeper.unref?.();
+
   // An instance of another spelling of the same directory wakes this one unloaded with a seat (twins.ts).
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
     lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     holds: (r) => half.held(r),
     adopt: () => half.adopt(),
+    sweep: () => void sweep(),
   });
 
   // The stop waits for the subagents' bridges to pause (children.ts): a reload is not their end.
   return async () => {
+    clearInterval(sweeper);
     twins.leave();
     controller.abort();
     keepalive.stop();

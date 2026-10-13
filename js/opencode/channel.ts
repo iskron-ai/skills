@@ -23,6 +23,7 @@ import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-t
 import { words } from "../shared/lang.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
+import { authDir } from "./bridge-io.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
@@ -35,8 +36,10 @@ export interface Channel {
   taken(session: string, inbox?: string): void;
   /** The session's turn is busy or free — by session.status. */
   status(session: string, busy: boolean): void;
-  /** The session was deleted: its waiting tact has nowhere to go (tacts.ts). */
+  /** The session was deleted: its waiting tact has nowhere to go (tacts.ts), its stop goes (halts.ts). */
   gone(session: string): void;
+  /** The session or an ancestor is stopped (another instance's stop too): its turn is cut once; false — not stopped. */
+  halt(session: string): boolean;
   /** The plugin stops: what gathered leaves now. */
   stop(): void;
   /** Counts of records waiting for a passing prompt into root session `session`; null — none. */
@@ -91,10 +94,11 @@ export function setupChannel(
   say: Say,
   freshestRoot: () => string | null,
   parents: ReadonlyMap<string, string> = new Map(),
+  onStop: (session: string) => void = () => {},
 ): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
-  const halts = createHalts((s) => parents.get(s));
+  const halts = createHalts((s) => parents.get(s), authDir);
   /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
     try {
@@ -245,28 +249,35 @@ export function setupChannel(
     piles.delete(key);
   }
 
+  const cutDone = new Set<string>(); // turns cut by a stop, until the session stands again
+  /** A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once per stop. */
+  function cut(id: string): void {
+    if (cutDone.has(id)) return;
+    cutDone.add(id);
+    for (const k of ["child", "root"]) dropPile(`${k}:${id}`);
+    tacts.gone(id);
+    const failed = (e: Error) => say(W.notDelivered(W.frame(), id, e.message), "warning");
+    void Promise.resolve((ctx.session as any).interrupt?.({ sessionID: id, resume: false })).catch(
+      failed,
+    );
+  }
+
   /**
    * The owner took the seat off (#7439, #7440 item 2): the running turns of the session and of
    * every descendant are interrupted, their piles and waiting tacts are dropped, and the stop
    * word goes to the human and into the session as a message that starts no turn. Nothing of
-   * this session or its descendants reaches them afterwards until it stands again by an explicit call (halts.ts).
+   * this session or its descendants reaches them afterwards until it stands again by an explicit
+   * call (halts.ts). The descendants' seats go down in their own instances (onStop).
    */
   function stopped(session: string | null, text: string, child: boolean): void {
     say(text, "error");
     dropPile(`${child ? "child" : "root"}:${session ?? ""}`);
     if (!session) return;
     halts.stop(session);
-    const s = ctx.session as any;
-    const cut = (id: string): void => {
-      tacts.gone(id);
-      const failed = (e: Error) => say(W.notDelivered(W.frame(), id, e.message), "warning");
-      void Promise.resolve(s.interrupt?.({ sessionID: id, resume: false })).catch(failed);
-    };
     cut(session);
-    for (const d of descendantsOf(session, parents)) {
-      for (const k of ["child", "root"]) dropPile(`${k}:${d}`);
-      cut(d);
-    }
+    for (const d of descendantsOf(session, parents)) cut(d);
+    onStop(session);
+    const s = ctx.session as any;
     const failed = (e: Error) => say(W.notDelivered(W.frame(), session, e.message), "warning");
     // A child's end goes to its parent (leads.ts): no word is laid into the child.
     if (child || typeof s.synthetic !== "function") return;
@@ -281,7 +292,17 @@ export function setupChannel(
       if (on) tacts.busy(session);
       else this.taken(session);
     },
-    gone: tacts.gone,
+    gone(session) {
+      tacts.gone(session);
+      halts.gone(session);
+      cutDone.delete(session);
+    },
+    halt(session) {
+      if (!halts.halted(session)) return false;
+      cut(session);
+      for (const d of descendantsOf(session, parents)) cut(d);
+      return true;
+    },
     taken(session, inbox) {
       tacts.taken(session, inbox);
       let matched = false;
@@ -367,6 +388,7 @@ export function setupChannel(
           return;
         case "held":
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
+          if (session) cutDone.delete(session);
           say(W.held(ev.key ?? ""), "info");
           return;
         case "released":

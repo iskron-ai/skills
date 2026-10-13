@@ -115,6 +115,17 @@ const lostMarkers = () => {
     return [];
   }
 };
+/** The owner's stops the plugin lays next to the grant (halts.ts) — read by every instance. */
+const stopMarks = () => {
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  try {
+    return readdirSync(dir)
+      .filter((f) => f.startsWith("opencode-stopped"))
+      .map((f) => join(dir, f));
+  } catch {
+    return [];
+  }
+};
 
 // ── the context the plugin is handed ─────────────────────────────────────────
 
@@ -376,7 +387,8 @@ async function plugin(env = {}, ctxOpts = {}) {
   // A plugin stopped with a holding bridge leaves a marker for the next instance
   // (keep.ts); the probes share one auth dir, so each starts clean unless it is
   // the marker itself that is under test.
-  if (!ctxOpts.keepMarker) for (const f of lostMarkers()) rmSync(f, { force: true });
+  if (!ctxOpts.keepMarker)
+    for (const f of [...lostMarkers(), ...stopMarks()]) rmSync(f, { force: true });
   const def = await loadPlugin(env);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
@@ -4059,6 +4071,7 @@ const LEAD_NAMES = ["iskron_stand", "iskron_channel", "iskron_case", "iskron_loo
 const LEAD_TOOLS = fakeTools(LEAD_NAMES);
 const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
 const SUB = "host.repo.opus-5.sub-1";
+const SUB_PLACE = { ...ROOT_PLACE, name: SUB };
 
 /** A root holding a place and a child standing as its satellite on a bridge of its own; dir — the instance's and both sessions' directory. */
 async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir = undefined) {
@@ -4333,6 +4346,93 @@ for (const [stop, cut, hears] of [
       await rec.stop();
     }
   });
+
+// Review of #7440, third round: the delivery ban lived in one plugin instance's memory, while
+// OpenCode loads an instance per location — a child in another folder, served by another
+// instance, woke on the next frame after its root's stop. The stop goes by seats: the
+// child's satellite is taken down in its own instance, and the ban lies on disk for all.
+test("the owner's stop of a root in one instance takes down its child's satellite in another folder's instance, and no frame wakes the child", async () => {
+  const calls = join(SANDBOX, "stop-two.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stop-two", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root", location: LOC_A },
+    { id: "child", parentID: "root", location: LOC_B },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const childPid = callsIn(calls).at(-1).pid;
+    assert.notEqual(childPid, rootPid, "the child stands by a bridge of its own");
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${rootPid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => A.interrupts.length === 1, "the root's interrupt");
+    await delay(300);
+    if (alive(childPid))
+      appendFileSync(
+        `${b.events}.${childPid}`,
+        event("frame", { frame: frame("после стопа корня"), raw: "" }),
+      );
+    await delay(500);
+    const woke = B.prompts.filter((p) => p.sessionID === "child");
+    assert.deepEqual(woke, [], "no frame wakes the child under the stopped root");
+    assert.ok(
+      callsIn(calls).some((c) => c.name === "iskron/end" && c.pid === childPid),
+      "the child's satellite is taken down by its own bridge",
+    );
+    assert.deepEqual(
+      B.interrupts,
+      [{ sessionID: "child", resume: false }],
+      "the child's turn is interrupted in its own instance",
+    );
+  } finally {
+    await B.stop();
+    await A.stop();
+  }
+});
+
+// The ban survives a plugin reload: the next instance reads it from disk, and nothing reaches
+// the stopped session until it stands again by an explicit call (held).
+test("after a plugin reload no frame reaches the stopped session until it stands again", async () => {
+  const b = bridgeEnv("stop-reload");
+  const first = await plugin(b.env);
+  let next = null;
+  try {
+    await serverTools(first);
+    await first.call("iskron_channel", { action: "connect" }, "s-stop");
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => first.interrupts.length === 1, "the interrupt of the session's turn");
+    await first.cleanup();
+    next = await plugin(b.env, { keepMarker: true });
+    await serverTools(next);
+    await next.call("iskron_channel", { action: "list" }, "s-stop");
+    const pid = pidsOf(b.log).at(-1);
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: { type: "message", id: "late", body: "после перезагрузки" } }),
+    );
+    await delay(500);
+    assert.deepEqual(next.prompts, [], "the reloaded plugin wakes no stopped session");
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: { type: "message", id: "after-stand", body: "снова на месте" } }),
+    );
+    await until(() => next.prompts.length === 1, "delivery after an explicit stand");
+    assert.match(next.prompts[0].text, /снова на месте/);
+  } finally {
+    await next?.stop();
+    first.restore();
+  }
+});
 
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
 // end's word says the place is being taken down; the child's bridge ends its run after it
