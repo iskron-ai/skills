@@ -8,6 +8,8 @@ export interface PlaceSnapshot {
   listening: boolean;
   last_work_at?: string;
   usage?: Record<string, string | number>;
+  skills?: { name: string; version: string; stamp?: string };
+  skills_mismatch?: boolean;
 }
 export interface SessionSnapshot {
   local_id: string;
@@ -18,6 +20,8 @@ export interface SessionSnapshot {
   cwd: string;
   build: string;
   skills?: { name: string; version: string; stamp?: string };
+  installed_skills?: { name: string; version: string; stamp?: string };
+  skills_mismatch?: boolean;
   places: PlaceSnapshot[];
 }
 export interface MachineSnapshot {
@@ -60,6 +64,7 @@ export function safeUsage(v: unknown): Record<string, string | number> | undefin
 export function safePlace(v: unknown): PlaceSnapshot {
   const p = record(v);
   const usage = safeUsage(p.usage);
+  const skills = safeSkills(p.skills);
   return {
     name: text(p.name),
     realm: text(p.realm),
@@ -69,6 +74,8 @@ export function safePlace(v: unknown): PlaceSnapshot {
     ...(typeof p.satellite_of === "string" ? { satellite_of: p.satellite_of } : {}),
     ...(typeof p.last_work_at === "string" ? { last_work_at: p.last_work_at } : {}),
     ...(usage ? { usage } : {}),
+    ...(skills ? { skills } : {}),
+    ...(typeof p.skills_mismatch === "boolean" ? { skills_mismatch: p.skills_mismatch } : {}),
   };
 }
 /** Apply at both ends: never spread wire, disk, attrs or origin into output. */
@@ -80,6 +87,7 @@ export function safeSnapshot(v: unknown): MachineSnapshot {
     sessions: list(raw.sessions).map((v) => {
       const s = record(v);
       const skills = safeSkills(s.skills);
+      const installed = safeSkills(s.installed_skills);
       return {
         local_id: text(s.local_id),
         thin_pid: number(s.thin_pid),
@@ -89,6 +97,8 @@ export function safeSnapshot(v: unknown): MachineSnapshot {
         cwd: text(s.cwd),
         build: text(s.build),
         ...(skills ? { skills } : {}),
+        ...(installed ? { installed_skills: installed } : {}),
+        ...(typeof s.skills_mismatch === "boolean" ? { skills_mismatch: s.skills_mismatch } : {}),
         places: list(s.places).map(safePlace),
       };
     }),

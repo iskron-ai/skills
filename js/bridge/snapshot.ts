@@ -9,6 +9,7 @@ import { placeFields } from "./placefields.ts";
 import { extraPlaces } from "./places.ts";
 import { type BridgeSession } from "./session.ts";
 import { skillsAttr } from "./skillset.ts";
+import { announcedSkills } from "./skillwatch.ts";
 import { state } from "./transport.ts";
 
 export function sessionSnapshot(
@@ -18,34 +19,44 @@ export function sessionSnapshot(
   attached: boolean,
   build: string,
 ): SessionSnapshot {
-  const inspect = (): SessionSnapshot => ({
-    local_id,
-    thin_pid,
-    attached,
-    build,
-    skills: skillsAttr(),
-    cwd: engine.origin?.cwd ?? "",
-    harness: harnessName(),
-    harness_session: sessionOfBridge(),
-    places: heldPlaces().map((p) => {
-      const standing = p.primary
-        ? state.standing
-        : extraPlaces().find((x) => x.door.key === p.key)?.standing;
-      const door = doors().find((d) => d.key === p.key);
-      const fields = placeFields(standing ?? {});
-      const last = engine.lastWork();
-      return safePlace({
-        name: standing?.name,
-        realm: standing?.realm,
-        karta: standing?.karta,
-        primary: p.primary,
-        satellite_of: fields.attrs.satellite_of,
-        listening:
-          !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
-        ...(last ? { last_work_at: new Date(last).toISOString() } : {}),
-        usage: fields.attrs.usage,
-      });
-    }),
-  });
+  const inspect = (): SessionSnapshot => {
+    const installed = skillsAttr();
+    const declared = state.standing ? announcedSkills(state.standing) : undefined;
+    const differs = (skills: typeof declared): boolean =>
+      JSON.stringify(skills) !== JSON.stringify(installed);
+    return {
+      local_id,
+      thin_pid,
+      attached,
+      build,
+      skills: declared,
+      installed_skills: installed,
+      skills_mismatch: differs(declared),
+      cwd: engine.origin?.cwd ?? "",
+      harness: harnessName(),
+      harness_session: sessionOfBridge(),
+      places: heldPlaces().map((p) => {
+        const standing = p.primary
+          ? state.standing
+          : extraPlaces().find((x) => x.door.key === p.key)?.standing;
+        const door = doors().find((d) => d.key === p.key);
+        const fields = placeFields(standing ?? {});
+        const last = engine.lastWork();
+        return safePlace({
+          name: standing?.name,
+          realm: standing?.realm,
+          karta: standing?.karta,
+          primary: p.primary,
+          satellite_of: fields.attrs.satellite_of,
+          listening:
+            !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
+          ...(last ? { last_work_at: new Date(last).toISOString() } : {}),
+          usage: fields.attrs.usage,
+          skills: standing ? announcedSkills(standing) : undefined,
+          skills_mismatch: differs(standing ? announcedSkills(standing) : undefined),
+        });
+      }),
+    };
+  };
   return engine.scope ? runIn(engine.scope, inspect) : inspect();
 }
