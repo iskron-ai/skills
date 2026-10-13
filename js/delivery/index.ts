@@ -71,6 +71,7 @@ export { LEAD, type LeadWords } from "./words/leads.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
 export { LISTEN, type ListenWords } from "./words/listen.ts";
 export { LOST, type LostWords } from "./words/lostplaces.ts";
+export { MACHINE_STATUS, type MachineStatusWords } from "./words/machinestatus.ts";
 export { MOMENT, type MomentWords } from "./words/moment.ts";
 export { NAMES, type NameWords } from "./words/names.ts";
 export { NARROW, type NarrowWords } from "./words/narrow.ts";
