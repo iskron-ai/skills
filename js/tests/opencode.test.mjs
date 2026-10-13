@@ -1345,12 +1345,20 @@ test("an idle-expired seat (4002) is loud: an error line and a prompt that names
 });
 
 // #7440 п.2: the owner took the seat off (4001, kind "stopped") — the session's running turn is
-// interrupted, its waiting words dropped, and the stop word goes to the human and into the
-// session as a message that starts no turn; nothing prompts it, the hearing watch lets it go.
+// interrupted, its waiting words dropped, and the stop word goes to the human; nothing prompts
+// the session, the hearing watch lets it go. #7585: OpenCode admits every synthetic, steer or
+// queue, into the session's inbox, and a later turn takes it — so the model reads the stop word
+// from the request's context, and only while the session stays stopped: nothing waits in the
+// inbox, and after an explicit stand no stale stop word comes.
 for (const busy of [true, false])
   test(`the owner's stop of a ${busy ? "busy" : "waiting"} session interrupts its turn and wakes nothing`, async () => {
     const b = bridgeEnv(`stopped-${busy ? "busy" : "idle"}`);
     const rec = await plugin(b.env);
+    const system = async (sessionID) => {
+      const req = { sessionID, system: [], messages: [] };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    };
     try {
       await serverTools(rec);
       await rec.call("iskron_channel", { action: "connect" }, "s-stop");
@@ -1364,11 +1372,15 @@ for (const busy of [true, false])
       appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
       await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
       assert.deepEqual(rec.interrupts[0], { sessionID: "s-stop", resume: false });
-      await until(() => rec.synthetics.length === 1, "the stop word in the session");
-      assert.equal(rec.synthetics[0].sessionID, "s-stop");
-      assert.equal(rec.synthetics[0].resume, false, "the stop word starts no turn");
-      assert.match(rec.synthetics[0].text, /снято \(человеком\) — ты остановлен/);
       assert.match(rec.said(), /\[iskron\/error\] Искрон: место proba снято/, "the human hears it");
+      await delay(100);
+      assert.deepEqual(rec.synthetics, [], "the stop word does not wait in the session's inbox");
+      assert.match(
+        await system("s-stop"),
+        /снято \(человеком\) — ты остановлен[\s\S]*iskron_stand/,
+        "a turn of the stopped session reads the stop word in its context",
+      );
+      assert.equal(await system("s-other"), "", "another session reads no stop word");
       // Nothing of the channel wakes the stopped session afterwards: no frame, batch, tact,
       // stale burst, resumed or loud word — until it stands again by an explicit call (held).
       const late = [
@@ -1382,12 +1394,8 @@ for (const busy of [true, false])
       for (const e of late) appendFileSync(`${b.events}.${pid}`, e);
       await delay(400);
       assert.equal(rec.prompts.length, 0, `the stop wakes no turn: ${JSON.stringify(rec.prompts)}`);
-      assert.equal(rec.synthetics.length, 1, "only the stop word lies in the session");
-      assert.doesNotMatch(
-        [...rec.prompts, ...rec.synthetics].map((p) => p.text).join("\n"),
-        /connect/,
-        "a stop never calls connect",
-      );
+      assert.deepEqual(rec.synthetics, [], "nothing lies in the session's inbox");
+      assert.doesNotMatch(await system("s-stop"), /connect/, "a stop never calls connect");
       assert.match(rec.said(), /не вложен — сессия s-stop остановлена снятием места/);
       appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
       appendFileSync(
@@ -1397,6 +1405,8 @@ for (const busy of [true, false])
       await until(() => rec.prompts.length === 1, "delivery after an explicit stand");
       assert.equal(rec.prompts[0].sessionID, "s-stop");
       assert.match(rec.prompts[0].text, /снова на месте/);
+      assert.equal(await system("s-stop"), "", "no stale stop word after the explicit stand");
+      assert.deepEqual(rec.synthetics, [], "no stale stop word after the explicit stand");
     } finally {
       await rec.stop();
     }
@@ -4437,6 +4447,66 @@ test("after a plugin reload no frame reaches the stopped session until it stands
   } finally {
     await next?.stop();
     first.restore();
+  }
+});
+
+// Review of #7585: the stop word lived only in the channel instance while the stop outlives a
+// reload (halts.ts) — the reloaded plugin let the stopped session's next turn go without it. The
+// word lies with the stop, in the registry and on disk; a record from before it reads the
+// general stop word; a held takes it away with the stop.
+test("after a plugin reload a turn of the stopped session still reads the stop word, until it stands again", async () => {
+  const b = bridgeEnv("stop-word-reload");
+  const first = await plugin(b.env);
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  const hash = (s) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+  let next = null;
+  const system = async (rec, sessionID) => {
+    const req = { sessionID, system: [], messages: [] };
+    for (const cb of rec.hooks.context ?? []) await cb(req);
+    return req.system.map((p) => p.text).join("\n");
+  };
+  try {
+    await serverTools(first);
+    await first.call("iskron_channel", { action: "connect" }, "s-word");
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => first.interrupts.length === 1, "the interrupt of the session's turn");
+    await first.cleanup();
+    next = await plugin(b.env, { keepMarker: true });
+    await serverTools(next);
+    assert.match(
+      await system(next, "s-word"),
+      /место proba снято \(человеком\) — ты остановлен[\s\S]*iskron_stand/,
+      "the reloaded plugin's context of the stopped session carries its stop word",
+    );
+    // A new process: only the disk record is left.
+    globalThis.__iskronHalts?.delete("s-word");
+    assert.match(
+      await system(next, "s-word"),
+      /место proba снято \(человеком\)/,
+      "the stop word is read from the disk record",
+    );
+    // A record laid before the word was kept: the general stop word.
+    const old = { session: "s-old", at: new Date().toISOString(), id: "old-stop" };
+    writeFileSync(join(dir, `opencode-stopped.${hash("s-old")}.json`), JSON.stringify(old));
+    assert.match(
+      await system(next, "s-old"),
+      /ты остановлен[\s\S]*iskron_stand/,
+      "a record without the word reads the general stop word",
+    );
+    await next.call("iskron_channel", { action: "list" }, "s-word");
+    appendFileSync(`${b.events}.${pidsOf(b.log).at(-1)}`, event("held", { key: "k" }));
+    await until(() => /мост держит стояние k\b/.test(next.said()), "the held word");
+    assert.equal(await system(next, "s-word"), "", "no stop word after the explicit stand");
+    assert.equal(
+      stopMarks().filter((f) => f.endsWith(`${hash("s-word")}.json`)).length,
+      0,
+      "the held removes the stop with its word",
+    );
+  } finally {
+    await next?.stop();
+    first.restore();
+    rmSync(join(dir, `opencode-stopped.${hash("s-old")}.json`), { force: true });
   }
 });
 
