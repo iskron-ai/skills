@@ -368,7 +368,9 @@ export async function setupTools(
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     // A tool's refusal is a throw — so OpenCode shows it as a refusal.
-    if (result?.isError) throw new Error(textOf(result) || P.refusalNoText(name));
+    // The api refusal's data rides along: the launcher's revoke reads its rule (release.ts).
+    if (result?.isError)
+      throw Object.assign(new Error(textOf(result) || P.refusalNoText(name)), { result });
     // The tool's answer is an observed holding event; an answer to a busy line alone is not (#6509).
     if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID); // stood again — writes go by its own bridge

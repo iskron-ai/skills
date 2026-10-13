@@ -39,7 +39,8 @@
 //                 notifications/tools/list_changed once (and remove the file),
 //                 as the real bridge does after a rollout (#5406).
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
-//                 rewrites it between calls. "__ERROR__<text>" answers isError.
+//                 rewrites it between calls. "__ERROR__<text>" answers isError;
+//                 "__REFUSAL__<status> <rule|-> <text>" — isError with the api refusal _meta.
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
@@ -160,6 +161,16 @@ function callResult(name) {
   }
   if (text.startsWith("__ERROR__")) {
     return { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] };
+  }
+  const refused = /^__REFUSAL__(\d+) (\S+) ([\s\S]*)$/.exec(text);
+  if (refused) {
+    const [, status, rule, prose] = refused;
+    const refusal = { status: Number(status), ...(rule === "-" ? {} : { rule }) };
+    return {
+      isError: true,
+      content: [{ type: "text", text: prose }],
+      _meta: { "iskron/refusal": refusal },
+    };
   }
   return { content: [{ type: "text", text }] };
 }
