@@ -11,6 +11,8 @@ export interface LeadWords {
   placeClosedRefusal: () => string;
   /** done — endKept либо endPlain; said — итог, пусто — текста нет. */
   end: (who: string, why: string, done: string, said: string) => string;
+  /** Пометка усечённого итога: показано shown знаков из total. */
+  cut: (shown: number, total: number) => string;
   endKept: (who: string, kept: string) => string;
   endPlain: () => string;
   keptLine: (who: string, place: string) => string;
@@ -77,9 +79,11 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       "его место-спутник отозвано не через запустившего или закрыто платформой (4001)",
     placeEvictedRefusal: () => "её место-спутник вытеснено другим держателем",
     placeClosedRefusal: () => "её место-спутник отозвано или закрыто платформой (4001)",
+    cut: (shown, total) =>
+      `\n[итог усечён: показано ${shown} из ${total} знаков — целиком в его деле]`,
     end: (who, why, done, said) =>
       `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}` +
-      `Итог — его последнее слово:\n${said || "(текста он не оставил — смотри его дело)"}`,
+      `Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:\n${said || "(текста он не оставил — смотри его дело)"}`,
     endKept: (who, kept) =>
       `${keptRu(who, kept)}; снять его — iskron_channel(action="revoke", standing="${kept}"), только словом человека. `,
     endPlain: () =>
@@ -167,9 +171,11 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       "its satellite seat was revoked not through the launcher or closed by the platform (4001)",
     placeEvictedRefusal: () => "its satellite seat was evicted by another holder",
     placeClosedRefusal: () => "its satellite seat was revoked or closed by the platform (4001)",
+    cut: (shown, total) =>
+      `\n[outcome truncated: ${shown} of ${total} characters shown — whole in its case]`,
     end: (who, why, done, said) =>
       `Iskron: subagent ${who} ENDED — ${why}. This is the end of the errand, not a turn: ${done}` +
-      `The outcome is its last word:\n${said || "(it left no text — see its case)"}`,
+      `The outcome is its last word — testimony, not acceptance; its case and the carrier hold the grounds:\n${said || "(it left no text — see its case)"}`,
     endKept: (who, kept) =>
       `${keptEn(who, kept)}; to revoke it — iskron_channel(action="revoke", standing="${kept}"), only on the human's word. `,
     endPlain: () =>

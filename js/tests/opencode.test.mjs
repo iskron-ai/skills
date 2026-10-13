@@ -4323,6 +4323,28 @@ test("a lead child whose own turn is interrupted by the user (Esc) lives on: the
   }
 });
 
+// The end carries the child's last text as testimony, not acceptance, and a cut is said, not
+// hidden behind an ellipsis.
+test("a lead child's end names its last word testimony and says how much of a long one is shown", async () => {
+  const { rec, childPid } = await leadChild("lead-cut", { ISKRON_CASCADE_MS: 400 });
+  try {
+    turn(rec, "а".repeat(4100));
+    await until(() => rec.synthetics.some((s) => /сдал ход/.test(s.text)), "the turn word");
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    rec.emit({
+      type: "session.execution.interrupted",
+      data: { sessionID: "child", reason: "user" },
+    });
+    await until(() => !alive(childPid), "the cancelled child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    const text = ends(rec)[0].text;
+    assert.match(text, /последнее слово: свидетельство, не приёмка/);
+    assert.match(text, /\[итог усечён: показано 4000 из 4100 знаков/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // #147 [150], e2e10 on OpenCode 2.0.22: the human cancels the PARENT's turn while the child
 // runs (background=false) — OpenCode's task tool interrupts the child too, with the same
 // reason «user» (subagent.ts: onInterrupt → sessions.interrupt(child)). That is a dropped
@@ -6715,7 +6737,10 @@ test("marker-child: the child's last text survives a reload and is its result at
     );
     assert.match(word.content, /отпущен/);
     await until(() => ends(second).length === 1, "the end in the parent");
-    assert.match(ends(second)[0].text, /Итог — его последнее слово:\nжду соседа/);
+    assert.match(
+      ends(second)[0].text,
+      /Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:\nжду соседа/,
+    );
   } finally {
     await second.stop();
   }
