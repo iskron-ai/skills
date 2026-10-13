@@ -4,7 +4,7 @@
 // session as a prompt (ctx.session.prompt). steer enters the running turn at the next step,
 // queue waits for the turn's end, one prompt per turn: a live frame and a loud word go steer,
 // or frames lagged by hours (#5233). Wake-up and stale batches go queue: not urgent — but a
-// wake-up batch carrying the launcher's word to its lead steers, as the word alone would (#7505).
+// wake-up or stale batch carrying the launcher's word to its lead steers, as the word alone would (#7505).
 // Case frames for the pile go queue too, one prompt per pile: a head of counts per case and
 // below it only lines addressed to the seat (#6574). While the pile's previous prompt is not
 // taken, new frames gather here and leave as one when OpenCode says it took it; a pile of counts
@@ -266,6 +266,29 @@ export function setupChannel(
     void deliver(session, text, W.frame(), "steer", child);
   }
 
+  /**
+   * A stale or wake-up batch — one prompt per pile, queued or held as a tact. The launcher's word
+   * gathered into it steers its lead's turn, the batch with it (#7505): queued, it would wait past
+   * the turn's end and wake an ended lead. The single frame and the case pile take that word by
+   * the same predicate (onEvent "frame"), so no queued path carries it.
+   */
+  function batch(session: string | null, child: boolean, ev: ChannelEvent, what: string): void {
+    noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
+    if (!ev.text) return;
+    if (launcherWordIn(session, child, ev.frames))
+      void deliver(session, ev.text, what, "steer", child);
+    else if (!tact(session, child, ev, what)) void deliver(session, ev.text, what, "queue", child);
+  }
+
+  const launcherWordIn = (
+    session: string | null,
+    child: boolean,
+    frames?: Frame[] | null,
+  ): boolean => {
+    const launcher = child ? leads.launcherOf(session ?? "") : null;
+    return !!frames?.some((f) => fromLauncher(f, launcher));
+  };
+
   function dropPile(key: string): void {
     const p = piles.get(key);
     if (p?.timer) clearTimeout(p.timer);
@@ -409,7 +432,7 @@ export function setupChannel(
           if (frame?.type === "status") return;
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
           // The launcher's word to its working lead steers its turn whatever its stack (#7505).
-          const steers = child && !!frame && fromLauncher(frame, leads.launcherOf(session ?? ""));
+          const steers = !!frame && launcherWordIn(session, child, [frame]);
           if (frame && !steers && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
           noteOwn(own, deliveryKeys(frame)); // the frame enters as text — the pile's count skips it
@@ -430,23 +453,10 @@ export function setupChannel(
           stopped(session, P.stopped(ev.text ?? ""), child);
           return;
         case "stale":
-          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
-          if (ev.text && !tact(session, child, ev, W.staleBatch()))
-            void deliver(session, ev.text, W.staleBatch(), "queue", child); // one pile — one prompt
-          return;
+          return batch(session, child, ev, W.staleBatch());
         case "backlog":
-          noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
           // A wake-up with the backlog — one prompt per pile, queued: steered mid-turn it would cut the doer's work (#5140).
-          if (ev.text) {
-            const what = W.wakeBatch(ev.frames?.length ?? 0);
-            // The launcher's word gathered into the window steers its lead's turn, the batch with it (#7505).
-            const launcher = child ? leads.launcherOf(session ?? "") : null;
-            if (ev.frames?.some((f) => fromLauncher(f, launcher)))
-              void deliver(session, ev.text, what, "steer", child);
-            else if (!tact(session, child, ev, what))
-              void deliver(session, ev.text, what, "queue", child);
-          }
-          return;
+          return batch(session, child, ev, W.wakeBatch(ev.frames?.length ?? 0));
         case "lost":
           // The holding bridge exited or the previous plugin was stopped: loudly, into the session.
           if (ev.text) loud(session, ev.text, child);

@@ -49,6 +49,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { Backlog } from "../bridge/backlog.ts";
 import { FRAME_MARK } from "../delivery/protocol.ts";
+import { staleBatch } from "../shared/stalebatch.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -5605,6 +5606,44 @@ test("a wake-up batch with the launcher's word steers its lead's turn; others' b
     await until(() => /не вложен — субагент сессии child кончен/.test(rec.said()), "the journal");
     await delay(300);
     assert.equal(own().length, 2, "nothing laid into the ended lead");
+  } finally {
+    await rec.stop();
+  }
+});
+
+/** The bridge's stale batch (stalebatch.ts) over the frames — its event as the bridge writes it. */
+function staleOf(frames) {
+  const { text, keys } = staleBatch(frames, () => false);
+  return event("stale", { frames, marks: keys, text });
+}
+
+// Round 5 of №652: the stale batch with the launcher's word still went queue — after the lead's
+// turn, able to wake it past its end. One rule for every batch: with the launcher's word — steer.
+test("a stale batch with the launcher's word steers its lead's turn; others' stale batch is queued", async () => {
+  const { b, rec, childPid } = await leadChild("lead-steer-stale");
+  const own = () => rec.prompts.filter((p) => p.sessionID === "child");
+  try {
+    rec.emit({ type: "session.status", data: { sessionID: "child", status: { type: "busy" } } });
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      staleOf([said(631, undefined, "лежалый сосед"), said(632, launcher, "лежалая поправка")]),
+    );
+    await until(() => own().length === 1, "the stale batch with the launcher's word");
+    assert.match(own()[0].text, /лежалая поправка/);
+    assert.match(own()[0].text, /лежалый сосед/, "the batch goes whole");
+    assert.equal(
+      own()[0].delivery,
+      "steer",
+      "the launcher's word in a stale batch steers the turn",
+    );
+    appendFileSync(`${b.events}.${childPid}`, staleOf([said(633, undefined, "ещё лежалый")]));
+    await until(() => own().length === 2, "the stale batch of others' frames");
+    assert.equal(
+      own()[1].delivery,
+      "queue",
+      "a stale batch without the launcher's word stays queued",
+    );
   } finally {
     await rec.stop();
   }
