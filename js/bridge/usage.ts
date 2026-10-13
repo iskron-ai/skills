@@ -11,7 +11,7 @@ import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { isParked } from "./hold.ts";
 import { rememberUsage } from "./placefields.ts";
-import { skillsAttr } from "./skillset.ts";
+import { skillsNeedRegister } from "./skillwatch.ts";
 import { replayRegister } from "./standing.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -25,10 +25,8 @@ const FLUSH_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1_500;
 const U = scoped(() => ({
   published: null as Usage | null,
   latest: null as Usage | null,
-  skills: "",
   at: 0,
 }));
-const currentSkills = (): string => JSON.stringify(skillsAttr());
 
 export const isUsageCall = (msg: JsonRpcMessage): boolean => msg?.method === method("usage");
 
@@ -42,12 +40,10 @@ export function usagePlace(): Standing | null {
 /** register of the seat with the last snapshot; true — attrs taken. */
 async function publish(place: Standing, u: Usage): Promise<boolean> {
   U.at = Date.now();
-  const skills = currentSkills();
   const got = await replayRegister(place);
   const ok = !!got && !got.error && !got.result?.isError;
   if (ok) {
     U.published = u;
-    U.skills = skills;
   } else
     log(
       `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`,
@@ -79,16 +75,14 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   rememberUsage(u);
   const s = usagePlace();
   const due =
-    !!s &&
-    Date.now() - U.at >= MIN_GAP_MS &&
-    (moved(U.published, u) || U.skills !== currentSkills());
+    !!s && Date.now() - U.at >= MIN_GAP_MS && (moved(U.published, u) || skillsNeedRegister(s));
   return answer({ pushed: due && s ? await publish(s, u) : false, usage: u });
 }
 
 /** The last snapshot, bypassing the threshold, strictly before the seat closes (leave, satellite revoke). */
 export async function flushUsage(place: Standing | null): Promise<void> {
   const u = U.latest;
-  if (!place || !u || (u === U.published && U.skills === currentSkills())) return;
+  if (!place || !u || (u === U.published && !skillsNeedRegister(place))) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cap = new Promise<"cap">((r) => (timer = setTimeout(() => r("cap"), FLUSH_CAP_MS)));
   // A network failure on the last snapshot does not break the end: the seat goes without it.

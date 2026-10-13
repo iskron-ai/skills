@@ -7,7 +7,7 @@ import { envOf, scoped } from "../shared/scope.ts";
 import { lockPlaces } from "../shared/skilllock.ts";
 import { safeSkills } from "../shared/snapshot.ts";
 import { normKarta, normName } from "./names.ts";
-import { skillsRoot } from "./skillset.ts";
+import { skillsAttr, skillsRefreshAllowed, skillsRoot } from "./skillset.ts";
 import { type Standing } from "./transport.ts";
 
 type Skills = NonNullable<ReturnType<typeof safeSkills>>;
@@ -20,6 +20,9 @@ const key = (p: Partial<Standing>): string =>
   `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
 export const announcedSkills = (p: Partial<Standing>): Skills | undefined =>
   W.announced.get(key(p));
+/** One decision for tool refresh and usage publication, against accepted declarations. */
+export const skillsNeedRegister = (p: Partial<Standing>): boolean =>
+  skillsRefreshAllowed() && JSON.stringify(announcedSkills(p)) !== JSON.stringify(skillsAttr());
 export function noteSkills(p: Partial<Standing>, skills: unknown): void {
   const s = safeSkills(skills);
   if (s) W.announced.set(key(p), s);
@@ -54,6 +57,7 @@ function diskVersion(): string {
 }
 /** At most once a minute per session, on a tool call; hashing only after mtime changes. */
 export function skillsCheckDue(): boolean {
+  if (!skillsRefreshAllowed()) return false;
   const gap = Number(process.env[envName("SKILLS_GAP_MS")]) || 60_000;
   if (Date.now() - W.checkedAt < gap) return false;
   W.checkedAt = Date.now();

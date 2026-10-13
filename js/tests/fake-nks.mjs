@@ -1006,6 +1006,8 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          if (st.standingRegisterDelayMs)
+            await new Promise((r) => setTimeout(r, st.standingRegisterDelayMs));
           st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
           st.placeArgs.push({

@@ -14,6 +14,7 @@ import { SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { currentScope, envOf } from "../shared/scope.ts";
 import { skillLock } from "../shared/skilllock.ts";
 import { versionIn } from "../shared/version.ts";
+import { log } from "./streams.ts";
 
 /** The set root by env: the home copy lies outside the set and learns it only this way. */
 export { SKILLS_ROOT_ENV };
@@ -24,32 +25,35 @@ const BRIDGE_IN_SET = join(BRIDGE_SKILL, "scripts", BRIDGE_FILE);
 // from the thin bridge the harness started, not from the daemon.
 const env = (k: string): string => envOf(k)?.trim() ?? "";
 
-/**
- * The directory holding the set's skills (`<root>/<skill>/SKILL.md`), or null.
- * Order: env; own file layout (…/<bridge skill>/scripts/); the Claude Code plugin root;
- * the flat install ~/.agents/skills.
- */
+/** Skills directory: explicit root, loaded plugin, own layout, then flat installation. */
 export function skillsRoot(
   self = currentScope().origin?.path || fileURLToPath(import.meta.url),
 ): string | null {
   const plugin = env("CLAUDE_PLUGIN_ROOT");
-  const candidates = [
-    env(SKILLS_ROOT_ENV),
-    resolve(dirname(self), "..", ".."),
-    plugin ? join(plugin, "skills") : "",
-    join(homedir(), ".agents", "skills"),
-  ];
+  const explicit = env(SKILLS_ROOT_ENV);
+  // An identified set must not fall through to another installation when removed.
+  if (explicit) return resolve(explicit);
+  if (plugin) return resolve(plugin, "skills");
+  if (self.includes("/plugins/cache/")) return resolve(dirname(self), "..", "..");
+  const candidates = [resolve(dirname(self), "..", ".."), join(homedir(), ".agents", "skills")];
   for (const c of candidates) if (c && existsSync(join(c, BRIDGE_IN_SET))) return resolve(c);
   return null;
 }
 
+/** Versioned plugin updates do not identify the set loaded by a live harness session. */
+export function skillsRefreshAllowed(): boolean {
+  const self = currentScope().origin?.path || fileURLToPath(import.meta.url);
+  const root = skillsRoot(self);
+  return (
+    !env("CLAUDE_PLUGIN_ROOT") &&
+    !self.includes("/plugins/cache/") &&
+    !(root && existsSync(join(root, "..", ".claude-plugin", "plugin.json")))
+  );
+}
+
 const sha8 = (h: ReturnType<typeof createHash>): string => h.digest("hex").slice(0, 8);
 
-/**
- * Flat install: the set source is the source of the bridge skill's entry in the lock where
- * npx skills puts it (shared/skilllock.ts; graph @nks/nks-dev, node #6226), else SET;
- * stamp folds skillFolderHash of that source's entries.
- */
+/** Flat source and fingerprint from the install lock (graph @nks/nks-dev, node #6226). */
 function lockSet(root: string): { name: string; stamp: string | null } {
   const skills = skillLock(root, env("XDG_STATE_HOME"));
   if (!skills) return { name: SET, stamp: null };
@@ -136,7 +140,7 @@ export function skillsAttr(): { name: string; version: string; stamp?: string } 
   try {
     version = versionIn(readFileSync(join(root, BRIDGE_IN_SET), "utf8")) ?? "unknown";
   } catch {
-    /* the bridge file vanished between search and read — version unknown */
+    log(`installed skills root is missing or unreadable: ${root}; not selecting another set`);
   }
   const lock = lockSet(root);
   const stamp = lock.stamp ?? treeStamp(root);
