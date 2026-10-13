@@ -1100,6 +1100,33 @@ test("a cached list serves this build's iskron_stand, not the one another build 
   assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
 });
 
+// A bridge before #7557 cached write tools with its writing-moment line first; a list
+// served from that cache (offline, login wait) reaches the harness as the server wrote it.
+test("a cached list written by a former bridge serves write tools without its moment line", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await fake.control({ richTools: true });
+  await bridge.call("tools/list", 20, {});
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
+  const former = {
+    iskron_add_vimarsha:
+      "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя.",
+    iskron_batch: "[bridge] The writing skill's moment: before each node, name the reader.",
+  };
+  for (const tool of cache.tools.tools)
+    if (former[tool.name]) tool.description = `${former[tool.name]}\n\n${tool.description}`;
+  writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
+  await bridge.stop();
+  await fake.stop(); // no network: the second bridge answers from the cache
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  const byName = Object.fromEntries((listed.result?.tools ?? []).map((x) => [x.name, x]));
+  assert.equal(byName.iskron_add_vimarsha?.description, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch?.description, "Атомарная дельта.");
+});
+
 // The shared answers cache keeps the form the harness gets — with the bridge's
 // own tool — or the next start without network serves a list without it, and a
 // cached list must not read as a changed one once the session opens (#5405).
@@ -1524,6 +1551,17 @@ test("tools/list passes write and read tool descriptions byte for byte; only the
   assert.ok(channel.startsWith("[мост] Занятость"), "the busyness line leads the channel tool");
   assert.match(channel, /\[мост\] action="leave"/, "the leave line stands on the channel tool");
   assert.ok(channel.endsWith("\n\nЖивой канал роли."), "the server's description follows whole");
+});
+
+// Without the bridge's line the door's moment map carries the writing moment (#7557):
+// the row stands, with the wait by kind and CHECKS as integrity, not execution.
+test("the door's moment map carries the writing row", () => {
+  const door = readFileSync(join(HERE, "..", "..", "skills", "iskron", "SKILL.md"), "utf8");
+  const row = door.match(/^\| перед `iskron_add_\*`[^|]*\| \*\*writing\*\*: (.+) \|$/m)?.[1];
+  assert.ok(row, "the door's moment map lacks the writing row");
+  assert.match(row, /вопрос по сути или обязательство — вимаршей `posed_to`/);
+  assert.match(row, /разовая задача или вопрос — в деле/);
+  assert.match(row, /CHECKS[^.]*не свидетельство исполнения/);
 });
 
 test("watchdog with nothing held tells the doer to name itself with iskron_stand", async () => {
