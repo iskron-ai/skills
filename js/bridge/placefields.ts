@@ -12,7 +12,7 @@ import { harnessName, harnessVersion } from "./client.ts";
 import { CFG } from "./config.ts";
 import { seatField } from "./fields.ts";
 import { normKarta, normName } from "./names.ts";
-import { skillsAttr } from "./skillset.ts";
+import { installedSkills } from "./skillwatch.ts";
 import { log } from "./streams.ts";
 
 // Per session (shared/scope.ts): the machine daemon holds seats of different sessions.
@@ -69,7 +69,7 @@ export function placeFields(place: Place = {}): {
     attrs: {
       ...extra,
       build: { name: BRIDGE_NAME, version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
-      skills: skillsAttr(),
+      skills: installedSkills(place),
       ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
       ...(usage ? { usage } : {}),

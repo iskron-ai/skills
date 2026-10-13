@@ -11,6 +11,7 @@ export const { serialized } = await import(join(source, "bridge/call.ts"));
 export const { refreshSkills } = await import(join(source, "bridge/skillrefresh.ts"));
 export const { skillsAttr, skillsRoot } = await import(join(source, "bridge/skillset.ts"));
 export const { runUsage } = await import(join(source, "bridge/usage.ts"));
+export const { withPlaceFields } = await import(join(source, "bridge/placefields.ts"));
 
 export async function fixture(fn) {
   const dir = mkdtempSync(join(tmpdir(), "refresh-review-"));

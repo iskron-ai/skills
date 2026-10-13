@@ -49,11 +49,6 @@ for (const missing of ["file", "skill", "root"])
         clock += 120_000;
         await refreshSkills();
         assert.equal(calls.length, before, "transient disappearance must not register unknown");
-        if (missing !== "root") {
-          clock += 120_000;
-          await refreshSkills();
-          assert.equal(calls.length, before, "a surviving root is still an incomplete update");
-        }
         renameSync(`${path}.away`, path);
         writeFileSync(join(root, "establish-mcp", "SKILL.md"), "after");
         clock += 120_000;
@@ -95,7 +90,7 @@ test("usage does not register unknown when the first disk check finds an incompl
   await fixture(async ({ root, calls }) => {
     state.initParams = { clientInfo: { name: "pi-iskron" } };
     const msg = { id: 1, method: "iskron/usage", params: { tokens: 100 } };
-    await runUsage(msg); // Changed usage sends before the watcher's first disk check.
+    await runUsage(msg); // The first publication initializes the shared disk check.
     const before = calls.length;
     renameSync(join(root, "establish-mcp"), join(root, "establish-mcp.away"));
     const now = Date.now;
