@@ -2961,6 +2961,28 @@ const caseAs = (b, action, room) =>
     arguments: { realm: "@nks/nks-dev", action, room },
   });
 
+test("satellite: iskron_room is not a case join or leave", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const legacy = (action, room) =>
+    sat.call("tools/call", {
+      name: "iskron_room",
+      arguments: { realm: "@nks/nks-dev", action, room },
+    });
+  await legacy("join", "№101");
+  await caseAs(sat, "join", "№102");
+  await legacy("leave", "№102");
+  await caseAs(sat, "join", "№103");
+  await caseAs(sat, "leave", "№103");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave").sort(),
+    ["№102", "№103"],
+    "only iskron_case changes the run's joined cases, even if the server accepts iskron_room",
+  );
+});
+
 test("satellite: at the run's end the bridge leaves the cases the run joined, once each; a session's bridge leaves none", async (t) => {
   const fake = await withCaller(t);
   const sat = await satelliteBridge(t, fake);

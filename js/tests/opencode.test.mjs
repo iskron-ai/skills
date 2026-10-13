@@ -5272,6 +5272,53 @@ test('rule 2: a child without a satellite is refused a stray action "?" on a too
   }
 });
 
+test("iskron_room does not join or end a child's errand case", async () => {
+  const { rec, childPid } = await leadChild("lead-no-room-synonym", {
+    FB_TOOLS: fakeTools([...LEAD_NAMES, "iskron_room"]),
+  });
+  try {
+    await rec.call("iskron_room", { action: "join", room: "№80" }, "child");
+    await rec.call("iskron_case", { action: "join", room: "№77" }, "child");
+    for (const args of [{ action: "leave", room: "№77" }, { action: "leave" }]) {
+      await rec.call("iskron_room", args, "child");
+      await delay(300);
+      assert.ok(alive(childPid), "iskron_room must not end the satellite");
+      assert.equal(ends(rec).length, 0, "no errand outcome sent to the parent");
+    }
+    await rec.call("iskron_case", { action: "leave", room: "№77" }, "child");
+    await until(() => !alive(childPid), "iskron_case to end the child's errand");
+    await until(() => ends(rec).length === 1, "the case outcome in the parent");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("iskron_room reads are not case reads by the parent's bridge or after an errand ends", async () => {
+  const { rec } = await childUnder("reads-no-room-synonym", true, ["iskron_room"]);
+  try {
+    for (const action of ["read", "history", "mine", "at"])
+      await assert.rejects(
+        rec.call("iskron_room", { action, room: "№77" }, "child"),
+        /только своим местом-спутником/,
+      );
+    await rec.call("iskron_case", { action: "history", room: "№77" }, "child");
+  } finally {
+    await rec.stop();
+  }
+  const lead = await leadChild("ended-no-room-synonym", {
+    FB_TOOLS: fakeTools([...LEAD_NAMES, "iskron_room"]),
+  });
+  try {
+    await lead.rec.call("iskron_case", { action: "leave" }, "child");
+    await until(() => !alive(lead.childPid), "the child's bridge to end");
+    for (const action of ["read", "history", "mine", "at"])
+      await assert.rejects(lead.rec.call("iskron_room", { action }, "child"), /сессия кончена/);
+    await lead.rec.call("iskron_case", { action: "history", room: "№77" }, "child");
+  } finally {
+    await lead.rec.stop();
+  }
+});
+
 test("a child's case leave without a room ends it", async () => {
   const { rec, childPid } = await leadChild("lead-leave-all");
   try {
