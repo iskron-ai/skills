@@ -101,7 +101,11 @@ export function setupChannel(
 ): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
-  const halts = createHalts((s) => parents.get(s), authDir);
+  const halts = createHalts(
+    (s) => parents.get(s),
+    authDir,
+    (id, message) => say(W.haltUnwritten(id, message), "warning"),
+  );
   /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
     try {
@@ -203,6 +207,11 @@ export function setupChannel(
   }
 
   function pile(session: string | null, child: boolean, frame: Frame): void {
+    // A stopped session gathers neither piles nor counts to ride until it stands again (#7440).
+    if (session && halts.halted(session)) {
+      const what = frame.id != null ? W.frameId(String(frame.id)) : W.frameNoId();
+      return say(W.halted(what, session), "warning");
+    }
     const key = `${child ? "child" : "root"}:${session ?? ""}`;
     let p = piles.get(key);
     if (!p)
@@ -360,6 +369,7 @@ export function setupChannel(
       }
     },
     ride(session) {
+      if (halts.halted(session)) return null;
       const own = [...piles.values()].filter(
         (p) => !p.child && (p.session === session || (!p.session && freshestRoot() === session)),
       );

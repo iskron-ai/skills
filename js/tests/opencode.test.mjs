@@ -28,6 +28,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -4434,6 +4435,77 @@ test("after a plugin reload no frame reaches the stopped session until it stands
   } finally {
     await next?.stop();
     first.restore();
+  }
+});
+
+// Review of #7440, fifth round: a late case record after the stop gathered into a pile of counts,
+// and the next prompt of the human carried that count into the stopped session before any held.
+test("a late case record after the stop rides no prompt into the stopped session until it stands again", async () => {
+  const b = bridgeEnv("stop-ride");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-ride");
+    const pid = pidOf(b.log);
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+    appendFileSync(`${b.events}.${pid}`, lines([progress(301, "late")]));
+    await delay(BATCH_MS * 4);
+    assert.equal(await rec.prompt("s-ride", "ход"), "ход", "no count rides into a stopped session");
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+    appendFileSync(`${b.events}.${pid}`, lines([progress(311, "after")]));
+    await delay(BATCH_MS * 4);
+    assert.equal(await rec.prompt("s-ride", "ход"), `ход\n\n${countOf(1, 310)}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Review of #7440, fifth round: a refused write of the stop's record left the ban in one
+// instance's memory, silently — another instance kept waking the stopped root's child. The ban
+// is shared by the process's instances, and the refusal is loud.
+test("a stop the disk refuses still bans the child in another instance, and the refusal is loud", async () => {
+  const calls = join(SANDBOX, "stop-unwritten.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stop-unwritten", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root-u", location: LOC_A },
+    { id: "child-u", parentID: "root-u", location: LOC_B },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-u");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child-u");
+    const childPid = callsIn(calls).at(-1).pid;
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+    chmodSync(dir, 0o500);
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${rootPid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => A.interrupts.length === 1, "the root's interrupt");
+    await delay(300);
+    if (alive(childPid))
+      appendFileSync(
+        `${b.events}.${childPid}`,
+        event("frame", { frame: frame("после стопа корня"), raw: "" }),
+      );
+    await delay(500);
+    const woke = B.prompts.filter((p) => p.sessionID === "child-u");
+    assert.deepEqual(woke, [], "no frame wakes the child under the stopped root");
+    assert.match(
+      A.said(),
+      /\[iskron\/warning\] Искрон: остановка сессии root-u не записана на диск/,
+    );
+  } finally {
+    chmodSync(dir, 0o700);
+    await B.stop();
+    await A.stop();
   }
 });
 

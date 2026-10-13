@@ -1,12 +1,17 @@
 // Sessions the owner stopped (graph @nks/nks-dev, nodes #7439, #7440): a stopped session and its
 // descendants get no channel word — frame, batch, tact, resumed — until a new "held" of that session,
 // which after a stop only an explicit call of the stand tool brings (bridge stophold.ts).
-// OpenCode loads an instance per location and a reload drops memory: the stop lies on disk next to
-// the plugin's other records (marker.ts), read by every instance at each delivery. The record is the
+// OpenCode loads an instance per location and a reload drops memory: the stop lies in a registry
+// on globalThis, shared by the process's live instances like the twins' (twins.ts), and on disk
+// next to the plugin's other records (marker.ts) for the instance after a reload. A refused write
+// is loud: the live instances still keep the ban, a reload would lose it. The record is the
 // session's id and the time, no secret; the session's deletion removes it.
+/* eslint-disable @typescript-eslint/no-explicit-any -- the process registry lives on globalThis */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { GLOBAL_PREFIX } from "../delivery/index.ts";
 
 export interface Halts {
   stop(session: string): void;
@@ -20,16 +25,21 @@ export interface Halts {
 const PREFIX = "opencode-stopped";
 const fileOf = (dir: string, session: string): string =>
   join(dir, `${PREFIX}.${createHash("sha256").update(session).digest("hex").slice(0, 16)}.json`);
+const stops = (): Set<string> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}Halts`] ??= new Set<string>());
 
-/** `parentOf` — the known parent of a child session, without asking OpenCode; `dir` — the records' directory. */
+/**
+ * `parentOf` — the known parent of a child session, without asking OpenCode; `dir` — the records'
+ * directory; `unwritten` — the disk refused a stop's record.
+ */
 export function createHalts(
   parentOf: (session: string) => string | undefined,
   dir: () => string,
+  unwritten: (session: string, message: string) => void,
 ): Halts {
-  const unwritten = new Set<string>(); // the disk refused the record — this instance keeps the ban itself
-  const marked = (s: string): boolean => unwritten.has(s) || existsSync(fileOf(dir(), s));
+  const marked = (s: string): boolean => stops().has(s) || existsSync(fileOf(dir(), s));
   const drop = (s: string): void => {
-    unwritten.delete(s);
+    stops().delete(s);
     try {
       unlinkSync(fileOf(dir(), s));
     } catch {
@@ -38,13 +48,13 @@ export function createHalts(
   };
   return {
     stop(session) {
+      stops().add(session);
       try {
         mkdirSync(dir(), { recursive: true, mode: 0o700 });
         const record = JSON.stringify({ session, at: new Date().toISOString() });
         writeFileSync(fileOf(dir(), session), record, { mode: 0o600 });
-        unwritten.delete(session);
-      } catch {
-        unwritten.add(session);
+      } catch (e) {
+        unwritten(session, (e as Error).message);
       }
     },
     held: (session) => void (session && drop(session)),
@@ -59,6 +69,8 @@ export function createHalts(
     },
   };
 }
+
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** Every known descendant of `session` — children, theirs, and so on — by the parent map `parents`. */
 export function descendantsOf(session: string, parents: Iterable<[string, string]>): string[] {

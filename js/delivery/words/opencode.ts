@@ -48,6 +48,7 @@ export interface OpencodeWords {
   sessionClosed: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
   halted: (frame: string, id: string) => string;
+  haltUnwritten: (id: string, message: string) => string;
   delivered: (frame: string, id: string) => string;
   notDelivered: (frame: string, id: string, message: string) => string;
   held: (key: string) => string;
@@ -112,6 +113,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       text,
     halted: (frame, id) =>
       `Искрон: ${frame} не вложен — сессия ${id} остановлена снятием места, до нового явного занятия места она не будится`,
+    haltUnwritten: (id, message) =>
+      `Искрон: остановка сессии ${id} не записана на диск (${message}) — запрет держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
     delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
@@ -177,6 +180,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       text,
     halted: (frame, id) =>
       `Iskron: ${frame} not delivered — session ${id} was stopped by taking its seat off; it is not woken until it takes a seat again explicitly`,
+    haltUnwritten: (id, message) =>
+      `Iskron: the stop of session ${id} was not written to disk (${message}) — only the live plugin instances of this process keep the ban, it will not survive a reload`,
     delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
     notDelivered: (frame, id, message) =>
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
