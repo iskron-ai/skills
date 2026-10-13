@@ -52,6 +52,12 @@ export function skillsRoot(
   return R.root && exists(R.root) ? R.root : null;
 }
 
+/** Distinguish an incomplete replacement from disappearance of the identified root. */
+export function skillsUnavailable(): "bridge" | "root" | null {
+  if (skillsRoot() || !R.root) return null;
+  return existsSync(R.root) ? "bridge" : "root";
+}
+
 /** Versioned plugin updates do not identify the set loaded by a live harness session. */
 export function skillsRefreshAllowed(): boolean {
   const self = currentScope().origin?.path || fileURLToPath(import.meta.url);

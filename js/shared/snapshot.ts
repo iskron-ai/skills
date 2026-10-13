@@ -8,6 +8,7 @@ export interface PlaceSnapshot {
   listening: boolean;
   last_work_at?: string;
   usage?: Record<string, string | number>;
+  /** Last skills this bridge sent with a successful reply, not a readback of server attrs. */
   skills?: { name: string; version: string; stamp?: string };
   skills_mismatch?: boolean;
 }
@@ -19,6 +20,7 @@ export interface SessionSnapshot {
   harness_session: string | null;
   cwd: string;
   build: string;
+  /** Last skills this bridge sent with a successful reply; other writers are not observed. */
   skills?: { name: string; version: string; stamp?: string };
   installed_skills?: { name: string; version: string; stamp?: string };
   skills_mismatch?: boolean;
