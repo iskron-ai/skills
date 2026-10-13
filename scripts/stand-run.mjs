@@ -9,6 +9,7 @@
 //
 // The token: a file (default ~/.iskron-stand/token), one line, mode 0600 or stricter; it is
 // handed to the bridge only through its own isolated auth dir, never argv, and never printed.
+// --realm2 — a second graph in the token's territory, for the seat beside (one seat per graph per bridge).
 // --realm — the run's graph when the token is scoped to it (a territorial writer PAT);
 // without it the run takes or creates @<self>/bridge-night. --expect-user — whoami must name it.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
@@ -27,6 +28,7 @@ const URL_ = arg("--url", "https://nks.lab.mirari.ru/mcp-test");
 const tokenFile = arg("--token-file", join(homedir(), ".iskron-stand", "token"));
 const keep = process.argv.includes("--keep");
 const realmArg = arg("--realm", null);
+const realm2Arg = arg("--realm2", null);
 const expectUser = arg("--expect-user", null);
 const bridgePath = join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs");
 
@@ -224,25 +226,47 @@ try {
   const again = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
   check(!again.error && /hello получен/.test(again.text), "explicit stand takes the name again", again.text.split("\n")[0]);
 
-  // 3. A seat beside on the same channel, taken off: forgotten without a stop of the main seat.
-  const beside = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameB, model: "stand-run" });
-  check(!beside.error, "second seat stands", beside.text.split("\n")[0]);
-  const idB = channelId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameB);
-  const before3 = A.notes.length;
-  await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: idB, as_person: true });
-  await sleep(20_000);
-  const board3 = (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
-  check(board3.includes(`:${nameA} —`), "main seat still held after the other one is taken off");
-  report.push(`notes after the beside revoke: ${A.notes.slice(before3).map(noteText).join(" | ").slice(0, 300)}`);
+  // 3. A seat beside — another graph on the same channel; taken off, it is forgotten without a stop.
+  if (realm2Arg) {
+    const k2 = await P.call("iskron_add_karta", {
+      realm: realm2Arg,
+      name: "🧪 Ночной агент моста рядом",
+      motivation: "Держит место рядом, чтобы прогон проверил снятие места рядом.",
+      manifested_as: "adhikarin",
+      epistemic_mode: "pratyakshita",
+      ontic_mode: "vartamana",
+      volitive_mode: "upeksha",
+    });
+    const karta2 = (k2.text.match(/\(#(\d+)\)/) || [])[1];
+    const beside = await A.call("iskron_stand", { realm: realm2Arg, karta: `#${karta2}`, name: nameB, model: "stand-run" });
+    check(!beside.error, "seat beside stands in the second graph", beside.text.split("\n")[0].slice(0, 160));
+    const idB = channelId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB);
+    const before3 = A.notes.length;
+    await P.call("iskron_channel", { realm: realm2Arg, action: "revoke", karta: `#${karta2}`, channel: idB, as_person: true });
+    await sleep(20_000);
+    const notes3 = A.notes.slice(before3).map(noteText);
+    check(!notes3.some((t) => /остановлен/.test(t) && t.includes(nameA)), "main seat not stopped by the beside removal", notes3.join(" | ").slice(0, 200));
+    const board3 = (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
+    check(board3.includes(`:${nameA} —`), "main seat still held after the one beside is taken off");
+  } else report.push("SKIP seat beside — no --realm2");
 
-  // 4. Own revoke: quiet, revoked:self, no stop word.
-  const idA2 = channelId(board3, nameA);
+  // 4. Own revoke, karta as a number: quiet, no stop word.
+  const idA2 = channelId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA);
   const before4 = A.notes.length;
-  const own4 = await A.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: idA2 });
-  check(!own4.error, "own revoke answered", own4.text.split("\n")[0].slice(0, 160));
+  const own4 = await A.call("iskron_channel", { realm, action: "revoke", karta: String(karta), channel: idA2 });
+  check(!own4.error, "own revoke (karta as a number) answered", own4.text.split("\n")[0].slice(0, 160));
   await sleep(15_000);
   const notes4 = A.notes.slice(before4).map(noteText);
-  check(!notes4.some((t) => /остановлен/.test(t)), "own revoke: no stop word", notes4.join(" | ").slice(0, 200));
+  check(!notes4.some((t) => /остановлен/.test(t)), "own revoke (karta as a number): no stop word", notes4.join(" | ").slice(0, 200));
+
+  // 4b. Own revoke, karta as "#N" — the form the bridge itself suggests (graph @nks/nks-dev, node #6987).
+  await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
+  const idA3 = channelId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA);
+  const before4b = A.notes.length;
+  await A.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: idA3 });
+  await sleep(15_000);
+  const notes4b = A.notes.slice(before4b).map(noteText);
+  check(!notes4b.some((t) => /остановлен/.test(t)), "own revoke (karta \"#N\"): no stop word", notes4b.join(" | ").slice(0, 200));
 
   // 5. status names what is attached on this (isolated) machine.
   const status = await new Promise((res) => {
