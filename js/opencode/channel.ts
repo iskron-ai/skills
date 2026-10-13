@@ -25,6 +25,7 @@ import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
 import { authDir } from "./bridge-io.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
+import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -100,6 +101,7 @@ export function setupChannel(
   freshestRoot: () => string | null,
   parents: ReadonlyMap<string, string> = new Map(),
   onStop: (session: string) => void = () => {},
+  leads: ChildLeads = NO_LEADS,
 ): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
@@ -145,6 +147,11 @@ export function setupChannel(
     }
     if (halts.halted(id)) {
       say(W.halted(frame, id), "warning");
+      return null;
+    }
+    // An ended lead is woken by nothing — a frame, a pile, a tact, a word (#7505): the journal keeps it.
+    if (child && leads.ended(id)) {
+      say(W.childEnded(frame, id, text.slice(0, 120)), "info");
       return null;
     }
     try {
@@ -400,7 +407,9 @@ export function setupChannel(
           if (frame?.type === "hello") return say(P.listening(), "info");
           if (frame?.type === "status") return;
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
-          if (frame && toPile(frame)) return pile(session, child, frame);
+          // The launcher's word to its working lead steers its turn whatever its stack (#7505).
+          const steers = child && !!frame && fromLauncher(frame, leads.launcherOf(session ?? ""));
+          if (frame && !steers && toPile(frame)) return pile(session, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
           noteOwn(own, deliveryKeys(frame)); // the frame enters as text — the pile's count skips it
           void deliver(

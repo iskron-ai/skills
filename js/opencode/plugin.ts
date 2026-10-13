@@ -90,7 +90,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   let ch: ReturnType<typeof setupChannel> | null = null;
   try {
     // The owner's stop goes by seats (#7440): every instance of the process takes its children's seats down.
-    const c0 = setupChannel(ctx, say, freshestRoot, parents, () => sweepAll());
+    // Lead subagents — by the tools half, which comes up after the channel (#7505).
+    const c0 = setupChannel(ctx, say, freshestRoot, parents, () => sweepAll(), {
+      ended: (s) => half.ended(s),
+      launcherOf: (s) => half.launcherOf(s),
+    });
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
