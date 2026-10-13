@@ -1,4 +1,4 @@
-// Accepted declarations and cheap disk-change checks (#6501, graph @nks/nks-dev).
+// Last successfully answered sends and cheap disk checks (#6501, graph @nks/nks-dev).
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -7,7 +7,7 @@ import { envOf, scoped } from "../shared/scope.ts";
 import { lockPlaces } from "../shared/skilllock.ts";
 import { safeSkills } from "../shared/snapshot.ts";
 import { normKarta, normName } from "./names.ts";
-import { skillsAttr, skillsRefreshAllowed, skillsRoot } from "./skillset.ts";
+import { skillsAttr, skillsRefreshAllowed, skillsRoot, skillsUnavailable } from "./skillset.ts";
 import { type Standing } from "./transport.ts";
 
 type Skills = NonNullable<ReturnType<typeof safeSkills>>;
@@ -17,15 +17,18 @@ const W = scoped(() => ({
   disk: "",
   installed: undefined as Skills | undefined,
   pending: false,
+  missingChecks: 0,
+  unsettled: false,
 }));
 const key = (p: Partial<Standing>): string =>
   `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
 export const announcedSkills = (p: Partial<Standing>): Skills | undefined =>
   W.announced.get(key(p));
-/** One decision for tool refresh and usage publication, against accepted declarations. */
+/** One decision for tool refresh and usage publication, against successfully answered sends. */
 export function skillsNeedRegister(p: Partial<Standing>): boolean {
   if (!skillsRefreshAllowed()) return false;
   checkInstalled();
+  if (W.unsettled) return false;
   return JSON.stringify(announcedSkills(p)) !== JSON.stringify(W.installed);
 }
 export function noteSkills(p: Partial<Standing>, skills: unknown): void {
@@ -64,9 +67,13 @@ function diskVersion(): string {
 function checkInstalled(): void {
   if (!skillsRefreshAllowed()) return;
   const gap = Number(process.env[envName("SKILLS_GAP_MS")]) || 60_000;
-  if (W.installed && Date.now() - W.checkedAt < gap) return;
+  if (W.checkedAt && Date.now() - W.checkedAt < gap) return;
   W.checkedAt = Date.now();
   const disk = diskVersion();
+  const missing = skillsUnavailable();
+  W.missingChecks = missing === "root" ? W.missingChecks + 1 : 0;
+  W.unsettled = missing === "bridge" || (missing === "root" && W.missingChecks < 2);
+  if (W.unsettled) return;
   if (disk === W.disk) return;
   W.disk = disk;
   W.installed = skillsAttr();
