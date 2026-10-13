@@ -104,7 +104,7 @@ export function createLeads(d: LeadDoors): Leads {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
-      const room = name === tool("case") || name === tool("room") ? roomNo(args.room) : null;
+      const room = name === tool("case") ? roomNo(args.room) : null;
       if (args.action === "join" && room) l.room ??= room;
       if (args.action !== "leave") return;
       if (name === tool("channel")) leave(child, l, W().leftSeat());
