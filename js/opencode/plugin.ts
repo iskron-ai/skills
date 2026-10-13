@@ -43,6 +43,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // and an ownerless bridge's frame goes to the freshest one seen — the v2 context lists no sessions.
   const roots = new Map<string, string>();
   const seen = new Map<string, number>();
+  // Child → parent as learnt: the owner's stop reaches a session's descendants (channel.ts, #7440).
+  const parents = new Map<string, string>();
   async function rootOf(sessionID: string): Promise<string> {
     const known = roots.get(sessionID);
     if (known) {
@@ -57,6 +59,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         const res: any = await ctx.session.get({ sessionID: root } as any);
         const parent: string | undefined = res?.parentID ?? res?.data?.parentID;
         if (!parent || visited.has(parent)) break;
+        parents.set(root, parent);
         root = parent;
       }
     } catch {
@@ -83,7 +86,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
   try {
-    const c0 = setupChannel(ctx, say, freshestRoot, (s) => roots.get(s));
+    const c0 = setupChannel(ctx, say, freshestRoot, parents);
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
@@ -167,6 +170,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             if (!id) break;
             roots.delete(id);
             seen.delete(id);
+            parents.delete(id);
             ch?.gone(id);
             void usage.flush(id).finally(() => {
               usage.forget(id);
@@ -178,12 +182,13 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             if (!id) break;
             if (ev.data?.title === keepaliveTitle()) break; // the keepalive service session is no activity
             const parent = ev.data?.parentID;
-            if (typeof parent === "string")
+            if (typeof parent === "string") {
+              parents.set(id, parent);
               void rootOf(parent).then((root) => {
                 roots.set(id, root);
                 seen.set(root, Date.now());
               });
-            else void rootOf(id);
+            } else void rootOf(id);
             break;
           }
           // Moved to another folder (#6550 item 3): the seat goes to the instance of its new location.

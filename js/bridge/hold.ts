@@ -407,6 +407,23 @@ export function forgetSeat(reason: string): void {
   state.standingSession = null;
 }
 
+/** The seat's end (`what`) outran the answer of its own revoke or close: a quiet release, no stop (#6634). */
+export function releasedAsOwn(what: string): boolean {
+  if (H.revokingOwn) {
+    log(
+      `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; ${what} arrived before the answer)`,
+    );
+    forgetSeat(holdWords().revokedOwn());
+    return true;
+  }
+  if (H.closingOwn) {
+    log(`channel closed by this session — released quietly (${what} arrived before the answer)`);
+    forgetSeat(holdWords().closedOwn());
+    return true;
+  }
+  return false;
+}
+
 // Socket handlers get the opening session's scope explicitly (shared/scope.ts); the runtime
 // need not carry it across events.
 function openHolder(url: string, key: string): void {
@@ -438,21 +455,7 @@ function openHolder(url: string, key: string): void {
         E.next?.(key, url, code); // the eviction word and the next move: evicted.ts
       },
       onStopped: (code, reason) => {
-        if (H.revokingOwn) {
-          // Own revoke in flight: 4001 outran the revoke answer, the token is closed, not dead;
-          // release quietly, else an obedient agent re-creates the place just revoked.
-          log(
-            `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
-          );
-          return forgetSeat(holdWords().revokedOwn());
-        }
-        if (H.closingOwn) {
-          // Own channel close, like own revoke: 4001 outran the answer (#6634).
-          log(
-            `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
-          );
-          return forgetSeat(holdWords().closedOwn());
-        }
+        if (releasedAsOwn(`close ${code}`)) return;
         // Anyone else's 4001: the owner stopped the doer (stophold.ts); unwired — released all the same.
         if (E.stop) E.stop(key, code, reason);
         else forgetSeat(`close ${code}`);

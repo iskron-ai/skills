@@ -1,6 +1,6 @@
 // The owner took a seat off (graph @nks/nks-dev, nodes #7439, #7440, #7493): the agent and
 // its seat have one life, so taking the seat off ends the agent. A close 4001 the session did
-// not expect as its own revoke or close — or a standing_ended frame naming the main seat — is
+// not expect as its own revoke or close — or such a standing_ended frame naming the main seat — is
 // the stop: every door and the notification client hear the stop word, unsent batches are
 // dropped to the journal (flushed, they would wake the stopped agent), the seat is released
 // with its record and binding forgotten, and no automatic path takes it again (none has a
@@ -10,7 +10,7 @@
 import { STOP, type StopWho } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Door } from "./door.ts";
-import { broadcast, type ChannelEvent, forgetSeat, notify } from "./hold.ts";
+import { broadcast, type ChannelEvent, forgetSeat, notify, releasedAsOwn } from "./hold.ts";
 import { type Frame, H, whenStopped } from "./holdstate.ts";
 import { dropExtra, extraPlaces } from "./places.ts";
 import { standingLog } from "./store.ts";
@@ -55,6 +55,7 @@ function seatEnded(key: string, frame: Frame): void {
   // An id that names neither seat: with seats beside it may be one whose id the bridge never learnt.
   if (id && (main ? main !== id : extraPlaces().length > 0))
     return log(`standing_ended for seat ${id}, not one this bridge knows — ignored`);
+  if (releasedAsOwn("standing_ended")) return; // the frame outran the answer of the session's own revoke or close
   stopAgent(key, "standing_ended", reason);
 }
 

@@ -4594,6 +4594,34 @@ test("#7440: standing_ended for the main seat is the same stop as the owner's 40
   assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
 });
 
+// Review of #7440: standing_ended for the main seat outran the answer of the session's own
+// revoke or close and was read as the owner's stop — the quiet release became a stopped session.
+for (const action of ["revoke", "close"])
+  test(`#7440: standing_ended outrunning the answer of one's own ${action} is a quiet release, not a stop`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ endedFrame: true, revokeReplyDelayMs: 600 });
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: "nks-dev", karta: 931, standing: "proba" }
+          : { action, realm: "nks-dev" },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+    assert.match(
+      bridge.stderr,
+      /by this session — released quietly.*standing_ended arrived before the answer/,
+      bridge.stderr,
+    );
+  });
+
 test("#7440: standing_ended for a seat beside forgets that seat only — the main seat holds, no stop, no wake", async (t) => {
   const { fake, bridge, idOf } = await twoGraphs(
     t,

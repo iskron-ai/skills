@@ -23,7 +23,7 @@ import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-t
 import { words } from "../shared/lang.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
-import { createHalts } from "./halts.ts";
+import { createHalts, descendantsOf } from "./halts.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -90,11 +90,11 @@ export function setupChannel(
   ctx: Context,
   say: Say,
   freshestRoot: () => string | null,
-  rootOf: (session: string) => string | undefined = () => undefined,
+  parents: ReadonlyMap<string, string> = new Map(),
 ): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
-  const halts = createHalts(rootOf);
+  const halts = createHalts((s) => parents.get(s));
   /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
     try {
@@ -239,24 +239,35 @@ export function setupChannel(
     void deliver(session, text, W.frame(), "steer", child);
   }
 
+  function dropPile(key: string): void {
+    const p = piles.get(key);
+    if (p?.timer) clearTimeout(p.timer);
+    piles.delete(key);
+  }
+
   /**
-   * The owner took the seat off (#7439): the session's running turn is interrupted, its piles
-   * and waiting tact are dropped, and the stop word goes to the human and into the session
-   * as a message that starts no turn. Nothing of this session or its children reaches it
-   * afterwards until it stands again by an explicit call (halts.ts).
+   * The owner took the seat off (#7439, #7440 item 2): the running turns of the session and of
+   * every descendant are interrupted, their piles and waiting tacts are dropped, and the stop
+   * word goes to the human and into the session as a message that starts no turn. Nothing of
+   * this session or its descendants reaches them afterwards until it stands again by an explicit call (halts.ts).
    */
   function stopped(session: string | null, text: string, child: boolean): void {
     say(text, "error");
-    const own = `${child ? "child" : "root"}:${session ?? ""}`;
-    const p = piles.get(own);
-    if (p?.timer) clearTimeout(p.timer);
-    piles.delete(own);
+    dropPile(`${child ? "child" : "root"}:${session ?? ""}`);
     if (!session) return;
     halts.stop(session);
-    tacts.gone(session);
     const s = ctx.session as any;
+    const cut = (id: string): void => {
+      tacts.gone(id);
+      const failed = (e: Error) => say(W.notDelivered(W.frame(), id, e.message), "warning");
+      void Promise.resolve(s.interrupt?.({ sessionID: id, resume: false })).catch(failed);
+    };
+    cut(session);
+    for (const d of descendantsOf(session, parents)) {
+      for (const k of ["child", "root"]) dropPile(`${k}:${d}`);
+      cut(d);
+    }
     const failed = (e: Error) => say(W.notDelivered(W.frame(), session, e.message), "warning");
-    void Promise.resolve(s.interrupt?.({ sessionID: session, resume: false })).catch(failed);
     // A child's end goes to its parent (leads.ts): no word is laid into the child.
     if (child || typeof s.synthetic !== "function") return;
     const said = markFrame(text);

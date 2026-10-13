@@ -4261,6 +4261,79 @@ for (const kind of ["evicted", "dead", "stopped"])
     }
   });
 
+// Review of #7440 п.2: the stop interrupted only the stopped session — its descendants' running
+// turns went on — and the delivery ban looked at the final root only, so a grandchild under a
+// stopped child kept getting frames. root → child → grand, each standing on a bridge of its own.
+async function lineage(name) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: "child", parentID: "root", location: { directory: "/work/child" } },
+      { id: "grand", parentID: "child", location: { directory: "/work/grand" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    rec.emit({ type: "session.created", data: { sessionID: "child", parentID: "root" } });
+    rec.emit({ type: "session.created", data: { sessionID: "grand", parentID: "child" } });
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    await rootHolds(rec, b, { pid: pidOf(b.log) });
+    const pids = { root: pidOf(b.log) };
+    for (const [i, s] of [
+      [1, "child"],
+      [2, "grand"],
+    ]) {
+      await rec.call("iskron_stand", { realm: "nks-dev" }, s);
+      pids[s] = pidsOf(b.log)[i];
+      const place = { ...ROOT_PLACE, name: `${ROOT_PLACE.name}.${s}` };
+      appendFileSync(`${b.events}.${pids[s]}`, event("held", { key: `k-${s}`, place }));
+      await until(() => rec.said().includes(`мост держит стояние k-${s}`), `${s}'s held word`);
+    }
+    return { b, rec, pids };
+  } catch (e) {
+    await rec.stop();
+    throw e;
+  }
+}
+
+for (const [stop, cut, hears] of [
+  ["root", ["root", "child", "grand"], null],
+  ["child", ["child", "grand"], "root"],
+])
+  test(`the owner's stop of the ${stop} interrupts the turns of all its descendants and no frame reaches them`, async () => {
+    const { b, rec, pids } = await lineage(`stop-lineage-${stop}`);
+    try {
+      const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(`${b.events}.${pids[stop]}`, event("stopped", { code: 4001, key: "k", text }));
+      await until(() => /ты остановлен/.test(rec.said()), "the stop word");
+      await delay(200);
+      const before = rec.prompts.length;
+      for (const s of ["root", "child", "grand"])
+        if (alive(pids[s]))
+          appendFileSync(
+            `${b.events}.${pids[s]}`,
+            event("frame", { frame: frame(`после стопа ${s}`), raw: "" }),
+          );
+      await delay(500);
+      const got = rec.prompts.slice(before).map((p) => p.sessionID);
+      assert.deepEqual(got, hears ? [hears] : [], `only a session outside the stop hears: ${got}`);
+      assert.deepEqual(
+        rec.interrupts.map((i) => i.sessionID).sort(),
+        [...cut].sort(),
+        "the stopped session and each descendant, none else",
+      );
+      assert.ok(
+        rec.interrupts.every((i) => i.resume === false),
+        JSON.stringify(rec.interrupts),
+      );
+    } finally {
+      await rec.stop();
+    }
+  });
+
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
 // end's word says the place is being taken down; the child's bridge ends its run after it
 // (iskron/end), and places not revoked come as a correction — not a second «КОНЧЕН», not waking.
