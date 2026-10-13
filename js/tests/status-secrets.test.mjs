@@ -84,6 +84,7 @@ test("status allowlists a fake daemon snapshot before either output format", asy
                 harness_session: "h1",
                 cwd: "/test",
                 build: "test",
+                skills: { name: "set", version: "1", stamp: "12345678", ...secret },
                 ...secret,
                 places: [
                   {

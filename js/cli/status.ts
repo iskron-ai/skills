@@ -63,8 +63,12 @@ function render(s: StatusSnapshot): string {
   if (d && !s.snapshot_available) lines.push(w.unavailable());
   if (!d || s.snapshot_available) lines.push(`${w.sessions()}: ${s.sessions.length}`);
   for (const session of s.sessions) {
+    const skills = session.skills;
+    const stamp = skills
+      ? ` · skills=${printable(skills.name)} ${printable(skills.version)}${skills.stamp ? `+${printable(skills.stamp)}` : ""}`
+      : "";
     lines.push(
-      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w.attached() : w.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}`,
+      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w.attached() : w.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}`,
     );
     for (const p of session.places) {
       const mode = p.satellite_of

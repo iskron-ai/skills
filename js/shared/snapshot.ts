@@ -22,6 +22,7 @@ export interface SessionSnapshot {
   harness_session: string | null;
   cwd: string;
   build: string;
+  skills?: { name: string; version: string; stamp?: string };
   places: PlaceSnapshot[];
 }
 export interface MachineSnapshot {
@@ -33,6 +34,16 @@ export const record = (v: unknown): Record<string, unknown> =>
 export const text = (v: unknown): string => (typeof v === "string" ? v : "");
 const number = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+
+export function safeSkills(v: unknown): SessionSnapshot["skills"] {
+  const s = record(v);
+  if (typeof s.name !== "string" || typeof s.version !== "string") return undefined;
+  return {
+    name: s.name,
+    version: s.version,
+    ...(typeof s.stamp === "string" ? { stamp: s.stamp } : {}),
+  };
+}
 
 export function safeUsage(v: unknown): Record<string, string | number> | undefined {
   const raw = record(v);
@@ -73,6 +84,7 @@ export function safeSnapshot(v: unknown): MachineSnapshot {
     daemon: { pid: number(d.pid), build: text(d.build), path: text(d.path) },
     sessions: list(raw.sessions).map((v) => {
       const s = record(v);
+      const skills = safeSkills(s.skills);
       return {
         local_id: text(s.local_id),
         thin_pid: number(s.thin_pid),
@@ -81,6 +93,7 @@ export function safeSnapshot(v: unknown): MachineSnapshot {
         harness_session: typeof s.harness_session === "string" ? s.harness_session : null,
         cwd: text(s.cwd),
         build: text(s.build),
+        ...(skills ? { skills } : {}),
         places: list(s.places).map(safePlace),
       };
     }),
