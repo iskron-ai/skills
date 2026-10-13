@@ -68,6 +68,11 @@ export interface ChannelEvent {
   batch?: { at: number; of: number; fold?: number; folded?: true };
   /** kind="released": released by this session's own close or revoke — the watchdog exits without alarm (#6638). */
   own?: true;
+  /**
+   * kind="released": a seat beside taken off by another (standing_ended, #7504) — forgotten,
+   * the main seat holds: the seat's watchdog neither wakes the doer nor leaves.
+   */
+  beside?: true;
   /** kind="stopped": the close reason as the service named it (`revoked:person`, `revoked:self`). */
   reason?: string;
 }

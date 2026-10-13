@@ -4438,6 +4438,42 @@ test("after a plugin reload no frame reaches the stopped session until it stands
   }
 });
 
+// Review of #7440, sixth round: a refused removal of the stop's record on held was swallowed —
+// the session took a seat explicitly and stayed banned, silently. The registry lifts the ban
+// always; the refusal is loud and the record is rewritten as lifted, so a reload reads no ban.
+test("a held whose stop record the disk will not remove lifts the ban all the same, loudly, and rewrites the record as lifted", async () => {
+  const b = bridgeEnv("stop-unlifted");
+  const first = await plugin(b.env);
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  try {
+    await serverTools(first);
+    await first.call("iskron_channel", { action: "connect" }, "s-lift");
+    const pid = pidOf(b.log);
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => first.interrupts.length === 1, "the interrupt of the session's turn");
+    chmodSync(dir, 0o500);
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: { type: "message", id: "lift-1", body: "снова на месте" } }),
+    );
+    await until(() => first.prompts.length === 1, "delivery after an explicit stand");
+    assert.match(
+      first.said(),
+      /\[iskron\/warning\] Искрон: сессия s-lift снова на месте, запрет снят, но запись остановки на диске не удалена \([^)]+\) — она переписана как снятая/,
+    );
+    // The process registry outlives a reload in this probe: the record itself is what a reload reads.
+    const hash = createHash("sha256").update("s-lift").digest("hex").slice(0, 16);
+    const record = JSON.parse(readFileSync(join(dir, `opencode-stopped.${hash}.json`), "utf8"));
+    assert.equal(record.session, "s-lift");
+    assert.ok(record.lifted, `the record is rewritten as lifted: ${JSON.stringify(record)}`);
+  } finally {
+    chmodSync(dir, 0o700);
+    await first.stop();
+  }
+});
+
 // Review of #7440, fifth round: a late case record after the stop gathered into a pile of counts,
 // and the next prompt of the human carried that count into the stopped session before any held.
 test("a late case record after the stop rides no prompt into the stopped session until it stands again", async () => {

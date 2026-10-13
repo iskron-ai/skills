@@ -24,7 +24,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { BUILT_BRIDGE } from "./built.mjs";
+import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import { progress } from "./room-frames.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -2338,8 +2340,8 @@ const waitUntil = async (check, what, ms = 8000) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A bridge standing in graph A, then in graph B; returns what the cases read. */
-async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}) {
-  const { fake, dir, bridge } = await ready(t, init);
+async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}, env = {}) {
+  const { fake, dir, bridge } = await ready(t, init, env);
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const a = await stand(A);
   assert.ok(!a.result?.isError, textOf(a));
@@ -4649,6 +4651,52 @@ test("#7440: standing_ended for a seat beside forgets that seat only — the mai
   assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
   assert.equal(fake.state.counts.connect, 1);
 });
+
+// Review of #7440: the seat beside taken off by another came to its watchdog as the session's
+// own release, and watchdog-codex put the count it had piled up into the thread — the end of
+// a seat beside woke the doer. Each watchdog of that seat falls silent: no turn, no line, no exit.
+for (const sub of ["watchdog-codex", "watchdog", "watchdog-exit"])
+  test(`#7504: standing_ended for a seat beside — its ${sub} wakes nobody and stays, the piled-up count unput`, async (t) => {
+    const { fake, dir, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, sub, keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    const before = w.out;
+    await fake.control({
+      ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+    });
+    await pause(1500);
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+    assert.equal(w.out, before, `no line to the doer:\n${w.out}`);
+    assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+  });
 
 test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
   for (const [reason, who] of [

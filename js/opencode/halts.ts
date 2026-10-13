@@ -5,10 +5,12 @@
 // on globalThis, shared by the process's live instances like the twins' (twins.ts), and on disk
 // next to the plugin's other records (marker.ts) for the instance after a reload. A refused write
 // is loud: the live instances still keep the ban, a reload would lose it. The record is the
-// session's id and the time, no secret; the session's deletion removes it.
+// session's id and the time, no secret; the session's deletion removes it. A new held lifts the
+// ban in the registry always; a refused removal of the record is loud and rewrites it as lifted,
+// so a reload reads no ban either.
 /* eslint-disable @typescript-eslint/no-explicit-any -- the process registry lives on globalThis */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { GLOBAL_PREFIX } from "../delivery/index.ts";
@@ -27,28 +29,56 @@ const fileOf = (dir: string, session: string): string =>
   join(dir, `${PREFIX}.${createHash("sha256").update(session).digest("hex").slice(0, 16)}.json`);
 const stops = (): Set<string> =>
   ((globalThis as any)[`${GLOBAL_PREFIX}Halts`] ??= new Set<string>());
+/** Bans lifted in this process: a record the disk would not let go no longer stops them. */
+const lifted = (): Set<string> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}Lifted`] ??= new Set<string>());
+
+const code = (e: unknown): string | undefined => (e as NodeJS.ErrnoException).code;
+
+/** The record bans: present and not rewritten as lifted; one unreadable bans, as before. */
+function recorded(file: string): boolean {
+  try {
+    return !(JSON.parse(readFileSync(file, "utf8")) as { lifted?: string }).lifted;
+  } catch (e) {
+    return code(e) !== "ENOENT";
+  }
+}
 
 /**
  * `parentOf` — the known parent of a child session, without asking OpenCode; `dir` — the records'
- * directory; `unwritten` — the disk refused a stop's record.
+ * directory; `unwritten` — the disk refused a stop's record; `unlifted` — the disk refused to
+ * remove it, `kept` — and to rewrite it as lifted.
  */
 export function createHalts(
   parentOf: (session: string) => string | undefined,
   dir: () => string,
   unwritten: (session: string, message: string) => void,
+  unlifted: (session: string, message: string, kept: boolean) => void,
 ): Halts {
-  const marked = (s: string): boolean => stops().has(s) || existsSync(fileOf(dir(), s));
+  const marked = (s: string): boolean =>
+    stops().has(s) || (!lifted().has(s) && recorded(fileOf(dir(), s)));
   const drop = (s: string): void => {
     stops().delete(s);
+    lifted().add(s);
+    const file = fileOf(dir(), s);
     try {
-      unlinkSync(fileOf(dir(), s));
-    } catch {
-      /* no record or removed by another instance */
+      unlinkSync(file);
+    } catch (e) {
+      if (code(e) === "ENOENT") return; // no record or removed by another instance
+      let kept = false;
+      try {
+        const record = JSON.stringify({ session: s, lifted: new Date().toISOString() });
+        writeFileSync(file, record, { mode: 0o600 });
+      } catch {
+        kept = true;
+      }
+      unlifted(s, (e as Error).message, kept);
     }
   };
   return {
     stop(session) {
       stops().add(session);
+      lifted().delete(session);
       try {
         mkdirSync(dir(), { recursive: true, mode: 0o700 });
         const record = JSON.stringify({ session, at: new Date().toISOString() });

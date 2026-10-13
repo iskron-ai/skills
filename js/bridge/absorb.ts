@@ -155,7 +155,7 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     // Another graph's seat revoked by us: drop its door and record, the channel stays (#5838).
-    dropExtra(beside.door.key, holdWords().revokedOwn(), true, true);
+    dropExtra(beside.door.key, holdWords().revokedOwn(), true, "own");
     return reply;
   }
   if (!revokesOwn(msg)) return reply;

@@ -261,6 +261,8 @@ export function runWatchdog(argv: string[]): void {
         case "released":
           // An own close/revoke is the last word, without alarm or a non-zero code (#6638).
           if (ev.own) leave(wd().bridgeReleasedSocket(ev.text ?? ""), 0);
+          // A seat beside forgotten (#7504): a line would wake the doer, whose main seat holds.
+          else if (ev.beside) process.stderr.write(wd().bridgeReleasedSocket(ev.text ?? "") + "\n");
           else log(wd().bridgeReleasedSocket(ev.text ?? ""));
           break;
       }

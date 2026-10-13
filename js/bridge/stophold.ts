@@ -49,7 +49,7 @@ function seatEnded(key: string, frame: Frame): void {
     const text = stopWord(beside.standing.name ?? "", reason);
     log(`${text} — that seat beside is forgotten, the rest are held`);
     dropUnsent(beside.door.key, [beside.door]);
-    return dropExtra(beside.door.key, text, true, true);
+    return dropExtra(beside.door.key, text, true, "beside");
   }
   const main = H.door?.standingId;
   // An id that names neither seat: with seats beside it may be one whose id the bridge never learnt.

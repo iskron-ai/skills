@@ -105,6 +105,7 @@ export function setupChannel(
     (s) => parents.get(s),
     authDir,
     (id, message) => say(W.haltUnwritten(id, message), "warning"),
+    (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
   /** The session still takes a word: exists and is not archived. */
   async function accepting(id: string): Promise<boolean> {
