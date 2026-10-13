@@ -921,6 +921,19 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
+      // A test-supplied reply for a named tool, transported by the same HTTP leg.
+      if (msg.method === "tools/call" && opts.callResults?.[msg.params?.name]) {
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: opts.callResults[msg.params.name],
+          },
+          extra,
+        );
+      }
       // Стояние делателя, смоделированное так, как его держит настоящая
       // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
       // сессия — другой писатель, и её память о регистрации собрана вместе со
