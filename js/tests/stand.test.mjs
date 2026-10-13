@@ -1486,7 +1486,10 @@ test("iskron_stand: skills of a flat install whose lock has no establish-mcp ent
     },
   };
   writeFileSync(lockPath, JSON.stringify(lock));
-  const { fake, bridge } = await holderReady(t, { file, env: { HOME: home } });
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: home },
+  });
   assert.ok(!(await stand(bridge)).result?.isError);
   assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
     name: SET,

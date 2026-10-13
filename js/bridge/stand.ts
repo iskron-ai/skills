@@ -203,7 +203,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // The session directory goes into the hold record: a re-raised bridge returns the seat by it (#5140).
   noteStandCwd(cwd);
 
-  const here = () => placeFields({ realm, karta, name }); // seat fields on every registration (#5174)
+  const here = () => placeFields({ realm, karta, name }, true); // seat fields on every registration (#5174)
   const register = () =>
     call(tool("channel"), { action: "register", realm, karta, name, ...here() });
 
