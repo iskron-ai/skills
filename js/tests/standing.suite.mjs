@@ -1100,21 +1100,39 @@ test("a cached list serves this build's iskron_stand, not the one another build 
   assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
 });
 
-// A bridge before #7557 cached write tools with its writing-moment line first; a list
-// served from that cache (offline, login wait) reaches the harness as the server wrote it.
+// Shipped moment lines of former bridges, whole: the last one (prepended from #282 on),
+// one from before #282 (appended), and the English one.
+const MOMENT_7_9 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; вопрос по сути или обязательство — вимаршей `posed_to` отвечающей роли с «Отвечено, когда»; разовая задача или вопрос — в деле, кончается исходом; отказ доставки рода не меняет; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_BEFORE_282 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; без дела — файл сессии; кадром не шлётся; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_EN =
+  "[bridge] The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; a substantive question or obligation is a vimarsha with `posed_to` to the answering role and an answer criterion; a one-off task or question belongs in a case and ends with its outcome; delivery refusal does not change its kind; the CHECKS lines in the reply are this beat's work.";
+
+// A bridge before #7557 cached write tools with its whole moment line — first from #282 on,
+// last before it; a list served from that cache (offline, login wait) reaches the harness
+// as the server wrote it. Only a whole shipped line with its blank line goes, only on write tools.
 test("a cached list written by a former bridge serves write tools without its moment line", async (t) => {
   const { fake, dir, bridge } = await connected(t);
   await fake.control({ richTools: true });
   await bridge.call("tools/list", 20, {});
   const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
   const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
-  const former = {
-    iskron_add_vimarsha:
-      "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя.",
-    iskron_batch: "[bridge] The writing skill's moment: before each node, name the reader.",
+  const like = "[мост] Момент скилла writing: это собственное объяснение сервера.";
+  const cached = {
+    iskron_add_vimarsha: `${MOMENT_7_9}\n\nСоздай вопрошание.`,
+    iskron_batch: `${MOMENT_EN}\n\nАтомарная дельта.`,
+    iskron_add_kriya: `Создай крию.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_bianhua: `${MOMENT_7_9}\n\nСоздай превращение.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_phenomenon: `${like}\n\nСоздай феномен.`,
+    iskron_add_holon: `${MOMENT_7_9}Создай контур.`,
+    iskron_add_karta: MOMENT_7_9,
+    iskron_orient: `${MOMENT_7_9}\n\nВойдите в граф.`,
   };
-  for (const tool of cache.tools.tools)
-    if (former[tool.name]) tool.description = `${former[tool.name]}\n\n${tool.description}`;
+  for (const tool of cache.tools.tools) if (cached[tool.name]) tool.description = cached[tool.name];
+  for (const name of Object.keys(cached))
+    if (!cache.tools.tools.some((x) => x.name === name))
+      cache.tools.tools.push({ name, description: cached[name], inputSchema: { type: "object" } });
   writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
   await bridge.stop();
   await fake.stop(); // no network: the second bridge answers from the cache
@@ -1123,8 +1141,17 @@ test("a cached list written by a former bridge serves write tools without its mo
   await second.call("initialize", 1, INIT);
   const listed = await second.call("tools/list", 2, {});
   const byName = Object.fromEntries((listed.result?.tools ?? []).map((x) => [x.name, x]));
+  // Taken off: the whole line first, last, both, in either language.
   assert.equal(byName.iskron_add_vimarsha?.description, "Создай вопрошание.");
   assert.equal(byName.iskron_batch?.description, "Атомарная дельта.");
+  assert.equal(byName.iskron_add_kriya?.description, "Создай крию.");
+  assert.equal(byName.iskron_add_bianhua?.description, "Создай превращение.");
+  // Kept byte for byte: a like start that is no shipped line, no blank line, nothing left
+  // after the line, and a read tool.
+  assert.equal(byName.iskron_add_phenomenon?.description, cached.iskron_add_phenomenon);
+  assert.equal(byName.iskron_add_holon?.description, cached.iskron_add_holon);
+  assert.equal(byName.iskron_add_karta?.description, MOMENT_7_9);
+  assert.equal(byName.iskron_orient?.description, cached.iskron_orient);
 });
 
 // The shared answers cache keeps the form the harness gets — with the bridge's
