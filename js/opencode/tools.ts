@@ -109,14 +109,18 @@ export async function setupTools(
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key; // the seat's key — the exact address of the record to return
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
-        if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
+        if (kind === "released" || kind === "dead" || kind === "evicted" || kind === "stopped")
+          slot.holding = false;
+        // Taken off by its owner (#7439): the hearing watchdog no longer raises this session's seat.
+        if (kind === "stopped" && slot.session) keeper.forget(slot.session);
         // Only a satellite child is a lead (#6550 item 4); a child on a plain bridge is one run (children.ts).
         const over =
           !!slot.child &&
           !!slot.satelliteOf &&
           !!slot.session &&
           leads.heard(slot.session, kind, slot.place);
-        if (!over) relay(slot.session, params, !!slot.child); // an ended lead gets no channel words
+        // An ended lead gets no channel words — but a stop still interrupts its turn (channel.ts).
+        if (!over || kind === "stopped") relay(slot.session, params, !!slot.child);
       },
       (e) => {
         // A holding bridge exited against our will — a word into the session, not a log line (#5140).

@@ -35,6 +35,7 @@ import {
 } from "./places.ts";
 import { otherRealm, sameRealm } from "./realms.ts";
 import { batchForWatchdogs, noteRoomKind } from "./roomstack.ts";
+import { stopOf } from "./stopped.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -333,6 +334,8 @@ function expectHello(): void {
 /** Return to the place left: same address, socket reopened. */
 export function resumeStanding(): boolean {
   if (!H.parked || !H.currentUrl || !H.currentKey) return false;
+  const s = state.standing;
+  if (s && stopOf(s.realm, s.karta, s.name)) return false; // taken off while away: no return (#7439)
   H.parked = false;
   expectHello();
   openHolder(H.currentUrl, H.currentKey);
@@ -400,6 +403,13 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
 const keyed = (d: Door, ev: ChannelEvent): ChannelEvent =>
   d === H.door ? ev : { ...ev, key: d.key };
 
+/** Released as the session's own act, records and binding forgotten: nothing returns it. */
+export function forgetSeat(reason: string): void {
+  releaseStanding(reason, true, false, true);
+  state.standing = null;
+  state.standingSession = null;
+}
+
 // Socket handlers get the opening session's scope explicitly (shared/scope.ts); the runtime
 // need not carry it across events.
 function openHolder(url: string, key: string): void {
@@ -429,28 +439,27 @@ function openHolder(url: string, key: string): void {
         dropOwnHoldRecord(key, url); // address rotated: own record is dead, the evictor's stays
         E.next?.(key, url, code); // the eviction word and the next move: evicted.ts
       },
-      onDeadToken: (code) => {
+      onStopped: (code, reason) => {
         if (H.revokingOwn) {
           // Own revoke in flight: 4001 outran the revoke answer, the token is closed, not dead;
           // release quietly, else an obedient agent re-creates the place just revoked.
           log(
             `standing revoked by this session — released quietly, binding forgotten (${state.standing?.name ?? "unnamed"}; close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords().revokedOwn(), true, false, true);
-          state.standing = null;
-          state.standingSession = null;
-          return;
+          return forgetSeat(holdWords().revokedOwn());
         }
         if (H.closingOwn) {
           // Own channel close, like own revoke: 4001 outran the answer (#6634).
           log(
             `channel closed by this session — released quietly (close ${code} arrived before the answer)`,
           );
-          releaseStanding(holdWords().closedOwn(), true, false, true);
-          state.standing = null;
-          state.standingSession = null;
-          return;
+          return forgetSeat(holdWords().closedOwn());
         }
+        // Anyone else's 4001: the owner stopped the doer (stophold.ts); unwired — released all the same.
+        if (E.stop) E.stop(key, code, reason);
+        else forgetSeat(`close ${code}`);
+      },
+      onDeadToken: (code) => {
         if (H.resuming > 0) {
           // Stale hold record, the place is already dead at the platform: a quiet rollback, not
           // an alarm; the stand tool takes the place anew by connect.

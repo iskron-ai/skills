@@ -51,6 +51,10 @@ export function runWatchdogCodex(argv: string[]): void {
     process.exit(2);
   }
   const target = resolveStanding(argv);
+  if ("stopped" in target) {
+    note(target.stopped); // taken off by its owner (#7439): no turn, exit 0
+    process.exit(0);
+  }
   if ("error" in target) {
     note(doer(target.error));
     process.exit(2);
@@ -222,6 +226,10 @@ export function runWatchdogCodex(argv: string[]): void {
         case "evicted":
           note(ev.text ?? wd().seatLost());
           void deliver(ev.text ?? wd().codexLost()).then(() => process.exit(1));
+          break;
+        case "stopped":
+          note(ev.text ?? wd().seatLost()); // the owner took the seat off (#7439): no turn/start
+          process.exit(0);
           break;
         case "alive":
           note(ev.text ?? wd().aliveNote());

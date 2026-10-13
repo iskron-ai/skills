@@ -228,6 +228,30 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
     void deliver(session, text, W.frame(), "steer", child);
   }
 
+  /**
+   * The owner took the seat off (#7439): the session's running turn is interrupted, its piles
+   * and waiting tact are dropped, and the stop word goes to the human and into the session
+   * as a message that starts no turn. Nothing of this session wakes it afterwards.
+   */
+  function stopped(session: string | null, text: string, child: boolean): void {
+    say(text, "error");
+    const own = `${child ? "child" : "root"}:${session ?? ""}`;
+    const p = piles.get(own);
+    if (p?.timer) clearTimeout(p.timer);
+    piles.delete(own);
+    if (!session) return;
+    tacts.gone(session);
+    const s = ctx.session as any;
+    const failed = (e: Error) => say(W.notDelivered(W.frame(), session, e.message), "warning");
+    void Promise.resolve(s.interrupt?.({ sessionID: session, resume: false })).catch(failed);
+    // A child's end goes to its parent (leads.ts): no word is laid into the child.
+    if (child || typeof s.synthetic !== "function") return;
+    const said = markFrame(text);
+    void Promise.resolve(
+      s.synthetic({ sessionID: session, text: said, delivery: "queue", resume: false }),
+    ).catch(failed);
+  }
+
   return {
     status(session, on) {
       if (on) tacts.busy(session);
@@ -288,6 +312,9 @@ export function setupChannel(ctx: Context, say: Say, freshestRoot: () => string 
         // A child's bridge word goes only to it (child): it is not the root's (#6625).
         case "dead":
           loud(session, P.dead(String(ev.code)), child);
+          return;
+        case "stopped":
+          stopped(session, P.stopped(ev.text ?? ""), child);
           return;
         case "stale":
           noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);

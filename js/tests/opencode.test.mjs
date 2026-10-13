@@ -157,6 +157,7 @@ function fakeCtx({
 } = {}) {
   const prompts = [];
   const synthetics = [];
+  const interrupts = [];
   const updates = [];
   const moves = [];
   const hooks = {};
@@ -223,6 +224,11 @@ function fakeCtx({
         moves.push(o);
         if (faults.moveFails) throw new Error("move refused");
       },
+      // An interrupt of the session's running turn (session.interrupt, @opencode/plugin 2.0.4).
+      interrupt: async (o) => {
+        interrupts.push(o);
+        return { interrupted: true };
+      },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
       synthetic: async (o) => {
         const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
@@ -257,6 +263,7 @@ function fakeCtx({
     ctx,
     prompts,
     synthetics,
+    interrupts,
     updates,
     moves,
     tools: () => tools.get(),
@@ -1301,24 +1308,62 @@ test("a frame with no session seen at all is said aloud, not lost silently", asy
   }
 });
 
-test("a dead token is loud: an error line and a prompt that names the move", async () => {
+test("an idle-expired seat (4002) is loud: an error line and a prompt that names the move", async () => {
   const b = bridgeEnv("dead");
   const rec = await plugin(b.env);
   try {
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "s-holder");
-    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("dead", { code: 4001 }));
-    await until(() => rec.prompts.length === 1, "the dead-token prompt");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("dead", { code: 4002 }));
+    await until(() => rec.prompts.length === 1, "the dead-seat prompt");
     assert.equal(rec.prompts[0].sessionID, "s-holder");
-    assert.match(rec.prompts[0].text, /токен мёртв/);
-    // connect on every code: mint answers 409 once the channel is back (#5189).
-    assert.match(rec.prompts[0].text, /action="connect"/);
-    assert.doesNotMatch(rec.prompts[0].text, /mint/, "4001 must not offer mint");
-    assert.match(rec.said(), /\[iskron\/error\] .*токен мёртв/, "the human must see it too");
+    assert.match(rec.prompts[0].text, /4002 — место погасло по простою/);
+    assert.match(rec.prompts[0].text, /iskron_stand тем же именем/);
+    assert.doesNotMatch(rec.prompts[0].text, /mint|токен мёртв/, "4002 is no dead token");
+    assert.match(rec.said(), /\[iskron\/error\] .*погасло по простою/, "the human must see it too");
   } finally {
     await rec.stop();
   }
 });
+
+// #7440 п.2: the owner took the seat off (4001, kind "stopped") — the session's running turn is
+// interrupted, its waiting words dropped, and the stop word goes to the human and into the
+// session as a message that starts no turn; nothing prompts it, the hearing watch lets it go.
+for (const busy of [true, false])
+  test(`the owner's stop of a ${busy ? "busy" : "waiting"} session interrupts its turn and wakes nothing`, async () => {
+    const b = bridgeEnv(`stopped-${busy ? "busy" : "idle"}`);
+    const rec = await plugin(b.env);
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-stop");
+      const pid = pidOf(b.log);
+      if (busy)
+        rec.emit({
+          type: "session.status",
+          data: { sessionID: "s-stop", status: { type: "busy" } },
+        });
+      const text =
+        "место proba снято (человеком) — стоп: место не занимай, работу не продолжай; встать снова — только по слову человека: iskron_stand(take=true)";
+      appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+      await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+      assert.deepEqual(rec.interrupts[0], { sessionID: "s-stop", resume: false });
+      await until(() => rec.synthetics.length === 1, "the stop word in the session");
+      assert.equal(rec.synthetics[0].sessionID, "s-stop");
+      assert.equal(rec.synthetics[0].resume, false, "the stop word starts no turn");
+      assert.match(rec.synthetics[0].text, /снято \(человеком\) — стоп/);
+      assert.match(rec.said(), /\[iskron\/error\] Искрон: место proba снято/, "the human hears it");
+      // A tact after the stop (a late batch) still goes by its own path; the stop itself prompts nothing.
+      await delay(300);
+      assert.equal(rec.prompts.length, 0, "the stop wakes no turn");
+      assert.doesNotMatch(
+        [...rec.prompts, ...rec.synthetics].map((p) => p.text).join("\n"),
+        /connect/,
+        "a stop never calls connect",
+      );
+    } finally {
+      await rec.stop();
+    }
+  });
 
 test("a stale burst is one prompt into the holder's session, bodies included", async () => {
   const b = bridgeEnv("stale");
@@ -4153,14 +4198,15 @@ for (const order of ["parent first", "child first"])
     }
   });
 
-// #147 [140] 1а: a satellite place the platform takes away (evicted 4000, dead token 4001)
-// ends the lead like a revoke — a word to the parent without waking it — instead of a
-// bridge without a place the reaper puts out half an hour later, the parent told nothing.
-for (const kind of ["evicted", "dead"])
+// #147 [140] 1а: a satellite place the platform takes away (evicted 4000, gone idle 4002) or
+// its owner takes off (stopped 4001, #7440) ends the lead like a revoke — a word to the parent
+// without waking it — instead of a bridge without a place the reaper puts out half an hour
+// later, the parent told nothing. A stop also interrupts the child's running turn.
+for (const kind of ["evicted", "dead", "stopped"])
   test(`a lead child whose satellite place is ${kind} is ended with a word to the parent, not left to the reaper`, async () => {
     const { b, rec, childPid } = await leadChild(`lead-${kind}`);
     try {
-      const code = kind === "dead" ? 4001 : 4000;
+      const code = { dead: 4002, stopped: 4001, evicted: 4000 }[kind];
       const text = `ДЕЛАТЕЛЬ: канал закрыт кодом ${code} — токен мёртв. Зови connect`;
       appendFileSync(`${b.events}.${childPid}`, event(kind, { code, text }));
       await until(() => !alive(childPid), "the placeless child's bridge to go");
@@ -4171,8 +4217,15 @@ for (const kind of ["evicted", "dead"])
         /токен мёртв/,
         "a 4001 after a revoke is no dead token",
       );
-      if (kind === "dead") assert.match(ends(rec)[0].text, /отозвано/);
+      if (kind !== "evicted") assert.match(ends(rec)[0].text, /отозвано/);
       assert.equal(ends(rec)[0].resume, false, "the loss of the place does not wake the parent");
+      if (kind === "stopped")
+        assert.deepEqual(
+          rec.interrupts,
+          [{ sessionID: "child", resume: false }],
+          "the stop interrupts the child's turn",
+        );
+      else assert.deepEqual(rec.interrupts, [], "only a stop interrupts");
       // e2e ada1ff7: the ended child was handed the bridge's «call connect» and woken for a turn.
       await delay(200);
       const toChild = [...rec.prompts, ...rec.synthetics].filter((p) => p.sessionID === "child");
@@ -4182,7 +4235,7 @@ for (const kind of ["evicted", "dead"])
         "no channel word is laid into the ended child, nothing wakes it",
       );
       const refused = rec.call("iskron_stand", { realm: "nks-dev" }, "child");
-      await assert.rejects(refused, kind === "dead" ? /отозвано/ : /вытеснено/);
+      await assert.rejects(refused, kind === "evicted" ? /вытеснено/ : /отозвано/);
       await assert.rejects(refused, (e) => !/запустивший отпустил/.test(e.message));
     } finally {
       await rec.stop();
@@ -6957,15 +7010,15 @@ const SPEECH = {
     missing: (tried) =>
       `Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: ${tried}. Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.`,
     listening: "Iskron: the channel is listening",
-    dead: (code) =>
-      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    dead: () =>
+      "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name.",
   },
   ru: {
     missing: (tried) =>
       `Искрон: мост не найден — тулов iskron_* в этой сессии не будет. Искал: ${tried}. Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.`,
     listening: "Искрон: канал слушает",
-    dead: (code) =>
-      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    dead: () =>
+      "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем.",
   },
 };
 
@@ -6975,7 +7028,7 @@ for (const [lang, chosen, label] of [
   ["ru", { ISKRON_BRIDGE_LANG: "ru" }, "ISKRON_BRIDGE_LANG=ru"],
 ]) {
   const say = SPEECH[lang];
-  test(`${label}: the missing bridge, the listening channel and a dead token are said in ${lang}`, async () => {
+  test(`${label}: the missing bridge, the listening channel and a seat gone idle are said in ${lang}`, async () => {
     const missing = join(SANDBOX, "no-such-bridge.mjs");
     const none = await plugin({ ISKRON_BRIDGE_PATH: missing, ...chosen });
     try {
@@ -6996,10 +7049,10 @@ for (const [lang, chosen, label] of [
         event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
       );
       await until(() => rec.said().includes(`[iskron] ${say.listening}\n`), "the hello line");
-      appendFileSync(`${b.events}.${pid}`, event("dead", { code: 4001 }));
-      await until(() => rec.prompts.length === 1, "the dead-token prompt");
-      assert.equal(rec.prompts[0].text, say.dead(4001));
-      assert.ok(rec.said().includes(`[iskron/error] ${say.dead(4001)}\n`), rec.said());
+      appendFileSync(`${b.events}.${pid}`, event("dead", { code: 4002 }));
+      await until(() => rec.prompts.length === 1, "the dead-seat prompt");
+      assert.equal(rec.prompts[0].text, say.dead());
+      assert.ok(rec.said().includes(`[iskron/error] ${say.dead()}\n`), rec.said());
     } finally {
       await rec.stop();
     }

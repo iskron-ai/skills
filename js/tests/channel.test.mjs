@@ -45,7 +45,7 @@ Object.defineProperty(globalThis, "WebSocket", {
 });
 
 process.env.ISKRON_CHANNEL_FLAP_MS = "400,1600"; // read at import: short flap pauses for the probe
-const { holdSocket, DEAD_TOKEN_CODES, EVICTED_CODE } = await import(
+const { holdSocket, DEAD_TOKEN_CODES, EVICTED_CODE, STOPPED_CODE } = await import(
   process.env.ISKRON_CHANNEL_SOURCE || "../shared/channel.ts"
 );
 
@@ -72,6 +72,30 @@ for (const code of DEAD_TOKEN_CODES) {
     assert.equal(holder.alive, false);
   });
 }
+
+// 4001 is revoked — the owner took the seat off (#7439): not a dead token; the holder yields
+// to onStopped with the close reason, once, past the 1006 guess, and never reopens.
+test("a 4001 close is the owner's stop: onStopped with its reason, once, no reopen, no dead token", async () => {
+  assert.equal(STOPPED_CODE, 4001);
+  assert.ok(!DEAD_TOKEN_CODES.includes(4001), "4001 is no dead token");
+  sockets.length = 0;
+  const stops = [];
+  const holder = holdSocket({
+    url: "ws://127.0.0.1:9/channel/ws/tok",
+    onFrame: () => {},
+    onDeadToken: () => assert.fail("a stop is no dead token"),
+    onStopped: (c, reason) => stops.push([c, reason]),
+    onServiceAlive: () => assert.fail("a stop must not be read as flapping"),
+  });
+  const first = sockets[0];
+  first.fire("error");
+  await delay(800);
+  first.fire("close", { code: 4001, reason: "revoked:person" });
+  await delay(2500);
+  assert.deepEqual(stops, [[4001, "revoked:person"]]);
+  assert.equal(sockets.length, 1, "the holder reopened on a stop");
+  assert.equal(holder.alive, false);
+});
 
 // 4000 is superseded, not dead — and no cue to reopen: the same address would evict
 // the new holder, and it us (seen live after a daemon handover: two bridges of one

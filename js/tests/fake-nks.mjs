@@ -446,8 +446,11 @@ export async function startFakeNks(opts = {}) {
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
+        // ws_close_reason: причина закрытия (#7492 — «revoked:person», «revoked:self»).
+        const why = Buffer.from(String(patch.ws_close_reason ?? ""));
         for (const sock of st.ws) {
-          sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
+          const code = Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff]);
+          sock.write(wsFrame(0x8, Buffer.concat([code, why])));
           setTimeout(() => sock.end(), 200).unref();
         }
       }
@@ -489,6 +492,7 @@ export async function startFakeNks(opts = {}) {
         "standingRefuseNext",
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
+        "stoppedNames", // имена под стопом владельца: connect/mint/register — 409 standing_stopped
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "rooms",
         "boardText",
@@ -923,6 +927,27 @@ export async function startFakeNks(opts = {}) {
       // смену id и один помнит выведенное имя.
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
+        // Стоп владельца (#7492, будущее api): connect/mint/register на остановленном имени — 409 standing_stopped.
+        if (
+          ["connect", "mint", "register"].includes(a.action) &&
+          (st.stoppedNames ?? []).includes(cleanName(a.name))
+        ) {
+          st.counts.stopped_refused = (st.counts.stopped_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused("Отказано (409): standing stopped", "Abgelehnt (409).", {
+                rule: "standing_stopped",
+                status: 409,
+                data: { reason: "revoked:person" },
+              }),
+            },
+            extra,
+          );
+        }
         if (a.action === "register") {
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));

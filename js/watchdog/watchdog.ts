@@ -94,6 +94,7 @@ const exitNow = (s: string, code: number): void => {
 
 export function runWatchdog(argv: string[]): void {
   const target = resolveStanding(argv);
+  if ("stopped" in target) return exitNow(target.stopped, 0); // taken off by its owner (#7439)
   if ("error" in target) {
     writeSync(2, `${doer(target.error)}\n`);
     process.exit(2);
@@ -250,6 +251,10 @@ export function runWatchdog(argv: string[]): void {
         case "dead":
         case "evicted":
           leave(ev.text ?? wd().seatLost(), 1);
+          break;
+        case "stopped":
+          // The owner took the seat off (#7439): the stop word is the last line, no alarm code.
+          leave(ev.text ?? wd().seatLost(), 0);
           break;
         case "alive":
           log(ev.text ?? wd().aliveNote()); // holding goes on, the watchdog keeps listening

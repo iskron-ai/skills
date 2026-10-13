@@ -6,6 +6,7 @@
 // key would kill the led one.
 import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
+import { stopMarkOf } from "../shared/stopmark.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -41,6 +42,7 @@ import { placeFields } from "./placefields.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { publishStatus } from "./status.ts";
+import { stopOf, stopWord } from "./stopped.ts";
 import { standingLog } from "./store.ts";
 import { emit, log } from "./streams.ts";
 import { afterResume } from "./suspend.ts";
@@ -83,7 +85,7 @@ export async function resumeFromDisk(
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key);
   if (!rec) return null;
-  if (holdsKey(key)) return null;
+  if (holdsKey(key) || stopOf(realm, karta, name)) return null;
   const led = ledKey();
   if (led && led !== key) return null;
   if (await localSocketAlive(localSocketPathOf(key))) return null;
@@ -164,6 +166,20 @@ export interface ResumeOutcome {
   legacy?: string[];
   /** Own seats whose socket a live bridge of another session holds: not taken (#6626). */
   elsewhere?: string[];
+  /** The seat was taken off by its owner (#7439): no return, the word is the stop word. */
+  stopped?: true;
+}
+
+/** A seat under a stop mark: the stop outcome; otherwise null (stopped.ts). */
+function stoppedOutcome(rec: {
+  realm: string;
+  karta: string | number;
+  name: string;
+}): ResumeOutcome | null {
+  const m = stopOf(rec.realm, rec.karta, rec.name);
+  if (!m) return null;
+  const key = keyOf(rec.realm, rec.karta, rec.name);
+  return { resumed: false, key, stopped: true, word: stopWord(rec.name, m.reason) };
 }
 
 /** Back to the parked seat: a new socket, hello is the proof. */
@@ -191,6 +207,9 @@ export async function resumeBy(
   register = true,
   takeOwn = false,
 ): Promise<ResumeOutcome> {
+  // The stop erased the record: the key's stop mark answers, not "no record — take it anew".
+  const marked = sel.key ? stopMarkOf(CFG.authDir, sel.key) : null;
+  if (marked) return { resumed: false, key: sel.key, stopped: true, word: marked.text };
   const { own: recs, sameDir, legacy: legacyRecs, left, neighbour } = recordsFor(sel);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
@@ -216,6 +235,8 @@ export async function resumeBy(
   const elsewhere: string[] = [];
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
+    const stop = stoppedOutcome(rec);
+    if (stop) return stop;
     if (holdsKey(key))
       return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding(), own: true };
     if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, resumeWords.byRecord());
@@ -256,6 +277,8 @@ export async function resumeBy(
     const proven = (!!me && rec.session === me) || (key === led && !rec.session);
     const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
     if (!back) {
+      const stopNow = stoppedOutcome(rec); // the return met the owner's 4001
+      if (stopNow) return stopNow;
       const kept = readHoldRecord(key);
       skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
       if (!kept) {

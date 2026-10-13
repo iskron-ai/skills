@@ -12,6 +12,7 @@ import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { openedConcurrently, refusalOf } from "./refusal.ts";
+import { isStopRefusal } from "./stoprefusal.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -86,6 +87,13 @@ function replayStanding(): Promise<void> {
         // Seats of other graphs in the same move, or their writes would land unattributed (#5838).
         if (await replayBeside()) state.standingSession = state.sessionId;
         log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
+      } else if (isStopRefusal(got)) {
+        // Taken off by its owner (stopped.ts, #7439): forgotten, never re-registered.
+        log(
+          `the standing was taken off by its owner, forgetting it: ${replyText(got).slice(0, 200)}`,
+        );
+        state.standing = null;
+        releaseStanding(replyText(got), true, false, true);
       } else if (seatIsGone(got)) {
         // The seat itself is gone (expired while we were away) — say so and let
         // the agent take it back with connect; never guess a different name.

@@ -41,12 +41,19 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
 }));
 
-/** Next step after eviction (evicted.ts): set once at load, one per process for all sessions. */
-export const E: { next: ((key: string, url: string, code: number) => void) | null } = {
+/** Next step after eviction (evicted.ts) and after the owner's stop (stophold.ts): set once at load, one per process for all sessions. */
+export const E: {
+  next: ((key: string, url: string, code: number) => void) | null;
+  stop: ((key: string, code: number, reason: string) => void) | null;
+} = {
   next: null,
+  stop: null,
 };
 export function whenEvicted(fn: (key: string, url: string, code: number) => void): void {
   E.next = fn;
+}
+export function whenStopped(fn: (key: string, code: number, reason: string) => void): void {
+  E.stop = fn;
 }
 
 /** A disk resume started (+1) or ended (-1). */

@@ -121,9 +121,11 @@ function fakePi({ hasUI = true } = {}) {
   const notices = [];
   const statuses = [];
   let idle = true; // ход агента не идёт — как ctx.isIdle() pi
+  const aborts = []; // ctx.abort() — прерывание идущего хода
   const ctx = {
     hasUI,
     isIdle: () => idle,
+    abort: () => aborts.push(Date.now()),
     ui: {
       notify: (text, level) => notices.push({ text, level }),
       setStatus: (key, text) => statuses.push({ key, text }),
@@ -162,6 +164,7 @@ function fakePi({ hasUI = true } = {}) {
     notices,
     statuses,
     handlers,
+    aborts,
     /** Ход занят (true) или свободен — что вернёт ctx.isIdle(). */
     busy(on) {
       idle = !on;
@@ -826,7 +829,7 @@ test("attention tacts while the turn is busy: none enters it, its end brings one
 // stopped trying; the extension has nowhere to exit to, so "loud" means the
 // doer sees it in the turn.
 test("a dead-token event complains loudly and names connect; mint is offered on no code", async () => {
-  for (const code of [4000, 4001, 4002]) {
+  for (const code of [4000, 4002]) {
     const { events, env } = eventsEnv(`dead${code}`);
     const rec = await session(env);
     try {
@@ -836,16 +839,44 @@ test("a dead-token event complains loudly and names connect; mint is offered on 
       assert.equal(rec.messages[0].msg.details.fatal, true);
       assert.equal(rec.messages[0].opts.triggerTurn, true);
       assert.equal(rec.notices.at(-1).level, "error");
-      assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
-      // connect opens what is not there too; mint answers 409 once the channel
-      // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
-      assert.match(rec.notices.at(-1).text, /action="connect"/);
+      // 4002 — the seat went out after idling, returned by iskron_stand; any other — a dead token.
+      if (code === 4002) {
+        assert.match(rec.notices.at(-1).text, /4002 — место погасло по простою/);
+        assert.match(rec.notices.at(-1).text, /iskron_stand тем же именем/);
+      } else {
+        assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
+        // connect opens what is not there too; mint answers 409 once the channel
+        // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
+        assert.match(rec.notices.at(-1).text, /action="connect"/);
+      }
       assert.doesNotMatch(rec.notices.at(-1).text, /mint/, `код ${code} предлагает mint`);
     } finally {
       await rec.stop();
     }
   }
 });
+
+// #7440: the owner took the seat off (4001, kind "stopped") — the running turn is aborted,
+// the stop word goes as a notice and into the history without raising a turn.
+for (const busy of [true, false])
+  test(`the owner's stop of a ${busy ? "busy" : "waiting"} pi session aborts the turn and raises none`, async () => {
+    const { events, env } = eventsEnv(`stopped-${busy}`);
+    const rec = await session(env);
+    try {
+      rec.busy(busy);
+      const text = "место proba снято (человеком) — стоп: место не занимай, работу не продолжай";
+      push(events, { kind: "stopped", code: 4001, text });
+      await delay(250);
+      assert.equal(rec.aborts.length, busy ? 1 : 0, "only a running turn is aborted");
+      assert.equal(rec.notices.at(-1).level, "error");
+      assert.match(rec.notices.at(-1).text, /Искрон: место proba снято \(человеком\) — стоп/);
+      assert.equal(rec.messages.length, 1, "the stop word is in the history");
+      assert.equal(rec.messages[0].opts.triggerTurn, false, "the stop raises no turn");
+      assert.doesNotMatch(rec.messages[0].msg.content, /connect/);
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // A burst of stale frames is one message into the turn, bodies included.
 // The dictionary of room kinds (#5851): event_kind decides the way into the
@@ -1735,8 +1766,8 @@ const SPEECH = {
       ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
     ],
     listening: "Iskron: the channel is listening",
-    dead: (code) =>
-      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    dead: () =>
+      "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name.",
   },
   ru: {
     missing: [
@@ -1744,8 +1775,8 @@ const SPEECH = {
       ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
     ],
     listening: "Искрон: канал слушает",
-    dead: (code) =>
-      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    dead: () =>
+      "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем.",
   },
 };
 
@@ -1755,7 +1786,7 @@ for (const [lang, chosen, label] of [
   ["ru", { ISKRON_BRIDGE_LANG: "ru" }, "ISKRON_BRIDGE_LANG=ru"],
 ]) {
   const say = SPEECH[lang];
-  test(`${label}: the missing bridge, the listening channel and a dead token are said in ${lang}`, async () => {
+  test(`${label}: the missing bridge, the listening channel and a seat gone idle are said in ${lang}`, async () => {
     const none = await session({
       ISKRON_BRIDGE_PATH: MISSING_BRIDGE,
       ISKRON_MCP_READY_WAIT_MS: 15000,
@@ -1776,10 +1807,10 @@ for (const [lang, chosen, label] of [
       push(events, frame({ type: "hello", pending: 0 }));
       await delay(250);
       assert.deepEqual(rec.statuses.at(-1), { key: "iskron", text: say.listening });
-      push(events, { kind: "dead", code: 4001, text: "DOER: close 4001" });
+      push(events, { kind: "dead", code: 4002, text: "DOER: close 4002" });
       await delay(250);
-      assert.equal(rec.notices.at(-1).text, say.dead(4001));
-      assert.equal(rec.messages.at(-1).msg.content, say.dead(4001));
+      assert.equal(rec.notices.at(-1).text, say.dead());
+      assert.equal(rec.messages.at(-1).msg.content, say.dead());
     } finally {
       await rec.stop();
     }

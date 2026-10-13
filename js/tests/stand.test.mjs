@@ -2196,9 +2196,10 @@ test("one's own close answered before its 4001 releases quietly by the answer, n
 });
 
 // Своё close или revoke, упавшие сами (ответа нет), не оставляют пометки «своё в
-// полёте»: иначе следующий настоящий мёртвый токен отпускался тихо словом «токен жив».
+// полёте»: иначе следующее настоящее снятие места отпускалось тихо словом «токен жив».
+// Чужой 4001 — стоп владельца (#7439): слово стопа, не «зови connect».
 for (const action of ["close", "revoke"])
-  test(`a failed own ${action} leaves no mark: a later real 4001 is a dead token that calls connect`, async (t) => {
+  test(`a failed own ${action} leaves no mark: a later real 4001 is the owner's stop`, async (t) => {
     const { fake, bridge } = await ready(t);
     const args = { realm: "nks-dev", karta: 931, name: "proba" };
     assert.ok(
@@ -2212,12 +2213,13 @@ for (const action of ["close", "revoke"])
     assert.ok(failed.result?.isError || failed.error, JSON.stringify(failed));
     await fake.control({ mcpDrop: 0, ws_close: 4001 });
     await new Promise((r) => setTimeout(r, 600));
-    const dead = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "dead");
+    const stop = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "stopped");
     assert.match(
-      dead?.text ?? "",
-      /зови connect/,
-      `a real dead token is announced:\n${bridge.stderr}`,
+      stop?.text ?? "",
+      /proba снято .* стоп/,
+      `the stop is announced:\n${bridge.stderr}`,
     );
+    assert.doesNotMatch(stop?.text ?? "", /connect/, "a stop never calls connect");
   });
 
 test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
@@ -4498,4 +4500,115 @@ test("outputSchema rides tools/list to a harness that asked for fields through t
   assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
   assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
+});
+
+// ── the owner's stop (graph nks-dev: #7439, #7440, #7492) ───────────────────
+// A foreign close 4001 is the owner taking the seat off, not a dead token: the bridge lets
+// the seat go, says «стоп» and takes it on no path — not the agent's raw connect or register,
+// not iskron_stand without take, not the plugin's resume or hearing check, not a new bridge
+// of the same home; only take=true, the human's word, stands again. The api's future refusal
+// 409 standing_stopped reads the same.
+const STOP_KEY = "proba--931--nks-dev";
+const stopFiles = (dir) => readdirSync(join(dir, "standings")).filter((f) => f.endsWith(".stop"));
+const sayStop = /место proba снято \(человеком\) — стоп: место не занимай/;
+
+test("#7440: the owner's 4001 stops the doer — no second connect or held, every return refused, take=true stands again", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const stand = (a) => bridge.call("tools/call", { name: "iskron_stand", arguments: a });
+  assert.ok(!(await stand(args)).result?.isError);
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(
+    () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+    "the stop word",
+  );
+  const stop = bridge.notifications.find((n) => n.params?.data?.kind === "stopped").params.data;
+  assert.match(stop.text, sayStop);
+  assert.doesNotMatch(stop.text, /connect/, "a stop never calls connect");
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+  const journal = () => readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal(), /stopped proba--931--nks-dev: close 4001 \(revoked:person\)/);
+  assert.equal(journal().match(/ held /g)?.length, 1, journal());
+  assert.equal(stopFiles(dir).length, 1, "the stop mark lies beside the hold records");
+  // Raw seat moves and the stand tool without take: the stop word, nothing sent.
+  for (const action of ["connect", "register"]) {
+    const r = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action, ...args },
+    });
+    assert.ok(r.result?.isError, `${action}: ${textOf(r)}`);
+    assert.match(textOf(r), sayStop, action);
+  }
+  for (const name of ["proba", "proba.2"]) {
+    const r = await stand({ ...args, name });
+    assert.ok(r.result?.isError, `${name}: ${textOf(r)}`);
+    assert.match(textOf(r), /стоп: место не занимай/, name);
+  }
+  // The plugin's return and hearing check by key: the stop word, no return.
+  for (const m of ["iskron/resume", "iskron/check"]) {
+    const r = await bridge.call(m, { key: STOP_KEY });
+    assert.equal(r.result?.stopped, true, `${m}: ${JSON.stringify(r.result)}`);
+    assert.match(r.result?.word ?? "", sayStop, m);
+  }
+  // A new bridge of the same home (restart, daemon change) does not take it either.
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", INIT)).result);
+  const again = await next.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(again.result?.isError, textOf(again));
+  assert.match(textOf(again), sayStop);
+  assert.equal(fake.state.counts.connect, 1, "no path took the stopped seat");
+  assert.equal(journal().match(/ held /g)?.length, 1, journal());
+  // take=true — the human's word: the stop is lifted and the seat taken.
+  const taken = await next.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.ok(!taken.result?.isError, textOf(taken));
+  assert.equal(fake.state.counts.connect, 2);
+  assert.deepEqual(stopFiles(dir), [], "take=true lifts the stop");
+});
+
+test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
+  for (const [reason, who] of [
+    ["", /снято \(владельцем или другой сессией\)/],
+    ["revoked:self", /снято \(сессией той же учётки\)/],
+  ]) {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ ws_close: 4001, ws_close_reason: reason });
+    await until(
+      () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+      "the stop word",
+    );
+    const stop = bridge.notifications.find((n) => n.params?.data?.kind === "stopped").params.data;
+    assert.match(stop.text, who, reason);
+  }
+});
+
+test("#7492: the api's 409 standing_stopped on connect reads as the owner's stop — marked, said, refused until take=true", async (t) => {
+  const { fake, dir, bridge } = await ready(t, ASKS_FIELDS);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const stand = (a) => bridge.call("tools/call", { name: "iskron_stand", arguments: a });
+  await fake.control({ structured: true, stoppedNames: ["proba"] });
+  const first = await stand(args);
+  assert.ok(first.result?.isError, textOf(first));
+  assert.match(textOf(first), sayStop);
+  assert.equal(stopFiles(dir).length, 1, "the api's stop is marked on disk");
+  await fake.control({ stoppedNames: [] });
+  const refused = fake.state.counts.stopped_refused;
+  const second = await stand(args);
+  assert.match(textOf(second), sayStop, "the mark refuses without asking the api");
+  assert.equal(fake.state.counts.stopped_refused, refused);
+  assert.equal(fake.state.counts.connect, 0);
+  const taken = await stand({ ...args, take: true });
+  assert.ok(!taken.result?.isError, textOf(taken));
+  assert.equal(fake.state.counts.connect, 1);
 });
