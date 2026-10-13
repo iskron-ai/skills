@@ -114,17 +114,23 @@ function replayStanding(): Promise<void> {
   return R.inFlight;
 }
 
-export async function replayRegister(place: Standing | null): Promise<JsonRpcMessage | null> {
-  const got = await registerOnce(place);
+export async function replayRegister(
+  place: Standing | null,
+  freshSkills = true,
+): Promise<JsonRpcMessage | null> {
+  const got = await registerOnce(place, freshSkills);
   if (!openedConcurrently(got)) return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
-  return registerOnce(place);
+  return registerOnce(place, freshSkills);
 }
 
-async function registerOnce(place: Standing | null): Promise<JsonRpcMessage | null> {
+async function registerOnce(
+  place: Standing | null,
+  freshSkills: boolean,
+): Promise<JsonRpcMessage | null> {
   const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
-  const arguments_ = { ...place, ...placeFields(place ?? {}), action: "register" };
+  const arguments_ = { ...place, ...placeFields(place ?? {}, freshSkills), action: "register" };
   await post(
     {
       jsonrpc: "2.0",

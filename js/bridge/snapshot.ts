@@ -5,7 +5,7 @@ import { harnessName, notifiedClient } from "./client.ts";
 import { doors, heldPlaces, holdsChannel } from "./hold.ts";
 import { sessionOfBridge } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
-import { placeFields } from "./placefields.ts";
+import { observedPlaceAttrs } from "./placefields.ts";
 import { extraPlaces } from "./places.ts";
 import { type BridgeSession } from "./session.ts";
 import { skillsAttr } from "./skillset.ts";
@@ -40,18 +40,18 @@ export function sessionSnapshot(
           ? state.standing
           : extraPlaces().find((x) => x.door.key === p.key)?.standing;
         const door = doors().find((d) => d.key === p.key);
-        const fields = placeFields(standing ?? {});
+        const attrs = observedPlaceAttrs();
         const last = engine.lastWork();
         return safePlace({
           name: standing?.name,
           realm: standing?.realm,
           karta: standing?.karta,
           primary: p.primary,
-          satellite_of: fields.attrs.satellite_of,
+          satellite_of: attrs.satellite_of,
           listening:
             !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
           ...(last ? { last_work_at: new Date(last).toISOString() } : {}),
-          usage: fields.attrs.usage,
+          usage: attrs.usage,
           skills: standing ? announcedSkills(standing) : undefined,
           skills_mismatch: differs(standing ? announcedSkills(standing) : undefined),
         });

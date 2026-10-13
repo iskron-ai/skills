@@ -1403,7 +1403,7 @@ test("iskron_stand: skills of a flat install — the set's bridge version and th
   writeFileSync(lockPath, JSON.stringify(lock));
   const { fake, bridge } = await holderReady(t, {
     file,
-    env: { HOME: home, ISKRON_SKILLS_GAP_MS: "1" },
+    env: { HOME: home },
     init: { ...INIT, clientInfo: { name: "claude-code", version: "2.1.273" } },
   });
   assert.ok(!(await stand(bridge)).result?.isError);
@@ -1417,7 +1417,6 @@ test("iskron_stand: skills of a flat install — the set's bridge version and th
   // and the agent's own register keeps the holder's keys beside its own.
   lock.skills.entry.skillFolderHash = "d".repeat(40);
   writeFileSync(lockPath, JSON.stringify(lock));
-  await new Promise((r) => setTimeout(r, 10)); // The shared disk check is due.
   const again = await bridge.call("tools/call", {
     name: "iskron_channel",
     arguments: {
@@ -1487,7 +1486,7 @@ test("iskron_stand: skills of a flat install whose lock has no establish-mcp ent
   writeFileSync(lockPath, JSON.stringify(lock));
   const { fake, bridge } = await holderReady(t, {
     file,
-    env: { HOME: home, ISKRON_SKILLS_GAP_MS: "1" },
+    env: { HOME: home },
   });
   assert.ok(!(await stand(bridge)).result?.isError);
   assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
@@ -1500,7 +1499,6 @@ test("iskron_stand: skills of a flat install whose lock has no establish-mcp ent
     lockPath,
     JSON.stringify({ version: 3, skills: { stranger: lock.skills.stranger } }),
   );
-  await new Promise((r) => setTimeout(r, 10)); // The shared disk check is due.
   assert.ok(!(await stand(bridge)).result?.isError);
   assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
     name: SET,

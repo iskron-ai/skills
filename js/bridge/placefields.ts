@@ -36,6 +36,11 @@ export function rememberUsage(u: object): void {
   P.usage = u;
 }
 
+/** Read-only snapshot fields; inspecting a place never checks the installed set. */
+export function observedPlaceAttrs(): { usage: object | null; satellite_of: string } {
+  return { usage: P.usage, satellite_of: P.satelliteOf };
+}
+
 /**
  * The caller's seat of a satellite bridge (satellite.ts): the address rides in attrs,
  * the id in the satellite_of field of connect, mint and register (#6064); never outside satellite mode.
@@ -51,7 +56,10 @@ export function rememberModel(m: unknown): void {
 }
 
 /** Seat fields for connect and register: always the full set. */
-export function placeFields(place: Place = {}): {
+export function placeFields(
+  place: Place = {},
+  freshSkills = true,
+): {
   model?: string;
   satellite_of?: string;
   locale?: string;
@@ -69,7 +77,7 @@ export function placeFields(place: Place = {}): {
     attrs: {
       ...extra,
       build: { name: BRIDGE_NAME, version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
-      skills: installedSkills(place),
+      skills: installedSkills(place, freshSkills),
       ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
       ...(usage ? { usage } : {}),

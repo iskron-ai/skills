@@ -26,7 +26,7 @@ export async function refreshSkills(): Promise<void> {
         retrySkillsCheck();
         continue;
       }
-      const got = await replayRegister(place);
+      const got = await replayRegister(place, false);
       if (seatIsGone(got)) {
         if (place === primary ? state.standing !== place : !state.places.includes(place)) continue;
         const why = words(STANDING).seatExpired();
