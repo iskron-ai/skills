@@ -4,6 +4,7 @@
 import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { markFrame } from "../shared/frame-text.ts";
+import { casesLeft } from "./casesleft.ts";
 import { W } from "./leadwords.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
@@ -46,9 +47,8 @@ export interface Released {
   place: Place | null;
 }
 
+/** Its cases are not here: whether a leave is the last, the platform says (casesleft.ts). */
 export interface Snapshot {
-  /** The cases the lead is in — numbers by commas. */
-  room: string | null;
   noted: boolean;
   last?: string;
 }
@@ -63,6 +63,8 @@ export interface LeadDoors {
   tell(session: string, text: string, wake: boolean): Promise<void>;
   /** The child's bridge ends its run (usage first, then the end method); the answer — seats left unrevoked, null — unknown. */
   close(child: string): Promise<string[] | null>;
+  /** How many cases the child's session sits in, by the platform (casesleft.ts); unasked or unread — a throw with the reason. */
+  sits(child: string, realm: string): Promise<number>;
   /** The session is marked ended while its bridge still finishes the run: any write is refused. */
   seal(child: string): void;
   end(child: string): Promise<void>;
@@ -96,6 +98,7 @@ export function leadDoors(
         .catch(() => null);
       return got?.ended ? (got.failed ?? []) : null;
     },
+    sits: (child, realm) => casesLeft(slots.get(child)?.bridge, realm),
     seal: (child) => end(child, null),
     async end(child) {
       end(child);

@@ -5606,11 +5606,12 @@ test("a lead child in case №77 of two graphs is not ended by leaving it in one
   }
 });
 
-// Review of №652, round 2 (P1): r5 and @nks/methodology were one case for a join — the second
-// join erased the first, and leaving methodology ended the child still in nks-dev №77.
-// A join keeps every spelling; a leave takes the exact key, else the same number of another kind.
-const caseRun = async (name, steps) => {
-  const { rec, childPid } = await leadChild(name);
+// Review of №652, rounds 2 and 3: the plugin cannot tell by a spelling (r5, r6, @nks/nks-dev,
+// slug) whether two cases are one. Whether a leave was the last is the platform's word: after
+// it the plugin asks iskron_case mine through the child's bridge (the fake models the cases
+// by graph identity, FB_REALMS).
+const caseRun = async (name, steps, env = {}) => {
+  const { rec, childPid } = await leadChild(name, env);
   try {
     for (const [action, realm, ended] of steps) {
       await rec.call("iskron_case", { realm, action, room: "#77" }, "child");
@@ -5649,6 +5650,53 @@ test("leaving @nks/nks-dev №77 takes the r5 entry, not @nks/methodology's — 
     ["leave", "@nks/nks-dev"],
     ["leave", "@nks/methodology", true],
   ]));
+
+test("a lead child in r5 №77 and r6 №77 is not ended by leaving @nks/nks-dev №77 — r6 is another graph", () =>
+  caseRun("lead-aliases-1", [
+    ["join", "r5"],
+    ["join", "r6"],
+    ["leave", "@nks/nks-dev"],
+    ["leave", "r6", true],
+  ]));
+
+test("a lead child joined by r5 and @nks/nks-dev — one case — ends by leaving it once", () =>
+  caseRun("lead-aliases-2", [
+    ["join", "r5"],
+    ["join", "@nks/nks-dev"],
+    ["leave", "@nks/nks-dev", true],
+  ]));
+
+test("a lead child in №77 of two @-addressed graphs ends only by leaving both", () =>
+  caseRun("lead-two-at-graphs", [
+    ["join", "@nks/nks-dev"],
+    ["join", "@nks/methodology"],
+    ["leave", "@nks/nks-dev"],
+    ["leave", "@nks/methodology", true],
+  ]));
+
+// The platform did not answer whether a case is left: the errand does not end on a guess — a
+// false end is worse than an unfinished one; the launcher gets a warning that does not wake it.
+test("the platform's mine refused after a lead's last leave: no end, a warning to the launcher without a wake", async () => {
+  const { b, rec, childPid, sent } = await leadChild("lead-mine-fails");
+  try {
+    writeFileSync(`${b.reply}.mine`, "__ERROR__Отказано (503): нет связи");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "#77" }, "child");
+    await until(() => rec.synthetics.some((s) => /последнее ли/.test(s.text)), "the warning");
+    const warn = rec.synthetics.find((s) => /последнее ли/.test(s.text));
+    assert.equal(warn.sessionID, "root");
+    assert.equal(warn.resume, false, "the warning does not wake the launcher");
+    assert.match(warn.text, /revoke/);
+    await delay(300);
+    assert.ok(alive(childPid), "no end without the platform's word");
+    assert.equal(ends(rec).length, 0);
+    const asked = sent().find((c) => c.name === "iskron_case" && c.arguments.action === "mine");
+    assert.equal(asked.arguments.relation, "participant");
+    assert.equal(asked.pid, childPid, "asked through the child's own bridge");
+  } finally {
+    await rec.stop();
+  }
+});
 
 // #6550 rule 4 (the owner's word, №147 [128]): no idle ceiling — waiting for a human is
 // not being forgotten; the end is an explicit act only. The former knob, set short, ends nothing.
@@ -6784,7 +6832,6 @@ test("a child's held place in the loss marker is flagged and never hints the roo
         key: "child--931--nks-dev",
         child: true,
         of: ROOT_PLACE,
-        room: null,
       },
       { session: "root", dir: "/work/same", key: "root--2816--nks-dev", child: false },
     ],

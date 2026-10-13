@@ -1,6 +1,7 @@
 // A lead subagent (graph @nks/nks-dev, node #6625; #6550, rule 4): a child session that stood
 // on its own seat lives until its errand's outcome, not until its turn's end. Its end is an
-// explicit act: leaving by the outcome (leave of the last case it is in, #7234; leaving all
+// explicit act: leaving by the outcome (leave of the last case it is in — by the platform's
+// word, casesleft.ts, #7234; leaving all
 // cases, or channel leave), the launcher's revoke of its seat, the session's deletion. Esc of
 // its turn only interrupts the turn (#7493, the owner's word in №607 [41]); a parent's cancel
 // that cut it by cascade is a word to the parent (cascade.ts). No idle ceiling: waiting for a
@@ -17,7 +18,7 @@ import { type Place, standsBy } from "./satellite.ts";
 interface Lead {
   parent: Promise<string | null>;
   place?: Place;
-  rooms: Set<string>; // the cases it is in — "realm#number" (caseKey); leaving the last is the outcome
+  moves: number; // its case joins and leaves: the platform's answer to an earlier leave is stale
   running?: boolean;
   noted?: boolean;
   leaving?: string; // leaving said mid-turn — the end waits for the turn's end and its text
@@ -25,32 +26,6 @@ interface Lead {
 }
 
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
-/** A case is its graph and its number: №77 of two graphs is two cases (#7234). */
-const caseKey = (realm: unknown, room: unknown): string =>
-  `${String(realm ?? "").trim()}#${roomNo(room)}`;
-const keyParts = (k: string): [string, string] => {
-  const i = k.lastIndexOf("#");
-  return [k.slice(0, i), k.slice(i + 1)];
-};
-// Two spellings of one kind (@owner/slug, rN, bare slug) that differ are surely two graphs;
-// mixed kinds (or no graph) may name one graph — or two: a join keeps both, a leave with no
-// exact key takes them. Left over: one case joined by two spellings and left by one stays.
-const spelling = (r: string): string => (r.startsWith("@") ? "@" : /^r\d+$/.test(r) ? "r" : "slug");
-const mayBeSame = (a: string, b: string): boolean => {
-  const [ra, na] = keyParts(a);
-  const [rb, nb] = keyParts(b);
-  return na === nb && (!ra || !rb || spelling(ra) !== spelling(rb));
-};
-/** The snapshot keeps the cases as one string, keys by commas — a former bare number reads as a case of no graph. */
-const roomsOf = (room: string | null | undefined): Set<string> =>
-  new Set(
-    (room ?? "")
-      .split(",")
-      .map((s) => (s.includes("#") ? keyParts(s.trim()) : ["", s]))
-      .filter(([, n]) => roomNo(n))
-      .map(([r, n]) => caseKey(r, n)),
-  );
-const roomsText = (l: Lead | undefined): string | null => [...(l?.rooms ?? [])].join(",") || null;
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
 
@@ -115,8 +90,25 @@ export function createLeads(d: LeadDoors): Leads {
     if (!l.running) void finish(child, why);
   }
 
+  /**
+   * After a case leave: the end only on the platform's word that no case is left (casesleft.ts).
+   * Unasked or unread — no end, a warning to the parent that does not wake it: a false end is
+   * worse than an unfinished one. A join or leave since the question makes its answer stale.
+   */
+  async function lastLeave(child: string, l: Lead, room: string, realm: string): Promise<void> {
+    const at = l.moves;
+    const left = await d.sits(child, realm).catch((e: Error) => e);
+    if (leads.get(child) !== l || l.moves !== at || l.leaving) return;
+    if (left === 0) return leave(child, l, W().leftCase(room));
+    if (typeof left === "number") return;
+    const text = W().lastUnknown(who(l, child), room, left.message);
+    const parent = await l.parent;
+    if (parent) await d.tell(parent, text, false);
+    else d.say(W().noParent(text), "warning");
+  }
+
   function stood(child: string): Lead {
-    const l = leads.get(child) ?? { parent: parentOf(child), rooms: new Set<string>() };
+    const l = leads.get(child) ?? { parent: parentOf(child), moves: 0 };
     leads.set(child, l);
     over.delete(child);
     return l;
@@ -134,22 +126,14 @@ export function createLeads(d: LeadDoors): Leads {
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
       const room = name === tool("case") ? roomNo(args.room) : null;
-      // The call's graph, by default the graph of the child's seat.
-      const key = room ? caseKey(String(args.realm ?? "").trim() || l.place?.realm, room) : null;
-      if (args.action === "join" && key) l.rooms.add(key);
+      if (room !== null && (args.action === "join" || args.action === "leave")) l.moves++;
       if (args.action !== "leave") return;
-      const same = !key
-        ? []
-        : l.rooms.has(key)
-          ? [key]
-          : [...l.rooms].filter((k) => mayBeSame(k, key));
       if (name === tool("channel")) leave(child, l, W().leftSeat());
       else if (room === "") leave(child, l, W().leftCases());
-      // The outcome is leaving the last case it is in, not the first it joined (#7234).
-      else if (room && same.length) {
-        for (const k of same) l.rooms.delete(k);
-        if (!l.rooms.size) leave(child, l, W().leftCase(room));
-      }
+      // The outcome is leaving the last case it is in, not the first it joined (#7234) — the
+      // platform says which; the call's graph, by default the graph of the child's seat.
+      else if (room)
+        void lastLeave(child, l, room, String(args.realm ?? "").trim() || l.place?.realm || "");
     },
     async release(caller, name, args) {
       const s = String(args.standing ?? "").trim();
@@ -191,7 +175,6 @@ export function createLeads(d: LeadDoors): Leads {
     },
     back(child, was) {
       const l = stood(child);
-      for (const r of roomsOf(was.room)) l.rooms.add(r);
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke by name before "held"
@@ -200,12 +183,12 @@ export function createLeads(d: LeadDoors): Leads {
     away: (child) => finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
-      return { room: roomsText(l), noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last };
     },
     handoff(child) {
       const l = leads.get(child);
       leads.delete(child); // neither "ended" nor over: the lead lives in the new folder's instance
-      return { room: roomsText(l), noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last };
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     onEvent(ev) {

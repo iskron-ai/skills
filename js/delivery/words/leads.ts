@@ -34,6 +34,8 @@ export interface LeadWords {
   leftSeat: () => string;
   leftCases: () => string;
   leftCase: (room: string) => string;
+  /** why — отчего платформа не сказала, остались ли дела. */
+  lastUnknown: (who: string, room: string, why: string) => string;
   releasedByLauncher: () => string;
   deleted: () => string;
   reloadUnreadable: () => string;
@@ -111,6 +113,9 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     leftSeat: () => "ушёл с места по исходу",
     leftCases: () => "ушёл из дел по исходу",
     leftCase: (room) => `вышел из дела №${room} по исходу`,
+    lastUnknown: (who, room, why) =>
+      `Искрон: субагент ${who} вышел из дела №${room}, но последнее ли это его дело, платформа не сказала (${why}) — поручение НЕ кончено, мост и место живы. ` +
+      `Кончилось — отпусти: iskron_channel(action="revoke", standing="${who}").`,
     releasedByLauncher: () => "отпущен словом запустившего",
     deleted: () => "сессия субагента удалена",
     reloadUnreadable: () => "перезагрузка плагина, сессия субагента не читается",
@@ -195,6 +200,9 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     leftSeat: () => "left its seat by the outcome",
     leftCases: () => "left its cases by the outcome",
     leftCase: (room) => `left case №${room} by the outcome`,
+    lastUnknown: (who, room, why) =>
+      `Iskron: subagent ${who} left case №${room}, but whether it was its last case the platform did not say (${why}) — the errand has NOT ended, its bridge and seat live. ` +
+      `If it is over — release it: iskron_channel(action="revoke", standing="${who}").`,
     releasedByLauncher: () => "released on the launcher's word",
     deleted: () => "the subagent's session was deleted",
     reloadUnreadable: () => "plugin reload, the subagent's session is unreadable",
