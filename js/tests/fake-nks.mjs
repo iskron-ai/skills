@@ -130,7 +130,7 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     closeCodeDelayMs: 0, // close: the HTTP answer goes out first, the 4001 close this much later
-    endedFrame: false, // revoke/close: a standing_ended frame per seat instead of the 4001 close (api 0.121.0)
+    endedFrame: false, // revoke/close: a standing_ended frame per seat instead of the 4001 close (api 0.121.0); close: "beside-first"
     statusDelayMs: 0,
     statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
     mcpDrop: 0, // the same for this many next MCP POSTs
@@ -1313,8 +1313,11 @@ export async function startFakeNks(opts = {}) {
           for (const sock of st.ws) {
             if (st.wsChans.get(sock) !== chan) continue;
             if (st.endedFrame) {
-              // endedFrame: each seat's end goes as a standing_ended frame, the socket stays.
-              for (const p of c.places.values())
+              // endedFrame: each seat's end goes as a standing_ended frame, the socket stays;
+              // "beside-first" — the seats beside before the main one.
+              const seats = [...c.places.values()];
+              if (st.endedFrame === "beside-first") seats.reverse();
+              for (const p of seats)
                 sock.write(
                   wsFrame(
                     0x1,

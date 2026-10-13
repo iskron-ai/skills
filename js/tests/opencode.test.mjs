@@ -4474,6 +4474,55 @@ test("a held whose stop record the disk will not remove lifts the ban all the sa
   }
 });
 
+// Review of #7440, seventh round: a held lifted the session's ban for good — its stop record was
+// never read again, so a later stop another process laid on the same home went unheard and the
+// root and its child kept getting frames. A held lifts only the stops not newer than itself.
+test("a stop laid on disk after the session's held bans it and its child again", async () => {
+  const calls = join(SANDBOX, "stop-late.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("stop-late", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root-l", location: LOC_A },
+    { id: "child-l", parentID: "root-l", location: LOC_B },
+  ];
+  const A = await plugin(b.env, { location: LOC_A, sessions });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true });
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  const send = (pid, id) =>
+    appendFileSync(`${b.events}.${pid}`, event("frame", { frame: { ...frame(id), id }, raw: "" }));
+  const woke = (rec, session) => rec.prompts.filter((p) => p.sessionID === session);
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-l");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid }); // the root's held lifts what stood before it
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child-l");
+    const childPid = callsIn(calls).at(-1).pid;
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+    send(rootPid, "before-root");
+    send(childPid, "before-child");
+    await until(
+      () => woke(A, "root-l").length === 1 && woke(B, "child-l").length === 1,
+      "frames before the late stop",
+    );
+    await delay(20);
+    const hash = createHash("sha256").update("root-l").digest("hex").slice(0, 16);
+    writeFileSync(
+      join(dir, `opencode-stopped.${hash}.json`),
+      JSON.stringify({ session: "root-l", at: new Date().toISOString() }),
+    );
+    send(rootPid, "after-root");
+    send(childPid, "after-child");
+    await delay(800);
+    assert.equal(woke(A, "root-l").length, 1, "no frame wakes the root under the late stop");
+    assert.equal(woke(B, "child-l").length, 1, "no frame wakes the child under the late stop");
+  } finally {
+    await B.stop();
+    await A.stop();
+  }
+});
+
 // Review of #7440, fifth round: a late case record after the stop gathered into a pile of counts,
 // and the next prompt of the human carried that count into the stopped session before any held.
 test("a late case record after the stop rides no prompt into the stopped session until it stands again", async () => {

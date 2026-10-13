@@ -4698,6 +4698,63 @@ for (const sub of ["watchdog-codex", "watchdog", "watchdog-exit"])
     assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
   });
 
+// Review of #7504: standing_ended for a seat beside outran the answer of the session's own
+// revoke of that seat, or of its own close of the channel, and was read as another's taking it
+// off — the seat's watchdog fell silent instead of leaving with exit 0, watchdog-codex kept
+// the count it had piled up. The control, another's taking it off, is the #7504 probe above.
+for (const action of ["revoke", "close"])
+  test(`#7504: standing_ended for a seat beside outrunning the answer of one's own ${action} — its watchdog-codex puts the count and leaves with exit 0`, async (t) => {
+    const { fake, dir, bridge, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    await fake.control({
+      endedFrame: action === "close" ? "beside-first" : true,
+      revokeReplyDelayMs: 1500,
+    });
+    const own = bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: DRUGOY, karta: 48, standing: "proba-b" }
+          : { action, realm: NKS },
+    });
+    // Before the answer: the frame alone must already end the seat as the session's own.
+    await waitUntil(() => proc.exitCode !== null, `the watchdog to leave:\n${w.out}${w.err}`);
+    assert.equal(proc.exitCode, 0, `one's own release, not another's:\n${w.out}${w.err}`);
+    assert.match(readFileSync(log, "utf8"), /turn\/start/, "the piled-up count is put");
+    const r = await own;
+    assert.ok(!r.result?.isError, textOf(r));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+  });
+
 test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
   for (const [reason, who] of [
     ["", /снято \(владельцем или другой сессией\)/],

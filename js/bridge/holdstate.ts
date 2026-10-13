@@ -37,6 +37,8 @@ export const H = scoped(() => ({
   revokingOwn: false,
   /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
   closingOwn: false,
+  /** keys of seats beside whose own revoke is in flight (absorb.ts): standing_ended outruns the answer */
+  revokingBeside: new Set<string>(),
   /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
   handingOver: null as string | null,
   /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
@@ -77,6 +79,12 @@ export function setRevokingOwn(v: boolean): void {
 /** absorb.ts: own channel close in flight; close 4001 is then not a dead token. */
 export function setClosingOwn(v: boolean): void {
   H.closingOwn = v;
+}
+
+/** absorb.ts: own revoke of the seat beside `key` in flight (true) or answered (false). */
+export function setRevokingBeside(key: string, v: boolean): void {
+  if (v) H.revokingBeside.add(key);
+  else H.revokingBeside.delete(key);
 }
 
 /**

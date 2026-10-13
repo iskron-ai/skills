@@ -6,12 +6,15 @@
 // with its record and binding forgotten, and no automatic path takes it again (none has a
 // record or a binding left; a move under way when it came says the stop word, stoppedSince).
 // The name stays free: an explicit call of the stand tool stands as usual. A standing_ended frame for a
-// seat beside forgets only that seat, waking nobody. Wired into hold.ts at load (session.ts).
+// seat beside forgets only that seat, waking nobody — unless it outran the answer of the session's
+// own revoke of that seat or close of the channel: then it is that quiet own release. Wired into
+// hold.ts at load (session.ts).
 import { STOP, type StopWho } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Door } from "./door.ts";
 import { broadcast, type ChannelEvent, forgetSeat, notify, releasedAsOwn } from "./hold.ts";
 import { type Frame, H, whenStopped } from "./holdstate.ts";
+import { holdWords } from "./holdwords.ts";
 import { dropExtra, extraPlaces } from "./places.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -46,6 +49,18 @@ function seatEnded(key: string, frame: Frame): void {
   const reason = typeof frame.by === "string" ? `revoked:${frame.by}` : "";
   const beside = id ? extraPlaces().find((p) => p.door.standingId === id) : undefined;
   if (beside) {
+    // The frame outran the answer of the session's own revoke of that seat or close of the channel.
+    const own = H.closingOwn
+      ? holdWords().closedOwn()
+      : H.revokingBeside.has(beside.door.key)
+        ? holdWords().revokedOwn()
+        : null;
+    if (own) {
+      log(
+        `seat beside ${beside.door.key} released quietly (standing_ended arrived before the answer)`,
+      );
+      return dropExtra(beside.door.key, own, true, "own");
+    }
     const text = stopWord(beside.standing.name ?? "", reason);
     log(`${text} — that seat beside is forgotten, the rest are held`);
     dropUnsent(beside.door.key, [beside.door]);

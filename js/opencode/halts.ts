@@ -6,8 +6,8 @@
 // next to the plugin's other records (marker.ts) for the instance after a reload. A refused write
 // is loud: the live instances still keep the ban, a reload would lose it. The record is the
 // session's id and the time, no secret; the session's deletion removes it. A new held lifts the
-// ban in the registry always; a refused removal of the record is loud and rewrites it as lifted,
-// so a reload reads no ban either.
+// ban in the registry always, the stops recorded up to it, not a later one; a refused removal of
+// the record is loud and rewrites it as lifted, so a reload reads no ban either.
 /* eslint-disable @typescript-eslint/no-explicit-any -- the process registry lives on globalThis */
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -29,16 +29,23 @@ const fileOf = (dir: string, session: string): string =>
   join(dir, `${PREFIX}.${createHash("sha256").update(session).digest("hex").slice(0, 16)}.json`);
 const stops = (): Set<string> =>
   ((globalThis as any)[`${GLOBAL_PREFIX}Halts`] ??= new Set<string>());
-/** Bans lifted in this process: a record the disk would not let go no longer stops them. */
-const lifted = (): Set<string> =>
-  ((globalThis as any)[`${GLOBAL_PREFIX}Lifted`] ??= new Set<string>());
+/**
+ * Bans lifted in this process, with the time of the held: a record the disk would not let go no
+ * longer stops them, a stop recorded later does.
+ */
+const lifted = (): Map<string, number> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}LiftedAt`] ??= new Map<string, number>());
 
 const code = (e: unknown): string | undefined => (e as NodeJS.ErrnoException).code;
 
-/** The record bans: present and not rewritten as lifted; one unreadable bans, as before. */
-function recorded(file: string): boolean {
+/**
+ * The record bans: present, not rewritten as lifted, and newer than a held lifted at `since`;
+ * one unreadable bans, as before.
+ */
+function recorded(file: string, since: number | undefined): boolean {
   try {
-    return !(JSON.parse(readFileSync(file, "utf8")) as { lifted?: string }).lifted;
+    const r = JSON.parse(readFileSync(file, "utf8")) as { at?: string; lifted?: string };
+    return !r.lifted && !(since !== undefined && Date.parse(r.at ?? "") <= since);
   } catch (e) {
     return code(e) !== "ENOENT";
   }
@@ -56,10 +63,10 @@ export function createHalts(
   unlifted: (session: string, message: string, kept: boolean) => void,
 ): Halts {
   const marked = (s: string): boolean =>
-    stops().has(s) || (!lifted().has(s) && recorded(fileOf(dir(), s)));
+    stops().has(s) || recorded(fileOf(dir(), s), lifted().get(s));
   const drop = (s: string): void => {
     stops().delete(s);
-    lifted().add(s);
+    lifted().set(s, Date.now());
     const file = fileOf(dir(), s);
     try {
       unlinkSync(file);

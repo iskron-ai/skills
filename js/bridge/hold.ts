@@ -89,7 +89,7 @@ export const ledKey = (): string | null => H.currentKey;
 export const holdsChannel = (): boolean => !!H.holder?.alive && !!H.currentKey;
 /** Local socket path of the key, to probe for a live holder (resume.ts). */
 export const localSocketPathOf = (key: string): string => socketPathOf(CFG.authDir, key);
-export { noteResuming, setClosingOwn, setRevokingOwn } from "./holdstate.ts";
+export { noteResuming, setClosingOwn, setRevokingBeside, setRevokingOwn } from "./holdstate.ts";
 
 // Stale service repeats after a session rebuild fold into one word, not one wake per frame
 // (graph @nks/nks-dev, nodes #4881, #5033).
