@@ -111,8 +111,11 @@ function open(name, e = env) {
       send({ jsonrpc: "2.0", method: "notifications/initialized" });
     },
     close() {
+      if (child.exitCode !== null) return Promise.resolve();
+      const done = new Promise((r) => child.once("exit", r));
       child.stdin.end();
       child.kill("SIGTERM");
+      return Promise.race([done, sleep(10_000)]);
     },
   };
 }
@@ -165,7 +168,7 @@ try {
     const bad = await B.call("iskron_me", { action: "whoami" });
     check(bad.error || /401|отверг|rejected/i.test(bad.text), "an unknown token is refused", bad.text.split("\n")[0].slice(0, 160));
   } finally {
-    B.close();
+    await B.close();
   }
 
   // A graph and a role of the run's own: the stand's data, nobody's live seat.
@@ -254,12 +257,11 @@ try {
   report.push(`ERROR ${e.message}`);
   failed++;
 } finally {
-  A.close();
-  P.close();
+  await Promise.all([A.close(), P.close()]);
 }
 
 // The report never carries the credential, whatever a tool echoed.
 process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
-if (!keep) rmSync(run, { recursive: true, force: true });
+if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(setup || (failed ? 1 : 0));
