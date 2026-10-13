@@ -1,8 +1,10 @@
 // Sessionless, read-only machine inspection (graph @nks/nks-dev, node #7495).
+import { existsSync } from "node:fs";
+
 import { BUILD } from "../bridge/build.ts";
 import { envName, MACHINE_STATUS } from "../delivery/index.ts";
 import { setLang, words } from "../shared/lang.ts";
-import { connectSeam, helloFrame } from "../shared/seam.ts";
+import { connectSeam, helloFrame, SEAM_PROTOCOL, SeamError } from "../shared/seam.ts";
 import { seamEntranceProblem, seamSocketPath } from "../shared/seam-entrance.ts";
 import { type MachineSnapshot, safeSnapshot } from "../shared/snapshot.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
@@ -17,16 +19,19 @@ interface StatusSnapshot {
   daemon: MachineSnapshot["daemon"] | null;
   sessions: MachineSnapshot["sessions"];
   snapshot_available: boolean;
+  snapshot_error?: "snapshot failed";
+  session_count?: number;
+  daemon_error?: "missing directory" | "no answer" | "different protocol" | "refused";
   fallback: FallbackSnapshot[];
   disk_only: DiskPlace[];
 }
-async function machine(
-  authDir: string,
-): Promise<Pick<StatusSnapshot, "daemon" | "sessions" | "snapshot_available">> {
-  if (!seamEntranceProblem(authDir)) {
+async function machine(authDir: string): Promise<Omit<StatusSnapshot, "fallback" | "disk_only">> {
+  let daemon_error: StatusSnapshot["daemon_error"] = "no answer";
+  if (!existsSync(authDir)) daemon_error = "missing directory";
+  else if (!seamEntranceProblem(authDir, false)) {
     try {
       const link = await connectSeam(
-        seamSocketPath(authDir),
+        seamSocketPath(authDir, false),
         {
           ...helloFrame({ build: BUILD, path: "", argv: [], probe: true }),
           env: {},
@@ -41,12 +46,21 @@ async function machine(
         daemon: safeSnapshot({ daemon: w }).daemon,
         sessions: [],
         snapshot_available: false,
+        ...(w.snapshot_error === "snapshot failed" ? { snapshot_error: w.snapshot_error } : {}),
+        ...(typeof w.sessions === "number" && Number.isInteger(w.sessions) && w.sessions >= 0
+          ? { session_count: w.sessions }
+          : {}),
       };
-    } catch {
-      /* No error details: wire errors can contain private addresses. */
+    } catch (e) {
+      // Only categorical reasons: wire errors can contain private addresses.
+      if (e instanceof SeamError && e.kind === "refused")
+        daemon_error =
+          e.protocol !== undefined && e.protocol !== SEAM_PROTOCOL
+            ? "different protocol"
+            : "refused";
     }
   }
-  return { daemon: null, sessions: [], snapshot_available: false };
+  return { daemon: null, sessions: [], snapshot_available: false, daemon_error };
 }
 const printable = (v: string | number): string =>
   [...String(v)]
@@ -58,9 +72,20 @@ function render(s: StatusSnapshot): string {
   const w = words(MACHINE_STATUS);
   const d = s.daemon;
   const lines = [
-    d ? `${w.daemon()}: pid=${d.pid} ${printable(d.build)} ${printable(d.path)}` : w.absent(),
+    d
+      ? `${w.daemon()}: pid=${d.pid} ${printable(d.build)} ${printable(d.path)}`
+      : s.daemon_error === "missing directory"
+        ? w.missing()
+        : s.daemon_error === "different protocol"
+          ? w.protocol()
+          : s.daemon_error === "refused"
+            ? w.refused()
+            : w.absent(),
   ];
-  if (d && !s.snapshot_available) lines.push(w.unavailable());
+  if (d && !s.snapshot_available)
+    lines.push(s.snapshot_error ? w.snapshotFailed() : w.unavailable());
+  if (d && !s.snapshot_available && s.session_count !== undefined)
+    lines.push(`${w.sessions()}: ${s.session_count}`);
   if (!d || s.snapshot_available) lines.push(`${w.sessions()}: ${s.sessions.length}`);
   for (const session of s.sessions) {
     const skills = session.skills;

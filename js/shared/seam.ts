@@ -94,6 +94,7 @@ export interface SeamWelcome {
   /** Probe answer: the daemon's file. */
   path?: string;
   snapshot?: MachineSnapshot;
+  snapshot_error?: "snapshot failed";
 }
 
 export interface SeamLog {
@@ -285,9 +286,11 @@ export function writeFrame(
 /** Why the daemon link failed: no daemon, refused, broken before welcome. */
 export class SeamError extends Error {
   kind: "absent" | "refused" | "broken";
-  constructor(kind: "absent" | "refused" | "broken", message: string) {
+  readonly protocol?: number;
+  constructor(kind: "absent" | "refused" | "broken", message: string, protocol?: number) {
     super(message);
     this.kind = kind;
+    this.protocol = protocol;
   }
 }
 
@@ -339,8 +342,10 @@ export function connectSeam(path: string, hello: SeamHello, timeoutMs: number): 
     socket.on("connect", () => writeFrame(socket, hello));
     readFrames(socket, (f) => {
       if (!welcome) {
-        if (f.t === "refuse") return fail(new SeamError("refused", f.reason));
+        if (f.t === "refuse") return fail(new SeamError("refused", f.reason, f.seam));
         if (f.t !== "welcome") return fail(new SeamError("broken", `expected welcome, got ${f.t}`));
+        if (f.seam !== SEAM_PROTOCOL)
+          return fail(new SeamError("refused", "the daemon speaks another seam protocol", f.seam));
         welcome = f;
         clearTimeout(timer);
         resolveLink({
