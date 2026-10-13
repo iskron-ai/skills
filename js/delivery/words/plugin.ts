@@ -17,6 +17,8 @@ export interface PluginWords {
   stopped: (text: string) => string;
   /** stopped — слово стопа (`stopped`): в контексте хода остановленной сессии, пока она не встала снова. */
   stoppedTurn: (stopped: string) => string;
+  /** Общее слово стопа — запись остановки, легшая до того, как плагин стал хранить её слово. */
+  stoppedAny: () => string;
   evicted: (code: number | string) => string;
   alive: (version: string) => string;
   note: (text: string) => string;
@@ -42,6 +44,7 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
     stopped: (text) => `Искрон: ${text}`,
     stoppedTurn: (stopped) =>
       `${stopped}. Это слово стоит, пока место снято; человек велит встать снова — встань явным вызовом iskron_stand, и слово уйдёт.`,
+    stoppedAny: () => "Искрон: место снято — ты остановлен: работу кончи, место не занимай",
     evicted: (code) =>
       `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. ` +
       "Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. " +
@@ -70,6 +73,8 @@ export const PLUGIN: Readonly<Record<Lang, PluginWords>> = {
     stopped: (text) => `Iskron: ${text}`,
     stoppedTurn: (stopped) =>
       `${stopped}. This word stands while the seat is taken off; if the human tells you to stand again — stand by an explicit iskron_stand call, and the word goes.`,
+    stoppedAny: () =>
+      "Iskron: the seat was taken off — you are stopped: end the work, do not take the seat",
     evicted: (code) =>
       `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. ` +
       "The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. " +

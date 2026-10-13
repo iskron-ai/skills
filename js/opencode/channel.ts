@@ -317,27 +317,24 @@ export function setupChannel(
       });
   }
 
-  /** Stop words of root sessions, read by their turns' context while they stay stopped (#7585). */
-  const stopWords = new Map<string, string>();
-
   /**
    * The owner took the seat off (#7439, #7440 item 2): the running turns of the session and of
    * every descendant are interrupted, their piles and waiting tacts are dropped, and the stop
    * word goes to the human and to the context of the session's turns while it stays stopped —
-   * not into its inbox, where a later turn would take it stale (#7585). Nothing of this session
-   * or its descendants reaches them afterwards until it stands again by an explicit call
-   * (halts.ts). The descendants' seats go down in their own instances (onStop).
+   * not into its inbox, where a later turn would take it stale (#7585); the word lies with the
+   * stop and outlives a reload as the stop does. Nothing of this session or its descendants
+   * reaches them afterwards until it stands again by an explicit call (halts.ts). The
+   * descendants' seats go down in their own instances (onStop).
    */
   function stopped(session: string | null, text: string, child: boolean): void {
     say(text, "error");
     dropPile(`${child ? "child" : "root"}:${session ?? ""}`);
     if (!session) return;
-    halts.stop(session);
+    // A child's end goes to its parent (leads.ts): no word is laid into the child.
+    halts.stop(session, child ? null : text);
     cut(session);
     for (const d of descendantsOf(session, parents)) cut(d);
     onStop(session);
-    // A child's end goes to its parent (leads.ts): no word is laid into the child.
-    if (!child) stopWords.set(session, markFrame(P.stoppedTurn(text)));
   }
 
   return {
@@ -348,7 +345,6 @@ export function setupChannel(
     gone(session) {
       tacts.gone(session);
       halts.gone(session);
-      stopWords.delete(session);
       cutDone.delete(session);
       cutFails.delete(session);
     },
@@ -391,7 +387,8 @@ export function setupChannel(
       return riding(own).join("\n") || null;
     },
     stopWord(session) {
-      return halts.halted(session) ? (stopWords.get(session) ?? null) : null;
+      const word = halts.wordOf(session, P.stoppedAny());
+      return word === null ? null : markFrame(P.stoppedTurn(word));
     },
     onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
@@ -449,7 +446,6 @@ export function setupChannel(
           return;
         case "held":
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
-          if (session) stopWords.delete(session);
           // The marks of the session's cuts go with it, its descendants' too.
           for (const s of session ? [session, ...descendantsOf(session, parents)] : []) {
             cutDone.delete(s);

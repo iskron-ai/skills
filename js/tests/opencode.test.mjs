@@ -4450,6 +4450,66 @@ test("after a plugin reload no frame reaches the stopped session until it stands
   }
 });
 
+// Review of #7585: the stop word lived only in the channel instance while the stop outlives a
+// reload (halts.ts) — the reloaded plugin let the stopped session's next turn go without it. The
+// word lies with the stop, in the registry and on disk; a record from before it reads the
+// general stop word; a held takes it away with the stop.
+test("after a plugin reload a turn of the stopped session still reads the stop word, until it stands again", async () => {
+  const b = bridgeEnv("stop-word-reload");
+  const first = await plugin(b.env);
+  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  const hash = (s) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+  let next = null;
+  const system = async (rec, sessionID) => {
+    const req = { sessionID, system: [], messages: [] };
+    for (const cb of rec.hooks.context ?? []) await cb(req);
+    return req.system.map((p) => p.text).join("\n");
+  };
+  try {
+    await serverTools(first);
+    await first.call("iskron_channel", { action: "connect" }, "s-word");
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => first.interrupts.length === 1, "the interrupt of the session's turn");
+    await first.cleanup();
+    next = await plugin(b.env, { keepMarker: true });
+    await serverTools(next);
+    assert.match(
+      await system(next, "s-word"),
+      /место proba снято \(человеком\) — ты остановлен[\s\S]*iskron_stand/,
+      "the reloaded plugin's context of the stopped session carries its stop word",
+    );
+    // A new process: only the disk record is left.
+    globalThis.__iskronHalts?.delete("s-word");
+    assert.match(
+      await system(next, "s-word"),
+      /место proba снято \(человеком\)/,
+      "the stop word is read from the disk record",
+    );
+    // A record laid before the word was kept: the general stop word.
+    const old = { session: "s-old", at: new Date().toISOString(), id: "old-stop" };
+    writeFileSync(join(dir, `opencode-stopped.${hash("s-old")}.json`), JSON.stringify(old));
+    assert.match(
+      await system(next, "s-old"),
+      /ты остановлен[\s\S]*iskron_stand/,
+      "a record without the word reads the general stop word",
+    );
+    await next.call("iskron_channel", { action: "list" }, "s-word");
+    appendFileSync(`${b.events}.${pidsOf(b.log).at(-1)}`, event("held", { key: "k" }));
+    await until(() => /мост держит стояние k\b/.test(next.said()), "the held word");
+    assert.equal(await system(next, "s-word"), "", "no stop word after the explicit stand");
+    assert.equal(
+      stopMarks().filter((f) => f.endsWith(`${hash("s-word")}.json`)).length,
+      0,
+      "the held removes the stop with its word",
+    );
+  } finally {
+    await next?.stop();
+    first.restore();
+    rmSync(join(dir, `opencode-stopped.${hash("s-old")}.json`), { force: true });
+  }
+});
+
 // Review of #7440, sixth round: a refused removal of the stop's record on held was swallowed —
 // the session took a seat explicitly and stayed banned, silently. The registry lifts the ban
 // always; the refusal is loud and the record is rewritten as lifted, so a reload reads no ban.
