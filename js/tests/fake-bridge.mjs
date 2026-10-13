@@ -39,8 +39,11 @@
 //                 notifications/tools/list_changed once (and remove the file),
 //                 as the real bridge does after a rollout (#5406).
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
-//                 rewrites it between calls. "__ERROR__<text>" answers isError.
+//                 rewrites it between calls. "__ERROR__<text>" answers isError;
+//                 "__REFUSAL__<status> <rule|-> <text>" — isError with the api refusal _meta.
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
+//   FB_REALMS     JSON spelling → graph: iskron_case join/leave/mine model the platform's
+//                 cases of this session by graph identity (callResult); <FB_REPLY>.mine overrides mine.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
 //   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
@@ -145,7 +148,52 @@ if (process.env.FB_CHANGED) {
   }, 100).unref();
 }
 
-function callResult(name) {
+// The platform's cases of this bridge's session: join and leave of iskron_case move them,
+// mine (relation=participant) answers them in the server's prose. A graph is one by
+// its identity, not its spelling: rN, slug and @owner/slug of one graph are one case
+// (FB_REALMS — JSON spelling → graph; no realm — the seat's graph @nks/nks-dev).
+// <FB_REPLY>.mine, when present, answers mine instead ("__ERROR__…" — a refusal).
+const REALMS = JSON.parse(
+  process.env.FB_REALMS ||
+    JSON.stringify({
+      r5: "@nks/nks-dev",
+      "nks-dev": "@nks/nks-dev",
+      r6: "@nks/methodology",
+      methodology: "@nks/methodology",
+    }),
+);
+const cases = new Set();
+const caseOf = (a) => {
+  const realm = String(a.realm ?? "").trim() || "@nks/nks-dev";
+  return `${REALMS[realm] ?? realm}#${String(a.room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "")}`;
+};
+function mine() {
+  if (!cases.size)
+    return "Дел под запрошенным сужением нет. Без 'relation' это перечисление отвечает ОБЕИМИ половинами.";
+  const rows = [...cases].map((k) => `  №${k.split("#")[1]} · дело ${k} — сижу · @me:sub`);
+  return `Дела этой сессии (${cases.size}):\n${rows.join("\n")}`;
+}
+function noteCase(name, a, result) {
+  if (!/_case$/.test(name ?? "") || result.isError) return;
+  if (a.action === "join" && a.room) cases.add(caseOf(a));
+  if (a.action === "leave") {
+    if (String(a.room ?? "").trim()) cases.delete(caseOf(a));
+    else cases.clear();
+  }
+}
+
+function callResult(name, a = {}) {
+  if (/_case$/.test(name ?? "") && a.action === "mine") {
+    let text = mine();
+    try {
+      text = readFileSync(`${process.env.FB_REPLY}.mine`, "utf8");
+    } catch {
+      /* the platform's own answer */
+    }
+    return text.startsWith("__ERROR__")
+      ? { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] }
+      : { content: [{ type: "text", text }] };
+  }
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
     // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY.
@@ -160,6 +208,16 @@ function callResult(name) {
   }
   if (text.startsWith("__ERROR__")) {
     return { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] };
+  }
+  const refused = /^__REFUSAL__(\d+) (\S+) ([\s\S]*)$/.exec(text);
+  if (refused) {
+    const [, status, rule, prose] = refused;
+    const refusal = { status: Number(status), ...(rule === "-" ? {} : { rule }) };
+    return {
+      isError: true,
+      content: [{ type: "text", text: prose }],
+      _meta: { "iskron/refusal": refusal },
+    };
   }
   return { content: [{ type: "text", text }] };
 }
@@ -277,7 +335,9 @@ process.stdin.on("data", (chunk) => {
           },
         });
       }
-      ok(msg.id, callResult(msg.params?.name));
+      const result = callResult(msg.params?.name, msg.params?.arguments ?? {});
+      noteCase(msg.params?.name, msg.params?.arguments ?? {}, result);
+      ok(msg.id, result);
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
       // logged in the same shape as a tool call; FB_RESUME names a file whose

@@ -4,16 +4,25 @@
 import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { markFrame } from "../shared/frame-text.ts";
+import { authDir } from "./bridge-io.ts";
+import { casesLeft } from "./casesleft.ts";
+import { createEnds, type Ends } from "./leadends.ts";
+import type { Up } from "./leadframes.ts";
 import { W } from "./leadwords.ts";
 import type { Context } from "./plugin.ts";
 import { ownPlace, type Place, type SatelliteSlot } from "./satellite.ts";
 import type { Say } from "./tools.ts";
 
 export interface Leads {
-  /** A child's successful call through its bridge: stood — a lead; first case entered — its errand; leaving by outcome — the end. */
+  /** A child's successful call through its bridge: stood — a lead; cases entered — its errand; leaving the last — the end. */
   called(child: string, name: string, args: Record<string, unknown>, place?: Place | null): void;
-  /** The launcher's revoke naming its lead's seat; null — not this case. */
-  release(caller: string, name: string, args: Record<string, unknown>): Promise<string | null>;
+  /**
+   * The launcher's revoke naming its lead's seat ends the child; null — not this case. The
+   * launcher's own revoke follows by its bridge (tools.ts): the seat goes on the platform.
+   */
+  release(caller: string, name: string, args: Record<string, unknown>): Promise<Released | null>;
+  /** Ended or ending by any end: nothing is laid into its session any more (#7505). */
+  ended(child: string): boolean;
   /** Released by the launcher — may not stand again. */
   released(child: string): boolean;
   /** Finally ended not by the launcher — the reason to refuse the child; otherwise undefined. */
@@ -32,11 +41,19 @@ export interface Leads {
   handoff(child: string): Snapshot;
   /** Seat name of a live lead (no seat — the session id); not a lead — null. */
   nameOf(child: string): string | null;
+  /** A live lead's parent session, once known; otherwise null. */
+  upOf(child: string): Up | null;
   onEvent(ev: any): void;
 }
 
+/** A lead ended by its launcher's revoke: the word and its seat. */
+export interface Released {
+  word: string;
+  place: Place | null;
+}
+
+/** Its cases are not here: whether a leave is the last, the platform says (casesleft.ts). */
 export interface Snapshot {
-  room: string | null;
   noted: boolean;
   last?: string;
 }
@@ -51,11 +68,15 @@ export interface LeadDoors {
   tell(session: string, text: string, wake: boolean): Promise<void>;
   /** The child's bridge ends its run (usage first, then the end method); the answer — seats left unrevoked, null — unknown. */
   close(child: string): Promise<string[] | null>;
+  /** How many cases the child's session sits in, by the platform (casesleft.ts); unasked or unread — a throw with the reason. */
+  sits(child: string, realm: string): Promise<number>;
   /** The session is marked ended while its bridge still finishes the run: any write is refused. */
   seal(child: string): void;
   end(child: string): Promise<void>;
   /** The child's seat name when it is not its satellite; satellite or no seat — null. */
   ownPlace(child: string): string | null;
+  /** Ended leads of every instance of the process, past a reload (leadends.ts). */
+  ends: Ends;
 }
 
 /** The end of a run by the child's bridge — no longer than this. */
@@ -71,6 +92,7 @@ export function leadDoors(
   flush: (session: string) => Promise<void>,
   end: (child: string, out?: ((s: string) => void) | null) => void,
   slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
+  closed: Closed = () => false,
 ): LeadDoors {
   return {
     say,
@@ -84,23 +106,44 @@ export function leadDoors(
         .catch(() => null);
       return got?.ended ? (got.failed ?? []) : null;
     },
+    sits: (child, realm) => casesLeft(slots.get(child)?.bridge, realm),
     seal: (child) => end(child, null),
     async end(child) {
       end(child);
     },
-    async parentOf(child) {
-      const s: any = await ctx.session.get({ sessionID: child } as any);
-      return s?.parentID ?? s?.data?.parentID ?? null;
-    },
-    tell: teller(ctx, say),
+    parentOf: (child) => parentOf(ctx, child),
+    tell: teller(ctx, say, closed),
+    ends: createEnds(
+      authDir,
+      (s, message) => say(W().endUnwritten(s, message), "warning"),
+      (s, message) => say(W().endUnlifted(s, message), "warning"),
+    ),
   };
 }
 
-/** Synthetic text (no synthetic — prompt) with steer; wake — resume. */
-export function teller(ctx: Context, say: Say): LeadDoors["tell"] {
+/** The session gets no word any more: an ended lead, a stopped session (#7505, #7440). */
+export type Closed = (session: string) => boolean;
+
+async function parentOf(ctx: Context, child: string): Promise<string | null> {
+  const s: any = await ctx.session.get({ sessionID: child } as any);
+  return s?.parentID ?? s?.data?.parentID ?? null;
+}
+
+/**
+ * Synthetic text (no synthetic — prompt) with steer; wake — resume. A closed addressee gets
+ * nothing — the word would wake it past the channel's ban (#7505): it goes up the parentID chain
+ * to the nearest live ancestor without waking it; none — the journal.
+ */
+export function teller(ctx: Context, say: Say, closed: Closed = () => false): LeadDoors["tell"] {
   return async (sessionID, text, wake) => {
     const s: any = ctx.session;
     const delivery = "steer";
+    for (const seen = new Set<string>(); closed(sessionID); wake = false) {
+      seen.add(sessionID);
+      const up = await parentOf(ctx, sessionID).catch(() => null);
+      if (!up || seen.has(up)) return say(W().noLiveAncestor(text), "warning");
+      sessionID = up;
+    }
     text = markFrame(text);
     try {
       if (typeof s.synthetic === "function")
