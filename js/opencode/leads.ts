@@ -33,12 +33,13 @@ const keyParts = (k: string): [string, string] => {
   return [k.slice(0, i), k.slice(i + 1)];
 };
 // Two spellings of one kind (@owner/slug, rN, bare slug) that differ are surely two graphs;
-// mixed kinds may name one graph — the same number there is the same case, as in the bridge's caseexit.ts.
+// mixed kinds (or no graph) may name one graph — or two: a join keeps both, a leave with no
+// exact key takes them. Left over: one case joined by two spellings and left by one stays.
 const spelling = (r: string): string => (r.startsWith("@") ? "@" : /^r\d+$/.test(r) ? "r" : "slug");
-const sameCase = (a: string, b: string): boolean => {
+const mayBeSame = (a: string, b: string): boolean => {
   const [ra, na] = keyParts(a);
   const [rb, nb] = keyParts(b);
-  return na === nb && (!ra || !rb || ra === rb || spelling(ra) !== spelling(rb));
+  return na === nb && (!ra || !rb || spelling(ra) !== spelling(rb));
 };
 /** The snapshot keeps the cases as one string, keys by commas — a former bare number reads as a case of no graph. */
 const roomsOf = (room: string | null | undefined): Set<string> =>
@@ -135,12 +136,13 @@ export function createLeads(d: LeadDoors): Leads {
       const room = name === tool("case") ? roomNo(args.room) : null;
       // The call's graph, by default the graph of the child's seat.
       const key = room ? caseKey(String(args.realm ?? "").trim() || l.place?.realm, room) : null;
-      const same = key ? [...l.rooms].filter((k) => sameCase(k, key)) : [];
-      if (args.action === "join" && key) {
-        for (const k of same) l.rooms.delete(k);
-        l.rooms.add(key);
-      }
+      if (args.action === "join" && key) l.rooms.add(key);
       if (args.action !== "leave") return;
+      const same = !key
+        ? []
+        : l.rooms.has(key)
+          ? [key]
+          : [...l.rooms].filter((k) => mayBeSame(k, key));
       if (name === tool("channel")) leave(child, l, W().leftSeat());
       else if (room === "") leave(child, l, W().leftCases());
       // The outcome is leaving the last case it is in, not the first it joined (#7234).

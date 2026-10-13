@@ -5606,6 +5606,50 @@ test("a lead child in case №77 of two graphs is not ended by leaving it in one
   }
 });
 
+// Review of №652, round 2 (P1): r5 and @nks/methodology were one case for a join — the second
+// join erased the first, and leaving methodology ended the child still in nks-dev №77.
+// A join keeps every spelling; a leave takes the exact key, else the same number of another kind.
+const caseRun = async (name, steps) => {
+  const { rec, childPid } = await leadChild(name);
+  try {
+    for (const [action, realm, ended] of steps) {
+      await rec.call("iskron_case", { realm, action, room: "#77" }, "child");
+      if (ended) {
+        await until(() => !alive(childPid), `the child's bridge to go with ${action} ${realm}`);
+        await until(() => ends(rec).length === 1, "the end in the parent");
+      } else if (action === "leave") {
+        await delay(300);
+        assert.ok(alive(childPid), `${action} ${realm} is no outcome`);
+        assert.equal(ends(rec).length, 0);
+      }
+    }
+  } finally {
+    await rec.stop();
+  }
+};
+
+test("a lead child in r5 №77 and @nks/methodology №77: leaving methodology is no end, leaving r5 is", () =>
+  caseRun("lead-kinds-a", [
+    ["join", "r5"],
+    ["join", "@nks/methodology"],
+    ["leave", "@nks/methodology"],
+    ["leave", "r5", true],
+  ]));
+
+test("a lead child joined in r5 №77 ends by leaving @nks/nks-dev №77 — one graph, another spelling", () =>
+  caseRun("lead-kinds-b", [
+    ["join", "r5"],
+    ["leave", "@nks/nks-dev", true],
+  ]));
+
+test("leaving @nks/nks-dev №77 takes the r5 entry, not @nks/methodology's — the end with methodology", () =>
+  caseRun("lead-kinds-c", [
+    ["join", "r5"],
+    ["join", "@nks/methodology"],
+    ["leave", "@nks/nks-dev"],
+    ["leave", "@nks/methodology", true],
+  ]));
+
 // #6550 rule 4 (the owner's word, №147 [128]): no idle ceiling — waiting for a human is
 // not being forgotten; the end is an explicit act only. The former knob, set short, ends nothing.
 test("a lead child idle with no turn and no frame is never ended by the plugin — no ceiling, even with the former knob set short", async () => {
