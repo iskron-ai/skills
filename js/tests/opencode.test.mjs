@@ -235,9 +235,12 @@ function fakeCtx({
         moves.push(o);
         if (faults.moveFails) throw new Error("move refused");
       },
-      // An interrupt of the session's running turn (session.interrupt, @opencode/plugin 2.0.4).
+      // An interrupt of the session's running turn (session.interrupt, @opencode/plugin 2.0.4);
+      // interruptFails — so many next interrupts throw.
       interrupt: async (o) => {
         interrupts.push(o);
+        if (faults.interruptFails > 0 && faults.interruptFails--)
+          throw new Error("interrupt refused");
         return { interrupted: true };
       },
       // A synthetic message — how OpenCode's own subagent tool reports to the parent.
@@ -4433,6 +4436,36 @@ test("after a plugin reload no frame reaches the stopped session until it stands
     first.restore();
   }
 });
+
+// Review of #7440, fourth round: the cut was marked done before the interrupt answered, so a
+// refused interrupt was never tried again and the running turn went on under a taken seat.
+// A refusal is retried, a bounded number of times; a success ends the retries.
+for (const [fails, calls] of [
+  [1, 2],
+  [Infinity, 3],
+])
+  test(`a stop whose interrupt is refused ${fails === 1 ? "once retries it" : "every time gives up after a bounded number of tries"}`, async () => {
+    const b = bridgeEnv(`stop-retry-${calls}`);
+    const rec = await plugin(b.env, { faults: { interruptFails: fails } });
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-stop");
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pidOf(b.log)}`,
+        event("stopped", { code: 4001, key: "k", text }),
+      );
+      await until(() => rec.interrupts.length === calls, `${calls} interrupts`, 8000);
+      await delay(1500);
+      assert.equal(rec.interrupts.length, calls, "no interrupt after a success or past the bound");
+      assert.ok(
+        rec.interrupts.every((i) => i.sessionID === "s-stop" && i.resume === false),
+        JSON.stringify(rec.interrupts),
+      );
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
 // end's word says the place is being taken down; the child's bridge ends its run after it

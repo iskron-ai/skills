@@ -52,6 +52,9 @@ const CASE_BATCH_MS = Number(process.env[envName("OPENCODE_BATCH_MS")]) || 5_000
 const CASE_BATCH_CAP = 20;
 /** A pile prompt whose taking OpenCode keeps silent about longer is counted taken. */
 const PENDING_MAX_MS = Number(process.env[envName("OPENCODE_PENDING_MS")]) || 120_000;
+/** How many times a stop's refused interrupt is tried, and how long apart. */
+const CUT_TRIES = 3;
+const CUT_RETRY_MS = 500;
 /**
  * A case frame for the pile: not a direct word and not a human's word (its flight and abort —
  * to the pile, #6081); a case record not addressed to the seat — to the pile at any stack (#6574).
@@ -250,16 +253,43 @@ export function setupChannel(
   }
 
   const cutDone = new Set<string>(); // turns cut by a stop, until the session stands again
-  /** A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once per stop. */
+  const cutting = new Set<string>(); // an interrupt in flight
+  const cutFails = new Map<string, number>(); // refused interrupts of this stop
+  const retries = new Set<ReturnType<typeof setTimeout>>();
+  /**
+   * A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once
+   * per stop. A refused interrupt is tried again, by a timer and by the next halt, up to CUT_TRIES.
+   * Prompts OpenCode already took into the session's inbox stay there: the plugin's session domain
+   * has no inbox.cancel (@opencode/plugin 2.0.4 through 2.0.28, only the full client has it).
+   */
   function cut(id: string): void {
-    if (cutDone.has(id)) return;
-    cutDone.add(id);
+    if (cutDone.has(id) || cutting.has(id)) return;
     for (const k of ["child", "root"]) dropPile(`${k}:${id}`);
     tacts.gone(id);
-    const failed = (e: Error) => say(W.notDelivered(W.frame(), id, e.message), "warning");
-    void Promise.resolve((ctx.session as any).interrupt?.({ sessionID: id, resume: false })).catch(
-      failed,
-    );
+    const s = ctx.session as any;
+    if (typeof s.interrupt !== "function") return void cutDone.add(id);
+    cutting.add(id);
+    void Promise.resolve()
+      .then(() => s.interrupt({ sessionID: id, resume: false }))
+      .then(
+        () => {
+          cutDone.add(id);
+          cutFails.delete(id);
+        },
+        (e: Error) => {
+          const n = (cutFails.get(id) ?? 0) + 1;
+          cutFails.set(id, n);
+          say(W.notDelivered(W.frame(), id, e.message), n < CUT_TRIES ? "warning" : "error");
+          if (n >= CUT_TRIES) return void cutDone.add(id);
+          const t = setTimeout(() => {
+            retries.delete(t);
+            if (halts.halted(id)) cut(id);
+          }, CUT_RETRY_MS);
+          (t as { unref?: () => void }).unref?.();
+          retries.add(t);
+        },
+      )
+      .finally(() => cutting.delete(id));
   }
 
   /**
@@ -296,6 +326,7 @@ export function setupChannel(
       tacts.gone(session);
       halts.gone(session);
       cutDone.delete(session);
+      cutFails.delete(session);
     },
     halt(session) {
       if (!halts.halted(session)) return false;
@@ -321,6 +352,8 @@ export function setupChannel(
     },
     stop() {
       tacts.stop();
+      for (const t of retries) clearTimeout(t);
+      retries.clear();
       for (const p of piles.values()) {
         p.pending = null;
         flush(p);
@@ -388,7 +421,10 @@ export function setupChannel(
           return;
         case "held":
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
-          if (session) cutDone.delete(session);
+          if (session) {
+            cutDone.delete(session);
+            cutFails.delete(session);
+          }
           say(W.held(ev.key ?? ""), "info");
           return;
         case "released":
