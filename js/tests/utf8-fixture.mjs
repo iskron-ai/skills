@@ -48,19 +48,20 @@ export function rawUtf8(raw, literals) {
     assert.ok(raw.includes(Buffer.from(literal, "utf8")), `raw UTF-8 bytes: ${literal}`);
 }
 
-export function listedTools(raw, fields) {
+export function listedTools(raw, fields, selected = tools.map((t) => t.name)) {
   rawUtf8(raw, ["кириллица ёж ЙЯ", "Текст на русском", "Схема:"]);
   const received = JSON.parse(raw.toString("utf8")).result.tools;
   // Exhaustive exceptions: own stand tool; writing moment; channel status/leave
-  // prefixes; channel place moves/fields narrowed; outputSchema without fields.
+  // prefixes; channel place moves/fields narrowed; outputSchema without fields;
+  // --tools omits iskron_batch in the satellite fixture; stand is always appended.
   assert.deepEqual(
     received.map((t) => t.name),
-    [...tools.map((t) => t.name), "iskron_stand"],
+    [...tools.filter((t) => selected.includes(t.name)).map((t) => t.name), "iskron_stand"],
   );
   const stand = received.at(-1);
   assert.equal(typeof stand.description, "string");
   assert.equal(stand.inputSchema.type, "object");
-  for (const original of tools) {
+  for (const original of tools.filter((t) => selected.includes(t.name))) {
     const expected = structuredClone(original);
     if (/^iskron_(add_[a-z_]+|batch)$/.test(original.name))
       expected.description = `${MOMENT.ru.moment()}\n\n${original.description}`;

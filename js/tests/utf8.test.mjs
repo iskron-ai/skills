@@ -14,10 +14,10 @@ import { callResult, listedTools, rawUtf8, tools } from "./utf8-fixture.mjs";
 
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const PAT = "nks_pat_utf8";
-function harness(url, dir, daemon) {
+function harness(url, dir, daemon, args) {
   const proc = spawn(
     process.env.ISKRON_NODE || process.execPath,
-    [BRIDGE, url, "--no-browser", "--auth-dir", dir],
+    [BRIDGE, url, "--no-browser", "--auth-dir", dir, ...args],
     {
       env: {
         ...process.env,
@@ -74,59 +74,71 @@ function harness(url, dir, daemon) {
   };
 }
 
-for (const daemon of [false, true]) {
-  for (const fields of [false, true]) {
-    test(`raw Cyrillic UTF-8: ${daemon ? "thin bridge → real daemon" : "full stdio bridge"}, fields=${fields}`, async () => {
-      const fake = await startFakeNks({
-        pat: PAT,
-        tools,
-        callResults: { iskron_orient: callResult },
-      });
-      const dir = mkdtempSync(join(tmpdir(), "iskron-utf8-"));
-      const b = harness(fake.mcpUrl, dir, daemon);
-      try {
-        const init = JSON.parse(
-          (
-            await b.call("initialize", {
-              protocolVersion: "2025-06-18",
-              capabilities: fields ? FIELDS_CAPABILITIES : {},
-              clientInfo: { name: "utf8-probe", version: "0" },
-            })
-          ).toString("utf8"),
-        );
-        assert.ok(init.result && !init.error);
-        b.proc.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
-        listedTools(await b.call("tools/list"), fields);
-        const raw = await b.call("tools/call", { name: "iskron_orient", arguments: {} });
-        rawUtf8(raw, fields ? ["Ответ: кириллица", "Русский язык", "Ёж"] : ["Ответ: кириллица"]);
-        const expected = structuredClone(callResult);
-        // forHarness strips structuredContent unless the harness declared fields.
-        if (!fields) delete expected.structuredContent;
-        assert.deepEqual(JSON.parse(raw.toString("utf8")).result, expected);
-        if (daemon) {
-          assert.match(b.stderr(), /through the machine's bridge daemon/);
-          assert.match(
-            readFileSync(join(dir, "run", "daemon.log"), "utf8"),
-            /\] rpc tools\/call 3$/m,
+const routes = [
+  { name: "session", args: [] },
+  { name: "satellite", args: ["--satellite"] },
+  {
+    name: "satellite --tools (omits iskron_batch)",
+    args: ["--satellite", "--tools", "iskron_orient,iskron_add_vimarsha,iskron_channel"],
+    selected: ["iskron_orient", "iskron_add_vimarsha", "iskron_channel"],
+  },
+];
+for (const route of routes) {
+  for (const daemon of [false, true]) {
+    for (const fields of [false, true]) {
+      const path = daemon ? "thin bridge → real daemon" : "full stdio bridge";
+      test(`raw Cyrillic UTF-8: ${route.name}, ${path}, fields=${fields}`, async () => {
+        const fake = await startFakeNks({
+          pat: PAT,
+          tools,
+          callResults: { iskron_orient: callResult },
+        });
+        const dir = mkdtempSync(join(tmpdir(), "iskron-utf8-"));
+        const b = harness(fake.mcpUrl, dir, daemon, route.args);
+        try {
+          const init = JSON.parse(
+            (
+              await b.call("initialize", {
+                protocolVersion: "2025-06-18",
+                capabilities: fields ? FIELDS_CAPABILITIES : {},
+                clientInfo: { name: "utf8-probe", version: "0" },
+              })
+            ).toString("utf8"),
           );
-        }
-      } finally {
-        await b.stop();
-        if (daemon) {
-          let journal = "";
-          try {
-            journal = readFileSync(join(dir, "run", "daemon.log"), "utf8");
-          } catch {}
-          for (const m of journal.matchAll(/ pid=(\d+) \S+ listening /g)) {
-            try {
-              process.kill(+m[1], "SIGKILL");
-            } catch {}
+          assert.ok(init.result && !init.error);
+          b.proc.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
+          listedTools(await b.call("tools/list"), fields, route.selected);
+          const raw = await b.call("tools/call", { name: "iskron_orient", arguments: {} });
+          rawUtf8(raw, fields ? ["Ответ: кириллица", "Русский язык", "Ёж"] : ["Ответ: кириллица"]);
+          const expected = structuredClone(callResult);
+          // forHarness strips structuredContent unless the harness declared fields.
+          if (!fields) delete expected.structuredContent;
+          assert.deepEqual(JSON.parse(raw.toString("utf8")).result, expected);
+          if (daemon) {
+            assert.match(b.stderr(), /through the machine's bridge daemon/);
+            assert.match(
+              readFileSync(join(dir, "run", "daemon.log"), "utf8"),
+              /\] rpc tools\/call 3$/m,
+            );
           }
+        } finally {
+          await b.stop();
+          if (daemon) {
+            let journal = "";
+            try {
+              journal = readFileSync(join(dir, "run", "daemon.log"), "utf8");
+            } catch {}
+            for (const m of journal.matchAll(/ pid=(\d+) \S+ listening /g)) {
+              try {
+                process.kill(+m[1], "SIGKILL");
+              } catch {}
+            }
+          }
+          await fake.stop();
+          rmSync(dir, { recursive: true, force: true });
         }
-        await fake.stop();
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
+      });
+    }
   }
 }
 
