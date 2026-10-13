@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
 
 import { ENV_PREFIX, envName, PRODUCT } from "../delivery/index.ts";
+import { type MachineSnapshot } from "./snapshot.ts";
 
 /** Wire version. Different versions do not talk: the daemon refuses, the thin bridge runs full. */
 export const SEAM_PROTOCOL = 1;
@@ -73,6 +74,8 @@ export interface SeamHello {
   session?: string | null;
   /** Only ask the daemon's build (--version): open no session. */
   probe?: boolean;
+  /** Sessionless machine inventory; used together with probe for old daemon compatibility. */
+  snapshot?: boolean;
 }
 
 export interface SeamWelcome {
@@ -90,6 +93,7 @@ export interface SeamWelcome {
   sessions?: number;
   /** Probe answer: the daemon's file. */
   path?: string;
+  snapshot?: MachineSnapshot;
 }
 
 export interface SeamLog {

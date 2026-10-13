@@ -26,6 +26,7 @@ import {
   seamSocketPath,
   takeFileLock,
 } from "./seam-entrance.ts";
+import { type MachineSnapshot } from "./snapshot.ts";
 
 /** An engine session as the seam sees it. */
 export interface SeamSession {
@@ -53,6 +54,7 @@ export interface SeamHost {
   log?(msg: string): void;
   /** How many sessions the daemon holds — in a probe answer. */
   count?(): number;
+  snapshot?(): MachineSnapshot;
   /** The daemon's file — in a probe answer. */
   path?: string;
   /**
@@ -167,8 +169,9 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
         ack: true,
         ...(id === null && host.count ? { sessions: host.count() } : {}),
         ...(id === null && host.path ? { path: host.path } : {}),
+        ...(id === null && hello.snapshot && host.snapshot ? { snapshot: host.snapshot() } : {}),
       });
-    if (hello.probe) {
+    if (hello.probe || hello.snapshot) {
       welcome(null, false);
       socket.end();
       return;
