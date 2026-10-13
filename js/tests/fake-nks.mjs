@@ -319,6 +319,18 @@ export async function startFakeNks(opts = {}) {
     });
     res.end(JSON.stringify(obj));
   };
+  // Fixture replies can exercise the streaming decoder across a UTF-8 byte boundary.
+  const fixtureReply = async (res, obj, headers) => {
+    if (!opts.sse) return json(res, 200, obj, headers);
+    const body = Buffer.from(`event: message\ndata: ${JSON.stringify(obj)}\n\n`, "utf8");
+    const first = body.findIndex((byte) => byte >= 0xc2);
+    if (first < 0) throw new Error("SSE fixture must contain a multibyte character");
+    res.writeHead(200, { ...headers, "content-type": "text/event-stream" });
+    res.write(body.subarray(0, first + 1));
+    // Give fetch a chance to read the incomplete character before its trailing bytes.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    res.end(body.subarray(first + 1));
+  };
   // structuredContent рядом с прозой (#6637) — {action, …} ключами api, как их шлёт
   // nks-mcp (PR #408). Под garble проза заменена формой, которой мост не знает: поле
   // должно её перевесить.
@@ -882,7 +894,11 @@ export async function startFakeNks(opts = {}) {
         );
       }
       if (msg.method === "tools/list" && st.tools) {
-        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } }, extra);
+        return fixtureReply(
+          res,
+          { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } },
+          extra,
+        );
       }
       if (msg.method === "tools/list") {
         return json(
@@ -923,9 +939,8 @@ export async function startFakeNks(opts = {}) {
       }
       // A test-supplied reply for a named tool, transported by the same HTTP leg.
       if (msg.method === "tools/call" && opts.callResults?.[msg.params?.name]) {
-        return json(
+        return fixtureReply(
           res,
-          200,
           {
             jsonrpc: "2.0",
             id: msg.id,

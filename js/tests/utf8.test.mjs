@@ -1,4 +1,4 @@
-// Black-box wire probes (graph @nks/nks-dev, case №646): both stdio routes,
+// Black-box wire probes (граф @nks/nks-dev, узел #7567): both stdio routes,
 // raw buffers at the harness boundary, not reserialized parsed answers.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
-import { callResult, listedTools, rawUtf8, tools } from "./utf8-fixture.mjs";
+import { callResult, listedTools, rawUtf8, tools, wireModes } from "./utf8-fixture.mjs";
 
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const PAT = "nks_pat_utf8";
@@ -85,12 +85,13 @@ const routes = [
 ];
 for (const route of routes) {
   for (const daemon of [false, true]) {
-    for (const fields of [false, true]) {
+    for (const { fields, sse } of wireModes) {
       const path = daemon ? "thin bridge → real daemon" : "full stdio bridge";
-      test(`raw Cyrillic UTF-8: ${route.name}, ${path}, fields=${fields}`, async () => {
+      test(`raw Cyrillic UTF-8: ${route.name}, ${path}, fields=${fields}, SSE=${sse}`, async () => {
         const fake = await startFakeNks({
           pat: PAT,
           tools,
+          sse,
           callResults: { iskron_orient: callResult },
         });
         const dir = mkdtempSync(join(tmpdir(), "iskron-utf8-"));
