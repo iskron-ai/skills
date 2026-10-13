@@ -43,6 +43,7 @@ import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
+import { revokeAsLauncher } from "./release.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, heldPlace, STAND_TOOL, standsBy } from "./satellite.ts";
 import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
@@ -294,10 +295,23 @@ export async function setupTools(
         description: String(t.description ?? ""),
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          // The launcher's revoke of its lead's seat is ended by the plugin (#6625); so is a child ended by a move (adopt.ts).
-          const word =
-            (await leads.release(String(tool.sessionID), name, input ?? {})) ??
-            adopt.revoked(name, input ?? {});
+          // The launcher's revoke of its lead's seat ends the child, then goes to the platform
+          // by the launcher's bridge (#6625, #7505); a child ended by a move is answered here (adopt.ts).
+          const caller = String(tool.sessionID);
+          const freed = await leads.release(caller, name, input ?? {});
+          if (freed)
+            return {
+              content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
+                const slot = await slotFor(caller);
+                slot.busy++;
+                try {
+                  return await callThrough(slot, name, args, caller);
+                } finally {
+                  slot.busy--;
+                }
+              }),
+            };
+          const word = adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // not through the root's bridge (#6361)
@@ -441,6 +455,8 @@ export async function setupTools(
     },
     onEvent: (ev) => leads.onEvent(ev),
     leadOf: (s) => leads.nameOf(s),
+    ended: (s) => leads.ended(s),
+    launcherOf: (s) => (leads.nameOf(s) ? (slots.get(s)?.satelliteOf?.name ?? null) : null),
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,

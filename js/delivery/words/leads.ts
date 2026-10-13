@@ -4,8 +4,6 @@
 import type { Lang } from "../lang.ts";
 
 export interface LeadWords {
-  cancelled: () => string;
-  cancelledRefusal: () => string;
   cascade: (who: string) => string;
   placeEvicted: () => string;
   placeClosed: () => string;
@@ -23,7 +21,8 @@ export interface LeadWords {
   turn: (place: string) => string;
   notice: (child: string, place: string) => string;
   release: (who: string) => string;
-  released: () => string;
+  /** why — ответ платформы на revoke запустившего. */
+  unreleased: (who: string, why: string) => string;
   /** last — последний текст, пусто — текста нет. */
   away: (who: string, last: string) => string;
   lost: (who: string, why: string) => string;
@@ -65,8 +64,6 @@ const keptEn = (who: string, place: string): string =>
 
 export const LEAD: Readonly<Record<Lang, LeadWords>> = {
   ru: {
-    cancelled: () => "его ход отменён в OpenCode (человеком или запустившим)",
-    cancelledRefusal: () => "её ход отменён в OpenCode",
     cascade: (who) =>
       `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. ` +
       `Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`,
@@ -96,9 +93,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. ` +
       `Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`,
     release: (who) =>
-      `Искрон: субагент ${who} отпущен — его мост погашен: выход из дел и снятие места делает он; итог лёг сюда синтетикой.`,
-    released: () =>
-      "Искрон: запустивший отпустил тебя — поручение кончено, место снято, из дел ты выведен; встать снова нельзя, в граф и дела больше не пиши.",
+      `Искрон: субагент ${who} отпущен — его мост погашен, из дел он выведен, место снято на платформе; итог лёг сюда синтетикой.`,
+    unreleased: (who, why) =>
+      `Искрон: субагент ${who} кончен и его мост погашен, но место НЕ снято — платформа ответила: ${why}. ` +
+      `Оно висит на доске: повтори iskron_channel(action="revoke", standing="${who}", karta) или скажи человеку.`,
     away: (who, last) =>
       `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: ` +
       `его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:\n${last || "(текста он не оставил — смотри его дело)"}`,
@@ -147,8 +145,6 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     interrupt: (who, reason) => `Искрон: ход субагента ${who} прерван (${reason}).`,
   },
   en: {
-    cancelled: () => "its turn was cancelled in OpenCode (by the human or the launcher)",
-    cancelledRefusal: () => "its turn was cancelled in OpenCode",
     cascade: (who) =>
       `Iskron: the turn of subagent ${who} was cut by the cancel of your turn — it has not ended: it holds its seat and cases and waits for frames of its case. ` +
       `To go on — a word into its case; to release it — iskron_channel(action="revoke", standing="${who}").`,
@@ -178,9 +174,10 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `it is a lead, stands on its own seat and waits for frames of its case. Do not count it finished — the outcome lands here with the word «ENDED» at its end. ` +
       `To release it earlier — iskron_channel(action="revoke", standing="${place}").`,
     release: (who) =>
-      `Iskron: subagent ${who} is released — its bridge is down: it leaves its cases and revokes its seat itself; the outcome landed here as a synthetic message.`,
-    released: () =>
-      "Iskron: the launcher released you — the errand is over, the seat is revoked, you are taken out of the cases; standing again is not possible, write nothing more into the graph or cases.",
+      `Iskron: subagent ${who} is released — its bridge is down, it is out of its cases, its seat is revoked on the platform; the outcome landed here as a synthetic message.`,
+    unreleased: (who, why) =>
+      `Iskron: subagent ${who} has ended and its bridge is down, but its seat is NOT revoked — the platform answered: ${why}. ` +
+      `It hangs on the board: repeat iskron_channel(action="revoke", standing="${who}", karta) or tell the human.`,
     away: (who, last) =>
       `Iskron: subagent ${who} was taken down by the parent's move to another folder — the errand here ended not by its outcome, there will be no «ENDED»: ` +
       `its bridge goes down: it leaves its cases, its seat is revoked; its session stayed in the previous folder. Its last word:\n${last || "(it left no text — see its case)"}`,

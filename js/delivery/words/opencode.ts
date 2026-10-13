@@ -45,6 +45,8 @@ export interface OpencodeWords {
   tactWaitsFolded: () => string;
   /** text — начало кадра. */
   childGone: (frame: string, id: string, text: string) => string;
+  /** text — начало кадра. */
+  childEnded: (frame: string, id: string, text: string) => string;
   sessionClosed: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
   halted: (frame: string, id: string) => string;
@@ -108,6 +110,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childGone: (frame, id, text) =>
       `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; ` +
       `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
+    childEnded: (frame, id, text) =>
+      `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; кадр остаётся в истории стояния — ${text}`,
     sessionClosed: (id, frame) =>
       `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
     nowhere: (frame, text) =>
@@ -180,6 +184,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childGone: (frame, id, text) =>
       `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; ` +
       `the frame stays in the standing's history (iskron_channel history); the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
+    childEnded: (frame, id, text) =>
+      `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; the frame stays in the standing's history — ${text}`,
     sessionClosed: (id, frame) =>
       `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
     nowhere: (frame, text) =>
