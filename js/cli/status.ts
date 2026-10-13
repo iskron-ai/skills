@@ -68,6 +68,14 @@ const printable = (v: string | number): string =>
       c.charCodeAt(0) < 32 || (c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159) ? " " : c,
     )
     .join("");
+function formatSkills(
+  label: string,
+  skills: MachineSnapshot["sessions"][number]["skills"],
+): string {
+  return skills
+    ? ` · ${label}=${printable(skills.name)} ${printable(skills.version)}${skills.stamp ? `+${printable(skills.stamp)}` : ""}`
+    : "";
+}
 function render(s: StatusSnapshot): string {
   const w = words(MACHINE_STATUS);
   const d = s.daemon;
@@ -88,22 +96,13 @@ function render(s: StatusSnapshot): string {
     lines.push(`${w.sessions()}: ${s.session_count}`);
   if (!d || s.snapshot_available) lines.push(`${w.sessions()}: ${s.sessions.length}`);
   for (const session of s.sessions) {
-    const skills = session.skills;
-    const stamp = skills
-      ? ` · skills=${printable(skills.name)} ${printable(skills.version)}${skills.stamp ? `+${printable(skills.stamp)}` : ""}`
-      : "";
-    const installed = session.installed_skills;
-    const diskStamp = installed
-      ? ` · installed_skills=${printable(installed.name)} ${printable(installed.version)}${installed.stamp ? `+${printable(installed.stamp)}` : ""}`
-      : "";
+    const stamp = formatSkills("skills", session.skills);
+    const diskStamp = formatSkills("installed_skills", session.installed_skills);
     lines.push(
       `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w.attached() : w.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}${diskStamp}${session.skills_mismatch ? " · skills_mismatch" : ""}`,
     );
     for (const p of session.places) {
-      const declared = p.skills;
-      const declaration = declared
-        ? ` · skills=${printable(declared.name)} ${printable(declared.version)}${declared.stamp ? `+${printable(declared.stamp)}` : ""}`
-        : "";
+      const declaration = formatSkills("skills", p.skills);
       const mode = p.satellite_of
         ? `${w.satellite()} ${printable(p.satellite_of)}`
         : p.primary

@@ -22,7 +22,10 @@ export async function refreshSkills(): Promise<void> {
       if (isParked(place.realm, place.karta, place.name ?? "")) continue;
       if (wasEvicted(place.realm, place.karta, place.name ?? "")) continue;
       if (!skillsNeedRegister(place)) continue;
-      if (deafPlaceIn(place.realm) && (await deafSeatTaken(place))) continue;
+      if (deafPlaceIn(place.realm) && (await deafSeatTaken(place))) {
+        retrySkillsCheck();
+        continue;
+      }
       const got = await replayRegister(place);
       if (seatIsGone(got)) {
         const why = words(STANDING).seatExpired();

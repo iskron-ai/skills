@@ -23,7 +23,7 @@ export function sessionSnapshot(
     const installed = skillsAttr();
     const declared = state.standing ? announcedSkills(state.standing) : undefined;
     const differs = (skills: typeof declared): boolean =>
-      JSON.stringify(skills) !== JSON.stringify(installed);
+      !!skills && JSON.stringify(skills) !== JSON.stringify(installed);
     return {
       local_id,
       thin_pid,
