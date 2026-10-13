@@ -33,9 +33,9 @@ for (const action of ["connect", "mint", "register"])
 
 test("stand fields read changed skills inside the background window", async () => {
   await fixture(async ({ root }) => {
-    const before = placeFields(state.standing).attrs.skills;
+    const before = placeFields(state.standing, true).attrs.skills;
     writeFileSync(join(root, "establish-mcp", "SKILL.md"), "after");
-    assert.notEqual(placeFields(state.standing).attrs.skills.stamp, before.stamp);
+    assert.notEqual(placeFields(state.standing, true).attrs.skills.stamp, before.stamp);
   });
 });
 

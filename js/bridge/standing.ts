@@ -116,7 +116,7 @@ function replayStanding(): Promise<void> {
 
 export async function replayRegister(
   place: Standing | null,
-  freshSkills = true,
+  freshSkills = false,
 ): Promise<JsonRpcMessage | null> {
   const got = await registerOnce(place, freshSkills);
   if (!openedConcurrently(got)) return got;

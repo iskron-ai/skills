@@ -58,7 +58,7 @@ export function rememberModel(m: unknown): void {
 /** Seat fields for connect and register: always the full set. */
 export function placeFields(
   place: Place = {},
-  freshSkills = true,
+  freshSkills = false,
 ): {
   model?: string;
   satellite_of?: string;
@@ -118,5 +118,5 @@ export function withPlaceFields(args: Record<string, unknown>): Record<string, u
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
     extras.set(placeKey(args), { ...(args.attrs as Record<string, unknown>) });
-  return { ...args, ...placeFields(args) };
+  return { ...args, ...placeFields(args, true) };
 }

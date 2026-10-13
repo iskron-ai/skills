@@ -18,13 +18,13 @@ const W = scoped(() => ({
   disk: "",
   installed: undefined as Skills | undefined,
   pending: false,
-  missingChecks: 0,
+  missingSince: null as number | null,
   unsettled: false,
 }));
 const key = (p: Place): string => `${p.realm ?? ""}|${normKarta(p.karta)}|${normName(p.name)}`;
 export const announcedSkills = (p: Place): Skills | undefined => W.announced.get(key(p));
 /** Seat writes share the absence guard; explicit moves bypass the background window. */
-export function installedSkills(p: Place, fresh = true): Skills {
+export function installedSkills(p: Place, fresh = false): Skills {
   if (!skillsRefreshAllowed()) return skillsAttr();
   checkInstalled(fresh);
   return W.installed ?? announcedSkills(p) ?? skillsAttr();
@@ -72,12 +72,13 @@ function diskVersion(): string {
 function checkInstalled(fresh = false): void {
   if (!skillsRefreshAllowed()) return;
   const gap = Number(process.env[envName("SKILLS_GAP_MS")]) || 60_000;
-  if (!fresh && W.checkedAt && Date.now() - W.checkedAt < gap) return;
-  W.checkedAt = Date.now();
+  const now = Date.now();
+  if (!fresh && W.checkedAt && now - W.checkedAt < gap) return;
+  W.checkedAt = now;
   const disk = diskVersion();
   const missing = skillsUnavailable();
-  W.missingChecks = missing ? W.missingChecks + 1 : 0;
-  W.unsettled = !!missing && W.missingChecks < 2;
+  W.missingSince = missing ? (W.missingSince ?? now) : null;
+  W.unsettled = W.missingSince !== null && now - W.missingSince < gap;
   if (W.unsettled) return;
   if (disk === W.disk) return;
   W.disk = disk;
