@@ -4677,6 +4677,66 @@ test("#7440: standing_ended for a seat beside forgets that seat only — the mai
   assert.equal(fake.state.counts.connect, 1);
 });
 
+// #6987: karta="#931" — the form the bridge itself prompts in its refusals — was compared raw
+// with the held normalized 931, so one's own revoke read as another's 4001: «ты остановлен».
+const OWN_FORMS = [
+  ["#931", "proba"],
+  ["931", "proba"],
+  [931, "proba"],
+  ["#931", "@tester:proba"],
+];
+for (const [karta, standing] of OWN_FORMS)
+  test(`#6987: one's own revoke of the main seat with karta ${JSON.stringify(karta)}, standing ${standing} — a quiet release, no stop`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "revoke", realm: "nks-dev", karta, standing },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(!stoppedEv(bridge), `one's own revoke is no stop:\n${bridge.stderr}`);
+    assert.doesNotMatch(bridge.stderr, /ты остановлен/, bridge.stderr);
+    assert.match(bridge.stderr, /standing revoked by this session — released quietly/);
+  });
+
+for (const karta of ["#48", "48", 48])
+  test(`#6987: one's own revoke of the seat beside with karta ${JSON.stringify(karta)} — a quiet release, no stop word`, async (t) => {
+    const { fake, bridge } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+    );
+    await fake.control({ endedFrame: true, revokeReplyDelayMs: 600 });
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "revoke", realm: DRUGOY, karta, standing: "proba-b" },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), bridge.stderr);
+    assert.doesNotMatch(bridge.stderr, /ты остановлен/, bridge.stderr);
+    assert.match(bridge.stderr, /seat beside \S+ released quietly/, bridge.stderr);
+    assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
+  });
+
+// The control: a 4001 the session did not ask for stays the stop, whatever form its own calls use.
+test('#6987: control — another\'s 4001 after a stand with karta "#931" is still the stop', async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: "#931", name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:self" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, /ты остановлен/);
+});
+
 // Review of #7440: the seat beside taken off by another came to its watchdog as the session's
 // own release, and watchdog-codex put the count it had piled up into the thread — the end of
 // a seat beside woke the doer. Each watchdog of that seat falls silent: no turn, no line, no exit.
