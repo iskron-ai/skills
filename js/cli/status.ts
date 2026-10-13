@@ -120,7 +120,7 @@ function render(s: StatusSnapshot): string {
   lines.push(`${w.disk()}: ${s.disk_only.length}`);
   for (const p of s.disk_only)
     lines.push(
-      `  ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} — ${w.record()}`,
+      `  ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} — ${w.record()} · ${w.left(p.left)}`,
     );
   return lines.join("\n") + "\n";
 }
