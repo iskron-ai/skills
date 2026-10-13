@@ -190,6 +190,8 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
   } finally {
     listed?.();
     settleOwnRevoke(msg);
+    // Publication follows the final answer, not an intermediate retry.
+    if (msg.method === "tools/call") void refreshSkills();
   }
 }
 
@@ -278,7 +280,6 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         });
         return;
       }
-      if (msg.method === "tools/call") await refreshSkills();
       if (isStand) {
         // The bridge's own tool: board, seat, knock — by the agent's calls, in one move.
         emit(withNotice(await serialized(() => runStand(msg))));
