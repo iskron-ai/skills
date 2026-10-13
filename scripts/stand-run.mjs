@@ -5,11 +5,15 @@
 // "stopped", a `stopped` line in standings.log, no `held` or reconnect after it — while the
 // name stays free and an own revoke stays quiet.
 //
-//   node scripts/stand-run.mjs [--token-file F] [--url U] [--keep]
+//   node scripts/stand-run.mjs [--token-file F] [--realm @owner/slug] [--expect-user U] [--url U] [--keep]
 //
+// The token: a file (default ~/.iskron-stand/token), one line, mode 0600 or stricter; it is
+// handed to the bridge only through its own isolated auth dir, never argv, and never printed.
+// --realm — the run's graph when the token is scoped to it (a territorial writer PAT);
+// without it the run takes or creates @<self>/bridge-night. --expect-user — whoami must name it.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,21 +26,26 @@ const arg = (name, dflt) => {
 const URL_ = arg("--url", "https://nks.lab.mirari.ru/mcp-test");
 const tokenFile = arg("--token-file", join(homedir(), ".iskron-stand", "token"));
 const keep = process.argv.includes("--keep");
+const realmArg = arg("--realm", null);
+const expectUser = arg("--expect-user", null);
 const bridgePath = join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs");
 
 if (!existsSync(bridgePath)) fail(2, `no dev build at ${bridgePath} — make build-js`);
 if (!existsSync(tokenFile)) fail(2, `no stand token at ${tokenFile}`);
 const token = readFileSync(tokenFile, "utf8").trim();
+if (!token) fail(2, `empty token file ${tokenFile}`);
+if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `token file ${tokenFile} is readable by others — chmod 600`);
 
 const run = mkdtempSync(join(tmpdir(), "stand-run-"));
-const env = {
-  ...process.env,
-  HOME: join(run, "home"),
-  ISKRON_BRIDGE_AUTH_DIR: join(run, "auth"),
-  ISKRON_BRIDGE_URL: URL_,
-  ISKRON_BRIDGE_TOKEN: token,
-  ISKRON_BRIDGE_NO_UPDATE: "1",
+const envFor = (dir, secret) => {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, "token"), secret + "\n", { mode: 0o600 });
+  const e = { ...process.env, HOME: join(run, "home"), ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_URL: URL_, ISKRON_BRIDGE_NO_UPDATE: "1" };
+  delete e.ISKRON_BRIDGE_TOKEN;
+  return e;
 };
+const env = envFor(join(run, "auth"), token);
+const badEnv = envFor(join(run, "auth-bad"), "stand-run-invalid-token");
 const report = [];
 let failed = 0;
 const check = (ok, what, seen) => {
@@ -49,8 +58,8 @@ function fail(code, text) {
   process.exit(code);
 }
 
-function open(name) {
-  const child = spawn("node", [bridgePath], { env, stdio: ["pipe", "pipe", "pipe"] });
+function open(name, e = env) {
+  const child = spawn("node", [bridgePath], { env: e, stdio: ["pipe", "pipe", "pipe"] });
   const replies = new Map();
   const notes = [];
   let buf = "";
@@ -133,18 +142,35 @@ const nameB = `night-${stamp}.b`;
 
 const A = open("agent");
 const P = open("person");
+let setup = 0;
 try {
-  await A.init();
-  await P.init();
+  try {
+    await A.init();
+    await P.init();
+  } catch (e) {
+    setup = 2;
+    throw e;
+  }
 
   // The token authenticates: a real tool call, not initialize or tools/list.
   const who = await P.call("iskron_me", { action: "whoami" });
   check(!who.error && !/401|отвергнут|rejected/i.test(who.text), "whoami answers under the token", who.text.split("\n")[0].slice(0, 160));
   if (who.error) throw new Error(`whoami: ${who.text.slice(0, 300)}`);
+  if (expectUser) check(who.text.includes(expectUser), `whoami names ${expectUser}`);
+
+  // Negative control: a token the stand never issued is refused on a real call.
+  const B = open("bad", badEnv);
+  try {
+    await B.init().catch(() => {});
+    const bad = await B.call("iskron_me", { action: "whoami" });
+    check(bad.error || /401|отверг|rejected/i.test(bad.text), "an unknown token is refused", bad.text.split("\n")[0].slice(0, 160));
+  } finally {
+    B.close();
+  }
 
   // A graph and a role of the run's own: the stand's data, nobody's live seat.
-  const list = await P.call("iskron_realm", { action: "list" });
-  const own = list.text.match(new RegExp(`(@[\\w-]+/${realmSlug})\\b`));
+  const list = realmArg ? { text: realmArg } : await P.call("iskron_realm", { action: "list" });
+  const own = realmArg ? [null, realmArg] : list.text.match(new RegExp(`(@[\\w-]+/${realmSlug})\\b`));
   if (own) realm = own[1];
   else {
     const made = await P.call("iskron_realm", { action: "create", slug: realmSlug, name: "Ночной прогон моста" });
@@ -232,7 +258,8 @@ try {
   P.close();
 }
 
-process.stdout.write(report.join("\n") + "\n");
+// The report never carries the credential, whatever a tool echoed.
+process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 if (!keep) rmSync(run, { recursive: true, force: true });
-process.exit(failed ? 1 : 0);
+process.exit(setup || (failed ? 1 : 0));
