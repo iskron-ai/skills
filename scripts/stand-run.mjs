@@ -128,6 +128,7 @@ const standingsLog = () => {
   return existsSync(p) ? readFileSync(p, "utf8") : "";
 };
 const noteText = (n) => JSON.stringify(n.m.params ?? {});
+const seatId = (board, name) => channelId(board, name);
 const channelId = (board, name) => {
   const lines = board.split("\n");
   for (let i = 0; i < lines.length; i++)
@@ -250,23 +251,28 @@ try {
     check(board3.includes(`:${nameA} —`), "main seat still held after the one beside is taken off");
   } else report.push("SKIP seat beside — no --realm2");
 
-  // 4. Own revoke, karta as a number: quiet, no stop word.
-  const idA2 = channelId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA);
-  const before4 = A.notes.length;
-  const own4 = await A.call("iskron_channel", { realm, action: "revoke", karta: String(karta), channel: idA2 });
-  check(!own4.error, "own revoke (karta as a number) answered", own4.text.split("\n")[0].slice(0, 160));
-  await sleep(15_000);
-  const notes4 = A.notes.slice(before4).map(noteText);
-  check(!notes4.some((t) => /остановлен/.test(t)), "own revoke (karta as a number): no stop word", notes4.join(" | ").slice(0, 200));
-
-  // 4b. Own revoke, karta as "#N" — the form the bridge itself suggests (graph @nks/nks-dev, node #6987).
-  await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
-  const idA3 = channelId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA);
-  const before4b = A.notes.length;
-  await A.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: idA3 });
-  await sleep(15_000);
-  const notes4b = A.notes.slice(before4b).map(noteText);
-  check(!notes4b.some((t) => /остановлен/.test(t)), "own revoke (karta \"#N\"): no stop word", notes4b.join(" | ").slice(0, 200));
+  // 4. Own revoke in every form the bridge must recognise as its own (graph @nks/nks-dev,
+  // node #6987): karta as a JSON number, as "N", as "#N"; standing as the full address and as
+  // the name alone. Each is quiet — no stop word; the seat is taken again between them.
+  const handle = (who.text.match(/You are (@[\w.-]+)/) || [])[1] ?? "";
+  const forms = [
+    ["karta as a JSON number", () => ({ karta: Number(karta) })],
+    ['karta as "N"', () => ({ karta: String(karta) })],
+    ['karta as "#N"', () => ({ karta: `#${karta}` })],
+    ["standing as the full address", () => ({ karta: `#${karta}`, standing: `${handle}:${nameA}` })],
+    ["standing as the name alone", () => ({ karta: `#${karta}`, standing: nameA })],
+  ];
+  for (const [label, args] of forms) {
+    if (!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA))
+      await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
+    const before4 = A.notes.length;
+    const own4 = await A.call("iskron_channel", { realm, action: "revoke", ...args() });
+    check(!own4.error, `own revoke (${label}) answered`, own4.text.split("\n")[0].slice(0, 160));
+    await sleep(12_000);
+    const notes4 = A.notes.slice(before4).map(noteText);
+    check(!notes4.some((t) => /остановлен/.test(t)), `own revoke (${label}): no stop word`, notes4.join(" | ").slice(0, 200));
+    check(!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA), `own revoke (${label}): the seat is gone`);
+  }
 
   // 5. status names what is attached on this (isolated) machine.
   const status = await new Promise((res) => {
