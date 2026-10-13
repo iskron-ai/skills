@@ -85,6 +85,7 @@ export function leadDoors(
   flush: (session: string) => Promise<void>,
   end: (child: string, out?: ((s: string) => void) | null) => void,
   slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
+  closed: Closed = () => false,
 ): LeadDoors {
   return {
     say,
@@ -103,19 +104,34 @@ export function leadDoors(
     async end(child) {
       end(child);
     },
-    async parentOf(child) {
-      const s: any = await ctx.session.get({ sessionID: child } as any);
-      return s?.parentID ?? s?.data?.parentID ?? null;
-    },
-    tell: teller(ctx, say),
+    parentOf: (child) => parentOf(ctx, child),
+    tell: teller(ctx, say, closed),
   };
 }
 
-/** Synthetic text (no synthetic — prompt) with steer; wake — resume. */
-export function teller(ctx: Context, say: Say): LeadDoors["tell"] {
+/** The session gets no word any more: an ended lead, a stopped session (#7505, #7440). */
+export type Closed = (session: string) => boolean;
+
+async function parentOf(ctx: Context, child: string): Promise<string | null> {
+  const s: any = await ctx.session.get({ sessionID: child } as any);
+  return s?.parentID ?? s?.data?.parentID ?? null;
+}
+
+/**
+ * Synthetic text (no synthetic — prompt) with steer; wake — resume. A closed addressee gets
+ * nothing — the word would wake it past the channel's ban (#7505): it goes up the parentID chain
+ * to the nearest live ancestor without waking it; none — the journal.
+ */
+export function teller(ctx: Context, say: Say, closed: Closed = () => false): LeadDoors["tell"] {
   return async (sessionID, text, wake) => {
     const s: any = ctx.session;
     const delivery = "steer";
+    for (const seen = new Set<string>(); closed(sessionID); wake = false) {
+      seen.add(sessionID);
+      const up = await parentOf(ctx, sessionID).catch(() => null);
+      if (!up || seen.has(up)) return say(W().noLiveAncestor(text), "warning");
+      sessionID = up;
+    }
     text = markFrame(text);
     try {
       if (typeof s.synthetic === "function")

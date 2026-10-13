@@ -4287,7 +4287,7 @@ for (const kind of ["evicted", "dead", "stopped"])
 // Review of #7440 п.2: the stop interrupted only the stopped session — its descendants' running
 // turns went on — and the delivery ban looked at the final root only, so a grandchild under a
 // stopped child kept getting frames. root → child → grand, each standing on a bridge of its own.
-async function lineage(name) {
+async function lineage(name, seat = (s) => `${ROOT_PLACE.name}.${s}`) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
@@ -4311,7 +4311,7 @@ async function lineage(name) {
     ]) {
       await rec.call("iskron_stand", { realm: "nks-dev" }, s);
       pids[s] = pidsOf(b.log)[i];
-      const place = { ...ROOT_PLACE, name: `${ROOT_PLACE.name}.${s}` };
+      const place = { ...ROOT_PLACE, name: seat(s, i) };
       appendFileSync(`${b.events}.${pids[s]}`, event("held", { key: `k-${s}`, place }));
       await until(() => rec.said().includes(`мост держит стояние k-${s}`), `${s}'s held word`);
     }
@@ -5522,6 +5522,44 @@ test("an ended lead is woken by nothing: frames, piles, batches and a held tact 
       "nothing laid into the ended child",
     );
     assert.match(rec.said(), /не вложен — субагент сессии child кончен/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Review of №652 (P1): a nested lead's outcome went to its parent straight as a waking synthetic,
+// past the channel's ban — the launcher revoked the child, the grandchild ended, and its «КОНЧЕН»
+// woke the ended child. An ended parent gets nothing: the word goes up to the nearest live
+// ancestor without waking it.
+test("a grandchild's outcome under an ended child goes to the nearest live ancestor without waking, nothing into the child", async () => {
+  const { rec, pids } = await lineage(
+    "lead-grand-outcome",
+    (_, i) => `${ROOT_PLACE.name}.sub-${i}`,
+  );
+  const child = (p) => p.sessionID === "child";
+  try {
+    await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
+      "root",
+    );
+    await until(() => !alive(pids.child), "the child's bridge to go on the launcher's word");
+    await until(() => ends(rec).length === 1, "the child's end in the root");
+    rec.emit({ type: "session.text.ended", data: { sessionID: "grand", text: "Итог внука." } });
+    await delay(50);
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "grand");
+    await until(() => !alive(pids.grand), "the grandchild's bridge to go with its leave");
+    await until(() => ends(rec).length === 2, "the grandchild's end somewhere");
+    await delay(300);
+    assert.deepEqual(
+      [...rec.prompts, ...rec.synthetics].filter(child),
+      [],
+      "nothing laid into the ended child — it would wake it",
+    );
+    const grand = ends(rec)[1];
+    assert.equal(grand.sessionID, "root", "the outcome goes to the nearest live ancestor");
+    assert.match(grand.text, /Итог внука/);
+    assert.equal(grand.resume, false, "an outcome passed up does not wake the ancestor");
   } finally {
     await rec.stop();
   }

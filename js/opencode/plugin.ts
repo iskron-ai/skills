@@ -15,9 +15,11 @@ import { LOGGERS, OPENCODE, PLUGIN, PRODUCT } from "../delivery/index.ts";
 import { markFrame } from "../shared/frame-text.ts";
 import { words } from "../shared/lang.ts";
 import { withWord } from "../shared/launch.ts";
+import { authDir } from "./bridge-io.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { idleHalf } from "./half.ts";
+import { createHalts } from "./halts.ts";
 import { homeOf } from "./host.ts";
 import { createKeepAlive, keepaliveTitle } from "./keepalive.ts";
 import { teller } from "./leaddoors.ts";
@@ -32,6 +34,7 @@ export type Context = Plugin.Context;
 
 /** How often an instance looks for its children under a stop it was not told of (another server, a reload). */
 const SWEEP_MS = 5_000;
+const nothing = (): void => {};
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 
@@ -102,10 +105,15 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   }
 
   let half = idleHalf();
+  // One look for every word laid into a session past the channel — a lead's outcome, a waiting
+  // child's word (teller): an ended lead or a stopped session gets none, its live ancestor does
+  // (#7505). The stops are read from the channel's registry and records (halts.ts), never written.
+  const stops = createHalts((s) => parents.get(s), authDir, nothing, nothing);
+  const closed = (s: string): boolean => half.ended(s) || stops.halted(s);
   // Usage comes up after the tools (it needs the session's bridge); a subagent's end flushes it first.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   try {
-    half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s));
+    half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s), closed);
   } catch (e) {
     say(words(PLUGIN).notRaised((e as Error).message), "error");
   }
@@ -166,7 +174,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // A child waiting on a permission or interrupted not by a cancel — a word to the parent (waits.ts),
   // told once per process across deliveries (#6815 item 7).
   const waits = createWaits(ctx, {
-    tell: teller(ctx, say),
+    tell: teller(ctx, say, closed),
     isLead: (s) => half.leadOf(s) !== null,
   });
   const controller = new AbortController();

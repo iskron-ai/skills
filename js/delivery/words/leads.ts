@@ -30,6 +30,7 @@ export interface LeadWords {
   tellFailed: (sessionID: string, message: string) => string;
   sessionOf: (child: string) => string;
   noParent: (text: string) => string;
+  noLiveAncestor: (text: string) => string;
   notDown: (who: string, message: string) => string;
   leftSeat: () => string;
   leftCases: () => string;
@@ -109,6 +110,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `Искрон: слово о субагенте не вложилось в ${sessionID}: ${message}`,
     sessionOf: (child) => `сессии ${child}`,
     noParent: (text) => `${text}\n(родителя плагин не знает — итог некому)`,
+    noLiveAncestor: (text) =>
+      `${text}\n(родитель и все предки кончены или остановлены — слово не вложено никому, оно здесь)`,
     notDown: (who, message) => `Искрон: мост субагента ${who} не погашен после итога — ${message}`,
     leftSeat: () => "ушёл с места по исходу",
     leftCases: () => "ушёл из дел по исходу",
@@ -195,6 +198,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     sessionOf: (child) => `of session ${child}`,
     noParent: (text) =>
       `${text}\n(the plugin does not know the parent — nobody to give the outcome to)`,
+    noLiveAncestor: (text) =>
+      `${text}\n(the parent and every ancestor are ended or stopped — the word went into no session, it is here)`,
     notDown: (who, message) =>
       `Iskron: the bridge of subagent ${who} was not put down after the outcome — ${message}`,
     leftSeat: () => "left its seat by the outcome",

@@ -43,7 +43,8 @@ export function createLeads(d: LeadDoors): Leads {
    * The outcome wakes and goes steer: OpenCode's own synthetic on the child's quiet wakes the
    * parent first, and a queued word would land only after its turn. A seat taken down by the
    * platform, an unreturned seat (lost) and the parent's move (away — no "ended") do not wake.
-   * own — the launcher's revoke follows by its own bridge: no correction word here.
+   * own — the launcher's revoke follows by its own bridge: no correction word here. A parent
+   * ended or stopped itself gets nothing: the word goes up to a live ancestor unwoken (teller).
    */
   async function finish(
     child: string,

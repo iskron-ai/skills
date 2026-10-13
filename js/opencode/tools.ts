@@ -37,7 +37,7 @@ import { hostEnvOf } from "./host.ts";
 import { createKeeper } from "./keep.ts";
 import { holdersOf } from "./keepalive.ts";
 import { createLauncher } from "./launch.ts";
-import { leadDoors } from "./leaddoors.ts";
+import { type Closed, leadDoors } from "./leaddoors.ts";
 import { createLeads } from "./leads.ts";
 import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
@@ -55,14 +55,13 @@ export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
 export type { Slot } from "./slot.ts";
 
-const hhmm = (): string => new Date().toTimeString().slice(0, 5);
-
 export async function setupTools(
   ctx: Context,
   say: Say,
   onChannel: (session: string | null, params: any, child?: boolean) => void,
   rootOf: (sessionID: string) => Promise<string>,
   flushUsage: (session: string) => Promise<void> = async () => {},
+  closed: Closed = () => false,
 ): Promise<ToolsHalf> {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
@@ -127,7 +126,7 @@ export async function setupTools(
         // A holding bridge exited against our will — a word into the session, not a log line (#5140).
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
-        const text = W.hearingLost(hhmm(), e.message);
+        const text = W.hearingLost(new Date().toTimeString().slice(0, 5), e.message);
         const lost = { logger: LOGGERS.channel, data: { kind: "lost", text } };
         onChannel(slot.session, lost, !!slot.child); // a child's hearing — a word only to it (#6625)
       },
@@ -146,7 +145,7 @@ export async function setupTools(
   // Lead subagents (#6625): the end is an explicit act, the outcome a synthetic message to the parent.
   const endChild = (c: string, out: ((s: string) => void) | null = forget) =>
     runEnds.end(c, slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots, closed));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
