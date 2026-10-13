@@ -238,8 +238,10 @@ function fakeCtx({
       },
       // An interrupt of the session's running turn (session.interrupt, @opencode/plugin 2.0.4);
       // interruptFails — so many next interrupts throw.
+      // interruptGate — a promise every interrupt waits for before it answers.
       interrupt: async (o) => {
         interrupts.push(o);
+        await faults.interruptGate;
         if (faults.interruptFails > 0 && faults.interruptFails--)
           throw new Error("interrupt refused");
         return { interrupted: true };
@@ -4623,6 +4625,36 @@ for (const [fails, calls] of [
       await rec.stop();
     }
   });
+
+// Review of #7440, eighth round: the first stop's interrupt still unanswered survived the held —
+// the second stop skipped its cut as in flight, and the first answer marked the second stop cut.
+// A held starts a new stop; an answer counts only for its own stop, and the next one follows it.
+test("a second stop after a held while the first stop's interrupt is unanswered interrupts the turn again", async () => {
+  const b = bridgeEnv("stop-again");
+  let release;
+  const faults = { interruptGate: new Promise((r) => (release = r)) };
+  const rec = await plugin(b.env, { faults });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-stop");
+    const pid = pidOf(b.log);
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    const stops = () => rec.said().split(text).length - 1;
+    appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => rec.interrupts.length === 1, "the first stop's interrupt");
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+    await until(() => /мост держит стояние k/.test(rec.said()), "the held word");
+    appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+    await until(() => stops() === 2, "the second stop's word");
+    release();
+    await until(() => rec.interrupts.length === 2, "the second stop's interrupt");
+    await delay(800);
+    assert.equal(rec.interrupts.length, 2, "one interrupt per stop");
+  } finally {
+    release();
+    await rec.stop();
+  }
+});
 
 // e2e12 (№147): the parent was told «место снято» while the child's revoke had failed. The
 // end's word says the place is being taken down; the child's bridge ends its run after it

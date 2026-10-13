@@ -262,35 +262,43 @@ export function setupChannel(
     piles.delete(key);
   }
 
-  const cutDone = new Set<string>(); // turns cut by a stop, until the session stands again
-  const cutting = new Set<string>(); // an interrupt in flight
-  const cutFails = new Map<string, number>(); // refused interrupts of this stop
+  const stops = new Map<string, number>(); // the session's stop generation: each held starts the next
+  const stopOf = (id: string): number => stops.get(id) ?? 0;
+  const cutDone = new Map<string, number>(); // the generation whose turn is cut
+  const cutting = new Map<string, number>(); // the generation whose interrupt is in flight
+  const cutFails = new Map<string, number>(); // refused interrupts of the current generation
   const retries = new Set<ReturnType<typeof setTimeout>>();
   /**
    * A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once
    * per stop. A refused interrupt is tried again, by a timer and by the next halt, up to CUT_TRIES.
+   * An interrupt answers only for its own stop: a stop after a held while the previous stop's
+   * interrupt is in flight gets its own interrupt right after it.
    * Prompts OpenCode already took into the session's inbox stay there: the plugin's session domain
    * has no inbox.cancel (@opencode/plugin 2.0.4 through 2.0.28, only the full client has it).
    */
   function cut(id: string): void {
-    if (cutDone.has(id) || cutting.has(id)) return;
+    const gen = stopOf(id);
+    if (cutDone.get(id) === gen || cutting.get(id) === gen) return;
     for (const k of ["child", "root"]) dropPile(`${k}:${id}`);
     tacts.gone(id);
+    if (cutting.has(id)) return; // the previous stop's interrupt is in flight: this one follows it
     const s = ctx.session as any;
-    if (typeof s.interrupt !== "function") return void cutDone.add(id);
-    cutting.add(id);
+    if (typeof s.interrupt !== "function") return void cutDone.set(id, gen);
+    cutting.set(id, gen);
     void Promise.resolve()
       .then(() => s.interrupt({ sessionID: id, resume: false }))
       .then(
         () => {
-          cutDone.add(id);
+          if (stopOf(id) !== gen) return;
+          cutDone.set(id, gen);
           cutFails.delete(id);
         },
         (e: Error) => {
+          if (stopOf(id) !== gen) return;
           const n = (cutFails.get(id) ?? 0) + 1;
           cutFails.set(id, n);
           say(W.notDelivered(W.frame(), id, e.message), n < CUT_TRIES ? "warning" : "error");
-          if (n >= CUT_TRIES) return void cutDone.add(id);
+          if (n >= CUT_TRIES) return void cutDone.set(id, gen);
           const t = setTimeout(() => {
             retries.delete(t);
             if (halts.halted(id)) cut(id);
@@ -299,7 +307,10 @@ export function setupChannel(
           retries.add(t);
         },
       )
-      .finally(() => cutting.delete(id));
+      .finally(() => {
+        cutting.delete(id);
+        if (stopOf(id) !== gen && halts.halted(id)) cut(id);
+      });
   }
 
   /**
@@ -335,6 +346,7 @@ export function setupChannel(
     gone(session) {
       tacts.gone(session);
       halts.gone(session);
+      stops.delete(session);
       cutDone.delete(session);
       cutFails.delete(session);
     },
@@ -433,6 +445,7 @@ export function setupChannel(
         case "held":
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
           if (session) {
+            stops.set(session, stopOf(session) + 1);
             cutDone.delete(session);
             cutFails.delete(session);
           }
