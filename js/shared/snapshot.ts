@@ -1,5 +1,4 @@
 // Machine status wire and allowlist (graph @nks/nks-dev, node #7494).
-// Pulse is a future wire surface: absent observations stay absent.
 export interface PlaceSnapshot {
   name: string;
   realm: string;
@@ -9,10 +8,6 @@ export interface PlaceSnapshot {
   listening: boolean;
   last_work_at?: string;
   usage?: Record<string, string | number>;
-  turn_at?: string;
-  read_at?: string;
-  pending?: number;
-  state?: "idle" | "busy" | "interrupted" | "failed" | "unknown";
 }
 export interface SessionSnapshot {
   local_id: string;

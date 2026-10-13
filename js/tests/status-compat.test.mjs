@@ -38,6 +38,7 @@ test("an older daemon is reported without inventing sessions or opening one", as
     assert.deepEqual(s.sessions, []);
     const human = await asyncStatus(dir, ["--lang", "en"]);
     assert.match(human.out, /snapshot unavailable/);
+    assert.match(human.out, /Sessions: 9/);
     assert.doesNotMatch(human.out, /Sessions: 0/);
   } finally {
     await new Promise((r) => server.close(r));

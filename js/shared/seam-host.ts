@@ -158,6 +158,16 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
     (line) => say(`unparseable seam line: ${line.slice(0, 120)}`),
   );
   const accept = async (hello: SeamHello) => {
+    let snapshot: MachineSnapshot | undefined;
+    let snapshot_error: "snapshot failed" | undefined;
+    if (hello.snapshot && host.snapshot) {
+      try {
+        snapshot = host.snapshot();
+      } catch {
+        snapshot_error = "snapshot failed";
+        say("seam snapshot failed");
+      }
+    }
     const welcome = (id: string | null, resumed: boolean) =>
       writeFrame(socket, {
         t: "welcome",
@@ -169,7 +179,8 @@ export function serveSeam(socket: Socket, host: SeamHost, graceMs = SEAM_REATTAC
         ack: true,
         ...(id === null && host.count ? { sessions: host.count() } : {}),
         ...(id === null && host.path ? { path: host.path } : {}),
-        ...(id === null && hello.snapshot && host.snapshot ? { snapshot: host.snapshot() } : {}),
+        ...(snapshot ? { snapshot } : {}),
+        ...(snapshot_error ? { snapshot_error } : {}),
       });
     if (hello.probe || hello.snapshot) {
       welcome(null, false);

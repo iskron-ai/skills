@@ -4,6 +4,7 @@ import { safePlace, type SessionSnapshot } from "../shared/snapshot.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { doors, heldPlaces, holdsChannel } from "./hold.ts";
 import { sessionOfBridge } from "./holdrecord.ts";
+import { H } from "./holdstate.ts";
 import { placeFields } from "./placefields.ts";
 import { extraPlaces } from "./places.ts";
 import { type BridgeSession } from "./session.ts";
@@ -39,7 +40,8 @@ export function sessionSnapshot(
         karta: standing?.karta,
         primary: p.primary,
         satellite_of: fields.attrs.satellite_of,
-        listening: holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
+        listening:
+          !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
         ...(last ? { last_work_at: new Date(last).toISOString() } : {}),
         usage: fields.attrs.usage,
       });
