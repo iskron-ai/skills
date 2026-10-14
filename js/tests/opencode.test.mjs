@@ -8708,7 +8708,7 @@ for (const [lang, chosen, label] of [
   });
 }
 
-test("the bridge the plugin raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, none under ru", async () => {
+test("the bridge the plugin raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, ru under ru", async () => {
   for (const lang of ["en", "ru"]) {
     const fake = await startFakeNks({ pat: "nks_pat_plugin" });
     const rec = await plugin({
@@ -8721,9 +8721,7 @@ test("the bridge the plugin raises speaks the session language: accept-language 
     try {
       await until(() => rec.tools().has("iskron_stand"), "the bridge's own tool", 15000);
       await until(() => fake.state.acceptLanguage.size > 0, "a request to the server", 15000);
-      const asked = [...fake.state.acceptLanguage];
-      if (lang === "en") assert.ok(asked.includes("en"), asked.join(","));
-      else assert.ok(asked.length && !asked.includes("en"), asked.join(","));
+      assert.deepEqual([...fake.state.acceptLanguage], [lang]);
     } finally {
       await rec.stop();
       await fake.stop();
