@@ -417,6 +417,12 @@ try {
       }
       check(gone, "satellite: the launcher's revoke takes the satellite seat off on the server");
       for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
+      // What the launcher's model is told (graph @nks/nks-dev, node #7599): no false «not taken
+      // off», and no revoke call for another seat to follow.
+      const told = JSON.stringify(messages(Rs.id).filter((x) => Number(x?.time?.created ?? 0) >= tRev));
+      check(!/НЕ снято|NOT taken off|not taken off/.test(told), "satellite: the launcher is not told the seat still hangs");
+      check(!/channel=\\*"[0-9a-f-]{36}/.test(told), "satellite: the launcher's answer carries no revoke call for another seat");
+      for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
       const word = await P.call("iskron_channel", { realm, action: "send", karta: `#${karta}`, standing: sub, text: "stand-run: reply PONG", as_person: true });
       report.push(`INFO word to the ended satellite: ${word.error ? "refused" : "accepted"} — ${word.text.split("\n")[0].slice(0, 140)}`);
       await sleep(30_000);
