@@ -237,8 +237,9 @@ test("stop <satellite session> orders the subagent's seat: no hold record needed
   assert.ok(id, "the satellite's seat id in the snapshot");
   const r = await stop(dir, [sat.welcome.session], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  // The satellite's own register clears a model the harness did not name (PATCH, #7591) — not the stop.
   assert.deepEqual(
-    fake.state.orders.human.map((h) => [h.method, h.id]),
+    fake.state.orders.human.filter((h) => h.method !== "PATCH").map((h) => [h.method, h.id]),
     [["POST", id]],
   );
 });
