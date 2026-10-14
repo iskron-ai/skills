@@ -71,19 +71,22 @@ async function hostEnv(): Promise<Record<string, string>> {
   return env;
 }
 
-/** A satellite's stand names the model pi runs (#7591); other calls go as they came. */
-const withModel = (name: string, args: any, ctx: any) =>
-  name === tool("stand") ? withHarnessModel(args, ctx?.model?.id) : args;
+/**
+ * A satellite's stand names the model pi runs (#7591); other calls go as they came. `holds` —
+ * the bridge holds a seat (its "held" word).
+ */
+const withModel = (name: string, args: any, ctx: any, holds: boolean) =>
+  name === tool("stand") ? withHarnessModel(args, ctx?.model?.id, holds) : args;
 
 /** A tool call by the bridge — for the launch line: a service move, not the agent's work (#6510). */
 const callVia =
-  (b: Bridge, ctx: any): LaunchCall =>
+  (b: Bridge, ctx: any, holds: () => boolean): LaunchCall =>
   async (name, args) =>
     textOrThrow(
       name,
       await b.request(
         "tools/call",
-        { name, arguments: withModel(name, args, ctx) },
+        { name, arguments: withModel(name, args, ctx, holds()) },
         { service: true },
       ),
     );
@@ -226,7 +229,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
             try {
               const result = await live.request(
                 "tools/call",
-                { name, arguments: withModel(name, params ?? {}, c) },
+                { name, arguments: withModel(name, params ?? {}, c, heldName !== null) },
                 { signal }, // no ceiling: the first call may go to the human's browser
               );
               // A tool's refusal is a throw — only it sets isError.
@@ -321,7 +324,12 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     await raising;
     const live = bridge;
     const word = live
-      ? await enterCase(l, callVia(live, ctx), of, () => heldName)
+      ? await enterCase(
+          l,
+          callVia(live, ctx, () => heldName !== null),
+          of,
+          () => heldName,
+        )
       : W.launchNoBridge(String(l.no));
     return { action: "transform", text: withWord(event.text, word) };
   });

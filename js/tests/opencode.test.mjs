@@ -5967,6 +5967,56 @@ test("real bridges: a child standing as a satellite carries its own session's mo
   }
 });
 
+// №680 review: a busy line alone is one only while the child's bridge holds a seat — the first
+// stand with a status takes the seat and names the child's model; and when the harness names
+// no model (session.get fails), the satellite has none — not the agent's word for it.
+test("a child's first stand with a status names its model; a harness without the model gives none, not the agent's", async () => {
+  const calls = join(SANDBOX, "sat-model.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("sat-model", {
+    FB_CALLS: calls,
+    FB_TOOLS: LEAD_TOOLS,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const mute = { id: "c2", parentID: "root" };
+  // The harness's answer for c2 fails where the model is read: session.get refused it.
+  Object.defineProperty(mute, "model", {
+    get: () => {
+      throw new Error("session.get refused");
+    },
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", model: { id: "claude-opus-5-5" } },
+      { id: "c1", parentID: "root", model: { id: "gpt-6.1-sol" } },
+      mute,
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    await rec.call("iskron_stand", { realm: "@nks/nks-dev", karta: "#931" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
+    const stand = (s, a) => rec.call("iskron_stand", { realm: "@nks/nks-dev", ...a }, s);
+    await stand("c1", { status: "чиню" });
+    await until(() => (rec.said().match(/мост держит стояние/g) ?? []).length > 1, "c1 held");
+    await stand("c1", { status: "дальше" });
+    await stand("c2", { model: "agent-says" });
+    const sat = readFileSync(calls, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand" && c.arguments.satellite_of)
+      .map((c) => [c.arguments.status ?? null, c.arguments.model ?? null]);
+    assert.deepEqual(sat, [
+      ["чиню", "gpt-6.1-sol"],
+      ["дальше", null],
+      [null, null],
+    ]);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // №664: one satellite name in two graphs is two seats (#5838). The child's bridge revoked its seat
 // in A and was refused in B: the launcher's revoke for B goes and its refusal is loud; for A it
 // is not sent again. A name-only match let A's success hide B's refusal — «место снято», B hung.

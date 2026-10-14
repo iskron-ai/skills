@@ -686,6 +686,40 @@ test("a satellite's stand carries pi's model; a busy line alone does not", async
   }
 });
 
+// №680 review: a busy line is one only while the bridge holds a seat — the first stand with a
+// status takes the seat and names the model; and the agent's model never stands in for pi's.
+test("a satellite's first stand with a status takes the seat with pi's model; without pi's model there is none, not the agent's", async () => {
+  for (const [label, model, said, want] of [
+    ["first-busy", { id: "gpt-6.1-sol", provider: "openai" }, {}, ["gpt-6.1-sol", undefined]],
+    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined]],
+  ]) {
+    const calls = join(SANDBOX, `sat-${label}.calls`);
+    const { env } = bridgeEnv(`sat-${label}`, {
+      FB_TOOLS: STAND_AND_CASE,
+      FB_CALLS: calls,
+      FB_STAND_HELD: "host.repo.opus-5",
+    });
+    const rec = await session(env);
+    rec.ctx.model = model;
+    try {
+      const stand = rec.tools.get("iskron_stand");
+      const args = { realm: "@nks/nks-dev", karta: 931, satellite_of: "@me:host.repo" };
+      const first = { ...args, status: "чиню", ...said };
+      await stand.execute("id", first, undefined, () => {}, rec.ctx);
+      await stand.execute("id", { ...args, status: "дальше" }, undefined, () => {}, rec.ctx);
+      assert.deepEqual(
+        toolCalls(calls)
+          .filter((c) => c.name === "iskron_stand")
+          .map((c) => c.arguments.model),
+        want,
+        label,
+      );
+    } finally {
+      await rec.stop();
+    }
+  }
+});
+
 test("without the tail the seat comes from ISKRON_SATELLITE_OF; only the first prompt launches, and a prompt without the line is left as it was", async () => {
   const calls = join(SANDBOX, "launch-env.calls");
   const { env } = bridgeEnv("launch-env", {
