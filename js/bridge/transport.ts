@@ -111,6 +111,9 @@ const TLS_REFUSALS = new Set([
   "ERR_TLS_CERT_ALTNAME_INVALID",
 ]);
 
+/** The account's key: a PAT outranks the store — with it the grant on disk is not read at all (#4267). */
+export const bearer = (): string | null => CFG.pat ?? loadStore().tokens?.access_token ?? null;
+
 // One POST to the server for one JSON-RPC message. Forwards every message the
 // server answers with (JSON body or a per-request SSE stream) via onMessage —
 // except tools/list_changed, which goes to the harness whoever asked (toolsync.ts, #6819).
@@ -126,8 +129,7 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   // The api's prose language follows an English bridge (shared/lang.ts); otherwise the server's default.
   const locale = SERVER_LOCALE[lang()];
   if (locale) headers["accept-language"] = locale;
-  // A PAT outranks the store: with it the grant on disk is not read at all (#4267).
-  const token = CFG.pat ?? loadStore().tokens?.access_token ?? null;
+  const token = bearer();
   if (token) headers.authorization = `Bearer ${token}`;
   // No grant and a login already out: the server can only answer 401 — say it here.
   else if (loginPublished())

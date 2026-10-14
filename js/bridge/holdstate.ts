@@ -55,10 +55,16 @@ export const E: {
   next: ((key: string, url: string, code: number) => void) | null;
   /** close 4001 not the session's own; or a standing_ended frame (`ended`) naming a seat of the channel */
   stop: ((key: string, code: number, reason: string, ended?: Frame) => void) | null;
+  /** every frame of the socket passes the stop orders (stoporder.ts): true — a stop frame, taken, not the agent's */
+  order: ((url: string, frame: Frame | null) => boolean) | null;
 } = {
   next: null,
   stop: null,
+  order: null,
 };
+export function whenOrdered(fn: NonNullable<(typeof E)["order"]>): void {
+  E.order = fn;
+}
 export function whenEvicted(fn: (key: string, url: string, code: number) => void): void {
   E.next = fn;
 }

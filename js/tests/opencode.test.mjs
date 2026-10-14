@@ -1419,6 +1419,34 @@ for (const busy of [true, false])
     }
   });
 
+// #7519: a stop order executed by the bridge says the same "stopped" as the owner's 4001 — no
+// close code, the order's reason — and the plugin halts the session the same way.
+test("the stop by an order halts the session as the stop by taking the seat off", async () => {
+  const b = bridgeEnv("stopped-order");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-order");
+    rec.emit({ type: "session.status", data: { sessionID: "s-order", status: { type: "busy" } } });
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    const pid = pidOf(b.log);
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text }),
+    );
+    await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+    assert.deepEqual(rec.interrupts[0], { sessionID: "s-order", resume: false });
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: { type: "message", id: "late-o", body: "после приказа" } }),
+    );
+    await delay(400);
+    assert.equal(rec.prompts.length, 0, "nothing wakes the stopped session");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a stale burst is one prompt into the holder's session, bodies included", async () => {
   const b = bridgeEnv("stale");
   const rec = await plugin(b.env);

@@ -5,6 +5,7 @@
 // own scope (shared/scope.ts).
 import "./standwire.ts"; // a taken seat and an own return stand by the same stand tool
 import "./stophold.ts"; // the owner's 4001 marks the seat stopped (#7439)
+import "./stoporder.ts"; // a stop order stops the seat the same way and is answered (#7519)
 
 import { createInterface } from "node:readline";
 import { type Writable } from "node:stream";

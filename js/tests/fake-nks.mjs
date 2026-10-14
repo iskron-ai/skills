@@ -18,6 +18,7 @@ import {
   devicePoll,
   deviceState,
 } from "./fake-device.mjs";
+import { ordersControl, ordersRoute, ordersState } from "./fake-orders.mjs";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
@@ -253,6 +254,7 @@ export async function startFakeNks(opts = {}) {
     // Sign-in from another device (RFC 8628, fake-device.mjs): off unless asked
     // for — a server without it is what every other probe stands on.
     device: deviceState(opts.device),
+    orders: ordersState(), // stop orders, api 0.122.0 (fake-orders.mjs)
   };
 
   const body = (req) =>
@@ -389,6 +391,8 @@ export async function startFakeNks(opts = {}) {
       return st.versionUp ? json(res, 200, { version: "fake-9" }) : json(res, 404, {});
     }
 
+    if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
+
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text, standing_id } = JSON.parse((await body(req)) || "{}");
       st.counts.status_requests++;
@@ -444,6 +448,7 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
+      ordersControl(st, patch, wsFrame);
       if (typeof patch.ws_send === "string") {
         for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, patch.ws_send));
       }

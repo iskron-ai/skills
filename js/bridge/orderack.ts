@@ -1,0 +1,132 @@
+// The api side of a stop order (graph @nks/nks-dev, nodes #7509, #7510, #7579): the open
+// orders read and the answer, with the key of the account that opened the seat. An answer the
+// api has not taken is repeated from the journal (orderjournal.ts) until it is taken.
+import { envName } from "../delivery/index.ts";
+import { scoped } from "../shared/scope.ts";
+import {
+  type OrderEntry,
+  type OrderState,
+  readOrder,
+  unanswered,
+  writeOrder,
+} from "./orderjournal.ts";
+import { log } from "./streams.ts";
+import { bearer } from "./transport.ts";
+
+/** An order as the frame and the read carry it. */
+export interface Order {
+  id: string;
+  standing_id: string;
+  reason_code?: string;
+  by?: string;
+}
+
+const TIMEOUT_MS = 5000;
+const RETRY_MS = (process.env[envName("ORDER_RETRY_MS")] || "1000,2000,5000,15000,30000,60000")
+  .split(",")
+  .map(Number)
+  .filter((n) => Number.isFinite(n) && n > 0);
+
+function headers(): Record<string, string> {
+  const h: Record<string, string> = { "content-type": "application/json" };
+  const token = bearer();
+  if (token) h.authorization = `Bearer ${token}`;
+  return h;
+}
+
+/**
+ * One answer. taken — the api took it, repeated it as a no-op, or holds the order closed
+ * (409: its state wins, 404: not this account's) — nothing to repeat; otherwise a later try.
+ */
+export async function sendAck(
+  base: string,
+  id: string,
+  state: OrderState,
+  reason?: string,
+): Promise<"taken" | "later"> {
+  try {
+    const res = await fetch(`${base}/me/orders/${encodeURIComponent(id)}/ack`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        state,
+        ...(reason ? { reason_code: reason } : {}),
+        client_id: `${id}-${state}`,
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    const body = await res.text().catch(() => "");
+    if (res.ok) return "taken";
+    if ([404, 409, 422].includes(res.status)) {
+      log(`stop order ${id}: answer ${state} not taken (${res.status}) — ${body.slice(0, 160)}`);
+      return "taken";
+    }
+    log(`stop order ${id}: answer ${state} refused (${res.status}) — repeated later`);
+  } catch (e) {
+    log(
+      `stop order ${id}: answer ${state} did not reach the api (${(e as Error).message}) — repeated later`,
+    );
+  }
+  return "later";
+}
+
+/** The account's open stop orders; [] when the api is not reached. */
+export async function openOrders(base: string): Promise<Order[]> {
+  try {
+    const res = await fetch(`${base}/me/orders?open=true&limit=200`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) return [];
+    const items = ((await res.json()) as { items?: unknown }).items;
+    return (Array.isArray(items) ? items : [])
+      .map((x) => x as Record<string, unknown>)
+      .filter((x) => typeof x.id === "string" && typeof x.standing_id === "string")
+      .map((x) => ({
+        id: x.id as string,
+        standing_id: x.standing_id as string,
+        ...(typeof x.reason_code === "string" ? { reason_code: x.reason_code } : {}),
+        ...(typeof x.by === "string" ? { by: x.by } : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+/** The outcome is on disk; answer it now and keep answering until the api takes it. */
+export async function answerOutcome(e: OrderEntry): Promise<void> {
+  if ((await sendAck(e.base, e.id, e.state, e.reason)) === "taken") markTaken(e.id);
+  else repeatLater();
+}
+
+function markTaken(id: string): void {
+  const e = readOrder(id);
+  if (e && !e.acked) writeOrder({ ...e, acked: true });
+}
+
+const P = scoped(() => ({ timer: null as ReturnType<typeof setTimeout> | null, step: 0 }));
+
+/** Every journal outcome the api has not taken, once more — now and on a growing pause. */
+export function repeatLater(now = false): void {
+  if (P.timer) {
+    if (!now) return;
+    clearTimeout(P.timer);
+  }
+  const pause = now ? 0 : RETRY_MS[Math.min(P.step, RETRY_MS.length - 1)];
+  P.timer = setTimeout(() => {
+    P.timer = null;
+    void (async () => {
+      const left = unanswered();
+      if (!left.length) return void (P.step = 0);
+      let open = false;
+      for (const e of left) {
+        if ((await sendAck(e.base, e.id, e.state, e.reason)) === "taken") markTaken(e.id);
+        else open = true;
+      }
+      if (!open) return void (P.step = 0);
+      P.step++;
+      repeatLater();
+    })();
+  }, pause);
+  P.timer.unref?.();
+}
