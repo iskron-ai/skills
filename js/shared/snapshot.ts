@@ -22,6 +22,9 @@ export interface SessionSnapshot {
   harness_session: string | null;
   cwd: string;
   build: string;
+  /** The session's server and its seats' api (the socket's origin): `stop` keys and addresses a seat by them. */
+  server?: string;
+  api?: string;
   /** Last skills this bridge sent with a successful reply; other writers are not observed. */
   skills?: { name: string; version: string; stamp?: string };
   installed_skills?: { name: string; version: string; stamp?: string };
@@ -101,6 +104,8 @@ export function safeSnapshot(v: unknown): MachineSnapshot {
         harness_session: typeof s.harness_session === "string" ? s.harness_session : null,
         cwd: text(s.cwd),
         build: text(s.build),
+        ...(typeof s.server === "string" && s.server ? { server: s.server } : {}),
+        ...(typeof s.api === "string" && s.api ? { api: s.api } : {}),
         ...(skills ? { skills } : {}),
         ...(installed ? { installed_skills: installed } : {}),
         ...(typeof s.skills_mismatch === "boolean" ? { skills_mismatch: s.skills_mismatch } : {}),

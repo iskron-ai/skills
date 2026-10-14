@@ -2,7 +2,7 @@
 
 Вход процесса — `main.ts`, цикл — `engine.ts` и `deliver.ts`; демон машины и тонкий клиент — `daemon.ts` и `thin.ts`.
 
-- `stand.ts` — занятие места: доска, connect/register, hello, стук, занятость; схема тула — `standtool.ts`.
+- `stand.ts` — занятие места: доска, connect/register, hello, стук, занятость; схема тула — `standtool.ts`; отказы с рабочим ходом, снятие прежнего места при take и ожидание 429 — `standmoves.ts`; полный вызов своего прежнего места — `standagain.ts`.
 - `board.ts`, `fields.ts`, `standing.ts` — чтение доски и ответов канала, привязка места.
 - `hold*.ts`, `resume*.ts`, `separate*.ts` — держание и возврат места, выбор места рядом.
 - `satellite.ts` — место субагента на прогон; `session.ts` — конец сессии.

@@ -514,6 +514,7 @@ export async function startFakeNks(opts = {}) {
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
+        "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
         "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
@@ -990,8 +991,15 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          if (st.registerStandsInRealmNext > 0) {
-            st.registerStandsInRealmNext--;
+          // Как api (oneSeatPerRealm): канал сессии уже стоит в этом графе другим живым местом.
+          const standsThere = st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm));
+          const another =
+            st.oneSeatPerRealm &&
+            !!standsThere &&
+            standsThere.name !== cleanName(a.name) &&
+            !channelOfPlace(a.realm, cleanName(a.name));
+          if (st.registerStandsInRealmNext > 0 || another) {
+            if (!another) st.registerStandsInRealmNext--;
             st.counts.register_stands_in_realm = (st.counts.register_stands_in_realm ?? 0) + 1;
             // Как api: сокет-канал уже несёт живое стояние этого графа под другим именем (#4032).
             return json(

@@ -6,7 +6,8 @@
 // аргумент уходит мосту, и снимка места он не печатает.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -17,10 +18,10 @@ import { startFakeNks } from "./fake-nks.mjs";
 import { BRIDGE, entrance, env, NODE, rpc } from "./status-kit.mjs";
 
 // Asynchronously: the fake api answers from this same process.
-const stop = (dir, args) =>
+const stop = (dir, args, childEnv = env) =>
   new Promise((resolve, reject) => {
     const child = spawn(NODE, [BRIDGE, "stop", ...args, "--auth-dir", dir], {
-      env,
+      env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -113,6 +114,113 @@ test("stop <session id> on an api without the stop route revokes the seat instea
       ["POST", id],
       ["DELETE", id],
     ],
+  );
+});
+
+/** The snapshot's session whose seat carries a standing id, once the bridge learnt it. */
+async function snapshotId(dir, session) {
+  for (let i = 0; i < 100; i++) {
+    const s = spawnSync(NODE, [BRIDGE, "status", "--json", "--auth-dir", dir], {
+      env,
+      encoding: "utf8",
+    });
+    const id = JSON.parse(s.stdout).sessions?.find((x) => x.local_id === session)?.places?.[0]
+      ?.standing_id;
+    if (id) return id;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return null;
+}
+
+// No personal token: the key is the OAuth grant of the seat's server, not of the machine's choice.
+const noPat = { ...env };
+delete noPat.ISKRON_BRIDGE_TOKEN;
+
+/** The grant store of a server in the grant directory, as the bridge keys it. */
+function grant(dir, serverUrl, store) {
+  const u = new URL(serverUrl);
+  const h = createHash("sha256")
+    .update(u.origin + u.pathname)
+    .digest("base64url")
+    .slice(0, 10);
+  writeFileSync(join(dir, `${u.hostname}_${h}.json`), JSON.stringify(store), { mode: 0o600 });
+}
+
+test("stop keys the order with the grant of the seat's own server, not the machine's", async (t) => {
+  const { dir, fake, id } = await seated(t, "own-server");
+  fake.state.access = "grant-of-the-seat-server";
+  grant(dir, fake.mcpUrl, { tokens: { access_token: "grant-of-the-seat-server" } });
+  const r = await stop(dir, ["own-server"], noPat);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.deepEqual(
+    fake.state.orders.human.map((h) => [h.method, h.id]),
+    [["POST", id]],
+  );
+});
+
+test("stop refreshes an expired grant of the seat's server the bridge's way, then orders", async (t) => {
+  const { dir, fake, id } = await seated(t, "expired");
+  fake.state.access = "not-this";
+  fake.state.refresh = "refresh-1";
+  grant(dir, fake.mcpUrl, {
+    client: { client_id: "c1" },
+    tokens: { access_token: "stale", refresh_token: "refresh-1", expires_at: Date.now() - 1000 },
+  });
+  const refreshes = fake.state.counts.refresh;
+  const r = await stop(dir, ["expired"], noPat);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.equal(fake.state.counts.refresh, refreshes + 1, "the grant was refreshed");
+  assert.deepEqual(
+    fake.state.orders.human.map((h) => [h.method, h.id]),
+    [["POST", id]],
+  );
+});
+
+test("stop with a grant that will not refresh says sign in again aloud and sends nothing", async (t) => {
+  const { dir, fake } = await seated(t, "dead-grant");
+  fake.state.refresh = "the-live-one";
+  grant(dir, fake.mcpUrl, {
+    client: { client_id: "c1" },
+    tokens: { access_token: "stale", refresh_token: "dead", expires_at: Date.now() - 1000 },
+  });
+  const r = await stop(dir, ["dead-grant"], noPat);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /ВОЙДИ ЗАНОВО/, r.stderr);
+  assert.equal(fake.state.orders.human.length, 0, "no foreign or stale key is sent");
+});
+
+test("stop <satellite session> orders the subagent's seat: no hold record needed", async (t) => {
+  const { dir, fake } = await seated(t, "lead");
+  const sat = await connectSeam(
+    seamSocketPath(dir),
+    helloFrame({
+      build: "v7.9.0+sat",
+      path: BRIDGE,
+      argv: [fake.mcpUrl, "--auth-dir", dir, "--satellite"],
+      patSha: patShaOf("status-pat"),
+    }),
+    3000,
+  );
+  t.after(() => sat.close());
+  const init = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "cc" } };
+  await rpc(sat, "initialize", init, 1);
+  const stood = await rpc(
+    sat,
+    "tools/call",
+    {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, satellite_of: "@tester:lead" },
+    },
+    2,
+  );
+  assert.ok(!stood.result?.isError, JSON.stringify(stood));
+  const id = await snapshotId(dir, sat.welcome.session);
+  assert.ok(id, "the satellite's seat id in the snapshot");
+  const r = await stop(dir, [sat.welcome.session]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.deepEqual(
+    fake.state.orders.human.map((h) => [h.method, h.id]),
+    [["POST", id]],
   );
 });
 

@@ -69,13 +69,14 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
+import { standAgainWord } from "./standagain.ts";
 import {
   awaitReissue,
+  ledIn,
   refusedWord,
   reissueNote,
   reissueThrottled,
   releasePrior,
-  standAgainWord,
 } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
@@ -121,7 +122,8 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   });
   if (!realm || !karta) {
     lines.push(
-      needRealmKarta(statusOnly.miss, statusOnly.of) + standAgainWord(realm, statusOnly.miss),
+      needRealmKarta(statusOnly.miss, statusOnly.of) +
+        (await standAgainWord(realm, karta, statusOnly.miss)),
     );
     return done(true);
   }
@@ -180,10 +182,14 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // A taken seat beside is no return: seatFor picks the next seat beside (#6706).
   const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
   if (ledSuffix && !besideTaken && a.take !== true) name = led0?.name ?? name;
-  // take=true onto another named seat of this graph: the led one is released after the take (#7553).
+  // take=true onto another named seat of the call's graph — the main one or one beside: the
+  // led one is released (#7553).
+  const ledThere = sat ? undefined : ledIn(realm);
   const prior =
-    a.take === true && !sat && led0?.name && (led0.name !== name || String(led0.karta) !== karta)
-      ? { ...led0 }
+    a.take === true &&
+    ledThere?.name &&
+    (ledThere.name !== name || String(ledThere.karta) !== karta)
+      ? { ...ledThere }
       : null;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map((k) => sw().cutPart(k)).join(", ");
@@ -332,7 +338,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // take=true is an explicit new entry cycle: connect even when the socket is already ours.
   if (beside) {
     // A channel holds seats in several graphs: register adds the seat on the same socket;
-    // connect would open a second channel (#5838).
+    // connect would open a second channel (#5838). The seat beside it replaces goes first:
+    // the channel stands once in a graph (#7553).
+    const freed = prior ? await releasePrior(realm, prior) : null;
+    if (freed && !freed.ok) return (lines.push(freed.note), done(true));
+    if (freed) extra.push(sw().note(freed.note));
     const r = await register();
     if (r.isError) {
       lines.push(refusedWord("register", r, realm));
@@ -431,7 +441,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
         : sw().howConnect(!!mine, listensElsewhere, a.take === true);
     // The seat retaken after a return that found no record: cases may have been lost (#6649).
     if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
-    if (prior) extra.push(sw().note(await releasePrior(realm, prior)));
+    if (prior) extra.push(sw().note((await releasePrior(realm, prior)).note));
   }
   lines.push(
     sw().head(mine?.address ?? name, karta, realm, how),

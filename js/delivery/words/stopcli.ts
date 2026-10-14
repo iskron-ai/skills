@@ -10,7 +10,10 @@ export interface StopCliWords {
   ambiguous: (target: string, list: string) => string;
   noId: (seat: string) => string;
   noRecord: (seat: string) => string;
-  noKey: () => string;
+  noServer: (seat: string) => string;
+  noKey: (server: string) => string;
+  /** Грант сервера места не освежился или отказан: вход заново, чужой ключ не шлётся. */
+  signIn: (server: string, why: string) => string;
   ordered: (seat: string, order: string) => string;
   revoked: (seat: string) => string;
   gone: (seat: string) => string;
@@ -32,8 +35,12 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
       `id места ${seat} мосту ещё не известен (hello его не назвал) — приказ адресовать нечем; повтори позже`,
     noRecord: (seat) =>
       `записи держания места ${seat} на диске нет — адрес api этого места неизвестен`,
-    noKey: () =>
-      "ключа учётки нет — ни личного токена, ни гранта OAuth в каталоге гранта; вход — establish-mcp",
+    noServer: (seat) =>
+      `демон не назвал сервер места ${seat} (сборка старше stop) — ключ выбрать нечем; обнови поставку: update`,
+    noKey: (server) =>
+      `ключа учётки сервера ${server} нет — ни личного токена, ни гранта OAuth в каталоге гранта; вход — establish-mcp`,
+    signIn: (server, why) =>
+      `ВОЙДИ ЗАНОВО: грант сервера ${server} не освежился (${why}) — ключ другого сервера месту не шлётся; вход — establish-mcp, затем повтори stop`,
     ordered: (seat, order) =>
       `приказ останова выдан месту ${seat}${order ? ` (приказ ${order})` : ""}: мост погасит агента и ответит исходом; ушло ли место — status`,
     revoked: (seat) =>
@@ -55,8 +62,12 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
       `the bridge does not know the id of the seat ${seat} yet (hello did not name it) — the order has no address; repeat later`,
     noRecord: (seat) =>
       `there is no hold record of the seat ${seat} on disk — the seat's api address is unknown`,
-    noKey: () =>
-      "no account key — neither a personal token nor an OAuth grant in the grant directory; sign in — establish-mcp",
+    noServer: (seat) =>
+      `the daemon did not name the server of the seat ${seat} (a build older than stop) — no key can be chosen; update the delivery: update`,
+    noKey: (server) =>
+      `no account key for the server ${server} — neither a personal token nor an OAuth grant in the grant directory; sign in — establish-mcp`,
+    signIn: (server, why) =>
+      `SIGN IN AGAIN: the grant of the server ${server} did not refresh (${why}) — another server's key is never sent to the seat; sign in — establish-mcp, then repeat stop`,
     ordered: (seat, order) =>
       `a stop order is issued to the seat ${seat}${order ? ` (order ${order})` : ""}: the bridge puts the agent down and answers the outcome; whether the seat went — status`,
     revoked: (seat) =>
