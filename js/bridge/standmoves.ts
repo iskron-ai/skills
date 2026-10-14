@@ -4,8 +4,7 @@ import { STAND_MOVES, type StandMovesWords, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Answer, callTool, short } from "./call.ts";
 import { holdsStanding } from "./hold.ts";
-import { keyOf } from "./holdrecord.ts";
-import { setRevokingBeside, stoppedSince } from "./holdstate.ts";
+import { setRevokingBeside, stoppedDuring } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { dropExtra, extraIn, extraOf, extraPlaces } from "./places.ts";
 import { sameRealm } from "./realms.ts";
@@ -87,7 +86,7 @@ function reissueThrottled(r: Answer): number | null {
   return Math.min(Math.max(Number.isFinite(said) ? said : 10, 1), REISSUE_MAX_S);
 }
 
-/** The wait for the seat's socket: `own` — it is ours; `stop` — the owner took the seat off meanwhile. */
+/** The wait for the seat's socket: `own` — it is ours; `stop` — the owner stopped the session meanwhile. */
 async function awaitReissue(
   seconds: number,
   held: () => boolean,
@@ -107,7 +106,7 @@ interface Reissued {
   c: Answer;
   /** the socket became this bridge's own during the wait (its own reopening): no second connect */
   own: boolean;
-  /** the owner's stop word: the seat was taken off during the wait — nothing takes it again (#7439) */
+  /** the owner's stop word: a seat the session held was taken off during the wait — the former one of a move too; nothing stands it again (#7439) */
   stop: string | null;
   note: string | null;
 }
@@ -129,7 +128,7 @@ export async function throughReissue(
   const { own, stop } = await awaitReissue(
     throttle,
     () => holdsStanding(seat.realm, seat.karta, seat.name),
-    () => stoppedSince(stopsBefore, keyOf(seat.realm, seat.karta, seat.name)),
+    () => stoppedDuring(stopsBefore),
   );
   if (stop) return { c, own, stop, note: null };
   const seconds = Math.round((Date.now() - t0) / 1000);

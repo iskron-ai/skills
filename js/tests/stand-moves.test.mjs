@@ -92,6 +92,27 @@ test("the owner takes the seat off while the call waits out a 429: no connect af
   assert.doesNotMatch(text, /429|socket_reissue_throttled|возвращено/, text);
 });
 
+// #7439 при переходе: take=true с места proba на drugoe пережидает 429, а владелец снимает
+// прежнее место proba — сессия остановлена, хотя новое место никто не снимал: повторного
+// connect нет, ответ — слово стопа.
+test("the owner takes the former seat off while take=true onto another seat waits out a 429: no connect after the wait, the answer is the stop", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const connects = fake.state.counts.connect;
+  await fake.control({ structured: true, connectThrottleNext: 1, connectThrottleRetryS: 8 });
+  const pending = stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  while (!fake.state.counts.connect_throttled) await new Promise((r) => setTimeout(r, 50));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.equal(fake.state.counts.connect, connects, "no connect after the owner's stop");
+  assert.match(text, /ты остановлен/, text);
+  assert.doesNotMatch(text, /429|socket_reissue_throttled|стояние \S*drugoe/, text);
+});
+
 // #7556 после connect: отказ register за свежим connect шёл мимо слова правила — голым английским.
 test("register refused by channel_already_stands_in_realm after a fresh connect reads in the session language with the move", async (t) => {
   const { fake, up } = await setup(t);

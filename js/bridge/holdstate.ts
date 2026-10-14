@@ -54,6 +54,9 @@ export const H = scoped(() => ({
 export const stoppedSince = (before: number, key: string): string | null =>
   H.stopped.n !== before && H.stopped.key === key ? H.stopped.text : null;
 export const stopsNow = (): number => H.stopped.n;
+/** The stop word if the session was stopped since the count `before`, whichever seat it held; otherwise null. */
+export const stoppedDuring = (before: number): string | null =>
+  H.stopped.n !== before ? H.stopped.text : null;
 
 /** Next step after eviction (evicted.ts) and after the owner's stop (stophold.ts): set once at load, one per process for all sessions. */
 export const E: {
