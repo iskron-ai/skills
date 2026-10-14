@@ -163,12 +163,14 @@ export default {
       }
       // видимый отказ мержа — вето на побудку мержа; маркера успеха не требует: gh вне терминала успех не печатает
       const held = !/^(?:[Ee]rror:|fatal:|GraphQL:|X )|not mergeable|merge failed/m.test(out);
-      const note = !refused && !tagCmd && (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet)
-        ? "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа (AGENTS.md, «Самопроверка этапа» и «Ревью и приёмка — чистым агентом против графа и диффа»)."
-        : held && (ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
-            ran("fj pr merge", "-h|--help|--auto|--disable-auto", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd)))
-          ? "[iskron] мерж — акты после мержа AGENTS.md («Жизненный цикл сессии», «Мерж → граф»): протки #1506, карта, модусы по свидетельству, закрыть по оси, reconcile, фидбэк, словарь; работа по ссылке от агента — только семя и модусы поставки."
-          : "";
+      // пуш и мерж судятся порознь, как два хука Claude Code: «пуш && мерж» будит обоими словами
+      const pushed = !refused && !tagCmd && (ran(push, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/) || quiet);
+      const merged = held && (ran("gh pr merge", "-h|--help|--auto|--disable-auto", /(Merged|Squashed and merged|Rebased and merged) pull request/) ||
+        ran("fj pr merge", "-h|--help|--auto|--disable-auto", /Merged PR #/) || ((exit ?? 0) === 0 && pull.test(cmd)));
+      const note = [
+        pushed && "[iskron] пуш — не отгрузка: самопроверка, словарный проход по тексту PR, холодное ревью этапа (AGENTS.md, «Самопроверка этапа» и «Ревью и приёмка — чистым агентом против графа и диффа»).",
+        merged && "[iskron] мерж — акты после мержа AGENTS.md («Жизненный цикл сессии», «Мерж → граф»): протки #1506, карта, модусы по свидетельству, закрыть по оси, reconcile, фидбэк, словарь; работа по ссылке от агента — только семя и модусы поставки.",
+      ].filter(Boolean).join("\n\n");
       if (!note || !(await mine(input.sessionID)) || !once(input.id)) return;
       input.result = {
         ...input.result,
