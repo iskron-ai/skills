@@ -9,35 +9,22 @@
 // ISKRON_BRIDGE_PATH aims the probe at any copy of the bridge: before the orders a stop frame
 // went to the agent and nothing answered it.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { test } from "node:test";
 
-import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
+import { saidKind, stand, textOf, until } from "./ownseat-kit.mjs";
+import {
+  acks,
+  frames,
+  journal,
+  kinds,
+  NKS,
+  orderOnDisk,
+  pause,
+  seatId,
+  standing,
+} from "./stoporder-kit.mjs";
 
-const NKS = "@nks/nks-dev";
 const DRUGOY = "@nks/drugoy";
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const seatId = (fake, canon, name) =>
-  [...fake.state.channels.values()].map((c) => c.places.get(canon)).find((p) => p?.name === name)
-    ?.standing_id;
-const acks = (fake, id) => fake.state.orders.acks.filter((a) => a.id === id && !a.dropped);
-const kinds = (b) => b.notifications.map((n) => n.params?.data?.kind).filter(Boolean);
-const frames = (b) =>
-  b.notifications.filter((n) => JSON.stringify(n.params?.data ?? {}).includes('"stop"'));
-const journal = (dir) => readFileSync(join(dir, "standings.log"), "utf8");
-const orderOnDisk = (dir, id) =>
-  JSON.parse(readFileSync(join(dir, "orders", `${id}.json`), "utf8"));
-
-async function standing(t, name = "proba") {
-  const env = await setup(t);
-  const b = await env.up();
-  const r = await stand(b, { realm: "nks-dev", karta: 931, name });
-  assert.ok(!r.result?.isError, textOf(r));
-  await until(() => env.fake.state.ws.size === 1, "the socket");
-  await until(() => seatId(env.fake, NKS, name), "the seat id");
-  return { ...env, b, id: seatId(env.fake, NKS, name) };
-}
 
 test("a stop frame: not the agent's — accepted before the stop, the stop word, the seat ended by stopped", async (t) => {
   const { fake, dir, b, id } = await standing(t);
@@ -128,6 +115,24 @@ test("an order for the seat beside ends that seat only — the main seat holds, 
   assert.ok(!kinds(b).includes("stopped"), `no stop of the agent: ${kinds(b)}`);
   assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
   assert.ok(seatId(fake, NKS, "proba"), "the main seat stays on the channel");
+});
+
+// #48 in №669: stopped for the founder ends the channel whole — its seats beside too — with one
+// 4001 revoked:self; the bridge does nothing more: that 4001 is no foreign stop, the seats beside
+// go quietly with the main seat, nothing stands again.
+test("an order for the founder with a seat beside: one stop, the seat beside goes quietly, no second stop on the 4001", async (t) => {
+  const { fake, dir, b, id } = await standing(t);
+  const r = await stand(b, { realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!r.result?.isError, textOf(r));
+  await until(() => seatId(fake, DRUGOY, "proba-b"), "the seat beside");
+  await fake.control({ stop_order: { id: "ord-f", standing_id: id } });
+  await until(() => fake.state.orders.list.get("ord-f").state === "stopped", "the outcome");
+  await until(() => fake.state.channels.size === 0, "the channel ended whole");
+  await pause(800);
+  assert.equal(kinds(b).filter((k) => k === "stopped").length, 1, `one stop word: ${kinds(b)}`);
+  assert.ok(!kinds(b).includes("dead"), "no dead token");
+  assert.equal(journal(dir).match(/^.*stopped .*close 4001.*$/m), null, journal(dir));
+  assert.equal(fake.state.counts.connect, 1, "nothing stands again");
 });
 
 test("an order for a seat the bridge does not hold is refused; nobody stops", async (t) => {

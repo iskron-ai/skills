@@ -765,8 +765,8 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
 });
 
 // Поля ответа по запросу (#6637, #6731): плагин объявляет iskron/structured мосту —
-// иначе мост их срезает, как харнесу без ключа.
-test("the plugin asks the bridge for response fields in its handshake", async () => {
+// иначе мост их срезает, как харнесу без ключа; iskron/halts — он подтверждает стоп приказа (#7519).
+test("the plugin asks the bridge for response fields in its handshake and declares its halts", async () => {
   const caps = join(SANDBOX, "fields.caps");
   writeFileSync(caps, "");
   const b = bridgeEnv("fields", { FB_INIT_CAPS: caps });
@@ -774,7 +774,11 @@ test("the plugin asks the bridge for response fields in its handshake", async ()
   try {
     await until(() => readFileSync(caps, "utf8").trim(), "the handshake", 8000);
     const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
-    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
+    assert.deepEqual(
+      seen[0],
+      { experimental: { "iskron/structured": {}, "iskron/halts": {} } },
+      JSON.stringify(seen),
+    );
   } finally {
     await rec.stop();
   }
@@ -1446,6 +1450,49 @@ test("the stop by an order halts the session as the stop by taking the seat off"
     await rec.stop();
   }
 });
+
+// #7519, review in case №669: the order's outcome is the executed interrupt — the plugin tells
+// its bridge iskron/halted only once the interrupt answered; a refused one is a refusal with code.
+for (const refused of [false, true])
+  test(`the stop by an order is confirmed to the bridge only after the interrupt ${refused ? "is refused for good" : "answered"}`, async () => {
+    const calls = join(SANDBOX, `halted-${refused}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-${refused}`, { FB_CALLS: calls });
+    let open;
+    const interruptGate = new Promise((r) => (open = r));
+    const faults = { interruptGate, interruptFails: refused ? Infinity : 0 };
+    const rec = await plugin(b.env, { faults });
+    const halted = () =>
+      readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((c) => c.name === "iskron/halted");
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-halt");
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pidOf(b.log)}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-9" }),
+      );
+      await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+      await delay(300);
+      assert.equal(halted().length, 0, "no confirmation while the interrupt is unanswered");
+      open();
+      await until(() => halted().length === 1, "the confirmation", 8000);
+      assert.deepEqual(
+        halted()[0].arguments,
+        refused
+          ? { order: "ord-9", ok: false, code: "interrupt_refused" }
+          : { order: "ord-9", ok: true },
+      );
+      if (refused) assert.equal(rec.interrupts.length, 3, "the refusal is final after the tries");
+    } finally {
+      await rec.stop();
+    }
+  });
 
 test("a stale burst is one prompt into the holder's session, bodies included", async () => {
   const b = bridgeEnv("stale");

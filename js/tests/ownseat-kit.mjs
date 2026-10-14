@@ -119,10 +119,11 @@ export async function setup(t) {
     await Promise.all(bridges.map((b) => b.stop()));
     for (const d of scratches.get(t) ?? []) rmSync(d, { recursive: true, force: true });
   });
-  const up = async (authDir = dir) => {
+  // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
+  const up = async (authDir = dir, capabilities = INIT.capabilities) => {
     const b = startBridge(fake.mcpUrl, authDir);
     bridges.push(b);
-    assert.ok((await b.call("initialize", INIT)).result);
+    assert.ok((await b.call("initialize", { ...INIT, capabilities })).result);
     return b;
   };
   return { fake, dir, cwd, up };

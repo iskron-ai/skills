@@ -1,14 +1,21 @@
 // The owner's stop order (graph @nks/nks-dev, nodes #7509, #7510, #7519): it reaches the bridge
 // by the socket's stop frame or by the open orders read on hello, and both meet here by order
 // id. The frame is never the agent's. The order goes on disk, accepted is answered, the seat
-// stops as when the owner takes it off (stophold.ts) and the outcome is answered — the api's
-// taking of the outcome ends the seat (stopped — as by itself). The same id again gives the
-// same outcome, not a second stop. Every bridge that knows orders executes them, with or
-// without the orchestrator's flag (#7513). Wired into hold.ts at load (session.ts).
+// stops as when the owner takes it off (stophold.ts), the harness's part of the stop is awaited
+// where the harness confirms it (orderhalt.ts), and the outcome is answered — never before the
+// accepted's answer; the api's taking of the outcome ends the seat (stopped — as by itself).
+// The same id again gives the same outcome, not a second stop. Every bridge that knows orders
+// executes them, with or without the orchestrator's flag (#7513). Wired into hold.ts at load
+// (session.ts).
+import { STOP } from "../delivery/index.ts";
 import { apiBase } from "../shared/channel.ts";
+import { words } from "../shared/lang.ts";
+import { broadcast, notify } from "./hold.ts";
 import { type Frame, whenOrdered } from "./holdstate.ts";
-import { answerOutcome, openOrders, type Order, repeatLater, sendAck } from "./orderack.ts";
+import { answerOutcome, type Order, repeatLater, sendAck } from "./orderack.ts";
+import { awaitHalt, confirmsHalts, SILENT } from "./orderhalt.ts";
 import { isTerminal, type OrderEntry, readOrder, writeOrder } from "./orderjournal.ts";
+import { readOpenOrders } from "./orderread.ts";
 import { holdsSeat, stopSeatByOrder } from "./stophold.ts";
 import { sleep, standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -24,6 +31,49 @@ function orderOf(frame: Frame): Order | null {
   const standing = str(frame.standing_id);
   if (!id || !standing) return null;
   return { id, standing_id: standing, reason_code: str(frame.reason_code), by: str(frame.by) };
+}
+
+/** The journal refused an entry: loudly — to the log, the doors and the human. */
+function journalRefused(id: string, outcome: boolean): void {
+  const text = words(STOP).orderJournalRefused(id, outcome);
+  log(text);
+  broadcast({ kind: "note", text });
+  notify("warning", { kind: "note", text });
+}
+
+/**
+ * The stop itself and the harness's part of it. Where the harness confirms (the OpenCode
+ * plugin), stopped is its executed interrupt and its refusal is failed with its code; where it
+ * cannot (the watchdog, pi), the stop is executed once the bridge gave the stop word and let
+ * the seat go. A seat beside stops no agent: it goes alone.
+ */
+async function stopOf(o: Order, entry: OrderEntry): Promise<OrderEntry> {
+  const confirms = confirmsHalts();
+  let seat: "main" | "beside" | null;
+  try {
+    seat = stopSeatByOrder(o.standing_id, o.by ?? "", o.id);
+  } catch (e) {
+    log(`stop order ${o.id}: the stop failed — ${(e as Error).message}`);
+    return { ...entry, state: "failed", reason: "stop_failed" };
+  }
+  if (seat === null) return { ...entry, state: "unknown", reason: "seat_gone_before_stop" };
+  if (seat === "beside" || !confirms) return { ...entry, state: "stopped" };
+  const code = await awaitHalt(o.id);
+  if (code === null) return { ...entry, state: "stopped" };
+  log(`stop order ${o.id}: the harness's stop — ${code}`);
+  return code === SILENT
+    ? { ...entry, state: "unknown", reason: SILENT }
+    : { ...entry, state: "failed", reason: code };
+}
+
+/** The outcome on disk, then answered; a disk that refused it — answered once, no repeat. */
+async function finish(end: OrderEntry): Promise<void> {
+  standingLog(
+    `stop order ${end.id} for ${end.standing}: ${end.state}${end.reason ? ` (${end.reason})` : ""}`,
+  );
+  if (writeOrder(end)) return answerOutcome(end);
+  journalRefused(end.id, true);
+  await sendAck(end.base, end.id, end.state, end.reason);
 }
 
 async function execute(o: Order, base: string, framed: boolean): Promise<void> {
@@ -43,28 +93,18 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
     acked: false,
     at: Date.now(),
   };
-  let end: OrderEntry;
   if (!holdsSeat(o.standing_id, true))
-    end = { ...entry, state: "refused", reason: "seat_not_held" };
-  else {
-    if (!writeOrder(entry))
-      log(`stop order ${o.id}: the journal refused the entry — executed all the same`);
-    // accepted before the act; an api out of reach does not hold the stop longer than the cap.
-    await Promise.race([sendAck(base, o.id, "accepted"), sleep(ACCEPT_CAP_MS)]);
-    try {
-      end = stopSeatByOrder(o.standing_id, o.by ?? "", o.id)
-        ? { ...entry, state: "stopped" }
-        : { ...entry, state: "unknown", reason: "seat_gone_before_stop" };
-    } catch (e) {
-      log(`stop order ${o.id}: the stop failed — ${(e as Error).message}`);
-      end = { ...entry, state: "failed", reason: "stop_failed" };
-    }
-  }
-  standingLog(
-    `stop order ${o.id} for ${o.standing_id}: ${end.state}${end.reason ? ` (${end.reason})` : ""}`,
-  );
-  writeOrder(end);
-  await answerOutcome(end);
+    return finish({ ...entry, state: "refused", reason: "seat_not_held" });
+  // accepted is the order on disk (#7510): not on disk — no accepted, the outcome goes alone.
+  const kept = writeOrder(entry);
+  if (!kept) journalRefused(o.id, false);
+  const accepted = kept ? sendAck(base, o.id, "accepted") : null;
+  // An api out of reach does not hold the stop longer than the cap…
+  if (accepted) await Promise.race([accepted, sleep(ACCEPT_CAP_MS)]);
+  const end = await stopOf(o, entry);
+  // …but the outcome never overtakes the accepted: it waits for its answer (bounded by its timeout).
+  await accepted;
+  await finish(end);
 }
 
 /**
@@ -75,9 +115,7 @@ function onOrder(url: string, frame: Frame | null): boolean {
   const base = apiBase(url);
   if (frame?.type === "hello") {
     repeatLater(true); // a new socket — a new chance for outcomes the api has not taken
-    void openOrders(base).then((orders) => {
-      for (const o of orders) void execute(o, base, false);
-    });
+    void readOpenOrders(base, (orders) => orders.map((o) => execute(o, base, false)));
     return false;
   }
   if (frame?.type !== "stop") return false;

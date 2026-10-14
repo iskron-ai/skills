@@ -31,13 +31,19 @@ function dropUnsent(key: string, doors: (Door | null | undefined)[]): void {
   if (n) standingLog(`stopped ${key}: ${n} undelivered frame(s) dropped, not given`);
 }
 
-function stopAgent(key: string, how: string, reason: string): void {
+function stopAgent(key: string, how: string, reason: string, order?: string): void {
   const text = stopWord(state.standing?.name ?? "", reason);
   log(text);
   standingLog(`stopped ${key}: ${how}${reason ? ` (${reason})` : ""}`);
   dropUnsent(key, [H.door, ...extraPlaces().map((p) => p.door)]);
   H.stopped = { n: H.stopped.n + 1, key, text };
-  const ev: ChannelEvent = { kind: "stopped", key, text, ...(reason ? { reason } : {}) };
+  const ev: ChannelEvent = {
+    kind: "stopped",
+    key,
+    text,
+    ...(reason ? { reason } : {}),
+    ...(order ? { order } : {}),
+  };
   broadcast(ev);
   notify("error", ev);
   forgetSeat(text);
@@ -58,7 +64,8 @@ function stopBeside(beside: Place, reason: string): void {
 export function stopSeatByOrder(id: string, by: string, order: string): "main" | "beside" | null {
   const reason = by ? `revoked:${by}` : "";
   const seat = seatOf(id);
-  if (seat === "main" && H.currentKey) stopAgent(H.currentKey, `stop order ${order}`, reason);
+  if (seat === "main" && H.currentKey)
+    stopAgent(H.currentKey, `stop order ${order}`, reason, order);
   else if (seat && seat !== "main") stopBeside(seat, reason);
   return seat === null ? null : seat === "main" ? "main" : "beside";
 }

@@ -1,5 +1,5 @@
-// The api side of a stop order (graph @nks/nks-dev, nodes #7509, #7510, #7579): the open
-// orders read and the answer, with the key of the account that opened the seat. An answer the
+// The api side of a stop order (graph @nks/nks-dev, nodes #7509, #7510, #7579): the answer,
+// with the key of the account that opened the seat (the read — orderread.ts). An answer the
 // api has not taken is repeated from the journal (orderjournal.ts) until it is taken.
 import { envName } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
@@ -17,17 +17,19 @@ import { bearer } from "./transport.ts";
 export interface Order {
   id: string;
   standing_id: string;
+  /** the read's order of commit (api: since) */
+  seq?: number;
   reason_code?: string;
   by?: string;
 }
 
-const TIMEOUT_MS = 5000;
+export const TIMEOUT_MS = 5000;
 const RETRY_MS = (process.env[envName("ORDER_RETRY_MS")] || "1000,2000,5000,15000,30000,60000")
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n > 0);
 
-function headers(): Record<string, string> {
+export function headers(): Record<string, string> {
   const h: Record<string, string> = { "content-type": "application/json" };
   const token = bearer();
   if (token) h.authorization = `Bearer ${token}`;
@@ -68,29 +70,6 @@ export async function sendAck(
     );
   }
   return "later";
-}
-
-/** The account's open stop orders; [] when the api is not reached. */
-export async function openOrders(base: string): Promise<Order[]> {
-  try {
-    const res = await fetch(`${base}/me/orders?open=true&limit=200`, {
-      headers: headers(),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) return [];
-    const items = ((await res.json()) as { items?: unknown }).items;
-    return (Array.isArray(items) ? items : [])
-      .map((x) => x as Record<string, unknown>)
-      .filter((x) => typeof x.id === "string" && typeof x.standing_id === "string")
-      .map((x) => ({
-        id: x.id as string,
-        standing_id: x.standing_id as string,
-        ...(typeof x.reason_code === "string" ? { reason_code: x.reason_code } : {}),
-        ...(typeof x.by === "string" ? { by: x.by } : {}),
-      }));
-  } catch {
-    return [];
-  }
 }
 
 /** The outcome is on disk; answer it now and keep answering until the api takes it. */

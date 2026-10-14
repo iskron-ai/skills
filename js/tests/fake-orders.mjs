@@ -1,14 +1,24 @@
 // Stop orders on the fake NKS, as api 0.122.0 serves them (graph @nks/nks-dev, nodes #7509,
 // #7510; word of #48 in case №669): the stop frame on the seat's channel, GET /api/me/orders,
-// POST /api/me/orders/{id}/ack. An outcome closes the order and ends the seat — the seat alone
-// on its channel closes the channel's sockets 4001 revoked:self, a seat beside goes by a
-// standing_ended frame. /control: stop_order {id, standing_id, frame?, by?, reason_code?} puts
-// an order (frame: false — readable only), orders_ack_drop: n — the next n answers lose their
-// connection without an answer.
+// POST /api/me/orders/{id}/ack. An outcome closes the order and ends the seat — the founder
+// seat ends its channel whole, its seats beside too, and closes the channel's sockets once with
+// 4001 revoked:self; a seat beside goes alone by a standing_ended frame. /control: stop_order {id, standing_id, frame?, by?, reason_code?} puts
+// an order (frame: false — readable only), stop_orders: [...] many, orders_ack_drop: n — the next n answers lose their
+// connection without an answer, orders_ack_delay: {state: ms} — answers of that state are taken
+// so much later. The read pages by since and limit (≤200) as the api does: next_since — the
+// last seq given.
 
 const OPEN = new Set(["issued", "accepted"]);
 
-export const ordersState = () => ({ list: new Map(), seq: 0, acks: [], reads: 0, ackDrop: 0 });
+export const ordersState = () => ({
+  list: new Map(),
+  seq: 0,
+  acks: [],
+  reads: 0,
+  queries: [],
+  ackDrop: 0,
+  ackDelay: {},
+});
 
 /** The channel holding the seat with this id, and the seat's graph in it. */
 function seatOf(st, id) {
@@ -23,7 +33,8 @@ function endSeat(st, id, wsFrame) {
   const at = seatOf(st, id);
   if (!at) return;
   const socks = channelSockets(st, at.chan);
-  if (at.c.places.size === 1) {
+  // The founder (the channel's first seat) ends the channel whole, its seats beside too (#48 in №669).
+  if (at.c.places.size === 1 || at.realm === at.c.places.keys().next().value) {
     st.channels.delete(at.chan);
     const why = Buffer.from("revoked:self");
     for (const s of socks) {
@@ -39,8 +50,11 @@ function endSeat(st, id, wsFrame) {
 
 export function ordersControl(st, patch, wsFrame) {
   if (Number.isInteger(patch.orders_ack_drop)) st.orders.ackDrop = patch.orders_ack_drop;
-  const o = patch.stop_order;
-  if (!o) return;
+  if (patch.orders_ack_delay) st.orders.ackDelay = patch.orders_ack_delay;
+  for (const o of [...(patch.stop_orders ?? []), patch.stop_order]) if (o) putOrder(st, o, wsFrame);
+}
+
+function putOrder(st, o, wsFrame) {
   const order = {
     id: o.id,
     seq: ++st.orders.seq,
@@ -74,13 +88,23 @@ export async function ordersRoute(st, req, res, p, { json, body, wsFrame }) {
   if (p === "/api/me/orders" && req.method === "GET") {
     st.orders.reads++;
     if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
-    const items = [...st.orders.list.values()].filter((o) => OPEN.has(o.state));
-    json(res, 200, { items, next_since: st.orders.seq });
+    const q = new URL(req.url, "http://x").searchParams;
+    const since = Number(q.get("since") || 0);
+    const limit = Math.min(Number(q.get("limit") || 50), 200);
+    st.orders.queries.push({ since, limit });
+    const items = [...st.orders.list.values()]
+      .filter((o) => o.seq > since && (q.get("open") !== "true" || OPEN.has(o.state)))
+      .sort((a, b) => a.seq - b.seq)
+      .slice(0, limit);
+    json(res, 200, { items, next_since: items.at(-1)?.seq ?? since });
     return true;
   }
   const m = /^\/api\/me\/orders\/([^/]+)\/ack$/.exec(p);
   if (!m || req.method !== "POST") return false;
   const ask = JSON.parse((await body(req)) || "{}");
+  // orders_ack_delay {state: ms}: the answer of that state is taken (and logged) so much later.
+  const delay = st.orders.ackDelay[ask.state];
+  if (delay) await new Promise((r) => setTimeout(r, delay));
   if (st.orders.ackDrop > 0) {
     st.orders.ackDrop--;
     st.orders.acks.push({ id: m[1], state: ask.state, dropped: true });

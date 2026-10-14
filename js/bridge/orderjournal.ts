@@ -62,6 +62,40 @@ export function writeOrder(e: OrderEntry): boolean {
 
 export const isTerminal = (s: OrderState): boolean => s !== "accepted";
 
+/** The order has an outcome on this home's disk: no bridge of the home needs to read it again. */
+export const settled = (id: string): boolean => {
+  const e = readOrder(id);
+  return !!e && isTerminal(e.state);
+};
+
+const sincePath = (): string => join(dir(), "since"); // not *.json: unanswered() skips it
+
+/**
+ * The open orders read starts past this seq (api: since). It moves only over orders settled on
+ * this disk, so every bridge of the home that writes it writes a floor true for all of them.
+ */
+export function readSince(base: string): number {
+  try {
+    const n = (JSON.parse(readFileSync(sincePath(), "utf8")) as Record<string, unknown>)[base];
+    return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function writeSince(base: string, seq: number): void {
+  let all: Record<string, unknown> = {};
+  try {
+    all = JSON.parse(readFileSync(sincePath(), "utf8")) as Record<string, unknown>;
+  } catch {}
+  try {
+    mkdirSync(dir(), { recursive: true, mode: 0o700 });
+    const tmp = `${sincePath()}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ ...all, [base]: seq }), { mode: 0o600 });
+    renameSync(tmp, sincePath());
+  } catch {}
+}
+
 /** Outcomes the api has not taken yet; entries past their term go. */
 export function unanswered(now = Date.now()): OrderEntry[] {
   let names: string[];

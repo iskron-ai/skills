@@ -113,7 +113,15 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Usage comes up after the tools (it needs the session's bridge); a subagent's end flushes it first.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   try {
-    half = await setupTools(ctx, say, onChannel, rootOf, (s) => flushUsage(s), closed);
+    half = await setupTools(
+      ctx,
+      say,
+      onChannel,
+      rootOf,
+      (s) => flushUsage(s),
+      closed,
+      (s) => ch?.halted(s) ?? Promise.resolve(null),
+    );
   } catch (e) {
     say(words(PLUGIN).notRaised((e as Error).message), "error");
   }
