@@ -352,6 +352,7 @@ const ENV_KEYS = [
   "FB_DIE_ONCE",
   "FB_ENV",
   "FB_END_FAILED",
+  "FB_END_REVOKED",
   "FB_END_DELAY_MS",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
@@ -5491,6 +5492,173 @@ test("the launcher's revoke refused for a missing role is loud — «не най
     await gone.rec.stop();
   }
 });
+
+// #7599 (live run): the child's bridge revoked its seat at its run's end, then the launcher's
+// revoke met «no standing named …» and the plugin said «место НЕ снято… повтори», nesting the
+// platform's list of the role's seats with a revoke for the launcher's own main seat. A seat the
+// child's bridge revoked itself is not revoked again; a real refusal names only the satellite.
+const ROLE_SEATS = `\nМеста роли #931:\n- ${ROOT_PLACE.name} (id 77): iskron_channel(action="revoke", channel="77")`;
+
+test("the launcher's revoke after the child's bridge revoked its seat itself: no second revoke, «отпущен», no «НЕ снято» and no foreign call", async () => {
+  const { b, rec, rootPid, childPid, sent } = await leadChild("lead-release-self-off", {
+    FB_END_REVOKED: `${SUB_PLACE.realm}|#${SUB_PLACE.karta}|${SUB}`,
+  });
+  try {
+    writeFileSync(`${b.reply}.iskron_channel`, `__ERROR__no standing named ${SUB}${ROLE_SEATS}`);
+    const word = await rec.call(
+      "iskron_channel",
+      { realm: SUB_PLACE.realm, action: "revoke", standing: SUB },
+      "root",
+    );
+    assert.match(word.content, /отпущен[\s\S]*место снято/);
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    await delay(300);
+    const launcher = sent().filter((c) => c.pid === rootPid && c.arguments.action === "revoke");
+    assert.deepEqual(launcher, [], "the seat its bridge revoked is not revoked again");
+    const words = rec.synthetics.filter((s) => s.sessionID === "root").map((s) => s.text);
+    assert.doesNotMatch(words.join("\n"), /НЕ снято|не снято|повтори|channel="77"/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a real refusal of the launcher's revoke is loud, and its hint names only the satellite — never the launcher's own seat from the platform's list", async () => {
+  const { b, rec } = await leadChild("lead-release-refused-list", { FB_END_FAILED: SUB });
+  try {
+    writeFileSync(
+      `${b.reply}.iskron_channel`,
+      `__REFUSAL__404 karta_not_found Роль #931 не найдена${ROLE_SEATS}`,
+    );
+    const err = await rec
+      .call("iskron_channel", { realm: "nks-dev", action: "revoke", standing: SUB }, "root")
+      .then(
+        () => assert.fail("the refusal must be loud"),
+        (e) => e,
+      );
+    assert.match(err.message, /место НЕ снято[\s\S]*Роль #931 не найдена/);
+    assert.match(err.message, new RegExp(`standing="${SUB.replace(/\./g, "\\.")}"`));
+    assert.doesNotMatch(err.message, /channel="77"|id 77/);
+    assert.doesNotMatch(err.message, /host\.repo\.opus-5(?!\.sub-1)/, "the launcher's own seat");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №664: against the real bridge — the child's own revoke at its run's end met only prose that
+// looks like «already gone» («role #931 not found», no refusal data): no confirmation, so the
+// launcher's revoke still goes and takes the seat off the board.
+test("real bridges: the child's revoke answered by bare prose is not taken as revoked — the launcher's revoke goes and the seat leaves the board", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-lead-real-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        { id: "root", location: { directory: dir } },
+        { id: "child", parentID: "root", location: { directory: dir } },
+      ],
+    },
+  );
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+    const root = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "proba" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    const child = await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const sub = [...fake.state.places.keys()].find((k) => /\.sub-\d+$/.test(k));
+    assert.ok(sub, `the child stood as a satellite:\n${child.content}\n${rec.said()}`);
+    const name = sub.replace(/^\d+:/, "");
+    await fake.control({ revokeRefuseNext: [{ text: "role #931 not found" }] });
+    await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: name },
+      "root",
+    );
+    await until(() => !fake.state.places.has(sub), `the seat ${name} off the board`, 8000);
+    const revokes = fake.state.calls.filter(
+      (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+    );
+    assert.equal(revokes.length, 2, "the child's own revoke, then the launcher's");
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
+// №664: one satellite name in two graphs is two seats (#5838). The child's bridge revoked its seat
+// in A and was refused in B: the launcher's revoke for B goes and its refusal is loud; for A it
+// is not sent again. A name-only match let A's success hide B's refusal — «место снято», B hung.
+for (const [graph, own] of [
+  ["@nks/nks-dev", false],
+  ["@nks/drugoy", true],
+])
+  test(`real bridges: one name in two graphs, the child's revoke refused in @nks/nks-dev — the launcher's revoke in ${graph} ${own ? "is not sent again" : "goes, its refusal loud"}`, async () => {
+    const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+    await fake.control({ richTools: true });
+    const dir = mkdtempSync(join(tmpdir(), "iskron-lead-two-"));
+    const rec = await plugin(
+      {
+        ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+        ISKRON_BRIDGE_URL: fake.mcpUrl,
+        ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+        ISKRON_BRIDGE_NO_BROWSER: "1",
+      },
+      {
+        location: { directory: dir },
+        sessions: [
+          { id: "root", location: { directory: dir } },
+          { id: "child", parentID: "root", location: { directory: dir } },
+        ],
+      },
+    );
+    const revokesIn = (realm) =>
+      fake.state.calls.filter(
+        (c) =>
+          c.name === "iskron_channel" &&
+          c.arguments.action === "revoke" &&
+          c.arguments.realm === realm,
+      );
+    try {
+      await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+      const name = "proba.sub-1";
+      for (const realm of ["@nks/nks-dev", "@nks/drugoy"]) {
+        const root = await rec.call("iskron_stand", { realm, karta: 931, name: "proba" }, "root");
+        assert.match(root.content, /стояние/, root.content);
+        const sat = await rec.call("iskron_stand", { realm }, "child");
+        assert.match(sat.content, /proba\.sub-1/, `one name in both graphs:\n${sat.content}`);
+      }
+      const refused = { realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" };
+      await fake.control({ revokeRefuseNext: [refused, refused] });
+      const said = await rec
+        .call("iskron_channel", { realm: graph, action: "revoke", standing: name }, "root")
+        .then(
+          (r) => r.content,
+          (e) => e.message,
+        );
+      await delay(300);
+      if (own) {
+        assert.match(said, /место снято/, said);
+        assert.equal(revokesIn(graph).length, 1, "only the child's own revoke");
+      } else {
+        assert.match(said, /место НЕ снято/, said);
+        assert.equal(revokesIn(graph).length, 2, "the child's own revoke, then the launcher's");
+      }
+    } finally {
+      await rec.stop();
+      await fake.stop();
+    }
+  });
 
 // #7505 (1): the child handed in its outcome and left its case; the launcher's word sent in the
 // middle of its work and held until its turn's end went into its session and woke it — it came

@@ -4,6 +4,7 @@
 import { method } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { markFrame } from "../shared/frame-text.ts";
+import type { SeatKey } from "../shared/seat.ts";
 import { authDir } from "./bridge-io.ts";
 import { casesLeft } from "./casesleft.ts";
 import { createEnds, type Ends } from "./leadends.ts";
@@ -18,7 +19,9 @@ export interface Leads {
   called(child: string, name: string, args: Record<string, unknown>, place?: Place | null): void;
   /**
    * The launcher's revoke naming its lead's seat ends the child; null — not this case. The
-   * launcher's own revoke follows by its bridge (tools.ts): the seat goes on the platform.
+   * launcher's own revoke follows by its bridge (tools.ts): the seat goes on the platform —
+   * unless the child's bridge revoked that very seat — graph, role, name — itself at its run's
+   * end (off, #7599, №664).
    */
   release(caller: string, name: string, args: Record<string, unknown>): Promise<Released | null>;
   /** Ended or ending by any end: nothing is laid into its session any more (#7505). */
@@ -46,10 +49,20 @@ export interface Leads {
   onEvent(ev: any): void;
 }
 
-/** A lead ended by its launcher's revoke: the word and its seat. */
+/** A lead ended by its launcher's revoke: the word and its seat; off — its bridge revoked the seat itself. */
 export interface Released {
   word: string;
   place: Place | null;
+  off: boolean;
+}
+
+/**
+ * The child's bridge at its run's end: names left unrevoked and seats it revoked itself — by
+ * canonical graph, role and name (№664).
+ */
+export interface RunEnd {
+  failed: string[];
+  revoked: SeatKey[];
 }
 
 /** Its cases are not here: whether a leave is the last, the platform says (casesleft.ts). */
@@ -66,8 +79,8 @@ export interface LeadDoors {
    * (queue into a busy session started one more turn); wake — resume an idle one.
    */
   tell(session: string, text: string, wake: boolean): Promise<void>;
-  /** The child's bridge ends its run (usage first, then the end method); the answer — seats left unrevoked, null — unknown. */
-  close(child: string): Promise<string[] | null>;
+  /** The child's bridge ends its run (usage first, then the end method); null — unknown. */
+  close(child: string): Promise<RunEnd | null>;
   /** How many cases the child's session sits in, by the platform (casesleft.ts); unasked or unread — a throw with the reason. */
   sits(child: string, realm: string): Promise<number>;
   /** The session is marked ended while its bridge still finishes the run: any write is refused. */
@@ -104,7 +117,10 @@ export function leadDoors(
         .get(child)
         ?.bridge.request(method("end"), {}, { timeoutMs: END_MS, service: true })
         .catch(() => null);
-      return got?.ended ? (got.failed ?? []) : null;
+      if (!got?.ended) return null;
+      // A bare name (an older bridge) is no seat: it confirms nothing.
+      const revoked = (got.revoked ?? []).filter((k: any) => typeof k?.name === "string");
+      return { failed: got.failed ?? [], revoked };
     },
     sits: (child, realm) => casesLeft(slots.get(child)?.bridge, realm),
     seal: (child) => end(child, null),

@@ -3109,7 +3109,10 @@ test("satellite: its own revoke at the run's end is repeated once on a closed co
   assert.doesNotMatch(sat.stderr, /unhandled rejection/);
 });
 
-test("satellite: iskron/end names the places it could not revoke; a dropped usage snapshot does not stop the revoke", async (t) => {
+// #7599: the answer names what it revoked too — the launcher's revoke then is not sent; a revoked
+// seat goes by its graph (canonical), role and name (№664).
+const SAT_SEAT = { realm: "@nks/nks-dev", karta: "931", name: `${CALLER}.sub-1` };
+test("satellite: iskron/end names the places it revoked and those it could not; a dropped usage snapshot does not stop the revoke", async (t) => {
   const fake = await withCaller(t);
   const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
   assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
@@ -3117,7 +3120,11 @@ test("satellite: iskron/end names the places it could not revoke; a dropped usag
   await sat.call("iskron/usage", { ...SPEND, tokens: 7777 });
   await fake.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:register" });
   const ok = (await sat.call("iskron/end", {})).result;
-  assert.deepEqual(ok, { ended: true, failed: [] }, `${JSON.stringify(ok)}\n${sat.stderr}`);
+  assert.deepEqual(
+    ok,
+    { ended: true, failed: [], revoked: [SAT_SEAT] },
+    `${JSON.stringify(ok)}\n${sat.stderr}`,
+  );
   assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
 
   const fake2 = await withCaller(t);
@@ -3125,10 +3132,60 @@ test("satellite: iskron/end names the places it could not revoke; a dropped usag
   assert.ok(!(await standAs(sat2, SAT_ARGS)).result?.isError, sat2.stderr);
   await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
   const bad = (await sat2.call("iskron/end", {})).result;
-  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`] }, sat2.stderr);
+  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`], revoked: [] }, sat2.stderr);
   await sat2.stop();
   assert.match(sat2.stderr, /NOT revoked/);
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
+});
+
+// №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
+// Prose that only looks like «already gone» is no confirmation: the place is neither revoked
+// nor failed for the plugin, and the launcher's revoke goes as before.
+for (const [how, refuse, confirmed] of [
+  ["success", null, true],
+  ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
+  ["a 404 refusal without a rule", { text: "Нет такого места.", status: 404 }, true],
+  ["prose «role #931 not found» without refusal data", { text: "role #931 not found" }, false],
+])
+  test(`satellite: iskron/end on a revoke answered by ${how} — revoked ${confirmed ? "names" : "does not name"} the place`, async (t) => {
+    const fake = await withCaller(t);
+    const sat = await satelliteBridge(t, fake);
+    assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+    if (refuse) await fake.control({ revokeRefuseNext: [refuse] });
+    const end = (await sat.call("iskron/end", {})).result;
+    const place = `${CALLER}.sub-1`;
+    assert.deepEqual(
+      end,
+      { ended: true, failed: [], revoked: confirmed ? [SAT_SEAT] : [] },
+      `${JSON.stringify(end)}\n${sat.stderr}`,
+    );
+    assert.deepEqual(revokes(fake), [place]);
+    if (!confirmed) assert.match(sat.stderr, /probably revoked/, sat.stderr);
+  });
+
+// №664: one satellite name in two graphs is two seats (#5838) — iskron/end keys a confirmed
+// revoke by graph, role and name, so the success in one graph does not cover a refusal in the other.
+test("satellite: iskron/end keys a confirmed revoke by graph, role and name — one name in two graphs, revoked in one, refused in the other", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const place = `${CALLER}.sub-1`;
+  const a = await standAs(sat, SAT_ARGS);
+  assert.equal(placeOf(a), place, `${textOf(a)}\n${sat.stderr}`);
+  const b = await standAs(sat, { ...SAT_ARGS, realm: "@nks/drugoy" });
+  assert.equal(placeOf(b), place, `one name in both graphs:\n${textOf(b)}\n${sat.stderr}`);
+  await fake.control({
+    revokeRefuseNext: [{ realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" }],
+  });
+  const end = (await sat.call("iskron/end", {})).result;
+  assert.deepEqual(
+    end,
+    {
+      ended: true,
+      failed: [place],
+      revoked: [{ realm: "@nks/drugoy", karta: "931", name: place }],
+    },
+    `${JSON.stringify(end)}\n${sat.stderr}`,
+  );
 });
 
 // #147 [145]: a re-arm slower than its cap still turns the address at the server; the

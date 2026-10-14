@@ -495,6 +495,7 @@ export async function startFakeNks(opts = {}) {
         "mcpStatus",
         "mcpHangMs",
         "revokeReplyDelayMs",
+        "revokeRefuseNext",
         "closeCodeDelayMs",
         "endedFrame",
         "accessTtl",
@@ -1409,6 +1410,22 @@ export async function startFakeNks(opts = {}) {
               },
               extra,
             );
+          }
+          // revokeRefuseNext: [{ text, status?, rule?, realm? }] — the next revokes refused this way, the
+          // place stays; with status — as an api refusal with data, without — bare prose; with realm —
+          // only a revoke in that graph (№664).
+          const at = (st.revokeRefuseNext ?? []).findIndex(
+            (r) => !r.realm || slug(r.realm) === slug(a.realm),
+          );
+          const refuse = at < 0 ? null : st.revokeRefuseNext.splice(at, 1)[0];
+          if (refuse) {
+            const { text, status, rule } = refuse;
+            const result = {
+              isError: true,
+              content: [{ type: "text", text }],
+              ...(status ? { _meta: { "iskron/refusal": { rule, status } } } : {}),
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
           }
           const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
           if (had) st.closedPlaces.add(`${String(a.karta).replace(/^#/, "")}:${name}`);
