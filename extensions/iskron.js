@@ -52,7 +52,7 @@ var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 
 // js/delivery/version.ts
-var VERSION = "7.9.0";
+var VERSION = "7.10.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -222,7 +222,10 @@ var PLUGIN = {
     refusalNoText: (name) => `${name}: отказ без текста`,
     relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
     listening: () => "Искрон: канал слушает",
-    dead: (code) => `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    dead: (code) => String(code) === "4002" ? "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем." : `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    stopped: (text) => `Искрон: ${text}`,
+    stoppedTurn: (stopped) => `${stopped}. Это слово стоит, пока место снято; человек велит встать снова — встань явным вызовом iskron_stand, и слово уйдёт.`,
+    stoppedAny: () => "Искрон: место снято — ты остановлен: работу кончи, место не занимай",
     evicted: (code) => `Искрон: канал закрыт кодом ${code} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true): ${TAKE.ru.rule()}.`,
     alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
     note: (text) => `Искрон: ${text}`
@@ -234,7 +237,10 @@ var PLUGIN = {
     refusalNoText: (name) => `${name}: refusal without text`,
     relistFailed: (message) => `Iskron: the tool list was not reread after the change on the server — ${message}`,
     listening: () => "Iskron: the channel is listening",
-    dead: (code) => `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    dead: (code) => String(code) === "4002" ? "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name." : `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    stopped: (text) => `Iskron: ${text}`,
+    stoppedTurn: (stopped) => `${stopped}. This word stands while the seat is taken off; if the human tells you to stand again — stand by an explicit iskron_stand call, and the word goes.`,
+    stoppedAny: () => "Iskron: the seat was taken off — you are stopped: end the work, do not take the seat",
     evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true): ${TAKE.en.rule()}.`,
     alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
     note: (text) => `Iskron: ${text}`
@@ -1281,8 +1287,12 @@ var H2 = scoped(() => ({
   revokingOwn: false,
   /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
   closingOwn: false,
+  /** keys of seats beside whose own revoke is in flight (absorb.ts): standing_ended outruns the answer */
+  revokingBeside: /* @__PURE__ */ new Set(),
   /** the daemon goes down while this session's thin bridge lives and restores the place (daemon.ts, #6485) */
-  handingOver: null
+  handingOver: null,
+  /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
+  stopped: { n: 0, key: "", text: "" }
 }));
 
 // js/bridge/realms.ts
@@ -1371,9 +1381,32 @@ function setupChannel(pi) {
     tactPoll.unref?.();
   }
   pi.on("agent_end", async () => releaseTact());
+  let halted = false;
+  function stopped(text) {
+    halted = true;
+    if (tactPoll) clearInterval(tactPoll);
+    tactPoll = null;
+    tact = null;
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    aside.splice(0);
+    if (ctxRef?.isIdle?.() === false) ctxRef.abort?.();
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text, "error");
+    pi.sendMessage(
+      {
+        customType: LOGGERS.channel,
+        content: markFrame(text),
+        display: true,
+        details: { stopped: true }
+      },
+      { triggerTurn: false, deliverAs: "nextTurn" }
+    );
+  }
   return (params) => {
     const ev = params?.data;
     if (!ev || typeof ev !== "object") return;
+    if (ev.kind === "held") halted = false;
+    if (halted && ev.kind !== "stopped") return;
     switch (ev.kind) {
       case "frame": {
         const frame = ev.frame ?? null;
@@ -1413,6 +1446,9 @@ function setupChannel(pi) {
         if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) return holdTact(ev);
         if (ev.frames?.some(isTact) && !olderTact(ev)) tact = null;
         sendBatch(ev);
+        return;
+      case "stopped":
+        stopped(P.stopped(ev.text ?? ""));
         return;
       case "evicted":
         loud(P.evicted(String(ev.code)));

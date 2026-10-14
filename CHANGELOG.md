@@ -1,5 +1,23 @@
 # Changelog
 
+## [7.10.0](https://github.com/iskron-ai/skills/compare/v7.9.0...v7.10.0) (2026-10-14)
+
+
+### Features
+
+* **bridge:** команда status и освежение штампа skills без переподключения ([#456](https://github.com/iskron-ai/skills/issues/456)) ([def54b7](https://github.com/iskron-ai/skills/commit/def54b73256880886e12d55354cbabde9de2b92c))
+
+
+### Bug Fixes
+
+* **architect,vahta:** проигрыш проверяет структуру, не исход; разбор судит решение по известному тогда и не служит приёмкой ([#452](https://github.com/iskron-ai/skills/issues/452)) ([2501a89](https://github.com/iskron-ai/skills/commit/2501a89dd9071dd116290adf2f8f93c5ca9efebb))
+* **bridge:** drop room tool synonym from case lifecycle ([#457](https://github.com/iskron-ai/skills/issues/457)) ([0434b9a](https://github.com/iskron-ai/skills/commit/0434b9a6f15b7737a50f0496335854ec3735641e))
+* **bridge:** revoke запустившего не шлётся, когда мост спутника сам снял место; отказ не несёт чужих вызовов ([#466](https://github.com/iskron-ai/skills/issues/466)) ([a5b295f](https://github.com/iskron-ai/skills/commit/a5b295fa7f48c7b071f140c67516f26a6afc7f22))
+* **bridge:** законченный спутник не оживает — revoke запустившего снимает место, Esc не конец, последнее дело — словом платформы ([#465](https://github.com/iskron-ai/skills/issues/465)) ([1380f8d](https://github.com/iskron-ai/skills/commit/1380f8d3f19f31ef193f223df4731a4f313853b3))
+* **bridge:** свой revoke с karta «#N» — тихое отпускание, не стоп ([#656](https://github.com/iskron-ai/skills/issues/656)) ([#462](https://github.com/iskron-ai/skills/issues/462)) ([605fcce](https://github.com/iskron-ai/skills/commit/605fcce67b98c0a7bc0d7953264dabdf80906c76))
+* **bridge:** слово стопа не ждёт в очереди сессии OpenCode — оно в system ходов, пока место снято ([#464](https://github.com/iskron-ai/skills/issues/464)) ([89f0de7](https://github.com/iskron-ai/skills/commit/89f0de73dc80933d76f01be88b98cf342a2dd0f9))
+* **bridge:** снятое место кончает агента — без connect, ход прерван, сессия не будится ([#455](https://github.com/iskron-ai/skills/issues/455)) ([1a61b97](https://github.com/iskron-ai/skills/commit/1a61b97db21e963d9343b59f6481cfdf7a5dcf4b))
+
 ## [7.9.0](https://github.com/iskron-ai/skills/compare/v7.8.0...v7.9.0) (2026-10-12)
 
 
