@@ -60,7 +60,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   }
   const url = trim(socket);
   const statusUrl = status ? trim(status) : deriveStatusUrl(url);
-  // Answered after the run's end: nobody is left to listen, the death window ends the seat (runend.ts).
+  // Answered after the run's end: nobody is left to listen, no socket opens (runend.ts).
   const late =
     !!state.standing &&
     lateSeat(

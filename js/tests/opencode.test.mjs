@@ -2189,6 +2189,31 @@ test("a plugin reload is an announced absence: the holding root's bridge is told
   assert.ok(!sent.some((c) => c.name === "iskron/end"), "a reload is not the agent's end");
 });
 
+// №677: before the first `held` the plugin knows no seat of the session — a reload then is
+// still an announced absence; the bridge itself keeps a seat its late connect answers.
+test("a plugin reload while the root's first connect is in flight: its bridge is told away all the same", async () => {
+  const calls = join(SANDBOX, "reload-inflight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("reload-inflight", { FB_CALLS: calls, FB_CALL_DELAY_MS: 5_000 });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-inf", location: { directory: "/work/inf" } }],
+  });
+  await serverTools(rec);
+  void rec.call("iskron_channel", { action: "connect" }, "s-inf").catch(() => {});
+  await until(
+    () => callsIn(calls).some((c) => c.arguments?.action === "connect"),
+    "the connect sent",
+  );
+  const pid = pidOf(b.log);
+  await rec.stop();
+  await until(() => !alive(pid), "the bridge to stop with the plugin");
+  const sent = callsIn(calls);
+  assert.ok(
+    sent.some((c) => c.name === "iskron/away" && c.pid === pid),
+    `the bridge was told away:\n${JSON.stringify(sent)}`,
+  );
+});
+
 test("an interrupted turn (Esc) leaves the seat alone: the bridge hears neither end nor away and lives", async () => {
   const { rec, calls, pid } = await heldRoot("esc-seat", "s-esc");
   try {

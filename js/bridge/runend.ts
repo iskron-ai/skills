@@ -21,6 +21,7 @@ import { localSocketPathOf, releaseStanding, standingIdIn } from "./hold.ts";
 import { keepHoldRecord } from "./holdkeep.ts";
 import { dropHoldRecord, readHoldRecord } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
+import { holdLate } from "./latehold.ts";
 import { handoverPauseKey, suspended } from "./pauserecord.ts";
 import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
@@ -45,11 +46,11 @@ const R = scoped(() => ({
    */
   dead: null as Dead | null,
   /**
-   * how a seat answered after the run's end goes: with the death window (the run ended closing
-   * its seats: not a handover, a pause or an announced absence), at once (a satellite's end), or
-   * held as ever (null)
+   * how a seat answered after the run's end goes — never by a socket: with the death window
+   * (the run ended closing its seats), at once (a satellite's end), or into the hold record
+   * for the return (a handover, a pause or an announced absence: latehold.ts)
    */
-  late: null as "window" | "now" | null,
+  late: null as "window" | "now" | "hold" | null,
 }));
 
 interface Dead {
@@ -79,7 +80,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
     const mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
     // A satellite's end is its death: a seat answered late goes at once (lateSeat).
-    R.late = mortal ? "window" : CFG.satellite && !paused ? "now" : null;
+    R.late = mortal ? "window" : CFG.satellite && !paused ? "now" : "hold";
     const dying = mortal && !!H.currentKey;
     const own = dying ? ownPlaces() : [];
     // Platform ids before the release forgets the doors: the stop's ended[] names seats by them.
@@ -114,11 +115,11 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
 }
 
 /**
- * A connect answered after the run's end — the agent died while it was in flight (case №677):
- * its socket is not opened, nobody is left to listen, and the seat joins the death window, which
- * ends it by that socket's token; a satellite's goes the same way at once — it has no window, its
- * end is its death. `id` — the seat's platform id from the reply. false — the run goes on or
- * keeps its seats: hold it as ever.
+ * A connect answered after the run's end (case №677) never opens a socket — nobody is left to
+ * listen. The agent died while it was in flight: the seat joins the death window, which ends it
+ * by that socket's token; a satellite's goes the same way at once — it has no window, its end is
+ * its death; a run keeping its seats keeps this one in the hold record. `id` — the seat's
+ * platform id from the reply. false — the run goes on: hold it as ever.
  */
 export function lateSeat(
   seat: Standing,
@@ -127,6 +128,10 @@ export function lateSeat(
   id: string | null,
 ): boolean {
   if (!R.run || !R.late) return false;
+  if (R.late === "hold") {
+    holdLate(seat, socket, status);
+    return true;
+  }
   const key = seatKeyOf(seat);
   const others = R.dead?.places.filter((s) => seatKeyOf(s) !== key) ?? [];
   const ids = new Map(R.dead?.ids ?? []).set(key, id);

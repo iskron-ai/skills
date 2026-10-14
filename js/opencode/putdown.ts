@@ -27,9 +27,13 @@ function unrevoked(got: Ended): string | null {
 const unconfirmed = (got: Ended): string | null =>
   got?.ended && got.probably?.length ? got.probably.join(", ") : null;
 
-/** The word to a root's bridge with a seat, then its stop; any other bridge just stops. */
+/**
+ * The word to a root's bridge, then its stop; a child's bridge just stops. `end` goes to a
+ * bridge with a seat; `away` to any — a first connect in flight has no seat here yet, and the
+ * bridge itself knows whether a seat waits (case №677).
+ */
 export async function putDown(slot: Slot, word: PutDown | null): Promise<void> {
-  if (word && !slot.child && (slot.holding || slot.key)) {
+  if (word && !slot.child && (word === "away" || slot.holding || slot.key)) {
     const got = await slot.bridge
       .request(method(word), {}, { timeoutMs: SAY_MS[word], service: true })
       .catch((e: Error) => ({ ended: false, word: e.message }));

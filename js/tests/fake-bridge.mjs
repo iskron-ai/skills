@@ -49,6 +49,7 @@
 //   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
+//   FB_CALL_DELAY_MS every tools/call is answered this much later (a call in flight).
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -337,7 +338,10 @@ process.stdin.on("data", (chunk) => {
       }
       const result = callResult(msg.params?.name, msg.params?.arguments ?? {});
       noteCase(msg.params?.name, msg.params?.arguments ?? {}, result);
-      ok(msg.id, result);
+      // FB_CALL_DELAY_MS: every tools/call is answered this much later — a call still in flight.
+      const callDelayMs = Number(process.env.FB_CALL_DELAY_MS || 0);
+      if (callDelayMs) setTimeout(() => ok(msg.id, result), callDelayMs);
+      else ok(msg.id, result);
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
       // logged in the same shape as a tool call; FB_RESUME names a file whose
