@@ -657,6 +657,35 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
   }
 });
 
+// №680 (#7591): the satellite's seat names the model pi runs on — the harness's, not the agent's
+// word — on the launch line and on the agent's own satellite stand; a busy line alone stays one.
+test("a satellite's stand carries pi's model; a busy line alone does not", async () => {
+  const calls = join(SANDBOX, "launch-model.calls");
+  const { env } = bridgeEnv("launch-model", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  rec.ctx.model = { id: "gpt-6.1-sol", provider: "openai" };
+  try {
+    await prompt(rec, "start @nks/nks-dev #48 дело №77 от @me:host.repo");
+    const stand = rec.tools.get("iskron_stand");
+    const own = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", model: "agent-says" };
+    await stand.execute("id", own, undefined, () => {}, rec.ctx);
+    const busy = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", status: "чиню" };
+    await stand.execute("id", busy, undefined, () => {}, rec.ctx);
+    assert.deepEqual(
+      toolCalls(calls)
+        .filter((c) => c.name === "iskron_stand")
+        .map((c) => c.arguments.model),
+      ["gpt-6.1-sol", "gpt-6.1-sol", undefined],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("without the tail the seat comes from ISKRON_SATELLITE_OF; only the first prompt launches, and a prompt without the line is left as it was", async () => {
   const calls = join(SANDBOX, "launch-env.calls");
   const { env } = bridgeEnv("launch-env", {

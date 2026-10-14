@@ -5913,6 +5913,60 @@ test("real bridges: the child's revoke answered by bare prose is not taken as re
   }
 });
 
+// №680 (#7591): the board printed the main seat's model, but a satellite seat only its build and
+// harness — the child's stand named no model, and the plugin did not hand it the harness's. The
+// satellite's seat carries the model its session runs on, from OpenCode, from the take on.
+test("real bridges: a child standing as a satellite carries its own session's model from the harness, not the root's", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-model-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        {
+          id: "root",
+          location: { directory: dir },
+          model: { id: "claude-opus-5-5", providerID: "anthropic" },
+        },
+        {
+          id: "child",
+          parentID: "root",
+          location: { directory: dir },
+          model: { id: "gpt-6.1-sol", providerID: "openai" },
+        },
+      ],
+    },
+  );
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+    const root = await rec.call(
+      "iskron_stand",
+      // A name of its own: the paused satellite of this run must not meet the next test's.
+      { realm: "nks-dev", karta: 931, name: "proba-model", model: "claude-opus-5-5" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    const child = await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const seat = fake.state.placeArgs.filter((p) => /\.sub-\d+$/.test(String(p.name)));
+    assert.ok(seat.length, `the child stood as a satellite:\n${child.content}\n${rec.said()}`);
+    assert.deepEqual(
+      seat.map((p) => [p.action, p.model]),
+      seat.map((p) => [p.action, "gpt-6.1-sol"]),
+      "every connect and register of the satellite names the child's model",
+    );
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
 // №664: one satellite name in two graphs is two seats (#5838). The child's bridge revoked its seat
 // in A and was refused in B: the launcher's revoke for B goes and its refusal is loud; for A it
 // is not sent again. A name-only match let A's success hide B's refusal — «место снято», B hung.
