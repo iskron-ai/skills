@@ -17,7 +17,7 @@ import {
 import { CFG } from "./config.ts";
 import { dropConfirmed, seatKeyOf } from "./deadseat.ts";
 import { closeDeadSeats } from "./deadstop.ts";
-import { localSocketPathOf, releaseStanding } from "./hold.ts";
+import { localSocketPathOf, releaseStanding, standingIdIn } from "./hold.ts";
 import { keepHoldRecord } from "./holdkeep.ts";
 import { dropHoldRecord, readHoldRecord } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
@@ -39,13 +39,26 @@ const R = scoped(() => ({
   /** the run's seats and busy address while a handover pause lasts */
   held: null as { places: Standing[]; addr: { url: string } | null } | null,
   /**
-   * the session's own seats left on the board at its end, the status address of their socket,
-   * and its address when the main seat is among them: the death window's
+   * the session's own seats left on the board at its end, their platform ids by key, the status
+   * address of their socket, and its address when the main seat is among them: the death
+   * window's; `now` — a satellite's, it has no window
    */
-  dead: null as { places: Standing[]; status: string | null; socket: string | null } | null,
-  /** the run ended closing its seats: not a handover, a pause, an announced absence or a satellite */
-  mortal: false,
+  dead: null as Dead | null,
+  /**
+   * how a seat answered after the run's end goes: with the death window (the run ended closing
+   * its seats: not a handover, a pause or an announced absence), at once (a satellite's end), or
+   * held as ever (null)
+   */
+  late: null as "window" | "now" | null,
 }));
+
+interface Dead {
+  places: Standing[];
+  ids: Map<string, string | null>;
+  status: string | null;
+  socket: string | null;
+  now?: boolean;
+}
 
 /**
  * Release the session's seat; the answer — satellite seats that failed to revoke and those it revoked.
@@ -64,9 +77,13 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     const spent = closing || paused ? usagePlace() : null;
     // The agent's end closes its seat (graph @nks/nks-dev, node #7493): at once on the harness's
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
-    R.mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
-    const dying = R.mortal && !!H.currentKey;
+    const mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
+    // A satellite's end is its death: a seat answered late goes at once (lateSeat).
+    R.late = mortal ? "window" : CFG.satellite && !paused ? "now" : null;
+    const dying = mortal && !!H.currentKey;
     const own = dying ? ownPlaces() : [];
+    // Platform ids before the release forgets the doors: the stop's ended[] names seats by them.
+    const ids = new Map(own.map((s) => [seatKeyOf(s), standingIdIn(s.realm)]));
     // The main seat's socket — its token ends the seat after the window (deadstop.ts).
     const socket = own[0] && own[0] === state.standing ? H.currentUrl : null;
     const ended = dying && now;
@@ -88,7 +105,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // Seats not confirmed revoked wait for the death window, which repeats the revoke.
     const left = ended ? dropConfirmed(own, end.revoked) : own;
     if (dying && left.length)
-      R.dead = { places: left, status, socket: left[0] === own[0] ? socket : null };
+      R.dead = { places: left, ids, status, socket: left[0] === own[0] ? socket : null };
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
@@ -99,14 +116,24 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
 /**
  * A connect answered after the run's end — the agent died while it was in flight (case №677):
  * its socket is not opened, nobody is left to listen, and the seat joins the death window, which
- * ends it by that socket's token. false — the run goes on or keeps its seats: hold it as ever.
+ * ends it by that socket's token; a satellite's goes the same way at once — it has no window, its
+ * end is its death. `id` — the seat's platform id from the reply. false — the run goes on or
+ * keeps its seats: hold it as ever.
  */
-export function lateSeat(seat: Standing, socket: string, status: string | null): boolean {
-  if (!R.run || !R.mortal) return false;
+export function lateSeat(
+  seat: Standing,
+  socket: string,
+  status: string | null,
+  id: string | null,
+): boolean {
+  if (!R.run || !R.late) return false;
   const key = seatKeyOf(seat);
   const others = R.dead?.places.filter((s) => seatKeyOf(s) !== key) ?? [];
-  R.dead = { places: [seat, ...others], status, socket };
-  log(`${key}: connect answered after the run's end — no socket opened, it ends with the window`);
+  const ids = new Map(R.dead?.ids ?? []).set(key, id);
+  R.dead = { places: [seat, ...others], ids, status, socket, now: R.late === "now" };
+  log(
+    `${key}: connect answered after the run's end — no socket opened, it ends ${R.late === "now" ? "at once" : "with the window"}`,
+  );
   return true;
 }
 
@@ -138,16 +165,17 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
 /**
  * The agent died — its session ended without an announced absence (graph @nks/nks-dev, node
  * #7493): after the window (a reconnect of MCP must not kill the seat) the seats no live bridge
- * holds again are closed — the main one by its dead socket's token, the rest by the server's
+ * holds again are closed — the whole channel by its dead socket's token, else by the server's
  * board (deadstop.ts); a hold record goes with a confirmed end only. Also the repeat of an end
- * whose revoke failed. The daemon calls it in the session's scope after the session ended; a
- * full bridge's process ends with its session and keeps none.
+ * whose revoke failed, and a satellite's seat answered late (no window). The daemon calls it in
+ * the session's scope after the session ended; a full bridge's process ends with its session
+ * and keeps none.
  */
 export async function endDeadRun(waitMs: number): Promise<void> {
   const dead = R.dead;
   R.dead = null;
   if (!dead?.places.length) return;
-  await sleep(waitMs);
+  if (!dead.now) await sleep(waitMs);
   const kept: Standing[] = [];
   for (const s of dead.places) {
     const key = seatKeyOf(s);
@@ -156,7 +184,7 @@ export async function endDeadRun(waitMs: number): Promise<void> {
   }
   const [first] = dead.places;
   const main = dead.socket && kept[0] === first ? { seat: first, socket: dead.socket } : null;
-  if (kept.length) await closeDeadSeats(kept, main, dead.status);
+  if (kept.length) await closeDeadSeats(kept, main, dead.status, dead.ids);
 }
 
 /**

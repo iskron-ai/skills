@@ -11,7 +11,7 @@
 // места не снимает, а away и end основного места не исполняются.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -30,8 +30,8 @@ const INIT = {
   clientInfo: { name: "pi-iskron", version: "0" },
 };
 
-function startBridge(serverUrl, authDir) {
-  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+function startBridge(serverUrl, authDir, args = []) {
+  const proc = spawn(NODE, [BRIDGE, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -119,8 +119,8 @@ async function withFake(fn, opts = {}) {
     homes.push(h);
     return h;
   };
-  const bridge = async (at = dir) => {
-    const b = startBridge(fake.mcpUrl, at);
+  const bridge = async (at = dir, args = []) => {
+    const b = startBridge(fake.mcpUrl, at, args);
     procs.push(b);
     const r = await b.request("initialize", INIT);
     assert.ok(r.result, `initialize: ${JSON.stringify(r)}\n${b.stderr}`);
@@ -179,8 +179,8 @@ for (const [how, end] of [
     });
   });
 
-// The platform keeps a channel's main seat while seats of other graphs stand on it: the
-// seats beside go first, then the main one.
+// The stop by the dead socket's token ends the whole channel (#7621 v2): the seat beside goes
+// with the main one in that one call, no revoke by name — no race with a new holder.
 test("a dead agent's seat beside in another graph closes with its main seat", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const a = await bridge();
@@ -199,6 +199,36 @@ test("a dead agent's seat beside in another graph closes with its main seat", as
     ).catch((e) => {
       throw new Error(`${e.message}\n${journalOf(dir)}`);
     });
+    assert.equal(revokesOf(fake, "die-b"), 0, `no revoke by name:\n${journalOf(dir)}`);
+    assert.equal(fake.state.counts.stops, 1, "one stop for the channel");
+  });
+});
+
+// A seat the stop's ended[] does not name is held by another live channel: not closed by this
+// call, and its hold record is not touched.
+test("a seat beside held by another live channel is not in the stop's ended: its record stays", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-k");
+    const rb = await a.request("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "drugoy", karta: 48, name: "die-k" },
+    });
+    assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+    const beside = holdFilePathOf(dir, "die-k--48--drugoy");
+    assert.ok(existsSync(beside), "the seat beside has its hold record");
+    fake.state.stopKeeps.add("48:die-k");
+    a.proc.kill("SIGKILL");
+    await a.gone();
+    await waitFor("the main seat closed", () => closed(fake, "die-k"), 15_000).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
+    await delay(300);
+    assert.ok(!fake.state.closedPlaces.has("48:die-k"), "the seat beside lives");
+    assert.match(journalOf(dir), /die-k--48--drugoy: not among the stop's ended seats/);
+    assert.equal(revokesOf(fake, "die-k"), 0, "no revoke by name");
+    assert.ok(existsSync(beside), "its hold record is not touched");
+    assert.ok(!existsSync(recordOf(dir, "die-k")), "the main seat's record dropped");
   });
 });
 
@@ -309,6 +339,74 @@ test("the name taken right after the bridge's last check: the stop by token answ
     assert.ok(!closed(fake, "die-g"), `the new holder's seat lives:\n${journalOf(dir)}`);
     assert.ok(fake.state.places.has("931:die-g"), "the seat is on the board");
     assert.ok(!existsSync(recordOf(dir, "die-g")), "the dead agent's own record is dropped");
+  });
+});
+
+// A new holder of the same home writes its hold record before the stop answers not current:
+// the dead agent drops only its own record (the same socket address), not the new holder's.
+test("the stop answers not current after a new holder of this home wrote its record: that record lives", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-h");
+    a.proc.kill("SIGKILL");
+    await a.gone();
+    const rec = recordOf(dir, "die-h");
+    const theirs = { realm: "nks-dev", karta: 931, name: "die-h", url: "ws://new-holder/x" };
+    fake.state.takeInWindow = "931:die-h";
+    fake.state.beforeStopReply = () =>
+      writeFileSync(rec, JSON.stringify({ ...theirs, session: "new-holder", at: Date.now() }));
+    await waitFor("the window's judgement", () =>
+      /die-h--931--nks-dev: its dead socket's token is not current/.test(journalOf(dir)),
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
+    await delay(300);
+    assert.ok(existsSync(rec), `the new holder's record lives:\n${journalOf(dir)}`);
+    assert.equal(JSON.parse(readFileSync(rec, "utf8")).url, theirs.url);
+  });
+});
+
+// A satellite has no death window — its end is its death: dead in the middle of its first
+// connect, the late reply opens no socket and its seat ends at once by that reply's token.
+test("a satellite dead in the middle of its first connect: no socket, the seat ends at once", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s = await bridge(dir, ["--satellite"]);
+    fake.state.connectReplyDelayMs = 1_500;
+    void s
+      .request("tools/call", {
+        name: "iskron_stand",
+        arguments: { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` },
+      })
+      .catch(() => {});
+    const connects = () =>
+      fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "connect",
+      ).length;
+    await waitFor("the connect sent", () => connects() > 0);
+    s.proc.kill("SIGKILL");
+    await s.gone();
+    const name = `${CALLER}.sub-1`;
+    const listens = () => [...fake.state.ws].some((w) => fake.state.wsNames.get(w) === name);
+    // The session ends when its stand in flight has answered: the seat goes then, not a window later.
+    await waitFor("the session's end", () => / session \S+ ended: /.test(journalOf(dir))).catch(
+      (e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      },
+    );
+    const since = Date.now();
+    await waitFor("the seat closed", () => closed(fake, name), 15_000).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
+    assert.ok(Date.now() - since < DEATH_MS, `at once, not after a window:\n${journalOf(dir)}`);
+    assert.match(
+      journalOf(dir),
+      /connect answered after the run's end — no socket opened, it ends at once/,
+    );
+    assert.match(journalOf(dir), /ended by its dead socket's token \(200/);
+    assert.ok(!listens(), `no socket listens on it:\n${journalOf(dir)}`);
+    assert.equal(connects(), 1, "one connect");
   });
 });
 

@@ -226,6 +226,8 @@ export async function startFakeNks(opts = {}) {
     latestToken: new Map(), // имя места → адрес сокета последнего connect
     stopAbsent: opts.stopAbsent ?? 0, // 404 | 405: api без снятия по ws-токену (№675)
     takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
+    stopKeeps: new Set(), // "karta:name": места, которые держит другой живой канал, — снятие по токену их не снимает
+    beforeStopReply: null, // () => void: проба вклинивается в снятие по токену до ответа
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
@@ -410,13 +412,16 @@ export async function startFakeNks(opts = {}) {
 
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
-    // api 0.124.0 (дело №675 [39]): снятие по ws-токену — места канала снимаются, только пока
-    // {token} текущий, проверка и снятие разом; иначе 404 с правилом ws_token_not_current.
-    // stopAbsent: 404 | 405 — api без этой ручки (404 без правила, как незнакомый маршрут).
+    // api 0.124.0 (дело №675 [49], узел #7621): снятие по ws-токену снимает КАНАЛ — все его места,
+    // кроме тех, что держит другой живой канал (stopKeeps "karta:name"), только пока {token}
+    // текущий, проверка и снятие разом; 200 перечисляет лишь реально снятые; иначе 404 с правилом
+    // ws_token_not_current, ничего не тронуто. stopAbsent: 404 | 405 — api без этой ручки (404 без
+    // правила, как незнакомый маршрут). beforeStopReply — проба вклинивается до ответа.
     if (p.startsWith("/api/channel/ws/") && p.endsWith("/stop") && req.method === "POST") {
       st.counts.stops++;
       if (st.stopAbsent) return json(res, st.stopAbsent, { title: "Not Found" });
       takeInWindow();
+      st.beforeStopReply?.();
       const tok = p.slice("/api/channel/ws/".length, -"/stop".length);
       const name = st.wsTokens.get(tok);
       const chan = st.channels.get(st.wsChannel.get(tok));
@@ -425,16 +430,18 @@ export async function startFakeNks(opts = {}) {
           title: "Not Found",
           errors: [{ rule: "ws_token_not_current", message: "токен не текущий" }],
         });
-      const ended = [...chan.places.values()];
-      chan.places.clear();
-      for (const pl of ended) {
+      const ended = [];
+      for (const [realm, pl] of [...chan.places]) {
+        if (st.stopKeeps.has(`${pl.karta}:${pl.name}`)) continue;
+        chan.places.delete(realm);
         st.places.delete(`${pl.karta}:${pl.name}`);
         st.closedPlaces.add(`${pl.karta}:${pl.name}`);
+        ended.push({ standing_id: pl.standing_id, ended_at: new Date().toISOString() });
       }
       return json(res, 200, {
-        standing_id: ended[0].standing_id,
+        channel_id: st.wsChannel.get(tok),
         ended_by: "self",
-        ended_at: new Date().toISOString(),
+        ended,
       });
     }
 

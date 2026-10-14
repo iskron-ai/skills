@@ -4,6 +4,7 @@
 import { ABSORB, tool } from "../delivery/index.ts";
 import { statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { words } from "../shared/lang.ts";
+import { seatField, structuredOf } from "./fields.ts";
 import {
   besideKeyIn,
   holdStanding,
@@ -60,7 +61,14 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   const url = trim(socket);
   const statusUrl = status ? trim(status) : deriveStatusUrl(url);
   // Answered after the run's end: nobody is left to listen, the death window ends the seat (runend.ts).
-  const late = !!state.standing && lateSeat(state.standing, url, statusUrl);
+  const late =
+    !!state.standing &&
+    lateSeat(
+      state.standing,
+      url,
+      statusUrl,
+      seatField(structuredOf(reply), a.action)?.seat_id ?? null,
+    );
   if (!late) holdStanding(url, statusUrl);
   const content = reply.result?.content;
   if (Array.isArray(content)) {
