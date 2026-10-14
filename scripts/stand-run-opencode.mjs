@@ -206,17 +206,26 @@ function api(method, path, body) {
   } catch {}
   return { ok: r.status === 0 && data !== null && !data?._tag, data, raw: r.stdout + r.stderr };
 }
-const active = () => Object.keys(api("GET", "/api/session/active").data?.data ?? {});
-const messages = (id) => {
-  const d = api("GET", `/api/session/${id}/message?limit=200`).data;
-  const list = d?.data ?? d;
-  return Array.isArray(list) ? list : Array.isArray(list?.items) ? list.items : [];
-};
-const inbox = (id) => {
-  const d = api("GET", `/api/session/${id}/inbox`).data;
+// An observation that failed is not an empty one: "not woken", "no new turn", "the queue is
+// empty" must not pass on an unreadable answer — the read throws and the run fails.
+function read(path) {
+  const r = api("GET", path);
+  if (!r.ok) throw new Error(`GET ${path}: ${r.raw.slice(0, 300)}`);
+  return r.data;
+}
+function listOf(d, what) {
   const l = d?.data ?? d;
-  return Array.isArray(l) ? l : [];
+  const list = Array.isArray(l) ? l : Array.isArray(l?.items) ? l.items : null;
+  if (!list) throw new Error(`${what}: not a list — ${JSON.stringify(d).slice(0, 300)}`);
+  return list;
+}
+const active = () => {
+  const d = read("/api/session/active");
+  if (!d || typeof d.data !== "object" || d.data === null) throw new Error(`session/active: ${JSON.stringify(d).slice(0, 300)}`);
+  return Object.keys(d.data);
 };
+const messages = (id) => listOf(read(`/api/session/${id}/message?limit=200`), `messages of ${id}`);
+const inbox = (id) => listOf(read(`/api/session/${id}/inbox`), `inbox of ${id}`);
 const hasStopWord = (x) => /остановлен|you are stopped/.test(JSON.stringify(x));
 const prompt = (id, text) => {
   const r = api("POST", `/api/session/${id}/prompt`, { text, resume: true });

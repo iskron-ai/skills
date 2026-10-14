@@ -172,12 +172,12 @@ try {
     check(own.some((l) => /handed over|resumed-from-disk/.test(l)), `${n}: resumed by the successor (standings.log)`, own.filter((l) => /handed|resumed/.test(l)).join(" | "));
     check(!own.some((l) => / stopped | released /.test(l) && Date.parse(l.slice(0, 24)) > tUp), `${n}: not released or stopped by the update`);
   }
-  // The seat beside in another graph: by the documented ceiling the successor does not return
-  // it — the session gets a lost notice, writes into that graph are refused until iskron_stand
-  // there, and that stand takes the same name, not a name beside.
+  // The seat beside in another graph: the successor returns it with the main seat by its holding
+  // record on the same channel (#7602) — not a lost notice and an explicit stand. Not returned is
+  // a failure; the lost path below only says what the session saw instead.
   const ownB = log.filter((l) => l.includes(`${n1b}--`));
   const resumedB = ownB.some((l) => /resumed-from-disk/.test(l) && Date.parse(l.slice(0, 24)) > tUp);
-  report.push(`INFO ${n1b} (beside, second graph): ${resumedB ? "resumed by the successor" : "NOT resumed"} — ${ownB.filter((l) => Date.parse(l.slice(0, 24)) >= tUp).map((l) => l.slice(25, 200)).join(" | ")}`);
+  check(resumedB, `${n1b} (beside, second graph): resumed by the successor (standings.log)`, ownB.filter((l) => Date.parse(l.slice(0, 24)) >= tUp).map((l) => l.slice(25, 200)).join(" | "));
   const lostNote = S1.notes.find((m) => /lost|потерян/.test(JSON.stringify(m)) && JSON.stringify(m).includes(n1b));
   if (!resumedB) {
     check(!!lostNote, `${n1b}: the session is told the seat beside was lost`, lostNote ? JSON.stringify(lostNote.params?.data ?? lostNote.params).slice(0, 200) : `notes: ${S1.notes.length}`);

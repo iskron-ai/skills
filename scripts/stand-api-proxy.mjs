@@ -42,13 +42,16 @@ const server = http.createServer((req, res) => {
     const up = http.request(
       { host: "127.0.0.1", port: TARGET, method: req.method, path, headers: { ...req.headers, host: `127.0.0.1:${TARGET}` } },
       (r) => {
-        if (ack && ackLog) {
-          let state = null;
-          try {
-            state = JSON.parse(body.toString()).state ?? null;
-          } catch {}
-          appendFileSync(ackLog, JSON.stringify({ t, done: Date.now(), order: ack[1], state, status: r.statusCode }) + "\n");
-        }
+        // done — when the api's answer ended, not when its headers came: the bridge reads the
+        // whole body before it sends the outcome, so the order check compares against this.
+        if (ack && ackLog)
+          r.on("end", () => {
+            let state = null;
+            try {
+              state = JSON.parse(body.toString()).state ?? null;
+            } catch {}
+            appendFileSync(ackLog, JSON.stringify({ t, done: Date.now(), order: ack[1], state, status: r.statusCode }) + "\n");
+          });
         res.writeHead(r.statusCode, r.headers);
         r.pipe(res);
       },
