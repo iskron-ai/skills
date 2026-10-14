@@ -41,7 +41,8 @@ const ASKS_FIELDS = { ...INIT, capabilities: { experimental: { "iskron/structure
 
 function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [], file = FILE) {
   const notifications = [];
-  const proc = spawn(NODE, [file, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
+  const url = serverUrl ? [serverUrl] : []; // null — адрес из окружения или файла выбора
+  const proc = spawn(NODE, [file, ...url, "--no-browser", "--auth-dir", authDir, ...args], {
     cwd,
     env: {
       ...process.env,
@@ -3730,9 +3731,10 @@ test("satellite: standing in another role, it still may not take, register or re
   );
 });
 
-// English Iskron (#6080): the bridge's language follows its server — a host on
-// .ai is English, any other Russian; ISKRON_BRIDGE_LANG=en|ru overrides. What the
-// bridge writes itself — the iskron_stand answer — speaks that language; an
+// English Iskron (#6080): the bridge's language is ISKRON_BRIDGE_LANG=en|ru, else
+// its server's — the address from the argument, ISKRON_BRIDGE_URL or the `server`
+// file beside the grant (the `use en` choice, #5040): a host on .ai is English, any
+// other Russian; with no address at all, Russian. What the bridge writes itself — the iskron_stand answer — speaks that language; an
 // English bridge asks the api for English prose (Accept-Language) and names the
 // seat's language in connect and register (locale: "en"); a Russian one asks the
 // same in Russian — the server's default is not its language (#7593).
@@ -3803,6 +3805,61 @@ test("a Russian bridge asks for Russian prose and sends locale ru in connect and
   // Every request names the language; fetch's own default («*») or none is not a choice.
   assert.deepEqual([...fake.state.acceptLanguage], ["ru"]);
 });
+
+// The two standard Iskrons (#5040, #7289) without ISKRON_BRIDGE_LANG: the language is
+// the server's — reached through ISKRON_BRIDGE_URL or the `server` file beside the
+// grant (the `use en` choice); *.ai asks for English, *.ru and any other host — Russian.
+// The fake answers under those names through a preload that resolves them to loopback.
+const RESOLVE_FAKE = `const dns = require("node:dns");
+const lookup = dns.lookup;
+dns.lookup = function (host, opts, cb) {
+  if (!/^fake\\.iskron\\.(ai|ru)$/.test(host)) return lookup.apply(this, arguments);
+  if (typeof opts === "function") [cb, opts] = [opts, {}];
+  if (opts?.all) return process.nextTick(cb, null, [{ address: "127.0.0.1", family: 4 }]);
+  process.nextTick(cb, null, "127.0.0.1", 4);
+};
+`;
+
+for (const source of ["ISKRON_BRIDGE_URL", "the server file"]) {
+  for (const [host, lang] of [
+    ["fake.iskron.ai", "en"],
+    ["fake.iskron.ru", "ru"],
+    ["127.0.0.1", "ru"],
+  ]) {
+    test(`without ISKRON_BRIDGE_LANG, a server on ${host} named by ${source} makes the bridge ask for ${lang} and send locale ${lang}`, async (t) => {
+      if (process.env.ISKRON_NODE) return t.skip("the resolver preload rides NODE_OPTIONS");
+      const fake = await startFakeNks({ pat: PAT });
+      const dir = mkdtempSync(join(tmpdir(), "iskron-stand-lang-by-server-"));
+      const preload = join(dir, "resolve-fake.cjs");
+      writeFileSync(preload, RESOLVE_FAKE);
+      const url = new URL(fake.mcpUrl);
+      url.hostname = host;
+      const env = {
+        NODE_OPTIONS: `--require ${preload}`,
+        ISKRON_BRIDGE_LANG: undefined,
+        ISKRON_BRIDGE_URL: undefined,
+      };
+      if (source === "ISKRON_BRIDGE_URL") env.ISKRON_BRIDGE_URL = url.href;
+      else writeFileSync(join(dir, "server"), url.href + "\n");
+      const bridge = startBridge(null, dir, process.cwd(), env);
+      t.after(async () => {
+        await bridge.stop();
+        await fake.stop();
+      });
+      assert.ok((await bridge.call("initialize", INIT)).result, bridge.stderr);
+      const r = await bridge.call("tools/call", {
+        name: "iskron_stand",
+        arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+      });
+      assert.ok(!r.result?.isError, textOf(r));
+      for (const action of ["connect", "register"]) {
+        const got = sentToChannel(fake).find((x) => x.action === action);
+        assert.equal(got?.locale, lang, `${action}: ${JSON.stringify(sentToChannel(fake))}`);
+      }
+      assert.deepEqual([...fake.state.acceptLanguage], [lang]);
+    });
+  }
+}
 
 // The fake treats a tool call as the server does: an argument the tool's schema in
 // fixtures/surface.json does not declare is dropped silently, not refused. The one
