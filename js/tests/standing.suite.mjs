@@ -1100,6 +1100,60 @@ test("a cached list serves this build's iskron_stand, not the one another build 
   assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
 });
 
+// Shipped moment lines of former bridges, whole: the last one (prepended from #282 on),
+// one from before #282 (appended), and the English one.
+const MOMENT_7_9 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; вопрос по сути или обязательство — вимаршей `posed_to` отвечающей роли с «Отвечено, когда»; разовая задача или вопрос — в деле, кончается исходом; отказ доставки рода не меняет; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_BEFORE_282 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; без дела — файл сессии; кадром не шлётся; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_EN =
+  "[bridge] The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; a substantive question or obligation is a vimarsha with `posed_to` to the answering role and an answer criterion; a one-off task or question belongs in a case and ends with its outcome; delivery refusal does not change its kind; the CHECKS lines in the reply are this beat's work.";
+
+// A bridge before #7557 cached write tools with its whole moment line — first from #282 on,
+// last before it; a list served from that cache (offline, login wait) reaches the harness
+// as the server wrote it. Only a whole shipped line with its blank line goes, only on write tools.
+test("a cached list written by a former bridge serves write tools without its moment line", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await fake.control({ richTools: true });
+  await bridge.call("tools/list", 20, {});
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
+  const like = "[мост] Момент скилла writing: это собственное объяснение сервера.";
+  const cached = {
+    iskron_add_vimarsha: `${MOMENT_7_9}\n\nСоздай вопрошание.`,
+    iskron_batch: `${MOMENT_EN}\n\nАтомарная дельта.`,
+    iskron_add_kriya: `Создай крию.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_bianhua: `${MOMENT_7_9}\n\nСоздай превращение.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_phenomenon: `${like}\n\nСоздай феномен.`,
+    iskron_add_holon: `${MOMENT_7_9}Создай контур.`,
+    iskron_add_karta: MOMENT_7_9,
+    iskron_orient: `${MOMENT_7_9}\n\nВойдите в граф.`,
+  };
+  for (const tool of cache.tools.tools) if (cached[tool.name]) tool.description = cached[tool.name];
+  for (const name of Object.keys(cached))
+    if (!cache.tools.tools.some((x) => x.name === name))
+      cache.tools.tools.push({ name, description: cached[name], inputSchema: { type: "object" } });
+  writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
+  await bridge.stop();
+  await fake.stop(); // no network: the second bridge answers from the cache
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  const byName = Object.fromEntries((listed.result?.tools ?? []).map((x) => [x.name, x]));
+  // Taken off: the whole line first, last, both, in either language.
+  assert.equal(byName.iskron_add_vimarsha?.description, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch?.description, "Атомарная дельта.");
+  assert.equal(byName.iskron_add_kriya?.description, "Создай крию.");
+  assert.equal(byName.iskron_add_bianhua?.description, "Создай превращение.");
+  // Kept byte for byte: a like start that is no shipped line, no blank line, nothing left
+  // after the line, and a read tool.
+  assert.equal(byName.iskron_add_phenomenon?.description, cached.iskron_add_phenomenon);
+  assert.equal(byName.iskron_add_holon?.description, cached.iskron_add_holon);
+  assert.equal(byName.iskron_add_karta?.description, MOMENT_7_9);
+  assert.equal(byName.iskron_orient?.description, cached.iskron_orient);
+});
+
 // The shared answers cache keeps the form the harness gets — with the bridge's
 // own tool — or the next start without network serves a list without it, and a
 // cached list must not read as a changed one once the session opens (#5405).
@@ -1511,29 +1565,30 @@ test("a frame delivered under the Monitor watchdog does not wake an exit watchdo
   assert.ok(again.out.includes("второй") && !again.out.includes("первый"), again.out);
 });
 
-test("tools/list carries the writing-moment line on write tools only", async (t) => {
+// The bridge adds no writing-moment line: the server's own line carries it (graph nks-dev: #7557).
+test("tools/list passes write and read tool descriptions byte for byte; only the channel tool gains the bridge's lines", async (t) => {
   const { bridge, fake } = await connected(t);
   await fake.control({ richTools: true });
   const list = await bridge.call("tools/list", 4, {});
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x.description]));
-  assert.ok(
-    byName.iskron_add_vimarsha?.includes("[мост] Момент скилла writing"),
-    "add tool lacks the line",
-  );
-  assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
-  // Строка моста и строка writing в карте моментов двери iskron — одна строка.
+  assert.equal(byName.iskron_add_vimarsha, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch, "Атомарная дельта.");
+  assert.equal(byName.iskron_orient, "Войдите в граф.");
+  const channel = byName.iskron_channel ?? "";
+  assert.ok(channel.startsWith("[мост] Занятость"), "the busyness line leads the channel tool");
+  assert.match(channel, /\[мост\] action="leave"/, "the leave line stands on the channel tool");
+  assert.ok(channel.endsWith("\n\nЖивой канал роли."), "the server's description follows whole");
+});
+
+// Without the bridge's line the door's moment map carries the writing moment (#7557):
+// the row stands, with the wait by kind and CHECKS as integrity, not execution.
+test("the door's moment map carries the writing row", () => {
   const door = readFileSync(join(HERE, "..", "..", "skills", "iskron", "SKILL.md"), "utf8");
   const row = door.match(/^\| перед `iskron_add_\*`[^|]*\| \*\*writing\*\*: (.+) \|$/m)?.[1];
   assert.ok(row, "the door's moment map lacks the writing row");
-  assert.ok(
-    byName.iskron_add_vimarsha.includes(`Момент скилла writing: ${row}`),
-    "the bridge's writing-moment line drifted from the door's moment map",
-  );
-  assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
-  assert.ok(
-    byName.iskron_channel?.includes('action="status"'),
-    "the channel tool must announce the bridge's own status action",
-  );
+  assert.match(row, /вопрос по сути или обязательство — вимаршей `posed_to`/);
+  assert.match(row, /разовая задача или вопрос — в деле/);
+  assert.match(row, /CHECKS[^.]*не свидетельство исполнения/);
 });
 
 test("watchdog with nothing held tells the doer to name itself with iskron_stand", async () => {
@@ -3084,8 +3139,9 @@ test("iskron/check stops reopening after two fruitless reopens and says so aloud
 // #6649: the plugin idle longer than the hold record's term (6 h; seen 30–32 h) — the
 // record went by its term, iskron_stand takes the seat back, but the platform had let
 // the place expire and it left all its cases. The return that finds no record of the
-// named seat says so, and the next iskron_stand repeats it: check mine, join again.
-test("a return whose hold record went by its term says to check iskron_case mine after iskron_stand — and the stand that takes the seat says it too", async (t) => {
+// named seat says so, and the next iskron_stand repeats it: join again. Not "check mine":
+// mine right after the stand answered "a session without a seat" (#7555).
+test("a return whose hold record went by its term says to join the cases again after iskron_stand, never to check mine — and the stand that takes the seat says it too", async (t) => {
   const own = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
   const { fake, dir, bridge, standings } = await connected(t, { init: own });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -3098,14 +3154,19 @@ test("a return whose hold record went by its term says to check iskron_case mine
   assert.ok((await next.call("initialize", 1, own)).result);
   const back = await next.call("iskron/resume", 2, { key: "proba--931--nks-dev" });
   assert.equal(back.result?.resumed, false, JSON.stringify(back));
-  assert.match(back.result.word, /после iskron_stand проверь iskron_case\(action="mine"\)/);
+  assert.match(
+    back.result.word,
+    /после iskron_stand войди заново в дела[^—]*iskron_case\(action="join"/,
+  );
+  assert.doesNotMatch(back.result.word, /"mine"/);
   const st = await next.call("tools/call", 3, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!st.result?.isError, said);
-  assert.match(said, /место могло истечь у платформы[\s\S]*войди в свои дела заново/);
+  assert.match(said, /место могло истечь у платформы[\s\S]*войди заново в дела/);
+  assert.doesNotMatch(said, /action="mine"/, said);
 });
 
 // ── cold review of the fix (r5 #5140): what it left open ─────────────────────

@@ -38,6 +38,7 @@ export const CLI: Readonly<Record<Lang, CliWords>> = {
       (--lang — язык поверхности; команду сторожа с ним печатает блок моста)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs status [--json] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs stop <место|id сессии> [--realm <граф>] [--auth-dir <dir>] [--lang en|ru]   (приказ останова месту; старый api — снятие)
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
   ${rituals}
@@ -85,6 +86,7 @@ export const CLI: Readonly<Record<Lang, CliWords>> = {
       (--lang — the surface language; the bridge block prints the watchdog command with it)
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs status [--json] [--auth-dir <dir>] [--lang en|ru]
+  node iskron.mjs stop <seat|session id> [--realm <graph>] [--auth-dir <dir>] [--lang en|ru]   (a stop order to the seat; an older api — a revoke)
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
   ${rituals}

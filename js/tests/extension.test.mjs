@@ -193,6 +193,8 @@ const ENV_KEYS = [
   "FB_REPLY",
   "FB_INIT_CAPS",
   "FB_CALLS",
+  "FB_EVENTS",
+  "FB_PULSE_REFUSE",
   "FB_STAND_HELD",
   "FB_ENV",
   "ISKRON_HARNESS_VERSION",
@@ -618,6 +620,88 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
   }
 });
 
+// The turn's word for the seat's pulse (graph nks-dev: #7529) belongs to its session: a new
+// session_start raises a new bridge, and the old session's turn_at and read_at do not ride to it.
+test("a new session's pulse carries none of the previous session's turn and read clocks", async () => {
+  const calls = join(SANDBOX, "pulse-reset.calls");
+  const { env } = bridgeEnv("pulse-reset", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && !pulses().some((p) => p.arguments.turn_at); i++) await delay(40);
+    const old = pulses().at(-1).arguments;
+    assert.ok(old.turn_at && old.read_at, `the old session's clocks: ${JSON.stringify(old)}`);
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const before = pulses().length;
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && pulses().length === before; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" }, "the new session's own word");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A daemon swapped mid-turn starts with an empty word (thin.ts replays only initialize and
+// resume); its "held" brings the session's last word back to it at once, not at the next event.
+test("a seat held again mid-turn — a new daemon — gets the turn's last word: busy and its clocks", async () => {
+  const calls = join(SANDBOX, "pulse-held.calls");
+  const { events, env } = eventsEnv("pulse-held", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const settle = async (n) => {
+    for (let i = 0; i < 50 && pulses().length < n; i++) await delay(40);
+  };
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await settle(4);
+    const last = pulses().at(-1).arguments;
+    assert.ok(last.state === "busy" && last.turn_at && last.read_at, JSON.stringify(last));
+    push(events, { kind: "held", key: "k", place: { realm: "r5", karta: "931", name: "p" } });
+    await settle(5);
+    assert.equal(pulses().length, 5, "the held seat got the word again");
+    assert.deepEqual(pulses().at(-1).arguments, last);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The turn's end the bridge refused is told again: with no event after it, the seat is not left
+// busy (#7529).
+test("an idle the bridge refused reaches it on the retry: the seat is not left busy", async () => {
+  const calls = join(SANDBOX, "pulse-refused.calls");
+  const refuse = join(SANDBOX, "pulse-refused.refuse");
+  const { env } = bridgeEnv("pulse-refused", { FB_CALLS: calls, FB_PULSE_REFUSE: refuse });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && !pulses().length; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" });
+    writeFileSync(refuse, "");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && existsSync(refuse); i++) await delay(40);
+    assert.ok(!existsSync(refuse), "the idle refused");
+    assert.equal(pulses().length, 1, "the refused idle is not taken");
+    for (let i = 0; i < 125 && pulses().length === 1; i++) await delay(40);
+    const last = pulses().at(-1).arguments;
+    assert.equal(last.state, "idle", "the idle taken on the retry");
+    assert.ok(last.turn_at, "the turn's end comes with it");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
   const calls = join(SANDBOX, "launch-tail.calls");
   const { log, env } = bridgeEnv("launch-tail", {
@@ -654,6 +738,76 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
     );
   } finally {
     await rec.stop();
+  }
+});
+
+// №680 (#7591): the satellite's seat names the model pi runs on — the harness's, not the agent's
+// word — on the launch line and on the agent's own satellite stand; a busy line alone stays one.
+test("a satellite's stand carries pi's model; a busy line alone does not", async () => {
+  const calls = join(SANDBOX, "launch-model.calls");
+  const { env } = bridgeEnv("launch-model", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  rec.ctx.model = { id: "gpt-6.1-sol", provider: "openai" };
+  try {
+    await prompt(rec, "start @nks/nks-dev #48 дело №77 от @me:host.repo");
+    const stand = rec.tools.get("iskron_stand");
+    const own = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", model: "agent-says" };
+    await stand.execute("id", own, undefined, () => {}, rec.ctx);
+    const busy = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", status: "чиню" };
+    await stand.execute("id", busy, undefined, () => {}, rec.ctx);
+    assert.deepEqual(
+      toolCalls(calls)
+        .filter((c) => c.name === "iskron_stand")
+        .map((c) => c.arguments.model),
+      ["gpt-6.1-sol", "gpt-6.1-sol", undefined],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №680 review: a busy line is one only while the bridge holds a seat — the first stand with a
+// status takes the seat and names the model; and the agent's model never stands in for pi's.
+test("a satellite's first stand with a status takes the seat with pi's model, as does a status in another graph, but not one in a graph it holds a seat beside in; without pi's model there is none, not the agent's", async () => {
+  const sol = "gpt-6.1-sol";
+  for (const [label, model, said, want] of [
+    ["first-busy", { id: sol, provider: "openai" }, {}, [sol, undefined, sol, undefined]],
+    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined, undefined, undefined]],
+  ]) {
+    const calls = join(SANDBOX, `sat-${label}.calls`);
+    const { env } = bridgeEnv(`sat-${label}`, {
+      FB_TOOLS: STAND_AND_CASE,
+      FB_CALLS: calls,
+      FB_STAND_HELD: "host.repo.opus-5",
+    });
+    const rec = await session(env);
+    rec.ctx.model = model;
+    try {
+      const stand = rec.tools.get("iskron_stand");
+      const args = { realm: "@nks/nks-dev", karta: 931, satellite_of: "@me:host.repo" };
+      const first = { ...args, status: "чиню", ...said };
+      await stand.execute("id", first, undefined, () => {}, rec.ctx);
+      await stand.execute("id", { ...args, status: "дальше" }, undefined, () => {}, rec.ctx);
+      // The seat is held in @nks/nks-dev only: in another graph the bridge takes one.
+      const other = { ...args, realm: "@nks/drugoy", status: "там" };
+      await stand.execute("id", other, undefined, () => {}, rec.ctx);
+      // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+      const again = { realm: "@nks/drugoy", satellite_of: "@me:host.repo", status: "там же" };
+      await stand.execute("id", again, undefined, () => {}, rec.ctx);
+      assert.deepEqual(
+        toolCalls(calls)
+          .filter((c) => c.name === "iskron_stand")
+          .map((c) => c.arguments.model),
+        want,
+        label,
+      );
+    } finally {
+      await rec.stop();
+    }
   }
 });
 

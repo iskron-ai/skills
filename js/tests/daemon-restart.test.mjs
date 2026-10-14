@@ -37,10 +37,10 @@ const INIT = {
   clientInfo: { name: "opencode-iskron", version: "0" },
 };
 
-/** Сборка выпуска v7.5.0 из истории; клон без тегов — null. */
-function oldRelease(to) {
+/** Сборка выпуска из истории (по умолчанию v7.5.0); клон без тегов — null. */
+function oldRelease(to, tag = "v7.5.0") {
   try {
-    const text = execFileSync("git", ["show", "v7.5.0:skills/establish-mcp/scripts/iskron.mjs"], {
+    const text = execFileSync("git", ["show", `${tag}:skills/establish-mcp/scripts/iskron.mjs`], {
       cwd: REPO,
       maxBuffer: 16 * 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
@@ -69,6 +69,7 @@ function thin(file, { url, dir, cwd, env }) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const waiters = new Map();
+  const notes = [];
   let out = "";
   let stderr = "";
   proc.stdout.on("data", (c) => {
@@ -78,6 +79,7 @@ function thin(file, { url, dir, cwd, env }) {
       out = out.slice(nl + 1);
       if (!line) continue;
       const msg = JSON.parse(line);
+      if (msg.id === undefined && msg.method) notes.push(msg);
       waiters.get(msg.id)?.(msg);
     }
   });
@@ -85,6 +87,7 @@ function thin(file, { url, dir, cwd, env }) {
   let seq = 0;
   return {
     proc,
+    notes,
     get stderr() {
       return stderr;
     },
@@ -196,6 +199,104 @@ test("plugin restart with the daemon change: the session's seat comes back to it
     `no seat beside: ${JSON.stringify(fake.state.placeArgs)}`,
   );
   assert.equal(record().find((r) => r.key === rec.key)?.session, SESSION, why);
+});
+
+// Переход с выпуска v7.10.0 (#7602): его демон отпускает место рядом и его тонкий мост
+// при переподхвате сразу говорит lost, но преемник этой ветки возвращает место рядом
+// вместе с основным — прежний тонкий мост снимает отказ по слову beside до конца ворот:
+// запись во второй граф проходит без iskron_stand, нового места на доске нет.
+test("from v7.10.0: the successor brings the beside seat back — the former thin bridge's lost is lifted before its gate opens", async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), "iskron-beside-"));
+  const old = oldRelease(join(scratch, "home", "release", "iskron.mjs"), "v7.10.0");
+  if (!old) return t.skip("the v7.10.0 tag is not in this clone");
+  const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
+  const [dir, home, cwd] = ["auth", "home", "cwd"].map((d) => join(scratch, d));
+  for (const d of [dir, cwd]) mkdirSync(d, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    ISKRON_BRIDGE_TOKEN: PAT,
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+    ISKRON_BRIDGE_DAEMON: "1",
+    ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+    ISKRON_BRIDGE_DAEMON_HOME_CHECK_MS: "200",
+  };
+  delete env.ISKRON_BRIDGE_NO_UPDATE;
+  const journal = () => {
+    try {
+      return readFileSync(join(dir, "run", "daemon.log"), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const procs = [];
+  t.after(async () => {
+    for (const p of procs) p.kill("SIGKILL");
+    for (const m of journal().matchAll(/ pid=(\d+) \S+ listening /g)) {
+      try {
+        process.kill(+m[1], "SIGKILL");
+      } catch {}
+    }
+    await fake.stop();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+  const daemon = spawn(NODE, [old, "daemon", "--auth-dir", dir], { env, stdio: "ignore" });
+  procs.push(daemon);
+  const homeCopy = join(home, ".iskron-bridge", "iskron-bridge.mjs");
+  await waitFor("the old daemon to put itself home", () => existsSync(homeCopy));
+  const former = thin(old, { url: fake.mcpUrl, dir, cwd, env });
+  procs.push(former.proc);
+  await former.handshake();
+  const stand = (realm, karta) =>
+    former.request("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm, karta, name: "two", cwd },
+    });
+  for (const [realm, karta] of [
+    ["nks-dev", 931],
+    ["drugoy", 48],
+  ]) {
+    const r = await stand(realm, karta);
+    assert.ok(!r.result?.isError, textOf(r));
+  }
+  const kinds = () =>
+    former.notes.map((n) => `${n.params?.data?.kind}:${n.params?.data?.key ?? ""}`);
+  const besideKey = "two--48--drugoy";
+  await waitFor("the beside word", () => kinds().includes(`beside:${besideKey}`));
+  const connects = fake.state.counts.connect;
+
+  // Ветка в дом под старшей версией — демон выпуска уходит к её преемнику.
+  const newer = readFileSync(BRIDGE, "utf8").replace(
+    /^((?:const|let|var)\s+VERSION\s*=\s*)"[^"]+"/m,
+    '$1"99.0.0"',
+  );
+  writeFileSync(homeCopy, newer);
+  const why = () => `${JSON.stringify(kinds())}\n${former.stderr}\n${journal()}`;
+  await waitFor(
+    "the beside seat back on the successor",
+    () => kinds().filter((k) => k === `beside:${besideKey}`).length === 2,
+    30_000,
+  ).catch((e) => {
+    throw new Error(`${e.message}\n${why()}`);
+  });
+  // Что видит сессия: прежний тонкий мост говорит lost по месту рядом, затем beside снимает его.
+  const seen = kinds();
+  t.diagnostic(`the session saw: ${seen.join(" ")}`);
+  const lostAt = seen.indexOf(`lost:${besideKey}`);
+  assert.ok(lostAt < 0 || lostAt < seen.lastIndexOf(`beside:${besideKey}`), why());
+  const before = fake.state.writes.length;
+  const there = await former.request("tools/call", {
+    name: "iskron_add_phenomenon",
+    arguments: { realm: "drugoy", name: "после перехода" },
+  });
+  assert.ok(there.result && !there.result.isError, `${JSON.stringify(there)}\n${why()}`);
+  assert.equal(fake.state.writes.at(-1)?.author, "two", JSON.stringify(fake.state.writes));
+  assert.equal(fake.state.writes.length, before + 1);
+  assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+  assert.equal(fake.state.counts.connect, connects, "no new connect");
+  const drugoy = [...fake.state.channels.values()].filter((c) => c.places.has("@nks/drugoy"));
+  assert.equal(drugoy.length, 1, `one seat in drugoy on the board: ${why()}`);
 });
 
 // Переполнение журнала приходится на шумный миг — смену демона, — и журнал, стёртый

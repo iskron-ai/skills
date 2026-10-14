@@ -2424,6 +2424,36 @@ test("two graphs: the second place stands beside the first on the same channel �
   assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
 });
 
+// #7556 (api 0.124.0): a register refused 409 channel_already_stands_in_realm names the channel's
+// seats in that graph (data.your_standings); the answer names the seat and the call to stand on it.
+// Without the data the refusal is as before.
+for (const withData of [true, false])
+  test(`two graphs: register refused 409 channel_already_stands_in_realm ${withData ? "with your_standings — the move names the seat and its iskron_stand" : "without data — the refusal as is"}`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!(await stand({ realm: NKS, karta: 931, name: "proba" })).result?.isError);
+    await fake.control({
+      registerRefuseNext: [
+        {
+          text: "Rejected (409): channel_already_stands_in_realm",
+          status: 409,
+          rule: "channel_already_stands_in_realm",
+          ...(withData ? { data: { your_standings: [{ id: "s-7", name: "proba-old" }] } } : {}),
+        },
+      ],
+    });
+    const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+    assert.ok(b.result?.isError, textOf(b));
+    assert.match(textOf(b), /^Отказано \(409\): канал этого моста уже стоит в графе/, textOf(b));
+    // The api names no role (#5418): the move leaves karta open, not the refused call's 48.
+    const move = `iskron_stand(realm="${DRUGOY}", karta, name="proba-old")`;
+    if (withData) assert.ok(textOf(b).includes(move), `the move by the seat's name:\n${textOf(b)}`);
+    else {
+      assert.doesNotMatch(textOf(b), /proba-old/, textOf(b));
+      assert.ok(textOf(b).includes("karta, name=<то имя>"), `the move by the board:\n${textOf(b)}`);
+    }
+  });
+
 test("two graphs: the busy line of a place beside names it @handle:name, not its record key — the platform sends no new hello for it", async (t) => {
   const { fake, stand, keyB } = await twoGraphs(
     t,
@@ -3146,6 +3176,22 @@ for (const [how, refuse, confirmed] of [
   ["success", null, true],
   ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
   ["a 404 refusal without a rule", { text: "Нет такого места.", status: 404 }, true],
+  // api 0.124.0 (#7599): the seat that is not there, by rule — both «already off».
+  [
+    "a 404 standing_not_found refusal",
+    { text: "Rejected.", status: 404, rule: "standing_not_found", data: { standing_id: "s-1" } },
+    true,
+  ],
+  [
+    "a 410 standing_already_ended refusal",
+    {
+      text: "Rejected.",
+      status: 410,
+      rule: "standing_already_ended",
+      data: { standing_id: "s-1", ended_by: "self", ended_at: "2026-10-14T00:00:00Z" },
+    },
+    true,
+  ],
   ["prose «role #931 not found» without refusal data", { text: "role #931 not found" }, false],
 ])
   test(`satellite: iskron/end on a revoke answered by ${how} — revoked ${confirmed ? "names" : "does not name"} the place`, async (t) => {
@@ -3965,7 +4011,7 @@ const SERVER_TOOLS = [
   ),
   {
     // Описание пишущего тула у сервера длиннее 2048 знаков — предела, до которого
-    // Claude Code режет описание: строка моста в хвосте до агента не доходит.
+    // Claude Code режет описание.
     name: "iskron_add_vimarsha",
     description: "Создаёт вопрошание. ".repeat(160),
     inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
@@ -4007,10 +4053,10 @@ test("every bridge: the harness sees iskron_channel without the place moves and 
       channel.description.indexOf('action="leave"') < channel.description.indexOf("Открывает"),
     channel.description,
   );
+  // Write tools reach the harness as the server sent them: the bridge adds no line (#7557).
   for (const name of ["iskron_add_vimarsha", "iskron_batch"]) {
-    const d = byName[name].description;
-    assert.ok(d.startsWith("[мост] Момент скилла writing"), `${name}: ${d.slice(0, 80)}`);
-    assert.ok(d.length > 2048, "the server's own text follows the line");
+    const served = SERVER_TOOLS.find((x) => x.name === name).description;
+    assert.equal(byName[name].description, served, `${name}: byte for byte`);
   }
   // The shared answers cache keeps the server's whole schema: other bridges read it.
   const cached = JSON.parse(
@@ -4330,6 +4376,57 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
   assert.equal(fake.state.counts.list, lists, "no board read");
 });
 
+// A satellite's model is the harness's (#7591): a full stand without it means the harness
+// did not name one — the seat's earlier model goes, not published again; a new one replaces it.
+test("satellite: a repeated full stand without a model drops the seat's earlier model; a new model replaces it", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const lastModel = () => {
+    const p = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`).at(-1);
+    assert.ok(p, JSON.stringify(fake.state.placeArgs));
+    return p.model;
+  };
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  assert.equal(lastModel(), "model-a");
+  // The seat as the api keeps it: register without model leaves the earlier one (#4032).
+  const [id] = [...fake.state.seatModels].find(([, m]) => m === "model-a") ?? [];
+  assert.ok(id, JSON.stringify([...fake.state.seatModels]));
+  const registers = fake.state.counts.register_standing;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.counts.register_standing > registers, "the repeat registers the seat");
+  assert.equal(lastModel(), undefined, "no model from the harness — none on the seat");
+  assert.equal(fake.state.seatModels.get(id), undefined, "the api no longer keeps model-a");
+  const patch = fake.state.seatPatches.find((x) => x.id === id);
+  assert.deepEqual(patch?.body, { model: null }, JSON.stringify(fake.state.seatPatches));
+  assert.match(patch.auth ?? "", /^Bearer /, "with the key that opened the seat");
+  assert.equal(patch.realm, "@nks/nks-dev", "the seat's graph, as the api requires (#99)");
+  assert.doesNotMatch(textOf(none), /not cleared|не снята/, textOf(none));
+  const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  assert.equal(lastModel(), "model-b");
+  assert.equal(fake.state.seatModels.get(id), "model-b");
+});
+
+// The clearing PATCH refused (#7591): the stand still stands, and its answer says in one line
+// that the earlier model stays.
+test("satellite: a refused clearing of the seat's model leaves the stand standing and says so", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  fake.state.seatPatchRefuse = 503;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.seatPatches.length > 0, "the clearing was tried");
+  const said = textOf(none)
+    .split("\n")
+    .filter((l) => /не снята/.test(l));
+  assert.equal(said.length, 1, textOf(none));
+  assert.match(said[0], /Прежняя модель места не снята \(503/, said[0]);
+});
+
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без
@@ -4619,7 +4716,7 @@ test("the bridge asks the server for fields on every handshake; a harness that d
   assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
 });
 
-test("outputSchema rides tools/list to a harness that asked for fields through the narrowing and the moment line", async (t) => {
+test("outputSchema rides tools/list to a harness that asked for fields through the narrowing", async (t) => {
   const schema = (key) => ({
     type: "object",
     properties: { [key]: { type: "array", items: { type: "object" } } },
@@ -4642,7 +4739,8 @@ test("outputSchema rides tools/list to a harness that asked for fields through t
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");
   assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
-  assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
+  const served = SERVER_TOOLS.find((x) => x.name === "iskron_add_vimarsha");
+  assert.equal(byName.iskron_add_vimarsha.description, served.description, "byte for byte");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
 });
 

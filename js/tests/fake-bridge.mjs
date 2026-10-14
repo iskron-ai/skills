@@ -49,6 +49,7 @@
 //   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
+//   FB_PULSE_REFUSE file whose presence refuses the next iskron/pulse once (removed on it).
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -224,6 +225,7 @@ function callResult(name, a = {}) {
 
 let buf = "";
 let usageDelayed = false;
+let mainRealm = null; // the graph of the first seat FB_STAND_HELD holds; others stand beside it
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -317,10 +319,13 @@ process.stdin.on("data", (chunk) => {
         );
       // FB_STAND_HELD: the place name an iskron_stand holds — said as «held» before
       // the answer, as the real bridge says it (js/bridge/hold.ts); a satellite
-      // stands as <satellite_of>.sub-1.
+      // stands as <satellite_of>.sub-1. A seat in another graph than the first held one
+      // stands beside it — said as «beside» (js/bridge/places.ts).
       if (process.env.FB_STAND_HELD && msg.params?.name === "iskron_stand") {
         const a = msg.params.arguments ?? {};
         const name = a.satellite_of ? `${a.satellite_of}.sub-1` : process.env.FB_STAND_HELD;
+        mainRealm ??= a.realm;
+        const beside = a.realm !== mainRealm;
         send({
           jsonrpc: "2.0",
           method: "notifications/message",
@@ -328,8 +333,8 @@ process.stdin.on("data", (chunk) => {
             level: "info",
             logger: "iskron-channel",
             data: {
-              kind: "held",
-              key: `k-${name}`,
+              kind: beside ? "beside" : "held",
+              key: beside ? `k-${name}@${a.realm}` : `k-${name}`,
               place: { realm: a.realm, karta: a.karta, name },
             },
           },
@@ -377,6 +382,24 @@ process.stdin.on("data", (chunk) => {
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       ok(msg.id, { taken: true });
+    } else if (msg.method === "iskron/pulse") {
+      // The session's word on its turn for the seat's pulse (js/bridge/pulse.ts, #7529).
+      // FB_PULSE_REFUSE: a file whose presence makes this one word refused — and it is
+      // removed, so the next word is taken; the refused one is logged as iskron/pulse:refused.
+      const refuse = process.env.FB_PULSE_REFUSE && existsSync(process.env.FB_PULSE_REFUSE);
+      if (refuse) unlinkSync(process.env.FB_PULSE_REFUSE);
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({
+            name: refuse ? `${msg.method}:refused` : msg.method,
+            arguments: msg.params,
+            pid: process.pid,
+          }) + "\n",
+        );
+      if (refuse)
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "pulse refused" } });
+      else ok(msg.id, { taken: true });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).

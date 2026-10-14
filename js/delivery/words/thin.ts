@@ -3,15 +3,15 @@
 import type { Lang } from "../lang.ts";
 
 export interface ThinWords {
-  /** Причина потери места рядом в другом графе: тонкий мост их не возвращает. */
+  /** Причина потери места рядом в другом графе: возврат основного его не вернул (#7602). */
   besideNotBack: () => string;
 }
 
 export const THIN: Readonly<Record<Lang, ThinWords>> = {
   ru: {
-    besideNotBack: () => "места других графов рядом не возвращаются",
+    besideNotBack: () => "место рядом не вернулось вместе с основным",
   },
   en: {
-    besideNotBack: () => "beside seats do not come back",
+    besideNotBack: () => "the seat beside did not come back with the main one",
   },
 };
