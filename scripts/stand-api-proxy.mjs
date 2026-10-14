@@ -6,13 +6,17 @@
 // of the run issues sockets on it by NKS_PUBLIC_API_URL=http://127.0.0.1:PORT/api. Anything else
 // is 404.
 //
-//   node scripts/stand-api-proxy.mjs --port 18091 --target 8091 [--ack-log F]
+//   node scripts/stand-api-proxy.mjs --port 18091 --target 8091 [--ack-log F] [--journal-root D]
 //
-// --ack-log — every POST /me/orders/{id}/ack as one JSON line {t, done, order, state, status}:
-// when the request came, when the api answered, the order, the state the bridge sent and the
-// api's status. No headers, no credentials. stand-run.mjs and stand-run-opencode.mjs read it by
-// their own --ack-log to see accepted answered before the outcome.
-import { appendFileSync } from "node:fs";
+// --ack-log — every POST /me/orders/{id}/ack as one JSON line {t, done, order, state, status,
+// disk}: when the request came, when the api answered, the order, the state the bridge sent and
+// the api's status. No headers, no credentials. stand-run.mjs and stand-run-opencode.mjs read it
+// by their own --ack-log to see accepted answered before the outcome.
+// --journal-root — where the drivers' run dirs live (their tmpdir): as an accepted comes in, the
+// proxy reads that order's journal entry (stand-*/…/orders/<id>.json) and logs its state as
+// `disk` — an independent snapshot that the order was on disk before its accepted went out.
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import http from "node:http";
 import net from "node:net";
 
@@ -23,7 +27,38 @@ const arg = (name, dflt) => {
 const PORT = Number(arg("--port", "18091"));
 const TARGET = Number(arg("--target", "8091"));
 const ackLog = arg("--ack-log", null);
+const journalRoot = arg("--journal-root", null);
 const ACK = /^\/me\/orders\/([0-9a-f-]+)\/ack(?:\?|$)/;
+
+// The order's journal state on disk right now, searched under the drivers' run dirs; null — none.
+function diskState(id) {
+  if (!journalRoot) return undefined;
+  const walk = (dir, depth) => {
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || (depth === 0 && !e.name.startsWith("stand-"))) continue;
+      const p = join(dir, e.name);
+      if (e.name === "orders") {
+        try {
+          return JSON.parse(readFileSync(join(p, `${id}.json`), "utf8")).state ?? null;
+        } catch {
+          continue;
+        }
+      }
+      if (depth < 6) {
+        const found = walk(p, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  return walk(journalRoot, 0);
+}
 
 const strip = (url) => (url.startsWith("/api/") ? url.slice(4) : url === "/api" ? "/" : null);
 
@@ -39,6 +74,8 @@ const server = http.createServer((req, res) => {
   req.on("data", (c) => chunks.push(c));
   req.on("end", () => {
     const body = Buffer.concat(chunks);
+    // The journal as it stands while this ack is still in the proxy, before the api sees it.
+    const disk = ack ? diskState(ack[1]) : undefined;
     const up = http.request(
       { host: "127.0.0.1", port: TARGET, method: req.method, path, headers: { ...req.headers, host: `127.0.0.1:${TARGET}` } },
       (r) => {
@@ -50,7 +87,7 @@ const server = http.createServer((req, res) => {
             try {
               state = JSON.parse(body.toString()).state ?? null;
             } catch {}
-            appendFileSync(ackLog, JSON.stringify({ t, done: Date.now(), order: ack[1], state, status: r.statusCode }) + "\n");
+            appendFileSync(ackLog, JSON.stringify({ t, done: Date.now(), order: ack[1], state, status: r.statusCode, disk }) + "\n");
           });
         res.writeHead(r.statusCode, r.headers);
         r.pipe(res);

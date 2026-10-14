@@ -160,7 +160,9 @@ function orderTrace(label, id, authDir, logText) {
     logText.split("\n").find((l) => / (?:stopped|released) /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
   check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
   const stopAt = stopLine ? stampOf(stopLine) : NaN;
-  check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j ? `accepted ${new Date(j.at).toISOString()} · ${stopLine?.slice(0, 120) ?? "no stop line"}` : "no journal entry");
+  // On disk before the stop: the proxy read the journal while the accepted was still in its hands
+  // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
+  check(acc?.disk === "accepted" && !!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
   check(!!acc && acc.done - 5 <= stopAt, `order (${label}): accepted answered by the api before the stop`, acc ? `answered ${new Date(acc.done).toISOString()} · stop ${Number.isNaN(stopAt) ? "unseen" : new Date(stopAt).toISOString()}` : "");
   check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
 }
