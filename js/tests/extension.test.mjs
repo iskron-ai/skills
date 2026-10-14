@@ -741,6 +741,76 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
   }
 });
 
+// №680 (#7591): the satellite's seat names the model pi runs on — the harness's, not the agent's
+// word — on the launch line and on the agent's own satellite stand; a busy line alone stays one.
+test("a satellite's stand carries pi's model; a busy line alone does not", async () => {
+  const calls = join(SANDBOX, "launch-model.calls");
+  const { env } = bridgeEnv("launch-model", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  rec.ctx.model = { id: "gpt-6.1-sol", provider: "openai" };
+  try {
+    await prompt(rec, "start @nks/nks-dev #48 дело №77 от @me:host.repo");
+    const stand = rec.tools.get("iskron_stand");
+    const own = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", model: "agent-says" };
+    await stand.execute("id", own, undefined, () => {}, rec.ctx);
+    const busy = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", status: "чиню" };
+    await stand.execute("id", busy, undefined, () => {}, rec.ctx);
+    assert.deepEqual(
+      toolCalls(calls)
+        .filter((c) => c.name === "iskron_stand")
+        .map((c) => c.arguments.model),
+      ["gpt-6.1-sol", "gpt-6.1-sol", undefined],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №680 review: a busy line is one only while the bridge holds a seat — the first stand with a
+// status takes the seat and names the model; and the agent's model never stands in for pi's.
+test("a satellite's first stand with a status takes the seat with pi's model, as does a status in another graph, but not one in a graph it holds a seat beside in; without pi's model there is none, not the agent's", async () => {
+  const sol = "gpt-6.1-sol";
+  for (const [label, model, said, want] of [
+    ["first-busy", { id: sol, provider: "openai" }, {}, [sol, undefined, sol, undefined]],
+    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined, undefined, undefined]],
+  ]) {
+    const calls = join(SANDBOX, `sat-${label}.calls`);
+    const { env } = bridgeEnv(`sat-${label}`, {
+      FB_TOOLS: STAND_AND_CASE,
+      FB_CALLS: calls,
+      FB_STAND_HELD: "host.repo.opus-5",
+    });
+    const rec = await session(env);
+    rec.ctx.model = model;
+    try {
+      const stand = rec.tools.get("iskron_stand");
+      const args = { realm: "@nks/nks-dev", karta: 931, satellite_of: "@me:host.repo" };
+      const first = { ...args, status: "чиню", ...said };
+      await stand.execute("id", first, undefined, () => {}, rec.ctx);
+      await stand.execute("id", { ...args, status: "дальше" }, undefined, () => {}, rec.ctx);
+      // The seat is held in @nks/nks-dev only: in another graph the bridge takes one.
+      const other = { ...args, realm: "@nks/drugoy", status: "там" };
+      await stand.execute("id", other, undefined, () => {}, rec.ctx);
+      // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+      const again = { realm: "@nks/drugoy", satellite_of: "@me:host.repo", status: "там же" };
+      await stand.execute("id", again, undefined, () => {}, rec.ctx);
+      assert.deepEqual(
+        toolCalls(calls)
+          .filter((c) => c.name === "iskron_stand")
+          .map((c) => c.arguments.model),
+        want,
+        label,
+      );
+    } finally {
+      await rec.stop();
+    }
+  }
+});
+
 test("without the tail the seat comes from ISKRON_SATELLITE_OF; only the first prompt launches, and a prompt without the line is left as it was", async () => {
   const calls = join(SANDBOX, "launch-env.calls");
   const { env } = bridgeEnv("launch-env", {

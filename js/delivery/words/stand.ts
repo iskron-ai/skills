@@ -19,6 +19,8 @@ export interface StandWords {
   boardCountFound: (declared: number, parsed: number) => string;
   refused: (what: string, text: string) => string;
   noIdInRegister: () => string;
+  /** Спутник без модели харнесса: PATCH снятия модели места не прошёл (#7591) — why: исход. */
+  modelNotCleared: (why: string) => string;
   howBeside: (led: string) => string;
   howReturned: () => string;
   /** Место прежнего моста этой же сессии харнесса (#6706): своё — мост вернул его сам, без take от агента. */
@@ -82,6 +84,8 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     refused: (what, text) => `Отказано: ${what} — ${text}`,
     noIdInRegister: () =>
       "register id места не назвал — кадры места находятся по графу и адресу, занятость ждёт id.",
+    modelNotCleared: (why) =>
+      `Прежняя модель места не снята (${why}): харнесс модели не назвал, а доска может показывать прежнюю.`,
     howBeside: (led) =>
       `место другого графа — встаёт рядом на канале, который держит этот мост (${led}): register`,
     howReturned: () =>
@@ -161,6 +165,8 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     refused: (what, text) => `Refused: ${what} — ${text}`,
     noIdInRegister: () =>
       "register did not name the seat's id — the seat's frames are found by graph and address; the busy line waits for the id.",
+    modelNotCleared: (why) =>
+      `The seat's earlier model is not cleared (${why}): the harness named no model, and the board may still show the earlier one.`,
     howBeside: (led) =>
       `a seat of another graph — stands beside on the channel this bridge holds (${led}): register`,
     howReturned: () =>

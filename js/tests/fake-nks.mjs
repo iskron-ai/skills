@@ -225,6 +225,11 @@ export async function startFakeNks(opts = {}) {
     wsChans: new Map(), // открытый сокет → id канала
     writes: [], // { tool, realm, author } — чем подписана каждая запись фабрики
     placeStatus: new Map(), // standing_id места → строка занятости: она держится у места (#5838)
+    // standing_id места → его модель, как хранит api (#4032): register без model оставляет
+    // прежнюю; снимает только PATCH /api/standings/{id} {"model": null} (api 0.123.0).
+    seatModels: new Map(),
+    seatPatches: [], // { id, body, auth, realm } — PATCH места, как дошли
+    seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
       { short: "r5", canon: "@nks/nks-dev" },
@@ -420,6 +425,24 @@ export async function startFakeNks(opts = {}) {
     }
 
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
+
+    const patched = /^\/api\/standings\/([^/]+)$/.exec(p);
+    if (patched && req.method === "PATCH") {
+      const id = decodeURIComponent(patched[1]);
+      const b = JSON.parse((await body(req)) || "{}");
+      const realm = req.headers["x-nks-realm"] ?? null;
+      st.seatPatches.push({ id, body: b, auth: req.headers.authorization ?? null, realm });
+      // Как api (#99): без X-NKS-Realm — 400; место ищется в графе заголовка, иначе 404.
+      if (!realm) return json(res, 400, { error: "X-NKS-Realm header is required" });
+      const inRealm = [...st.channels.values()].some(
+        (c) => c.places.get(slug(realm))?.standing_id === id,
+      );
+      if (!inRealm) return json(res, 404, { error: "no such standing" });
+      if (st.seatPatchRefuse) return json(res, st.seatPatchRefuse, { error: "refused" });
+      if (b.model === null) st.seatModels.delete(id);
+      else if (typeof b.model === "string") st.seatModels.set(id, b.model);
+      return json(res, 200, { standing_id: id, model: st.seatModels.get(id) ?? null });
+    }
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text, standing_id } = JSON.parse((await body(req)) || "{}");
@@ -1091,6 +1114,7 @@ export async function startFakeNks(opts = {}) {
           const seatId = st.registerNoId
             ? null
             : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))?.standing_id;
+          if (seatId && typeof a.model === "string" && a.model) st.seatModels.set(seatId, a.model);
           if (reg.added) {
             // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
             const listening = [...st.ws].some((s) => st.wsChans.get(s) === reg.channel);
