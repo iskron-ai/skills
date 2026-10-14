@@ -1,19 +1,23 @@
-// One rule for the stand call's move (graph @nks/nks-dev, nodes #7439, #7553): the seat its
-// connect took stays only if the move went through. The session stopped since the call began —
-// the new seat is taken off again and the answer is the stop word; register refused after
-// connect — the new seat is taken off and the session goes back to the seat it stood on.
+// The stand call's move is undone, not half kept (graph @nks/nks-dev, nodes #7439, #7553). One
+// guard at the exit of the whole call: the session stopped since the call began — every seat
+// the call took or bound again is taken off quietly, the session is left with no seat, and the
+// answer is the stop word. register refused after connect — the new seat is taken off and the
+// session goes back to the seat it stood on.
 import { STAND_MOVES, type StandMovesWords, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Answer, callTool, short } from "./call.ts";
 import { forgetSeat, holdsStanding, holdStanding, keyOf } from "./hold.ts";
-import { H, setRevokingOwn, stoppedDuring } from "./holdstate.ts";
+import { H, setRevokingOwn, stoppedDuring, stopsNow } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { placeFields } from "./placefields.ts";
 import { refusedWord, type Reissued, revokeCall, throughReissue } from "./standmoves.ts";
 import { sw } from "./standwords.ts";
 import { type Standing, state } from "./transport.ts";
+import { type JsonRpcMessage } from "./types.ts";
 
 const mw = (): StandMovesWords => words(STAND_MOVES);
+
+type Seat = { realm: string; karta: string | number; name: string };
 
 /** The main seat's socket before the move: the former seat is held on it again if the move is undone. */
 export interface HeldAddress {
@@ -25,59 +29,77 @@ export const heldAddress = (realm: string, prior: Standing | null): HeldAddress 
     ? { url: H.currentUrl, statusUrl: H.currentStatusUrl }
     : null;
 
-/** The call's connects run under the stop count `before`: a stop meanwhile leaves their answer unheld (absorb.ts). */
-async function inMove<T>(before: number, fn: () => Promise<T>): Promise<T> {
-  H.moveSince = before;
-  try {
-    return await fn();
-  } finally {
-    H.moveSince = null;
-  }
-}
-
 /**
- * The move's connect — `first`, a 429 of a socket reissue waited out and connected `again` —
- * under the stop count; `taken` — the seat this connect took; `stop` — the stop word, that seat off again.
+ * The move's connect — `first`, a 429 of a socket reissue waited out and connected `again`;
+ * `taken` — the seat this connect took.
  */
 export async function connectInMove(
   before: number,
   seat: Required<Standing>,
   again: () => Promise<Answer>,
   first: () => Promise<Answer>,
-): Promise<Reissued & { taken: Required<Standing> | null; stop: string | null }> {
-  const re = await inMove(before, async () => throughReissue(await first(), again, seat, before));
-  const taken = !re.c.isError && !re.own ? seat : null;
-  return { ...re, taken, stop: await stopInMove(before, taken) };
+): Promise<Reissued & { taken: Required<Standing> | null }> {
+  const re = await throughReissue(await first(), again, seat, before);
+  return { ...re, taken: !re.c.isError && !re.own ? seat : null };
 }
 
 /**
- * Take the seat just taken off again, quietly: held — as an own revoke, not a stop; unheld (its
- * answer came after a stop) — the platform alone. A seat the owner's stop already took off is
- * left. null — revoked; otherwise the word with the revoke call.
+ * Take a seat this call took off again, quietly: held — as an own revoke, not a stop; unheld —
+ * the platform alone. A refusal for the seat the owner's stop took off is that stop's: no word.
+ * null — revoked; otherwise the word with the revoke call.
  */
-async function dropTaken(seat: Required<Standing>): Promise<string | null> {
+async function dropTaken(seat: Seat): Promise<string | null> {
   const { realm, karta, name } = seat;
   const own = holdsStanding(realm, karta, name);
-  if (!own && H.stopped.key === keyOf(realm, karta, name)) return null;
   if (own) setRevokingOwn(true);
   const args = { action: "revoke", realm, karta: String(karta), standing: name };
   const r = await callTool(tool("channel"), args).finally(() => {
     if (own) setRevokingOwn(false);
   });
+  if (r.isError && !own && H.stopped.key === keyOf(realm, karta, name)) return null;
   if (r.isError) return mw().moveNotUndone(name, short(r.text, 160), revokeCall(realm, seat));
   if (own && holdsStanding(realm, karta, name)) forgetSeat(holdWords().revokedOwn());
   return null;
 }
 
-/** The stop word if the session was stopped since `before`, the seat just taken taken off again; otherwise null. */
-export async function stopInMove(
-  before: number,
-  seat: Required<Standing> | null,
-): Promise<string | null> {
+/**
+ * The stop guard around the whole stand call (#7439): every answer passes it. Stopped since the
+ * call began — the seats the call's connect or register took or bound again are revoked, the
+ * binding goes (no seat to write from), and the answer is the stop word, nothing held.
+ */
+export async function stopGuard(
+  msg: JsonRpcMessage,
+  run: () => Promise<JsonRpcMessage>,
+): Promise<JsonRpcMessage> {
+  const before = stopsNow();
+  const outer = { since: H.moveSince, taken: H.taken };
+  H.moveSince = outer.since ?? before; // a connect answered after a stop is not held (absorb.ts)
+  H.taken = [];
+  let reply: JsonRpcMessage;
+  let taken: NonNullable<typeof H.taken>;
+  try {
+    reply = await run();
+  } finally {
+    taken = H.taken ?? [];
+    Object.assign(H, { moveSince: outer.since, taken: outer.taken });
+  }
   const stop = stoppedDuring(before);
-  if (!stop) return null;
-  const left = seat ? await dropTaken(seat) : null;
-  return left ? `${stop}\n${left}` : stop;
+  if (!stop) {
+    outer.taken?.push(...taken);
+    return reply;
+  }
+  const left: string[] = [];
+  for (const seat of taken) {
+    const word = await dropTaken(seat);
+    if (word) left.push(word);
+  }
+  forgetSeat(stop);
+  const text = [stop, ...left].join("\n");
+  return {
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { isError: true, content: [{ type: "text", text }] },
+  };
 }
 
 /**

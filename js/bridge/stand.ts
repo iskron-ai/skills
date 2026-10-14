@@ -71,7 +71,7 @@ import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from 
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
 import { standAgainWord } from "./standagain.ts";
 import { besideHoldsMain, ledIn, refusedWord, releasePrior } from "./standmoves.ts";
-import { connectInMove, heldAddress, registerRefused, stopInMove } from "./standundo.ts";
+import { connectInMove, heldAddress, registerRefused, stopGuard } from "./standundo.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -97,7 +97,11 @@ export const isDirectory = (p: string): boolean => {
 export const isStandCall = (msg: JsonRpcMessage): boolean =>
   msg?.method === "tools/call" && msg?.params?.name === tool("stand");
 
-export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
+/** Every answer of the stand call passes the stop guard (standundo.ts, #7439). */
+export const runStand = (msg: JsonRpcMessage): Promise<JsonRpcMessage> =>
+  stopGuard(msg, () => standOnce(msg));
+
+async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // Busyness on a seat the bridge already holds — the line only (#6509).
   const statusOnly = await standStatusOnly(msg);
   if ("reply" in statusOnly) return statusOnly.reply;
@@ -373,7 +377,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (!holdsStanding(realm, karta, name) && !R.again) {
       R.again = true;
       try {
-        return await runStand(msg);
+        return await standOnce(msg);
       } finally {
         R.again = false;
       }
@@ -405,7 +409,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (sat) args.ttl_seconds = SATELLITE_TTL_S; // a satellite's invitations do not outlive the run (#6001, condition a)
     const addr = heldAddress(realm, prior);
     const connect = () => call(tool("channel"), args);
-    // One rule for the move (standundo.ts): after every wait a stop since the call began takes the new seat off again.
+    // A stop since the call began is the stop guard's (standundo.ts); a 429 wait ends at it.
     const re = await connectInMove(stopsBefore, { realm, karta, name }, connect, async () => {
       const c0 = await connect(); // the holder takes the new socket itself: a clean frame ring
       if (!sat || !c0.isError || !ttlRefused(c0)) return c0;
@@ -415,15 +419,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       return connect();
     });
     const { c, own: ownReopen, taken } = re;
-    if (re.stop) return (lines.push(re.stop), done(true));
     if (re.note) extra.push(sw().note(re.note));
     if (c.isError && !ownReopen) {
       lines.push(refusedWord("connect", c, realm));
       return done(true);
     }
     const r = await register();
-    const stopAt = await stopInMove(stopsBefore, taken);
-    if (stopAt) return (lines.push(stopAt), done(true));
     if (r.isError) {
       lines.push(await registerRefused(r, realm, taken, prior, addr));
       return done(true);
@@ -439,8 +440,6 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // The seat retaken after a return that found no record: cases may have been lost (#6649).
     if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
     const freed = prior ? await releasePrior(realm, prior) : null;
-    const stopLate = await stopInMove(stopsBefore, taken);
-    if (stopLate) return (lines.push(stopLate), done(true));
     if (freed) extra.push(sw().note(freed.note));
     priorKept = !!freed && !freed.ok; // the former seat lives: the call reports it, not success
   }

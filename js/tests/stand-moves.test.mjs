@@ -137,6 +137,55 @@ test("the owner takes the former seat off while take=true's repeated connect aft
   assert.equal(fake.state.counts.ws_upgrades, upgrades, "no socket held for the new seat");
 });
 
+// #7439, страж на выходе вызова: register нового места ответил успехом уже после стопа —
+// ответ всё равно слово стопа, привязки нет: следующая запись идёт не от нового места.
+test("a register that answers after the owner's stop leaves no binding: the answer is the stop, the next write is not from the new seat", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  await fake.control({ structured: true });
+  fake.state.standingRegisterDelayMs = 1500;
+  const pending = stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  const heard = () => [...fake.state.ws].some((s) => fake.state.wsNames.get(s) === "drugoe");
+  while (!heard()) await new Promise((r) => setTimeout(r, 50));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  fake.state.standingRegisterDelayMs = 0;
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.match(text, /ты остановлен/, text);
+  assert.doesNotMatch(text, /стояние \S*drugoe/, text);
+  await write(b);
+  const last = fake.state.writes.at(-1);
+  assert.notEqual(last?.author, "drugoe", "the next write is not from the new seat");
+  assert.ok(fake.state.closedPlaces.has("931:drugoe"), "the seat the call bound is revoked");
+});
+
+// #7439 рядом: стоп пришёл, пока вызов ждал ответа revoke прежнего места рядом, — register
+// нового места рядом не оставляет привязки, запись в тот граф не идёт от него.
+test("the owner's stop during the revoke of the former seat beside: the register after it leaves no binding to the new seat", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const near = await stand(b, { realm: METH, karta: 12, name: "m-a" });
+  assert.ok(!near.result?.isError, textOf(near));
+  await fake.control({ structured: true, revokeReplyDelayMs: 1500 });
+  const pending = stand(b, { realm: METH, karta: 12, name: "m-b", take: true });
+  while (!fake.state.closedPlaces.has("12:m-a")) await new Promise((r) => setTimeout(r, 50));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  await fake.control({ revokeReplyDelayMs: 0 });
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.match(text, /ты остановлен/, text);
+  assert.doesNotMatch(text, /стояние \S*m-b/, text);
+  await write(b, METH);
+  const last = fake.state.writes.at(-1);
+  assert.notEqual(last?.author, "m-b", "the next write is not from the new seat beside");
+});
+
 // #7553 при отказе register: connect нового места прошёл, register отказан — переход не удался:
 // новое место снято, сессия осталась на прежнем, оно у неё единственное.
 test("register refused after take=true's connect onto another seat undoes the move: the new seat is revoked, the former one stays the only one", async (t) => {

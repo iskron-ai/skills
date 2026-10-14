@@ -48,9 +48,25 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
   /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
   stopped: { n: 0, key: "", text: "" },
-  /** a stand call's connect in flight since this stop count (standundo.ts): a stop meanwhile — its answer is not held */
+  /** a stand call in flight since this stop count (standundo.ts): a stop meanwhile — its connect answers are not held */
   moveSince: null as number | null,
+  /** seats a stand call in flight took or bound again (connect, register answered): a stop meanwhile takes them off */
+  taken: null as { realm: string; karta: string; name: string }[] | null,
 }));
+
+/** A channel connect or register answered: the seat goes into the stand call's list, if one runs. */
+export function noteTaken(a: Record<string, unknown>): void {
+  if (!H.taken || (a.action !== "connect" && a.action !== "register")) return;
+  const seat = {
+    realm: String(a.realm ?? ""),
+    karta: String(a.karta ?? ""),
+    name: String(a.name ?? ""),
+  };
+  if (
+    !H.taken.some((s) => s.realm === seat.realm && s.karta === seat.karta && s.name === seat.name)
+  )
+    H.taken.push(seat);
+}
 
 /** The stop word if the seat `key` was taken off by its owner since the count `before` (stopsNow); otherwise null. */
 export const stoppedSince = (before: number, key: string): string | null =>
