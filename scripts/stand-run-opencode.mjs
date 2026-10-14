@@ -10,6 +10,13 @@
 // (key entries of anthropic/openai only) into the isolated home. Exit 0 — passed, 1 — a check
 // failed, 2 — setup failed. --api URL --person U — the owner's stop order (#7519) on a running
 // session's seat and on a satellite's, laid by U through the api's test identity.
+// The release batch: the seat's pulse — idle after a turn, busy in it, turn_at at its end, read_at
+// when a word went into it (#7529; with --api read from GET /me/channels, else the board's text);
+// the agent's end (#7493) — Esc keeps the seat, a plugin reload returns it to the same session
+// without waiting, a deleted session's seat goes at once without a stop word, a killed harness's
+// seat stands until the death window (--death-ms, 20000) and then goes. With --satellite the
+// child session runs on --child-model (default anthropic/claude-opus-5-5) and its .sub-N seat
+// carries that model on the board, not the parent's (#7591).
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -18,10 +25,17 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  const head = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1);
+  process.stdout.write(head.slice(0, head.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n");
+  process.exit(0);
+}
 const tokenFile = arg("--token-file");
 const URL_ = arg("--url");
 const realm = arg("--realm");
 const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").split("/");
+const [childProviderID, childModelID] = arg("--child-model", "anthropic/claude-opus-5-5").split("/");
+const deathMs = Number(arg("--death-ms", "20000"));
 const keep = process.argv.includes("--keep");
 const apiArg = arg("--api");
 const personArg = arg("--person");
@@ -31,6 +45,7 @@ const bridge = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts
 const plugin = arg("--plugin", join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js"));
 const fail = (code, t) => (process.stderr.write(`stand-run-opencode: ${t}\n`), process.exit(code));
 if (!tokenFile || !URL_ || !realm) fail(2, "--token-file, --url and --realm are required");
+if (process.argv.includes("--satellite") && childModelID === modelID) fail(2, "--child-model must differ from --model: the satellite's model is told apart by it");
 if (!existsSync(bridge) || !existsSync(plugin)) fail(2, "no bridge or plugin build — make build-js, or --bridge/--plugin");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
 const token = readFileSync(tokenFile, "utf8").trim();
@@ -93,6 +108,7 @@ const env = {
   ISKRON_BRIDGE_URL: URL_,
   ISKRON_BRIDGE_NO_UPDATE: "1",
   ISKRON_BRIDGE_NO_BROWSER: "1",
+  ISKRON_BRIDGE_DEATH_MS: String(deathMs),
 };
 
 // Model keys: export from the real home, keep key entries, import into the isolated one.
@@ -265,6 +281,44 @@ const seatId = (board, name) => {
   return null;
 };
 const log = () => (existsSync(join(auth, "standings.log")) ? readFileSync(join(auth, "standings.log"), "utf8") : "");
+const daemonLog = () => (existsSync(join(auth, "run/daemon.log")) ? readFileSync(join(auth, "run/daemon.log"), "utf8") : "");
+// The seat's lines on the board: its head line up to the next seat's.
+const seatBlock = (board, name) => {
+  const lines = board.split("\n");
+  const i = lines.findIndex((l) => l.includes(`:${name} —`));
+  if (i === -1) return [];
+  const j = lines.findIndex((l, k) => k > i && / · @[\w.-]+:\S+ —/.test(l));
+  return lines.slice(i, j === -1 ? i + 10 : Math.min(j, i + 10));
+};
+// The seat's pulse (graph @nks/nks-dev, node #7529): with --api the deepest object of
+// GET /me/channels carrying `pulse` that names the seat, else the board's text.
+function pulseIn(x, key) {
+  if (!x || typeof x !== "object") return null;
+  for (const v of Object.values(x)) {
+    const f = pulseIn(v, key);
+    if (f) return f;
+  }
+  return x.pulse && typeof x.pulse === "object" && JSON.stringify(x).includes(key) ? x.pulse : null;
+}
+function pulseText(block) {
+  const t = block.join("\n");
+  const j = t.match(/pulse[=:]\s*(\{[^\n]*?\})/);
+  if (j)
+    try {
+      return JSON.parse(j[1]);
+    } catch {}
+  const s = t.match(/\bstate[=:]\s*(\w+)/);
+  if (!s) return null;
+  const out = { state: s[1] };
+  const p = t.match(/\bpending[=:]\s*(\d+)/);
+  if (p) out.pending = Number(p[1]);
+  for (const k of ["turn_at", "read_at", "cycle_at"]) {
+    const m = t.match(new RegExp(`\\b${k}[=:]\\s*([^\\s,·]+)`));
+    if (m) out[k] = m[1];
+  }
+  return out;
+}
+const hasStop = (name, text) => text.split("\n").some((l) => l.includes(name) && / stopped /.test(l));
 const lastAt = (msgs) => Math.max(0, ...msgs.map((x) => Number(x?.time?.created ?? x?.time?.completed ?? 0)));
 const assistantAfter = (msgs, t) => msgs.filter((x) => (x.type ?? x.role) === "assistant" && Number(x?.time?.created ?? 0) > t).length;
 
@@ -441,6 +495,110 @@ try {
   if (seatId(brd2, nameB))
     await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd2, nameB), as_person: true });
 
+  // The release batch on one session L: its pulse (graph @nks/nks-dev, node #7529), then its end
+  // (#7493) — Esc, a plugin reload, a killed harness; a session D for the deletion.
+  const pulseOf = async (name) => {
+    const brd = await board();
+    if (!apiArg) return pulseText(seatBlock(brd, name));
+    return pulseIn((await nks("GET", "/me/channels", { asSeat: true })).body, seatId(brd, name) ?? `:${name}`);
+  };
+  const waitPulse = async (name, ok, ms = 60_000) => {
+    let p = null;
+    for (let t = 0; t < ms; t += 5000) {
+      p = await pulseOf(name);
+      if (ok(p)) return p;
+      await sleep(5000);
+    }
+    return p;
+  };
+  const idle = async (id, s = 120) => {
+    for (let t = 0; t < s && active().includes(id); t++) await sleep(1000);
+  };
+  const nameL = `oc-${stamp}.l`;
+  const L = newSession("batch-L");
+  prompt(L.id, `${standText(nameL)} Then answer READY and end your turn.`);
+  if (!(await waitSeat(nameL))) throw new Error("L: the model did not take the seat — a probe failure; run again");
+  await idle(L.id);
+  const p0 = await waitPulse(nameL, (p) => p?.state === "idle" && typeof p.pending === "number");
+  check(p0?.state === "idle" && typeof p0.pending === "number", `pulse: the seat idle with pending after its turn (${apiArg ? "GET /me/channels" : "board text"})`, JSON.stringify(p0));
+  const tTurn = Date.now();
+  prompt(L.id, "Run the shell command `sleep 90` and wait for it to finish. Then answer DONE and end your turn. Do not call anything from iskron.");
+  const p1 = await waitPulse(nameL, (p) => p?.state === "busy");
+  check(p1?.state === "busy", "pulse: busy during the turn", JSON.stringify(p1));
+  const tWord = Date.now();
+  const w = await P.call("iskron_channel", { realm, action: "send", karta: `#${karta}`, standing: nameL, text: "stand-run: a word into the running turn — no answer needed", as_person: true });
+  check(!w.error, "pulse: a word to the seat during the turn accepted", w.text.split("\n")[0]);
+  await idle(L.id, 180);
+  const p2 = await waitPulse(nameL, (p) => p?.state === "idle" && Date.parse(p.turn_at) >= tTurn);
+  check(p2?.state === "idle" && Date.parse(p2.turn_at) >= tTurn, "pulse: idle after the turn, turn_at at its end", JSON.stringify(p2));
+  check(Date.parse(p2?.read_at) >= tWord, "pulse: read_at — the word went into the turn", p2?.read_at);
+
+  // Esc: an interrupted turn keeps the seat; the pulse names it interrupted.
+  await idle(L.id, 180);
+  const lE = log().length;
+  prompt(L.id, "Run the shell command `sleep 600` and wait for it to finish. Then answer DONE. Do not call anything from iskron.");
+  for (let t = 0; t < 60 && !active().includes(L.id); t++) await sleep(1000);
+  await sleep(10_000);
+  const esc = api("POST", `/api/session/${L.id}/interrupt`);
+  await idle(L.id, 15);
+  check(!active().includes(L.id), "Esc: the turn is interrupted", esc.raw.slice(0, 160));
+  await sleep(deathMs + 10_000);
+  check(!!seatId(await board(), nameL) && !hasStop(nameL, log().slice(lE)), "Esc: the seat stands past the death window, no stop", log().slice(lE).split("\n").filter((l) => l.includes(nameL)).join(" | ").slice(0, 200));
+  const pE = await pulseOf(nameL);
+  check(pE?.state === "interrupted", "pulse: interrupted after Esc", JSON.stringify(pE));
+
+  // A plugin reload is an announced absence: the same session holds its seat again without
+  // waiting, the seat stands past the death window.
+  const lR = log().length;
+  await stopServe();
+  const tR = Date.now();
+  await startServe();
+  let back = false;
+  for (let t = 0; t < 60 && !back; t++) {
+    await sleep(1000);
+    back = log().slice(lR).split("\n").some((l) => l.includes(nameL) && /\b(held|resumed)\b/.test(l));
+  }
+  check(back, "reload: the same session holds its seat again without waiting", `${Math.round((Date.now() - tR) / 1000)} s · ${log().slice(lR).split("\n").filter((l) => l.includes(nameL)).join(" | ").slice(0, 160)}`);
+  await sleep(deathMs + 10_000);
+  const afterR = log().slice(lR).split("\n").filter((l) => l.includes(nameL));
+  check(!!seatId(await board(), nameL), "reload: the seat stands past the death window");
+  check(!afterR.some((l) => / (stopped|released) /.test(l)), "reload: the seat neither stopped nor released", afterR.join(" | ").slice(0, 200));
+
+  // A deleted session: its seat goes at once (its bridge's own revoke), no stop word.
+  const nameD = `oc-${stamp}.d`;
+  const D = newSession("end-D");
+  prompt(D.id, `${standText(nameD)} Then answer READY and end your turn.`);
+  if (!(await waitSeat(nameD))) throw new Error("D: the model did not take the seat — a probe failure; run again");
+  await idle(D.id);
+  const lD = log().length;
+  const tD = Date.now();
+  const del = api("DELETE", `/api/session/${D.id}`);
+  let goneD = false;
+  while (!goneD && Date.now() - tD < deathMs / 2) {
+    await sleep(2000);
+    goneD = !seatId(await board(), nameD);
+  }
+  check(goneD, `end: a deleted session's seat goes at once (before ${deathMs / 2} ms)`, `${Math.round((Date.now() - tD) / 1000)} s · ${del.raw.slice(0, 80)}`);
+  check(!hasStop(nameD, log().slice(lD)), "end: no stop word on a deleted session (standings.log)", log().slice(lD).split("\n").filter((l) => l.includes(nameD)).join(" | ").slice(0, 200));
+
+  // A harness killed without a mark: L's seat stands until the death window, then goes.
+  await idle(L.id, 180);
+  const dK = daemonLog().length;
+  const lK = log().length;
+  const killed = new Promise((r) => serve.once("exit", r));
+  serve.kill("SIGKILL");
+  await Promise.race([killed, sleep(10_000)]);
+  delete env.OPENCODE_PASSWORD;
+  await sleep(deathMs / 2);
+  check(!!seatId(await board(), nameL), `end: before the death window (${deathMs} ms) the killed harness's seat stands`);
+  await sleep(deathMs / 2 + 20_000);
+  check(!seatId(await board(), nameL), "end: after the death window the killed harness's seat is gone");
+  const died = daemonLog().slice(dK).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
+  check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
+  check(!hasStop(nameL, log().slice(lK)), "end: no stop on a death (standings.log)");
+  await startServe();
+  await sleep(15_000); // the plugin's tool list
+
   // The satellite layer (graph @nks/nks-dev, node #7505): a child session stands as the root's
   // satellite; the launcher's revoke takes the satellite seat off on the server, and a word to
   // the ended satellite does not wake its session.
@@ -451,7 +609,7 @@ try {
     prompt(Rs.id, `${standText(nameR)} Then answer READY and end your turn.`);
     if (!(await waitSeat(nameR))) throw new Error("root: the model did not take the seat — a probe failure");
     for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
-    const C = api("POST", "/api/session", { title: "sat-child", parentID: Rs.id, location: { directory: cwd }, model: { providerID, id: modelID } });
+    const C = api("POST", "/api/session", { title: "sat-child", parentID: Rs.id, location: { directory: cwd }, model: { providerID: childProviderID, id: childModelID } });
     const Cs = C.data?.data ?? C.data;
     if (!Cs?.id) throw new Error(`child create: ${C.raw.slice(0, 200)}`);
     prompt(Cs.id, `Call the tool iskron_stand with realm="${realm}", karta="#${karta}", satellite_of="${handle}:${nameR}". Do not call anything else from iskron. Then answer READY and end your turn.`);
@@ -463,6 +621,9 @@ try {
     check(!!sub, "satellite: the child stands as the root's satellite", sub);
     if (sub) {
       for (let t = 0; t < 120 && active().includes(Cs.id); t++) await sleep(1000);
+      // The satellite's model (#7591): the child session's, from the harness — not the parent's.
+      const blk = seatBlock(await board(), sub).join("\n");
+      check(blk.includes(childModelID) && !blk.includes(modelID), `satellite: ${sub} carries the child's model ${childModelID}, not the parent's ${modelID}`, blk.replace(/\n\s*/g, " | ").slice(0, 200));
       const tRev = Date.now();
       prompt(Rs.id, `Call the tool iskron_channel with realm="${realm}", action="revoke", karta="#${karta}", standing="${sub}". Do not call anything else from iskron. Then answer DONE and end your turn.`);
       let gone = false;

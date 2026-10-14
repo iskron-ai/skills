@@ -17,6 +17,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  const head = readFileSync(new URL(import.meta.url), "utf8").split("\n").slice(1);
+  process.stdout.write(head.slice(0, head.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n");
+  process.exit(0);
+}
 const [oldFile, newFile, tokenFile, URL_, realm, realm2] = ["--old", "--new", "--token-file", "--url", "--realm", "--realm2"].map((n) => arg(n));
 const keep = process.argv.includes("--keep");
 const fail = (code, t) => (process.stderr.write(`stand-run-upgrade: ${t}\n`), process.exit(code));

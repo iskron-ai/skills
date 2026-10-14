@@ -15,6 +15,11 @@
 // --api, --person — the api beside the MCP and a person it trusts by X-Forwarded-User (a LOCAL
 // carrier's test identity, the graphs' owner): the owner's stop order (#7519) is laid on the
 // seats as the window's button lays it. Without them the order is not run.
+// The release batch: the seat's pulse on the board (#7529; with --api read from GET /me/channels,
+// else from the board's text), take onto another name refused while a seat beside stands
+// (#6499, needs --realm2), the `stop` subcommand and its refusal of another owner's address
+// (#7518), a bridge killed without a mark — its seat stands until the death window, then goes
+// (#7493). --death-ms — the run's death window (ISKRON_BRIDGE_DEATH_MS of its daemon), 20000.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -27,6 +32,11 @@ const arg = (name, dflt) => {
   const i = process.argv.indexOf(name);
   return i === -1 ? dflt : process.argv[i + 1];
 };
+if (process.argv.includes("--help") || process.argv.includes("-h")) {
+  const head = readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1);
+  process.stdout.write(head.slice(0, head.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n");
+  process.exit(0);
+}
 const URL_ = arg("--url", "https://nks.lab.mirari.ru/mcp-test");
 const tokenFile = arg("--token-file", join(homedir(), ".iskron-stand", "token"));
 const keep = process.argv.includes("--keep");
@@ -38,6 +48,7 @@ const personArg = arg("--person", null);
 const ackLog = arg("--ack-log", null);
 // --bridge — another build of the bridge (a release output), dist/dev by default.
 const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
+const deathMs = Number(arg("--death-ms", "20000"));
 
 if (!existsSync(bridgePath)) fail(2, `no bridge at ${bridgePath} — make build-js or --bridge`);
 if (!existsSync(tokenFile)) fail(2, `no stand token at ${tokenFile}`);
@@ -49,7 +60,7 @@ const run = mkdtempSync(join(tmpdir(), "stand-run-"));
 const envFor = (dir, secret) => {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, "token"), secret + "\n", { mode: 0o600 });
-  const e = { ...process.env, HOME: join(run, "home"), ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_URL: URL_, ISKRON_BRIDGE_NO_UPDATE: "1" };
+  const e = { ...process.env, HOME: join(run, "home"), ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_URL: URL_, ISKRON_BRIDGE_NO_UPDATE: "1", ISKRON_BRIDGE_DEATH_MS: String(deathMs) };
   delete e.ISKRON_BRIDGE_TOKEN;
   delete e.ISKRON_BRIDGE_LANG; // the default is under test: no variable names the language
   return e;
@@ -184,6 +195,57 @@ const channelId = (board, name) => {
       }
   return null;
 };
+// The seat's lines on the board: its head line up to the next seat's.
+const seatBlock = (board, name) => {
+  const lines = board.split("\n");
+  const i = lines.findIndex((l) => l.includes(`:${name} —`));
+  if (i === -1) return [];
+  const j = lines.findIndex((l, k) => k > i && / · @[\w.-]+:\S+ —/.test(l));
+  return lines.slice(i, j === -1 ? i + 10 : Math.min(j, i + 10));
+};
+// The seat's pulse (graph @nks/nks-dev, node #7529): with --api the deepest object of
+// GET /me/channels carrying `pulse` that names the seat, else the board's text.
+function pulseIn(x, key) {
+  if (!x || typeof x !== "object") return null;
+  for (const v of Object.values(x)) {
+    const f = pulseIn(v, key);
+    if (f) return f;
+  }
+  return x.pulse && typeof x.pulse === "object" && JSON.stringify(x).includes(key) ? x.pulse : null;
+}
+function pulseText(block) {
+  const t = block.join("\n");
+  const j = t.match(/pulse[=:]\s*(\{[^\n]*?\})/);
+  if (j)
+    try {
+      return JSON.parse(j[1]);
+    } catch {}
+  const s = t.match(/\bstate[=:]\s*(\w+)/);
+  if (!s) return null;
+  const out = { state: s[1] };
+  const p = t.match(/\bpending[=:]\s*(\d+)/);
+  if (p) out.pending = Number(p[1]);
+  for (const k of ["turn_at", "read_at", "cycle_at"]) {
+    const m = t.match(new RegExp(`\\b${k}[=:]\\s*([^\\s,·]+)`));
+    if (m) out[k] = m[1];
+  }
+  return out;
+}
+const daemonLog = () => {
+  const p = join(env.ISKRON_BRIDGE_AUTH_DIR, "run", "daemon.log");
+  return existsSync(p) ? readFileSync(p, "utf8") : "";
+};
+// A subcommand of the bridge under the run's env: stop, status.
+const sub = (args) =>
+  new Promise((res) => {
+    const c = spawn("node", [bridgePath, ...args], { env });
+    let out = "";
+    let err = "";
+    c.stdout.on("data", (d) => (out += d));
+    c.stderr.on("data", (d) => (err += d));
+    c.on("close", (code) => res({ code, out, err }));
+  });
+const STOP_WORD = /остановлен|you are stopped/;
 
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 const realmSlug = "bridge-night";
@@ -272,6 +334,18 @@ try {
   const again = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
   check(!again.error && /hello получен/.test(again.text), "explicit stand takes the name again", again.text.split("\n")[0]);
 
+  // Pulse (#7529): the seat's socket carries the agent's liveness — the board shows its state and
+  // pending. A bare stdio client is no harness that reports turns: the state is noted, not judged.
+  const pulseOf = async (r, k, name) => {
+    const brd = (await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` })).text;
+    if (!apiArg) return pulseText(seatBlock(brd, name));
+    const ch = await api("GET", "/me/channels", { asSeat: true, realm: r });
+    return pulseIn(ch.body, seatId(brd, name) ?? `:${name}`);
+  };
+  await sleep(5_000);
+  const pl = await pulseOf(realm, karta, nameA);
+  check(typeof pl?.state === "string" && typeof pl?.pending === "number", `pulse: the board shows the seat's state and pending (${apiArg ? "GET /me/channels" : "board text"})`, JSON.stringify(pl));
+
   // 3. A seat beside — another graph on the same channel; taken off, it is forgotten without a stop.
   let karta2;
   if (realm2Arg) {
@@ -288,6 +362,15 @@ try {
     const beside = await A.call("iskron_stand", { realm: realm2Arg, karta: `#${karta2}`, name: nameB, model: "stand-run" });
     check(!beside.error, "seat beside stands in the second graph", beside.text.split("\n")[0].slice(0, 160));
     const idB = channelId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB);
+    // take onto another main name while the seat beside stands (#6499): refused before connect.
+    const nameT = `night-${stamp}.t`;
+    const l3 = standingsLog().length;
+    const tk = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameT, model: "stand-run", take: true });
+    check(/Отказано|Refused/.test(tk.text) && /рядом|beside/.test(tk.text), "take onto another name with a seat beside — refused", tk.text.split("\n")[0].slice(0, 200));
+    const bt = (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
+    check(!seatId(bt, nameT) && !!seatId(bt, nameA), "take refused: no seat of the new name, the main seat stands");
+    check(!standingsLog().slice(l3).includes(nameT), "take refused: no connect of the new name (standings.log)", standingsLog().slice(l3).split("\n").filter((l) => l.includes(nameT)).join(" | ").slice(0, 200));
+    check(!!seatId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB), "take refused: the seat beside stands");
     const before3 = A.notes.length;
     await P.call("iskron_channel", { realm: realm2Arg, action: "revoke", karta: `#${karta2}`, channel: idB, as_person: true });
     await sleep(20_000);
@@ -394,6 +477,68 @@ try {
     }
   } finally {
     await E.close();
+  }
+
+  const boardOf = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
+
+  // 8. The stop subcommand (#7518): a human puts down an agent of this machine by its seat — an
+  // order to the seat (old api: a revoke), the agent's bridge stops it. Another owner's address
+  // of the same name is refused, nothing is sent.
+  const nameS = `night-${stamp}.s`;
+  const S = open("stop-cli");
+  try {
+    await S.init();
+    const sst = await S.call("iskron_stand", { realm, karta: `#${karta}`, name: nameS, model: "stand-run" });
+    check(!sst.error, "stop: the agent's seat stands", sst.text.split("\n")[0].slice(0, 160));
+    await sleep(5_000); // the daemon's snapshot learns the seat's id from hello
+    const idS = seatId(await boardOf(), nameS);
+    const n0 = S.notes.length;
+    const foreign = await sub(["stop", `@stand-run-not-owner:${nameS}`, "--auth-dir", env.ISKRON_BRIDGE_AUTH_DIR]);
+    check(foreign.code !== 0, "stop @another:name — refused", (foreign.err || foreign.out).split("\n")[0].slice(0, 200));
+    await sleep(5_000);
+    check(!!seatId(await boardOf(), nameS) && !S.notes.slice(n0).map(noteText).some((t) => STOP_WORD.test(t)), "stop @another:name — nothing taken off, the agent not stopped");
+    const l0 = standingsLog().length;
+    const sp = await sub(["stop", nameS, "--auth-dir", env.ISKRON_BRIDGE_AUTH_DIR]);
+    check(sp.code === 0, "stop <seat>: answered", (sp.out || sp.err).split("\n")[0].slice(0, 200));
+    await sleep(20_000);
+    const notesS = S.notes.slice(n0).map(noteText);
+    check(notesS.some((t) => STOP_WORD.test(t)), "stop <seat>: the agent told it is stopped", notesS.find((t) => STOP_WORD.test(t))?.slice(0, 200) ?? `notes: ${notesS.length}`);
+    const logS = standingsLog().slice(l0).split("\n");
+    const stopLine = logS.findIndex((l) => (l.includes(nameS) && / stopped /.test(l)) || (idS && l.includes(`for ${idS}: stopped`)));
+    check(stopLine !== -1, "stop <seat>: standings.log stops it", logS[stopLine]?.slice(0, 200) ?? "none");
+    check(stopLine !== -1 && !logS.slice(stopLine + 1).some((l) => l.includes(nameS) && / held /.test(l)), "stop <seat>: no held after it");
+    check(!seatId(await boardOf(), nameS), "stop <seat>: the seat is gone from the board");
+    if (apiArg) {
+      const orderId = (sp.out.match(/\((?:приказ|order) ([\w-]+)\)/) || [])[1];
+      const mine = await api("GET", "/me/orders?limit=200", { asSeat: true });
+      const it = (mine.body?.items ?? []).find((x) => (orderId ? x.id === orderId : JSON.stringify(x).includes(idS)));
+      check(it?.state === "stopped", "stop <seat>: /me/orders holds the order stopped", `${mine.status} ${it ? `${it.id} ${it.state} acked ${it.acked_at}` : `not listed (order ${orderId ?? "?"})`}`);
+    } else report.push("SKIP stop <seat>: /me/orders — no --api");
+  } finally {
+    await S.close();
+  }
+
+  // 9. The agent's end (#7493): a bridge killed without an announced absence keeps its seat until
+  // the death window, then the machine daemon closes it — no stop word.
+  const nameK = `night-${stamp}.k`;
+  const K = open("killed");
+  try {
+    await K.init();
+    const kst = await K.call("iskron_stand", { realm, karta: `#${karta}`, name: nameK, model: "stand-run" });
+    check(!kst.error, "end: the agent's seat stands", kst.text.split("\n")[0].slice(0, 160));
+    await sleep(3_000);
+    const d0 = daemonLog().length;
+    const l0 = standingsLog().length;
+    K.child.kill("SIGKILL");
+    await sleep(deathMs / 2);
+    check(!!seatId(await boardOf(), nameK), `end: before the death window (${deathMs} ms) the killed agent's seat stands`);
+    await sleep(deathMs / 2 + 20_000);
+    check(!seatId(await boardOf(), nameK), "end: after the death window the seat is gone");
+    const died = daemonLog().slice(d0).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
+    check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
+    check(!standingsLog().slice(l0).split("\n").some((l) => l.includes(nameK) && / stopped /.test(l)), "end: no stop on a death (standings.log)");
+  } finally {
+    if (K.child.exitCode === null && K.child.signalCode === null) await K.close();
   }
 
   // 5. status names what is attached on this (isolated) machine.
