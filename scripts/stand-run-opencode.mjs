@@ -152,11 +152,12 @@ function orderTrace(label, id, authDir, logText) {
   const out = acks.find((a) => a.state !== "accepted");
   check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
   check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
-  // The stop action: the main seat's line names the order; a seat beside's line does not — it is
-  // the stop line between the accepted on disk and the outcome. Not seen — the run fails, no stand-in.
+  // The stop action: the main seat's line names the order; a seat beside's does not — it is its
+  // "released <key>" line (places.ts) between the accepted on disk and the outcome. Not seen — the
+  // run fails, no stand-in.
   const stopLine =
     action ??
-    logText.split("\n").find((l) => / stopped /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
+    logText.split("\n").find((l) => / (?:stopped|released) /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
   check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
   const stopAt = stopLine ? stampOf(stopLine) : NaN;
   check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j ? `accepted ${new Date(j.at).toISOString()} · ${stopLine?.slice(0, 120) ?? "no stop line"}` : "no journal entry");
