@@ -251,6 +251,7 @@ try {
   // that hands the model a catalog without iskron_stand (a probe failure, not the bridge's).
   const toolsUp = () => (existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : "");
   for (let t = 0; t < 120 && !/тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp()); t++) await sleep(500);
+  await sleep(10_000); // the reload of the tool list lands after the plugin says so
   report.push(`realm ${realm} · karta #${karta} · serve ${server} · model ${providerID}/${modelID}`);
   const board = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
   const waitSeat = async (name, ms = 240_000) => {
@@ -384,6 +385,46 @@ try {
   const brd2 = await board();
   if (seatId(brd2, nameB))
     await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd2, nameB), as_person: true });
+
+  // The satellite layer (graph @nks/nks-dev, node #7505): a child session stands as the root's
+  // satellite; the launcher's revoke takes the satellite seat off on the server, and a word to
+  // the ended satellite does not wake its session.
+  if (process.argv.includes("--satellite")) {
+    const handle = ((await P.call("iskron_me", { action: "whoami" })).text.match(/You are (@[\w.-]+)/) || [])[1] ?? "";
+    const nameR = `oc-${stamp}.r`;
+    const Rs = newSession("sat-root");
+    prompt(Rs.id, `${standText(nameR)} Then answer READY and end your turn.`);
+    if (!(await waitSeat(nameR))) throw new Error("root: the model did not take the seat — a probe failure");
+    for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
+    const C = api("POST", "/api/session", { title: "sat-child", parentID: Rs.id, location: { directory: cwd }, model: { providerID, id: modelID } });
+    const Cs = C.data?.data ?? C.data;
+    if (!Cs?.id) throw new Error(`child create: ${C.raw.slice(0, 200)}`);
+    prompt(Cs.id, `Call the tool iskron_stand with realm="${realm}", karta="#${karta}", satellite_of="${handle}:${nameR}". Do not call anything else from iskron. Then answer READY and end your turn.`);
+    let sub = null;
+    for (let t = 0; t < 48 && !sub; t++) {
+      sub = ((await board()).match(new RegExp(`:(${nameR.replace(/\./g, "\\.")}\\.sub-\\d+) —`)) || [])[1] ?? null;
+      if (!sub) await sleep(5000);
+    }
+    check(!!sub, "satellite: the child stands as the root's satellite", sub);
+    if (sub) {
+      for (let t = 0; t < 120 && active().includes(Cs.id); t++) await sleep(1000);
+      const tRev = Date.now();
+      prompt(Rs.id, `Call the tool iskron_channel with realm="${realm}", action="revoke", karta="#${karta}", standing="${sub}". Do not call anything else from iskron. Then answer DONE and end your turn.`);
+      let gone = false;
+      for (let t = 0; t < 24 && !gone; t++) {
+        await sleep(5000);
+        gone = !seatId(await board(), sub);
+      }
+      check(gone, "satellite: the launcher's revoke takes the satellite seat off on the server");
+      for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
+      const word = await P.call("iskron_channel", { realm, action: "send", karta: `#${karta}`, standing: sub, text: "stand-run: reply PONG", as_person: true });
+      report.push(`INFO word to the ended satellite: ${word.error ? "refused" : "accepted"} — ${word.text.split("\n")[0].slice(0, 140)}`);
+      await sleep(30_000);
+      check(!active().includes(Cs.id) && assistantAfter(messages(Cs.id), tRev + 20_000) === 0, "satellite: the ended child session does not run again");
+    }
+    const brd3 = await board();
+    if (seatId(brd3, nameR)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd3, nameR), as_person: true });
+  }
 } catch (e) {
   report.push(`ERROR ${e.message}`);
   failed++;
