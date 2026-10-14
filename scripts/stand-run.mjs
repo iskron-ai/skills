@@ -270,7 +270,7 @@ const A = open("agent");
 const P = open("person");
 // The board as the person reads it; a refused read is not an empty board — "the seat is gone"
 // must not pass on it, so the run fails.
-const list = async (r, k) => {
+const readBoard = async (r, k) => {
   const x = await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` });
   if (x.error) throw new Error(`board of ${r}: ${x.text.slice(0, 300)}`);
   return x.text;
@@ -331,7 +331,7 @@ try {
   // 1. The agent stands; the person takes the seat off; the agent is stopped.
   const st = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
   check(!st.error && /hello получен/.test(st.text), "stand: seat held, hello", st.text.split("\n")[0]);
-  const board = (await list(realm, karta));
+  const board = (await readBoard(realm, karta));
   const idA = channelId(board, nameA);
   check(!!idA, "board: seat listed with its id", idA ?? "no id");
   const before = A.notes.length;
@@ -347,7 +347,7 @@ try {
   check(stopIdx !== -1, "standings.log: stopped line", keyA[stopIdx]?.slice(0, 200) ?? "none");
   check(stopIdx !== -1 && /revoked:person/.test(keyA[stopIdx]), "stop names revoked:person");
   check(stopIdx !== -1 && !keyA.slice(stopIdx + 1).some((l) => / held /.test(l)), "no held after the stop", keyA.slice(stopIdx + 1).join(" | ").slice(0, 200));
-  const board2 = (await list(realm, karta));
+  const board2 = (await readBoard(realm, karta));
   check(!board2.includes(`:${nameA} —`), "board: no seat after a minute");
 
   // 2. The name is free: an explicit stand takes it again.
@@ -357,7 +357,7 @@ try {
   // Pulse (#7529): the seat's socket carries the agent's liveness — the board shows its state and
   // pending. A bare stdio client is no harness that reports turns: the state is noted, not judged.
   const pulseOf = async (r, k, name) => {
-    const brd = (await list(r, k));
+    const brd = (await readBoard(r, k));
     if (!apiArg) return pulseText(seatBlock(brd, name));
     const ch = await api("GET", "/me/channels", { asSeat: true, realm: r });
     return pulseIn(ch.body, seatId(brd, name) ?? `:${name}`);
@@ -381,22 +381,22 @@ try {
     karta2 = (k2.text.match(/\(#(\d+)\)/) || [])[1];
     const beside = await A.call("iskron_stand", { realm: realm2Arg, karta: `#${karta2}`, name: nameB, model: "stand-run" });
     check(!beside.error, "seat beside stands in the second graph", beside.text.split("\n")[0].slice(0, 160));
-    const idB = channelId((await list(realm2Arg, karta2)), nameB);
+    const idB = channelId((await readBoard(realm2Arg, karta2)), nameB);
     // take onto another main name while the seat beside stands (#6499): refused before connect.
     const nameT = `night-${stamp}.t`;
     const l3 = standingsLog().length;
     const tk = await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameT, model: "stand-run", take: true });
     check(/Отказано|Refused/.test(tk.text) && /рядом|beside/.test(tk.text), "take onto another name with a seat beside — refused", tk.text.split("\n")[0].slice(0, 200));
-    const bt = (await list(realm, karta));
+    const bt = (await readBoard(realm, karta));
     check(!seatId(bt, nameT) && !!seatId(bt, nameA), "take refused: no seat of the new name, the main seat stands");
     check(!standingsLog().slice(l3).includes(nameT), "take refused: no connect of the new name (standings.log)", standingsLog().slice(l3).split("\n").filter((l) => l.includes(nameT)).join(" | ").slice(0, 200));
-    check(!!seatId((await list(realm2Arg, karta2)), nameB), "take refused: the seat beside stands");
+    check(!!seatId((await readBoard(realm2Arg, karta2)), nameB), "take refused: the seat beside stands");
     const before3 = A.notes.length;
     await P.call("iskron_channel", { realm: realm2Arg, action: "revoke", karta: `#${karta2}`, channel: idB, as_person: true });
     await sleep(20_000);
     const notes3 = A.notes.slice(before3).map(noteText);
     check(!notes3.some((t) => /остановлен/.test(t) && t.includes(nameA)), "main seat not stopped by the beside removal", notes3.join(" | ").slice(0, 200));
-    const board3 = (await list(realm, karta));
+    const board3 = (await readBoard(realm, karta));
     check(board3.includes(`:${nameA} —`), "main seat still held after the one beside is taken off");
   } else report.push("SKIP seat beside — no --realm2");
 
@@ -413,7 +413,7 @@ try {
     ["standing as the name alone", () => ({ karta: `#${karta}`, standing: nameA })],
   ];
   for (const [label, args] of forms) {
-    if (!seatId((await list(realm, karta)), nameA))
+    if (!seatId((await readBoard(realm, karta)), nameA))
       await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
     const before4 = A.notes.length;
     const own4 = await A.call("iskron_channel", { realm, action: "revoke", ...args() });
@@ -421,7 +421,7 @@ try {
     await sleep(12_000);
     const notes4 = A.notes.slice(before4).map(noteText);
     check(!notes4.some((t) => /остановлен/.test(t)), `own revoke (${label}): no stop word`, notes4.join(" | ").slice(0, 200));
-    check(!seatId((await list(realm, karta)), nameA), `own revoke (${label}): the seat is gone`);
+    check(!seatId((await readBoard(realm, karta)), nameA), `own revoke (${label}): the seat is gone`);
   }
 
   // 6. The owner's stop order (#7519): laid on a seat by POST /standings/{id}/stop, it reaches
@@ -431,11 +431,11 @@ try {
   if (apiArg && personArg && realm2Arg) {
     const standBoth = async () => {
       for (const [r, k, n] of [[realm, karta, nameA], [realm2Arg, karta2, nameB]])
-        if (!seatId((await list(r, k)), n))
+        if (!seatId((await readBoard(r, k)), n))
           await A.call("iskron_stand", { realm: r, karta: `#${k}`, name: n, model: "stand-run" });
       return [
-        seatId((await list(realm, karta)), nameA),
-        seatId((await list(realm2Arg, karta2)), nameB),
+        seatId((await readBoard(realm, karta)), nameA),
+        seatId((await readBoard(realm2Arg, karta2)), nameB),
       ];
     };
     const order = async (label, seat, inRealm, wait) => {
@@ -459,23 +459,23 @@ try {
       return { notes, log };
     };
     // The main seat alone: its agent is stopped, as by the owner's revoke.
-    if (!seatId((await list(realm, karta)), nameA))
+    if (!seatId((await readBoard(realm, karta)), nameA))
       await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
-    const a0 = seatId((await list(realm, karta)), nameA);
+    const a0 = seatId((await readBoard(realm, karta)), nameA);
     const alone = await order("main alone", a0, realm, 20_000);
     check(alone.notes.some((t) => /остановлен/.test(t)), "order (main alone): the agent told it is stopped");
-    check(!seatId((await list(realm, karta)), nameA), "order (main alone): the seat is gone");
+    check(!seatId((await readBoard(realm, karta)), nameA), "order (main alone): the seat is gone");
     const [a1, b1] = await standBoth();
     check(!!a1 && !!b1, "order: the main seat and the seat beside stand", `${a1} ${b1}`);
     const beside = await order("beside", b1, realm2Arg, 20_000);
-    check(!seatId((await list(realm2Arg, karta2)), nameB), "order (beside): the seat beside is gone");
-    check(!!seatId((await list(realm, karta)), nameA), "order (beside): the main seat holds");
+    check(!seatId((await readBoard(realm2Arg, karta2)), nameB), "order (beside): the seat beside is gone");
+    check(!!seatId((await readBoard(realm, karta)), nameA), "order (beside): the main seat holds");
     check(!beside.notes.some((t) => /остановлен/.test(t) && t.includes(nameA)), "order (beside): the main seat is not stopped");
     const [a2, b2] = await standBoth();
     const founder = await order("founder", a2, realm, 30_000);
     check(founder.notes.some((t) => /остановлен/.test(t)), "order (founder): the agent told it is stopped", founder.notes.find((t) => /остановлен/.test(t))?.slice(0, 200) ?? `notes: ${founder.notes.length}`);
     for (const [r, k, n] of [[realm, karta, nameA], [realm2Arg, karta2, nameB]])
-      check(!seatId((await list(r, k)), n), `order (founder): ${n} is gone`);
+      check(!seatId((await readBoard(r, k)), n), `order (founder): ${n} is gone`);
     const after = founder.log.split("\n");
     check(!after.some((l) => / held /.test(l) && (l.includes(nameA) || l.includes(nameB))), "order (founder): no held after it", after.filter((l) => / held /.test(l)).join(" | ").slice(0, 200));
     report.push(`INFO order (founder): 4001 lines — ${after.filter((l) => /4001/.test(l)).join(" | ").slice(0, 300) || "none"} (beside was ${b2})`);
@@ -499,7 +499,7 @@ try {
     await E.close();
   }
 
-  const boardOf = async () => (await list(realm, karta));
+  const boardOf = async () => (await readBoard(realm, karta));
 
   // 8. The stop subcommand (#7518): a human puts down an agent of this machine by its seat — an
   // order to the seat (old api: a revoke), the agent's bridge stops it. Another owner's address
