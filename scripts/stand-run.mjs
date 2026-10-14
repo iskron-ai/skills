@@ -181,8 +181,15 @@ function orderTrace(label, id, authDir, logText) {
   const out = acks.find((a) => a.state !== "accepted");
   check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
   check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
-  const stopAt = action ? stampOf(action) : outcome ? stampOf(outcome) : NaN;
-  check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j && action ? `accepted ${new Date(j.at).toISOString()} · ${action.slice(0, 120)}` : outcome?.slice(0, 140));
+  // The stop action: the main seat's line names the order; a seat beside's line does not — it is
+  // the stop line between the accepted on disk and the outcome. Not seen — the run fails, no stand-in.
+  const stopLine =
+    action ??
+    logText.split("\n").find((l) => / stopped /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
+  check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
+  const stopAt = stopLine ? stampOf(stopLine) : NaN;
+  check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j ? `accepted ${new Date(j.at).toISOString()} · ${stopLine?.slice(0, 120) ?? "no stop line"}` : "no journal entry");
+  check(!!acc && acc.done - 5 <= stopAt, `order (${label}): accepted answered by the api before the stop`, acc ? `answered ${new Date(acc.done).toISOString()} · stop ${Number.isNaN(stopAt) ? "unseen" : new Date(stopAt).toISOString()}` : "");
   check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
 }
 const standingsLog = () => {
