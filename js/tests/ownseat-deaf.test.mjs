@@ -58,7 +58,7 @@ test("left by word, then another session took the seat: no write, raw register o
 
 test("a dead token, then another session took the seat: no write, raw register or replay signs with it", async (t) => {
   const { fake, a } = await deafThenTaken(t, async (f, a) => {
-    await f.control({ ws_close: 4001 });
+    await f.control({ ws_close: 4002 }); // dead seat; 4001 is the owner's stop (#7439)
     await until(() => saidKind(a, "dead"), "the dead word");
   });
   await neverSigned(fake, a);

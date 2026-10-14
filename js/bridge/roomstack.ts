@@ -51,6 +51,11 @@ export class RoomBatch {
     }
   }
 
+  /** The frames the batch holds (pulse.ts pending). */
+  get frames(): Frame[] {
+    return this.held.map((h) => h.frame);
+  }
+
   /** A batched frame is not handed out separately by the ring (door.ts). */
   holds(frame: Frame | null): boolean {
     return !!frame && this.held.some((h) => h.frame === frame);
@@ -67,6 +72,14 @@ export class RoomBatch {
     const kept = new Set(splitBatch(unit, Infinity, this.has).kept);
     const out = got.filter((h) => kept.has(h.frame));
     if (out.length) emitBatch(out, emit);
+  }
+
+  /** On the owner's stop: the pending batch is not given (#7439). */
+  drop(): number {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.emit = null;
+    return this.held.splice(0).length;
   }
 
   /** The seat's marks: an event already in the turn is not repeated (seen.ts eventIn). */

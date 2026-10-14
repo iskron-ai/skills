@@ -83,7 +83,7 @@ test("К3: after a dead token erased the record, iskron_stand by the seat beside
   );
   await until(() => fake.state.ws.size === 1, "socket");
   const hooks = fake.state.counts.webhooks_added;
-  await fake.control({ ws_close: 4001 });
+  await fake.control({ ws_close: 4002 }); // dead seat; 4001 is the owner's stop (#7439)
   await until(() => saidKind(b1, "dead"), "the dead word");
   await b1.stop();
   const b = await up();

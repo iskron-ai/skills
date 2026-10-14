@@ -21,28 +21,32 @@ import {
   authDir,
   buildsLine,
   findBridge,
-  handshake,
   listTools,
   readCache,
   refreshToolList,
   retryPause,
   sleep,
+  slotReady,
   textOf,
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
+import { answerHalt } from "./cuts.ts";
 import { idleHalf, type ToolsHalf } from "./half.ts";
 import { createHandoff } from "./handoff.ts";
 import { hostEnvOf } from "./host.ts";
 import { createKeeper } from "./keep.ts";
 import { holdersOf } from "./keepalive.ts";
 import { createLauncher } from "./launch.ts";
-import { leadDoors } from "./leaddoors.ts";
+import { type Closed, leadDoors } from "./leaddoors.ts";
+import { launcherSeat } from "./leadframes.ts";
 import { createLeads } from "./leads.ts";
 import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
+import { createModels } from "./models.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
+import { revokeAsLauncher } from "./release.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, heldPlace, STAND_TOOL, standsBy } from "./satellite.ts";
 import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
@@ -54,14 +58,15 @@ export type Say = (text: string, level: "info" | "warning" | "error") => void;
 
 export type { Slot } from "./slot.ts";
 
-const hhmm = (): string => new Date().toTimeString().slice(0, 5);
-
 export async function setupTools(
   ctx: Context,
   say: Say,
   onChannel: (session: string | null, params: any, child?: boolean) => void,
   rootOf: (sessionID: string) => Promise<string>,
   flushUsage: (session: string) => Promise<void> = async () => {},
+  closed: Closed = () => false,
+  halted: (session: string | null, signal?: AbortSignal) => Promise<string | null> = async () =>
+    null,
 ): Promise<ToolsHalf> {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
@@ -81,6 +86,7 @@ export async function setupTools(
 
   // The human in the browser — one sign-in for all the plugin's bridges (login.ts).
   const login = createLogin(say);
+  const { shake, readyFor } = slotReady<Slot>(login);
 
   function spawn(args: string[] = []): Slot {
     const slot: Slot = {
@@ -102,27 +108,39 @@ export async function setupTools(
       (method, params) => {
         if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
         if (method !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
-        const kind = params?.data?.kind;
+        const kind = models.seen(slot, params?.data); // the graphs of its seats too (#7591)
         // holding follows an observed event — the bridge's "held" word and hello (#5140).
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
         if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
           slot.key = params.data.key; // the seat's key — the exact address of the record to return
         if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
-        if (kind === "released" || kind === "dead" || kind === "evicted") slot.holding = false;
+        if (kind === "released" || kind === "dead" || kind === "evicted" || kind === "stopped")
+          slot.holding = false;
+        // Taken off by its owner (#7439): the hearing watchdog no longer raises this session's seat.
+        if (kind === "stopped" && slot.session) keeper.forget(slot.session);
         // Only a satellite child is a lead (#6550 item 4); a child on a plain bridge is one run (children.ts).
-        const over =
-          !!slot.child &&
-          !!slot.satelliteOf &&
-          !!slot.session &&
-          leads.heard(slot.session, kind, slot.place);
-        if (!over) relay(slot.session, params, !!slot.child); // an ended lead gets no channel words
+        const lead = !!slot.child && !!slot.satelliteOf && !!slot.session;
+        const session = slot.session as string;
+        if (kind === "stopped") {
+          // An ended lead gets no channel words — but a stop still interrupts its turn (channel.ts).
+          relay(slot.session, params, !!slot.child);
+          // A stop by an order: the bridge answers the order once the interrupt ended (cuts.ts),
+          // and only then may a lead's end take its bridge down — the answer goes by that bridge.
+          const answered = answerHalt(slot.bridge, params?.data, (signal) =>
+            halted(slot.session, signal),
+          );
+          if (lead) void answered.then(() => leads.heard(session, kind, slot.place));
+          return;
+        }
+        const over = lead && leads.heard(session, kind, slot.place);
+        if (!over) relay(slot.session, params, !!slot.child);
       },
       (e) => {
         // A holding bridge exited against our will — a word into the session, not a log line (#5140).
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
-        const text = W.hearingLost(hhmm(), e.message);
+        const text = W.hearingLost(new Date().toTimeString().slice(0, 5), e.message);
         const lost = { logger: LOGGERS.channel, data: { kind: "lost", text } };
         onChannel(slot.session, lost, !!slot.child); // a child's hearing — a word only to it (#6625)
       },
@@ -137,11 +155,12 @@ export async function setupTools(
   const mv = createMoves(ctx);
   const { home, directoryOf, exists, ours } = mv;
   const relay = mv.relay(onChannel, say);
+  const models = createModels(ctx); // a satellite's seat names its session's model (#7591)
   const runEnds = createRunEnds(); // ended children: a write through a seat is a refusal aloud (#6361)
   // Lead subagents (#6625): the end is an explicit act, the outcome a synthetic message to the parent.
   const endChild = (c: string, out: ((s: string) => void) | null = forget) =>
     runEnds.end(c, slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots));
+  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots, closed));
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -175,21 +194,6 @@ export async function setupTools(
   if (lost) adopt.take(lost.entries);
   // A stopped instance takes no markers: a deferred move adoption would take the next instance's marker.
   const adoptNow = () => void (stopped || adopt.now());
-
-  function shake(slot: Slot): void {
-    slot.ready = handshake(slot.bridge, login.on, login.done);
-    slot.ready.catch(() => {});
-  }
-
-  /** The slot's handshake; a failed one is repeated at once, once. */
-  async function readyFor(slot: Slot): Promise<void> {
-    try {
-      await slot.ready;
-    } catch {
-      shake(slot);
-      await slot.ready;
-    }
-  }
 
   /**
    * A root session's bridge: the load's spare first, then its own; a dead one is replaced.
@@ -290,10 +294,23 @@ export async function setupTools(
         description: String(t.description ?? ""),
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          // The launcher's revoke of its lead's seat is ended by the plugin (#6625); so is a child ended by a move (adopt.ts).
-          const word =
-            (await leads.release(String(tool.sessionID), name, input ?? {})) ??
-            adopt.revoked(name, input ?? {});
+          // The launcher's revoke of its lead's seat ends the child, then goes to the platform
+          // by the launcher's bridge (#6625, #7505); a child ended by a move is answered here (adopt.ts).
+          const caller = String(tool.sessionID);
+          const freed = await leads.release(caller, name, input ?? {});
+          if (freed)
+            return {
+              content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
+                const slot = await slotFor(caller);
+                slot.busy++;
+                try {
+                  return await callThrough(slot, name, args, caller);
+                } finally {
+                  slot.busy--;
+                }
+              }),
+            };
+          const word = adopt.revoked(name, input ?? {});
           if (word) return { content: word };
           await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
           runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // not through the root's bridge (#6361)
@@ -343,6 +360,7 @@ export async function setupTools(
       await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
+    if (name === STAND_TOOL) await models.name(args, sessionID, slot);
     // The bridge runs in OpenCode's cwd: the standing's repo comes from the session's directory (#5108).
     if (name === STAND_TOOL && !args.cwd) {
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
@@ -350,7 +368,9 @@ export async function setupTools(
     }
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     // A tool's refusal is a throw — so OpenCode shows it as a refusal.
-    if (result?.isError) throw new Error(textOf(result) || P.refusalNoText(name));
+    // The api refusal's data rides along: the launcher's revoke reads its rule (release.ts).
+    if (result?.isError)
+      throw Object.assign(new Error(textOf(result) || P.refusalNoText(name)), { result });
     // The tool's answer is an observed holding event; an answer to a busy line alone is not (#6509).
     if (standsBy(name, args) && !busy) keeper.stood(slot);
     if (standsBy(name, args)) runEnds.clear(sessionID); // stood again — writes go by its own bridge
@@ -435,8 +455,10 @@ export async function setupTools(
       forget(s);
       runEnds.clear(s, true); // no session — no final mark either
     },
-    onEvent: (ev) => leads.onEvent(ev),
+    onEvent: (ev) => [models, leads].forEach((x) => x.onEvent(ev)),
     leadOf: (s) => leads.nameOf(s),
+    ended: (s) => leads.ended(s),
+    launcherOf: (s) => launcherSeat(leads.upOf(s), slots, slots.get(s)?.satelliteOf?.name),
     holders: () => holdersOf(slots.values()),
     owns: (s) => slots.has(s),
     held: (r) => [slots.get(r)].find((x) => x?.holding && x.place && !x.bridge.failure) ?? null,
@@ -445,6 +467,16 @@ export async function setupTools(
     moved: (s, to) =>
       handoff(s, to, home) ||
       mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
+    children: () =>
+      [...slots.values()].flatMap((x) => (x.child && x.holding && x.session ? [x.session] : [])),
+    halt(child) {
+      const slot = slots.get(child);
+      if (!slot?.child || !slot.holding) return;
+      slot.holding = false;
+      keeper.forget(child);
+      // A lead ends as by the launcher's revoke — its bridge takes the seat off; any other child's bridge goes down with it.
+      if (!(slot.satelliteOf && leads.heard(child, "stopped", slot.place))) forget(child);
+    },
     async stop() {
       stopped = true;
       clearInterval(reaper);

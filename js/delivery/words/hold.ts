@@ -34,7 +34,7 @@ export const HOLD: Readonly<Record<Lang, HoldWords>> = {
     closedOwn: () =>
       "канал закрыт своим close этой сессии — место отпущено, токен жив; встать снова — iskron_stand",
     resumeFailed: () => "возврат с диска не удался",
-    tokenDead: () => "токен мёртв",
+    tokenDead: () => "место погасло по простою (4002)",
     parked: (reason) =>
       `мост ушёл с места (${reason}) — сокет закрыт, место цело; возврат — сторож или iskron_stand`,
     evicted: (code) =>
@@ -66,7 +66,7 @@ export const HOLD: Readonly<Record<Lang, HoldWords>> = {
     closedOwn: () =>
       "the channel was closed by this session's own close — the seat is released, the token is alive; to stand again — iskron_stand",
     resumeFailed: () => "resume from disk failed",
-    tokenDead: () => "token dead",
+    tokenDead: () => "the seat went out after idling (4002)",
     parked: (reason) =>
       `the bridge left the seat (${reason}) — socket closed, seat intact; to return use the watchdog or iskron_stand`,
     evicted: (code) =>

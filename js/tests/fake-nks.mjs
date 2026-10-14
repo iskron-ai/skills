@@ -18,6 +18,7 @@ import {
   devicePoll,
   deviceState,
 } from "./fake-device.mjs";
+import { ordersControl, ordersRoute, ordersState } from "./fake-orders.mjs";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
@@ -102,6 +103,33 @@ function wsFrame(opcode, payload) {
   return Buffer.concat([head, data]);
 }
 
+/** Whole client frames from the head of `buf` (masked, as a client sends); each carries the rest. */
+function* clientFrames(buf) {
+  let rest = buf;
+  while (rest.length >= 2) {
+    const masked = (rest[1] & 0x80) !== 0;
+    let len = rest[1] & 0x7f;
+    let at = 2;
+    if (len === 126) {
+      if (rest.length < 4) return;
+      len = rest.readUInt16BE(2);
+      at = 4;
+    } else if (len === 127) {
+      if (rest.length < 10) return;
+      len = Number(rest.readBigUInt64BE(2));
+      at = 10;
+    }
+    const mask = masked ? rest.subarray(at, at + 4) : null;
+    if (masked) at += 4;
+    if (rest.length < at + len) return;
+    const payload = Buffer.from(rest.subarray(at, at + len));
+    if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    const opcode = rest[0] & 0x0f;
+    rest = rest.subarray(at + len);
+    yield { opcode, payload, rest };
+  }
+}
+
 export async function startFakeNks(opts = {}) {
   const st = {
     accessTtl: opts.accessTtl ?? 3600,
@@ -130,6 +158,7 @@ export async function startFakeNks(opts = {}) {
     mcpHangMs: 0, // hold /mcp open past the caller's deadline: the request left, the answer never came
     revokeReplyDelayMs: 0, // revoke: the 4001 close goes out first, the HTTP answer this much later
     closeCodeDelayMs: 0, // close: the HTTP answer goes out first, the 4001 close this much later
+    endedFrame: false, // revoke/close: a standing_ended frame per seat instead of the 4001 close (api 0.121.0); close: "beside-first"
     statusDelayMs: 0,
     statusDrop: 0, // this many next status POSTs: the request is read, the connection closed without an answer
     mcpDrop: 0, // the same for this many next MCP POSTs
@@ -196,6 +225,11 @@ export async function startFakeNks(opts = {}) {
     wsChans: new Map(), // открытый сокет → id канала
     writes: [], // { tool, realm, author } — чем подписана каждая запись фабрики
     placeStatus: new Map(), // standing_id места → строка занятости: она держится у места (#5838)
+    // standing_id места → его модель, как хранит api (#4032): register без model оставляет
+    // прежнюю; снимает только PATCH /api/standings/{id} {"model": null} (api 0.123.0).
+    seatModels: new Map(),
+    seatPatches: [], // { id, body, auth, realm } — PATCH места, как дошли
+    seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
       { short: "r5", canon: "@nks/nks-dev" },
@@ -206,6 +240,7 @@ export async function startFakeNks(opts = {}) {
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
+    pulses: [], // { at, place, frame } — кадры pulse, присланные мостом по сокету (#7529)
     placeAttrs: new Map(), // "karta:name" → attrs места, последние принятые; переживают revoke (#6401)
     closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
@@ -225,7 +260,7 @@ export async function startFakeNks(opts = {}) {
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
     evicted: new Set(), // вытесненные сокеты, ещё не закрытые: служба в них не пишет, но сервер они держат
-    richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки приписки момента
+    richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки того, что мост приписывает и чего нет
     structured: false, // /control {structured:true}: доска, register и connect несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
     lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
@@ -244,6 +279,7 @@ export async function startFakeNks(opts = {}) {
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
+    standingRefuseDelayMs: 0, // и так долго держать ответ этого отказа
     standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
@@ -252,6 +288,7 @@ export async function startFakeNks(opts = {}) {
     // Sign-in from another device (RFC 8628, fake-device.mjs): off unless asked
     // for — a server without it is what every other probe stands on.
     device: deviceState(opts.device),
+    orders: ordersState(), // stop orders, api 0.122.0 (fake-orders.mjs)
   };
 
   const body = (req) =>
@@ -318,6 +355,18 @@ export async function startFakeNks(opts = {}) {
     });
     res.end(JSON.stringify(obj));
   };
+  // Fixture replies can exercise the streaming decoder across a UTF-8 byte boundary.
+  const fixtureReply = async (res, obj, headers) => {
+    if (!opts.sse) return json(res, 200, obj, headers);
+    const body = Buffer.from(`event: message\ndata: ${JSON.stringify(obj)}\n\n`, "utf8");
+    const first = body.findIndex((byte) => byte >= 0xc2);
+    if (first < 0) throw new Error("SSE fixture must contain a multibyte character");
+    res.writeHead(200, { ...headers, "content-type": "text/event-stream" });
+    res.write(body.subarray(0, first + 1));
+    // Give fetch a chance to read the incomplete character before its trailing bytes.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    res.end(body.subarray(first + 1));
+  };
   // structuredContent рядом с прозой (#6637) — {action, …} ключами api, как их шлёт
   // nks-mcp (PR #408). Под garble проза заменена формой, которой мост не знает: поле
   // должно её перевесить.
@@ -376,6 +425,26 @@ export async function startFakeNks(opts = {}) {
       return st.versionUp ? json(res, 200, { version: "fake-9" }) : json(res, 404, {});
     }
 
+    if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
+
+    const patched = /^\/api\/standings\/([^/]+)$/.exec(p);
+    if (patched && req.method === "PATCH") {
+      const id = decodeURIComponent(patched[1]);
+      const b = JSON.parse((await body(req)) || "{}");
+      const realm = req.headers["x-nks-realm"] ?? null;
+      st.seatPatches.push({ id, body: b, auth: req.headers.authorization ?? null, realm });
+      // Как api (#99): без X-NKS-Realm — 400; место ищется в графе заголовка, иначе 404.
+      if (!realm) return json(res, 400, { error: "X-NKS-Realm header is required" });
+      const inRealm = [...st.channels.values()].some(
+        (c) => c.places.get(slug(realm))?.standing_id === id,
+      );
+      if (!inRealm) return json(res, 404, { error: "no such standing" });
+      if (st.seatPatchRefuse) return json(res, st.seatPatchRefuse, { error: "refused" });
+      if (b.model === null) st.seatModels.delete(id);
+      else if (typeof b.model === "string") st.seatModels.set(id, b.model);
+      return json(res, 200, { standing_id: id, model: st.seatModels.get(id) ?? null });
+    }
+
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text, standing_id } = JSON.parse((await body(req)) || "{}");
       st.counts.status_requests++;
@@ -431,6 +500,7 @@ export async function startFakeNks(opts = {}) {
 
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
+      ordersControl(st, patch, wsFrame);
       if (typeof patch.ws_send === "string") {
         for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, patch.ws_send));
       }
@@ -446,8 +516,11 @@ export async function startFakeNks(opts = {}) {
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
       if (Number.isInteger(patch.ws_close)) {
+        // ws_close_reason: причина закрытия (#7492 — «revoked:person», «revoked:self»).
+        const why = Buffer.from(String(patch.ws_close_reason ?? ""));
         for (const sock of st.ws) {
-          sock.write(wsFrame(0x8, Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff])));
+          const code = Buffer.from([patch.ws_close >> 8, patch.ws_close & 0xff]);
+          sock.write(wsFrame(0x8, Buffer.concat([code, why])));
           setTimeout(() => sock.end(), 200).unref();
         }
       }
@@ -479,7 +552,11 @@ export async function startFakeNks(opts = {}) {
         "mcpStatus",
         "mcpHangMs",
         "revokeReplyDelayMs",
+        "revokeRefuseNext",
+        "revokeGone", // 404 | 410: revoke of a seat not there — the rule of api 0.124.0 (#7599)
+        "registerRefuseNext", // [{ text, status, rule, data }]: the next registers refused as the api would
         "closeCodeDelayMs",
+        "endedFrame",
         "accessTtl",
         "refreshDelayMs",
         "reuseDetection",
@@ -490,6 +567,10 @@ export async function startFakeNks(opts = {}) {
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
+        "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
+        "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
+        "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
+        "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
@@ -514,7 +595,7 @@ export async function startFakeNks(opts = {}) {
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
       // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
       if (patch.ws_say) {
-        const { name, text, id } = patch.ws_say;
+        const { name, text, id, stale } = patch.ws_say;
         for (const [, c] of st.channels) {
           const found = [...c.places].find(([, p]) => p.name === name);
           if (!found) continue;
@@ -523,7 +604,7 @@ export async function startFakeNks(opts = {}) {
             type: "message",
             id: id ?? token("say"),
             received_at: new Date().toISOString(),
-            stale: false,
+            stale: stale === true,
             content_type: "text/plain",
             body_chars: text.length,
             to_standing_id: pl.standing_id,
@@ -877,7 +958,11 @@ export async function startFakeNks(opts = {}) {
         );
       }
       if (msg.method === "tools/list" && st.tools) {
-        return json(res, 200, { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } }, extra);
+        return fixtureReply(
+          res,
+          { jsonrpc: "2.0", id: msg.id, result: { tools: st.tools } },
+          extra,
+        );
       }
       if (msg.method === "tools/list") {
         return json(
@@ -916,6 +1001,18 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
+      // A test-supplied reply for a named tool, transported by the same HTTP leg.
+      if (msg.method === "tools/call" && opts.callResults?.[msg.params?.name]) {
+        return fixtureReply(
+          res,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: opts.callResults[msg.params.name],
+          },
+          extra,
+        );
+      }
       // Стояние делателя, смоделированное так, как его держит настоящая
       // поверхность: коррелятор писателя — идентификатор сессии MCP. Новая
       // сессия — другой писатель, и её память о регистрации собрана вместе со
@@ -948,6 +1045,51 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          const refuseReg = (st.registerRefuseNext ?? []).shift();
+          if (refuseReg) {
+            const { text, status, rule, data } = refuseReg;
+            const result = {
+              isError: true,
+              content: [{ type: "text", text }],
+              _meta: { "iskron/refusal": { rule, status, data } },
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
+          }
+          // Как api (oneSeatPerRealm): канал сессии уже стоит в этом графе другим живым местом.
+          const standsThere = st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm));
+          const another =
+            st.oneSeatPerRealm &&
+            !!standsThere &&
+            standsThere.name !== cleanName(a.name) &&
+            !channelOfPlace(a.realm, cleanName(a.name));
+          if (st.registerStandsInRealmNext > 0 || another) {
+            if (!another) st.registerStandsInRealmNext--;
+            st.counts.register_stands_in_realm = (st.counts.register_stands_in_realm ?? 0) + 1;
+            // Как api: сокет-канал уже несёт живое стояние этого графа под другим именем (#4032);
+            // api 0.124 называет его в data.your_standings (#7556).
+            const data =
+              standsThere && standsThere.name !== cleanName(a.name)
+                ? { your_standings: [{ id: standsThere.standing_id, name: standsThere.name }] }
+                : undefined;
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: refused(
+                  "Conflict (409): channel_already_stands_in_realm: this channel already stands in the realm under another name",
+                  "Abgelehnt (409).",
+                  {
+                    rule: "channel_already_stands_in_realm",
+                    status: 409,
+                    ...(data ? { data } : {}),
+                  },
+                ),
+              },
+              extra,
+            );
+          }
           if (st.registerConcurrentNext > 0) {
             st.registerConcurrentNext--;
             st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
@@ -969,6 +1111,8 @@ export async function startFakeNks(opts = {}) {
           }
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
+            if (st.standingRefuseDelayMs)
+              await new Promise((r) => setTimeout(r, st.standingRefuseDelayMs));
             return json(
               res,
               200,
@@ -1006,6 +1150,8 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          if (st.standingRegisterDelayMs)
+            await new Promise((r) => setTimeout(r, st.standingRegisterDelayMs));
           st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
           st.placeArgs.push({
@@ -1022,6 +1168,7 @@ export async function startFakeNks(opts = {}) {
           const seatId = st.registerNoId
             ? null
             : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))?.standing_id;
+          if (seatId && typeof a.model === "string" && a.model) st.seatModels.set(seatId, a.model);
           if (reg.added) {
             // Место рядом на канале: на доске его графа, слушает — если сокет канала открыт.
             const listening = [...st.ws].some((s) => st.wsChans.get(s) === reg.channel);
@@ -1153,9 +1300,31 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        // connect_asked — до задержки: проба видит, что connect ушёл, пока ответа ещё нет.
+        if (a.action === "connect") st.counts.connect_asked = (st.counts.connect_asked ?? 0) + 1;
         // Медленный connect (/control {connect_delay_ms}): ответ позже потолка вызывающего, адрес всё равно повёрнут.
         if (a.action === "connect" && st.connectDelayMs)
           await new Promise((r) => setTimeout(r, st.connectDelayMs));
+        // Переоткрытие сокета места чаще порога api: 429 с «retry in N s» (#7552).
+        if (a.action === "connect" && st.connectThrottleNext > 0) {
+          st.connectThrottleNext--;
+          st.counts.connect_throttled = (st.counts.connect_throttled ?? 0) + 1;
+          const s = st.connectThrottleRetryS ?? 9;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused(
+                `Too Many Requests (429): socket_reissue_throttled — retry in ${s}s`,
+                "Abgelehnt (429).",
+                { rule: "socket_reissue_throttled", status: 429 },
+              ),
+            },
+            extra,
+          );
+        }
         if (
           (a.action === "connect" || a.action === "mint") &&
           st.connectRefuseTtl &&
@@ -1307,6 +1476,24 @@ export async function startFakeNks(opts = {}) {
           }
           for (const sock of st.ws) {
             if (st.wsChans.get(sock) !== chan) continue;
+            if (st.endedFrame) {
+              // endedFrame: each seat's end goes as a standing_ended frame, the socket stays;
+              // "beside-first" — the seats beside before the main one.
+              const seats = [...c.places.values()];
+              if (st.endedFrame === "beside-first") seats.reverse();
+              for (const p of seats)
+                sock.write(
+                  wsFrame(
+                    0x1,
+                    JSON.stringify({
+                      type: "standing_ended",
+                      standing_id: p.standing_id,
+                      by: "self",
+                    }),
+                  ),
+                );
+              continue;
+            }
             const shut = () => {
               sock.write(wsFrame(0x8, Buffer.from([4001 >> 8, 4001 & 0xff])));
               setTimeout(() => sock.end(), 100).unref();
@@ -1357,8 +1544,48 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
-          if (had) st.closedPlaces.add(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          // revokeRefuseNext: [{ text, status?, rule?, data?, realm? }] — the next revokes refused this
+          // way, the place stays; with status — as an api refusal with data, without — bare prose; with
+          // realm — only a revoke in that graph (№664).
+          const at = (st.revokeRefuseNext ?? []).findIndex(
+            (r) => !r.realm || slug(r.realm) === slug(a.realm),
+          );
+          const refuse = at < 0 ? null : st.revokeRefuseNext.splice(at, 1)[0];
+          if (refuse) {
+            const { text, status, rule, data } = refuse;
+            const result = {
+              isError: true,
+              content: [{ type: "text", text }],
+              ...(status ? { _meta: { "iskron/refusal": { rule, status, data } } } : {}),
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
+          }
+          const placeKey = `${String(a.karta).replace(/^#/, "")}:${name}`;
+          // revokeGone (api 0.124.0, #7599): a seat that is not there is refused by rule — one revoked
+          // before 410 standing_already_ended, any other 404 standing_not_found; 404 — both 404.
+          if (st.revokeGone && !st.places.has(placeKey)) {
+            const ended = st.revokeGone === 410 && st.closedPlaces.has(placeKey);
+            const result = {
+              isError: true,
+              content: [{ type: "text", text: `Rejected: no standing named «${name}».` }],
+              _meta: {
+                "iskron/refusal": ended
+                  ? {
+                      rule: "standing_already_ended",
+                      status: 410,
+                      data: {
+                        standing_id: name,
+                        ended_by: "self",
+                        ended_at: new Date().toISOString(),
+                      },
+                    }
+                  : { rule: "standing_not_found", status: 404, data: { standing_id: name } },
+              },
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
+          }
+          const had = st.places.delete(placeKey);
+          if (had) st.closedPlaces.add(placeKey);
           // Место снимается с канала; канал без мест закрыт, с местами других графов — жив (#5838).
           const chan =
             channelOfPlace(a.realm, name) ??
@@ -1366,10 +1593,37 @@ export async function startFakeNks(opts = {}) {
               [...c.places.values()].some((p) => p.name === name),
             )?.[0];
           const places = st.channels.get(chan)?.places;
+          const endedIds = [];
           for (const [r, p] of places ?? [])
-            if (p.name === name && (!places.has(slug(a.realm)) || r === slug(a.realm)))
+            if (p.name === name && (!places.has(slug(a.realm)) || r === slug(a.realm))) {
+              endedIds.push(p.standing_id);
               places.delete(r);
+            }
           const empty = !st.channels.get(chan)?.places.size;
+          // endedFrame: the seat's end goes as a standing_ended frame before the answer, the socket stays.
+          if (st.endedFrame) {
+            for (const sock of st.ws)
+              if (st.wsChans.get(sock) === chan)
+                for (const id of endedIds)
+                  sock.write(
+                    wsFrame(
+                      0x1,
+                      JSON.stringify({ type: "standing_ended", standing_id: id, by: "self" }),
+                    ),
+                  );
+            if (st.revokeReplyDelayMs)
+              await new Promise((r) => setTimeout(r, st.revokeReplyDelayMs));
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: { content: [{ type: "text", text: `Место «${name}» снято.` }] },
+              },
+              extra,
+            );
+          }
           // As the real surface: only the revoked place's socket is closed — the
           // socket of another place the same bridge holds stays up (#5154).
           for (const sock of st.ws) {
@@ -1668,9 +1922,21 @@ export async function startFakeNks(opts = {}) {
     if (placeName !== undefined) st.wsNames.set(socket, placeName);
     for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
     // Сокет апгрейда читается: без чтения поток стоит на паузе, «end» не приходит и место
-    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета.
+    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета;
+    // текстовый кадр pulse (#7529) ложится в st.pulses с местом сокета и временем.
+    let inbound = Buffer.alloc(0);
     socket.on("data", (buf) => {
-      if ((buf[0] & 0x0f) === 0x8) socket.end();
+      inbound = Buffer.concat([inbound, buf]);
+      for (const f of clientFrames(inbound)) {
+        inbound = f.rest;
+        if (f.opcode === 0x8) return socket.end();
+        if (f.opcode !== 0x1) continue;
+        let frame = null;
+        try {
+          frame = JSON.parse(f.payload.toString("utf8"));
+        } catch {}
+        if (frame?.type === "pulse") st.pulses.push({ at: Date.now(), place: placeName, frame });
+      }
     });
     socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком
     socket.on("close", () => {

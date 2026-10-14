@@ -17,6 +17,10 @@ export interface ToolsHalf {
   bridgeOf(session: string): Bridge | null; // the holding slot's bridge — for session usage (usage.ts)
   /** The seat name of a live lead subagent; not a lead — null (notice.ts). */
   leadOf(session: string): string | null;
+  /** A lead subagent ended or ending: nothing goes into its session (#7505, channel.ts). */
+  ended(session: string): boolean;
+  /** The launcher's seat name of a live lead subagent; otherwise null (channel.ts). */
+  launcherOf(session: string): string | null;
   /** Sessions with a held seat — root, lead satellite; roots first (keepalive.ts). */
   holders(): string[];
   /** The session has a bridge of this instance — it is in its directory (keepalive.ts). */
@@ -27,6 +31,10 @@ export interface ToolsHalf {
   adopt(): void;
   /** The session moved to location to (event session.moved). */
   moved(session: string, to: Home | null): void;
+  /** Child sessions whose own bridge holds a seat in this instance. */
+  children(): string[];
+  /** An ancestor of the child was stopped: its seat goes down as by its own 4001 (#7440, #6625). */
+  halt(child: string): void;
 }
 
 export const idleHalf = (): ToolsHalf => ({
@@ -36,11 +44,15 @@ export const idleHalf = (): ToolsHalf => ({
   stop() {},
   bridgeOf: () => null,
   leadOf: () => null,
+  ended: () => false,
+  launcherOf: () => null,
   holders: () => [],
   owns: () => false,
   held: () => null,
   adopt() {},
   moved() {},
+  children: () => [],
+  halt() {},
 });
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

@@ -9,10 +9,13 @@ import {
   holdStanding,
   releaseStanding,
   setClosingOwn,
+  setRevokingBeside,
   setRevokingOwn,
 } from "./hold.ts";
+import { stoppedInMove } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { listenBlock } from "./listen.ts";
+import { normKarta } from "./names.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
@@ -45,6 +48,7 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   if (msg?.params?.name !== tool("channel")) return reply;
   if (a?.action !== "connect" && a?.action !== "mint") return reply;
   if (reply?.error || reply?.result?.isError) return reply;
+  if (stoppedInMove()) return reply; // the stand call takes the seat off again and says the stop (standundo.ts)
   const text = replyText(reply);
   const socket = SOCKET_RE.exec(text)?.[0];
   if (!socket) return reply;
@@ -88,7 +92,7 @@ function names(a: Record<string, unknown>, s: Standing): boolean {
     asked === "mine" ||
     asked === (s.name ?? "") ||
     asked.endsWith(`:${s.name ?? ""}`);
-  return own && String(a.karta ?? s.karta) === String(s.karta);
+  return own && normKarta(a.karta ?? s.karta) === normKarta(s.karta); // "#931" too (#6987)
 }
 
 /**
@@ -98,6 +102,31 @@ function names(a: Record<string, unknown>, s: Standing): boolean {
 export function expectOwnRevoke(msg: JsonRpcMessage): void {
   if (revokesOwn(msg)) setRevokingOwn(true);
   if (closesOwn(msg)) setClosingOwn(true);
+  const beside = revokesBeside(msg);
+  if (beside) {
+    besideRevokes.set(msg, beside);
+    setRevokingBeside(beside, true);
+  }
+}
+
+/**
+ * The seat beside an own revoke takes off, by the call: its standing_ended may drop the
+ * seat before the answer, so the answer clears the mark by this, not by the seat (stophold.ts).
+ */
+const besideRevokes = new WeakMap<JsonRpcMessage, string>();
+
+function revokesBeside(msg: JsonRpcMessage): string | null {
+  const a = msg?.params?.arguments;
+  if (msg?.params?.name !== tool("channel") || a?.action !== "revoke") return null;
+  const beside = extraIn(a.realm);
+  return beside && names(a, beside.standing) ? beside.door.key : null;
+}
+
+function settleBesideRevoke(msg: JsonRpcMessage): void {
+  const key = besideRevokes.get(msg);
+  if (!key) return;
+  besideRevokes.delete(msg);
+  setRevokingBeside(key, false);
 }
 
 /**
@@ -120,6 +149,7 @@ export function settleOwnRevoke(msg: JsonRpcMessage): void {
   const action = msg.params.arguments?.action;
   if (action === "revoke") setRevokingOwn(false);
   if (action === "close") setClosingOwn(false);
+  settleBesideRevoke(msg);
 }
 
 export function absorbCloseReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcMessage {
@@ -139,6 +169,7 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   if (msg?.params?.name !== tool("channel") || msg?.params?.arguments?.action !== "revoke")
     return reply;
   setRevokingOwn(false);
+  settleBesideRevoke(msg);
   const a = msg.params.arguments;
   if (reply?.error || reply?.result?.isError) {
     // The server keeps the channel's main seat while other graphs' seats stand on it
@@ -155,7 +186,7 @@ export function absorbRevokeReply(msg: JsonRpcMessage, reply: JsonRpcMessage): J
   const beside = extraIn(a.realm);
   if (beside && names(a, beside.standing)) {
     // Another graph's seat revoked by us: drop its door and record, the channel stays (#5838).
-    dropExtra(beside.door.key, holdWords().revokedOwn(), true, true);
+    dropExtra(beside.door.key, holdWords().revokedOwn(), true, "own");
     return reply;
   }
   if (!revokesOwn(msg)) return reply;

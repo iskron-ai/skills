@@ -6,6 +6,7 @@
 // key would kill the led one.
 import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
+import { besideBack } from "./besideback.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -34,6 +35,7 @@ import {
   restoreHoldRecord,
   sessionOfBridge,
 } from "./holdrecord.ts";
+import { stoppedSince, stopsNow, withSpoolHeld } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
@@ -123,6 +125,20 @@ export async function resumeFromDisk(
   return null;
 }
 
+/** Register the seat returned from disk, then the seats beside it on the same channel (#7602). */
+async function registerBack(rec: HoldRecord): Promise<string> {
+  const r = await callTool(tool("channel"), {
+    action: "register",
+    realm: rec.realm,
+    karta: rec.karta,
+    name: rec.name,
+    ...placeFields(rec),
+  });
+  if (r.isError) return resumeWords.registerRefused(short(r.text));
+  await besideBack(rec.url, rec);
+  return "register";
+}
+
 /**
  * Take the own seat the same way as the stand tool by its name (standwire.ts passes it
  * here so imports do not close a loop): returns the answer's first line.
@@ -164,12 +180,23 @@ export interface ResumeOutcome {
   legacy?: string[];
   /** Own seats whose socket a live bridge of another session holds: not taken (#6626). */
   elsewhere?: string[];
+  /** The seat was taken off by its owner (#7439): no return, the word is the stop word. */
+  stopped?: true;
+}
+
+/** The return met the owner's 4001 since `before` (stophold.ts): the stop outcome, no other move; otherwise null. */
+function stoppedOutcome(before: number, key: string): ResumeOutcome | null {
+  const word = stoppedSince(before, key);
+  return word ? { resumed: false, key, stopped: true, word } : null;
 }
 
 /** Back to the parked seat: a new socket, hello is the proof. */
 async function backToParked(key: string, how: string): Promise<ResumeOutcome> {
+  const before = stopsNow();
   if (!returnToStanding(how)) return { resumed: false, key, word: resumeWords.failed() };
   const hello = await awaitHello(4000);
+  const stop = stoppedOutcome(before, key);
+  if (stop) return stop;
   return {
     resumed: true,
     key,
@@ -216,6 +243,7 @@ export async function resumeBy(
   const elsewhere: string[] = [];
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
+    const before = stopsNow();
     if (holdsKey(key))
       return { resumed: true, key, pending: 0, word: resumeWords.alreadyHolding(), own: true };
     if (isParked(rec.realm, rec.karta, rec.name)) return backToParked(key, resumeWords.byRecord());
@@ -229,6 +257,8 @@ export async function resumeBy(
     const holder = await localHolder(key, sel.cwd ?? sessionCwd());
     if (holder === "session" && takeOwn && !CFG.satellite && T.takeOwn) {
       const said = await T.takeOwn(rec, sel.cwd);
+      const stop = stoppedOutcome(before, key);
+      if (stop) return stop;
       const now = ledKey();
       if (now && holdsKey(now)) {
         const hello = await awaitHello(4000);
@@ -254,8 +284,14 @@ export async function resumeBy(
     // the seat and no other named session stood on it.
     const me = sel.session ?? sessionOfBridge();
     const proven = (!!me && rec.session === me) || (key === led && !rec.session);
-    const back = await resumeFromDisk(rec.realm, rec.karta, rec.name);
+    // The handover spool waits until the seats beside are back with this one (#7602).
+    const { back, registered } = await withSpoolHeld(async () => {
+      const b = await resumeFromDisk(rec.realm, rec.karta, rec.name);
+      return { back: b, registered: b && register ? await registerBack(rec) : null };
+    });
     if (!back) {
+      const stop = stoppedOutcome(before, key); // the return met the owner's 4001
+      if (stop) return stop;
       const kept = readHoldRecord(key);
       skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
       if (!kept) {
@@ -264,17 +300,7 @@ export async function resumeBy(
       }
       continue;
     }
-    const lines = [back.word];
-    if (register) {
-      const r = await callTool(tool("channel"), {
-        action: "register",
-        realm: rec.realm,
-        karta: rec.karta,
-        name: rec.name,
-        ...placeFields(rec),
-      });
-      lines.push(r.isError ? resumeWords.registerRefused(short(r.text)) : "register");
-    }
+    const lines = [back.word, ...(registered ? [registered] : [])];
     // Records the loop above found stale are already erased: not named.
     const others = [
       ...new Set([...recs.map((r) => keyOf(r.realm, r.karta, r.name)), ...sameDir]),
@@ -419,9 +445,12 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   D.reopens++;
   standingLog(`reopen ${key}: board reads deaf${pending ? ` with ${pending} pending` : ""}`);
+  const before = stopsNow();
   parkStanding(resumeWords.deafBoard());
   resumeStanding();
   const hello = await awaitHello(4000);
+  const stop = stoppedOutcome(before, key); // the reopening met the owner's 4001
+  if (stop) return reply(msg, { holding: false, ...stop });
   return reply(msg, {
     holding: true,
     key,

@@ -31,6 +31,12 @@ export const ID_PREFIX = `${PRODUCT}-`;
 export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 
 /**
+ * Ключ `capabilities.experimental` клиента моста, который подтверждает исполнение стопа
+ * харнесом методом `method("halted")` (плагин OpenCode): приказ останова ждёт его исхода.
+ */
+export const HALTS_CAPABILITY = `${PRODUCT}/halts`;
+
+/**
  * Ключи протокола сервера, которые из имени продукта не выводятся: их значение
  * называет поверхность своего сервера (отказ api — `_meta[refusal]`).
  */
@@ -40,6 +46,7 @@ export const serverProtocol = {
 
 /**
  * Язык прозы, который мост просит у сервера явно (`locale` места, `accept-language`), по
- * языку сессии; языка нет в таблице — решает умолчание сервера.
+ * языку сессии; языка нет в таблице — решает умолчание сервера. Русский назван тоже:
+ * умолчание у развёртываний разное (граф @nks/nks-dev, узел #7593).
  */
-export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { en: "en" };
+export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { ru: "ru", en: "en" };

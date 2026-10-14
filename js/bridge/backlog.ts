@@ -35,6 +35,11 @@ export class Backlog {
     this.has = has;
   }
 
+  /** The frames the window holds (pulse.ts pending). */
+  get frames(): readonly Frame[] {
+    return this.all;
+  }
+
   /** An open window is not extended, only filled. */
   open(expected: number, emit: (ev: ChannelEvent) => void): void {
     this.pending = Math.max(this.pending, expected);
@@ -48,6 +53,16 @@ export class Backlog {
     if (!this.timer) return;
     clearTimeout(this.timer);
     this.close();
+  }
+
+  /** On the owner's stop: what waited is not given, the stopped agent is not woken (#7439). */
+  drop(): number {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.flush = null;
+    this.pending = 0;
+    this.direct = 0;
+    return this.all.splice(0).length;
   }
 
   /**

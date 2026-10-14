@@ -24,7 +24,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { BUILT_BRIDGE } from "./built.mjs";
+import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import { progress } from "./room-frames.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -39,7 +41,8 @@ const ASKS_FIELDS = { ...INIT, capabilities: { experimental: { "iskron/structure
 
 function startBridge(serverUrl, authDir, cwd = process.cwd(), env = {}, args = [], file = FILE) {
   const notifications = [];
-  const proc = spawn(NODE, [file, serverUrl, "--no-browser", "--auth-dir", authDir, ...args], {
+  const url = serverUrl ? [serverUrl] : []; // null — адрес из окружения или файла выбора
+  const proc = spawn(NODE, [file, ...url, "--no-browser", "--auth-dir", authDir, ...args], {
     cwd,
     env: {
       ...process.env,
@@ -1484,7 +1487,10 @@ test("iskron_stand: skills of a flat install whose lock has no establish-mcp ent
     },
   };
   writeFileSync(lockPath, JSON.stringify(lock));
-  const { fake, bridge } = await holderReady(t, { file, env: { HOME: home } });
+  const { fake, bridge } = await holderReady(t, {
+    file,
+    env: { HOME: home },
+  });
   assert.ok(!(await stand(bridge)).result?.isError);
   assert.deepEqual(placeSends(fake).at(-1).attrs?.skills, {
     name: SET,
@@ -2196,9 +2202,10 @@ test("one's own close answered before its 4001 releases quietly by the answer, n
 });
 
 // Своё close или revoke, упавшие сами (ответа нет), не оставляют пометки «своё в
-// полёте»: иначе следующий настоящий мёртвый токен отпускался тихо словом «токен жив».
+// полёте»: иначе следующее настоящее снятие места отпускалось тихо словом «токен жив».
+// Чужой 4001 — стоп владельца (#7439): слово стопа, не «зови connect».
 for (const action of ["close", "revoke"])
-  test(`a failed own ${action} leaves no mark: a later real 4001 is a dead token that calls connect`, async (t) => {
+  test(`a failed own ${action} leaves no mark: a later real 4001 is the owner's stop`, async (t) => {
     const { fake, bridge } = await ready(t);
     const args = { realm: "nks-dev", karta: 931, name: "proba" };
     assert.ok(
@@ -2212,12 +2219,13 @@ for (const action of ["close", "revoke"])
     assert.ok(failed.result?.isError || failed.error, JSON.stringify(failed));
     await fake.control({ mcpDrop: 0, ws_close: 4001 });
     await new Promise((r) => setTimeout(r, 600));
-    const dead = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "dead");
+    const stop = bridge.notifications.map((n) => n.params?.data).find((d) => d?.kind === "stopped");
     assert.match(
-      dead?.text ?? "",
-      /зови connect/,
-      `a real dead token is announced:\n${bridge.stderr}`,
+      stop?.text ?? "",
+      /proba снято .* ты остановлен/,
+      `the stop is announced:\n${bridge.stderr}`,
     );
+    assert.doesNotMatch(stop?.text ?? "", /connect/, "a stop never calls connect");
   });
 
 test("revoking one's own standing through the bridge is quiet: no dead-token alarm, no re-registration", async (t) => {
@@ -2336,8 +2344,8 @@ const waitUntil = async (check, what, ms = 8000) => {
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A bridge standing in graph A, then in graph B; returns what the cases read. */
-async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}) {
-  const { fake, dir, bridge } = await ready(t, init);
+async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}, env = {}) {
+  const { fake, dir, bridge } = await ready(t, init, env);
   const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
   const a = await stand(A);
   assert.ok(!a.result?.isError, textOf(a));
@@ -2415,6 +2423,36 @@ test("two graphs: the second place stands beside the first on the same channel �
   assert.ok(fake.state.places.get("931:proba")?.listening, "place A listens");
   assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
 });
+
+// #7556 (api 0.124.0): a register refused 409 channel_already_stands_in_realm names the channel's
+// seats in that graph (data.your_standings); the answer names the seat and the call to stand on it.
+// Without the data the refusal is as before.
+for (const withData of [true, false])
+  test(`two graphs: register refused 409 channel_already_stands_in_realm ${withData ? "with your_standings — the move names the seat and its iskron_stand" : "without data — the refusal as is"}`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!(await stand({ realm: NKS, karta: 931, name: "proba" })).result?.isError);
+    await fake.control({
+      registerRefuseNext: [
+        {
+          text: "Rejected (409): channel_already_stands_in_realm",
+          status: 409,
+          rule: "channel_already_stands_in_realm",
+          ...(withData ? { data: { your_standings: [{ id: "s-7", name: "proba-old" }] } } : {}),
+        },
+      ],
+    });
+    const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+    assert.ok(b.result?.isError, textOf(b));
+    assert.match(textOf(b), /^Отказано \(409\): канал этого моста уже стоит в графе/, textOf(b));
+    // The api names no role (#5418): the move leaves karta open, not the refused call's 48.
+    const move = `iskron_stand(realm="${DRUGOY}", karta, name="proba-old")`;
+    if (withData) assert.ok(textOf(b).includes(move), `the move by the seat's name:\n${textOf(b)}`);
+    else {
+      assert.doesNotMatch(textOf(b), /proba-old/, textOf(b));
+      assert.ok(textOf(b).includes("karta, name=<то имя>"), `the move by the board:\n${textOf(b)}`);
+    }
+  });
 
 test("two graphs: the busy line of a place beside names it @handle:name, not its record key — the platform sends no new hello for it", async (t) => {
   const { fake, stand, keyB } = await twoGraphs(
@@ -2954,6 +2992,28 @@ const caseAs = (b, action, room) =>
     arguments: { realm: "@nks/nks-dev", action, room },
   });
 
+test("satellite: iskron_room is not a case join or leave", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const legacy = (action, room) =>
+    sat.call("tools/call", {
+      name: "iskron_room",
+      arguments: { realm: "@nks/nks-dev", action, room },
+    });
+  await legacy("join", "№101");
+  await caseAs(sat, "join", "№102");
+  await legacy("leave", "№102");
+  await caseAs(sat, "join", "№103");
+  await caseAs(sat, "leave", "№103");
+  await sat.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave").sort(),
+    ["№102", "№103"],
+    "only iskron_case changes the run's joined cases, even if the server accepts iskron_room",
+  );
+});
+
 test("satellite: at the run's end the bridge leaves the cases the run joined, once each; a session's bridge leaves none", async (t) => {
   const fake = await withCaller(t);
   const sat = await satelliteBridge(t, fake);
@@ -3080,7 +3140,10 @@ test("satellite: its own revoke at the run's end is repeated once on a closed co
   assert.doesNotMatch(sat.stderr, /unhandled rejection/);
 });
 
-test("satellite: iskron/end names the places it could not revoke; a dropped usage snapshot does not stop the revoke", async (t) => {
+// #7599: the answer names what it revoked too — the launcher's revoke then is not sent; a revoked
+// seat goes by its graph (canonical), role and name (№664).
+const SAT_SEAT = { realm: "@nks/nks-dev", karta: "931", name: `${CALLER}.sub-1` };
+test("satellite: iskron/end names the places it revoked and those it could not; a dropped usage snapshot does not stop the revoke", async (t) => {
   const fake = await withCaller(t);
   const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
   assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
@@ -3088,7 +3151,11 @@ test("satellite: iskron/end names the places it could not revoke; a dropped usag
   await sat.call("iskron/usage", { ...SPEND, tokens: 7777 });
   await fake.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:register" });
   const ok = (await sat.call("iskron/end", {})).result;
-  assert.deepEqual(ok, { ended: true, failed: [] }, `${JSON.stringify(ok)}\n${sat.stderr}`);
+  assert.deepEqual(
+    ok,
+    { ended: true, failed: [], revoked: [SAT_SEAT] },
+    `${JSON.stringify(ok)}\n${sat.stderr}`,
+  );
   assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
 
   const fake2 = await withCaller(t);
@@ -3096,10 +3163,76 @@ test("satellite: iskron/end names the places it could not revoke; a dropped usag
   assert.ok(!(await standAs(sat2, SAT_ARGS)).result?.isError, sat2.stderr);
   await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
   const bad = (await sat2.call("iskron/end", {})).result;
-  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`] }, sat2.stderr);
+  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`], revoked: [] }, sat2.stderr);
   await sat2.stop();
   assert.match(sat2.stderr, /NOT revoked/);
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
+});
+
+// №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
+// Prose that only looks like «already gone» is no confirmation: the place is neither revoked
+// nor failed for the plugin, and the launcher's revoke goes as before.
+for (const [how, refuse, confirmed] of [
+  ["success", null, true],
+  ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
+  ["a 404 refusal without a rule", { text: "Нет такого места.", status: 404 }, true],
+  // api 0.124.0 (#7599): the seat that is not there, by rule — both «already off».
+  [
+    "a 404 standing_not_found refusal",
+    { text: "Rejected.", status: 404, rule: "standing_not_found", data: { standing_id: "s-1" } },
+    true,
+  ],
+  [
+    "a 410 standing_already_ended refusal",
+    {
+      text: "Rejected.",
+      status: 410,
+      rule: "standing_already_ended",
+      data: { standing_id: "s-1", ended_by: "self", ended_at: "2026-10-14T00:00:00Z" },
+    },
+    true,
+  ],
+  ["prose «role #931 not found» without refusal data", { text: "role #931 not found" }, false],
+])
+  test(`satellite: iskron/end on a revoke answered by ${how} — revoked ${confirmed ? "names" : "does not name"} the place`, async (t) => {
+    const fake = await withCaller(t);
+    const sat = await satelliteBridge(t, fake);
+    assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+    if (refuse) await fake.control({ revokeRefuseNext: [refuse] });
+    const end = (await sat.call("iskron/end", {})).result;
+    const place = `${CALLER}.sub-1`;
+    assert.deepEqual(
+      end,
+      { ended: true, failed: [], revoked: confirmed ? [SAT_SEAT] : [] },
+      `${JSON.stringify(end)}\n${sat.stderr}`,
+    );
+    assert.deepEqual(revokes(fake), [place]);
+    if (!confirmed) assert.match(sat.stderr, /probably revoked/, sat.stderr);
+  });
+
+// №664: one satellite name in two graphs is two seats (#5838) — iskron/end keys a confirmed
+// revoke by graph, role and name, so the success in one graph does not cover a refusal in the other.
+test("satellite: iskron/end keys a confirmed revoke by graph, role and name — one name in two graphs, revoked in one, refused in the other", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const place = `${CALLER}.sub-1`;
+  const a = await standAs(sat, SAT_ARGS);
+  assert.equal(placeOf(a), place, `${textOf(a)}\n${sat.stderr}`);
+  const b = await standAs(sat, { ...SAT_ARGS, realm: "@nks/drugoy" });
+  assert.equal(placeOf(b), place, `one name in both graphs:\n${textOf(b)}\n${sat.stderr}`);
+  await fake.control({
+    revokeRefuseNext: [{ realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" }],
+  });
+  const end = (await sat.call("iskron/end", {})).result;
+  assert.deepEqual(
+    end,
+    {
+      ended: true,
+      failed: [place],
+      revoked: [{ realm: "@nks/drugoy", karta: "931", name: place }],
+    },
+    `${JSON.stringify(end)}\n${sat.stderr}`,
+  );
 });
 
 // #147 [145]: a re-arm slower than its cap still turns the address at the server; the
@@ -3644,12 +3777,13 @@ test("satellite: standing in another role, it still may not take, register or re
   );
 });
 
-// English Iskron (#6080): the bridge's language follows its server — a host on
-// .ai is English, any other Russian; ISKRON_BRIDGE_LANG=en|ru overrides. What the
-// bridge writes itself — the iskron_stand answer — speaks that language; an
+// English Iskron (#6080): the bridge's language is ISKRON_BRIDGE_LANG=en|ru, else
+// its server's — the address from the argument, ISKRON_BRIDGE_URL or the `server`
+// file beside the grant (the `use en` choice, #5040): a host on .ai is English, any
+// other Russian; with no address at all, Russian. What the bridge writes itself — the iskron_stand answer — speaks that language; an
 // English bridge asks the api for English prose (Accept-Language) and names the
-// seat's language in connect and register (locale: "en"); a Russian one sends
-// neither and leaves it to the server's default.
+// seat's language in connect and register (locale: "en"); a Russian one asks the
+// same in Russian — the server's default is not its language (#7593).
 const CYRILLIC = /[а-яё]/i;
 
 for (const [server, en] of [
@@ -3702,7 +3836,7 @@ test("an English bridge (ISKRON_BRIDGE_LANG=en) answers a whole iskron_stand wit
   assert.ok(fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
 });
 
-test("a Russian bridge sends no locale and no Accept-Language — the server's default decides", async (t) => {
+test("a Russian bridge asks for Russian prose and sends locale ru in connect and register — not the server's default", async (t) => {
   const { fake, bridge } = await ready(t);
   const r = await bridge.call("tools/call", {
     name: "iskron_stand",
@@ -3710,10 +3844,68 @@ test("a Russian bridge sends no locale and no Accept-Language — the server's d
   });
   assert.ok(!r.result?.isError, textOf(r));
   assert.match(textOf(r), /стояние proba — роль #931, граф nks-dev: connect и register/);
-  for (const x of sentToChannel(fake)) assert.ok(!("locale" in x), JSON.stringify(x));
-  // fetch's own default («*») is not a choice of language.
-  assert.ok(!fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+  for (const action of ["connect", "register"]) {
+    const got = sentToChannel(fake).find((x) => x.action === action);
+    assert.equal(got?.locale, "ru", `${action}: ${JSON.stringify(sentToChannel(fake))}`);
+  }
+  // Every request names the language; fetch's own default («*») or none is not a choice.
+  assert.deepEqual([...fake.state.acceptLanguage], ["ru"]);
 });
+
+// The two standard Iskrons (#5040, #7289) without ISKRON_BRIDGE_LANG: the language is
+// the server's — reached through ISKRON_BRIDGE_URL or the `server` file beside the
+// grant (the `use en` choice); *.ai asks for English, *.ru and any other host — Russian.
+// The fake answers under those names through a preload that resolves them to loopback.
+const RESOLVE_FAKE = `const dns = require("node:dns");
+const lookup = dns.lookup;
+dns.lookup = function (host, opts, cb) {
+  if (!/^fake\\.iskron\\.(ai|ru)$/.test(host)) return lookup.apply(this, arguments);
+  if (typeof opts === "function") [cb, opts] = [opts, {}];
+  if (opts?.all) return process.nextTick(cb, null, [{ address: "127.0.0.1", family: 4 }]);
+  process.nextTick(cb, null, "127.0.0.1", 4);
+};
+`;
+
+for (const source of ["ISKRON_BRIDGE_URL", "the server file"]) {
+  for (const [host, lang] of [
+    ["fake.iskron.ai", "en"],
+    ["fake.iskron.ru", "ru"],
+    ["127.0.0.1", "ru"],
+  ]) {
+    test(`without ISKRON_BRIDGE_LANG, a server on ${host} named by ${source} makes the bridge ask for ${lang} and send locale ${lang}`, async (t) => {
+      if (process.env.ISKRON_NODE) return t.skip("the resolver preload rides NODE_OPTIONS");
+      const fake = await startFakeNks({ pat: PAT });
+      const dir = mkdtempSync(join(tmpdir(), "iskron-stand-lang-by-server-"));
+      const preload = join(dir, "resolve-fake.cjs");
+      writeFileSync(preload, RESOLVE_FAKE);
+      const url = new URL(fake.mcpUrl);
+      url.hostname = host;
+      const env = {
+        NODE_OPTIONS: `--require ${preload}`,
+        ISKRON_BRIDGE_LANG: undefined,
+        ISKRON_BRIDGE_URL: undefined,
+      };
+      if (source === "ISKRON_BRIDGE_URL") env.ISKRON_BRIDGE_URL = url.href;
+      else writeFileSync(join(dir, "server"), url.href + "\n");
+      const bridge = startBridge(null, dir, process.cwd(), env);
+      t.after(async () => {
+        await bridge.stop();
+        await fake.stop();
+      });
+      assert.ok((await bridge.call("initialize", INIT)).result, bridge.stderr);
+      const r = await bridge.call("tools/call", {
+        name: "iskron_stand",
+        arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
+      });
+      assert.ok(!r.result?.isError, textOf(r));
+      for (const action of ["connect", "register"]) {
+        const got = sentToChannel(fake).find((x) => x.action === action);
+        assert.equal(got?.locale, lang, `${action}: ${JSON.stringify(sentToChannel(fake))}`);
+      }
+      assert.deepEqual([...fake.state.acceptLanguage], [lang]);
+    });
+  }
+}
 
 // The fake treats a tool call as the server does: an argument the tool's schema in
 // fixtures/surface.json does not declare is dropped silently, not refused. The one
@@ -3819,7 +4011,7 @@ const SERVER_TOOLS = [
   ),
   {
     // Описание пишущего тула у сервера длиннее 2048 знаков — предела, до которого
-    // Claude Code режет описание: строка моста в хвосте до агента не доходит.
+    // Claude Code режет описание.
     name: "iskron_add_vimarsha",
     description: "Создаёт вопрошание. ".repeat(160),
     inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
@@ -3861,10 +4053,10 @@ test("every bridge: the harness sees iskron_channel without the place moves and 
       channel.description.indexOf('action="leave"') < channel.description.indexOf("Открывает"),
     channel.description,
   );
+  // Write tools reach the harness as the server sent them: the bridge adds no line (#7557).
   for (const name of ["iskron_add_vimarsha", "iskron_batch"]) {
-    const d = byName[name].description;
-    assert.ok(d.startsWith("[мост] Момент скилла writing"), `${name}: ${d.slice(0, 80)}`);
-    assert.ok(d.length > 2048, "the server's own text follows the line");
+    const served = SERVER_TOOLS.find((x) => x.name === name).description;
+    assert.equal(byName[name].description, served, `${name}: byte for byte`);
   }
   // The shared answers cache keeps the server's whole schema: other bridges read it.
   const cached = JSON.parse(
@@ -4184,6 +4376,57 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
   assert.equal(fake.state.counts.list, lists, "no board read");
 });
 
+// A satellite's model is the harness's (#7591): a full stand without it means the harness
+// did not name one — the seat's earlier model goes, not published again; a new one replaces it.
+test("satellite: a repeated full stand without a model drops the seat's earlier model; a new model replaces it", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const lastModel = () => {
+    const p = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`).at(-1);
+    assert.ok(p, JSON.stringify(fake.state.placeArgs));
+    return p.model;
+  };
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  assert.equal(lastModel(), "model-a");
+  // The seat as the api keeps it: register without model leaves the earlier one (#4032).
+  const [id] = [...fake.state.seatModels].find(([, m]) => m === "model-a") ?? [];
+  assert.ok(id, JSON.stringify([...fake.state.seatModels]));
+  const registers = fake.state.counts.register_standing;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.counts.register_standing > registers, "the repeat registers the seat");
+  assert.equal(lastModel(), undefined, "no model from the harness — none on the seat");
+  assert.equal(fake.state.seatModels.get(id), undefined, "the api no longer keeps model-a");
+  const patch = fake.state.seatPatches.find((x) => x.id === id);
+  assert.deepEqual(patch?.body, { model: null }, JSON.stringify(fake.state.seatPatches));
+  assert.match(patch.auth ?? "", /^Bearer /, "with the key that opened the seat");
+  assert.equal(patch.realm, "@nks/nks-dev", "the seat's graph, as the api requires (#99)");
+  assert.doesNotMatch(textOf(none), /not cleared|не снята/, textOf(none));
+  const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  assert.equal(lastModel(), "model-b");
+  assert.equal(fake.state.seatModels.get(id), "model-b");
+});
+
+// The clearing PATCH refused (#7591): the stand still stands, and its answer says in one line
+// that the earlier model stays.
+test("satellite: a refused clearing of the seat's model leaves the stand standing and says so", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  fake.state.seatPatchRefuse = 503;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.seatPatches.length > 0, "the clearing was tried");
+  const said = textOf(none)
+    .split("\n")
+    .filter((l) => /не снята/.test(l));
+  assert.equal(said.length, 1, textOf(none));
+  assert.match(said[0], /Прежняя модель места не снята \(503/, said[0]);
+});
+
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без
@@ -4473,7 +4716,7 @@ test("the bridge asks the server for fields on every handshake; a harness that d
   assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
 });
 
-test("outputSchema rides tools/list to a harness that asked for fields through the narrowing and the moment line", async (t) => {
+test("outputSchema rides tools/list to a harness that asked for fields through the narrowing", async (t) => {
   const schema = (key) => ({
     type: "object",
     properties: { [key]: { type: "array", items: { type: "object" } } },
@@ -4496,6 +4739,376 @@ test("outputSchema rides tools/list to a harness that asked for fields through t
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");
   assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
-  assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
+  const served = SERVER_TOOLS.find((x) => x.name === "iskron_add_vimarsha");
+  assert.equal(byName.iskron_add_vimarsha.description, served.description, "byte for byte");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
+});
+
+// ── the owner's stop (graph nks-dev: #7439, #7440, #7493) ───────────────────
+// A foreign close 4001 is the owner taking the seat off, not a dead token: the agent and its
+// seat have one life, so the bridge lets the seat go with its record and binding, says
+// «ты остановлен» and no automatic path takes it again — not the plugin's return or hearing
+// check, not a new bridge of the same home. The name stays free: an explicit iskron_stand
+// stands as usual. api 0.121.0 sends standing_ended for one seat of a live channel instead.
+const STOP_KEY = "proba--931--nks-dev";
+const sayStop = /место proba снято \(человеком\) — ты остановлен: работу кончи, место не занимай/;
+const stoppedEv = (bridge) =>
+  bridge.notifications.find((n) => n.params?.data?.kind === "stopped")?.params.data;
+
+test("#7440: the owner's 4001 stops the doer — no second connect or held on any automatic path; the name stays free", async (t) => {
+  const { fake, dir, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  const stand = (b, a) => b.call("tools/call", { name: "iskron_stand", arguments: a });
+  assert.ok(!(await stand(bridge, args)).result?.isError);
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, sayStop);
+  assert.doesNotMatch(stoppedEv(bridge).text, /connect|take/, "a stop calls for no move");
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+  const journal = () => readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal(), /stopped proba--931--nks-dev: close 4001 \(revoked:person\)/);
+  // The plugin's return and hearing check by key, a new bridge of the same home: no return.
+  for (const m of ["iskron/resume", "iskron/check"]) {
+    const r = await bridge.call(m, { key: STOP_KEY });
+    assert.notEqual(r.result?.resumed, true, `${m}: ${JSON.stringify(r.result)}`);
+  }
+  const next = startBridge(fake.mcpUrl, dir);
+  t.after(() => next.stop());
+  assert.ok((await next.call("initialize", INIT)).result);
+  const back = await next.call("iskron/resume", { key: STOP_KEY, cwd: process.cwd() });
+  assert.notEqual(back.result?.resumed, true, JSON.stringify(back.result));
+  assert.equal(fake.state.counts.connect, 1, "no automatic path took the stopped seat");
+  assert.equal(journal().match(/ held /g)?.length, 1, journal());
+  // The name is free: the human's explicit iskron_stand stands as usual.
+  const again = await stand(next, args);
+  assert.ok(!again.result?.isError, textOf(again));
+  assert.equal(fake.state.counts.connect, 2);
+});
+
+// Review of #7440: releasing the seat flushed the open batch, so a wake reached the session
+// after the stop word and woke the stopped agent again. On the stop the batch is dropped.
+test("#7440: a batch the bridge still holds is dropped on the owner's 4001, not given after the stop word", async (t) => {
+  const { fake, dir, bridge } = await ready(
+    t,
+    { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+    { ISKRON_BRIDGE_BACKLOG_MS: "3000" },
+  );
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  for (const id of ["w1", "w2"])
+    await fake.control({ ws_send: JSON.stringify({ id, type: "message", body: `кадр ${id}` }) });
+  await new Promise((r) => setTimeout(r, 200));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  await new Promise((r) => setTimeout(r, 3500));
+  const kinds = bridge.notifications.map((n) => n.params?.data?.kind).filter(Boolean);
+  const after = kinds.slice(kinds.indexOf("stopped"));
+  assert.ok(
+    !after.some((k) => ["backlog", "frame", "stale", "resumed"].includes(k)),
+    `nothing wakes the session after the stop: ${after}`,
+  );
+  assert.ok(!kinds.includes("backlog"), `the held batch is not given at all: ${kinds}`);
+  const journal = readFileSync(join(dir, "standings.log"), "utf8");
+  assert.match(journal, /stopped proba--931--nks-dev: 2 undelivered frame\(s\) dropped/, journal);
+});
+
+test("#7440: standing_ended for the main seat is the same stop as the owner's 4001", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  const id = [...fake.state.channels.values()][0].places.values().next().value.standing_id;
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: id, by: "person" }),
+  });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, sayStop);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+});
+
+// Review of #7440: standing_ended for the main seat outran the answer of the session's own
+// revoke or close and was read as the owner's stop — the quiet release became a stopped session.
+for (const action of ["revoke", "close"])
+  test(`#7440: standing_ended outrunning the answer of one's own ${action} is a quiet release, not a stop`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ endedFrame: true, revokeReplyDelayMs: 600 });
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: "nks-dev", karta: 931, standing: "proba" }
+          : { action, realm: "nks-dev" },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+    assert.match(
+      bridge.stderr,
+      /by this session — released quietly.*standing_ended arrived before the answer/,
+      bridge.stderr,
+    );
+  });
+
+test("#7440: standing_ended for a seat beside forgets that seat only — the main seat holds, no stop, no wake", async (t) => {
+  const { fake, bridge, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const before = bridge.notifications.length;
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "standing_ended",
+      standing_id: idOf(DRUGOY, "proba-b"),
+      by: "self",
+    }),
+  });
+  await until(
+    () => /that seat beside is forgotten/.test(bridge.stderr),
+    "the seat beside forgotten",
+  );
+  assert.match(bridge.stderr, /место proba-b снято \(сессией той же учётки\)/);
+  const after = bridge.notifications.slice(before).map((n) => n.params?.data?.kind);
+  assert.ok(
+    !after.some((k) => ["stopped", "released", "dead", "lost", "frame"].includes(k)),
+    `${after}`,
+  );
+  assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
+  assert.equal(fake.state.counts.connect, 1);
+});
+
+// #6987: karta="#931" — the form the bridge itself prompts in its refusals — was compared raw
+// with the held normalized 931, so one's own revoke read as another's 4001: «ты остановлен».
+const OWN_FORMS = [
+  ["#931", "proba"],
+  ["931", "proba"],
+  [931, "proba"],
+  ["#931", "@tester:proba"],
+];
+for (const [karta, standing] of OWN_FORMS)
+  test(`#6987: one's own revoke of the main seat with karta ${JSON.stringify(karta)}, standing ${standing} — a quiet release, no stop`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "revoke", realm: "nks-dev", karta, standing },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(!stoppedEv(bridge), `one's own revoke is no stop:\n${bridge.stderr}`);
+    assert.doesNotMatch(bridge.stderr, /ты остановлен/, bridge.stderr);
+    assert.match(bridge.stderr, /standing revoked by this session — released quietly/);
+  });
+
+for (const karta of ["#48", "48", 48])
+  test(`#6987: one's own revoke of the seat beside with karta ${JSON.stringify(karta)} — a quiet release, no stop word`, async (t) => {
+    const { fake, bridge } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+    );
+    await fake.control({ endedFrame: true, revokeReplyDelayMs: 600 });
+    const own = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "revoke", realm: DRUGOY, karta, standing: "proba-b" },
+    });
+    assert.ok(!own.result?.isError, textOf(own));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), bridge.stderr);
+    assert.doesNotMatch(bridge.stderr, /ты остановлен/, bridge.stderr);
+    assert.match(bridge.stderr, /seat beside \S+ released quietly/, bridge.stderr);
+    assert.equal(fake.state.ws.size, 1, "the main seat's socket stays");
+  });
+
+// The control: a 4001 the session did not ask for stays the stop, whatever form its own calls use.
+test('#6987: control — another\'s 4001 after a stand with karta "#931" is still the stop', async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: "#931", name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:self" });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, /ты остановлен/);
+});
+
+// Review of #7440: the seat beside taken off by another came to its watchdog as the session's
+// own release, and watchdog-codex put the count it had piled up into the thread — the end of
+// a seat beside woke the doer. Each watchdog of that seat falls silent: no turn, no line, no exit.
+for (const sub of ["watchdog-codex", "watchdog", "watchdog-exit"])
+  test(`#7504: standing_ended for a seat beside — its ${sub} wakes nobody and stays, the piled-up count unput`, async (t) => {
+    const { fake, dir, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, sub, keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    const before = w.out;
+    await fake.control({
+      ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+    });
+    await pause(1500);
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+    assert.equal(w.out, before, `no line to the doer:\n${w.out}`);
+    assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+  });
+
+// Review of #7504: standing_ended for a seat beside outran the answer of the session's own
+// revoke of that seat, or of its own close of the channel, and was read as another's taking it
+// off — the seat's watchdog fell silent instead of leaving with exit 0, watchdog-codex kept
+// the count it had piled up. The control, another's taking it off, is the #7504 probe above.
+for (const action of ["revoke", "close"])
+  test(`#7504: standing_ended for a seat beside outrunning the answer of one's own ${action} — its watchdog-codex puts the count and leaves with exit 0`, async (t) => {
+    const { fake, dir, bridge, keyB, idOf } = await twoGraphs(
+      t,
+      { realm: NKS, karta: 931, name: "proba" },
+      { realm: DRUGOY, karta: 48, name: "proba-b" },
+      INIT,
+      async () => {},
+      { ISKRON_BRIDGE_ROOM_BATCH_MS: "200" },
+    );
+    const home = mkdtempSync(join(tmpdir(), "cxd-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const log = join(home, "door.log");
+    writeFileSync(log, "");
+    const door = await startFakeCodex(
+      join(home, "app-server-control", "app-server-control.sock"),
+      log,
+    );
+    t.after(() => door.stop());
+    const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+      env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const w = { out: "", err: "" };
+    proc.stdout.on("data", (c) => (w.out += c));
+    proc.stderr.on("data", (c) => (w.err += c));
+    t.after(() => proc.kill("SIGKILL"));
+    await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+    const idB = idOf(DRUGOY, "proba-b");
+    const counted = { ...progress(44), to_standing_id: idB, to_standing: "@tester:proba-b" };
+    await fake.control({ ws_send: JSON.stringify(counted) });
+    await pause(800); // the batch window passed: the count waits in the watchdog, no turn
+    assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "a count alone starts no turn");
+    await fake.control({
+      endedFrame: action === "close" ? "beside-first" : true,
+      revokeReplyDelayMs: 1500,
+    });
+    const own = bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments:
+        action === "revoke"
+          ? { action, realm: DRUGOY, karta: 48, standing: "proba-b" }
+          : { action, realm: NKS },
+    });
+    // Before the answer: the frame alone must already end the seat as the session's own.
+    await waitUntil(() => proc.exitCode !== null, `the watchdog to leave:\n${w.out}${w.err}`);
+    assert.equal(proc.exitCode, 0, `one's own release, not another's:\n${w.out}${w.err}`);
+    assert.match(readFileSync(log, "utf8"), /turn\/start/, "the piled-up count is put");
+    const r = await own;
+    assert.ok(!r.result?.isError, textOf(r));
+    assert.ok(!stoppedEv(bridge), `one's own ${action} is no stop:\n${bridge.stderr}`);
+  });
+
+// Review of #7504: a frame for the seat beside waited for the Codex door to open, the seat was
+// taken off by another meanwhile, and its turn/start still went out once the door opened —
+// the doer woke. The seat beside taken off cancels what waits for the door; nothing goes out.
+test("#7504: a seat beside taken off while its frame waits for a slow Codex door — no turn/start after the door opens", async (t) => {
+  const { fake, dir, keyB, idOf } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "proba" },
+    { realm: DRUGOY, karta: 48, name: "proba-b" },
+  );
+  const home = mkdtempSync(join(tmpdir(), "cxd-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+    { upgradeDelayMs: 1200 },
+  );
+  t.after(() => door.stop());
+  const proc = spawn(NODE, [FILE, "watchdog-codex", keyB, "--auth-dir", dir], {
+    env: { ...process.env, CODEX_HOME: home, CODEX_THREAD_ID: "thread-b" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const w = { out: "", err: "" };
+  proc.stdout.on("data", (c) => (w.out += c));
+  proc.stderr.on("data", (c) => (w.err += c));
+  t.after(() => proc.kill("SIGKILL"));
+  await waitUntil(() => /слушаю стояние/.test(w.out + w.err), "the watchdog to attach");
+  const idB = idOf(DRUGOY, "proba-b");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "message", id: "b-slow", to_standing_id: idB, body: "к B" }),
+  });
+  await pause(200); // the frame waits for the door's upgrade
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: idB, by: "person" }),
+  });
+  await pause(2000); // the upgrade answered long ago
+  assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, `no turn:\n${w.err}`);
+  assert.equal(proc.exitCode, null, `the watchdog stays:\n${w.out}${w.err}`);
+});
+
+test("#7440: a stop without a reason names the owner or another session; revoked:self names the account's session", async (t) => {
+  for (const [reason, who] of [
+    ["", /снято \(владельцем или другой сессией\)/],
+    ["revoked:self", /снято \(сессией той же учётки\)/],
+  ]) {
+    const { fake, bridge } = await ready(t);
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await fake.control({ ws_close: 4001, ws_close_reason: reason });
+    await until(() => stoppedEv(bridge), "the stop word");
+    assert.match(stoppedEv(bridge).text, who, reason);
+  }
 });

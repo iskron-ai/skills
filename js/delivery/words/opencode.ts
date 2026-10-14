@@ -45,8 +45,16 @@ export interface OpencodeWords {
   tactWaitsFolded: () => string;
   /** text — начало кадра. */
   childGone: (frame: string, id: string, text: string) => string;
+  /** text — начало кадра. */
+  childEnded: (frame: string, id: string, text: string) => string;
   sessionClosed: (id: string, frame: string) => string;
   nowhere: (frame: string, text: string) => string;
+  halted: (frame: string, id: string) => string;
+  /** The pulse (#7529): the session holds so many frames laid and not taken by its turn yet. */
+  pulseOverflow: (id: string, waiting: number) => string;
+  haltUnwritten: (id: string, message: string) => string;
+  /** kept — the record could not be rewritten as lifted either. */
+  haltUnlifted: (id: string, message: string, kept: boolean) => string;
   delivered: (frame: string, id: string) => string;
   notDelivered: (frame: string, id: string, message: string) => string;
   held: (key: string) => string;
@@ -104,11 +112,24 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childGone: (frame, id, text) =>
       `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; ` +
       `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
+    childEnded: (frame, id, text) =>
+      `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; кадр остаётся в истории стояния — ${text}`,
     sessionClosed: (id, frame) =>
       `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` +
       text,
+    halted: (frame, id) =>
+      `Искрон: ${frame} не вложен — сессия ${id} остановлена снятием места, до нового явного занятия места она не будится`,
+    pulseOverflow: (id, waiting) =>
+      `Искрон: в сессии ${id} ждут хода уже ${waiting} вложенных кадров — OpenCode их не берёт; пульс держит их все`,
+    haltUnwritten: (id, message) =>
+      `Искрон: остановка сессии ${id} не записана на диск (${message}) — запрет держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
+    haltUnlifted: (id, message, kept) =>
+      `Искрон: сессия ${id} снова на месте, запрет снят, но запись остановки на диске не удалена (${message}) — ` +
+      (kept
+        ? "переписать её снятой тоже не вышло: после перезагрузки плагина сессия снова будет считаться остановленной"
+        : "она переписана как снятая"),
     delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
@@ -167,11 +188,24 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childGone: (frame, id, text) =>
       `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; ` +
       `the frame stays in the standing's history (iskron_channel history); the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
+    childEnded: (frame, id, text) =>
+      `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; the frame stays in the standing's history — ${text}`,
     sessionClosed: (id, frame) =>
       `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; the frame stays in the standing's history — ` +
       text,
+    halted: (frame, id) =>
+      `Iskron: ${frame} not delivered — session ${id} was stopped by taking its seat off; it is not woken until it takes a seat again explicitly`,
+    pulseOverflow: (id, waiting) =>
+      `Iskron: ${waiting} frames laid into session ${id} wait for its turn — OpenCode does not take them; the pulse keeps them all`,
+    haltUnwritten: (id, message) =>
+      `Iskron: the stop of session ${id} was not written to disk (${message}) — only the live plugin instances of this process keep the ban, it will not survive a reload`,
+    haltUnlifted: (id, message, kept) =>
+      `Iskron: session ${id} holds a seat again and its ban is lifted, but the stop's record on disk was not removed (${message}) — ` +
+      (kept
+        ? "rewriting it as lifted failed too: after a plugin reload the session will count as stopped again"
+        : "it is rewritten as lifted"),
     delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
     notDelivered: (frame, id, message) =>
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,

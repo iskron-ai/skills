@@ -29,7 +29,13 @@ const SILENT_INTERVALS = 3;
 const SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 60_000;
 
 /** Closes after which the same token never reopens. */
-export const DEAD_TOKEN_CODES = [4001, 4002];
+export const DEAD_TOKEN_CODES = [4002];
+/**
+ * Revoked: the seat was taken off for good (graph @nks/nks-dev, nodes #2319, #7439). Not a
+ * dead token: unless the session revoked it itself, its owner stopped the doer — the
+ * holder yields with the close reason and no return.
+ */
+export const STOPPED_CODE = 4001;
 /**
  * Eviction: another holder owns the channel. Not a dead token and no reason to reopen —
  * the same address would evict the new holder and it us (observed ping-pong). The
@@ -57,7 +63,12 @@ function httpOrigin(socketUrl: string): string {
 }
 
 export function versionUrl(socketUrl: string): string {
-  return httpOrigin(socketUrl) + "/api/version";
+  return apiBase(socketUrl) + "/version";
+}
+
+/** The api beside the channel: the socket's origin under /api (graph @nks/nks-dev, node #7510). */
+export function apiBase(socketUrl: string): string {
+  return httpOrigin(socketUrl) + "/api";
 }
 
 /**
@@ -175,6 +186,8 @@ export interface HoldOptions {
   onFrame: (raw: string, frame: Frame | null) => void;
   /** Dead token: holding is over, no return with the same token. Called once. */
   onDeadToken: (code: number) => void;
+  /** Revoked (4001): the seat is gone for good; `reason` — the close reason, "" if none. Called once. */
+  onStopped: (code: number, reason: string) => void;
   /** Eviction: another holder listens on the seat, holding is over, the binding intact. Called once; absent — as a dead token. */
   onEvicted?: (code: number) => void;
   /** Drops while the service is up: holding goes slower, the token question to the doer. Once per run of drops. */
@@ -196,6 +209,8 @@ export interface Holder {
    * no reopen. No socket — onGone at once.
    */
   handOff(onFrame: (raw: string) => void, onGone: (code: number) => void): void;
+  /** A frame to the service on the open socket; false — not open now, nothing sent. */
+  send(text: string): boolean;
   /** Whether the socket is alive (open or opening). */
   readonly alive: boolean;
   /** Last sign of the service (ping or frame), epoch ms; 0 — none. An open attempt is not a sign. */
@@ -280,7 +295,10 @@ export function holdSocket(o: HoldOptions): Holder {
     sock.addEventListener("error", () =>
       setTimeout(() => void dropped(1006), ERROR_GUESS_DELAY_MS),
     );
-    sock.addEventListener("close", (e) => void dropped((e as unknown as { code: number }).code));
+    sock.addEventListener("close", (e) => {
+      const c = e as unknown as { code: number; reason?: string };
+      void dropped(c.code, typeof c.reason === "string" ? c.reason : "");
+    });
 
     function watchLife(interval: number): void {
       stopWatch();
@@ -320,7 +338,7 @@ export function holdSocket(o: HoldOptions): Holder {
       cb(code);
     }
 
-    async function dropped(code: number): Promise<void> {
+    async function dropped(code: number, reason = ""): Promise<void> {
       if (stopped || ws !== sock) return;
       stopWatch();
       if (handing) {
@@ -334,6 +352,7 @@ export function holdSocket(o: HoldOptions): Holder {
       // A dead token beats any drop guess and eviction: it always passes the `gone`
       // fence and cancels a scheduled reopen.
       if (DEAD_TOKEN_CODES.includes(code)) return yieldTo(o.onDeadToken, code);
+      if (code === STOPPED_CODE) return yieldTo((c) => o.onStopped(c, reason), code);
       // Eviction — yield aloud at once, never reopening; passes the fence likewise.
       if (code === EVICTED_CODE) return yieldTo(o.onEvicted ?? o.onDeadToken, code);
       if (gone) return;
@@ -391,6 +410,15 @@ export function holdSocket(o: HoldOptions): Holder {
       retry = null;
       stopWatch();
       handing = { onFrame, onGone };
+    },
+    send(text) {
+      if (stopped || handing || !ws || ws.readyState !== 1) return false;
+      try {
+        ws.send(text);
+        return true;
+      } catch {
+        return false;
+      }
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);

@@ -121,9 +121,11 @@ function fakePi({ hasUI = true } = {}) {
   const notices = [];
   const statuses = [];
   let idle = true; // ход агента не идёт — как ctx.isIdle() pi
+  const aborts = []; // ctx.abort() — прерывание идущего хода
   const ctx = {
     hasUI,
     isIdle: () => idle,
+    abort: () => aborts.push(Date.now()),
     ui: {
       notify: (text, level) => notices.push({ text, level }),
       setStatus: (key, text) => statuses.push({ key, text }),
@@ -162,6 +164,7 @@ function fakePi({ hasUI = true } = {}) {
     notices,
     statuses,
     handlers,
+    aborts,
     /** Ход занят (true) или свободен — что вернёт ctx.isIdle(). */
     busy(on) {
       idle = !on;
@@ -190,6 +193,8 @@ const ENV_KEYS = [
   "FB_REPLY",
   "FB_INIT_CAPS",
   "FB_CALLS",
+  "FB_EVENTS",
+  "FB_PULSE_REFUSE",
   "FB_STAND_HELD",
   "FB_ENV",
   "ISKRON_HARNESS_VERSION",
@@ -615,6 +620,88 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
   }
 });
 
+// The turn's word for the seat's pulse (graph nks-dev: #7529) belongs to its session: a new
+// session_start raises a new bridge, and the old session's turn_at and read_at do not ride to it.
+test("a new session's pulse carries none of the previous session's turn and read clocks", async () => {
+  const calls = join(SANDBOX, "pulse-reset.calls");
+  const { env } = bridgeEnv("pulse-reset", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && !pulses().some((p) => p.arguments.turn_at); i++) await delay(40);
+    const old = pulses().at(-1).arguments;
+    assert.ok(old.turn_at && old.read_at, `the old session's clocks: ${JSON.stringify(old)}`);
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const before = pulses().length;
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && pulses().length === before; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" }, "the new session's own word");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A daemon swapped mid-turn starts with an empty word (thin.ts replays only initialize and
+// resume); its "held" brings the session's last word back to it at once, not at the next event.
+test("a seat held again mid-turn — a new daemon — gets the turn's last word: busy and its clocks", async () => {
+  const calls = join(SANDBOX, "pulse-held.calls");
+  const { events, env } = eventsEnv("pulse-held", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const settle = async (n) => {
+    for (let i = 0; i < 50 && pulses().length < n; i++) await delay(40);
+  };
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await settle(4);
+    const last = pulses().at(-1).arguments;
+    assert.ok(last.state === "busy" && last.turn_at && last.read_at, JSON.stringify(last));
+    push(events, { kind: "held", key: "k", place: { realm: "r5", karta: "931", name: "p" } });
+    await settle(5);
+    assert.equal(pulses().length, 5, "the held seat got the word again");
+    assert.deepEqual(pulses().at(-1).arguments, last);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The turn's end the bridge refused is told again: with no event after it, the seat is not left
+// busy (#7529).
+test("an idle the bridge refused reaches it on the retry: the seat is not left busy", async () => {
+  const calls = join(SANDBOX, "pulse-refused.calls");
+  const refuse = join(SANDBOX, "pulse-refused.refuse");
+  const { env } = bridgeEnv("pulse-refused", { FB_CALLS: calls, FB_PULSE_REFUSE: refuse });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && !pulses().length; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" });
+    writeFileSync(refuse, "");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && existsSync(refuse); i++) await delay(40);
+    assert.ok(!existsSync(refuse), "the idle refused");
+    assert.equal(pulses().length, 1, "the refused idle is not taken");
+    for (let i = 0; i < 125 && pulses().length === 1; i++) await delay(40);
+    const last = pulses().at(-1).arguments;
+    assert.equal(last.state, "idle", "the idle taken on the retry");
+    assert.ok(last.turn_at, "the turn's end comes with it");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
   const calls = join(SANDBOX, "launch-tail.calls");
   const { log, env } = bridgeEnv("launch-tail", {
@@ -651,6 +738,76 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
     );
   } finally {
     await rec.stop();
+  }
+});
+
+// №680 (#7591): the satellite's seat names the model pi runs on — the harness's, not the agent's
+// word — on the launch line and on the agent's own satellite stand; a busy line alone stays one.
+test("a satellite's stand carries pi's model; a busy line alone does not", async () => {
+  const calls = join(SANDBOX, "launch-model.calls");
+  const { env } = bridgeEnv("launch-model", {
+    FB_TOOLS: STAND_AND_CASE,
+    FB_CALLS: calls,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const rec = await session(env);
+  rec.ctx.model = { id: "gpt-6.1-sol", provider: "openai" };
+  try {
+    await prompt(rec, "start @nks/nks-dev #48 дело №77 от @me:host.repo");
+    const stand = rec.tools.get("iskron_stand");
+    const own = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", model: "agent-says" };
+    await stand.execute("id", own, undefined, () => {}, rec.ctx);
+    const busy = { realm: "@nks/nks-dev", satellite_of: "@me:host.repo", status: "чиню" };
+    await stand.execute("id", busy, undefined, () => {}, rec.ctx);
+    assert.deepEqual(
+      toolCalls(calls)
+        .filter((c) => c.name === "iskron_stand")
+        .map((c) => c.arguments.model),
+      ["gpt-6.1-sol", "gpt-6.1-sol", undefined],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №680 review: a busy line is one only while the bridge holds a seat — the first stand with a
+// status takes the seat and names the model; and the agent's model never stands in for pi's.
+test("a satellite's first stand with a status takes the seat with pi's model, as does a status in another graph, but not one in a graph it holds a seat beside in; without pi's model there is none, not the agent's", async () => {
+  const sol = "gpt-6.1-sol";
+  for (const [label, model, said, want] of [
+    ["first-busy", { id: sol, provider: "openai" }, {}, [sol, undefined, sol, undefined]],
+    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined, undefined, undefined]],
+  ]) {
+    const calls = join(SANDBOX, `sat-${label}.calls`);
+    const { env } = bridgeEnv(`sat-${label}`, {
+      FB_TOOLS: STAND_AND_CASE,
+      FB_CALLS: calls,
+      FB_STAND_HELD: "host.repo.opus-5",
+    });
+    const rec = await session(env);
+    rec.ctx.model = model;
+    try {
+      const stand = rec.tools.get("iskron_stand");
+      const args = { realm: "@nks/nks-dev", karta: 931, satellite_of: "@me:host.repo" };
+      const first = { ...args, status: "чиню", ...said };
+      await stand.execute("id", first, undefined, () => {}, rec.ctx);
+      await stand.execute("id", { ...args, status: "дальше" }, undefined, () => {}, rec.ctx);
+      // The seat is held in @nks/nks-dev only: in another graph the bridge takes one.
+      const other = { ...args, realm: "@nks/drugoy", status: "там" };
+      await stand.execute("id", other, undefined, () => {}, rec.ctx);
+      // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+      const again = { realm: "@nks/drugoy", satellite_of: "@me:host.repo", status: "там же" };
+      await stand.execute("id", again, undefined, () => {}, rec.ctx);
+      assert.deepEqual(
+        toolCalls(calls)
+          .filter((c) => c.name === "iskron_stand")
+          .map((c) => c.arguments.model),
+        want,
+        label,
+      );
+    } finally {
+      await rec.stop();
+    }
   }
 });
 
@@ -826,7 +983,7 @@ test("attention tacts while the turn is busy: none enters it, its end brings one
 // stopped trying; the extension has nowhere to exit to, so "loud" means the
 // doer sees it in the turn.
 test("a dead-token event complains loudly and names connect; mint is offered on no code", async () => {
-  for (const code of [4000, 4001, 4002]) {
+  for (const code of [4000, 4002]) {
     const { events, env } = eventsEnv(`dead${code}`);
     const rec = await session(env);
     try {
@@ -836,16 +993,60 @@ test("a dead-token event complains loudly and names connect; mint is offered on 
       assert.equal(rec.messages[0].msg.details.fatal, true);
       assert.equal(rec.messages[0].opts.triggerTurn, true);
       assert.equal(rec.notices.at(-1).level, "error");
-      assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
-      // connect opens what is not there too; mint answers 409 once the channel
-      // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
-      assert.match(rec.notices.at(-1).text, /action="connect"/);
+      // 4002 — the seat went out after idling, returned by iskron_stand; any other — a dead token.
+      if (code === 4002) {
+        assert.match(rec.notices.at(-1).text, /4002 — место погасло по простою/);
+        assert.match(rec.notices.at(-1).text, /iskron_stand тем же именем/);
+      } else {
+        assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
+        // connect opens what is not there too; mint answers 409 once the channel
+        // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
+        assert.match(rec.notices.at(-1).text, /action="connect"/);
+      }
       assert.doesNotMatch(rec.notices.at(-1).text, /mint/, `код ${code} предлагает mint`);
     } finally {
       await rec.stop();
     }
   }
 });
+
+// #7440: the owner took the seat off (4001, kind "stopped") — the running turn is aborted,
+// the stop word goes as a notice and into the history without raising a turn.
+for (const busy of [true, false])
+  test(`the owner's stop of a ${busy ? "busy" : "waiting"} pi session aborts the turn and raises none`, async () => {
+    const { events, env } = eventsEnv(`stopped-${busy}`);
+    const rec = await session(env);
+    try {
+      rec.busy(busy);
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      push(events, { kind: "stopped", code: 4001, text });
+      await delay(250);
+      assert.equal(rec.aborts.length, busy ? 1 : 0, "only a running turn is aborted");
+      assert.equal(rec.notices.at(-1).level, "error");
+      assert.match(
+        rec.notices.at(-1).text,
+        /Искрон: место proba снято \(человеком\) — ты остановлен/,
+      );
+      assert.equal(rec.messages.length, 1, "the stop word is in the history");
+      assert.equal(rec.messages[0].opts.triggerTurn, false, "the stop raises no turn");
+      assert.doesNotMatch(rec.messages[0].msg.content, /connect/);
+      // Nothing of the channel raises a turn afterwards — until an explicit stand (held).
+      rec.busy(false);
+      push(events, { kind: "frame", frame: { type: "message", id: "late-1", body: "после" } });
+      push(events, { kind: "backlog", frames: [{ id: "b1" }], marks: ["b1"], text: "Побудка" });
+      push(events, { kind: "stale", frames: [{ id: "s1" }], text: "Лежалых кадров: 1" });
+      push(events, { kind: "evicted", code: 4000, text: "отняли" });
+      await delay(250);
+      assert.equal(rec.messages.length, 1, `no word after the stop: ${rec.messages.length}`);
+      push(events, { kind: "held", key: "k" });
+      push(events, { kind: "frame", frame: { type: "message", id: "again", body: "снова" } });
+      await delay(250);
+      assert.equal(rec.messages.length, 2, "delivery after an explicit stand");
+      assert.equal(rec.messages[1].opts.triggerTurn, true);
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // A burst of stale frames is one message into the turn, bodies included.
 // The dictionary of room kinds (#5851): event_kind decides the way into the
@@ -1735,8 +1936,8 @@ const SPEECH = {
       ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
     ],
     listening: "Iskron: the channel is listening",
-    dead: (code) =>
-      `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
+    dead: () =>
+      "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name.",
   },
   ru: {
     missing: [
@@ -1744,8 +1945,8 @@ const SPEECH = {
       ". Задай ISKRON_BRIDGE_PATH или поставь мост скиллом establish-mcp.",
     ],
     listening: "Искрон: канал слушает",
-    dead: (code) =>
-      `Искрон: канал закрыт кодом ${code} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    dead: () =>
+      "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем.",
   },
 };
 
@@ -1755,7 +1956,7 @@ for (const [lang, chosen, label] of [
   ["ru", { ISKRON_BRIDGE_LANG: "ru" }, "ISKRON_BRIDGE_LANG=ru"],
 ]) {
   const say = SPEECH[lang];
-  test(`${label}: the missing bridge, the listening channel and a dead token are said in ${lang}`, async () => {
+  test(`${label}: the missing bridge, the listening channel and a seat gone idle are said in ${lang}`, async () => {
     const none = await session({
       ISKRON_BRIDGE_PATH: MISSING_BRIDGE,
       ISKRON_MCP_READY_WAIT_MS: 15000,
@@ -1776,17 +1977,17 @@ for (const [lang, chosen, label] of [
       push(events, frame({ type: "hello", pending: 0 }));
       await delay(250);
       assert.deepEqual(rec.statuses.at(-1), { key: "iskron", text: say.listening });
-      push(events, { kind: "dead", code: 4001, text: "DOER: close 4001" });
+      push(events, { kind: "dead", code: 4002, text: "DOER: close 4002" });
       await delay(250);
-      assert.equal(rec.notices.at(-1).text, say.dead(4001));
-      assert.equal(rec.messages.at(-1).msg.content, say.dead(4001));
+      assert.equal(rec.notices.at(-1).text, say.dead());
+      assert.equal(rec.messages.at(-1).msg.content, say.dead());
     } finally {
       await rec.stop();
     }
   });
 }
 
-test("the bridge the extension raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, none under ru", async () => {
+test("the bridge the extension raises speaks the session language: accept-language en under ISKRON_BRIDGE_LANG=en, ru under ru", async () => {
   for (const lang of ["en", "ru"]) {
     const fake = await startFakeNks({ pat: "nks_pat_ext" });
     const rec = await session({
@@ -1799,9 +2000,7 @@ test("the bridge the extension raises speaks the session language: accept-langua
     });
     try {
       assert.ok(rec.tools.has("iskron_stand"), [...rec.tools.keys()].join(","));
-      const asked = [...fake.state.acceptLanguage];
-      if (lang === "en") assert.ok(asked.includes("en"), asked.join(","));
-      else assert.ok(asked.length && !asked.includes("en"), asked.join(","));
+      assert.deepEqual([...fake.state.acceptLanguage], [lang]);
     } finally {
       await rec.stop();
       await fake.stop();

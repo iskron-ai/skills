@@ -20,9 +20,9 @@ const INIT = {
   clientInfo: { name: "stand-probe", version: "0" },
 };
 
-function startBridge(serverUrl, authDir) {
+function startBridge(serverUrl, authDir, extra = []) {
   const notifications = [];
-  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir], {
+  const proc = spawn(NODE, [FILE, serverUrl, "--no-browser", "--auth-dir", authDir, ...extra], {
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -65,14 +65,14 @@ function startBridge(serverUrl, authDir) {
       proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: myId, method, params }) + "\n");
       return p;
     },
-    stop: () =>
+    stop: (killMs = 3000) =>
       proc.exitCode !== null || proc.signalCode !== null
         ? Promise.resolve()
         : new Promise((r) => {
             proc.once("exit", r);
             proc.stdin.end();
             // Не unref: мост, не вышедший по концу stdin, иначе оставил бы пробу без цикла событий.
-            const kill = setTimeout(() => proc.kill("SIGKILL"), 3000);
+            const kill = setTimeout(() => proc.kill("SIGKILL"), killMs);
             proc.once("exit", () => clearTimeout(kill));
           }),
   };
@@ -119,10 +119,12 @@ export async function setup(t) {
     await Promise.all(bridges.map((b) => b.stop()));
     for (const d of scratches.get(t) ?? []) rmSync(d, { recursive: true, force: true });
   });
-  const up = async (authDir = dir) => {
-    const b = startBridge(fake.mcpUrl, authDir);
+  // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
+  // extra — more arguments of the bridge (--satellite).
+  const up = async (authDir = dir, capabilities = INIT.capabilities, extra = []) => {
+    const b = startBridge(fake.mcpUrl, authDir, extra);
     bridges.push(b);
-    assert.ok((await b.call("initialize", INIT)).result);
+    assert.ok((await b.call("initialize", { ...INIT, capabilities })).result);
     return b;
   };
   return { fake, dir, cwd, up };

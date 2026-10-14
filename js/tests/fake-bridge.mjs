@@ -39,13 +39,17 @@
 //                 notifications/tools/list_changed once (and remove the file),
 //                 as the real bridge does after a rollout (#5406).
 //   FB_REPLY      file holding the text of the NEXT tools/call answer; the probe
-//                 rewrites it between calls. "__ERROR__<text>" answers isError.
+//                 rewrites it between calls. "__ERROR__<text>" answers isError;
+//                 "__REFUSAL__<status> <rule|-> <text>" — isError with the api refusal _meta.
 //                 <FB_REPLY>.<tool>, when present, answers only that tool.
+//   FB_REALMS     JSON spelling → graph: iskron_case join/leave/mine model the platform's
+//                 cases of this session by graph identity (callResult); <FB_REPLY>.mine overrides mine.
 //   FB_STAND_HELD place name an iskron_stand says «held» for (satellite: <of>.sub-1).
 //   FB_INITS      file to append "<pid> <ms>" to for every initialize received.
 //   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
+//   FB_PULSE_REFUSE file whose presence refuses the next iskron/pulse once (removed on it).
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -145,7 +149,52 @@ if (process.env.FB_CHANGED) {
   }, 100).unref();
 }
 
-function callResult(name) {
+// The platform's cases of this bridge's session: join and leave of iskron_case move them,
+// mine (relation=participant) answers them in the server's prose. A graph is one by
+// its identity, not its spelling: rN, slug and @owner/slug of one graph are one case
+// (FB_REALMS — JSON spelling → graph; no realm — the seat's graph @nks/nks-dev).
+// <FB_REPLY>.mine, when present, answers mine instead ("__ERROR__…" — a refusal).
+const REALMS = JSON.parse(
+  process.env.FB_REALMS ||
+    JSON.stringify({
+      r5: "@nks/nks-dev",
+      "nks-dev": "@nks/nks-dev",
+      r6: "@nks/methodology",
+      methodology: "@nks/methodology",
+    }),
+);
+const cases = new Set();
+const caseOf = (a) => {
+  const realm = String(a.realm ?? "").trim() || "@nks/nks-dev";
+  return `${REALMS[realm] ?? realm}#${String(a.room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "")}`;
+};
+function mine() {
+  if (!cases.size)
+    return "Дел под запрошенным сужением нет. Без 'relation' это перечисление отвечает ОБЕИМИ половинами.";
+  const rows = [...cases].map((k) => `  №${k.split("#")[1]} · дело ${k} — сижу · @me:sub`);
+  return `Дела этой сессии (${cases.size}):\n${rows.join("\n")}`;
+}
+function noteCase(name, a, result) {
+  if (!/_case$/.test(name ?? "") || result.isError) return;
+  if (a.action === "join" && a.room) cases.add(caseOf(a));
+  if (a.action === "leave") {
+    if (String(a.room ?? "").trim()) cases.delete(caseOf(a));
+    else cases.clear();
+  }
+}
+
+function callResult(name, a = {}) {
+  if (/_case$/.test(name ?? "") && a.action === "mine") {
+    let text = mine();
+    try {
+      text = readFileSync(`${process.env.FB_REPLY}.mine`, "utf8");
+    } catch {
+      /* the platform's own answer */
+    }
+    return text.startsWith("__ERROR__")
+      ? { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] }
+      : { content: [{ type: "text", text }] };
+  }
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
     // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY.
@@ -161,11 +210,22 @@ function callResult(name) {
   if (text.startsWith("__ERROR__")) {
     return { isError: true, content: [{ type: "text", text: text.slice("__ERROR__".length) }] };
   }
+  const refused = /^__REFUSAL__(\d+) (\S+) ([\s\S]*)$/.exec(text);
+  if (refused) {
+    const [, status, rule, prose] = refused;
+    const refusal = { status: Number(status), ...(rule === "-" ? {} : { rule }) };
+    return {
+      isError: true,
+      content: [{ type: "text", text: prose }],
+      _meta: { "iskron/refusal": refusal },
+    };
+  }
   return { content: [{ type: "text", text }] };
 }
 
 let buf = "";
 let usageDelayed = false;
+let mainRealm = null; // the graph of the first seat FB_STAND_HELD holds; others stand beside it
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -259,10 +319,13 @@ process.stdin.on("data", (chunk) => {
         );
       // FB_STAND_HELD: the place name an iskron_stand holds — said as «held» before
       // the answer, as the real bridge says it (js/bridge/hold.ts); a satellite
-      // stands as <satellite_of>.sub-1.
+      // stands as <satellite_of>.sub-1. A seat in another graph than the first held one
+      // stands beside it — said as «beside» (js/bridge/places.ts).
       if (process.env.FB_STAND_HELD && msg.params?.name === "iskron_stand") {
         const a = msg.params.arguments ?? {};
         const name = a.satellite_of ? `${a.satellite_of}.sub-1` : process.env.FB_STAND_HELD;
+        mainRealm ??= a.realm;
+        const beside = a.realm !== mainRealm;
         send({
           jsonrpc: "2.0",
           method: "notifications/message",
@@ -270,14 +333,16 @@ process.stdin.on("data", (chunk) => {
             level: "info",
             logger: "iskron-channel",
             data: {
-              kind: "held",
-              key: `k-${name}`,
+              kind: beside ? "beside" : "held",
+              key: beside ? `k-${name}@${a.realm}` : `k-${name}`,
               place: { realm: a.realm, karta: a.karta, name },
             },
           },
         });
       }
-      ok(msg.id, callResult(msg.params?.name));
+      const result = callResult(msg.params?.name, msg.params?.arguments ?? {});
+      noteCase(msg.params?.name, msg.params?.arguments ?? {}, result);
+      ok(msg.id, result);
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
       // logged in the same shape as a tool call; FB_RESUME names a file whose
@@ -309,6 +374,32 @@ process.stdin.on("data", (chunk) => {
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       ok(msg.id, { suspended: true });
+    } else if (msg.method === "iskron/halted") {
+      // The plugin's stop of a stop order executed or refused (js/bridge/orderhalt.ts, #7519).
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+        );
+      ok(msg.id, { taken: true });
+    } else if (msg.method === "iskron/pulse") {
+      // The session's word on its turn for the seat's pulse (js/bridge/pulse.ts, #7529).
+      // FB_PULSE_REFUSE: a file whose presence makes this one word refused — and it is
+      // removed, so the next word is taken; the refused one is logged as iskron/pulse:refused.
+      const refuse = process.env.FB_PULSE_REFUSE && existsSync(process.env.FB_PULSE_REFUSE);
+      if (refuse) unlinkSync(process.env.FB_PULSE_REFUSE);
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({
+            name: refuse ? `${msg.method}:refused` : msg.method,
+            arguments: msg.params,
+            pid: process.pid,
+          }) + "\n",
+        );
+      if (refuse)
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "pulse refused" } });
+      else ok(msg.id, { taken: true });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).
@@ -318,9 +409,18 @@ process.stdin.on("data", (chunk) => {
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       // FB_END_DELAY_MS — the answer comes this much later: a revoke with its retry, live ~2 s.
+      // FB_END_REVOKED — seats the bridge revoked itself (comma-separated realm|karta|name; a bare
+      // name — as an older bridge answered).
       const failed = (process.env.FB_END_FAILED ?? "").split(",").filter(Boolean);
+      const revoked = (process.env.FB_END_REVOKED ?? "")
+        .split(",")
+        .filter(Boolean)
+        .map((s) => {
+          const [realm, karta, name] = s.split("|");
+          return name ? { realm, karta, name } : s;
+        });
       setTimeout(
-        () => ok(msg.id, { ended: true, failed }),
+        () => ok(msg.id, { ended: true, failed, revoked }),
         Number(process.env.FB_END_DELAY_MS || 0),
       );
     } else if (msg.method === "iskron/usage") {

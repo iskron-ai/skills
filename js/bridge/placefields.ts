@@ -12,7 +12,7 @@ import { harnessName, harnessVersion } from "./client.ts";
 import { CFG } from "./config.ts";
 import { seatField } from "./fields.ts";
 import { normKarta, normName } from "./names.ts";
-import { skillsAttr } from "./skillset.ts";
+import { installedSkills } from "./skillwatch.ts";
 import { log } from "./streams.ts";
 
 // Per session (shared/scope.ts): the machine daemon holds seats of different sessions.
@@ -36,6 +36,11 @@ export function rememberUsage(u: object): void {
   P.usage = u;
 }
 
+/** Read-only snapshot fields; inspecting a place never checks the installed set. */
+export function observedPlaceAttrs(): { usage: object | null; satellite_of: string } {
+  return { usage: P.usage, satellite_of: P.satelliteOf };
+}
+
 /**
  * The caller's seat of a satellite bridge (satellite.ts): the address rides in attrs,
  * the id in the satellite_of field of connect, mint and register (#6064); never outside satellite mode.
@@ -50,8 +55,23 @@ export function rememberModel(m: unknown): void {
   if (typeof m === "string" && m.trim()) P.model = m.trim().replace(/^[^/]*\//, "");
 }
 
+/**
+ * The model of a stand call. A satellite's is the harness's (#7591): none named means none
+ * known, so the earlier one goes rather than being published again; the own seat keeps it.
+ */
+export function rememberStandModel(m: unknown): void {
+  if (CFG.satellite) P.model = "";
+  rememberModel(m);
+}
+
+/** A satellite's seat with no model known: register alone keeps the earlier one (modelclear.ts). */
+export const satelliteWithoutModel = (): boolean => CFG.satellite && !P.model;
+
 /** Seat fields for connect and register: always the full set. */
-export function placeFields(place: Place = {}): {
+export function placeFields(
+  place: Place = {},
+  freshSkills = false,
+): {
   model?: string;
   satellite_of?: string;
   locale?: string;
@@ -69,7 +89,7 @@ export function placeFields(place: Place = {}): {
     attrs: {
       ...extra,
       build: { name: BRIDGE_NAME, version: VERSION, stamp: BUILD.split("+")[1] ?? "" },
-      skills: skillsAttr(),
+      skills: installedSkills(place, freshSkills),
       ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
       ...(usage ? { usage } : {}),
@@ -110,5 +130,5 @@ export function withPlaceFields(args: Record<string, unknown>): Record<string, u
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
     extras.set(placeKey(args), { ...(args.attrs as Record<string, unknown>) });
-  return { ...args, ...placeFields(args) };
+  return { ...args, ...placeFields(args, true) };
 }

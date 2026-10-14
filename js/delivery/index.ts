@@ -8,6 +8,7 @@ export { ACTION_LIST_RE, SEAT_GONE_RE, UNATTRIBUTED_RE } from "./patterns/channe
 export { SERVER_CHOICE } from "./patterns/config.ts";
 export { NOTICE_MARK } from "./patterns/deliver.ts";
 export { LAUNCH_LINE } from "./patterns/launch.ts";
+export { MINE_NONE, MINE_ROW } from "./patterns/mine.ts";
 export { SAT_LOGIN_RE, SAT_OLD_FLAG_RE } from "./patterns/satprobe.ts";
 export {
   BRIDGE_FILE,
@@ -35,6 +36,7 @@ export {
 } from "./product.ts";
 export {
   FRAME_MARK,
+  HALTS_CAPABILITY,
   ID_PREFIX,
   LOGGERS,
   method,
@@ -71,6 +73,7 @@ export { LEAD, type LeadWords } from "./words/leads.ts";
 export { LEAVE, type LeaveWords } from "./words/leave.ts";
 export { LISTEN, type ListenWords } from "./words/listen.ts";
 export { LOST, type LostWords } from "./words/lostplaces.ts";
+export { MACHINE_STATUS, type MachineStatusWords } from "./words/machinestatus.ts";
 export { MOMENT, type MomentWords } from "./words/moment.ts";
 export { NAMES, type NameWords } from "./words/names.ts";
 export { NARROW, type NarrowWords } from "./words/narrow.ts";
@@ -109,9 +112,12 @@ export { STAND, type StandWords } from "./words/stand.ts";
 export { STANDING, type StandingWords } from "./words/standing.ts";
 export { STANDINGS, type StandingsWords } from "./words/standings.ts";
 export { STAND_MISS, type StandMissWords } from "./words/standmiss.ts";
+export { STAND_MOVES, type StandMovesWords } from "./words/standmoves.ts";
 export { STAND_TOOL, type StandToolWords } from "./words/standtool.ts";
 export { STATUS, type StatusWords } from "./words/status.ts";
 export { STATUS_POST, type StatusPostWords } from "./words/statuspost.ts";
+export { STOP, type StopWho, type StopWords } from "./words/stop.ts";
+export { STOP_CLI, type StopCliWords } from "./words/stopcli.ts";
 export { SUBAGENT, type SubagentWords } from "./words/subagents.ts";
 export { SUSPEND, type SuspendWords } from "./words/suspend.ts";
 export { THIN, type ThinWords } from "./words/thin.ts";

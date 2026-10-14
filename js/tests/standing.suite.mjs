@@ -537,11 +537,11 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const wd = runClient("watchdog", dir, key);
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
-  await fake.control({ ws_close: 4001 });
+  await fake.control({ ws_close: 4002 });
   const r = await wd.done;
-  assert.notEqual(r.exit, null, "the watchdog is still alive after a 4001 close");
-  assert.notEqual(r.exit, 0, "the watchdog exited 0 on a dead token");
-  assert.match(wd.out, /токен мёртв/);
+  assert.notEqual(r.exit, null, "the watchdog is still alive after a 4002 close");
+  assert.notEqual(r.exit, 0, "the watchdog exited 0 on a dead seat");
+  assert.match(wd.out, /4002 — место погасло по простою/);
   await waitFor(
     () =>
       bridge.notifications.some(
@@ -554,6 +554,26 @@ test("a dead-token close leaves the watchdog loudly and reaches the harness as a
     "the local socket to be withdrawn",
   );
 });
+
+// #7440: the owner took the seat off (4001 with a reason) — the watchdog's last line is the
+// stop word and it leaves with 0, for both watchdogs.
+for (const kind of ["watchdog", "watchdog-exit"])
+  test(`the owner's 4001 ends ${kind} with the stop word and exit 0`, async (t) => {
+    const { fake, dir, bridge, key } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const wd = runClient(kind, dir, key);
+    await waitFor(() => (wd.out + wd.err).includes("слушаю стояние"), "the watchdog to attach");
+    await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    const r = await wd.done;
+    assert.equal(r.exit, 0, `the stop is no alarm: ${wd.out}${wd.err}`);
+    assert.match(wd.out, /снято \(человеком\) — ты остановлен: работу кончи, место не занимай/);
+    assert.doesNotMatch(wd.out, /токен мёртв|connect/);
+    await waitFor(
+      () => bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+      "the stop notification",
+    );
+    assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "dead"), "no dead token");
+  });
 
 // Своё close или revoke отпускает место словом моста (released), не уходом:
 // сторож говорит то же слово одной строкой и выходит нулём, без общей тревоги
@@ -722,11 +742,33 @@ test("watchdog-codex puts a message frame into the Codex thread through the app-
     1,
     "hello must not wake the thread",
   );
-  // A dead token is loud through the same door, and the watchdog leaves non-zero.
-  await fake.control({ ws_close: 4001 });
+  // A dead seat is loud through the same door, and the watchdog leaves non-zero.
+  await fake.control({ ws_close: 4002 });
   const r = await wd.done;
-  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead token");
-  assert.match(wd.err, /токен мёртв/);
+  assert.notEqual(r.exit, 0, "the watchdog must leave non-zero on a dead seat");
+  assert.match(wd.err, /погасло по простою/);
+});
+
+// #7440: the owner's stop starts no turn in the Codex thread; the watchdog says it and leaves 0.
+test("watchdog-codex on the owner's 4001: no turn/start, the stop word, exit 0", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-42",
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:self" });
+  const r = await wd.done;
+  assert.equal(r.exit, 0, `the stop is no alarm: ${wd.err}`);
+  assert.match(wd.err, /снято \(сессией той же учётки\) — ты остановлен/);
+  assert.doesNotMatch(readFileSync(log, "utf8"), /turn\/start/, "the stop wakes no thread");
 });
 
 // A frame put into the Codex thread is delivered (#5428): the fallback exit
@@ -1056,6 +1098,60 @@ test("a cached list serves this build's iskron_stand, not the one another build 
   assert.ok(listed.result?.tools, `served from the cache: ${JSON.stringify(listed)}`);
   const stand = listed.result.tools.find((x) => x.name === "iskron_stand");
   assert.ok(stand && !stand.description.includes("ПРЕЖНЯЯ СБОРКА"), JSON.stringify(stand));
+});
+
+// Shipped moment lines of former bridges, whole: the last one (prepended from #282 on),
+// one from before #282 (appended), and the English one.
+const MOMENT_7_9 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; вопрос по сути или обязательство — вимаршей `posed_to` отвечающей роли с «Отвечено, когда»; разовая задача или вопрос — в деле, кончается исходом; отказ доставки рода не меняет; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_BEFORE_282 =
+  "[мост] Момент скилла writing: перед вызовом по каждому узлу назови читателя, что изменит извлечение и что здесь ново; тип и given_as, три модуса как утверждения, имя-тезис, стрелки со смыслом; тело — нынешнее знание, никогда провенанс: кто сказал, когда, чьей рукой — в истории узла и в деле, узел переписывается, а не дописывается разделом; hint — семя превращения: только важное после сессии, не журнал; гроссбух — строками дела; без дела — файл сессии; кадром не шлётся; строки CHECKS в ответе — работа этого такта.";
+const MOMENT_EN =
+  "[bridge] The writing skill's moment: before each node, name the reader, what will change retrieval and what is new here; type and given_as, the three modes as claims, a thesis name, arrows with sense; the body is present knowledge, never provenance: who said it, when, by whose hand — lives in the node's history and in the case, a node is rewritten, not appended with a section; hint is a transformation's seed: only what matters after the session, not a log; a substantive question or obligation is a vimarsha with `posed_to` to the answering role and an answer criterion; a one-off task or question belongs in a case and ends with its outcome; delivery refusal does not change its kind; the CHECKS lines in the reply are this beat's work.";
+
+// A bridge before #7557 cached write tools with its whole moment line — first from #282 on,
+// last before it; a list served from that cache (offline, login wait) reaches the harness
+// as the server wrote it. Only a whole shipped line with its blank line goes, only on write tools.
+test("a cached list written by a former bridge serves write tools without its moment line", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await fake.control({ richTools: true });
+  await bridge.call("tools/list", 20, {});
+  const cacheFile = readdirSync(dir).find((f) => f.endsWith(".server-answers"));
+  const cache = JSON.parse(readFileSync(join(dir, cacheFile), "utf8"));
+  const like = "[мост] Момент скилла writing: это собственное объяснение сервера.";
+  const cached = {
+    iskron_add_vimarsha: `${MOMENT_7_9}\n\nСоздай вопрошание.`,
+    iskron_batch: `${MOMENT_EN}\n\nАтомарная дельта.`,
+    iskron_add_kriya: `Создай крию.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_bianhua: `${MOMENT_7_9}\n\nСоздай превращение.\n\n${MOMENT_BEFORE_282}`,
+    iskron_add_phenomenon: `${like}\n\nСоздай феномен.`,
+    iskron_add_holon: `${MOMENT_7_9}Создай контур.`,
+    iskron_add_karta: MOMENT_7_9,
+    iskron_orient: `${MOMENT_7_9}\n\nВойдите в граф.`,
+  };
+  for (const tool of cache.tools.tools) if (cached[tool.name]) tool.description = cached[tool.name];
+  for (const name of Object.keys(cached))
+    if (!cache.tools.tools.some((x) => x.name === name))
+      cache.tools.tools.push({ name, description: cached[name], inputSchema: { type: "object" } });
+  writeFileSync(join(dir, cacheFile), JSON.stringify(cache));
+  await bridge.stop();
+  await fake.stop(); // no network: the second bridge answers from the cache
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  await second.call("initialize", 1, INIT);
+  const listed = await second.call("tools/list", 2, {});
+  const byName = Object.fromEntries((listed.result?.tools ?? []).map((x) => [x.name, x]));
+  // Taken off: the whole line first, last, both, in either language.
+  assert.equal(byName.iskron_add_vimarsha?.description, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch?.description, "Атомарная дельта.");
+  assert.equal(byName.iskron_add_kriya?.description, "Создай крию.");
+  assert.equal(byName.iskron_add_bianhua?.description, "Создай превращение.");
+  // Kept byte for byte: a like start that is no shipped line, no blank line, nothing left
+  // after the line, and a read tool.
+  assert.equal(byName.iskron_add_phenomenon?.description, cached.iskron_add_phenomenon);
+  assert.equal(byName.iskron_add_holon?.description, cached.iskron_add_holon);
+  assert.equal(byName.iskron_add_karta?.description, MOMENT_7_9);
+  assert.equal(byName.iskron_orient?.description, cached.iskron_orient);
 });
 
 // The shared answers cache keeps the form the harness gets — with the bridge's
@@ -1469,29 +1565,30 @@ test("a frame delivered under the Monitor watchdog does not wake an exit watchdo
   assert.ok(again.out.includes("второй") && !again.out.includes("первый"), again.out);
 });
 
-test("tools/list carries the writing-moment line on write tools only", async (t) => {
+// The bridge adds no writing-moment line: the server's own line carries it (graph nks-dev: #7557).
+test("tools/list passes write and read tool descriptions byte for byte; only the channel tool gains the bridge's lines", async (t) => {
   const { bridge, fake } = await connected(t);
   await fake.control({ richTools: true });
   const list = await bridge.call("tools/list", 4, {});
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x.description]));
-  assert.ok(
-    byName.iskron_add_vimarsha?.includes("[мост] Момент скилла writing"),
-    "add tool lacks the line",
-  );
-  assert.ok(byName.iskron_batch?.includes("[мост] Момент скилла writing"), "batch lacks the line");
-  // Строка моста и строка writing в карте моментов двери iskron — одна строка.
+  assert.equal(byName.iskron_add_vimarsha, "Создай вопрошание.");
+  assert.equal(byName.iskron_batch, "Атомарная дельта.");
+  assert.equal(byName.iskron_orient, "Войдите в граф.");
+  const channel = byName.iskron_channel ?? "";
+  assert.ok(channel.startsWith("[мост] Занятость"), "the busyness line leads the channel tool");
+  assert.match(channel, /\[мост\] action="leave"/, "the leave line stands on the channel tool");
+  assert.ok(channel.endsWith("\n\nЖивой канал роли."), "the server's description follows whole");
+});
+
+// Without the bridge's line the door's moment map carries the writing moment (#7557):
+// the row stands, with the wait by kind and CHECKS as integrity, not execution.
+test("the door's moment map carries the writing row", () => {
   const door = readFileSync(join(HERE, "..", "..", "skills", "iskron", "SKILL.md"), "utf8");
   const row = door.match(/^\| перед `iskron_add_\*`[^|]*\| \*\*writing\*\*: (.+) \|$/m)?.[1];
   assert.ok(row, "the door's moment map lacks the writing row");
-  assert.ok(
-    byName.iskron_add_vimarsha.includes(`Момент скилла writing: ${row}`),
-    "the bridge's writing-moment line drifted from the door's moment map",
-  );
-  assert.ok(!byName.iskron_orient?.includes("[мост]"), "a read tool must stay untouched");
-  assert.ok(
-    byName.iskron_channel?.includes('action="status"'),
-    "the channel tool must announce the bridge's own status action",
-  );
+  assert.match(row, /вопрос по сути или обязательство — вимаршей `posed_to`/);
+  assert.match(row, /разовая задача или вопрос — в деле/);
+  assert.match(row, /CHECKS[^.]*не свидетельство исполнения/);
 });
 
 test("watchdog with nothing held tells the doer to name itself with iskron_stand", async () => {
@@ -1724,7 +1821,7 @@ for (const [what, after] of [
   ["the door closes", (sock) => setTimeout(() => sock.destroy(), 100)],
   [
     "a dead token comes",
-    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4001, text: "токен мёртв" }) + "\n"),
+    (sock) => sock.write(JSON.stringify({ kind: "dead", code: 4002, text: "токен мёртв" }) + "\n"),
   ],
 ]) {
   test(`${what} before the ring the bridge named is out: the watchdog says so and exits 1`, async (t) => {
@@ -1928,8 +2025,8 @@ test("a stale hold record is dropped quietly: no dead-token alarm, the place is 
   const path = join(standings, hold);
   bridge.proc.kill("SIGKILL");
   await waitFor(() => fake.state.ws.size === 0, "the socket to close");
-  // The platform no longer knows the token: the socket is refused with 4001 on open.
-  await fake.control({ ws_refuse: 4001 }); // one refusal: the resume dies, the connect after it is served
+  // The seat went out at the platform: the socket is refused with 4002 on open (4001 is the owner's stop, #7439).
+  await fake.control({ ws_refuse: 4002 }); // one refusal: the resume dies, the connect after it is served
   const second = startBridge(fake.mcpUrl, dir);
   t.after(() => second.stop());
   assert.ok((await second.call("initialize", 1, INIT)).result);
@@ -1966,6 +2063,31 @@ test("a stale hold record is dropped quietly: no dead-token alarm, the place is 
   assert.equal(fake.state.counts.connect, 3);
 });
 
+// #7440: the seat was taken off while no bridge held it — the return by record meets 4001.
+// That is the owner's stop, not a stale record: no connect after it, the stop word instead.
+test("a return by record refused with 4001 is the owner's stop: no connect after it, the stop word", async (t) => {
+  const { fake, dir, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the socket to close");
+  await fake.control({ ws_refuse: 4001 });
+  const second = startBridge(fake.mcpUrl, dir);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+  assert.ok(st.result?.isError, said);
+  assert.match(said, /место proba снято .* — ты остановлен: работу кончи, место не занимай/, said);
+  assert.equal(fake.state.counts.connect, 1, "the stop is not answered by connect");
+  assert.ok(
+    !second.notifications.some((n) => n.params?.data?.kind === "dead"),
+    "a stop is no dead token",
+  );
+});
+
 test("a dead token forgets the hold record; a live holder's place is not taken from disk", async (t) => {
   const { fake, dir, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -1980,14 +2102,14 @@ test("a dead token forgets the hold record; a live holder's place is not taken f
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!/возврат места с диска/.test(said), `a live holder keeps its place:\n${said}`);
   assert.match(said, /встаю рядом на proba\.2/, said);
-  await fake.control({ ws_close: 4001 });
+  await fake.control({ ws_close: 4002 });
   await waitFor(
     () => bridge.notifications.some((n) => n.params?.data?.kind === "dead"),
     "the dead token to reach the harness",
   );
-  // 4001 too is answered by connect: mint answers 409 once the channel is back (#5189).
+  // 4002 is answered by the stand tool; never mint — it answers 409 once the channel is back (#5189).
   const dead = bridge.notifications.find((n) => n.params?.data?.kind === "dead").params.data.text;
-  assert.match(dead, /зови connect/, dead);
+  assert.match(dead, /погасло по простою.*iskron_stand тем же именем/, dead);
   assert.doesNotMatch(dead, /mint/, dead);
   await waitFor(
     () => !readdirSync(standings).some((f) => f.endsWith(".hold")),
@@ -3017,8 +3139,9 @@ test("iskron/check stops reopening after two fruitless reopens and says so aloud
 // #6649: the plugin idle longer than the hold record's term (6 h; seen 30–32 h) — the
 // record went by its term, iskron_stand takes the seat back, but the platform had let
 // the place expire and it left all its cases. The return that finds no record of the
-// named seat says so, and the next iskron_stand repeats it: check mine, join again.
-test("a return whose hold record went by its term says to check iskron_case mine after iskron_stand — and the stand that takes the seat says it too", async (t) => {
+// named seat says so, and the next iskron_stand repeats it: join again. Not "check mine":
+// mine right after the stand answered "a session without a seat" (#7555).
+test("a return whose hold record went by its term says to join the cases again after iskron_stand, never to check mine — and the stand that takes the seat says it too", async (t) => {
   const own = { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } };
   const { fake, dir, bridge, standings } = await connected(t, { init: own });
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -3031,14 +3154,19 @@ test("a return whose hold record went by its term says to check iskron_case mine
   assert.ok((await next.call("initialize", 1, own)).result);
   const back = await next.call("iskron/resume", 2, { key: "proba--931--nks-dev" });
   assert.equal(back.result?.resumed, false, JSON.stringify(back));
-  assert.match(back.result.word, /после iskron_stand проверь iskron_case\(action="mine"\)/);
+  assert.match(
+    back.result.word,
+    /после iskron_stand войди заново в дела[^—]*iskron_case\(action="join"/,
+  );
+  assert.doesNotMatch(back.result.word, /"mine"/);
   const st = await next.call("tools/call", 3, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba" },
   });
   const said = (st.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!st.result?.isError, said);
-  assert.match(said, /место могло истечь у платформы[\s\S]*войди в свои дела заново/);
+  assert.match(said, /место могло истечь у платформы[\s\S]*войди заново в дела/);
+  assert.doesNotMatch(said, /action="mine"/, said);
 });
 
 // ── cold review of the fix (r5 #5140): what it left open ─────────────────────
@@ -5966,17 +6094,20 @@ test("English surface: leave, resume and hello — the bridge and the three watc
   assert.ok(!left.result?.isError, leftText);
   assert.match(leftText, /busyness cleared/, leftText);
   assert.doesNotMatch(leftText, CYRILLIC, leftText);
+  await waitFor(() => fake.state.ws.size === 0, "the socket closed by the leave");
   const back = await bridge.call("tools/call", 6, {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", status: "back" },
   });
   const backText = (back.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.ok(!back.result?.isError, backText);
-  // The proof-of-hearing line depends on timing, not language: hello may land after the 4 s wait,
-  // or the socket the leave closed is still held when stand registers again — every form is English.
+  // This probe holds the language, not the path: the stand after the leave is a fresh connect
+  // (hello, or none within 4 s), a register on a held socket, or — when the deafness watch has
+  // already returned the seat — a busyness update only. That last race is the bridge's own
+  // (graph @nks/nks-dev, node #7008); every form is English.
   assert.match(
     backText,
-    /hello received|no hello within 4 s|This bridge holds the socket \(hello came when the socket opened\)/,
+    /hello received|no hello within 4 s|This bridge holds the socket \(hello came when the socket opened\)|^busyness \S+: back$/m,
     backText,
   );
   // «(Вебхук #N создан → …)» — проза сервера внутри строки хука, не слово моста.

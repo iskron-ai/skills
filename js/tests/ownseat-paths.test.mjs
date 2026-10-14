@@ -94,7 +94,7 @@ test("Ф2: left by word, the seat beside taken by another session — a write in
 
 test("Ф2: a dead token, the seat beside taken by another session — a write in its graph is refused", async (t) => {
   await besideDeaf(t, async (f, a) => {
-    await f.control({ ws_close: 4001 });
+    await f.control({ ws_close: 4002 }); // dead seat; 4001 is the owner's stop (#7439)
     await until(() => saidKind(a, "dead"), "the dead word");
   });
 });

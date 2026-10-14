@@ -130,17 +130,31 @@ export function rememberExtraStatus(key: string, ch: Channel, text: string): voi
 }
 
 /**
- * Release a beside seat; `forget` drops its record and re-register line. `own` — the
- * session's own close or revoke: the watchdog hears released with own and quits calmly (#6638).
+ * Release a beside seat; `forget` drops its record and re-register line. `as` "own" — the
+ * session's own close or revoke: the watchdog hears released with own and quits calmly (#6638);
+ * "beside" — another took the seat off (#7504): released with beside, the watchdog falls silent.
  */
-export function dropExtra(key: string, reason: string, forget: boolean, own = false): void {
+export function dropExtra(
+  key: string,
+  reason: string,
+  forget: boolean,
+  as?: "own" | "beside",
+): void {
   const p = extras.get(key);
   if (!p) return;
   extras.delete(key);
-  if (own) {
-    p.door.flushBatches();
-    p.door.broadcast({ kind: "released", key, text: reason, own });
+  // Handed to the successor with the main seat (#7602): its record stays, its watchdog waits.
+  const handover = !forget && !as ? handoverReason() : null;
+  if (handover) {
+    p.door.broadcast({ kind: "handover", key, text: handover });
+    p.door.close();
+    return standingLog(`handed over ${key} beside the channel: ${handover}`);
   }
+  if (as === "own") {
+    p.door.flushBatches();
+    p.door.broadcast({ kind: "released", key, text: reason, own: true });
+  } else if (as === "beside")
+    p.door.broadcast({ kind: "released", key, text: reason, beside: true });
   p.door.close();
   if (forget) {
     dropHoldRecord(key);
@@ -152,7 +166,7 @@ export function dropExtra(key: string, reason: string, forget: boolean, own = fa
 }
 
 export function dropAllExtras(reason: string, forget: boolean, own = false): void {
-  for (const k of [...extras.keys()]) dropExtra(k, reason, forget, own);
+  for (const k of [...extras.keys()]) dropExtra(k, reason, forget, own ? "own" : undefined);
   if (forget) state.places = [];
 }
 

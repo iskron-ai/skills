@@ -1,5 +1,58 @@
 # Changelog
 
+## [7.10.0](https://github.com/iskron-ai/skills/compare/v7.9.0...v7.10.0) (2026-10-14)
+
+
+### Features
+
+* **bridge:** команда status и освежение штампа skills без переподключения ([#456](https://github.com/iskron-ai/skills/issues/456)) ([def54b7](https://github.com/iskron-ai/skills/commit/def54b73256880886e12d55354cbabde9de2b92c))
+
+
+### Bug Fixes
+
+* **architect,vahta:** проигрыш проверяет структуру, не исход; разбор судит решение по известному тогда и не служит приёмкой ([#452](https://github.com/iskron-ai/skills/issues/452)) ([2501a89](https://github.com/iskron-ai/skills/commit/2501a89dd9071dd116290adf2f8f93c5ca9efebb))
+* **bridge:** drop room tool synonym from case lifecycle ([#457](https://github.com/iskron-ai/skills/issues/457)) ([0434b9a](https://github.com/iskron-ai/skills/commit/0434b9a6f15b7737a50f0496335854ec3735641e))
+* **bridge:** revoke запустившего не шлётся, когда мост спутника сам снял место; отказ не несёт чужих вызовов ([#466](https://github.com/iskron-ai/skills/issues/466)) ([a5b295f](https://github.com/iskron-ai/skills/commit/a5b295fa7f48c7b071f140c67516f26a6afc7f22))
+* **bridge:** законченный спутник не оживает — revoke запустившего снимает место, Esc не конец, последнее дело — словом платформы ([#465](https://github.com/iskron-ai/skills/issues/465)) ([1380f8d](https://github.com/iskron-ai/skills/commit/1380f8d3f19f31ef193f223df4731a4f313853b3))
+* **bridge:** свой revoke с karta «#N» — тихое отпускание, не стоп ([#656](https://github.com/iskron-ai/skills/issues/656)) ([#462](https://github.com/iskron-ai/skills/issues/462)) ([605fcce](https://github.com/iskron-ai/skills/commit/605fcce67b98c0a7bc0d7953264dabdf80906c76))
+* **bridge:** слово стопа не ждёт в очереди сессии OpenCode — оно в system ходов, пока место снято ([#464](https://github.com/iskron-ai/skills/issues/464)) ([89f0de7](https://github.com/iskron-ai/skills/commit/89f0de73dc80933d76f01be88b98cf342a2dd0f9))
+* **bridge:** снятое место кончает агента — без connect, ход прерван, сессия не будится ([#455](https://github.com/iskron-ai/skills/issues/455)) ([1a61b97](https://github.com/iskron-ai/skills/commit/1a61b97db21e963d9343b59f6481cfdf7a5dcf4b))
+
+## [7.9.0](https://github.com/iskron-ai/skills/compare/v7.8.0...v7.9.0) (2026-10-12)
+
+
+### Features
+
+* **architect:** постановка — проект в графе: целевые положения, крия-спецификация, исполнителю ссылка на неё ([#445](https://github.com/iskron-ai/skills/issues/445)) ([a132c9b](https://github.com/iskron-ai/skills/commit/a132c9b1402f50d79ef3b91416ff5ffaf7b9b43e))
+
+
+### Bug Fixes
+
+* **bridge:** слова о take различают своё и чужое имя — своё после молчания пробы 5 минут, чужое словом человека ([#438](https://github.com/iskron-ai/skills/issues/438)) ([7e795fe](https://github.com/iskron-ai/skills/commit/7e795fef75d1be5d6e64a0739ecef5e28612c6c8))
+* **establish-mcp:** работа — через плагин с мостом, веб-коннектор напрямую — запасной путь с ценой, нехватка названа ([#447](https://github.com/iskron-ai/skills/issues/447)) ([8f9431a](https://github.com/iskron-ai/skills/commit/8f9431a081cd047dae34966a172c3804fe3f63c0))
+* **establish-mcp:** установка каналом харнеса, Claude Desktop — из выпуска, не с main ([#432](https://github.com/iskron-ai/skills/issues/432)) ([fae0ec7](https://github.com/iskron-ai/skills/commit/fae0ec716e387fe7c9bcbf9a4d8a1f88a7bd7aa6))
+* **inquiry:** разрешение — только когда «Отвечено, когда» исполнено дословно ([#450](https://github.com/iskron-ai/skills/issues/450)) ([ad447f4](https://github.com/iskron-ai/skills/commit/ad447f45f9bf7cfaed7e411d8d82a80c18e2d5e2))
+* **integrity:** интеграция с соседом ведётся делом на передаточном феномене — зов стюардов, стык и приёмка карточками, закрытие по исходу обеих сторон ([#441](https://github.com/iskron-ai/skills/issues/441)) ([6313677](https://github.com/iskron-ai/skills/commit/6313677d0b562f594b485d8caf3e91c9fe5aa262))
+* **iskronify:** fj в образце плагина — тот же набор флагов-пустышек мержа, что у gh (--auto, --disable-auto) ([#430](https://github.com/iskron-ai/skills/issues/430)) ([5c1aec6](https://github.com/iskron-ai/skills/commit/5c1aec602d1e2dfdfad5b024599ae5569b94fe3d))
+* **iskronify:** вето мержа ловит отказ fj «Error:» с заглавной ([#422](https://github.com/iskron-ai/skills/issues/422)) ([ae29602](https://github.com/iskron-ai/skills/commit/ae2960244e0411061a023f4a1d981506c64028b8))
+* **iskron:** вопрос человеку задаёт место, которое дождётся ответа — субагент с открытым ask не уходит ([#433](https://github.com/iskron-ai/skills/issues/433)) ([0f19068](https://github.com/iskron-ai/skills/commit/0f190685972573a08b1413a7a4b8a39fbe8fb333))
+* **iskron:** глобальная уборка — не уборка своего (docker prune без своих меток, git clean вне своего дерева) ([#429](https://github.com/iskron-ai/skills/issues/429)) ([8d75216](https://github.com/iskron-ai/skills/commit/8d75216116a6a13f5d26614ebc7628a47075280d))
+* **iskron:** ключ карточки — на одного адресата; вопрос двум людям — двумя ключами ([#443](https://github.com/iskron-ai/skills/issues/443)) ([e363344](https://github.com/iskron-ai/skills/commit/e36334461a3fd173239f752a00ae6ff87a9cf59d))
+* **iskron:** отказ квоты слов 402 — не повторять, сказать человеку его местом ([#427](https://github.com/iskron-ai/skills/issues/427)) ([2e66518](https://github.com/iskron-ai/skills/commit/2e66518b9144d6a25ca8053012bff84f3208bd7b))
+* **iskron:** правило «ключ вопроса не перекрывай строкой» — одно место в двери, с ценой для человека ([#442](https://github.com/iskron-ai/skills/issues/442)) ([91e290f](https://github.com/iskron-ai/skills/commit/91e290f26e659e424edc83ebd7b2b1f8badd78f6))
+* **iskron:** снят тул room — без прежнего имени iskron_room в двери и слове кадра; снимок поверхности ([#425](https://github.com/iskron-ai/skills/issues/425)) ([1f2f927](https://github.com/iskron-ai/skills/commit/1f2f9271308173ef44c83000eee00bcc2929b386))
+* **iskron:** строка под ключом своей открытой карточки снимает её — до ack строки нет ([#434](https://github.com/iskron-ai/skills/issues/434)) ([6c9f584](https://github.com/iskron-ai/skills/commit/6c9f5847388f2da8afa81a0b1329e3166f7ce278))
+* **skills:** поправка меняет деяние и задетые узлы, а не свод правил ([#7381](https://github.com/iskron-ai/skills/issues/7381)) ([#451](https://github.com/iskron-ai/skills/issues/451)) ([b39189c](https://github.com/iskron-ai/skills/commit/b39189c7568cdcd9172ee6d9464c99adca37ee43))
+* **tests:** English surface — повторный stand ждёт, пока leave закроет сокет ([#7008](https://github.com/iskron-ai/skills/issues/7008)) ([#440](https://github.com/iskron-ai/skills/issues/440)) ([86549fb](https://github.com/iskron-ai/skills/commit/86549fbc2241683eb396bf398a9e1ce8da90f5fd))
+* **tests:** English surface — слово о hello по таймауту тоже английское; проба не зависит от скорости раннера ([#7008](https://github.com/iskron-ai/skills/issues/7008)) ([#431](https://github.com/iskron-ai/skills/issues/431)) ([741a568](https://github.com/iskron-ai/skills/commit/741a56841dffe8c8c04f744596e719c0778770f8))
+* **tests:** English surface — строка о слухе после повторного stand бывает и «сокет держит этот мост»; проба держит язык, не тайминг ([#7008](https://github.com/iskron-ai/skills/issues/7008)) ([#437](https://github.com/iskron-ai/skills/issues/437)) ([84c9e4c](https://github.com/iskron-ai/skills/commit/84c9e4c129af8cbcd8176d01436a0ba7e97ded40))
+* **tests:** English surface держит язык, не путь повторного stand — гонка возврата места названа в [#7008](https://github.com/iskron-ai/skills/issues/7008) ([#446](https://github.com/iskron-ai/skills/issues/446)) ([fc84f59](https://github.com/iskron-ai/skills/commit/fc84f598883041149de530ad76d17ae23457d88e))
+* **vahta:** дело закрывается сразу за мержем, немая просьба без карточки, неблокирующие находки — узлом ([#428](https://github.com/iskron-ai/skills/issues/428)) ([7597104](https://github.com/iskron-ai/skills/commit/7597104c63b8c71dc7311ad4f949bd5fb260ea5e))
+* **vahta:** долги роли, не места — брошенные дела роли разбираются и закрываются ([#426](https://github.com/iskron-ai/skills/issues/426)) ([fa05441](https://github.com/iskron-ai/skills/commit/fa054417cab1c233945d56859ca253ce74f1643c))
+* **vahta:** на заступлении и побудке первым — ответы без приёма на свои карточки и карточки роли ([#435](https://github.com/iskron-ai/skills/issues/435)) ([f5127c7](https://github.com/iskron-ai/skills/commit/f5127c7303a2da96760bf1d7ce13d4a6d0c786d6))
+* **vahta:** ожидание CI, сборки и выката ведёт фоновый субагент, не главная сессия ([#424](https://github.com/iskron-ai/skills/issues/424)) ([0a8a1b9](https://github.com/iskron-ai/skills/commit/0a8a1b992274ac02de6877dff703afca04bdd9e0))
+* **writing,design,vahta:** в семя — суть решения без атрибуции; кто сказал и когда — reasoning ([#449](https://github.com/iskron-ai/skills/issues/449)) ([db89037](https://github.com/iskron-ai/skills/commit/db89037cd484ddbd49c32b7407ce717ea34fdff0))
+
 ## [7.8.0](https://github.com/iskron-ai/skills/compare/v7.7.0...v7.8.0) (2026-10-09)
 
 
