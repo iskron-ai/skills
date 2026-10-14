@@ -24,6 +24,7 @@ import { homeOf } from "./host.ts";
 import { createKeepAlive, keepaliveTitle } from "./keepalive.ts";
 import { teller } from "./leaddoors.ts";
 import { annotate } from "./notice.ts";
+import { createPulseFeed } from "./pulse.ts";
 import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createTwins, sweepAll } from "./twins.ts";
@@ -93,13 +94,20 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Each half under its own try: a failed one takes neither the other nor the plugin's load.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
+  // The session's word on its turn goes to the bridge of its own seat (pulse.ts, #7529).
+  const pulse = createPulseFeed({ bridgeOf: (s) => half.bridgeOf(s) });
   try {
     // The owner's stop goes by seats (#7440): every instance of the process takes its children's seats down.
     // Lead subagents — by the tools half, which comes up after the channel (#7505).
-    const c0 = setupChannel(ctx, say, freshestRoot, parents, () => sweepAll(), {
-      ended: (s) => half.ended(s),
-      launcherOf: (s) => half.launcherOf(s),
-    });
+    const c0 = setupChannel(
+      ctx,
+      say,
+      freshestRoot,
+      parents,
+      () => sweepAll(),
+      { ended: (s) => half.ended(s), launcherOf: (s) => half.launcherOf(s) },
+      pulse.prompted,
+    );
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
   } catch (e) {
@@ -197,9 +205,11 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         half.onEvent(ev); // a lead subagent's turn, text and deletion (leads.ts)
         keepalive.onEvent(ev);
         waits.onEvent(ev);
+        pulse.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
+            pulse.forget(id);
             roots.delete(id);
             seen.delete(id);
             parents.delete(id);
@@ -293,6 +303,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     keepalive.stop();
     waits.stop();
     usage.stop();
+    pulse.stop();
     ch?.stop();
     twins.left((await half.stop()) || []);
   };

@@ -20,6 +20,7 @@ import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { words } from "../shared/lang.ts";
 import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
 import { findBridge, type Notify, packagedBridgePath, refreshHomeBridge } from "./home-copy.ts";
+import { setupPulse } from "./pulse.ts";
 import { setupUsage } from "./usage.ts";
 
 export type ChannelEventSink = (params: any) => void;
@@ -344,6 +345,8 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
 
   // Session usage — to the bridge while it holds a seat (usage.ts, #6271).
   setupUsage(pi, () => (heldName ? bridge : null));
+  // The turn's word for the seat's pulse — kept by the bridge before a seat too (pulse.ts, #7529).
+  setupPulse(pi, () => bridge);
 
   pi.on("session_shutdown", async () => {
     // Idempotent: pi calls this on paths where nothing came up too.

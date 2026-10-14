@@ -1832,7 +1832,8 @@ test("a new root session with a directory asks its bridge to resume that directo
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name !== "iskron/pulse"); // the session's word for the pulse rides beside (#7529)
     assert.equal(sent[0].name, "iskron/resume", "the resume goes first");
     assert.equal(sent[0].arguments.cwd, "/work/of/the-session");
     assert.equal(sent[1].name, "iskron_orient", "the tool call waits for the resume");
@@ -2033,6 +2034,54 @@ test("usage events reach the holding session's bridge as iskron/usage, with the 
       context: 51900,
       window: 200000,
     });
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The session's word on its turn for the seat's pulse (graph nks-dev: #7529): busy on
+// session.status busy, idle with turn_at at the turn's end, interrupted on an interrupt —
+// each change to the holding session's bridge as iskron/pulse.
+test("turn events reach the holding session's bridge as iskron/pulse: busy, then idle with turn_at", async () => {
+  const calls = join(SANDBOX, "pulse.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-pulse", location: { directory: "/work/p" } }],
+  });
+  const pulses = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron/pulse")
+      .map((c) => c.arguments);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-pulse");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "pulse--931--nks-dev" }));
+    await until(() => /мост держит стояние pulse--931--nks-dev/.test(rec.said()), "the held line");
+    const status = (type) =>
+      rec.emit({ type: "session.status", data: { sessionID: "s-pulse", status: { type } } });
+    status("busy");
+    await until(() => pulses().some((p) => p.state === "busy"), "the busy word");
+    assert.equal(pulses().at(-1).turn_at, undefined, "no turn has ended yet");
+    const before = Date.now();
+    status("idle");
+    await until(() => pulses().at(-1)?.state === "idle", "the idle word");
+    const turn = Date.parse(pulses().at(-1).turn_at);
+    assert.ok(turn >= before - 5 && turn <= Date.now(), `turn_at at the turn's end: ${turn}`);
+    status("busy");
+    rec.emit({
+      type: "session.execution.interrupted",
+      data: { sessionID: "s-pulse", reason: "user" },
+    });
+    await until(() => pulses().at(-1)?.state === "interrupted", "the interrupt word");
+    status("idle");
+    await delay(150);
+    assert.equal(pulses().at(-1).state, "interrupted", "the idle after an interrupt keeps it");
   } finally {
     await rec.stop();
   }
@@ -7659,7 +7708,8 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name !== "iskron/pulse"); // the session's word for the pulse rides beside (#7529)
     const fresh = pidsOf(b.log)[2];
     assert.ok(
       fresh && fresh !== rootPid && fresh !== childPid,

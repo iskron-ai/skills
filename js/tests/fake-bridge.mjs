@@ -377,6 +377,14 @@ process.stdin.on("data", (chunk) => {
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
       ok(msg.id, { taken: true });
+    } else if (msg.method === "iskron/pulse") {
+      // The session's word on its turn for the seat's pulse (js/bridge/pulse.ts, #7529).
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+        );
+      ok(msg.id, { taken: true });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).
