@@ -17,6 +17,7 @@ import { listenBlock } from "./listen.ts";
 import { normKarta } from "./names.ts";
 import { dropExtra, extraIn, extraPlaces } from "./places.ts";
 import { otherRealm } from "./realms.ts";
+import { lateSeat } from "./runend.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -56,12 +57,15 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     // even if the bridge held another before: the label must not lie.
     state.standing = rememberedPlace(a.realm, a.karta, a.name); // normalized, as register does
   }
-  holdStanding(trim(socket), status ? trim(status) : deriveStatusUrl(trim(socket)));
-  const block = listenBlock() ?? "";
+  const url = trim(socket);
+  const statusUrl = status ? trim(status) : deriveStatusUrl(url);
+  // Answered after the run's end: nobody is left to listen, the death window ends the seat (runend.ts).
+  const late = !!state.standing && lateSeat(state.standing, url, statusUrl);
+  if (!late) holdStanding(url, statusUrl);
   const content = reply.result?.content;
   if (Array.isArray(content)) {
     for (const c of content) if (typeof c?.text === "string") c.text = hideAddresses(c.text);
-    content.push({ type: "text", text: block.trim() });
+    if (!late) content.push({ type: "text", text: (listenBlock() ?? "").trim() });
   }
   return reply;
 }

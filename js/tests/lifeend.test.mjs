@@ -417,6 +417,39 @@ test("an end whose revoke is refused keeps the hold record, and the death window
   });
 });
 
+// №677: the agent dies while its first connect is in flight — the run's end finds no seat, and
+// the connect's late reply must not open a socket nobody ends: the seat goes with the window.
+test("death in the middle of the first connect: the late reply opens no socket, the seat ends after the window", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    fake.state.connectReplyDelayMs = 1_500;
+    void stand(a, "die-m").catch(() => {});
+    const connects = () =>
+      fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "connect",
+      ).length;
+    await waitFor("the connect sent", () => connects() > 0);
+    a.proc.kill("SIGKILL");
+    await a.gone();
+    const listens = () => [...fake.state.ws].some((s) => fake.state.wsNames.get(s) === "die-m");
+    await waitFor("the late reply", () =>
+      /connect answered after the run's end/.test(journalOf(dir)),
+    );
+    await delay(300);
+    assert.ok(!listens(), `the late reply opened no socket:\n${journalOf(dir)}`);
+    await waitFor("the seat closed after the window", () => closed(fake, "die-m"), 15_000).catch(
+      (e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      },
+    );
+    assert.ok(!fake.state.places.has("931:die-m"), "the seat is off the board");
+    assert.ok(!listens(), `no socket listens on it:\n${journalOf(dir)}`);
+    assert.equal(connects(), 1, "one connect");
+    assert.match(journalOf(dir), /die-m--931--nks-dev ended by its dead socket's token \(200/);
+    assert.ok(!existsSync(recordOf(dir, "die-m")), "no hold record left");
+  });
+});
+
 test("a cancelled call (Esc) leaves the seat alone past the window", async () => {
   await withFake(async ({ fake, bridge }) => {
     const a = await bridge();

@@ -43,6 +43,8 @@ const R = scoped(() => ({
    * and its address when the main seat is among them: the death window's
    */
   dead: null as { places: Standing[]; status: string | null; socket: string | null } | null,
+  /** the run ended closing its seats: not a handover, a pause, an announced absence or a satellite */
+  mortal: false,
 }));
 
 /**
@@ -62,7 +64,8 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     const spent = closing || paused ? usagePlace() : null;
     // The agent's end closes its seat (graph @nks/nks-dev, node #7493): at once on the harness's
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
-    const dying = !CFG.satellite && !paused && !handover && !awayAnnounced() && !!H.currentKey;
+    R.mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
+    const dying = R.mortal && !!H.currentKey;
     const own = dying ? ownPlaces() : [];
     // The main seat's socket — its token ends the seat after the window (deadstop.ts).
     const socket = own[0] && own[0] === state.standing ? H.currentUrl : null;
@@ -91,6 +94,20 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
     return end;
   })());
+}
+
+/**
+ * A connect answered after the run's end — the agent died while it was in flight (case №677):
+ * its socket is not opened, nobody is left to listen, and the seat joins the death window, which
+ * ends it by that socket's token. false — the run goes on or keeps its seats: hold it as ever.
+ */
+export function lateSeat(seat: Standing, socket: string, status: string | null): boolean {
+  if (!R.run || !R.mortal) return false;
+  const key = seatKeyOf(seat);
+  const others = R.dead?.places.filter((s) => seatKeyOf(s) !== key) ?? [];
+  R.dead = { places: [seat, ...others], status, socket };
+  log(`${key}: connect answered after the run's end — no socket opened, it ends with the window`);
+  return true;
 }
 
 /**
