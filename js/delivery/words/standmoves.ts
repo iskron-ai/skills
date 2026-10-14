@@ -5,6 +5,8 @@ import type { Lang } from "../lang.ts";
 export interface StandMovesWords {
   /** 409 channel_already_stands_in_realm (#7556); call — полный вызов места, уже стоящего в графе, либо пусто. */
   standsInRealm: (realm: string, call: string, board: string, leave: string) => string;
+  /** Полный вызов занятия места, которое эта сессия держала (#7554). */
+  standAgain: (call: string) => string;
 }
 
 export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
@@ -15,6 +17,8 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
         ? `Встань им: ${call}. `
         : `Его имя — строка этого канала на доске ${board}; встань им: iskron_stand(realm="${realm}", karta, name=<то имя>). `) +
       `Нужно именно новое имя — сначала отпусти прежнее: ${leave}, затем повтори вызов.`,
+    standAgain: (call) =>
+      `Место этой сессии мост сейчас не держит — займи его полным вызовом: ${call} (status можно передать в нём же).`,
   },
   en: {
     standsInRealm: (realm, call, board, leave) =>
@@ -23,5 +27,7 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
         ? `Stand as it: ${call}. `
         : `Its name is this channel's line on the board ${board}; stand as it: iskron_stand(realm="${realm}", karta, name=<that name>). `) +
       `If a new name is what you need, release the former one first: ${leave}, then repeat the call.`,
+    standAgain: (call) =>
+      `The bridge does not hold this session's seat now — take it with the full call: ${call} (status can go in the same call).`,
   },
 };

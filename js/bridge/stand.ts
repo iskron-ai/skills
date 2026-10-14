@@ -69,7 +69,7 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
-import { refusedWord } from "./standmoves.ts";
+import { refusedWord, standAgainWord } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -113,7 +113,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     },
   });
   if (!realm || !karta) {
-    lines.push(needRealmKarta(statusOnly.miss, statusOnly.of));
+    lines.push(
+      needRealmKarta(statusOnly.miss, statusOnly.of) + standAgainWord(realm, statusOnly.miss),
+    );
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
