@@ -52,6 +52,7 @@ export function sessionSnapshot(
           karta: standing?.karta,
           primary: p.primary,
           standing_id: door?.standingId ?? undefined,
+          address: door?.address ?? undefined,
           satellite_of: attrs.satellite_of,
           listening:
             !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),

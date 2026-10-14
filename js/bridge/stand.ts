@@ -70,14 +70,7 @@ import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
 import { standAgainWord } from "./standagain.ts";
-import {
-  awaitReissue,
-  ledIn,
-  refusedWord,
-  reissueNote,
-  reissueThrottled,
-  releasePrior,
-} from "./standmoves.ts";
+import { ledIn, refusedWord, releasePrior, throughReissue } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -412,23 +405,24 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       delete args.ttl_seconds;
       c = await call(tool("channel"), args);
     }
-    // 429: the socket was just reissued — mostly by this bridge's own reopening; wait for it
-    // inside the call, the agent gets the outcome, not the refusal (#7552).
-    const throttle = reissueThrottled(c);
-    let ownReopen = false;
-    if (throttle) {
-      const t0 = Date.now();
-      ownReopen = await awaitReissue(throttle, () => holdsStanding(realm, karta, name));
-      if (!ownReopen) c = await call(tool("channel"), args);
-      extra.push(sw().note(reissueNote(Math.round((Date.now() - t0) / 1000), ownReopen)));
-    }
+    // 429 of a socket reissue is waited out inside the call; the owner's stop meanwhile ends it.
+    const re = await throughReissue(
+      c,
+      () => call(tool("channel"), args),
+      { realm, karta, name },
+      stopsBefore,
+    );
+    if (re.stop) return (lines.push(re.stop), done(true));
+    const ownReopen = re.own;
+    c = re.c;
+    if (re.note) extra.push(sw().note(re.note));
     if (c.isError && !ownReopen) {
       lines.push(refusedWord("connect", c, realm));
       return done(true);
     }
     const r = await register();
     if (r.isError) {
-      lines.push(sw().takenButRegister(short(r.text)));
+      lines.push(refusedWord("register", r, realm, sw().takenButRegister(short(r.text))));
       return done(true);
     }
     resetKnocks(realm, karta, name);

@@ -6,6 +6,8 @@ export interface PlaceSnapshot {
   primary: boolean;
   /** The platform's seat id (hello, register) — the `stop` subcommand addresses the seat by it. */
   standing_id?: string;
+  /** The seat's address @handle:name — `stop @handle:name` checks the owner by it. */
+  address?: string;
   satellite_of?: string;
   listening: boolean;
   last_work_at?: string;
@@ -79,6 +81,7 @@ export function safePlace(v: unknown): PlaceSnapshot {
     primary: p.primary === true,
     listening: p.listening === true,
     ...(typeof p.standing_id === "string" ? { standing_id: p.standing_id } : {}),
+    ...(typeof p.address === "string" && p.address ? { address: p.address } : {}),
     ...(typeof p.satellite_of === "string" ? { satellite_of: p.satellite_of } : {}),
     ...(typeof p.last_work_at === "string" ? { last_work_at: p.last_work_at } : {}),
     ...(usage ? { usage } : {}),

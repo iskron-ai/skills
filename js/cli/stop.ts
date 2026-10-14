@@ -36,6 +36,7 @@ function pick(
   realm: string | undefined,
 ): Seat | string {
   const session = sessions.find((s) => s.local_id === target);
+  const full = /^@[^:]+:/.test(target);
   const name = target.replace(/^@[^:]+:/, "");
   const found: Seat[] = session
     ? session.places
@@ -44,9 +45,15 @@ function pick(
     : sessions.flatMap((s) =>
         s.places.filter((p) => p.name === name).map((place) => ({ place, session: s })),
       );
-  const seats = found.filter(
+  const inRealm = found.filter(
     ({ place: p }) => !realm || p.realm === realm || p.realm.endsWith(`/${realm}`),
   );
+  // A full address names the owner too: a seat of the same name under another handle is not it.
+  const seats = full && !session ? inRealm.filter(({ place: p }) => p.address === target) : inRealm;
+  if (!seats.length && inRealm.length) {
+    const known = inRealm.map(({ place: p }) => p.address).filter((x): x is string => !!x);
+    return known.length ? sw().otherOwner(target, known.join(", ")) : sw().noOwner(target);
+  }
   if (!seats.length) return sw().notFound(target);
   if (seats.length > 1)
     return sw().ambiguous(target, seats.map(({ place: p }) => `${p.name} (${p.realm})`).join(", "));

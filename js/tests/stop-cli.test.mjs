@@ -224,6 +224,23 @@ test("stop <satellite session> orders the subagent's seat: no hold record needed
   );
 });
 
+// Полный адрес @handle:name называет и владельца места: место этой машины с тем же именем,
+// но другим владельцем — не то место; отказ, ничего не отправлено.
+test("stop @another:name refuses a seat of this machine named the same under another owner", async (t) => {
+  const { dir, fake, id } = await seated(t, "proba");
+  const r = await stop(dir, ["@other:proba"]);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stderr, /@other:proba/, r.stderr);
+  assert.match(r.stderr, /@tester:proba/, r.stderr);
+  assert.equal(fake.state.orders.human.length, 0, "nothing is sent");
+  const own = await stop(dir, ["@tester:proba"]);
+  assert.equal(own.status, 0, `${own.stdout}\n${own.stderr}`);
+  assert.deepEqual(
+    fake.state.orders.human.map((h) => [h.method, h.id]),
+    [["POST", id]],
+  );
+});
+
 test("stop names no seat it does not see, and fails loudly", async (t) => {
   const { dir, fake } = await seated(t, "here");
   const r = await stop(dir, ["nobody"]);

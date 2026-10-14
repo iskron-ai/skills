@@ -71,6 +71,41 @@ test("429 met while the bridge itself reopens the seat's socket: the call waits 
   assert.doesNotMatch(text, /429|socket_reissue_throttled|Too Many/, text);
 });
 
+// #7439 в ожидании 429: владелец снял место, пока вызов пережидал порог, — после стопа место
+// не занимает ничто, кроме нового слова человека: второго connect нет, ответ — слово стопа.
+// Сокет места падает, мост переоткрывает его сам (~2 с), и переоткрытие встречает 4001
+// владельца — тем временем вызов take=true пережидает 429.
+test("the owner takes the seat off while the call waits out a 429: no connect after the wait, the answer is the stop", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const connects = fake.state.counts.connect;
+  await fake.control({ structured: true, connectThrottleNext: 1, connectThrottleRetryS: 8 });
+  await fake.control({ ws_refuse: 4001 });
+  await fake.control({ ws_close: 1011 });
+  const r = await stand(b, { realm: "nks-dev", karta: 931, name: "proba", take: true });
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.equal(fake.state.counts.connect, connects, "no connect after the owner's stop");
+  assert.match(text, /ты остановлен/, text);
+  assert.doesNotMatch(text, /429|socket_reissue_throttled|возвращено/, text);
+});
+
+// #7556 после connect: отказ register за свежим connect шёл мимо слова правила — голым английским.
+test("register refused by channel_already_stands_in_realm after a fresh connect reads in the session language with the move", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  await fake.control({ structured: true, registerStandsInRealmNext: 1 });
+  const r = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.equal(fake.state.counts.register_stands_in_realm, 1, "the api refusal was met");
+  assert.match(text, /^Отказано \(409\): канал этого моста уже стоит в графе \S*nks-dev/, text);
+  assert.match(text, /iskron_channel\(action="list", realm="\S*nks-dev"\)/, text);
+  assert.doesNotMatch(text, /channel_already_stands_in_realm|Conflict|already stands/, text);
+});
+
 // #7553 рядом: смена места take=true во втором графе кончалась 409 — прежнее место искали
 // только в основном графе. Канал стоит в графе один раз: прежнее место рядом снимается до register.
 test("take=true onto another seat of a graph beside revokes the former seat there first: no 409", async (t) => {

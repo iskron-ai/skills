@@ -8,6 +8,10 @@ export interface StopCliWords {
   notFound: (target: string) => string;
   /** list — кандидаты через запятую. */
   ambiguous: (target: string, list: string) => string;
+  /** Полный адрес назвал другого владельца; list — адреса мест машины с этим именем. */
+  otherOwner: (target: string, list: string) => string;
+  /** Полный адрес, а снимок не знает адресов мест этого имени — владельца не сверить. */
+  noOwner: (target: string) => string;
   noId: (seat: string) => string;
   noRecord: (seat: string) => string;
   noServer: (seat: string) => string;
@@ -31,6 +35,10 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
       `ни сессии, ни места «${target}» у демона машины нет — имена и id сессий печатает status`,
     ambiguous: (target, list) =>
       `«${target}» называет несколько мест: ${list} — уточни --realm или назови id сессии`,
+    otherOwner: (target, list) =>
+      `места ${target} у этой машины нет: место этого имени здесь — ${list}, другого владельца; stop снимает только места этой машины по их адресу, ничего не отправлено`,
+    noOwner: (target) =>
+      `владельца места ${target} не сверить: демон не назвал адреса мест этого имени (адрес ещё не известен или сборка старше) — ничего не отправлено; назови id сессии из status`,
     noId: (seat) =>
       `id места ${seat} мосту ещё не известен (hello его не назвал) — приказ адресовать нечем; повтори позже`,
     noRecord: (seat) =>
@@ -58,6 +66,10 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
       `the machine daemon has neither a session nor a seat «${target}» — status prints the names and session ids`,
     ambiguous: (target, list) =>
       `«${target}» names several seats: ${list} — narrow it by --realm or name the session id`,
+    otherOwner: (target, list) =>
+      `this machine has no seat ${target}: the seat of that name here is ${list}, another owner's; stop takes off only this machine's seats by their address, nothing is sent`,
+    noOwner: (target) =>
+      `the owner of the seat ${target} cannot be checked: the daemon named no address of the seats of that name (not known yet or an older build) — nothing is sent; name the session id from status`,
     noId: (seat) =>
       `the bridge does not know the id of the seat ${seat} yet (hello did not name it) — the order has no address; repeat later`,
     noRecord: (seat) =>

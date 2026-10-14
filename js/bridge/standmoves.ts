@@ -3,7 +3,9 @@
 import { STAND_MOVES, type StandMovesWords, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Answer, callTool, short } from "./call.ts";
-import { setRevokingBeside } from "./holdstate.ts";
+import { holdsStanding } from "./hold.ts";
+import { keyOf } from "./holdrecord.ts";
+import { setRevokingBeside, stoppedSince } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { dropExtra, extraIn, extraOf } from "./places.ts";
 import { sameRealm } from "./realms.ts";
@@ -52,7 +54,7 @@ export async function releasePrior(
 const REISSUE_MAX_S = 15;
 
 /** Seconds to wait out a 429 socket reissue refusal of connect (#7552); null — another answer. */
-export function reissueThrottled(r: Answer): number | null {
+function reissueThrottled(r: Answer): number | null {
   if (!r.isError) return null;
   const rule = r.refusal?.rule;
   const hit =
@@ -64,29 +66,67 @@ export function reissueThrottled(r: Answer): number | null {
   return Math.min(Math.max(Number.isFinite(said) ? said : 10, 1), REISSUE_MAX_S);
 }
 
-/**
- * The bridge's own reopening of the seat's socket met this call's connect: wait inside the
- * call for its outcome instead of passing the 429 to the agent. true — the socket is ours.
- */
-export async function awaitReissue(seconds: number, held: () => boolean): Promise<boolean> {
+/** The wait for the seat's socket: `own` — it is ours; `stop` — the owner took the seat off meanwhile. */
+async function awaitReissue(
+  seconds: number,
+  held: () => boolean,
+  stopped: () => string | null,
+): Promise<{ own: boolean; stop: string | null }> {
   for (const end = Date.now() + seconds * 1000; Date.now() < end;) {
-    if (held()) return true;
+    const stop = stopped();
+    if (stop || held()) return { own: !stop, stop };
     await new Promise((r) => setTimeout(r, 200));
   }
-  return held();
+  const stop = stopped();
+  return { own: !stop && held(), stop };
 }
 
-export const reissueNote = (seconds: number, own: boolean): string =>
-  mw().reissueWaited(seconds, own);
+interface Reissued {
+  /** connect's answer: the first one, or the repeat after the wait */
+  c: Answer;
+  /** the socket became this bridge's own during the wait (its own reopening): no second connect */
+  own: boolean;
+  /** the owner's stop word: the seat was taken off during the wait — nothing takes it again (#7439) */
+  stop: string | null;
+  note: string | null;
+}
 
-/** The refusal of connect or register as the agent reads it: a known api rule with its move, else as is. */
-export function refusedWord(what: string, r: Answer, realm: string): string {
+/**
+ * connect met 429 socket_reissue_throttled — mostly the bridge's own reopening of the seat's
+ * socket: wait inside the call for the outcome instead of passing the 429 to the agent (#7552);
+ * the socket not ours after the wait — connect `again`.
+ */
+export async function throughReissue(
+  c: Answer,
+  again: () => Promise<Answer>,
+  seat: { realm: string; karta: string | number; name: string },
+  stopsBefore: number,
+): Promise<Reissued> {
+  const throttle = reissueThrottled(c);
+  if (!throttle) return { c, own: false, stop: null, note: null };
+  const t0 = Date.now();
+  const { own, stop } = await awaitReissue(
+    throttle,
+    () => holdsStanding(seat.realm, seat.karta, seat.name),
+    () => stoppedSince(stopsBefore, keyOf(seat.realm, seat.karta, seat.name)),
+  );
+  if (stop) return { c, own, stop, note: null };
+  const seconds = Math.round((Date.now() - t0) / 1000);
+  return { c: own ? c : await again(), own, stop, note: mw().reissueWaited(seconds, own) };
+}
+
+/**
+ * The refusal of connect or register as the agent reads it: a known api rule with its move, else as is.
+ * `afterConnect` — register refused right after this call's connect: the led seat is the one just
+ * taken, not the seat the channel stands on; other refusals read this word.
+ */
+export function refusedWord(what: string, r: Answer, realm: string, afterConnect?: string): string {
   if (r.refusal?.rule === STANDS_IN_REALM || r.text.includes(STANDS_IN_REALM)) {
-    const led = ledIn(realm);
+    const led = afterConnect === undefined ? ledIn(realm) : undefined;
     const call = led ? standCall(realm, led.karta, led.name ?? "") : "";
     const board = `${tool("channel")}(action="list", realm="${realm}")`;
     const leave = `${tool("channel")}(action="revoke", realm="${realm}", karta, standing=<${led?.name ?? "name"}>)`;
     return mw().standsInRealm(realm, call, board, leave);
   }
-  return sw().refused(what, short(r.text));
+  return afterConnect ?? sw().refused(what, short(r.text));
 }
