@@ -361,14 +361,15 @@ process.stdin.on("data", (chunk) => {
         /* no answer prepared — nothing to resume */
       }
       ok(msg.id, result);
-    } else if (msg.method === "iskron/suspend") {
-      // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625).
+    } else if (msg.method === "iskron/suspend" || msg.method === "iskron/away") {
+      // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625),
+      // and marks a root's absence before a reload or a move (js/bridge/away.ts, #7493).
       if (process.env.FB_CALLS)
         appendFileSync(
           process.env.FB_CALLS,
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
-      ok(msg.id, { suspended: true });
+      ok(msg.id, msg.method === "iskron/away" ? { away: true } : { suspended: true });
     } else if (msg.method === "iskron/halted") {
       // The plugin's stop of a stop order executed or refused (js/bridge/orderhalt.ts, #7519).
       if (process.env.FB_CALLS)

@@ -9,6 +9,7 @@ import {
 } from "./absorb.ts";
 import { refusedAudience } from "./audience.ts";
 import { ensureAuth } from "./auth.ts";
+import { localAway } from "./away.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import { noteCaseEntry } from "./caseexit.ts";
@@ -199,7 +200,12 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
 async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   // Answered by the bridge itself, never sent upstream.
   const local =
-    localStatus(msg) ?? localLeave(msg) ?? localSuspend(msg) ?? localEnd(msg) ?? localHalted(msg);
+    localStatus(msg) ??
+    localLeave(msg) ??
+    localSuspend(msg) ??
+    localAway(msg) ??
+    localEnd(msg) ??
+    localHalted(msg);
   if (local) {
     emit(await local);
     return;

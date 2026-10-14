@@ -45,6 +45,7 @@ import { createLogin } from "./login.ts";
 import { takeLostMarker, writeLostMarker } from "./marker.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
+import { type PutDown, putDown } from "./putdown.ts";
 import { revokeAsLauncher } from "./release.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, heldPlace, STAND_TOOL, standsBy } from "./satellite.ts";
@@ -434,7 +435,7 @@ export async function setupTools(
     },
   });
 
-  function forget(session: string): void {
+  function forget(session: string, word: PutDown | null = null): void {
     runEnds.clear(session); // a deleted session takes its run-end mark along
     launcher.forget(session);
     keeper.forget(session);
@@ -442,14 +443,14 @@ export async function setupTools(
     if (!slot) return;
     slots.delete(session);
     slot.ownStop = true;
-    slot.bridge.stop(); // the bridge's shutdown releases the standing: key, socket, busy line
+    void putDown(slot, word); // the bridge's shutdown releases the standing: key, socket, busy line
   }
 
   return {
     launch: launcher.launch,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
-      forget(s);
+      forget(s, "end"); // a deleted session is the agent's end: its seat closes (#7493)
       runEnds.clear(s, true); // no session — no final mark either
     },
     onEvent: (ev) => leads.onEvent(ev),
@@ -484,10 +485,9 @@ export async function setupTools(
       if (spare) spare.ownStop = true;
       spare?.bridge.stop();
       spare = null;
-      for (const slot of slots.values()) {
-        slot.ownStop = true;
-        slot.bridge.stop();
-      }
+      for (const slot of slots.values()) slot.ownStop = true;
+      // A reload is an announced absence: the seats wait for the next instance (#7493).
+      await Promise.all([...slots.values()].map((slot) => putDown(slot, "away")));
       slots.clear();
       return left; // to the directory's twin — wake this spelling's instance (twins.ts)
     },

@@ -7,6 +7,8 @@
 //   sessions        Map id → engine session in its own scope (session.ts, shared/scope.ts)
 //   idle            the last session gone — the daemon leaves after the idle window;
 //                   a login awaiting a click holds it only up to a limit (daemon-idle.ts)
+//   death           a session ended without an announced absence (away.ts): its seats
+//                   no bridge took back close after the window (runend.ts endDeadRun)
 //   update          a newer home copy or thin bridge — places are handed to a successor
 //                   (resume.ts, suspend.ts, handoff.ts), then the daemon leaves; only the
 //                   daemon checks releases. Handover: no new requests (unacked ones are
@@ -44,7 +46,7 @@ import { pruneFallbacks } from "./fallback.ts";
 import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
 import { pauseForHandover } from "./pauserecord.ts";
-import { endUnreturnedPause } from "./runend.ts";
+import { endDeadRun, endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sessionSnapshot } from "./snapshot.ts";
 import { rotateJournal } from "./store.ts";
@@ -75,6 +77,8 @@ const SUCCESSOR_WAIT_MS = ms(envName("BRIDGE_DAEMON_SUCCESSOR_WAIT_MS"), 20_000)
 const GRACE_MS = ms(envName("BRIDGE_DAEMON_GRACE_MS"), 5_000);
 /** How long a leaving daemon waits for a live satellite bridge to return to the successor. */
 const RETURN_WAIT_MS = ms(envName("BRIDGE_DAEMON_RETURN_WAIT_MS"), 30_000);
+/** How long the seat of a session ended without an announced absence waits before it closes (#7493). */
+const DEATH_MS = ms(envName("BRIDGE_DEATH_MS"), 60_000);
 const JOURNAL_MAX = 256_000;
 
 /** Exit code: this grant's daemon is already alive — the spawner waits for it instead of going full. */
@@ -140,6 +144,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
   /** Scopes of sessions handed to the successor: a pause asked during handover is answered there. */
   const handed = new Map<string, Scope>();
   const answering = new Set<Promise<unknown>>();
+  /** Death windows of ended sessions (runend.ts endDeadRun): the daemon stays for them. */
+  const dying = new Set<Promise<void>>();
   let draining = false;
   let counter = 0;
   let lastNotice: string | null = null;
@@ -147,7 +153,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
 
   const idle = idleWatch(
     IDLE_MS,
-    () => draining || sessions.size > 0,
+    () => draining || sessions.size > 0 || dying.size > 0,
     () => {
       server?.close();
       process.exit(0);
@@ -306,6 +312,17 @@ export async function daemonMain(argv: string[]): Promise<void> {
             sessions.delete(id);
             engines.delete(id);
             log(`session ${id} ended: ${why}`);
+            if (opened?.scope) {
+              const death: Promise<void> = runIn(opened.scope, () => endDeadRun(DEATH_MS))
+                .catch((e: unknown) =>
+                  log(`session ${id}: the death window failed: ${errorMessage(e)}`),
+                )
+                .finally(() => {
+                  dying.delete(death);
+                  armIdle();
+                });
+              dying.add(death);
+            }
             armIdle();
           });
         },

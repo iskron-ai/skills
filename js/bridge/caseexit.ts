@@ -75,15 +75,29 @@ export async function leaveJoinedCases(): Promise<void> {
     );
 }
 
-/** A satellite's seats, main and in other graphs; taken before releaseStanding erases them. */
-export const satellitePlaces = (): Standing[] =>
-  CFG.satellite
-    ? [
-        // An evicted (4000) seat belongs to its taker: revoking it would remove theirs.
-        H.evictedKey && H.evictedKey === H.currentKey ? null : state.standing,
-        ...extraPlaces().map((p) => p.standing),
-      ].filter((s): s is Standing => !!s?.name)
-    : [];
+/** The session's seats, main first, then those in other graphs; taken before releaseStanding erases them. */
+export const ownPlaces = (): Standing[] =>
+  [
+    // An evicted (4000) seat belongs to its taker: revoking it would remove theirs.
+    H.evictedKey && H.evictedKey === H.currentKey ? null : state.standing,
+    ...extraPlaces().map((p) => p.standing),
+  ].filter((s): s is Standing => !!s?.name);
+
+/** A satellite's seats, main and in other graphs. */
+export const satellitePlaces = (): Standing[] => (CFG.satellite ? ownPlaces() : []);
+
+/**
+ * Revokes a session's own seats at the agent's end (graph @nks/nks-dev, node #7493): the seats
+ * beside first — the platform keeps a channel's main seat while seats of other graphs stand on it.
+ */
+export async function revokeOwnPlaces(
+  places: Standing[],
+): Promise<{ failed: string[]; revoked: SeatKey[] }> {
+  const [main, ...beside] = places;
+  const a = await revokeSatellitePlaces(beside);
+  const b = await revokeSatellitePlaces(main ? [main] : []);
+  return { failed: [...a.failed, ...b.failed], revoked: [...a.revoked, ...b.revoked] };
+}
 
 /**
  * Revokes the satellite's seats at the run's end (graph @nks/nks-dev, nodes #6550,
