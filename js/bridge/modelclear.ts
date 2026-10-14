@@ -3,12 +3,24 @@
 // PATCH /standings/{id} {"model": null} with the key that opened the seat (api 0.123.0, #5083),
 // the seat's graph in X-NKS-Realm, required by the api (#99).
 import { apiBase } from "../shared/channel.ts";
+import { type Answer } from "./call.ts";
 import { standingIdIn } from "./hold.ts";
 import { H } from "./holdstate.ts";
 import { headers, TIMEOUT_MS } from "./orderack.ts";
 import { satelliteWithoutModel } from "./placefields.ts";
 import { canonRealm } from "./realms.ts";
 import { log } from "./streams.ts";
+
+/** A register that clears a model it is not given; kept() — the clearing refused, said aloud. */
+export function clearingRegister(send: () => Promise<Answer>, realm: string) {
+  let kept: string | null = null;
+  const register = async (): Promise<Answer> => {
+    const r = await send();
+    if (!r.isError) kept = await clearSeatModel(realm);
+    return r;
+  };
+  return { register, kept: () => kept };
+}
 
 /**
  * After a satellite's register: no model known — none on the seat. A failure does not fail

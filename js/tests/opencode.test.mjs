@@ -2436,6 +2436,10 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   try {
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
     assert.match(second.said(), /proba--931--nks-dev/);
+    // The seat is returning by itself: the word says wait, not «call iskron_stand now» —
+    // a call at the moment of the return met its own reopen as 429 (#7552).
+    assert.match(second.said(), /возвращается с диска само — подожди/);
+    assert.doesNotMatch(second.said(), /Не вернулось — iskron_stand/);
     assert.equal(lostMarkers().length, 0, "the marker is said once and gone");
     const sentBy = () =>
       readFileSync(calls, "utf8")
@@ -4600,6 +4604,24 @@ test("a lead child whose own turn is interrupted by the user (Esc) lives on: the
       () => rec.prompts.some((p) => p.sessionID === "child" && /сосед ответил/.test(p.text)),
       "the frame waking the child after its Esc",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The end carries the child's last text as testimony, not acceptance, and a cut is said, not
+// hidden behind an ellipsis.
+test("a lead child's end names its last word testimony and says how much of a long one is shown", async () => {
+  const { rec, childPid } = await leadChild("lead-cut");
+  try {
+    turn(rec, "а".repeat(4100));
+    await until(() => rec.synthetics.some((s) => /сдал ход/.test(s.text)), "the turn word");
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    const text = ends(rec)[0].text;
+    assert.match(text, /последнее слово: свидетельство, не приёмка/);
+    assert.match(text, /\[итог усечён: показано 4000 из 4100 знаков/);
   } finally {
     await rec.stop();
   }
@@ -7182,7 +7204,10 @@ test("marker-child: the child's last text survives a reload and is its result at
     );
     assert.match(word.content, /отпущен/);
     await until(() => ends(second).length === 1, "the end in the parent");
-    assert.match(ends(second)[0].text, /Итог — его последнее слово:\nжду соседа/);
+    assert.match(
+      ends(second)[0].text,
+      /Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:\nжду соседа/,
+    );
   } finally {
     await second.stop();
   }

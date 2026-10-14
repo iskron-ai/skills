@@ -30,8 +30,6 @@ export interface StandWords {
   howRegister: () => string;
   ttlRefused: (ttl: number, text: string) => string;
   takenButRegister: (text: string) => string;
-  /** 409 channel_already_stands_in_realm с data.your_standings (#7556): ход — встать этим местом. */
-  standsAs: (name: string, realm: string, karta: string) => string;
   howConnect: (mine: boolean, listensElsewhere: boolean, take: boolean) => string;
   head: (place: string, karta: string, realm: string, how: string) => string;
   /** Строка ответа после шапки с меткой тула. */
@@ -100,8 +98,6 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     ttlRefused: (ttl, text) =>
       `Окно простоя ${ttl} с контур не принял (${text}) — место занято с окном по умолчанию контура.`,
     takenButRegister: (text) => `Место занято, но register отказал — ${text}`,
-    standsAs: (name, realm, karta) =>
-      `Канал этой сессии уже стоит в графе ${realm} местом ${name} — второго места в графе у канала нет; встань им: iskron_stand(realm="${realm}", karta="${karta}", name="${name}").`,
     howConnect: (mine, listensElsewhere, take) =>
       mine
         ? listensElsewhere
@@ -183,8 +179,6 @@ export const STAND: Readonly<Record<Lang, StandWords>> = {
     ttlRefused: (ttl, text) =>
       `The contour refused the ${ttl} s idle window (${text}) — the seat is taken with the contour's default window.`,
     takenButRegister: (text) => `The seat is taken, but register refused — ${text}`,
-    standsAs: (name, realm, karta) =>
-      `This session's channel already stands in graph ${realm} on the seat ${name} — a channel has no second seat in a graph; stand on it: iskron_stand(realm="${realm}", karta="${karta}", name="${name}").`,
     howConnect: (mine, listensElsewhere, take) =>
       mine
         ? listensElsewhere
