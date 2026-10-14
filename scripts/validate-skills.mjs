@@ -664,10 +664,9 @@ try {
 //    до модели не доходит. Вывод skill — обёртка клиента вокруг тела без фронтматтера, базового
 //    каталога и до десяти файлов скилла (форма — тот же бинарь, сверена с захватом прогона
 //    loaded-stub-20261013T234051Z: дверь 7.9.0 → 252 строки). Каталог берётся длинным —
-//    запас на путь установки. Скиллы, которые предел уже переросли, названы поимённо
-//    и держат список честным: влез — вычеркни.
+//    запас на путь установки. Исключений нет: переросший скилл перекомпонуется — механика
+//    дословно в references/ с обязательным указателем на месте, ядро в теле.
 const CLIENT_OUTPUT_MAX = { lines: 2000, bytes: 51200 };
-const OVER_CLIENT_OUTPUT = new Set(["iskronify", "vahta"]);
 function clientSkillOutput(name) {
   const dir = `/Users/${"x".repeat(32)}/.config/opencode/skills/${name}`;
   const text = readFileSync(join(skillsDir, name, "SKILL.md"), "utf8");
@@ -701,14 +700,9 @@ for (const name of skillNames) {
   const out = clientSkillOutput(name);
   const lines = out.split("\n").length;
   const bytes = Buffer.byteLength(out, "utf8");
-  const over = lines > CLIENT_OUTPUT_MAX.lines || bytes > CLIENT_OUTPUT_MAX.bytes;
-  const where = `skills/${name}/SKILL.md`;
-  if (over && !OVER_CLIENT_OUTPUT.has(name))
-    fail(where, `вывод тула skill — ${bytes} байт, ${lines} строк: больше предела клиента (${CLIENT_OUTPUT_MAX.bytes} байт, ${CLIENT_OUTPUT_MAX.lines} строк) — хвост до модели не дойдёт; перекомпонуй, не сокращая смысла (#7597)`);
-  else if (over)
-    warn(where, `вывод тула skill — ${bytes} байт: больше предела клиента ${CLIENT_OUTPUT_MAX.bytes}, известный перерост (#7597)`);
-  else if (OVER_CLIENT_OUTPUT.has(name))
-    fail(where, `влез в предел клиента (${bytes} байт) — вычеркни из OVER_CLIENT_OUTPUT`);
+  if (lines > CLIENT_OUTPUT_MAX.lines || bytes > CLIENT_OUTPUT_MAX.bytes)
+    fail(`skills/${name}/SKILL.md`, `вывод тула skill — ${bytes} байт, ${lines} строк: больше предела клиента (${CLIENT_OUTPUT_MAX.bytes} байт, ${CLIENT_OUTPUT_MAX.lines} строк) — хвост до модели не дойдёт; перекомпонуй, не сокращая смысла (#7597)`);
+  if (process.env.SKILL_OUTPUT_SIZES) console.log(`${name}\t${bytes}\t${lines}`);
 }
 
 // Report.
