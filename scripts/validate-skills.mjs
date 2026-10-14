@@ -658,6 +658,59 @@ try {
   fail("маркеры конфликта", `проверка маркеров конфликта не удалась: ${e.message}`);
 }
 
+// 9. Скилл доходит до модели целиком (граф @nks/nks-dev, узел #7597). OpenCode 2.0.28 режет
+//    вывод тула skill, как и любого тула, по целым строкам: не больше 2000 строк и 51 200 байт
+//    UTF-8 на весь текст (умолчания `tool_output` — op=2000, np=51200 в бинаре клиента); хвост
+//    до модели не доходит. Вывод skill — обёртка клиента вокруг тела без фронтматтера, базового
+//    каталога и до десяти файлов скилла (форма — тот же бинарь, сверена с захватом прогона
+//    loaded-stub-20261013T234051Z: дверь 7.9.0 → 252 строки). Каталог берётся длинным —
+//    запас на путь установки. Скиллы, которые предел уже переросли, названы поимённо
+//    и держат список честным: влез — вычеркни.
+const CLIENT_OUTPUT_MAX = { lines: 2000, bytes: 51200 };
+const OVER_CLIENT_OUTPUT = new Set(["iskronify", "vahta"]);
+function clientSkillOutput(name) {
+  const dir = `/Users/${"x".repeat(32)}/.config/opencode/skills/${name}`;
+  const text = readFileSync(join(skillsDir, name, "SKILL.md"), "utf8");
+  const fm = /^---\n[\s\S]*?\n---\n/.exec(text);
+  const body = text.slice(fm ? fm[0].length : 0).trim();
+  const files = [];
+  const walk = (d, rel) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) walk(join(d, e.name), `${rel}${e.name}/`);
+      else if (`${rel}${e.name}` !== "SKILL.md") files.push(`${dir}/${rel}${e.name}`);
+    }
+  };
+  walk(join(skillsDir, name), "");
+  return [
+    `<skill_content name="${name}">`,
+    `# Skill: ${name}`,
+    "",
+    body,
+    "",
+    `Base directory for this skill: ${dir}`,
+    "Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
+    "Note: file list is sampled.",
+    "",
+    "<skill_files>",
+    ...files.sort().slice(0, 10).map((f) => `<file>${f}</file>`),
+    "</skill_files>",
+    "</skill_content>",
+  ].join("\n");
+}
+for (const name of skillNames) {
+  const out = clientSkillOutput(name);
+  const lines = out.split("\n").length;
+  const bytes = Buffer.byteLength(out, "utf8");
+  const over = lines > CLIENT_OUTPUT_MAX.lines || bytes > CLIENT_OUTPUT_MAX.bytes;
+  const where = `skills/${name}/SKILL.md`;
+  if (over && !OVER_CLIENT_OUTPUT.has(name))
+    fail(where, `вывод тула skill — ${bytes} байт, ${lines} строк: больше предела клиента (${CLIENT_OUTPUT_MAX.bytes} байт, ${CLIENT_OUTPUT_MAX.lines} строк) — хвост до модели не дойдёт; перекомпонуй, не сокращая смысла (#7597)`);
+  else if (over)
+    warn(where, `вывод тула skill — ${bytes} байт: больше предела клиента ${CLIENT_OUTPUT_MAX.bytes}, известный перерост (#7597)`);
+  else if (OVER_CLIENT_OUTPUT.has(name))
+    fail(where, `влез в предел клиента (${bytes} байт) — вычеркни из OVER_CLIENT_OUTPUT`);
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);
