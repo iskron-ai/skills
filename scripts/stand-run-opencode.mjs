@@ -25,6 +25,7 @@ const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").spli
 const keep = process.argv.includes("--keep");
 const apiArg = arg("--api");
 const personArg = arg("--person");
+const ackLog = arg("--ack-log", null);
 // --bridge / --plugin — another build (a release output), dist/dev by default.
 const bridge = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 const plugin = arg("--plugin", join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js"));
@@ -112,6 +113,28 @@ const check = (ok, what, seen) => {
   if (!ok) failed++;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The order's trace (#7510): accepted on disk and answered before the stop, the outcome after
+// the accepted's answer. The bridge's journal <auth>/orders/<id>.json keeps the accepted's time
+// (`at`) under the outcome; the stand's /api proxy logs every ack it carries (--ack-log, JSONL
+// {t, done, order, state, status}); standings.log stamps the stop and the outcome.
+const stampOf = (line) => Date.parse(line.slice(0, 24));
+function orderTrace(label, id, authDir, logText) {
+  const lines = logText.split("\n").filter((l) => l.includes(`stop order ${id}`));
+  const outcome = lines.find((l) => l.includes(`stop order ${id} for `));
+  const action = lines.find((l) => !l.includes(`stop order ${id} for `));
+  const jf = join(authDir, "orders", `${id}.json`);
+  const j = existsSync(jf) ? JSON.parse(readFileSync(jf, "utf8")) : null;
+  check(!!j && j.state === "stopped" && typeof j.at === "number", `order (${label}): the journal holds it, stopped, with the accepted's time`, j ? `${j.state} at ${new Date(j.at).toISOString()} acked ${j.acked}` : "no journal entry");
+  const acks = ackLog ? (existsSync(ackLog) ? readFileSync(ackLog, "utf8") : "").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a.order === id) : [];
+  const acc = acks.find((a) => a.state === "accepted");
+  const out = acks.find((a) => a.state !== "accepted");
+  check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
+  check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
+  const stopAt = action ? stampOf(action) : outcome ? stampOf(outcome) : NaN;
+  check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j && action ? `accepted ${new Date(j.at).toISOString()} · ${action.slice(0, 120)}` : outcome?.slice(0, 140));
+  check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
+}
+
 // The nks api directly: as the person (test identity) or as the plugin's own credential.
 async function nks(method, path, { body, asSeat } = {}) {
   const h = { "Content-Type": "application/json", "X-NKS-Realm": realm };
@@ -289,7 +312,8 @@ try {
     const lines = log().slice(l0).split("\n").filter((l) => o.body?.id && l.includes(`stop order ${o.body.id} for `));
     check(lines.length === 1 && lines[0].includes(`for ${seat}: stopped`), `order (${label}): one "stop order … stopped" line`, lines.join(" | ").slice(0, 200) || "none");
     const it = ((await nks("GET", "/me/orders?limit=200", { asSeat: true })).body?.items ?? []).find((x) => x.id === o.body?.id);
-    check(it?.state === "stopped", `order (${label}): the api holds it stopped`, it ? `${it.state} by ${it.by}` : "not listed");
+    check(it?.state === "stopped" && !!it.acked_at, `order (${label}): the api holds it stopped`, it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed");
+    if (o.body?.id) orderTrace(label, o.body.id, auth, log());
     return { id: o.body?.id, t };
   };
   const standText = (name) =>
@@ -501,6 +525,8 @@ try {
       check(!seatId(await board(), sub), "order (satellite): the satellite seat is gone");
       check(!!seatId(await board(), nameS), "order (satellite): the root's seat holds");
       check(!active().includes(Cs.id) && assistantAfter(messages(Cs.id), os.t + 20_000) === 0, "order (satellite): the child does not run again");
+      const seenC = JSON.stringify(messages(Cs.id));
+      check(!/"type":\s*"stop"/.test(seenC) && !(os.id && seenC.includes(os.id)), "order (satellite): the stop frame is not in the child session");
     }
     const brd4 = await board();
     if (seatId(brd4, nameS)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd4, nameS), as_person: true });

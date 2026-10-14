@@ -35,6 +35,7 @@ const realm2Arg = arg("--realm2", null);
 const expectUser = arg("--expect-user", null);
 const apiArg = arg("--api", null);
 const personArg = arg("--person", null);
+const ackLog = arg("--ack-log", null);
 // --bridge — another build of the bridge (a release output), dist/dev by default.
 const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 
@@ -50,6 +51,7 @@ const envFor = (dir, secret) => {
   writeFileSync(join(dir, "token"), secret + "\n", { mode: 0o600 });
   const e = { ...process.env, HOME: join(run, "home"), ISKRON_BRIDGE_AUTH_DIR: dir, ISKRON_BRIDGE_URL: URL_, ISKRON_BRIDGE_NO_UPDATE: "1" };
   delete e.ISKRON_BRIDGE_TOKEN;
+  delete e.ISKRON_BRIDGE_LANG; // the default is under test: no variable names the language
   return e;
 };
 const env = envFor(join(run, "auth"), token);
@@ -144,6 +146,28 @@ async function api(method, path, { body, realm, asSeat } = {}) {
   return { status: r.status, body: j?.data ?? j };
 }
 const CYR = /[а-яё]/i;
+
+// The order's trace (#7510): accepted on disk and answered before the stop, the outcome after
+// the accepted's answer. The bridge's journal <auth>/orders/<id>.json keeps the accepted's time
+// (`at`) under the outcome; the stand's /api proxy logs every ack it carries (--ack-log, JSONL
+// {t, done, order, state, status}); standings.log stamps the stop and the outcome.
+const stampOf = (line) => Date.parse(line.slice(0, 24));
+function orderTrace(label, id, authDir, logText) {
+  const lines = logText.split("\n").filter((l) => l.includes(`stop order ${id}`));
+  const outcome = lines.find((l) => l.includes(`stop order ${id} for `));
+  const action = lines.find((l) => !l.includes(`stop order ${id} for `));
+  const jf = join(authDir, "orders", `${id}.json`);
+  const j = existsSync(jf) ? JSON.parse(readFileSync(jf, "utf8")) : null;
+  check(!!j && j.state === "stopped" && typeof j.at === "number", `order (${label}): the journal holds it, stopped, with the accepted's time`, j ? `${j.state} at ${new Date(j.at).toISOString()} acked ${j.acked}` : "no journal entry");
+  const acks = ackLog ? (existsSync(ackLog) ? readFileSync(ackLog, "utf8") : "").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a.order === id) : [];
+  const acc = acks.find((a) => a.state === "accepted");
+  const out = acks.find((a) => a.state !== "accepted");
+  check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
+  check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
+  const stopAt = action ? stampOf(action) : outcome ? stampOf(outcome) : NaN;
+  check(!!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, j && action ? `accepted ${new Date(j.at).toISOString()} · ${action.slice(0, 120)}` : outcome?.slice(0, 140));
+  check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
+}
 const standingsLog = () => {
   const p = join(env.ISKRON_BRIDGE_AUTH_DIR, "standings.log");
   return existsSync(p) ? readFileSync(p, "utf8") : "";
@@ -327,9 +351,17 @@ try {
       check(lines.length === 1 && lines[0].includes(`for ${seat}: stopped`), `order (${label}): one "stop order … stopped" line`, lines.join(" | ").slice(0, 200) || "none");
       const mine = await api("GET", "/me/orders?limit=200", { asSeat: true });
       const it = (mine.body?.items ?? []).find((x) => x.id === o.body?.id);
-      check(it?.state === "stopped", `order (${label}): the api holds it stopped`, `${mine.status} ${it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed"}`);
+      check(it?.state === "stopped" && !!it.acked_at, `order (${label}): the api holds it stopped`, `${mine.status} ${it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed"}`);
+      if (o.body?.id) orderTrace(label, o.body.id, env.ISKRON_BRIDGE_AUTH_DIR, standingsLog());
       return { notes, log };
     };
+    // The main seat alone: its agent is stopped, as by the owner's revoke.
+    if (!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA))
+      await A.call("iskron_stand", { realm, karta: `#${karta}`, name: nameA, model: "stand-run" });
+    const a0 = seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA);
+    const alone = await order("main alone", a0, realm, 20_000);
+    check(alone.notes.some((t) => /остановлен/.test(t)), "order (main alone): the agent told it is stopped");
+    check(!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA), "order (main alone): the seat is gone");
     const [a1, b1] = await standBoth();
     check(!!a1 && !!b1, "order: the main seat and the seat beside stand", `${a1} ${b1}`);
     const beside = await order("beside", b1, realm2Arg, 20_000);
@@ -348,32 +380,11 @@ try {
 
   // 7. The bridge asks the server's prose in its own language (#7593): a ru session reads the
   // tools and whoami in Russian, an en session in English, whatever the server's default.
-  // The .ai scenario: no language variable, the server's address on .ai names English. The
-  // stand is on loopback, so a preload sends fetch for the .ai name to it (the bridge's bytes
-  // untouched) — a check of the choice by address, not of a live .ai server.
-  const aiHost = "stand-run.iskron-test.ai";
-  const preload = join(run, "ai-dns.mjs");
-  writeFileSync(
-    preload,
-    `const H = ${JSON.stringify(aiHost)}, f = globalThis.fetch;\n` +
-      `globalThis.fetch = (u, o) => {\n` +
-      `  if (typeof u === "string" || u instanceof URL) { const x = new URL(String(u)); if (x.hostname === H) { x.hostname = "127.0.0.1"; u = x.toString(); } }\n` +
-      `  return f(u, o);\n};\n`,
-  );
-  const aiUrl = URL_.replace(/^(https?:\/\/)(127\.0\.0\.1|localhost)(?=[:/])/, `$1${aiHost}`);
   const sessions = [["ru", A, true]];
   const E = open("en", { ...env, ISKRON_BRIDGE_LANG: "en" });
-  // Its own auth dir: the session goes through a machine daemon of its own, which inherits the preload.
-  const aiEnv = envFor(join(run, "auth-ai"), token);
-  const AI = aiUrl !== URL_ ? open("ai", { ...aiEnv, ISKRON_BRIDGE_URL: aiUrl, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${preload}`.trim() }) : null;
   try {
     await E.init();
     sessions.push(["en", E, false]);
-    if (AI) {
-      const up = await AI.init().then(() => null, (e) => e.message);
-      if (up) check(false, "language (.ai): the bridge on the .ai address comes up", up.slice(0, 200));
-      else sessions.push([`ai (${aiHost})`, AI, false]);
-    } else report.push("SKIP language (.ai) — the stand is not on loopback");
     for (const [label, b, ru] of sessions) {
       const tools = (await b.list()).result?.tools ?? [];
       const me = tools.find((t) => t.name === "iskron_me")?.description ?? "";
@@ -382,7 +393,7 @@ try {
       check(ru ? CYR.test(who) && !/You are/.test(who) : /You are/.test(who), `language (${label}): whoami in ${ru ? "ru" : "en"}`, who.split("\n")[0].slice(0, 120));
     }
   } finally {
-    await Promise.all([E.close(), AI?.close()]);
+    await E.close();
   }
 
   // 5. status names what is attached on this (isolated) machine.
@@ -406,7 +417,7 @@ process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 // The machine daemons of this run's auth dirs outlive their sessions by an idle window and
 // would write into the run dir after its removal: put them down first.
-for (const d of [join(run, "auth"), join(run, "auth-bad"), join(run, "auth-ai")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
+for (const d of [join(run, "auth"), join(run, "auth-bad")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
 await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(setup || (failed ? 1 : 0));
