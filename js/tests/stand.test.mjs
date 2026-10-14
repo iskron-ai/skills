@@ -3731,9 +3731,10 @@ test("satellite: standing in another role, it still may not take, register or re
   );
 });
 
-// English Iskron (#6080): the bridge's language follows its server — a host on
-// .ai is English, any other Russian; ISKRON_BRIDGE_LANG=en|ru overrides. What the
-// bridge writes itself — the iskron_stand answer — speaks that language; an
+// English Iskron (#6080): the bridge's language is ISKRON_BRIDGE_LANG=en|ru, else
+// its server's — the address from the argument, ISKRON_BRIDGE_URL or the `server`
+// file beside the grant (the `use en` choice, #5040): a host on .ai is English, any
+// other Russian; with no address at all, Russian. What the bridge writes itself — the iskron_stand answer — speaks that language; an
 // English bridge asks the api for English prose (Accept-Language) and names the
 // seat's language in connect and register (locale: "en"); a Russian one asks the
 // same in Russian — the server's default is not its language (#7593).
