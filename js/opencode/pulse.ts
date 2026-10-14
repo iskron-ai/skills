@@ -1,8 +1,10 @@
 // An OpenCode session's word on its turn for the seat's pulse (graph @nks/nks-dev, node #7529):
 // state from service events — session.status busy/idle, session.execution.succeeded, failed and
 // interrupted; turn_at — when a turn ended; read_at — when a frame the channel laid into the
-// session entered a turn as text: at once for a steer, on session.inbox.delivered for a queued one.
-// Each change goes to the session's bridge by method("pulse"); the bridge paces the socket.
+// session entered a turn as text: on session.inbox.delivered of its inbox item, a steer too — it
+// waits for the running tool to return (#5048). Each change goes to the session's bridge by
+// method("pulse"); the bridge paces the socket. The last word is kept: a seat taken or returned
+// gets it at once (seated), so a turn heard before the seat is not lost.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
@@ -17,8 +19,10 @@ interface Word {
 
 export interface PulseFeed {
   onEvent: (ev: any) => void;
-  /** The channel laid a frame into the session: a steer is read now, a queued one when taken. */
-  prompted: (session: string, inbox: string | null, delivery: "steer" | "queue") => void;
+  /** The channel laid a frame into the session: read when OpenCode takes its inbox item, steer or queue. */
+  prompted: (session: string, inbox: string | null) => void;
+  /** The session's bridge took or returned its seat: the last word goes to it now. */
+  seated: (session: string) => void;
   forget: (session: string) => void;
   stop: () => void;
 }
@@ -91,14 +95,18 @@ export function createPulseFeed(opts: {
         }
       }
     },
-    prompted(session, inbox, delivery): void {
-      if (delivery === "steer") return tell(session, { read_at: at() });
+    prompted(session, inbox): void {
       if (!inbox) return;
       if (taken.get(inbox) === session) {
         taken.delete(inbox);
         return tell(session, { read_at: at() });
       }
       keep(queued, inbox, session);
+    },
+    seated(session): void {
+      if (!words.has(session)) return;
+      unsent.add(session);
+      tell(session, {});
     },
     forget(session): void {
       words.delete(session);

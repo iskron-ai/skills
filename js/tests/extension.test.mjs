@@ -618,6 +618,33 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
   }
 });
 
+// The turn's word for the seat's pulse (graph nks-dev: #7529) belongs to its session: a new
+// session_start raises a new bridge, and the old session's turn_at and read_at do not ride to it.
+test("a new session's pulse carries none of the previous session's turn and read clocks", async () => {
+  const calls = join(SANDBOX, "pulse-reset.calls");
+  const { env } = bridgeEnv("pulse-reset", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && !pulses().some((p) => p.arguments.turn_at); i++) await delay(40);
+    const old = pulses().at(-1).arguments;
+    assert.ok(old.turn_at && old.read_at, `the old session's clocks: ${JSON.stringify(old)}`);
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const before = pulses().length;
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && pulses().length === before; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" }, "the new session's own word");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
   const calls = join(SANDBOX, "launch-tail.calls");
   const { log, env } = bridgeEnv("launch-tail", {

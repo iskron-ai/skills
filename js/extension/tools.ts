@@ -292,6 +292,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     });
   /** The session's first prompt has passed — the launch line runs only in it. */
   let prompted = false;
+  let resetPulse = (): void => {};
 
   // The launch line with a case (shared/launch.ts): the first prompt stands and enters the case
   // before the model's turn. The launcher's seat — the "from <seat>" tail, else the SATELLITE_OF
@@ -320,6 +321,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     canSpeak = Boolean(ctx.hasUI);
     bridge?.stop();
     bridge = null;
+    resetPulse(); // the old session's turn and read clocks are not the new one's (pulse.ts)
     prompted = false;
     heldName = null;
 
@@ -346,7 +348,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
   // Session usage — to the bridge while it holds a seat (usage.ts, #6271).
   setupUsage(pi, () => (heldName ? bridge : null));
   // The turn's word for the seat's pulse — kept by the bridge before a seat too (pulse.ts, #7529).
-  setupPulse(pi, () => bridge);
+  resetPulse = setupPulse(pi, () => bridge);
 
   pi.on("session_shutdown", async () => {
     // Idempotent: pi calls this on paths where nothing came up too.

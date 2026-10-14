@@ -16,8 +16,9 @@ function endOf(messages: readonly any[] | undefined): "idle" | "interrupted" | "
   return "idle";
 }
 
-export function setupPulse(pi: ExtensionAPI, live: () => Bridge | null): void {
-  const word: { state?: string; turn_at?: string; read_at?: string } = {};
+/** Hangs the turn's hooks; the returned reset drops the word — a new session's bridge gets none of the old one's clocks. */
+export function setupPulse(pi: ExtensionAPI, live: () => Bridge | null): () => void {
+  let word: { state?: string; turn_at?: string; read_at?: string } = {};
   const tell = (change: typeof word): void => {
     Object.assign(word, change);
     void live()
@@ -31,6 +32,9 @@ export function setupPulse(pi: ExtensionAPI, live: () => Bridge | null): void {
     const m: any = event.message;
     if (m?.role === "custom" && m.customType === LOGGERS.channel) tell({ read_at: at() });
   });
+  return () => {
+    word = {};
+  };
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

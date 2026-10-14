@@ -2087,6 +2087,75 @@ test("turn events reach the holding session's bridge as iskron/pulse: busy, then
   }
 });
 
+/** The iskron/pulse calls a bridge got, in order (FB_CALLS). */
+const pulsesIn = (calls) =>
+  readFileSync(calls, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.name === "iskron/pulse")
+    .map((c) => c.arguments);
+
+// A turn heard before the seat (#7529): the session's last word is kept and goes to the bridge
+// as soon as it holds the seat — the seat's first turn is not unknown.
+test("busy heard before the seat reaches the bridge once it holds the seat", async () => {
+  const calls = join(SANDBOX, "pulse-early.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-early", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-early", location: { directory: "/work/p" } }],
+  });
+  try {
+    await serverTools(rec);
+    rec.emit({ type: "session.status", data: { sessionID: "s-early", status: { type: "busy" } } });
+    await rec.call("iskron_channel", { action: "connect" }, "s-early");
+    await delay(150);
+    assert.equal(pulsesIn(calls).length, 0, "the busy came before any seat, nothing sent");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "early--931--nks-dev" }));
+    await until(() => pulsesIn(calls).length > 0, "the word on the held");
+    assert.deepEqual(pulsesIn(calls).at(-1), { state: "busy" });
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A steered word enters the turn when the running tool returns (#5048, #4266): read_at comes
+// with session.inbox.delivered of its inbox item, not with the prompt's acceptance.
+test("a steered frame is read when OpenCode takes its inbox item, not when the prompt is accepted", async () => {
+  const calls = join(SANDBOX, "pulse-steer.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-steer", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-steer", location: { directory: "/work/p" } }],
+    inboxIds: true,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-steer");
+    const events = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(events, event("held", { key: "steer--931--nks-dev" }));
+    await until(() => /мост держит стояние steer--931--nks-dev/.test(rec.said()), "the held line");
+    rec.emit({ type: "session.status", data: { sessionID: "s-steer", status: { type: "busy" } } });
+    await until(() => pulsesIn(calls).some((p) => p.state === "busy"), "the busy word");
+    appendFileSync(events, event("frame", { frame: frame("слово в ход"), raw: "" }));
+    await until(() => rec.prompts.length === 1, "the frame prompted");
+    assert.equal(rec.prompts[0].delivery, "steer");
+    await delay(150);
+    assert.equal(pulsesIn(calls).at(-1).read_at, undefined, "accepted is not read");
+    const before = Date.now();
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-steer", inboxID: "inbox-1" },
+    });
+    await until(() => pulsesIn(calls).at(-1)?.read_at, "read_at on delivered");
+    const read = Date.parse(pulsesIn(calls).at(-1).read_at);
+    assert.ok(read >= before - 5 && read <= Date.now(), `read_at at the taking: ${read}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");

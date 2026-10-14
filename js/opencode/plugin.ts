@@ -122,11 +122,24 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   const closed = (s: string): boolean => half.ended(s) || stops.halted(s);
   // Usage comes up after the tools (it needs the session's bridge); a subagent's end flushes it first.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
+  // A seat taken or returned gets the session's last word on its turn at once (pulse.ts, #7529).
+  const heard = (s: string | null, p: any, c?: boolean): void => {
+    onChannel(s, p, c);
+    const kind: unknown = p?.data?.kind;
+    if (
+      s &&
+      (kind === "held" ||
+        kind === "attached" ||
+        kind === "resumed" ||
+        p?.data?.frame?.type === "hello")
+    )
+      pulse.seated(s);
+  };
   try {
     half = await setupTools(
       ctx,
       say,
-      onChannel,
+      heard,
       rootOf,
       (s) => flushUsage(s),
       closed,
