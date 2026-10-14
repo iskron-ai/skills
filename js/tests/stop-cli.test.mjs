@@ -267,3 +267,16 @@ test("stop names no seat it does not see, and fails loudly", async (t) => {
   assert.match(r.stderr, /ни сессии, ни места «nobody»/, r.stderr);
   assert.equal(fake.state.orders.human.length, 0, "nothing is sent");
 });
+
+// Явный --lang главнее языка, который выбор конфигурации берёт по серверу.
+test("stop --lang en answers in English, past the choice of the seat's server", async (t) => {
+  const { dir, fake } = await seated(t, "in-english");
+  const unforced = { ...patOf(fake) };
+  delete unforced.ISKRON_BRIDGE_LANG;
+  const none = await stop(dir, ["nobody", "--lang", "en"], unforced);
+  assert.equal(none.status, 1, none.stdout);
+  assert.match(none.stderr, /neither a session nor a seat «nobody»/, none.stderr);
+  const r = await stop(dir, ["in-english", "--lang", "en"], unforced);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /a stop order is issued to the seat in-english/, r.stdout);
+});

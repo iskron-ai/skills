@@ -246,6 +246,7 @@ export async function startFakeNks(opts = {}) {
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
+    standingRefuseDelayMs: 0, // и так долго держать ответ этого отказа
     standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
@@ -1038,6 +1039,8 @@ export async function startFakeNks(opts = {}) {
           }
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
+            if (st.standingRefuseDelayMs)
+              await new Promise((r) => setTimeout(r, st.standingRefuseDelayMs));
             return json(
               res,
               200,

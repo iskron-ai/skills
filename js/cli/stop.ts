@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 
 import { CFG, parseArgs, setConfig } from "../bridge/config.ts";
 import { keyOf } from "../bridge/holdrecord.ts";
+import { type Config } from "../bridge/types.ts";
 import { envName, STOP_CLI, type StopCliWords } from "../delivery/index.ts";
 import { apiBase } from "../shared/channel.ts";
 import { setLang, words } from "../shared/lang.ts";
@@ -75,7 +76,13 @@ function apiOf({ place: p, session }: Seat): string | null {
 
 export async function runStop(argv: string[]): Promise<void> {
   const args = [...argv];
-  setLang(take(args, "--lang"));
+  const lang = take(args, "--lang");
+  // An explicit --lang outranks the language the config takes by its server.
+  const configure = (cfg: Config): void => {
+    setConfig(cfg);
+    setLang(lang);
+  };
+  setLang(lang);
   const realm = take(args, "--realm");
   const authDir =
     take(args, "--auth-dir") || process.env[envName("BRIDGE_AUTH_DIR")] || defaultAuthDir();
@@ -86,7 +93,7 @@ export async function runStop(argv: string[]): Promise<void> {
   };
   if (!target) return fail(sw().usage().trimEnd());
   const rest = args.filter((a) => a !== target);
-  setConfig(parseArgs(["--auth-dir", authDir, ...rest]));
+  configure(parseArgs(["--auth-dir", authDir, ...rest]));
   const snap = await machine(authDir);
   if (!snap.snapshot_available) return fail(sw().noDaemon());
   const seat = pick(snap.sessions, target, realm);
@@ -106,7 +113,7 @@ export async function runStop(argv: string[]): Promise<void> {
     cfg.pat = null;
     cfg.patSource = null;
   }
-  setConfig(cfg);
+  configure(cfg);
   const key = await keyFor(server);
   if ("why" in key) return fail(key.why);
   const out = await stopSeat(p, p.standing_id, base, key.token);

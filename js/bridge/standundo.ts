@@ -2,12 +2,12 @@
 // guard at the exit of the whole call: the session stopped since the call began — every seat
 // the call took or bound again is taken off quietly, the session is left with no seat, and the
 // answer is the stop word. register refused after connect — the new seat is taken off and the
-// session goes back to the seat it stood on.
+// session goes back to the seat it stood on, unless it was stopped meanwhile.
 import { STAND_MOVES, type StandMovesWords, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Answer, callTool, short } from "./call.ts";
 import { forgetSeat, holdsStanding, holdStanding, keyOf } from "./hold.ts";
-import { H, setRevokingOwn, stoppedDuring, stopsNow } from "./holdstate.ts";
+import { H, setRevokingOwn, stoppedDuring, stoppedInMove, stopsNow } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { placeFields } from "./placefields.ts";
 import { refusedWord, type Reissued, revokeCall, throughReissue } from "./standmoves.ts";
@@ -117,8 +117,12 @@ export async function registerRefused(
   const text = short(r.text);
   if (!taken || !prior) return refusedWord("register", r, realm, sw().takenButRegister(text));
   const refusal = refusedWord("register", r, realm, sw().refused("register", text));
+  // Stopped since the call began: the former seat is not held again (held lifts a harness's
+  // wake ban that the stop does not restore); the stop guard takes the new one off and answers.
+  if (stoppedInMove()) return refusal;
   const left = await dropTaken(taken);
   if (left) return `${refusal}\n${left}`;
+  if (stoppedInMove()) return refusal;
   state.standing = { ...prior };
   if (addr) holdStanding(addr.url, addr.statusUrl);
   const back = await callTool(tool("channel"), {

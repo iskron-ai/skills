@@ -186,6 +186,35 @@ test("the owner's stop during the revoke of the former seat beside: the register
   assert.notEqual(last?.author, "m-b", "the next write is not from the new seat beside");
 });
 
+// #7439 при откате: стоп пришёл, пока вызов ждал отказа register нового места, — прежнее место
+// не держится снова и held не звучит: held снимает запрет побудок (OpenCode), стоп его не вернёт.
+test("the owner's stop while register of the new seat is refused: the former seat is not held again, no held, the answer is the stop", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  await fake.control({ structured: true, standingRefuseNext: 1 });
+  fake.state.standingRefuseDelayMs = 1500;
+  const said = b.notifications.length;
+  const pending = stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  const heard = () => [...fake.state.ws].some((s) => fake.state.wsNames.get(s) === "drugoe");
+  while (!heard()) await new Promise((r) => setTimeout(r, 50));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  fake.state.standingRefuseDelayMs = 0;
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.match(text, /ты остановлен/, text);
+  assert.doesNotMatch(text, /осталась на прежнем месте/, text);
+  await new Promise((r) => setTimeout(r, 300));
+  const kinds = b.notifications.slice(said).map((n) => n.params?.data?.kind);
+  const after = kinds.slice(kinds.indexOf("stopped"));
+  assert.ok(kinds.includes("stopped"), `the stop is said: ${kinds.join(", ")}`);
+  assert.ok(!after.includes("held"), `no held after the stop: ${kinds.join(", ")}`);
+  const names = [...fake.state.ws].map((s) => fake.state.wsNames.get(s));
+  assert.ok(!names.includes("proba"), `the former seat is not held again: ${names.join(", ")}`);
+});
+
 // #7553 при отказе register: connect нового места прошёл, register отказан — переход не удался:
 // новое место снято, сессия осталась на прежнем, оно у неё единственное.
 test("register refused after take=true's connect onto another seat undoes the move: the new seat is revoked, the former one stays the only one", async (t) => {
