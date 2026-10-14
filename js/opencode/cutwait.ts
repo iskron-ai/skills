@@ -5,6 +5,7 @@
 // registry on globalThis: the confirmation waits for the session and every descendant the
 // process knows, whoever cuts them. A descendant no live instance cuts is waited for until the
 // confirmation's cap (cuts.ts answerHalt); the bridge then answers the order unknown harness_silent.
+// The cap and the waiting instance's stop take its waits out of the registry.
 /* eslint-disable @typescript-eslint/no-explicit-any -- the process registry lives on globalThis */
 import { GLOBAL_PREFIX } from "../delivery/index.ts";
 import { descendantsOf } from "./halts.ts";
@@ -39,15 +40,33 @@ export function forget(id: string): void {
   wake(id);
 }
 
-/** The outcome of the session's cut for its current stop (`stopOf`); a session not stopped is cut. */
-export function outcomeOf(id: string, stopOf: (id: string) => string | null): Promise<CutOutcome> {
+/**
+ * The outcome of the session's cut for its current stop (`stopOf`); a session not stopped is cut.
+ * `signal` aborted — the wait leaves the registry and never settles.
+ */
+export function outcomeOf(
+  id: string,
+  stopOf: (id: string) => string | null,
+  signal?: AbortSignal,
+): Promise<CutOutcome> {
   const gen = stopOf(id);
   const o = outcomes().get(id);
   if (gen === null) return Promise.resolve(null);
   if (o?.[0] === gen) return Promise.resolve(o[1]);
   return new Promise((done) => {
+    if (signal?.aborted) return;
     const set = waiters().get(id) ?? new Set();
-    set.add(() => void outcomeOf(id, stopOf).then(done));
+    const off = (): void => {
+      const now = waiters().get(id);
+      now?.delete(w);
+      if (now?.size === 0) waiters().delete(id);
+    };
+    const w = (): void => {
+      signal?.removeEventListener("abort", off);
+      void outcomeOf(id, stopOf, signal).then(done);
+    };
+    signal?.addEventListener("abort", off, { once: true });
+    set.add(w);
     waiters().set(id, set);
   });
 }

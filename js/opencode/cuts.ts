@@ -4,7 +4,7 @@
 // (halts.ts stopOf): a new stop of the session or of any ancestor cuts it anew. The outcomes lie
 // in the process's registry (cutwait.ts): another instance's cuts count too.
 
-import { method } from "../delivery/index.ts";
+import { envName, method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
 import { type CutOutcome, forget as unsettle, outcomeOf, settle as settled } from "./cutwait.ts";
 
@@ -12,22 +12,24 @@ export type { CutOutcome };
 
 /** How long the bridge is given to take the stop's outcome. */
 const HALTED_MS = 10_000;
-/** Past the bridge's own wait for the harness (20 s) its order is answered without us. */
-const ANSWER_CAP_MS = 30_000;
+/** Past the bridge's own wait for the harness (20 s) its order is answered without us; the variable is a probe seam. */
+const ANSWER_CAP_MS = Number(process.env[envName("OPENCODE_HALT_CAP_MS")]) || 30_000;
 
 /**
  * A "stopped" event of a stop order (`order` — its id): once the interrupt of the session and its
  * descendants ended, the bridge that said it hears method("halted") {order, ok, code?}. Settles
- * when that answer is given (or the cap passed): only then may the bridge go down.
+ * when that answer is given (or the cap passed): only then may the bridge go down. Past the cap
+ * the wait for the outcome is dropped (`signal`).
  */
 export function answerHalt(
   bridge: Bridge | null,
   ev: { order?: unknown } | undefined,
-  outcome: () => Promise<CutOutcome>,
+  outcome: (signal: AbortSignal) => Promise<CutOutcome>,
 ): Promise<void> {
   const order = ev?.order;
   if (typeof order !== "string") return Promise.resolve();
-  const answered = outcome().then((code) =>
+  const capped = new AbortController();
+  const answered = outcome(capped.signal).then((code) =>
     bridge
       ?.request(
         method("halted"),
@@ -44,7 +46,10 @@ export function answerHalt(
     t = setTimeout(done, ANSWER_CAP_MS);
     (t as { unref?: () => void }).unref?.();
   });
-  return Promise.race([answered, cap]).finally(() => clearTimeout(t));
+  return Promise.race([answered, cap]).finally(() => {
+    clearTimeout(t);
+    capped.abort();
+  });
 }
 
 /** How many times a stop's refused interrupt is tried, and how long apart. */
@@ -68,6 +73,7 @@ export function createCuts(d: CutDeps) {
   const cutting = new Map<string, string>(); // the stops whose interrupt is in flight
   const cutFails = new Map<string, [string, number]>(); // refused interrupts of those stops
   const retries = new Set<ReturnType<typeof setTimeout>>();
+  const waits = new Set<AbortController>(); // the confirmations waiting for outcomes
 
   /**
    * A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once
@@ -119,10 +125,34 @@ export function createCuts(d: CutDeps) {
 
   return {
     cut,
-    /** The first refusal among the sessions' cuts, whoever cuts them, once all ended; null — all cut. */
-    async outcome(ids: string[]): Promise<CutOutcome> {
-      const all = await Promise.all(ids.map((id) => outcomeOf(id, d.stopOf)));
-      return all.find((c) => c !== null) ?? null;
+    /**
+     * The first refusal among the sessions' cuts, whoever cuts them, once all ended; null — all
+     * cut. `ids` is read again once the known ones answered: a session it names anew (a child
+     * born during the wait) is waited for too, until the set stands still. `signal` or this
+     * instance's stop drops the wait.
+     */
+    async outcome(ids: () => string[], signal?: AbortSignal): Promise<CutOutcome> {
+      const own = new AbortController();
+      const off = (): void => {
+        waits.delete(own);
+        own.abort();
+      };
+      waits.add(own);
+      signal?.addEventListener("abort", off, { once: true });
+      if (signal?.aborted) off();
+      try {
+        const asked = new Set<string>();
+        let first: CutOutcome = null;
+        for (let next = ids(); next.length; next = ids().filter((id) => !asked.has(id))) {
+          for (const id of next) asked.add(id);
+          const all = await Promise.all(next.map((id) => outcomeOf(id, d.stopOf, own.signal)));
+          first ??= all.find((c) => c !== null) ?? null;
+        }
+        return first;
+      } finally {
+        waits.delete(own);
+        signal?.removeEventListener("abort", off);
+      }
     },
     /** The session is gone or stands again: its marks go, whoever waits reads it anew. */
     forget(id: string): void {
@@ -133,6 +163,8 @@ export function createCuts(d: CutDeps) {
     stop(): void {
       for (const t of retries) clearTimeout(t);
       retries.clear();
+      for (const w of waits) w.abort(); // its waits leave the process's registry (cutwait.ts)
+      waits.clear();
     },
   };
 }

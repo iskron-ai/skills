@@ -64,7 +64,8 @@ export async function setupTools(
   rootOf: (sessionID: string) => Promise<string>,
   flushUsage: (session: string) => Promise<void> = async () => {},
   closed: Closed = () => false,
-  halted: (session: string | null) => Promise<string | null> = async () => null,
+  halted: (session: string | null, signal?: AbortSignal) => Promise<string | null> = async () =>
+    null,
 ): Promise<ToolsHalf> {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
@@ -125,7 +126,9 @@ export async function setupTools(
           relay(slot.session, params, !!slot.child);
           // A stop by an order: the bridge answers the order once the interrupt ended (cuts.ts),
           // and only then may a lead's end take its bridge down — the answer goes by that bridge.
-          const answered = answerHalt(slot.bridge, params?.data, () => halted(slot.session));
+          const answered = answerHalt(slot.bridge, params?.data, (signal) =>
+            halted(slot.session, signal),
+          );
           if (lead) void answered.then(() => leads.heard(session, kind, slot.place));
           return;
         }

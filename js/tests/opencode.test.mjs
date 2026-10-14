@@ -371,6 +371,7 @@ const ENV_KEYS = [
   "ISKRON_WAKE_MS",
   "ISKRON_OPENCODE_PENDING_MS",
   "ISKRON_OPENCODE_WAKE_HOLD_MS",
+  "ISKRON_OPENCODE_HALT_CAP_MS",
 ];
 
 let seq = 0;
@@ -4626,6 +4627,106 @@ for (const refused of [false, true])
       open();
       await B.stop();
       await A.stop();
+    }
+  });
+
+// Review of #7519, fifth round in case №669: the confirmation read the descendants once, before
+// its wait — a child born while it waited was not waited for, the bridge heard stopped first.
+test("a stop order's confirmation waits for a child born while it waits", async () => {
+  const calls = join(SANDBOX, "halted-late.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("halted-late", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root-late", location: LOC_A },
+    { id: "child-late", parentID: "root-late", location: LOC_B },
+    { id: "late", parentID: "root-late", location: LOC_A },
+  ];
+  let openChild, openLate;
+  const faultsA = {};
+  const faultsB = { interruptGate: new Promise((r) => (openChild = r)) };
+  const A = await plugin(b.env, { location: LOC_A, sessions, faults: faultsA });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true, faults: faultsB });
+  const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-late");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child-late");
+    const childPid = callsIn(calls).at(-1).pid;
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${rootPid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-late" }),
+    );
+    await until(() => A.interrupts.length === 1, "the root's interrupt");
+    await until(() => B.interrupts.length === 1, "the child's interrupt in its own instance");
+    faultsA.interruptGate = new Promise((r) => (openLate = r));
+    A.emit({ type: "session.created", data: { sessionID: "late", parentID: "root-late" } });
+    await delay(200);
+    openChild();
+    await until(
+      () => A.interrupts.some((i) => i.sessionID === "late"),
+      "the late child's interrupt",
+      8000,
+    );
+    await delay(400);
+    assert.equal(
+      halted().length,
+      0,
+      "no confirmation while the late child's interrupt is unanswered",
+    );
+    openLate();
+    await until(() => halted().length === 1, "the confirmation", 8000);
+    assert.deepEqual(halted()[0].arguments, { order: "ord-late", ok: true });
+  } finally {
+    openChild();
+    openLate?.();
+    await B.stop();
+    await A.stop();
+  }
+});
+
+// The same round: the cap ended the confirmation but left its wait in the process's registry,
+// past the instance's stop too — a descendant nobody cuts held it for good.
+for (const how of ["cap", "stop"])
+  test(`a stop order's wait for an interrupt leaves the process's registry ${how === "cap" ? "past the confirmation's cap" : "with its instance's stop"}`, async () => {
+    const id = `root-wait-${how}`;
+    const calls = join(SANDBOX, `halted-wait-${how}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-wait-${how}`, {
+      FB_CALLS: calls,
+      FB_TOOLS: LEAD_TOOLS,
+      ...(how === "cap" ? { ISKRON_OPENCODE_HALT_CAP_MS: 300 } : {}),
+    });
+    let open;
+    const faults = { interruptGate: new Promise((r) => (open = r)) };
+    const A = await plugin(b.env, { location: LOC_A, sessions: [{ id, location: LOC_A }], faults });
+    const waits = () => globalThis.__iskronCutWaiters?.get(id)?.size ?? 0;
+    let down = false;
+    try {
+      await until(() => A.tools().has("iskron_case"), "tools", 8000);
+      await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, id);
+      const pid = callsIn(calls).at(-1).pid;
+      await rootHolds(A, b, { pid });
+      const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: `ord-${how}` }),
+      );
+      await until(() => A.interrupts.length === 1, "the root's interrupt");
+      await until(() => waits() === 1, "the confirmation waits for the interrupt");
+      if (how === "cap") await until(() => waits() === 0, "no wait past the cap", 3000);
+      else {
+        down = true;
+        await A.stop();
+        assert.equal(waits(), 0, "no wait of a stopped instance");
+      }
+    } finally {
+      open();
+      if (!down) await A.stop();
     }
   });
 

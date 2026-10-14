@@ -123,7 +123,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       (s) => flushUsage(s),
       closed,
       // No channel half — no interrupt: the order's stop is refused, not reported executed.
-      (s) => (ch ? ch.halted(s) : Promise.resolve(CHANNEL_DOWN)),
+      (s, signal) => (ch ? ch.halted(s, signal) : Promise.resolve(CHANNEL_DOWN)),
     );
   } catch (e) {
     say(words(PLUGIN).notRaised((e as Error).message), "error");

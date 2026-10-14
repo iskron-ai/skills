@@ -47,9 +47,9 @@ export interface Channel {
   /**
    * How the stop's interrupt of session `session` and its descendants ended, whichever instance of
    * the process cuts them: null — every turn is cut (or nothing was stopped), a code — the first
-   * refusal (cutwait.ts).
+   * refusal (cutwait.ts). `signal` drops the wait.
    */
-  halted(session: string | null): Promise<string | null>;
+  halted(session: string | null, signal?: AbortSignal): Promise<string | null>;
   /** The plugin stops: what gathered leaves now. */
   stop(): void;
   /** Counts of records waiting for a passing prompt into root session `session`; null — none. */
@@ -347,7 +347,15 @@ export function setupChannel(
       halts.gone(session);
       cuts.forget(session);
     },
-    halted: (session) => cuts.outcome(session ? [session, ...processDescendants(session)] : []),
+    // Each reading cuts the descendants this instance serves, a child born during the wait too;
+    // other instances cut theirs by the same stops (plugin.ts sweep).
+    halted(session, signal) {
+      return cuts.outcome(() => {
+        if (!session) return [];
+        this.halt(session);
+        return [session, ...processDescendants(session)];
+      }, signal);
+    },
     halt(session) {
       if (!halts.halted(session)) return false;
       cut(session);
