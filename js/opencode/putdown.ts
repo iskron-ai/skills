@@ -12,16 +12,20 @@ export type PutDown = "end" | "away";
 /** `end` waits for the revokes of the main seat and those beside; `away` is a mark only. */
 const SAY_MS: Record<PutDown, number> = { end: 8_000, away: 1_000 };
 
+type Ended = { ended?: boolean; failed?: string[]; probably?: string[]; word?: string } | null;
+
 /**
  * What an `end` left on the board, aloud — the bridge keeps the hold record and repeats the
  * revoke after the death window (runend.ts); null — all revoked.
  */
-function unrevoked(
-  got: { ended?: boolean; failed?: string[]; word?: string } | null,
-): string | null {
+function unrevoked(got: Ended): string | null {
   if (got?.ended && !got.failed?.length) return null;
   return got?.failed?.length ? got.failed.join(", ") : (got?.word ?? "—");
 }
+
+/** Seats gone only by the revoke reply's prose — not confirmed, their hold records kept (caseexit.ts). */
+const unconfirmed = (got: Ended): string | null =>
+  got?.ended && got.probably?.length ? got.probably.join(", ") : null;
 
 /** The word to a root's bridge with a seat, then its stop; any other bridge just stops. */
 export async function putDown(slot: Slot, word: PutDown | null): Promise<void> {
@@ -30,7 +34,10 @@ export async function putDown(slot: Slot, word: PutDown | null): Promise<void> {
       .request(method(word), {}, { timeoutMs: SAY_MS[word], service: true })
       .catch((e: Error) => ({ ended: false, word: e.message }));
     const left = word === "end" ? unrevoked(got) : null;
+    const maybe = word === "end" ? unconfirmed(got) : null;
     if (left) process.stderr.write(`[${PRODUCT}/warning] ${words(OPENCODE).endUnrevoked(left)}\n`);
+    if (maybe)
+      process.stderr.write(`[${PRODUCT}/warning] ${words(OPENCODE).endUnconfirmed(maybe)}\n`);
   }
   slot.bridge.stop();
 }

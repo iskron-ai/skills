@@ -90,13 +90,25 @@ export const satellitePlaces = (): Standing[] => (CFG.satellite ? ownPlaces() : 
  * Revokes a session's own seats at the agent's end (graph @nks/nks-dev, node #7493): the seats
  * beside first — the platform keeps a channel's main seat while seats of other graphs stand on it.
  */
-export async function revokeOwnPlaces(
-  places: Standing[],
-): Promise<{ failed: string[]; revoked: SeatKey[] }> {
+export async function revokeOwnPlaces(places: Standing[]): Promise<Revokes> {
   const [main, ...beside] = places;
   const a = await revokeSatellitePlaces(beside);
   const b = await revokeSatellitePlaces(main ? [main] : []);
-  return { failed: [...a.failed, ...b.failed], revoked: [...a.revoked, ...b.revoked] };
+  return {
+    failed: [...a.failed, ...b.failed],
+    revoked: [...a.revoked, ...b.revoked],
+    probably: [...a.probably, ...b.probably],
+  };
+}
+
+/**
+ * Revokes' outcome: names left on the board; seats confirmed revoked by canonical graph, role
+ * and name (№664); names gone only by the reply's prose — neither failed nor confirmed.
+ */
+export interface Revokes {
+  failed: string[];
+  revoked: SeatKey[];
+  probably: string[];
 }
 
 /**
@@ -106,11 +118,10 @@ export async function revokeOwnPlaces(
  * releaseStanding and the case exits, so a 4001 close is not taken for a dead token. The answer —
  * names left on the board, and confirmed revokes by canonical graph, role and name (№664).
  */
-export async function revokeSatellitePlaces(
-  places: Standing[],
-): Promise<{ failed: string[]; revoked: SeatKey[] }> {
+export async function revokeSatellitePlaces(places: Standing[]): Promise<Revokes> {
   const failed = new Set(places); // revoked seats are struck out — one name in two graphs is two (#5838)
   const revoked: SeatKey[] = [];
+  const probably = new Set<string>();
   const revokes = places.map((s) =>
     call(tool("channel"), { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
@@ -118,8 +129,10 @@ export async function revokeSatellitePlaces(
         if (how === "failed")
           return log(`place ${s.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
         failed.delete(s);
-        if (how === "probably")
+        if (how === "probably") {
+          probably.add(s.name as string);
           return log(`${s.name} probably revoked at the run's end: ${r.text.slice(0, 120)}`);
+        }
         revoked.push({ realm: canonRealm(s.realm), karta: normKarta(s.karta), name: s.name ?? "" });
         log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
       })
@@ -129,7 +142,11 @@ export async function revokeSatellitePlaces(
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
     );
-  return { failed: [...new Set([...failed].map((s) => s.name as string))], revoked: [...revoked] };
+  return {
+    failed: [...new Set([...failed].map((s) => s.name as string))],
+    revoked: [...revoked],
+    probably: [...probably],
+  };
 }
 
 /**

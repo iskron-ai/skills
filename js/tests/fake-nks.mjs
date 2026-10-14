@@ -180,6 +180,7 @@ export async function startFakeNks(opts = {}) {
       register_standing: 0,
       connect: 0,
       list: 0,
+      stops: 0, // POST /api/channel/ws/{token}/stop, answered or not
       webhooks_added: 0,
       webhooks_listed: 0,
       status_posts: 0,
@@ -223,6 +224,8 @@ export async function startFakeNks(opts = {}) {
     wsToken: "tok",
     turned404: false, // апгрейд по адресу, который повернул connect того же места, — HTTP 404, как у контура
     latestToken: new Map(), // имя места → адрес сокета последнего connect
+    stopAbsent: opts.stopAbsent ?? 0, // 404 | 405: api без снятия по ws-токену (№675)
+    takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
@@ -286,6 +289,20 @@ export async function startFakeNks(opts = {}) {
       places: new Map([[slug(realm), place(karta, name)]]),
     });
     return id;
+  };
+  /**
+   * takeInWindow "karta:name": чужой connect того же места ложится один раз сразу после последней
+   * сверки моста — чтения доски или снятия по токену (№677): токен места перевыдан, место слушают.
+   */
+  const takeInWindow = () => {
+    const pl = st.takeInWindow && st.places.get(st.takeInWindow);
+    st.takeInWindow = null;
+    if (!pl) return;
+    const tok = token("ws");
+    st.wsChannel.set(tok, st.wsChannel.get(st.latestToken.get(pl.name)));
+    st.wsTokens.set(tok, pl.name);
+    st.latestToken.set(pl.name, tok);
+    pl.listening = true;
   };
   /** Канал, который держит место (граф, имя), — или undefined. */
   const channelOfPlace = (realm, name) =>
@@ -392,6 +409,34 @@ export async function startFakeNks(opts = {}) {
     }
 
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
+
+    // api 0.124.0 (дело №675 [39]): снятие по ws-токену — места канала снимаются, только пока
+    // {token} текущий, проверка и снятие разом; иначе 404 с правилом ws_token_not_current.
+    // stopAbsent: 404 | 405 — api без этой ручки (404 без правила, как незнакомый маршрут).
+    if (p.startsWith("/api/channel/ws/") && p.endsWith("/stop") && req.method === "POST") {
+      st.counts.stops++;
+      if (st.stopAbsent) return json(res, st.stopAbsent, { title: "Not Found" });
+      takeInWindow();
+      const tok = p.slice("/api/channel/ws/".length, -"/stop".length);
+      const name = st.wsTokens.get(tok);
+      const chan = st.channels.get(st.wsChannel.get(tok));
+      if (name === undefined || st.latestToken.get(name) !== tok || !chan?.places.size)
+        return json(res, 404, {
+          title: "Not Found",
+          errors: [{ rule: "ws_token_not_current", message: "токен не текущий" }],
+        });
+      const ended = [...chan.places.values()];
+      chan.places.clear();
+      for (const pl of ended) {
+        st.places.delete(`${pl.karta}:${pl.name}`);
+        st.closedPlaces.add(`${pl.karta}:${pl.name}`);
+      }
+      return json(res, 200, {
+        standing_id: ended[0].standing_id,
+        ended_by: "self",
+        ended_at: new Date().toISOString(),
+      });
+    }
 
     if (p.startsWith("/channel/status/") && req.method === "POST") {
       const { text, standing_id } = JSON.parse((await body(req)) || "{}");
@@ -1188,6 +1233,7 @@ export async function startFakeNks(opts = {}) {
               inbound: `${base}/api/channel/in/room-${r.karta}`,
             })),
           ];
+          takeInWindow(); // доска уже прочитана: чужой connect — между ней и revoke
           return json(
             res,
             200,

@@ -259,13 +259,105 @@ test("the plugin's end of a deleted session revokes the main seat at once, quiet
   });
 });
 
+const revokesOf = (fake, name) =>
+  fake.state.calls.filter(
+    (c) =>
+      c.name === "iskron_channel" &&
+      c.arguments.action === "revoke" &&
+      c.arguments.standing === name,
+  ).length;
+
+// №677, api 0.124.0 (case №675): the main seat ends by its dead socket's own token — the check
+// that the token is still current and the end are one transaction on the server.
+test("after the window the main seat ends by its dead socket's token, not by a revoke by name", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-s");
+    a.proc.kill("SIGKILL");
+    await a.gone();
+    await waitFor("the seat closed after the window", () => closed(fake, "die-s"), 15_000).catch(
+      (e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      },
+    );
+    await waitFor("the hold record dropped", () => !existsSync(recordOf(dir, "die-s")), 5_000);
+    assert.match(journalOf(dir), /die-s--931--nks-dev ended by its dead socket's token \(200/);
+    assert.equal(revokesOf(fake, "die-s"), 0, "no revoke by name");
+  });
+});
+
+// Another holder's connect lands right after the bridge's last check: between the board's read
+// and the revoke by name (an old bridge), or before the stop by token — whose 404 with the rule
+// leaves the new holder's seat alive.
+test("the name taken right after the bridge's last check: the stop by token answers not current, the new holder's seat lives", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-g");
+    a.proc.kill("SIGKILL");
+    await a.gone();
+    fake.state.takeInWindow = "931:die-g";
+    await waitFor(
+      "the window's judgement",
+      () =>
+        /die-g--931--nks-dev: its dead socket's token is not current/.test(journalOf(dir)) ||
+        closed(fake, "die-g"),
+      15_000,
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
+    await delay(500);
+    assert.ok(!closed(fake, "die-g"), `the new holder's seat lives:\n${journalOf(dir)}`);
+    assert.ok(fake.state.places.has("931:die-g"), "the seat is on the board");
+    assert.ok(!existsSync(recordOf(dir, "die-g")), "the dead agent's own record is dropped");
+  });
+});
+
+// An api without the stop (404 without a rule, 405): the board's check and a revoke by name.
+for (const absent of [404, 405])
+  test(`an api without the stop by token (${absent}): the dead seat closes by the board and a revoke`, async () => {
+    await withFake(
+      async ({ fake, dir, bridge }) => {
+        const a = await bridge();
+        await stood(a, "die-o");
+        a.proc.kill("SIGKILL");
+        await a.gone();
+        await waitFor(
+          "the seat closed after the window",
+          () => closed(fake, "die-o"),
+          15_000,
+        ).catch((e) => {
+          throw new Error(`${e.message}\n${journalOf(dir)}`);
+        });
+        assert.match(journalOf(dir), new RegExp(`no stop by token on this api \\(${absent}`));
+        assert.equal(revokesOf(fake, "die-o"), 1, "the revoke by name");
+        await waitFor("the hold record dropped", () => !existsSync(recordOf(dir, "die-o")), 5_000);
+      },
+      { stopAbsent: absent },
+    );
+  });
+
+// A revoke whose reply only reads as gone (prose without refusal data) is not confirmed: the
+// bridge says it apart from failed, and the hold record stays for the window.
+test("an end whose revoke is gone only by the reply's prose answers it as probably, the record kept", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-p");
+    fake.state.revokeRefuseNext = [{ text: "Место уже снято." }];
+    const r = await a.request("iskron/end");
+    assert.deepEqual(r.result?.probably, ["die-p"], JSON.stringify(r));
+    assert.deepEqual(r.result?.failed, [], JSON.stringify(r));
+    assert.ok(existsSync(recordOf(dir, "die-p")), "the hold record stays");
+  });
+});
+
 // №677: the death window checks the server, not only this machine's socket — a bridge of
 // another home took the name in the window, and a revoke by name would close its live seat.
+// An api without the stop by token: the board's check (with the token's stop see above).
 for (const [how, opts, mute, said] of [
-  ["listens on it", {}, false, /someone listens on it — another holder took it/],
+  ["listens on it", { stopAbsent: 404 }, false, /someone listens on it — another holder took it/],
   [
     "turned its address (its socket not on the board)",
-    { statusRotates: true },
+    { statusRotates: true, stopAbsent: 404 },
     true,
     /its socket's address was turned — another holder took it/,
   ],

@@ -2126,10 +2126,10 @@ test("a bridge stopped by the plugin itself is not a lost hearing, and the watch
 // bridge is told `end` (it revokes its own seats) before it goes, without a word into the
 // session; a reload is an announced absence — `away`, the seat waits for the next instance;
 // an interrupted turn (Esc) is neither — the bridge hears nothing and lives on.
-async function heldRoot(name, session, ctxOpts = {}) {
+async function heldRoot(name, session, ctxOpts = {}, env = {}) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
-  const b = bridgeEnv(name, { FB_CALLS: calls });
+  const b = bridgeEnv(name, { FB_CALLS: calls, ...env });
   const rec = await plugin(b.env, ctxOpts);
   await serverTools(rec);
   await rec.call("iskron_channel", { action: "connect" }, session);
@@ -2151,6 +2151,25 @@ test("a deleted session ends its agent: the bridge is told to end before it goes
     );
     assert.ok(!sent.some((c) => c.name === "iskron/away"), "a deletion is no absence");
     assert.equal(rec.prompts.length, 0, "no word into the deleted session");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №677: a revoke the reply's prose reads as gone, without refusal data, is not confirmed —
+// the bridge says it apart from failed and the plugin warns: the hold record stays.
+test("a deleted session whose seat went only by the reply's prose: the plugin warns the revoke is not confirmed", async () => {
+  const { rec, pid } = await heldRoot("del-maybe", "s-maybe", {}, { FB_END_PROBABLY: "del-maybe" });
+  try {
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-maybe" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    await until(
+      () =>
+        /\[iskron\/warning\] Искрон: сессия удалена, снятие места не подтверждено \(del-maybe\)/.test(
+          rec.said(),
+        ),
+      `the warning:\n${rec.said()}`,
+    );
   } finally {
     await rec.stop();
   }

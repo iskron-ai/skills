@@ -388,8 +388,9 @@ process.stdin.on("data", (chunk) => {
         );
       // FB_END_DELAY_MS — the answer comes this much later: a revoke with its retry, live ~2 s.
       // FB_END_REVOKED — seats the bridge revoked itself (comma-separated realm|karta|name; a bare
-      // name — as an older bridge answered).
+      // name — as an older bridge answered). FB_END_PROBABLY — seats gone only by the reply's prose.
       const failed = (process.env.FB_END_FAILED ?? "").split(",").filter(Boolean);
+      const probably = (process.env.FB_END_PROBABLY ?? "").split(",").filter(Boolean);
       const revoked = (process.env.FB_END_REVOKED ?? "")
         .split(",")
         .filter(Boolean)
@@ -398,7 +399,7 @@ process.stdin.on("data", (chunk) => {
           return name ? { realm, karta, name } : s;
         });
       setTimeout(
-        () => ok(msg.id, { ended: true, failed, revoked }),
+        () => ok(msg.id, { ended: true, failed, revoked, probably }),
         Number(process.env.FB_END_DELAY_MS || 0),
       );
     } else if (msg.method === "iskron/usage") {

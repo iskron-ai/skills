@@ -3124,7 +3124,7 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   const ok = (await sat.call("iskron/end", {})).result;
   assert.deepEqual(
     ok,
-    { ended: true, failed: [], revoked: [SAT_SEAT] },
+    { ended: true, failed: [], revoked: [SAT_SEAT], probably: [] },
     `${JSON.stringify(ok)}\n${sat.stderr}`,
   );
   assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
@@ -3134,7 +3134,11 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   assert.ok(!(await standAs(sat2, SAT_ARGS)).result?.isError, sat2.stderr);
   await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
   const bad = (await sat2.call("iskron/end", {})).result;
-  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`], revoked: [] }, sat2.stderr);
+  assert.deepEqual(
+    bad,
+    { ended: true, failed: [`${CALLER}.sub-1`], revoked: [], probably: [] },
+    sat2.stderr,
+  );
   await sat2.stop();
   assert.match(sat2.stderr, /NOT revoked/);
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
@@ -3142,7 +3146,8 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
 
 // №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
 // Prose that only looks like «already gone» is no confirmation: the place is neither revoked
-// nor failed for the plugin, and the launcher's revoke goes as before.
+// nor failed for the plugin — it is named apart, as probably (№677) — and the launcher's
+// revoke goes as before.
 for (const [how, refuse, confirmed] of [
   ["success", null, true],
   ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
@@ -3158,7 +3163,12 @@ for (const [how, refuse, confirmed] of [
     const place = `${CALLER}.sub-1`;
     assert.deepEqual(
       end,
-      { ended: true, failed: [], revoked: confirmed ? [SAT_SEAT] : [] },
+      {
+        ended: true,
+        failed: [],
+        revoked: confirmed ? [SAT_SEAT] : [],
+        probably: confirmed ? [] : [place],
+      },
       `${JSON.stringify(end)}\n${sat.stderr}`,
     );
     assert.deepEqual(revokes(fake), [place]);
@@ -3185,6 +3195,7 @@ test("satellite: iskron/end keys a confirmed revoke by graph, role and name — 
       ended: true,
       failed: [place],
       revoked: [{ realm: "@nks/drugoy", karta: "931", name: place }],
+      probably: [],
     },
     `${JSON.stringify(end)}\n${sat.stderr}`,
   );

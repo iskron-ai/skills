@@ -5,17 +5,18 @@ import { method, RUN_END } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { ownPidAlive } from "../shared/seam-entrance.ts";
-import { type SeatKey } from "../shared/seat.ts";
 import { awayAnnounced } from "./away.ts";
 import {
   leaveJoinedCases,
   ownPlaces,
   revokeOwnPlaces,
+  type Revokes,
   revokeSatellitePlaces,
   satellitePlaces,
 } from "./caseexit.ts";
 import { CFG } from "./config.ts";
-import { dropConfirmed, seatKeyOf, stillOwn } from "./deadseat.ts";
+import { dropConfirmed, seatKeyOf } from "./deadseat.ts";
+import { closeDeadSeats } from "./deadstop.ts";
 import { localSocketPathOf, releaseStanding } from "./hold.ts";
 import { keepHoldRecord } from "./holdkeep.ts";
 import { dropHoldRecord, readHoldRecord } from "./holdrecord.ts";
@@ -26,26 +27,22 @@ import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
-import { type Standing } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
-/**
- * Satellite seats at the run's end: names failed to revoke, and seats confirmed revoked by this
- * bridge's own call — by canonical graph, role and name; a seat gone only by the reply's prose is
- * in neither (caseexit.ts, №664).
- */
-export interface RunEnd {
-  failed: string[];
-  revoked: SeatKey[];
-}
+/** Seats at the run's end: failed, confirmed revoked, gone only by the reply's prose (caseexit.ts, №664). */
+export type RunEnd = Revokes;
 
 const R = scoped(() => ({
   run: null as Promise<RunEnd> | null,
   /** the run's seats and busy address while a handover pause lasts */
   held: null as { places: Standing[]; addr: { url: string } | null } | null,
-  /** the session's own seats left on the board at its end, and the status address of their socket: the death window's */
-  dead: null as { places: Standing[]; status: string | null } | null,
+  /**
+   * the session's own seats left on the board at its end, the status address of their socket,
+   * and its address when the main seat is among them: the death window's
+   */
+  dead: null as { places: Standing[]; status: string | null; socket: string | null } | null,
 }));
 
 /**
@@ -67,6 +64,8 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
     const dying = !CFG.satellite && !paused && !handover && !awayAnnounced() && !!H.currentKey;
     const own = dying ? ownPlaces() : [];
+    // The main seat's socket — its token ends the seat after the window (deadstop.ts).
+    const socket = own[0] && own[0] === state.standing ? H.currentUrl : null;
     const ended = dying && now;
     // A satellite keeps no hold record; others keep it with the term counted from now (graph
     // @nks/nks-dev, node #6649) — the agent's end too, until its revoke is confirmed.
@@ -78,12 +77,15 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // (graph @nks/nks-dev, nodes #6573, #6593, #6401). On a daemon change without a pause the lost
     // seat closes too; a handover with a live bridge pauses itself (daemon.ts, pauseForHandover).
     await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
-    let end = paused ? { failed: [], revoked: [] } : await revokeSatellitePlaces(places);
+    let end: RunEnd = paused
+      ? { failed: [], revoked: [], probably: [] }
+      : await revokeSatellitePlaces(places);
     const status = addr?.url ?? null;
     if (ended) end = await revokeOwnPlaces(own);
     // Seats not confirmed revoked wait for the death window, which repeats the revoke.
     const left = ended ? dropConfirmed(own, end.revoked) : own;
-    if (dying && left.length) R.dead = { places: left, status };
+    if (dying && left.length)
+      R.dead = { places: left, status, socket: left[0] === own[0] ? socket : null };
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
@@ -119,25 +121,25 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
 /**
  * The agent died — its session ended without an announced absence (graph @nks/nks-dev, node
  * #7493): after the window (a reconnect of MCP must not kill the seat) the seats no live bridge
- * holds again and the server still shows on the dead socket (deadseat.ts) are revoked; a hold
- * record goes with a confirmed revoke only. Also the repeat of an end whose revoke failed. The
- * daemon calls it in the session's scope after the session ended; a full bridge's process
- * ends with its session and keeps none.
+ * holds again are closed — the main one by its dead socket's token, the rest by the server's
+ * board (deadstop.ts); a hold record goes with a confirmed end only. Also the repeat of an end
+ * whose revoke failed. The daemon calls it in the session's scope after the session ended; a
+ * full bridge's process ends with its session and keeps none.
  */
 export async function endDeadRun(waitMs: number): Promise<void> {
   const dead = R.dead;
   R.dead = null;
   if (!dead?.places.length) return;
   await sleep(waitMs);
-  const gone: Standing[] = [];
+  const kept: Standing[] = [];
   for (const s of dead.places) {
     const key = seatKeyOf(s);
     if (await localSocketAlive(localSocketPathOf(key))) log(`${key} is held again — not closed`);
-    else if (await stillOwn(s, dead.status)) gone.push(s);
+    else kept.push(s);
   }
-  if (!gone.length) return;
-  log(`the agent's session ended without an announced absence — closing its seats (#7493)`);
-  dropConfirmed(gone, (await revokeOwnPlaces(gone)).revoked);
+  const [first] = dead.places;
+  const main = dead.socket && kept[0] === first ? { seat: first, socket: dead.socket } : null;
+  if (kept.length) await closeDeadSeats(kept, main, dead.status);
 }
 
 /**
@@ -151,6 +153,6 @@ export function localEnd(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
   if (suspended()) return Promise.resolve(answer({ ended: false }));
   return closeRun(words(RUN_END).pluginEnd(), false, true)
-    .then(({ failed, revoked }) => answer({ ended: true, failed, revoked }))
+    .then(({ failed, revoked, probably }) => answer({ ended: true, failed, revoked, probably }))
     .catch((e: Error) => answer({ ended: false, word: e.message }));
 }
