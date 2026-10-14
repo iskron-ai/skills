@@ -9,6 +9,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
+import { createInboxBook } from "./inbox.ts";
 
 type State = "idle" | "busy" | "interrupted" | "failed";
 
@@ -34,38 +35,17 @@ const ENDS = new Map<unknown, State>([
   ["session.execution.interrupted", "interrupted"],
 ]);
 
-/**
- * Per session. Taken before the channel's answer is mostly the session's own prompts, never
- * answered by the channel: past TAKEN_MAX the oldest goes. Laid and not taken yet is awaited and
- * never pushed out: past QUEUED_MAX it is only told.
- */
-const TAKEN_MAX = 100;
-const QUEUED_MAX = 100;
 /** A word the bridge refused is told again this much later, unless an event tells it first. */
 const RETRY_MS = 2_000;
 
 export function createPulseFeed(opts: {
   /** The bridge holding the session's own seat; null — no seat, nowhere to send. */
   bridgeOf: (session: string) => Bridge | null;
-  /** The session holds more inbox items laid by the channel and not taken than QUEUED_MAX. */
+  /** The session holds more inbox items laid by the channel and not taken than the book awaits (inbox.ts). */
   overflow?: (session: string, waiting: number) => void;
 }): PulseFeed {
   const words = new Map<string, Word>();
-  // session → inbox ids: laid by the channel, not taken yet; taken before the channel's answer
-  const queued = new Map<string, Set<string>>();
-  const taken = new Map<string, Set<string>>();
-  const add = (m: Map<string, Set<string>>, session: string, inbox: string): Set<string> => {
-    const ids = m.get(session) ?? new Set<string>();
-    m.set(session, ids.add(inbox));
-    return ids;
-  };
-  /** True — the inbox id was the session's and is gone now. */
-  const drop = (m: Map<string, Set<string>>, session: string, inbox: string): boolean => {
-    const ids = m.get(session);
-    if (!ids?.delete(inbox)) return false;
-    if (!ids.size) m.delete(session);
-    return true;
-  };
+  const inboxes = createInboxBook(opts.overflow);
   const unsent = new Set<string>();
   const retries = new Map<string, ReturnType<typeof setTimeout>>();
   let stopped = false;
@@ -125,26 +105,19 @@ export function createPulseFeed(opts: {
           return ended(session, "idle");
         case "session.inbox.delivered": {
           const inbox: unknown = ev.data?.inboxID;
-          if (typeof inbox !== "string") return;
-          // The taking may outrun the prompt's answer: remembered, judged when the answer comes.
-          if (drop(queued, session, inbox)) return tell(session, { read_at: at() });
-          const ids = add(taken, session, inbox);
-          if (ids.size > TAKEN_MAX) drop(taken, session, ids.values().next().value as string);
+          if (typeof inbox === "string" && inboxes.delivered(session, inbox))
+            tell(session, { read_at: at() });
           return;
         }
-        // Cancelled is never taken: not awaited any more.
         case "session.inbox.cancelled": {
           const inbox: unknown = ev.data?.inboxID;
-          if (typeof inbox === "string") drop(queued, session, inbox);
+          if (typeof inbox === "string") inboxes.cancelled(session, inbox);
           return;
         }
       }
     },
     prompted(session, inbox): void {
-      if (!inbox) return;
-      if (drop(taken, session, inbox)) return tell(session, { read_at: at() });
-      const waiting = add(queued, session, inbox).size;
-      if (waiting === QUEUED_MAX + 1) opts.overflow?.(session, waiting);
+      if (inbox && inboxes.prompted(session, inbox)) tell(session, { read_at: at() });
     },
     seated(session): void {
       if (!words.has(session)) return;
@@ -155,15 +128,13 @@ export function createPulseFeed(opts: {
       words.delete(session);
       unsent.delete(session);
       unretry(session);
-      queued.delete(session);
-      taken.delete(session);
+      inboxes.forget(session);
     },
     stop(): void {
       stopped = true;
       for (const session of [...retries.keys()]) unretry(session);
       words.clear();
-      queued.clear();
-      taken.clear();
+      inboxes.clear();
     },
   };
 }

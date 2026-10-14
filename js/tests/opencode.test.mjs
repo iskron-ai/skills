@@ -211,12 +211,13 @@ function fakeCtx({
       // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
       // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
       // the probes read the text after it.
+      // faults.promptWait(id) — the answer waits for the promise it returns.
       prompt: async (o) => {
         const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
         prompts.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
-        return inboxIds
-          ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
-          : {};
+        const id = `inbox-${prompts.length}`;
+        await faults.promptWait?.(id);
+        return inboxIds ? { id, type: "user", delivery: o.delivery } : {};
       },
       // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
       // createNoId — the answer carries no id; removeFails — so many next removes throw.
@@ -2264,6 +2265,55 @@ test("inbox items cancelled by OpenCode are not awaited: no overflow, no read", 
     });
     await delay(200);
     assert.doesNotMatch(rec.said(), /ждут хода уже/, "no overflow of cancelled items");
+    assert.ok(!pulsesIn(calls).some((p) => p.read_at), "a cancelled item's taking is not read");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The cancelling may outrun the prompt's answer that names the item: the late answer does not lay
+// a cancelled item into the awaited ones.
+test("an inbox item cancelled before its prompt's answer is not awaited: no overflow, no read", async () => {
+  const calls = join(SANDBOX, "pulse-cancel-early.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-cancel-early", { FB_CALLS: calls });
+  let answer = null;
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-early-cancel", location: { directory: "/work/p" } }],
+    inboxIds: true,
+    faults: {
+      promptWait: (id) =>
+        new Promise((r) => {
+          answer = { id, r };
+        }),
+    },
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-early-cancel");
+    const events = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(events, event("held", { key: "cearly--931--nks-dev" }));
+    await until(() => /мост держит стояние cearly--931--nks-dev/.test(rec.said()), "the held line");
+    for (let n = 1; n <= 101; n++) {
+      appendFileSync(
+        events,
+        event("frame", { frame: { ...frame(`слово ${n}`), id: `ce-${n}` }, raw: "" }),
+      );
+      await until(() => answer?.id === `inbox-${n}`, `frame ${n} prompted`);
+      rec.emit({
+        type: "session.inbox.cancelled",
+        data: { sessionID: "s-early-cancel", inboxID: `inbox-${n}` },
+      });
+      await delay(10);
+      answer.r();
+    }
+    await delay(100);
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-early-cancel", inboxID: "inbox-1" },
+    });
+    await delay(200);
+    assert.doesNotMatch(rec.said(), /ждут хода уже/, "no cancelled item awaited");
     assert.ok(!pulsesIn(calls).some((p) => p.read_at), "a cancelled item's taking is not read");
   } finally {
     await rec.stop();

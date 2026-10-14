@@ -193,6 +193,8 @@ const ENV_KEYS = [
   "FB_REPLY",
   "FB_INIT_CAPS",
   "FB_CALLS",
+  "FB_EVENTS",
+  "FB_PULSE_REFUSE",
   "FB_STAND_HELD",
   "FB_ENV",
   "ISKRON_HARNESS_VERSION",
@@ -669,6 +671,32 @@ test("a seat held again mid-turn — a new daemon — gets the turn's last word:
     await settle(5);
     assert.equal(pulses().length, 5, "the held seat got the word again");
     assert.deepEqual(pulses().at(-1).arguments, last);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The turn's end the bridge refused is told again: with no event after it, the seat is not left
+// busy (#7529).
+test("an idle the bridge refused reaches it on the retry: the seat is not left busy", async () => {
+  const calls = join(SANDBOX, "pulse-refused.calls");
+  const refuse = join(SANDBOX, "pulse-refused.refuse");
+  const { env } = bridgeEnv("pulse-refused", { FB_CALLS: calls, FB_PULSE_REFUSE: refuse });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && !pulses().length; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" });
+    writeFileSync(refuse, "");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && existsSync(refuse); i++) await delay(40);
+    assert.ok(!existsSync(refuse), "the idle refused");
+    assert.equal(pulses().length, 1, "the refused idle is not taken");
+    for (let i = 0; i < 125 && pulses().length === 1; i++) await delay(40);
+    const last = pulses().at(-1).arguments;
+    assert.equal(last.state, "idle", "the idle taken on the retry");
+    assert.ok(last.turn_at, "the turn's end comes with it");
   } finally {
     await rec.stop();
   }
