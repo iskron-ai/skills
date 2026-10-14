@@ -3734,8 +3734,8 @@ test("satellite: standing in another role, it still may not take, register or re
 // .ai is English, any other Russian; ISKRON_BRIDGE_LANG=en|ru overrides. What the
 // bridge writes itself — the iskron_stand answer — speaks that language; an
 // English bridge asks the api for English prose (Accept-Language) and names the
-// seat's language in connect and register (locale: "en"); a Russian one sends
-// neither and leaves it to the server's default.
+// seat's language in connect and register (locale: "en"); a Russian one asks the
+// same in Russian — the server's default is not its language (#7593).
 const CYRILLIC = /[а-яё]/i;
 
 for (const [server, en] of [
@@ -3788,7 +3788,7 @@ test("an English bridge (ISKRON_BRIDGE_LANG=en) answers a whole iskron_stand wit
   assert.ok(fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
 });
 
-test("a Russian bridge sends no locale and no Accept-Language — the server's default decides", async (t) => {
+test("a Russian bridge asks for Russian prose and sends locale ru in connect and register — not the server's default", async (t) => {
   const { fake, bridge } = await ready(t);
   const r = await bridge.call("tools/call", {
     name: "iskron_stand",
@@ -3796,9 +3796,12 @@ test("a Russian bridge sends no locale and no Accept-Language — the server's d
   });
   assert.ok(!r.result?.isError, textOf(r));
   assert.match(textOf(r), /стояние proba — роль #931, граф nks-dev: connect и register/);
-  for (const x of sentToChannel(fake)) assert.ok(!("locale" in x), JSON.stringify(x));
-  // fetch's own default («*») is not a choice of language.
-  assert.ok(!fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+  for (const action of ["connect", "register"]) {
+    const got = sentToChannel(fake).find((x) => x.action === action);
+    assert.equal(got?.locale, "ru", `${action}: ${JSON.stringify(sentToChannel(fake))}`);
+  }
+  // Every request names the language; fetch's own default («*») or none is not a choice.
+  assert.deepEqual([...fake.state.acceptLanguage], ["ru"]);
 });
 
 // The fake treats a tool call as the server does: an argument the tool's schema in
