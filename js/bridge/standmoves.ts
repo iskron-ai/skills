@@ -49,7 +49,7 @@ export async function releasePrior(
   return { ok: false, note: mw().priorKept(name, short(r.text, 160), revokeCall(realm, prior)) };
 }
 
-const revokeCall = (realm: string, s: Standing): string =>
+export const revokeCall = (realm: string, s: Standing): string =>
   `${tool("channel")}(action="revoke", realm="${realm}", karta="${s.karta}", standing="${s.name ?? ""}")`;
 
 /**
@@ -101,20 +101,19 @@ async function awaitReissue(
   return { own: !stop && held(), stop };
 }
 
-interface Reissued {
+export interface Reissued {
   /** connect's answer: the first one, or the repeat after the wait */
   c: Answer;
   /** the socket became this bridge's own during the wait (its own reopening): no second connect */
   own: boolean;
-  /** the owner's stop word: a seat the session held was taken off during the wait — the former one of a move too; nothing stands it again (#7439) */
-  stop: string | null;
   note: string | null;
 }
 
 /**
  * connect met 429 socket_reissue_throttled — mostly the bridge's own reopening of the seat's
  * socket: wait inside the call for the outcome instead of passing the 429 to the agent (#7552);
- * the socket not ours after the wait — connect `again`.
+ * the socket not ours after the wait — connect `again`. The session stopped meanwhile — no
+ * connect again, the 429 stays; the caller says the stop (standundo.ts, #7439).
  */
 export async function throughReissue(
   c: Answer,
@@ -123,16 +122,16 @@ export async function throughReissue(
   stopsBefore: number,
 ): Promise<Reissued> {
   const throttle = reissueThrottled(c);
-  if (!throttle) return { c, own: false, stop: null, note: null };
+  if (!throttle) return { c, own: false, note: null };
   const t0 = Date.now();
   const { own, stop } = await awaitReissue(
     throttle,
     () => holdsStanding(seat.realm, seat.karta, seat.name),
     () => stoppedDuring(stopsBefore),
   );
-  if (stop) return { c, own, stop, note: null };
+  if (stop) return { c, own, note: null };
   const seconds = Math.round((Date.now() - t0) / 1000);
-  return { c: own ? c : await again(), own, stop, note: mw().reissueWaited(seconds, own) };
+  return { c: own ? c : await again(), own, note: mw().reissueWaited(seconds, own) };
 }
 
 /**

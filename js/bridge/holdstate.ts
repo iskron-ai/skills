@@ -48,6 +48,8 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
   /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
   stopped: { n: 0, key: "", text: "" },
+  /** a stand call's connect in flight since this stop count (standundo.ts): a stop meanwhile — its answer is not held */
+  moveSince: null as number | null,
 }));
 
 /** The stop word if the seat `key` was taken off by its owner since the count `before` (stopsNow); otherwise null. */
@@ -57,6 +59,9 @@ export const stopsNow = (): number => H.stopped.n;
 /** The stop word if the session was stopped since the count `before`, whichever seat it held; otherwise null. */
 export const stoppedDuring = (before: number): string | null =>
   H.stopped.n !== before ? H.stopped.text : null;
+/** A stand call's connect answers after the session was stopped: the seat it took is not held (#7439). */
+export const stoppedInMove = (): boolean =>
+  H.moveSince !== null && stoppedDuring(H.moveSince) !== null;
 
 /** Next step after eviction (evicted.ts) and after the owner's stop (stophold.ts): set once at load, one per process for all sessions. */
 export const E: {

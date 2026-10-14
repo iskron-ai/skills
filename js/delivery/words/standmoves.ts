@@ -20,6 +20,10 @@ export interface StandMovesWords {
   ) => string;
   /** 429 переоткрытия сокета (#7552): вызов дождался исхода; own — сокет переоткрыл сам мост. */
   reissueWaited: (seconds: number, own: boolean) => string;
+  /** take не удался после connect (#7553): только что занятое место снято, сессия на прежнем. */
+  moveUndone: (asked: string, prior: string) => string;
+  /** только что занятое место снять не удалось: text — отказ, revoke — вызов снятия. */
+  moveNotUndone: (asked: string, text: string, revoke: string) => string;
 }
 
 export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
@@ -42,6 +46,10 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       own
         ? `твоё — возвращено: сокет этого места в тот же миг переоткрывал сам мост, вызов дождался его исхода (${seconds} с)`
         : `сокет этого места только что переоткрывался — вызов переждал порог платформы (${seconds} с) и занял место`,
+    moveUndone: (asked, prior) =>
+      `Переход не состоялся: только что занятое место ${asked} снято, сессия осталась на прежнем месте ${prior} — оно у неё единственное.`,
+    moveNotUndone: (asked, text, revoke) =>
+      `Только что занятое место ${asked} снять не удалось (${text}) — сними его: ${revoke}`,
   },
   en: {
     standsInRealm: (realm, call, board, leave) =>
@@ -62,5 +70,9 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       own
         ? `yours — returned: the bridge itself was reopening this seat's socket at that moment, the call waited for its outcome (${seconds} s)`
         : `this seat's socket was just reopened — the call waited out the platform's threshold (${seconds} s) and took the seat`,
+    moveUndone: (asked, prior) =>
+      `The move did not happen: the seat ${asked} just taken is revoked, the session stays on its former seat ${prior} — its only one.`,
+    moveNotUndone: (asked, text, revoke) =>
+      `The seat ${asked} just taken could not be revoked (${text}) — revoke it: ${revoke}`,
   },
 };

@@ -1224,6 +1224,8 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        // connect_asked — до задержки: проба видит, что connect ушёл, пока ответа ещё нет.
+        if (a.action === "connect") st.counts.connect_asked = (st.counts.connect_asked ?? 0) + 1;
         // Медленный connect (/control {connect_delay_ms}): ответ позже потолка вызывающего, адрес всё равно повёрнут.
         if (a.action === "connect" && st.connectDelayMs)
           await new Promise((r) => setTimeout(r, st.connectDelayMs));
