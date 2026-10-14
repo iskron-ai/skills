@@ -13,7 +13,7 @@
 // --realm — the run's graph when the token is scoped to it (a territorial writer PAT);
 // without it the run takes or creates @<self>/bridge-night. --expect-user — whoami must name it.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -293,5 +293,9 @@ try {
 // The report never carries the credential, whatever a tool echoed.
 process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
+// The machine daemons of this run's auth dirs outlive their sessions by an idle window and
+// would write into the run dir after its removal: put them down first.
+for (const d of [join(run, "auth"), join(run, "auth-bad")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
+await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(setup || (failed ? 1 : 0));

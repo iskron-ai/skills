@@ -440,5 +440,9 @@ try {
 }
 process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
+// The machine daemons of this run's auth dirs outlive their sessions by an idle window and
+// would write into the run dir after its removal: put them down first.
+for (const d of [auth, join(run, "auth-person")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
+await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(failed ? 1 : 0);
