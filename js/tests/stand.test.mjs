@@ -4330,6 +4330,29 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
   assert.equal(fake.state.counts.list, lists, "no board read");
 });
 
+// A satellite's model is the harness's (#7591): a full stand without it means the harness
+// did not name one — the seat's earlier model goes, not published again; a new one replaces it.
+test("satellite: a repeated full stand without a model drops the seat's earlier model; a new model replaces it", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const lastModel = () => {
+    const p = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`).at(-1);
+    assert.ok(p, JSON.stringify(fake.state.placeArgs));
+    return p.model;
+  };
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  assert.equal(lastModel(), "model-a");
+  const registers = fake.state.counts.register_standing;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.counts.register_standing > registers, "the repeat registers the seat");
+  assert.equal(lastModel(), undefined, "no model from the harness — none on the seat");
+  const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  assert.equal(lastModel(), "model-b");
+});
+
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без

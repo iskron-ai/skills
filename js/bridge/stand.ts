@@ -63,7 +63,7 @@ import {
   sanitize,
 } from "./names.ts";
 import { ownerRefusal } from "./owner.ts";
-import { placeFields, rememberModel } from "./placefields.ts";
+import { placeFields, rememberStandModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
@@ -116,7 +116,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
-  rememberModel(model);
+  rememberStandModel(model);
   // Default directory is the harness bridge's: for a daemon session, the thin bridge's cwd.
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
   // A bad cwd would address another seat — a refusal aloud, as for an explicit name (#5068).
