@@ -112,6 +112,7 @@ export { STAND, type StandWords } from "./words/stand.ts";
 export { STANDING, type StandingWords } from "./words/standing.ts";
 export { STANDINGS, type StandingsWords } from "./words/standings.ts";
 export { STAND_MISS, type StandMissWords } from "./words/standmiss.ts";
+export { STAND_MOVES, type StandMovesWords } from "./words/standmoves.ts";
 export { STAND_TOOL, type StandToolWords } from "./words/standtool.ts";
 export { STATUS, type StatusWords } from "./words/status.ts";
 export { STATUS_POST, type StatusPostWords } from "./words/statuspost.ts";

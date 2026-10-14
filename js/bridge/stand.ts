@@ -69,6 +69,7 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
+import { refusedWord } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -320,7 +321,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // connect would open a second channel (#5838).
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
@@ -330,7 +331,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (resumed) {
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -357,7 +358,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -365,7 +366,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (!take && (holdsStanding(realm, karta, name) || reopening)) {
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -388,7 +389,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       c = await call(tool("channel"), args);
     }
     if (c.isError) {
-      lines.push(sw().refused("connect", short(c.text)));
+      lines.push(refusedWord("connect", c, realm));
       return done(true);
     }
     const r = await register();

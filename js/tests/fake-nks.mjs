@@ -513,6 +513,9 @@ export async function startFakeNks(opts = {}) {
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
+        "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
+        "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
+        "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
@@ -982,6 +985,25 @@ export async function startFakeNks(opts = {}) {
                     status: 422,
                     data: { your_standings: [{ name: "andere" }] },
                   },
+                ),
+              },
+              extra,
+            );
+          }
+          if (st.registerStandsInRealmNext > 0) {
+            st.registerStandsInRealmNext--;
+            st.counts.register_stands_in_realm = (st.counts.register_stands_in_realm ?? 0) + 1;
+            // Как api: сокет-канал уже несёт живое стояние этого графа под другим именем (#4032).
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: refused(
+                  "Conflict (409): channel_already_stands_in_realm: this channel already stands in the realm under another name",
+                  "Abgelehnt (409).",
+                  { rule: "channel_already_stands_in_realm", status: 409 },
                 ),
               },
               extra,
