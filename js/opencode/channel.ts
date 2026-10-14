@@ -26,6 +26,7 @@ import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { deliveryKeys, eventIn } from "../shared/seen.ts";
 import { authDir } from "./bridge-io.ts";
 import { createCuts } from "./cuts.ts";
+import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import type { Context } from "./plugin.ts";
@@ -44,8 +45,9 @@ export interface Channel {
   /** The session or an ancestor is stopped (another instance's stop too): its turn is cut once; false — not stopped. */
   halt(session: string): boolean;
   /**
-   * How the stop's interrupt of session `session` and its descendants ended: null — every turn
-   * is cut (or nothing was stopped), a code — the first refusal (cutwait.ts).
+   * How the stop's interrupt of session `session` and its descendants ended, whichever instance of
+   * the process cuts them: null — every turn is cut (or nothing was stopped), a code — the first
+   * refusal (cutwait.ts).
    */
   halted(session: string | null): Promise<string | null>;
   /** The plugin stops: what gathered leaves now. */
@@ -109,8 +111,11 @@ export function setupChannel(
 ): Channel {
   const W = words(OPENCODE);
   const P = words(PLUGIN);
+  // The instance's lineage joins the process's: a stop's confirmation waits for descendants other
+  // instances serve, and reads their stops by the same chain those instances cut by (cutwait.ts).
+  const unshare = shareLineage(parents);
   const halts = createHalts(
-    (s) => parents.get(s),
+    (s) => parents.get(s) ?? processParent(s),
     authDir,
     (id, message) => say(W.haltUnwritten(id, message), "warning"),
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
@@ -342,7 +347,7 @@ export function setupChannel(
       halts.gone(session);
       cuts.forget(session);
     },
-    halted: (session) => cuts.outcome(session ? [session, ...descendantsOf(session, parents)] : []),
+    halted: (session) => cuts.outcome(session ? [session, ...processDescendants(session)] : []),
     halt(session) {
       if (!halts.halted(session)) return false;
       cut(session);
@@ -366,6 +371,7 @@ export function setupChannel(
       }
     },
     stop() {
+      unshare();
       tacts.stop();
       cuts.stop();
       for (const p of piles.values()) {

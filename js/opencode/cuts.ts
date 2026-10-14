@@ -1,13 +1,14 @@
 // The interrupt of a stopped session's turn (graph @nks/nks-dev, nodes #7439, #7440, #7519),
 // and how it ended: the bridge's stop order waits for that — stopped is the executed interrupt,
 // a refusal is failed with its code. A cut belongs to the stops over the session's chain
-// (halts.ts stopOf): a new stop of the session or of any ancestor cuts it anew.
+// (halts.ts stopOf): a new stop of the session or of any ancestor cuts it anew. The outcomes lie
+// in the process's registry (cutwait.ts): another instance's cuts count too.
 
 import { method } from "../delivery/index.ts";
 import { type Bridge } from "../shared/bridge-client.ts";
+import { type CutOutcome, forget as unsettle, outcomeOf, settle as settled } from "./cutwait.ts";
 
-/** null — the turn is cut; a code — the interrupt was refused or is impossible. */
-export type CutOutcome = string | null;
+export type { CutOutcome };
 
 /** How long the bridge is given to take the stop's outcome. */
 const HALTED_MS = 10_000;
@@ -67,14 +68,6 @@ export function createCuts(d: CutDeps) {
   const cutting = new Map<string, string>(); // the stops whose interrupt is in flight
   const cutFails = new Map<string, [string, number]>(); // refused interrupts of those stops
   const retries = new Set<ReturnType<typeof setTimeout>>();
-  const outcomes = new Map<string, [string, CutOutcome]>();
-  const waiters = new Map<string, Set<() => void>>();
-
-  const wake = (id: string): void => {
-    const set = waiters.get(id);
-    waiters.delete(id);
-    for (const w of set ?? []) w();
-  };
 
   /**
    * A stopped session's running turn is interrupted, its piles and waiting tact are dropped — once
@@ -91,8 +84,7 @@ export function createCuts(d: CutDeps) {
     if (cutting.has(id)) return; // the previous stop's interrupt is in flight: this one follows it
     const settle = (code: CutOutcome): void => {
       cutDone.set(id, gen);
-      outcomes.set(id, [gen, code]);
-      wake(id);
+      settled(id, gen, code);
     };
     if (!d.canInterrupt()) return settle("interrupt_missing");
     cutting.set(id, gen);
@@ -125,32 +117,18 @@ export function createCuts(d: CutDeps) {
       });
   }
 
-  /** The outcome of the session's cut for its current stop; a session not stopped is cut. */
-  function outcomeOf(id: string): Promise<CutOutcome> {
-    const gen = d.stopOf(id);
-    const o = outcomes.get(id);
-    if (gen === null) return Promise.resolve(null);
-    if (o?.[0] === gen) return Promise.resolve(o[1]);
-    return new Promise((done) => {
-      const set = waiters.get(id) ?? new Set();
-      set.add(() => void outcomeOf(id).then(done));
-      waiters.set(id, set);
-    });
-  }
-
   return {
     cut,
-    /** The first refusal among the sessions' cuts, once all ended; null — all cut. */
+    /** The first refusal among the sessions' cuts, whoever cuts them, once all ended; null — all cut. */
     async outcome(ids: string[]): Promise<CutOutcome> {
-      const all = await Promise.all(ids.map(outcomeOf));
+      const all = await Promise.all(ids.map((id) => outcomeOf(id, d.stopOf)));
       return all.find((c) => c !== null) ?? null;
     },
     /** The session is gone or stands again: its marks go, whoever waits reads it anew. */
     forget(id: string): void {
       cutDone.delete(id);
       cutFails.delete(id);
-      outcomes.delete(id);
-      wake(id);
+      unsettle(id);
     },
     stop(): void {
       for (const t of retries) clearTimeout(t);

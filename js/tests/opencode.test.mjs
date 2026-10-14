@@ -4569,6 +4569,66 @@ test("the owner's stop of a root in one instance takes down its child's satellit
   }
 });
 
+// Review of #7519, fourth round in case №669: the order's confirmation waited only for the
+// interrupts of its own instance — a child in another folder, cut by that folder's instance,
+// was still running (or its interrupt refused for good) when the bridge heard stopped (#7510).
+for (const refused of [false, true])
+  test(`a stop order to a root is confirmed only after its child's interrupt in another folder's instance ${refused ? "is refused for good" : "answered"}`, async () => {
+    const calls = join(SANDBOX, `halted-two-${refused}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-two-${refused}`, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+    const sessions = [
+      { id: "root", location: LOC_A },
+      { id: "child", parentID: "root", location: LOC_B },
+    ];
+    let open;
+    const faults = {
+      interruptGate: new Promise((r) => (open = r)),
+      interruptFails: refused ? Infinity : 0,
+    };
+    const A = await plugin(b.env, { location: LOC_A, sessions });
+    const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true, faults });
+    const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+    try {
+      await until(
+        () => A.tools().has("iskron_case") && B.tools().has("iskron_case"),
+        "tools",
+        8000,
+      );
+      await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+      const rootPid = callsIn(calls).at(-1).pid;
+      await rootHolds(A, b, { pid: rootPid });
+      await B.call("iskron_stand", { realm: "nks-dev" }, "child");
+      const childPid = callsIn(calls).at(-1).pid;
+      appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+      await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+      const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${rootPid}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-two" }),
+      );
+      await until(() => A.interrupts.length === 1, "the root's interrupt");
+      await until(() => B.interrupts.length === 1, "the child's interrupt in its own instance");
+      await delay(400);
+      assert.equal(halted().length, 0, "no confirmation while the child's interrupt is unanswered");
+      open();
+      await until(() => halted().length === 1, "the confirmation", 8000);
+      assert.deepEqual(
+        halted()[0].arguments,
+        refused
+          ? { order: "ord-two", ok: false, code: "interrupt_refused" }
+          : { order: "ord-two", ok: true },
+      );
+      assert.equal(halted()[0].pid, rootPid, "by the root's bridge");
+      if (refused)
+        assert.equal(B.interrupts.length, 3, "the child's refusal is final after the tries");
+    } finally {
+      open();
+      await B.stop();
+      await A.stop();
+    }
+  });
+
 // The ban survives a plugin reload: the next instance reads it from disk, and nothing reaches
 // the stopped session until it stands again by an explicit call (held).
 test("after a plugin reload no frame reaches the stopped session until it stands again", async () => {
