@@ -8,6 +8,8 @@ export interface PlaceSnapshot {
   listening: boolean;
   last_work_at?: string;
   usage?: Record<string, string | number>;
+  /** The last pulse the seat's socket carried (graph @nks/nks-dev, node #7529), with sent_at. */
+  pulse?: Record<string, string | number>;
   /** Last skills this bridge sent with a successful reply, not a readback of server attrs. */
   skills?: { name: string; version: string; stamp?: string };
   skills_mismatch?: boolean;
@@ -63,9 +65,19 @@ export function safeUsage(v: unknown): Record<string, string | number> | undefin
   for (const k of ["model", "at"]) if (typeof raw[k] === "string") out[k] = raw[k];
   return Object.keys(out).length ? out : undefined;
 }
+export function safePulse(v: unknown): Record<string, string | number> | undefined {
+  const raw = record(v);
+  if (typeof raw.state !== "string") return undefined;
+  const out: Record<string, string | number> = { state: raw.state };
+  if (typeof raw.pending === "number" && Number.isFinite(raw.pending)) out.pending = raw.pending;
+  for (const k of ["turn_at", "read_at", "cycle_at", "sent_at"])
+    if (typeof raw[k] === "string") out[k] = raw[k];
+  return out;
+}
 export function safePlace(v: unknown): PlaceSnapshot {
   const p = record(v);
   const usage = safeUsage(p.usage);
+  const pulse = safePulse(p.pulse);
   const skills = safeSkills(p.skills);
   return {
     name: text(p.name),
@@ -76,6 +88,7 @@ export function safePlace(v: unknown): PlaceSnapshot {
     ...(typeof p.satellite_of === "string" ? { satellite_of: p.satellite_of } : {}),
     ...(typeof p.last_work_at === "string" ? { last_work_at: p.last_work_at } : {}),
     ...(usage ? { usage } : {}),
+    ...(pulse ? { pulse } : {}),
     ...(skills ? { skills } : {}),
     ...(typeof p.skills_mismatch === "boolean" ? { skills_mismatch: p.skills_mismatch } : {}),
   };
