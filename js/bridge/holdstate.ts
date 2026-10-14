@@ -33,6 +33,9 @@ export const H = scoped(() => ({
   helloWaiters: new Set<(f: Frame | null) => void>(),
   /** disk resumes in flight: a dead token during one is a stale record, not an alarm */
   resuming: 0,
+  /** a return from disk brings the seats beside back: the handover spool waits for them (#7602) */
+  spoolHeld: 0,
+  spoolLater: null as (() => void) | null,
   /** own revoke in flight (absorb.ts): close 4001 outruns the revoke answer */
   revokingOwn: false,
   /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
@@ -75,6 +78,28 @@ export function whenStopped(fn: NonNullable<(typeof E)["stop"]>): void {
 /** A disk resume started (+1) or ended (-1). */
 export function noteResuming(delta: number): void {
   H.resuming += delta;
+}
+
+/**
+ * Hold the handover spool while `fn` returns the seat with its seats beside: a spooled frame
+ * of a seat beside is judged once that seat is back, not given to the main seat as a stray (#7602).
+ */
+export async function withSpoolHeld<T>(fn: () => Promise<T>): Promise<T> {
+  H.spoolHeld++;
+  try {
+    return await fn();
+  } finally {
+    if (--H.spoolHeld === 0 && H.spoolLater) {
+      const later = H.spoolLater;
+      H.spoolLater = null;
+      later();
+    }
+  }
+}
+/** Drain the spool now, or once the return holding it ends. */
+export function drainWhenFree(drain: () => void): void {
+  if (H.spoolHeld > 0) H.spoolLater = drain;
+  else drain();
 }
 
 /** absorb.ts: own revoke in flight; close 4001 is then not a dead token. */

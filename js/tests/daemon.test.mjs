@@ -511,6 +511,13 @@ async function updatableDaemon(dir, extra = {}) {
 }
 const write = (x, name) =>
   x.request("tools/call", { name: "iskron_add_phenomenon", arguments: { realm: "nks-dev", name } });
+// Место рядом возвращается с основным по своей записи держания (#7602); без записи — теряется.
+const dropRecordsIn = (dir, realm) => {
+  for (const f of readdirSync(join(dir, "standings")).filter((x) => x.endsWith(".hold"))) {
+    const path = join(dir, "standings", f);
+    if (JSON.parse(readFileSync(path, "utf8")).realm === realm) rmSync(path);
+  }
+};
 
 // Ревью #280, п.1: записи, посланные в окне смены демона, уходят в новую сессию
 // только после возврата места — иначе они ложатся без автора.
@@ -926,9 +933,10 @@ test("a place that did not come back after the daemon change refuses every call 
   });
 });
 
-// Ревью #280, круг 3: место рядом в другом графе смену демона не переживает —
-// громко: уведомление lost по нему и отказ записей в его граф до iskron_stand там.
-test("a beside seat lost in the daemon change is said and its graph refused until iskron_stand there", async () => {
+// Место рядом в другом графе переживает смену демона вместе с основным (#7602):
+// преемник возвращает его по записи держания на том же канале — без lost, без
+// iskron_stand там, без нового места на доске; запись в его граф проходит сразу.
+test("a beside seat comes back with the main one in the daemon change: no lost, its graph writes at once, no second seat", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const d = await updatableDaemon(dir);
     try {
@@ -936,44 +944,54 @@ test("a beside seat lost in the daemon change is said and its graph refused unti
       await handshake(a);
       const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "main-a" });
       assert.ok(!ra.result?.isError, textOf(ra));
-      const besideArgs = { realm: "drugoy", karta: 48, name: "main-a" };
-      const rb = await stand(a, besideArgs);
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "main-a" });
       assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
-      await waitFor("the beside word", () =>
-        a.notifications.some((n) => n.params?.data?.kind === "beside"),
-      );
+      const besides = () => a.notifications.filter((n) => n.params?.data?.kind === "beside");
+      await waitFor("the beside word", () => besides().length === 1);
+      const connects = fake.state.counts.connect;
       d.bump();
+      const standings = () => {
+        try {
+          return readFileSync(join(dir, "standings.log"), "utf8");
+        } catch {
+          return "";
+        }
+      };
+      const kinds = () =>
+        a.notifications.map((n) => `${n.params?.data?.kind}:${n.params?.data?.key ?? ""}`);
+      const why = () => `${JSON.stringify(kinds())}\n${a.stderr}\n${standings()}`;
       await waitFor(
-        "the lost word for the beside seat",
-        () =>
-          a.notifications.some(
-            (n) => n.params?.data?.kind === "lost" && /drugoy/.test(n.params?.data?.key ?? ""),
-          ),
+        "the beside seat back on the successor",
+        () => besides().length === 2 && /through the machine's bridge daemon v99/.test(a.stderr),
         30_000,
-      );
+      ).catch((e) => {
+        throw new Error(`${e.message}\n${why()}`);
+      });
       const before = fake.state.writes.length;
-      for (const name of ["b-1", "b-2"]) {
-        const refused = await a.request("tools/call", {
-          name: "iskron_add_phenomenon",
-          arguments: { realm: "drugoy", name },
-        });
-        assert.equal(refused.result?.isError, true, `${name}: ${JSON.stringify(refused)}`);
-        assert.match(textOf(refused), /граф drugoy\) не вернулось после смены демона/);
-      }
-      assert.equal(fake.state.writes.length, before, "no refused write went out");
-      const main = await write(a, "main");
-      assert.ok(
-        main.result && !main.result.isError,
-        `the main seat came back: ${JSON.stringify(main)}\n${JSON.stringify(a.notifications.map((n) => n.params?.data?.kind + ":" + (n.params?.data?.key ?? "") + ":" + JSON.stringify(n.params?.data?.place ?? null)))}\n${a.stderr}`,
-      );
-      const again = await stand(a, besideArgs);
-      assert.ok(!again.result?.isError, textOf(again));
       const there = await a.request("tools/call", {
         name: "iskron_add_phenomenon",
-        arguments: { realm: "drugoy", name: "снова" },
+        arguments: { realm: "drugoy", name: "сразу после смены" },
       });
-      assert.ok(there.result && !there.result.isError, JSON.stringify(there));
+      assert.ok(there.result && !there.result.isError, `${JSON.stringify(there)}\n${why()}`);
+      const main = await write(a, "main");
+      assert.ok(main.result && !main.result.isError, JSON.stringify(main));
+      assert.equal(fake.state.writes.length, before + 2, why());
+      assert.deepEqual(
+        fake.state.writes.slice(before).map((w) => w.author),
+        ["main-a", "main-a"],
+        `both writes signed: ${JSON.stringify(fake.state.writes)}`,
+      );
       assert.equal(fake.state.counts.unattributed, 0, JSON.stringify(fake.state.writes));
+      assert.ok(!kinds().some((k) => k.startsWith("lost:")), `no lost word: ${why()}`);
+      assert.equal(fake.state.counts.connect, connects, "no new connect: both seats came back");
+      const drugoySeats = [...fake.state.channels.values()].filter((c) =>
+        c.places.has("@nks/drugoy"),
+      );
+      assert.equal(drugoySeats.length, 1, `one seat in drugoy on the board: ${why()}`);
+      assert.ok(
+        !fake.state.placeArgs.some((p) => /^main-a\.\d+$/.test(p.name ?? "")),
+        `no seat beside under name.N: ${JSON.stringify(fake.state.placeArgs)}`,
+      );
     } finally {
       d.cleanup();
     }
@@ -1193,6 +1211,7 @@ test("a lost seat refuses only its own graph: no-realm calls and rN into a held 
       await waitFor("the beside word", () =>
         a.notifications.some((n) => n.params?.data?.kind === "beside"),
       );
+      dropRecordsIn(dir, "drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -1242,7 +1261,7 @@ test("the bridge's own realm list is past --tools: rN into the held graph goes t
   await withFake(async ({ fake, dir, bridge }) => {
     const d = await updatableDaemon(dir);
     try {
-      // Держимое место и место рядом: рядом теряется при смене демона, и без
+      // Держимое место и место рядом: рядом без записи теряется при смене демона, и без
       // списка графов r5 и nks-dev для отказа потерянного места неразличимы.
       const a = bridge({}, ["--tools", "case"]);
       await handshake(a);
@@ -1254,6 +1273,7 @@ test("the bridge's own realm list is past --tools: rN into the held graph goes t
         a.notifications.some((n) => n.params?.data?.kind === "beside"),
       );
       const listsForA = fake.state.counts.realm_list ?? 0;
+      dropRecordsIn(dir, "drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -1399,6 +1419,7 @@ test("the gate holds harness calls until the bridge's own realm list answers: rN
       // алиасов из него, — приговорённый до ответа получил бы unresolved-отказ.
       await fake.control({ realmDelayMs: 1200 });
       const listsBefore = fake.state.counts.realm_list ?? 0;
+      dropRecordsIn(dir, "drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -2069,6 +2090,63 @@ test("a spool left for hours is not delivered as live: the next hello of the pla
 // #6586, место рядом: кадр места другого графа, пришедший в окне смены, лежит в спуле
 // основного места; место рядом смену не пережило — кадр не отдаётся основному месту
 // его кадром и не метится в его .seen, а идёт словом с адресатом.
+// #7602: место рядом вернулось с основным — кадр ему из спула окна смены идёт его
+// двери кадром, а не словом «не вернувшемуся»: спул ждёт возврата мест рядом.
+test("a spooled frame of a beside seat that came back reaches that seat as its frame", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "main-t" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "side-t" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const [realm, side] = [...fake.state.channels.values()]
+        .flatMap((c) => [...c.places])
+        .find(([, p]) => p.name === "side-t");
+      const [first] = daemonPids(dir);
+      d.bump(1500);
+      await waitFor(
+        "the outgoing session's end",
+        () => /session \S+ ended: daemon handover/.test(journalOf(dir)),
+        10_000,
+      );
+      await fake.control({
+        ws_send: JSON.stringify({
+          type: "message",
+          id: "side-2",
+          received_at: new Date().toISOString(),
+          stale: false,
+          content_type: "text/plain",
+          to_standing_id: side.standing_id,
+          to_standing: "@tester:side-t",
+          realm,
+          karta_seq: 48,
+          body: "вернувшемуся месту рядом",
+        }),
+      });
+      await waitFor("the outgoing daemon to leave", () => !alive(first), 30_000);
+      const carrying = () =>
+        a.notifications.filter((n) =>
+          JSON.stringify(n.params?.data ?? {}).includes("вернувшемуся месту рядом"),
+        );
+      await waitFor("the beside seat's frame", () => carrying().length > 0, 15_000).catch((e) => {
+        throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+      await new Promise((res) => setTimeout(res, 500));
+      assert.deepEqual(
+        carrying().map((n) => `${n.params.data.kind}:${n.params.data.key ?? ""}`),
+        ["frame:side-t--48--drugoy"],
+        `the frame of the seat beside, at its door: ${a.stderr}`,
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 test("a spooled frame of a beside seat that did not come back is not given to the main place as its own", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const d = await updatableDaemon(dir);
@@ -2085,6 +2163,7 @@ test("a spooled frame of a beside seat that did not come back is not given to th
         .find(([, p]) => p.name === "side-s");
       const before = new Set(fake.state.ws);
       const [first] = daemonPids(dir);
+      dropRecordsIn(dir, "drugoy"); // без записи место рядом не вернётся (#7602)
       d.bump(1500);
       await waitFor(
         "the outgoing session's end",

@@ -18,7 +18,7 @@ import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
 import { letGo, takeSpool } from "./handoff.ts";
 import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
-import { E, type Frame, H, handoverReason } from "./holdstate.ts";
+import { drainWhenFree, E, type Frame, H, handoverReason } from "./holdstate.ts";
 import { deadWord, holdWords } from "./holdwords.ts";
 import {
   addExtra,
@@ -446,7 +446,7 @@ function openHolder(url: string, key: string): void {
             d.broadcast({ kind: "note", text: note });
           }
           deliverTo(d, raw, frame, full);
-          if (full?.type === "hello") takeSpool(key, held, onFrame); // what reached the leaving daemon (#6586)
+          if (full?.type === "hello") drainWhenFree(() => takeSpool(key, held, onFrame)); // the leaving daemon's (#6586), after the seats beside (#7602)
         });
       },
       onEvicted: (code) => {
