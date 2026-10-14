@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tool } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { standingsDirOf } from "../shared/standings.ts";
-import { callTool, short } from "./call.ts";
+import { callTool, resolveAgainstLed, short } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
@@ -39,20 +39,28 @@ function besideRecords(url: string, primary: HoldRecord): HoldRecord[] {
 }
 
 /**
- * The record's graph as the agent named it (rN, slug) is learnt from hello, which lists the
- * channel's seats with canonical graphs: a new session knows no realm list yet, and an
- * unresolved graph would make the register replace the main seat (standing.ts).
+ * The record's graph as the agent named it (rN, slug) resolves to @owner/slug (#5838) — first
+ * from hello, which lists the channel's seats with canonical graphs, by role and name outside
+ * the main seat's graph; the same role and name in two graphs leave it to the graph list.
+ * An unresolved graph would make the register replace the main seat (standing.ts).
  */
-function learnFrom(hello: Frame | null, rec: HoldRecord): void {
+async function resolveRecord(
+  hello: Frame | null,
+  rec: HoldRecord,
+  primary: HoldRecord,
+): Promise<void> {
   if (resolvedRealm(rec.realm)) return;
   const listed = Array.isArray(hello?.standings) ? hello.standings : [];
   const fits = listed.filter(
     (e) =>
       typeof e.realm === "string" &&
+      !sameRealm(e.realm, primary.realm) &&
       String(e.standing ?? "").replace(/^.*:/, "") === rec.name &&
       (e.karta_seq == null || String(e.karta_seq) === String(rec.karta)),
   );
-  if (fits.length === 1) learnRealm(rec.realm, String(fits[0].realm));
+  if (fits.length === 1 && resolvedRealm(primary.realm))
+    learnRealm(rec.realm, String(fits[0].realm));
+  else await resolveAgainstLed(rec.realm);
 }
 
 /**
@@ -67,7 +75,7 @@ export async function besideBack(url: string, primary: HoldRecord): Promise<void
   const hello = await awaitHello(0);
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
-    learnFrom(hello, rec);
+    await resolveRecord(hello, rec, primary);
     if (!otherRealm(primary.realm, rec.realm)) {
       log(`seat beside ${key}: its graph is not known as another one — not registered`);
       continue;

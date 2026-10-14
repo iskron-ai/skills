@@ -36,6 +36,8 @@ export const H = scoped(() => ({
   /** a return from disk brings the seats beside back: the handover spool waits for them (#7602) */
   spoolHeld: 0,
   spoolLater: null as (() => void) | null,
+  /** live frames of a seat beside not back yet, judged after the spool once the return ends */
+  liveLater: [] as (() => void)[],
   /** own revoke in flight (absorb.ts): close 4001 outruns the revoke answer */
   revokingOwn: false,
   /** own channel close in flight (absorb.ts): close 4001 outruns the answer, as with revoke (#6634) */
@@ -89,10 +91,10 @@ export async function withSpoolHeld<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
-    if (--H.spoolHeld === 0 && H.spoolLater) {
-      const later = H.spoolLater;
-      H.spoolLater = null;
-      later();
+    if (--H.spoolHeld === 0) {
+      const later = [...(H.spoolLater ? [H.spoolLater] : []), ...H.liveLater];
+      Object.assign(H, { spoolLater: null, liveLater: [] });
+      for (const fn of later) fn();
     }
   }
 }
@@ -100,6 +102,12 @@ export async function withSpoolHeld<T>(fn: () => Promise<T>): Promise<T> {
 export function drainWhenFree(drain: () => void): void {
   if (H.spoolHeld > 0) H.spoolLater = drain;
   else drain();
+}
+/** A live frame waits like the spool while a return is held (after it); false — not held, judge now. */
+export function liveWhenFree(judge: () => void): boolean {
+  if (H.spoolHeld === 0) return false;
+  H.liveLater.push(judge);
+  return true;
 }
 
 /** absorb.ts: own revoke in flight; close 4001 is then not a dead token. */

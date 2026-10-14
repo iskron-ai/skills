@@ -998,6 +998,57 @@ test("a beside seat comes back with the main one in the daemon change: no lost, 
   });
 });
 
+// №673, ревью: одно имя и одна роль в двух графах — hello не различает места по
+// роли и имени; граф записи рядом, названный коротким именем, разрешается каноном
+// по списку графов (#5838), и место рядом возвращается, а не теряется.
+test("a beside seat of the same role and name, its graph named short, comes back with the main one", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({});
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "twin" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "r7", karta: 931, name: "twin" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      const besides = () => a.notifications.filter((n) => n.params?.data?.kind === "beside");
+      await waitFor("the beside word", () => besides().length === 1);
+      d.bump();
+      const kinds = () =>
+        a.notifications.map((n) => `${n.params?.data?.kind}:${n.params?.data?.key ?? ""}`);
+      const why = () => `${JSON.stringify(kinds())}\n${a.stderr}`;
+      await waitFor(
+        "the beside seat back on the successor",
+        () =>
+          (besides().length === 2 || kinds().some((k) => k.startsWith("lost:"))) &&
+          /through the machine's bridge daemon v99/.test(a.stderr),
+        30_000,
+      ).catch((e) => {
+        throw new Error(`${e.message}\n${why()}`);
+      });
+      assert.ok(!kinds().some((k) => k.startsWith("lost:")), `no lost word: ${why()}`);
+      assert.equal(besides().length, 2, why());
+      const before = fake.state.writes.length;
+      const there = await a.request("tools/call", {
+        name: "iskron_add_phenomenon",
+        arguments: { realm: "r7", name: "в граф рядом" },
+      });
+      assert.ok(there.result && !there.result.isError, `${JSON.stringify(there)}\n${why()}`);
+      assert.deepEqual(
+        fake.state.writes.slice(before).map((w) => [w.realm, w.author]),
+        [["r7", "twin"]],
+        JSON.stringify(fake.state.writes),
+      );
+      const drugoySeats = [...fake.state.channels.values()].filter((c) =>
+        c.places.has("@nks/drugoy"),
+      );
+      assert.equal(drugoySeats.length, 1, `one seat in drugoy on the board: ${why()}`);
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 // Ревью #280, круг 3: отмена помнится только до ack или ответа — повторный id после
 // отменённого не глотается при следующем обрыве.
 test("a cancelled id reused later is sent again after a break, not swallowed", async () => {
@@ -2141,6 +2192,77 @@ test("a spooled frame of a beside seat that came back reaches that seat as its f
         ["frame:side-t--48--drugoy"],
         `the frame of the seat beside, at its door: ${a.stderr}`,
       );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
+// №673, ревью: живой кадр месту рядом на новом сокете преемника, между hello и
+// концом его register, ждёт возврата места рядом, как спул, — и идёт его двери,
+// а не основной и не в её .seen.
+test("a live frame of a beside seat between the successor's hello and its register reaches that seat", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir);
+    try {
+      const a = bridge({}, [], INIT_PI);
+      await handshake(a);
+      const ra = await stand(a, { realm: "nks-dev", karta: 931, name: "main-w" });
+      assert.ok(!ra.result?.isError, textOf(ra));
+      const rb = await stand(a, { realm: "drugoy", karta: 48, name: "side-w" });
+      assert.ok(!rb.result?.isError, `beside: ${textOf(rb)}`);
+      await waitFor("the place's socket", () => fake.state.ws.size === 1);
+      const [realm, side] = [...fake.state.channels.values()]
+        .flatMap((c) => [...c.places])
+        .find(([, p]) => p.name === "side-w");
+      const before = new Set(fake.state.ws);
+      await fake.control({ registerToolDelayMs: 2500 });
+      d.bump();
+      await waitFor(
+        "the successor's socket alone",
+        () => fake.state.ws.size === 1 && ![...fake.state.ws].some((s) => before.has(s)),
+        30_000,
+      );
+      await new Promise((res) => setTimeout(res, 300)); // hello is in, the registers are not
+      await fake.control({
+        ws_send: JSON.stringify({
+          type: "message",
+          id: "side-live",
+          received_at: new Date().toISOString(),
+          stale: false,
+          content_type: "text/plain",
+          to_standing_id: side.standing_id,
+          to_standing: "@tester:side-w",
+          realm,
+          karta_seq: 48,
+          body: "живое месту рядом",
+        }),
+      });
+      const carrying = () =>
+        a.notifications.filter((n) =>
+          JSON.stringify(n.params?.data ?? {}).includes("живое месту рядом"),
+        );
+      await waitFor("the beside seat's frame", () => carrying().length > 0, 20_000).catch((e) => {
+        throw new Error(`${e.message}\n${a.stderr}\n${journalOf(dir)}`);
+      });
+      await new Promise((res) => setTimeout(res, 500));
+      assert.deepEqual(
+        carrying().map((n) => `${n.params.data.kind}:${n.params.data.key ?? ""}`),
+        ["frame:side-w--48--drugoy"],
+        `the frame of the seat beside, at its door: ${a.stderr}`,
+      );
+      const standings = join(dir, "standings");
+      const keyOfFile = (f) => {
+        const k = join(standings, `${f.split(".")[0]}.key`);
+        return existsSync(k) ? readFileSync(k, "utf8") : "";
+      };
+      const marking = readdirSync(standings).filter(
+        (f) =>
+          f.endsWith(".seen") && readFileSync(join(standings, f), "utf8").includes("side-live"),
+      );
+      assert.ok(marking.length > 0, "the seat beside marks its frame");
+      for (const f of marking)
+        assert.match(keyOfFile(f), /side-w/, `${f} is not the beside seat's`);
     } finally {
       d.cleanup();
     }

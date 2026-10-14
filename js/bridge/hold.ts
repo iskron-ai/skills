@@ -16,7 +16,7 @@ import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
-import { letGo, takeSpool } from "./handoff.ts";
+import { holdStray, letGo, takeSpool } from "./handoff.ts";
 import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { drainWhenFree, E, type Frame, H, handoverReason } from "./holdstate.ts";
 import { deadWord, holdWords } from "./holdwords.ts";
@@ -437,8 +437,8 @@ function openHolder(url: string, key: string): void {
           if (E.order?.(url, full)) return; // a stop frame is the bridge's, never the agent's (stoporder.ts)
           const primary = held();
           if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // socket without a standing (env)
-          // hello names the channel's places: their ids and canonical graphs (#5838).
-          if (full?.type === "hello") learnFromHello(full, primary);
+          if (full?.type === "hello") learnFromHello(full, primary); // hello names the channel's places: their ids and canonical graphs (#5838)
+          if (holdStray(raw, full, held, () => onFrame(raw, frame))) return; // its seat beside is coming back (#7602)
           // A frame goes to its place's door by to_standing_id; an unmatched one to the primary with a note.
           const { door: d, note } = routeFrame(full?.type === "hello" ? null : full, primary);
           if (note) {
