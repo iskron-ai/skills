@@ -89,36 +89,46 @@ export const satellitePlaces = (): Standing[] =>
  * channel's term does. Every seat of the channel, other graphs included. Called after
  * releaseStanding and the case exits, so a 4001 close is not taken for a dead token.
  */
-export async function revokeSatellitePlaces(places: Standing[]): Promise<string[]> {
-  if (!places.length) return [];
+export async function revokeSatellitePlaces(
+  places: Standing[],
+): Promise<{ failed: string[]; revoked: string[] }> {
   const failed = new Set(places.map((s) => s.name as string)); // revoked names are struck out
+  const revoked: string[] = [];
   const revokes = places.map((s) =>
     call(tool("channel"), { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
-        // Already gone (the platform's 4001, a retry after a closed connection) counts as revoked.
-        if (!r.isError || alreadyClosed(r)) {
-          failed.delete(s.name as string);
-          return log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
-        }
-        log(`place ${s.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
+        const how = revokeOutcome(r);
+        if (how === "failed")
+          return log(`place ${s.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
+        failed.delete(s.name as string);
+        if (how === "probably")
+          return log(`${s.name} probably revoked at the run's end: ${r.text.slice(0, 120)}`);
+        revoked.push(s.name as string);
+        log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
       })
       .catch((e: Error) => log(`place ${s.name} NOT revoked at the run's end: ${e.message}`)),
   );
-  if (!(await underCap(Promise.allSettled(revokes))))
+  if (places.length && !(await underCap(Promise.allSettled(revokes))))
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
     );
-  return [...failed];
+  return { failed: [...failed], revoked: [...revoked] };
 }
 
 /**
- * A revoke reply about a seat already gone: 410, or 404 without a rule; any other api
- * refusal (e.g. the channel's main seat) is a real failure; without refusal data — the prose.
+ * A revoke reply: confirmed — success, or a seat already gone as data (410, 404 without a
+ * rule; the platform's 4001, a retry after a closed connection); probably — prose that reads
+ * as gone without refusal data, never confirmed to the plugin (№664); any other refusal
+ * (e.g. the channel's main seat) is a real failure.
  */
-const alreadyClosed = (r: Answer): boolean =>
-  r.refusal
-    ? r.refusal.status === 410 || (r.refusal.status === 404 && !r.refusal.rule)
-    : CASE_EXIT_CLOSED.test(r.text);
+const revokeOutcome = (r: Answer): "confirmed" | "probably" | "failed" => {
+  if (!r.isError) return "confirmed";
+  if (r.refusal)
+    return r.refusal.status === 410 || (r.refusal.status === 404 && !r.refusal.rule)
+      ? "confirmed"
+      : "failed";
+  return CASE_EXIT_CLOSED.test(r.text) ? "probably" : "failed";
+};
 
 /** true when the work finished under the end-of-run cap. */
 async function underCap(work: Promise<unknown>): Promise<boolean> {

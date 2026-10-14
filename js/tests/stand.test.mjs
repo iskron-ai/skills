@@ -3136,6 +3136,31 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
 });
 
+// №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
+// Prose that only looks like «already gone» is no confirmation: the place is neither revoked
+// nor failed for the plugin, and the launcher's revoke goes as before.
+for (const [how, refuse, confirmed] of [
+  ["success", null, true],
+  ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
+  ["a 404 refusal without a rule", { text: "Нет такого места.", status: 404 }, true],
+  ["prose «role #931 not found» without refusal data", { text: "role #931 not found" }, false],
+])
+  test(`satellite: iskron/end on a revoke answered by ${how} — revoked ${confirmed ? "names" : "does not name"} the place`, async (t) => {
+    const fake = await withCaller(t);
+    const sat = await satelliteBridge(t, fake);
+    assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+    if (refuse) await fake.control({ revokeRefuseNext: [refuse] });
+    const end = (await sat.call("iskron/end", {})).result;
+    const place = `${CALLER}.sub-1`;
+    assert.deepEqual(
+      end,
+      { ended: true, failed: [], revoked: confirmed ? [place] : [] },
+      `${JSON.stringify(end)}\n${sat.stderr}`,
+    );
+    assert.deepEqual(revokes(fake), [place]);
+    if (!confirmed) assert.match(sat.stderr, /probably revoked/, sat.stderr);
+  });
+
 // #147 [145]: a re-arm slower than its cap still turns the address at the server; the
 // bridge's end waits for it and the pause record follows the new address.
 test("satellite: a pause whose re-arm loses the cap still lands its turned address in the record at the bridge's end", async (t) => {

@@ -20,7 +20,10 @@ import { type Standing } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
-/** Satellite seats at the run's end: failed to revoke, and revoked by this bridge's own call. */
+/**
+ * Satellite seats at the run's end: failed to revoke, and confirmed revoked by this bridge's own
+ * call; a seat gone only by the reply's prose is in neither (caseexit.ts, №664).
+ */
 export interface RunEnd {
   failed: string[];
   revoked: string[];
@@ -55,14 +58,11 @@ export function closeRun(why: string, handover: boolean): Promise<RunEnd> {
     // (graph @nks/nks-dev, nodes #6573, #6593, #6401). On a daemon change without a pause the lost
     // seat closes too; a handover with a live bridge pauses itself (daemon.ts, pauseForHandover).
     await Promise.all([paused ? null : leaveJoinedCases(), flushUsage(spent)]);
-    const failed = paused ? [] : await revokeSatellitePlaces(places);
+    const end = paused ? { failed: [], revoked: [] } : await revokeSatellitePlaces(places);
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    const revoked = paused
-      ? []
-      : places.map((s) => s.name as string).filter((n) => !failed.includes(n));
-    return { failed, revoked };
+    return end;
   })());
 }
 
@@ -86,7 +86,7 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
   log(`handover pause of ${key}: the bridge left in the handover window — the run ends`);
   dropHoldRecord(key);
   await leaveJoinedCases();
-  const failed = await revokeSatellitePlaces(held.places);
+  const { failed } = await revokeSatellitePlaces(held.places);
   if (failed.length) log(`handover pause of ${key}: NOT revoked ${failed.join(", ")}`);
   if (held.addr) await publishStatusTo(held.addr.url, "", 3000).catch(() => {});
 }

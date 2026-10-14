@@ -5545,6 +5545,57 @@ test("a real refusal of the launcher's revoke is loud, and its hint names only t
   }
 });
 
+// №664: against the real bridge — the child's own revoke at its run's end met only prose that
+// looks like «already gone» («role #931 not found», no refusal data): no confirmation, so the
+// launcher's revoke still goes and takes the seat off the board.
+test("real bridges: the child's revoke answered by bare prose is not taken as revoked — the launcher's revoke goes and the seat leaves the board", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-lead-real-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        { id: "root", location: { directory: dir } },
+        { id: "child", parentID: "root", location: { directory: dir } },
+      ],
+    },
+  );
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+    const root = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "proba" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    const child = await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const sub = [...fake.state.places.keys()].find((k) => /\.sub-\d+$/.test(k));
+    assert.ok(sub, `the child stood as a satellite:\n${child.content}\n${rec.said()}`);
+    const name = sub.replace(/^\d+:/, "");
+    await fake.control({ revokeRefuseNext: [{ text: "role #931 not found" }] });
+    await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: name },
+      "root",
+    );
+    await until(() => !fake.state.places.has(sub), `the seat ${name} off the board`, 8000);
+    const revokes = fake.state.calls.filter(
+      (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+    );
+    assert.equal(revokes.length, 2, "the child's own revoke, then the launcher's");
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
 // #7505 (1): the child handed in its outcome and left its case; the launcher's word sent in the
 // middle of its work and held until its turn's end went into its session and woke it — it came
 // back with the same seat into the case. From the leave on, nothing goes into the child's session:
