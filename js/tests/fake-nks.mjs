@@ -410,6 +410,15 @@ export async function startFakeNks(opts = {}) {
         return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
+      // opts.statusRotates: статусный адрес прежнего сокета места после чужого connect — 404, как его адрес сокета.
+      const statusToken = p.slice("/channel/status/".length);
+      const statusName = st.wsTokens.get(statusToken);
+      if (
+        opts.statusRotates &&
+        statusName !== undefined &&
+        st.latestToken.get(statusName) !== statusToken
+      )
+        return json(res, 404, { error: "no such standing" });
       // api 0.108.0 (#6729, дело №234): длиннее 64 — режется по слову с «…», 200 с warnings[];
       // statusTrim: false — прежний сервер, отказ 422.
       const trim = st.statusTrim && typeof text === "string" && [...text].length > 64;

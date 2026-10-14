@@ -18,8 +18,8 @@ export interface SeparateWords {
   noFree: (base: string) => string;
 }
 
-// Держатель своего имени — живой агент: место умершего мост его машины закрывает сам (#7493),
-// поэтому пробы «жив?» и подхвата по её молчанию нет — работа идёт на месте рядом.
+// Пробы «жив?» и подхвата по её молчанию нет (#7493) — работа идёт на месте рядом; место
+// умершего закрывает мост машины с демоном, иначе срок платформы (take.ts).
 const besideRu = (): string =>
   `работай здесь, её дела не бери и её не жди; вытеснить ту сессию (take=true): ${TAKE.ru.rule()}`;
 
@@ -29,14 +29,14 @@ const besideEn = (): string =>
 const HOLDER_RU: Record<NonNullable<Kin>, string> = {
   live: "другая живая сессия твоего имени (та же роль, та же учётка)",
   record:
-    "другая сессия твоего имени (та же роль, та же учётка; её мост здесь не отвечает — если она мертва, её место закроется само)",
+    "другая сессия твоего имени (та же роль, та же учётка; её мост здесь не отвечает — жива ли, доска не скажет; место умершего закроет мост машины с демоном, иначе срок платформы)",
   board: "другая сессия той же роли",
 };
 
 const HOLDER_EN: Record<NonNullable<Kin>, string> = {
   live: "another live session of your own name (the same role, the same account)",
   record:
-    "another session of your own name (the same role, the same account; its bridge does not answer here — if it is dead, its seat closes by itself)",
+    "another session of your own name (the same role, the same account; its bridge does not answer here — the board does not tell whether it is alive; a dead agent's seat is closed by a machine bridge with a daemon, otherwise by the platform's term)",
   board: "another session of the same role",
 };
 

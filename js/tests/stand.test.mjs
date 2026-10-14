@@ -131,10 +131,11 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
   // karta — только для занятия места; занятость на держимом месте без неё (#6509).
   assert.deepEqual(stand.inputSchema.required, ["realm"]);
   assert.match(stand.inputSchema.properties.status.description, /обновить занятость/);
-  // take: только словом человека, и своё имя тоже — место мёртвого мост закрывает сам (#6976, #7493).
+  // take: только словом человека, и своё имя тоже; место на доске — не свидетельство жизни,
+  // окно смерти — только у моста машины с демоном (#6976, #7493, №677).
   assert.match(
     stand.inputSchema.properties.take.description,
-    /вытеснить живого держателя ДРУГОЙ сессии — только по слову человека, и своего имени тоже: место умершего мост его машины закрывает сам примерно через минуту/,
+    /вытеснить живого держателя ДРУГОЙ сессии — только по слову человека, и своего имени тоже: место на доске — не свидетельство жизни держателя; место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы/,
   );
   assert.doesNotMatch(stand.inputSchema.properties.take.description, /5 минут|пробу словом/);
   assert.ok(
@@ -934,14 +935,14 @@ test("iskron_stand refusal «already leads another seat»: no take=true advice w
 // Where the bridge does not know who hears the asked seat — the board did not
 // read, or a bare connect/register/mint that reads no board — the refusal stays
 // neutral: this bridge's own seat, the move beside, take=true by the take rule — only on
-// the human's word: a dead agent's seat closes by itself (#6976, #7194, #7493).
+// the human's word; the board is no evidence of life (#6976, #7194, #7493, №677).
 const neutralRefusal = (text, led) => {
   assert.match(text, /уже ведёт место/, text);
   assert.match(text, new RegExp(`своё место этого моста — ${led}`), text);
   assert.match(text, /встать рядом — iskron_stand без name/, text);
   assert.match(
     text,
-    /отнять место \(take=true\): только словом человека — место держит живой агент: место умершего мост его машины закрывает сам примерно через минуту/,
+    /отнять место \(take=true\): только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы/,
     text,
   );
   assert.doesNotMatch(text, /iskron_stand с take=true/, text);
@@ -1978,10 +1979,10 @@ const backByRecord = (r, seat = "proba") => {
 test("iskron_stand: the board reads a stopped holder of ANOTHER session listening — the bridge stands beside with hearing, never «register only»", async (t) => {
   const { r } = await stoppedHolder(t, "ses-1", "ses-2");
   besideHeard(r);
-  // Запись другой сессии этого дома — своё имя; если та мертва, её место закроется само (#7493).
+  // Запись другой сессии этого дома — своё имя; жива ли она, доска не скажет (#7493, №677).
   assert.match(
     standText(r),
-    /другая сессия твоего имени \(та же роль, та же учётка; её мост здесь не отвечает — если она мертва, её место закроется само\) — .*её не жди/,
+    /другая сессия твоего имени \(та же роль, та же учётка; её мост здесь не отвечает — жива ли, доска не скажет; место умершего закроет мост машины с демоном, иначе срок платформы\) — .*её не жди/,
     standText(r),
   );
 });

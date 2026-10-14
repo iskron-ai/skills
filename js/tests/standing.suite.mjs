@@ -90,9 +90,9 @@ const INIT = {
   clientInfo: { name: "standing-probe", version: "0" },
 };
 const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba" };
-// The take rule of a taken seat (#6976, #7194, #7493): only on the human's word — a dead agent's seat closes by itself.
+// The take rule of a taken seat (#6976, #7194, #7493, №677): only on the human's word; the board is no evidence of life.
 const TAKE_RULE_RU =
-  /iskron_stand с take=true \(только словом человека — место держит живой агент: место умершего мост его машины закрывает сам примерно через минуту, пробовать держателя не нужно\)/;
+  /iskron_stand с take=true \(только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы\)/;
 
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir, extraEnv = {}) {

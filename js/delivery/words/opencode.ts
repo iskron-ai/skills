@@ -57,6 +57,8 @@ export interface OpencodeWords {
   notDelivered: (frame: string, id: string, message: string) => string;
   held: (key: string) => string;
   released: (key: string, text: string) => string;
+  /** seats — not revoked by the deleted session's bridge, or its word when it did not answer. */
+  endUnrevoked: (seats: string) => string;
 }
 
 export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
@@ -130,6 +132,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
     released: (key, text) => `Искрон: мост отпустил стояние ${key} — ${text}`,
+    endUnrevoked: (seats) =>
+      `Искрон: сессия удалена, но её место не снято (${seats}) — запись держания оставлена; мост машины повторит снятие после окна, иначе место уйдёт сроком платформы`,
   },
   en: {
     channelDown: (message) => `Iskron: the channel did not come up — ${message}`,
@@ -205,5 +209,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
     held: (key) => `Iskron: the bridge holds the standing ${key}`,
     released: (key, text) => `Iskron: the bridge released the standing ${key} — ${text}`,
+    endUnrevoked: (seats) =>
+      `Iskron: the session is deleted but its seat is not revoked (${seats}) — the hold record is kept; the machine's bridge repeats the revoke after the window, else the seat goes by the platform's term`,
   },
 };

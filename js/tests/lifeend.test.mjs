@@ -108,12 +108,19 @@ async function waitFor(what, fn, ms = 15_000) {
   }
 }
 
-async function withFake(fn) {
-  const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
+async function withFake(fn, opts = {}) {
+  const fake = await startFakeNks({ pat: PAT, evictSameAddress: true, ...opts });
   const dir = mkdtempSync(join(tmpdir(), "iskron-lifeend-"));
+  const homes = [dir];
   const procs = [];
-  const bridge = async () => {
-    const b = startBridge(fake.mcpUrl, dir);
+  // Another home of the same account (another machine or grant dir): its own daemon.
+  const home = () => {
+    const h = mkdtempSync(join(tmpdir(), "iskron-lifeend-other-"));
+    homes.push(h);
+    return h;
+  };
+  const bridge = async (at = dir) => {
+    const b = startBridge(fake.mcpUrl, at);
     procs.push(b);
     const r = await b.request("initialize", INIT);
     assert.ok(r.result, `initialize: ${JSON.stringify(r)}\n${b.stderr}`);
@@ -121,16 +128,17 @@ async function withFake(fn) {
     return b;
   };
   try {
-    await fn({ fake, dir, bridge });
+    await fn({ fake, dir, bridge, home });
   } finally {
     for (const b of procs) b.proc.kill("SIGKILL");
     await Promise.all(procs.map((b) => b.gone()));
-    for (const pid of daemonPids(dir))
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
+    for (const h of homes)
+      for (const pid of daemonPids(h))
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
     await fake.stop();
-    rmSync(dir, { recursive: true, force: true });
+    for (const h of homes) rmSync(h, { recursive: true, force: true });
   }
 }
 
@@ -248,6 +256,72 @@ test("the plugin's end of a deleted session revokes the main seat at once, quiet
     await delay(300);
     const stop = a.notifications.filter((n) => n.params?.data?.kind === "stopped");
     assert.equal(stop.length, 0, `no stop word: ${JSON.stringify(stop)}`);
+  });
+});
+
+// №677: the death window checks the server, not only this machine's socket — a bridge of
+// another home took the name in the window, and a revoke by name would close its live seat.
+for (const [how, opts, mute, said] of [
+  ["listens on it", {}, false, /someone listens on it — another holder took it/],
+  [
+    "turned its address (its socket not on the board)",
+    { statusRotates: true },
+    true,
+    /its socket's address was turned — another holder took it/,
+  ],
+])
+  test(`the name taken by another home within the window — the board ${how}: the dead seat is not revoked`, async () => {
+    await withFake(async ({ fake, dir, bridge, home }) => {
+      const a = await bridge();
+      await stood(a, "die-t");
+      a.proc.kill("SIGKILL");
+      await a.gone();
+      // The dead session's end has released its socket: the take below is no eviction of it.
+      await waitFor(
+        "the dead socket released",
+        () => !fake.state.places.get("931:die-t")?.listening,
+      );
+      const b = await bridge(home());
+      const r = await b.request("tools/call", {
+        name: "iskron_stand",
+        arguments: { realm: "nks-dev", karta: 931, name: "die-t", take: true },
+      });
+      assert.ok(!r.result?.isError, textOf(r));
+      // A holder that keeps no socket between its windows: the board does not hear it.
+      if (mute) fake.state.places.get("931:die-t").listening = false;
+      await waitFor(
+        "the window's judgement",
+        () => said.test(journalOf(dir)) || closed(fake, "die-t"),
+        15_000,
+      ).catch((e) => {
+        throw new Error(`${e.message}\n${journalOf(dir)}`);
+      });
+      await delay(500);
+      assert.ok(!closed(fake, "die-t"), `the new holder's seat lives:\n${journalOf(dir)}`);
+      assert.match(journalOf(dir), said);
+      assert.ok(fake.state.places.has("931:die-t"), "the seat is on the board");
+      assert.ok(!existsSync(recordOf(dir, "die-t")), "the dead agent's own record is dropped");
+    }, opts);
+  });
+
+test("an end whose revoke is refused keeps the hold record, and the death window repeats the revoke", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const a = await bridge();
+    await stood(a, "die-f");
+    fake.state.revokeRefuseNext = [{ text: "Отказано (503): сбой", status: 503, rule: "x" }];
+    const r = await a.request("iskron/end");
+    assert.ok(
+      r.result?.failed?.includes("die-f"),
+      `the refusal is in the answer: ${JSON.stringify(r)}`,
+    );
+    assert.ok(!closed(fake, "die-f"), "the seat stands");
+    assert.ok(existsSync(recordOf(dir, "die-f")), "the hold record stays for the repeat");
+    a.proc.stdin.end();
+    await a.gone();
+    await waitFor("the repeat closed the seat", () => closed(fake, "die-f"), 15_000).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
+    await waitFor("the hold record dropped", () => !existsSync(recordOf(dir, "die-f")), 5_000);
   });
 });
 
