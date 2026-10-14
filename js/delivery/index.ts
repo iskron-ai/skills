@@ -117,6 +117,7 @@ export { STAND_TOOL, type StandToolWords } from "./words/standtool.ts";
 export { STATUS, type StatusWords } from "./words/status.ts";
 export { STATUS_POST, type StatusPostWords } from "./words/statuspost.ts";
 export { STOP, type StopWho, type StopWords } from "./words/stop.ts";
+export { STOP_CLI, type StopCliWords } from "./words/stopcli.ts";
 export { SUBAGENT, type SubagentWords } from "./words/subagents.ts";
 export { SUSPEND, type SuspendWords } from "./words/suspend.ts";
 export { THIN, type ThinWords } from "./words/thin.ts";

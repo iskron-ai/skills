@@ -47,6 +47,7 @@ export function sessionSnapshot(
           realm: standing?.realm,
           karta: standing?.karta,
           primary: p.primary,
+          standing_id: door?.standingId ?? undefined,
           satellite_of: attrs.satellite_of,
           listening:
             !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),

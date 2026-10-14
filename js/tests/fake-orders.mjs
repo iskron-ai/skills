@@ -18,6 +18,8 @@ export const ordersState = () => ({
   queries: [],
   ackDrop: 0,
   ackDelay: {},
+  human: [],
+  routeMissing: false,
 });
 
 /** The channel holding the seat with this id, and the seat's graph in it. */
@@ -51,6 +53,7 @@ function endSeat(st, id, wsFrame) {
 export function ordersControl(st, patch, wsFrame) {
   if (Number.isInteger(patch.orders_ack_drop)) st.orders.ackDrop = patch.orders_ack_drop;
   if (patch.orders_ack_delay) st.orders.ackDelay = patch.orders_ack_delay;
+  if ("orders_route_missing" in patch) st.orders.routeMissing = !!patch.orders_route_missing;
   for (const o of [...(patch.stop_orders ?? []), patch.stop_order]) if (o) putOrder(st, o, wsFrame);
 }
 
@@ -66,7 +69,7 @@ function putOrder(st, o, wsFrame) {
     issued_at: new Date().toISOString(),
   };
   st.orders.list.set(order.id, order);
-  if (o.frame === false) return;
+  if (o.frame === false) return order;
   const frame = JSON.stringify({
     type: "stop",
     order_id: order.id,
@@ -78,13 +81,43 @@ function putOrder(st, o, wsFrame) {
   });
   for (const s of channelSockets(st, seatOf(st, o.standing_id)?.chan))
     if (!st.hung.has(s)) s.write(wsFrame(0x1, frame));
+  return order;
+}
+
+/**
+ * The human's stop of a seat (graph @nks/nks-dev, nodes #7518, #5085): POST /api/standings/{id}/stop
+ * puts an order (with its frame), as api 0.122; an older api (/control orders_route_missing: true)
+ * answers it 404, and DELETE /api/standings/{id} revokes the seat. Each request lands in
+ * st.orders.human: {method, id, realm, body}.
+ */
+async function standingsRoute(st, req, res, p, authed, { json, body, wsFrame }) {
+  const m = /^\/api\/standings\/([^/]+)(\/stop)?$/.exec(p);
+  if (!m) return false;
+  const id = decodeURIComponent(m[1]);
+  const ask = m[2] ? JSON.parse((await body(req)) || "{}") : null;
+  st.orders.human.push({ method: req.method, id, realm: req.headers["x-nks-realm"], body: ask });
+  if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
+  if (!seatOf(st, id)) return (json(res, 410, { error: "standing ended" }), true);
+  if (m[2] && req.method === "POST") {
+    if (st.orders.routeMissing) return (json(res, 404, { error: "not found" }), true);
+    const order = putOrder(st, { id: `ord-${st.orders.seq + 1}`, standing_id: id }, wsFrame);
+    return (json(res, 201, order), true);
+  }
+  if (!m[2] && req.method === "DELETE") {
+    endSeat(st, id, wsFrame);
+    res.writeHead(204).end();
+    return true;
+  }
+  return false;
 }
 
 /** true — the request was an orders route and is answered. */
 export async function ordersRoute(st, req, res, p, { json, body, wsFrame }) {
-  if (!p.startsWith("/api/me/orders")) return false;
   const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
   const authed = (!!st.pat && bearer === st.pat) || (!!st.access && bearer === st.access);
+  if (p.startsWith("/api/standings/"))
+    return standingsRoute(st, req, res, p, authed, { json, body, wsFrame });
+  if (!p.startsWith("/api/me/orders")) return false;
   if (p === "/api/me/orders" && req.method === "GET") {
     st.orders.reads++;
     if (!authed) return (json(res, 401, { error: "unauthorized" }), true);

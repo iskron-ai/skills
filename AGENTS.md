@@ -167,6 +167,7 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Найти по скиллам | `grep`/`Grep` по `skills/` |
 | Поставить тулчейн | `make deps` (= `npm ci`; раз на клон; нужен для lint/typecheck/build-js и pre-commit-хука) |
 | Осмотреть мост машины | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs status [--json]` — сессии и места демона; отдельно мосты мимо него и записи диска вне снимка (живость неизвестна); `--auth-dir <каталог>`, `--lang en|ru` |
+| Снять место агента машины | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs stop <место\|id сессии> [--realm <граф>]` — приказ останова месту из снимка демона (api 0.122+), на старом api — снятие места; `--auth-dir <каталог>`, `--lang en\|ru` |
 | Пересобрать производное рабочей копии | `make build` (= `make build-js` + зипы из `skills/`; детерминированно поперёк машин; или pre-commit-хуком) |
 | Собрать выходы JS (dev) | `make build-js` → `dist/dev/` вне индекса (esbuild: `iskron.mjs` и `opencode-plugin.js` в establish-mcp, `extensions/iskron.js`, рендер в шаблон роадмапа); пробы берут их отсюда (`js/tests/built.mjs`), живой прогон — тоже |
 | Собрать выходы выпуска | `make build-release` — только джоб bundle-sync релизного PR: метка канала release, закоммиченные места, бандлы |

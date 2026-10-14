@@ -4,6 +4,8 @@ export interface PlaceSnapshot {
   realm: string;
   karta: string | number;
   primary: boolean;
+  /** The platform's seat id (hello, register) — the `stop` subcommand addresses the seat by it. */
+  standing_id?: string;
   satellite_of?: string;
   listening: boolean;
   last_work_at?: string;
@@ -73,6 +75,7 @@ export function safePlace(v: unknown): PlaceSnapshot {
     karta: typeof p.karta === "number" ? number(p.karta) : text(p.karta),
     primary: p.primary === true,
     listening: p.listening === true,
+    ...(typeof p.standing_id === "string" ? { standing_id: p.standing_id } : {}),
     ...(typeof p.satellite_of === "string" ? { satellite_of: p.satellite_of } : {}),
     ...(typeof p.last_work_at === "string" ? { last_work_at: p.last_work_at } : {}),
     ...(usage ? { usage } : {}),

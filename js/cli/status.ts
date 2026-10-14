@@ -25,7 +25,9 @@ interface StatusSnapshot {
   fallback: FallbackSnapshot[];
   disk_only: DiskPlace[];
 }
-async function machine(authDir: string): Promise<Omit<StatusSnapshot, "fallback" | "disk_only">> {
+export async function machine(
+  authDir: string,
+): Promise<Omit<StatusSnapshot, "fallback" | "disk_only">> {
   let daemon_error: StatusSnapshot["daemon_error"] = "no answer";
   if (!existsSync(authDir)) daemon_error = "missing directory";
   else if (!seamEntranceProblem(authDir, false)) {
