@@ -51,6 +51,7 @@ import { stoppedSince, stopsNow } from "./holdstate.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
+import { clearSeatModel } from "./modelclear.ts";
 import {
   deriveParts,
   fitName,
@@ -63,7 +64,7 @@ import {
   sanitize,
 } from "./names.ts";
 import { ownerRefusal } from "./owner.ts";
-import { placeFields, rememberModel } from "./placefields.ts";
+import { placeFields, rememberStandModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
@@ -126,7 +127,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     return done(true);
   }
   const model = typeof a.model === "string" && a.model.trim() ? a.model : undefined;
-  rememberModel(model);
+  rememberStandModel(model);
   // Default directory is the harness bridge's: for a daemon session, the thin bridge's cwd.
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
   // A bad cwd would address another seat — a refusal aloud, as for an explicit name (#5068).
@@ -226,8 +227,12 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   noteStandCwd(cwd);
 
   const here = () => placeFields({ realm, karta, name }, true); // seat fields on every registration (#5174)
-  const register = () =>
-    call(tool("channel"), { action: "register", realm, karta, name, ...here() });
+  let modelKept: string | null = null; // the earlier model's PATCH refused: said aloud, the stand stands
+  const register = async () => {
+    const r = await call(tool("channel"), { action: "register", realm, karta, name, ...here() });
+    if (!r.isError) modelKept = await clearSeatModel(realm); // register keeps a model it is not given (#7591)
+    return r;
+  };
 
   // 1. The board — before any change.
   const board = await call(tool("channel"), { action: "list", realm });
@@ -447,6 +452,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     sw().head(mine?.address ?? name, karta, realm, how),
     ...nameNotes.map((n) => sw().note(n)),
     ...extra,
+    ...(modelKept ? [sw().modelNotCleared(modelKept)] : []),
   );
   const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);

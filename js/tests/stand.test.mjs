@@ -4330,6 +4330,57 @@ test("satellite: iskron_stand with status and satellite_of on the held .sub-N se
   assert.equal(fake.state.counts.list, lists, "no board read");
 });
 
+// A satellite's model is the harness's (#7591): a full stand without it means the harness
+// did not name one — the seat's earlier model goes, not published again; a new one replaces it.
+test("satellite: a repeated full stand without a model drops the seat's earlier model; a new model replaces it", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const lastModel = () => {
+    const p = fake.state.placeArgs.filter((x) => x.name === `${CALLER}.sub-1`).at(-1);
+    assert.ok(p, JSON.stringify(fake.state.placeArgs));
+    return p.model;
+  };
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  assert.equal(lastModel(), "model-a");
+  // The seat as the api keeps it: register without model leaves the earlier one (#4032).
+  const [id] = [...fake.state.seatModels].find(([, m]) => m === "model-a") ?? [];
+  assert.ok(id, JSON.stringify([...fake.state.seatModels]));
+  const registers = fake.state.counts.register_standing;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.counts.register_standing > registers, "the repeat registers the seat");
+  assert.equal(lastModel(), undefined, "no model from the harness — none on the seat");
+  assert.equal(fake.state.seatModels.get(id), undefined, "the api no longer keeps model-a");
+  const patch = fake.state.seatPatches.find((x) => x.id === id);
+  assert.deepEqual(patch?.body, { model: null }, JSON.stringify(fake.state.seatPatches));
+  assert.match(patch.auth ?? "", /^Bearer /, "with the key that opened the seat");
+  assert.equal(patch.realm, "@nks/nks-dev", "the seat's graph, as the api requires (#99)");
+  assert.doesNotMatch(textOf(none), /not cleared|не снята/, textOf(none));
+  const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  assert.equal(lastModel(), "model-b");
+  assert.equal(fake.state.seatModels.get(id), "model-b");
+});
+
+// The clearing PATCH refused (#7591): the stand still stands, and its answer says in one line
+// that the earlier model stays.
+test("satellite: a refused clearing of the seat's model leaves the stand standing and says so", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  fake.state.seatPatchRefuse = 503;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.seatPatches.length > 0, "the clearing was tried");
+  const said = textOf(none)
+    .split("\n")
+    .filter((l) => /не снята/.test(l));
+  assert.equal(said.length, 1, textOf(none));
+  assert.match(said[0], /Прежняя модель места не снята \(503/, said[0]);
+});
+
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без

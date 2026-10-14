@@ -9,6 +9,7 @@ import { sessionOfBridge } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { observedPlaceAttrs } from "./placefields.ts";
 import { extraPlaces } from "./places.ts";
+import { sentPulse } from "./pulse.ts";
 import { type BridgeSession } from "./session.ts";
 import { skillsAttr } from "./skillset.ts";
 import { announcedSkills } from "./skillwatch.ts";
@@ -58,6 +59,7 @@ export function sessionSnapshot(
             !H.unheard && holdsChannel() && (notifiedClient() ? attached : !!door?.clients.size),
           ...(last ? { last_work_at: new Date(last).toISOString() } : {}),
           usage: attrs.usage,
+          pulse: sentPulse(),
           skills: standing ? announcedSkills(standing) : undefined,
           skills_mismatch: differs(standing ? announcedSkills(standing) : undefined),
         });
