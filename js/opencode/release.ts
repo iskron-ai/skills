@@ -3,8 +3,10 @@
 // leaves its cases, revokes and goes down), then the launcher's own revoke goes to the platform
 // by the launcher's bridge, the seat's role filled in. One word of the launcher takes the seat
 // off the board whatever the child's bridge managed; a seat the child's bridge revoked itself is
-// not revoked twice — the second call met only "no such seat" (#7599); a seat already gone counts
-// as taken off, any other refusal is a loud refusal of the launcher's call, not a quiet "released".
+// not revoked twice — the second call met only "no such seat" (#7599); the same seat is the same
+// canonical graph, role and name, a graph not known in that form is no match (№664); a seat
+// already gone counts as taken off, any other refusal is a loud refusal of the launcher's call,
+// not a quiet "released".
 import { refusalOf } from "../bridge/refusal.ts";
 import type { JsonRpcMessage } from "../bridge/types.ts";
 import type { Released } from "./leaddoors.ts";

@@ -3109,7 +3109,9 @@ test("satellite: its own revoke at the run's end is repeated once on a closed co
   assert.doesNotMatch(sat.stderr, /unhandled rejection/);
 });
 
-// #7599: the answer names what it revoked too — the launcher's revoke then is not sent.
+// #7599: the answer names what it revoked too — the launcher's revoke then is not sent; a revoked
+// seat goes by its graph (canonical), role and name (№664).
+const SAT_SEAT = { realm: "@nks/nks-dev", karta: "931", name: `${CALLER}.sub-1` };
 test("satellite: iskron/end names the places it revoked and those it could not; a dropped usage snapshot does not stop the revoke", async (t) => {
   const fake = await withCaller(t);
   const { bridge: sat } = await usageBridge(t, { fake, gap: "600000", args: ["--satellite"] });
@@ -3120,7 +3122,7 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   const ok = (await sat.call("iskron/end", {})).result;
   assert.deepEqual(
     ok,
-    { ended: true, failed: [], revoked: [`${CALLER}.sub-1`] },
+    { ended: true, failed: [], revoked: [SAT_SEAT] },
     `${JSON.stringify(ok)}\n${sat.stderr}`,
   );
   assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
@@ -3154,12 +3156,37 @@ for (const [how, refuse, confirmed] of [
     const place = `${CALLER}.sub-1`;
     assert.deepEqual(
       end,
-      { ended: true, failed: [], revoked: confirmed ? [place] : [] },
+      { ended: true, failed: [], revoked: confirmed ? [SAT_SEAT] : [] },
       `${JSON.stringify(end)}\n${sat.stderr}`,
     );
     assert.deepEqual(revokes(fake), [place]);
     if (!confirmed) assert.match(sat.stderr, /probably revoked/, sat.stderr);
   });
+
+// №664: one satellite name in two graphs is two seats (#5838) — iskron/end keys a confirmed
+// revoke by graph, role and name, so the success in one graph does not cover a refusal in the other.
+test("satellite: iskron/end keys a confirmed revoke by graph, role and name — one name in two graphs, revoked in one, refused in the other", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const place = `${CALLER}.sub-1`;
+  const a = await standAs(sat, SAT_ARGS);
+  assert.equal(placeOf(a), place, `${textOf(a)}\n${sat.stderr}`);
+  const b = await standAs(sat, { ...SAT_ARGS, realm: "@nks/drugoy" });
+  assert.equal(placeOf(b), place, `one name in both graphs:\n${textOf(b)}\n${sat.stderr}`);
+  await fake.control({
+    revokeRefuseNext: [{ realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" }],
+  });
+  const end = (await sat.call("iskron/end", {})).result;
+  assert.deepEqual(
+    end,
+    {
+      ended: true,
+      failed: [place],
+      revoked: [{ realm: "@nks/drugoy", karta: "931", name: place }],
+    },
+    `${JSON.stringify(end)}\n${sat.stderr}`,
+  );
+});
 
 // #147 [145]: a re-arm slower than its cap still turns the address at the server; the
 // bridge's end waits for it and the pause record follows the new address.

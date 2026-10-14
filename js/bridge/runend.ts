@@ -5,6 +5,7 @@ import { method, RUN_END } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { ownPidAlive } from "../shared/seam-entrance.ts";
+import { type SeatKey } from "../shared/seat.ts";
 import { leaveJoinedCases, revokeSatellitePlaces, satellitePlaces } from "./caseexit.ts";
 import { CFG } from "./config.ts";
 import { localSocketPathOf, releaseStanding } from "./hold.ts";
@@ -21,12 +22,13 @@ import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
 /**
- * Satellite seats at the run's end: failed to revoke, and confirmed revoked by this bridge's own
- * call; a seat gone only by the reply's prose is in neither (caseexit.ts, №664).
+ * Satellite seats at the run's end: names failed to revoke, and seats confirmed revoked by this
+ * bridge's own call — by canonical graph, role and name; a seat gone only by the reply's prose is
+ * in neither (caseexit.ts, №664).
  */
 export interface RunEnd {
   failed: string[];
-  revoked: string[];
+  revoked: SeatKey[];
 }
 
 const R = scoped(() => ({

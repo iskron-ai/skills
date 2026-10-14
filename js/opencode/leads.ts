@@ -10,8 +10,9 @@
 // nothing reaches the child's session any more (#7505). Contract — leaddoors.ts, words — leadwords.ts.
 
 import { tool } from "../delivery/index.ts";
+import { sameSeat } from "../shared/seat.ts";
 import { createCascade } from "./cascade.ts";
-import type { LeadDoors, Leads } from "./leaddoors.ts";
+import type { LeadDoors, Leads, RunEnd } from "./leaddoors.ts";
 import type { Up } from "./leadframes.ts";
 import { awayWord, endWord, unrevokedWord, W } from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
@@ -48,7 +49,7 @@ export function createLeads(d: LeadDoors): Leads {
    * platform, an unreturned seat (lost) and the parent's move (away — no "ended") do not wake.
    * own — the launcher's revoke follows by its own bridge: no correction word here. A parent
    * ended or stopped itself gets nothing: the word goes up to a live ancestor unwoken (teller).
-   * The answer — true when the child's bridge revoked the seat it stood on itself.
+   * The answer — the child's bridge's run end (what it revoked itself); not ended by it — null.
    */
   async function finish(
     child: string,
@@ -57,9 +58,9 @@ export function createLeads(d: LeadDoors): Leads {
     wake = true,
     kind: "end" | "lost" | "away" = "end",
     own = false,
-  ): Promise<boolean> {
+  ): Promise<RunEnd | null> {
     const l = leads.get(child);
-    if (!l) return false;
+    if (!l) return null;
     leads.delete(child);
     over.end(child);
     // The end takes down only the child's satellite: a plain seat that stood instead stays.
@@ -81,7 +82,7 @@ export function createLeads(d: LeadDoors): Leads {
           : endWord(who(l, child), why, last, kept),
       wake,
     );
-    if (!ended || kept) return false;
+    if (!ended || kept) return null;
     // The bridge ends its run after the word: after it, the word landed later than OpenCode's
     // synthetic and the parent woke twice (№147). A failed release is a correction that does not wake.
     const run = await d.close(child).catch(() => null);
@@ -89,7 +90,7 @@ export function createLeads(d: LeadDoors): Leads {
     const failed = run?.failed ?? null;
     if (kind !== "lost" && !own && (failed === null || failed.length))
       await tell(unrevokedWord(who(l, child), failed), false);
-    return !!l.place?.name && !!run?.revoked.some((s) => names(l.place, child, s));
+    return run;
   }
 
   function leave(child: string, l: Lead, why: string): void {
@@ -159,7 +160,15 @@ export function createLeads(d: LeadDoors): Leads {
         gone.set(child, undefined);
         const place = l.place ?? null;
         // No word into the child (#7505): anything laid there would wake it for a turn.
-        const off = await finish(child, W().releasedByLauncher(), true, true, "end", true);
+        const run = await finish(child, W().releasedByLauncher(), true, true, "end", true);
+        // Off only for the very seat the launcher revokes — its call's graph and role, else its
+        // seat's; one name in another graph is another seat (#5838, №664).
+        const seat = place && {
+          realm: String(args.realm ?? "").trim() || place.realm,
+          karta: args.karta == null ? place.karta : String(args.karta),
+          name: place.name,
+        };
+        const off = !!seat && !!run?.revoked.some((k) => sameSeat(k, seat));
         return { word: W().release(who(l, child)), place, off };
       }
       return null;

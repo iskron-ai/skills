@@ -5501,13 +5501,13 @@ const ROLE_SEATS = `\nМеста роли #931:\n- ${ROOT_PLACE.name} (id 77): i
 
 test("the launcher's revoke after the child's bridge revoked its seat itself: no second revoke, «отпущен», no «НЕ снято» and no foreign call", async () => {
   const { b, rec, rootPid, childPid, sent } = await leadChild("lead-release-self-off", {
-    FB_END_REVOKED: SUB,
+    FB_END_REVOKED: `${SUB_PLACE.realm}|#${SUB_PLACE.karta}|${SUB}`,
   });
   try {
     writeFileSync(`${b.reply}.iskron_channel`, `__ERROR__no standing named ${SUB}${ROLE_SEATS}`);
     const word = await rec.call(
       "iskron_channel",
-      { realm: "nks-dev", action: "revoke", standing: SUB },
+      { realm: SUB_PLACE.realm, action: "revoke", standing: SUB },
       "root",
     );
     assert.match(word.content, /отпущен[\s\S]*место снято/);
@@ -5595,6 +5595,70 @@ test("real bridges: the child's revoke answered by bare prose is not taken as re
     await fake.stop();
   }
 });
+
+// №664: one satellite name in two graphs is two seats (#5838). The child's bridge revoked its seat
+// in A and was refused in B: the launcher's revoke for B goes and its refusal is loud; for A it
+// is not sent again. A name-only match let A's success hide B's refusal — «место снято», B hung.
+for (const [graph, own] of [
+  ["@nks/nks-dev", false],
+  ["@nks/drugoy", true],
+])
+  test(`real bridges: one name in two graphs, the child's revoke refused in @nks/nks-dev — the launcher's revoke in ${graph} ${own ? "is not sent again" : "goes, its refusal loud"}`, async () => {
+    const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+    await fake.control({ richTools: true });
+    const dir = mkdtempSync(join(tmpdir(), "iskron-lead-two-"));
+    const rec = await plugin(
+      {
+        ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+        ISKRON_BRIDGE_URL: fake.mcpUrl,
+        ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+        ISKRON_BRIDGE_NO_BROWSER: "1",
+      },
+      {
+        location: { directory: dir },
+        sessions: [
+          { id: "root", location: { directory: dir } },
+          { id: "child", parentID: "root", location: { directory: dir } },
+        ],
+      },
+    );
+    const revokesIn = (realm) =>
+      fake.state.calls.filter(
+        (c) =>
+          c.name === "iskron_channel" &&
+          c.arguments.action === "revoke" &&
+          c.arguments.realm === realm,
+      );
+    try {
+      await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+      const name = "proba.sub-1";
+      for (const realm of ["@nks/nks-dev", "@nks/drugoy"]) {
+        const root = await rec.call("iskron_stand", { realm, karta: 931, name: "proba" }, "root");
+        assert.match(root.content, /стояние/, root.content);
+        const sat = await rec.call("iskron_stand", { realm }, "child");
+        assert.match(sat.content, /proba\.sub-1/, `one name in both graphs:\n${sat.content}`);
+      }
+      const refused = { realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" };
+      await fake.control({ revokeRefuseNext: [refused, refused] });
+      const said = await rec
+        .call("iskron_channel", { realm: graph, action: "revoke", standing: name }, "root")
+        .then(
+          (r) => r.content,
+          (e) => e.message,
+        );
+      await delay(300);
+      if (own) {
+        assert.match(said, /место снято/, said);
+        assert.equal(revokesIn(graph).length, 1, "only the child's own revoke");
+      } else {
+        assert.match(said, /место НЕ снято/, said);
+        assert.equal(revokesIn(graph).length, 2, "the child's own revoke, then the launcher's");
+      }
+    } finally {
+      await rec.stop();
+      await fake.stop();
+    }
+  });
 
 // #7505 (1): the child handed in its outcome and left its case; the launcher's word sent in the
 // middle of its work and held until its turn's end went into its session and woke it — it came

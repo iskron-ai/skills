@@ -3,9 +3,11 @@
 // go and before the revoke; a failed leave only logs, the case lapses by the seat's term.
 import { CASE_EXIT_CLOSED, envName, tool } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
+import { type SeatKey } from "../shared/seat.ts";
 import { type Answer, callTool as call } from "./call.ts";
 import { CFG } from "./config.ts";
 import { H } from "./holdstate.ts";
+import { normKarta } from "./names.ts";
 import { extraPlaces } from "./places.ts";
 import { canonRealm, otherRealm } from "./realms.ts";
 import { log } from "./streams.ts";
@@ -87,23 +89,24 @@ export const satellitePlaces = (): Standing[] =>
  * Revokes the satellite's seats at the run's end (graph @nks/nks-dev, nodes #6550,
  * #6593): a closed socket does not remove a seat from the board, only a revoke or the
  * channel's term does. Every seat of the channel, other graphs included. Called after
- * releaseStanding and the case exits, so a 4001 close is not taken for a dead token.
+ * releaseStanding and the case exits, so a 4001 close is not taken for a dead token. The answer —
+ * names left on the board, and confirmed revokes by canonical graph, role and name (№664).
  */
 export async function revokeSatellitePlaces(
   places: Standing[],
-): Promise<{ failed: string[]; revoked: string[] }> {
-  const failed = new Set(places.map((s) => s.name as string)); // revoked names are struck out
-  const revoked: string[] = [];
+): Promise<{ failed: string[]; revoked: SeatKey[] }> {
+  const failed = new Set(places); // revoked seats are struck out — one name in two graphs is two (#5838)
+  const revoked: SeatKey[] = [];
   const revokes = places.map((s) =>
     call(tool("channel"), { action: "revoke", realm: s.realm, karta: s.karta, standing: s.name })
       .then((r) => {
         const how = revokeOutcome(r);
         if (how === "failed")
           return log(`place ${s.name} NOT revoked at the run's end: ${r.text.slice(0, 120)}`);
-        failed.delete(s.name as string);
+        failed.delete(s);
         if (how === "probably")
           return log(`${s.name} probably revoked at the run's end: ${r.text.slice(0, 120)}`);
-        revoked.push(s.name as string);
+        revoked.push({ realm: canonRealm(s.realm), karta: normKarta(s.karta), name: s.name ?? "" });
         log(`revoked ${s.name} in ${s.realm} at the run's end (#6593)`);
       })
       .catch((e: Error) => log(`place ${s.name} NOT revoked at the run's end: ${e.message}`)),
@@ -112,7 +115,7 @@ export async function revokeSatellitePlaces(
     log(
       `revoke at the run's end exceeded ${LEAVE_CAP_MS} ms — the place lapses by the channel's term`,
     );
-  return { failed: [...failed], revoked: [...revoked] };
+  return { failed: [...new Set([...failed].map((s) => s.name as string))], revoked: [...revoked] };
 }
 
 /**
