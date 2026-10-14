@@ -40,6 +40,7 @@ export const serverProtocol = {
 
 /**
  * Язык прозы, который мост просит у сервера явно (`locale` места, `accept-language`), по
- * языку сессии; языка нет в таблице — решает умолчание сервера.
+ * языку сессии — каждый язык поставки назван: умолчание сервера зависит от развёртывания
+ * и язык поверхности не решает (граф @nks/nks-dev, узел #7593).
  */
-export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { en: "en" };
+export const SERVER_LOCALE: Readonly<Partial<Record<Lang, string>>> = { ru: "ru", en: "en" };

@@ -3731,17 +3731,25 @@ test("an English bridge (ISKRON_BRIDGE_LANG=en) answers a whole iskron_stand wit
   assert.ok(fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
 });
 
-test("a Russian bridge sends no locale and no Accept-Language — the server's default decides", async (t) => {
+// The delivery's language is asked explicitly, not left to the server's default (graph
+// nks-dev #7593): a server whose default is English still answers a Russian bridge in Russian.
+test("a Russian bridge asks locale ru and Accept-Language ru — fresh tools/list included", async (t) => {
   const { fake, bridge } = await ready(t);
+  const list = await bridge.call("tools/list", {});
+  assert.ok(list.result?.tools, JSON.stringify(list));
+  assert.equal(fake.state.acceptLanguageOf.get("tools/list"), "ru");
   const r = await bridge.call("tools/call", {
     name: "iskron_stand",
     arguments: { realm: "nks-dev", karta: 931, name: "proba", model: "opus-5" },
   });
   assert.ok(!r.result?.isError, textOf(r));
   assert.match(textOf(r), /стояние proba — роль #931, граф nks-dev: connect и register/);
-  for (const x of sentToChannel(fake)) assert.ok(!("locale" in x), JSON.stringify(x));
-  // fetch's own default («*») is not a choice of language.
-  assert.ok(!fake.state.acceptLanguage.has("en"), [...fake.state.acceptLanguage].join(","));
+  for (const action of ["connect", "register"]) {
+    const got = sentToChannel(fake).find((x) => x.action === action);
+    assert.equal(got?.locale, "ru", `${action}: ${JSON.stringify(sentToChannel(fake))}`);
+  }
+  // Every request to the server names the language; fetch's own «*» never goes alone.
+  assert.deepEqual([...fake.state.acceptLanguage], ["ru"]);
 });
 
 // The fake treats a tool call as the server does: an argument the tool's schema in

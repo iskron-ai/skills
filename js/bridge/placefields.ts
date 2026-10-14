@@ -71,7 +71,7 @@ export function placeFields(
   const locale = SERVER_LOCALE[lang()];
   return {
     ...(model ? { model } : {}),
-    // Seat language (#6080): asked only where the layer names a locale; otherwise the server default decides.
+    // Seat language (#6080): asked where the layer names a locale; otherwise the server default decides.
     ...(locale ? { locale } : {}),
     ...(CFG.satellite && satelliteOfId ? { satellite_of: satelliteOfId } : {}),
     attrs: {

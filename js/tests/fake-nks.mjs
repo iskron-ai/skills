@@ -211,6 +211,7 @@ export async function startFakeNks(opts = {}) {
     closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
+    acceptLanguageOf: new Map(), // метод JSON-RPC → Accept-Language последнего такого запроса
     rooms: [],
     webhookCalls: [], // { action, node_id, realm } — ходы iskron_admin к хукам роли
     sends: [], // { karta, standing, text, bound }
@@ -766,6 +767,8 @@ export async function startFakeNks(opts = {}) {
       let sid = req.headers["mcp-session-id"];
       st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
+      if (msg?.method)
+        st.acceptLanguageOf.set(msg.method, String(req.headers["accept-language"] ?? ""));
       // A keep-alive connection the server already closed: the request is read and
       // never processed, the socket shut with no HTTP answer (ECONNRESET, 7.2.2 live).
       if (

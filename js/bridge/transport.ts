@@ -123,7 +123,8 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
   };
-  // The api's prose language follows an English bridge (shared/lang.ts); otherwise the server's default.
+  // The api's prose language follows the session language the delivery names (shared/lang.ts);
+  // a language the layer does not name is left to the server's default.
   const locale = SERVER_LOCALE[lang()];
   if (locale) headers["accept-language"] = locale;
   // A PAT outranks the store: with it the grant on disk is not read at all (#4267).
