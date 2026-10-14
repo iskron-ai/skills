@@ -4326,16 +4326,12 @@ test("a lead child whose own turn is interrupted by the user (Esc) lives on: the
 // The end carries the child's last text as testimony, not acceptance, and a cut is said, not
 // hidden behind an ellipsis.
 test("a lead child's end names its last word testimony and says how much of a long one is shown", async () => {
-  const { rec, childPid } = await leadChild("lead-cut", { ISKRON_CASCADE_MS: 400 });
+  const { rec, childPid } = await leadChild("lead-cut");
   try {
     turn(rec, "а".repeat(4100));
     await until(() => rec.synthetics.some((s) => /сдал ход/.test(s.text)), "the turn word");
-    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
-    rec.emit({
-      type: "session.execution.interrupted",
-      data: { sessionID: "child", reason: "user" },
-    });
-    await until(() => !alive(childPid), "the cancelled child's bridge to go");
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    await until(() => !alive(childPid), "the child's bridge to go");
     await until(() => ends(rec).length === 1, "the end in the parent");
     const text = ends(rec)[0].text;
     assert.match(text, /последнее слово: свидетельство, не приёмка/);
