@@ -87,7 +87,8 @@ test("an accepted left by a bridge that ended before the outcome: the next bridg
   );
   await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 0, standings: [] }) });
   await until(() => acks(fake, "ord-r").length, `the outcome:\n${b.stderr}`);
-  assert.deepEqual(states(fake, "ord-r"), ["unknown"]);
+  // The read and the repeat may both answer it: the same outcome, idempotent at the api.
+  assert.deepEqual([...new Set(states(fake, "ord-r"))], ["unknown"]);
   assert.equal(acks(fake, "ord-r")[0].reason_code, "bridge_restarted");
   assert.equal(orderOnDisk(dir, "ord-r").state, "unknown");
   assert.ok(!saidKind(b, "stopped"), "the harness is not asked again");

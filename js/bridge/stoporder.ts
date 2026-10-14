@@ -13,6 +13,7 @@ import { words } from "../shared/lang.ts";
 import { broadcast, notify } from "./hold.ts";
 import { type Frame, whenOrdered } from "./holdstate.ts";
 import { answerOutcome, type Order, repeatLater, sendAck } from "./orderack.ts";
+import { fly } from "./orderflight.ts";
 import { awaitHalt, confirmsHalts, SILENT } from "./orderhalt.ts";
 import { isTerminal, type OrderEntry, readOrder, writeOrder } from "./orderjournal.ts";
 import { readOpenOrders } from "./orderread.ts";
@@ -85,6 +86,10 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
   // The read lists every seat of the account: one this session does not hold is another's.
   if (taken.has(o.id) || (!framed && !holdsSeat(o.standing_id, false))) return;
   taken.add(o.id);
+  return fly(o.id, (f) => carry(o, base, f));
+}
+
+async function carry(o: Order, base: string, f: { end: OrderEntry | null }): Promise<void> {
   const entry: OrderEntry = {
     id: o.id,
     standing: o.standing_id,
@@ -102,9 +107,9 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
   const accepted = kept ? sendAck(base, o.id, "accepted") : null;
   // An api out of reach does not hold the stop longer than the cap…
   if (accepted) await Promise.race([accepted, sleep(ACCEPT_CAP_MS)]);
-  const end = await stopOf(o, entry);
-  // …but the outcome never overtakes the accepted: it waits for its answer (bounded by its timeout).
-  // An accepted the api takes after that timeout, past the outcome, is a harmless 200 idempotent_noop.
+  const end = (f.end = await stopOf(o, entry));
+  // …but the outcome never overtakes the accepted's answer or its timeout (orderack.ts); an
+  // accepted the api takes later, past the outcome, is a harmless 200 idempotent_noop.
   await accepted;
   await finish(end);
 }

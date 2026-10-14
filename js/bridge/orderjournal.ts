@@ -113,7 +113,7 @@ export function writeSince(base: string, seq: number): void {
 }
 
 /**
- * Outcomes the api has not taken yet; entries past their term go. An accepted whose process is
+ * Outcomes the api has not taken yet; taken entries past their term go. An accepted whose process is
  * gone (the daemon fell between the stop and its outcome) gets the outcome unknown once, on disk
  * — the harness is not asked again; from there it is repeated as any outcome.
  */
@@ -128,7 +128,8 @@ export function unanswered(now = Date.now()): OrderEntry[] {
   for (const n of names) {
     const e = readOrder(n.slice(0, -".json".length));
     if (!e) continue;
-    if (now - e.at > KEEP_MS) {
+    // Only an answer the api took (or a closed order) goes: an untaken one waits for the api (#7510).
+    if (e.acked && now - e.at > KEEP_MS) {
       try {
         unlinkSync(join(dir(), n));
       } catch {}
