@@ -544,7 +544,8 @@ try {
     const canonical = JSON.parse(m[1]);
     const agentsDir = join(root, ".claude", "agents");
     const copies = [
-      join("skills", "iskronify", "references", "delegation.md"),
+      join("skills", "iskronify", "references", "delegation-1.md"),
+      join("skills", "iskronify", "references", "delegation-2.md"),
       ...(existsSync(agentsDir)
         ? readdirSync(agentsDir)
             .filter((f) => f.endsWith(".md"))
@@ -594,10 +595,12 @@ try {
       checkRoleFrontmatter(rel, readFileSync(join(root, rel), "utf8").split("\n"), 0);
     }
   }
-  const rel = join("skills", "iskronify", "references", "delegation.md");
-  const lines = readFileSync(join(root, rel), "utf8").split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === "```markdown") checkRoleFrontmatter(rel, lines, i + 1);
+  for (const part of ["delegation-1.md", "delegation-2.md"]) {
+    const rel = join("skills", "iskronify", "references", part);
+    const lines = readFileSync(join(root, rel), "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] === "```markdown") checkRoleFrontmatter(rel, lines, i + 1);
+    }
   }
 } catch (e) {
   fail("ролевые файлы", `проверка фронтматтера не удалась: ${e.message}`);
@@ -703,6 +706,36 @@ for (const name of skillNames) {
   if (lines > CLIENT_OUTPUT_MAX.lines || bytes > CLIENT_OUTPUT_MAX.bytes)
     fail(`skills/${name}/SKILL.md`, `вывод тула skill — ${bytes} байт, ${lines} строк: больше предела клиента (${CLIENT_OUTPUT_MAX.bytes} байт, ${CLIENT_OUTPUT_MAX.lines} строк) — хвост до модели не дойдёт; перекомпонуй, не сокращая смысла (#7597)`);
   if (process.env.SKILL_OUTPUT_SIZES) console.log(`${name}\t${bytes}\t${lines}`);
+}
+
+// 9b. Справочник скилла агент открывает тулом чтения, и у OpenCode 2.0.28 он режет тем же
+//     пределом вывода (2000 строк, 51 200 байт) и сверх того безвозвратно обрезает строку
+//     длиннее 2000 знаков («(line truncated to 2000 chars)»). Модель вывода — номер строки,
+//     «: », строка; запас на шапку пути. Длинный справочник — частями, длинная строка —
+//     переносом по границе предложения (#7597). Меряются `.md`: их читает модель; шаблон
+//     роадмапа копируется и правится по data-объекту, не читается целиком.
+const READ_LINE_MAX = 2000;
+function readToolOutputBytes(text) {
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  return lines.reduce((n, l, i) => n + Buffer.byteLength(`${i + 1}: ${l}\n`, "utf8"), 400);
+}
+for (const name of skillNames) {
+  const refs = join(skillsDir, name, "references");
+  if (!existsSync(refs)) continue;
+  for (const f of readdirSync(refs).filter((x) => x.endsWith(".md")).sort()) {
+    const rel = `skills/${name}/references/${f}`;
+    const text = readFileSync(join(refs, f), "utf8");
+    const bytes = readToolOutputBytes(text);
+    const lines = text.split("\n");
+    if (bytes > CLIENT_OUTPUT_MAX.bytes || lines.length > CLIENT_OUTPUT_MAX.lines)
+      fail(rel, `вывод тула чтения — ${bytes} байт, ${lines.length} строк: больше предела клиента (${CLIENT_OUTPUT_MAX.bytes} байт, ${CLIENT_OUTPUT_MAX.lines} строк) — разбей на части дословно, с указателем на все части (#7597)`);
+    lines.forEach((l, i) => {
+      if (l.length > READ_LINE_MAX)
+        fail(`${rel}:${i + 1}`, `строка ${l.length} знаков: тул чтения обрежет её на ${READ_LINE_MAX} — перенеси по границе предложения или пункта (#7597)`);
+    });
+    if (process.env.SKILL_OUTPUT_SIZES) console.log(`${rel}\t${bytes}\t${lines.length}`);
+  }
 }
 
 // Report.
