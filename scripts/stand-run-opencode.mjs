@@ -22,11 +22,12 @@ const URL_ = arg("--url");
 const realm = arg("--realm");
 const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").split("/");
 const keep = process.argv.includes("--keep");
-const bridge = join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs");
-const plugin = join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js");
+// --bridge / --plugin — another build (a release output), dist/dev by default.
+const bridge = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
+const plugin = arg("--plugin", join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js"));
 const fail = (code, t) => (process.stderr.write(`stand-run-opencode: ${t}\n`), process.exit(code));
 if (!tokenFile || !URL_ || !realm) fail(2, "--token-file, --url and --realm are required");
-if (!existsSync(bridge) || !existsSync(plugin)) fail(2, "no dev build — make build-js");
+if (!existsSync(bridge) || !existsSync(plugin)) fail(2, "no bridge or plugin build — make build-js, or --bridge/--plugin");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
 const token = readFileSync(tokenFile, "utf8").trim();
 const opencode = spawnSync("sh", ["-c", "command -v opencode"]).stdout.toString().trim();

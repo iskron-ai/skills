@@ -30,9 +30,10 @@ const keep = process.argv.includes("--keep");
 const realmArg = arg("--realm", null);
 const realm2Arg = arg("--realm2", null);
 const expectUser = arg("--expect-user", null);
-const bridgePath = join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs");
+// --bridge — another build of the bridge (a release output), dist/dev by default.
+const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 
-if (!existsSync(bridgePath)) fail(2, `no dev build at ${bridgePath} — make build-js`);
+if (!existsSync(bridgePath)) fail(2, `no bridge at ${bridgePath} — make build-js or --bridge`);
 if (!existsSync(tokenFile)) fail(2, `no stand token at ${tokenFile}`);
 const token = readFileSync(tokenFile, "utf8").trim();
 if (!token) fail(2, `empty token file ${tokenFile}`);
