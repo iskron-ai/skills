@@ -360,7 +360,7 @@ export async function setupTools(
       await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
-    if (name === STAND_TOOL) await models.name(args, sessionID, !!slot.place);
+    if (name === STAND_TOOL) await models.name(args, sessionID, slot.place?.realm ?? null);
     // The bridge runs in OpenCode's cwd: the standing's repo comes from the session's directory (#5108).
     if (name === STAND_TOOL && !args.cwd) {
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));

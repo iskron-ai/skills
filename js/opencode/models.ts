@@ -10,9 +10,10 @@ export interface Models {
   onEvent(ev: any): void;
   /**
    * A satellite's stand arguments get the session's model in place of the agent's, none if the
-   * harness names none; others are not touched. `holds` — the bridge holds a seat ("held").
+   * harness names none; others are not touched. `heldRealm` — the graph of the seat the bridge
+   * holds ("held"), null — none.
    */
-  name(args: Record<string, unknown>, session: string, holds: boolean): Promise<void>;
+  name(args: Record<string, unknown>, session: string, heldRealm: string | null): Promise<void>;
 }
 
 const idOf = (m: any): string | null =>
@@ -39,9 +40,9 @@ export function createModels(ctx: Context): Models {
       const id = ev.type === "session.step.started" ? idOf(ev.data?.model) : null;
       if (id) stepped.set(session, id);
     },
-    async name(args, session, holds) {
+    async name(args, session, heldRealm) {
       if (!args.satellite_of) return;
-      const next = withHarnessModel(args, await of(session), holds);
+      const next = withHarnessModel(args, await of(session), heldRealm);
       delete args.model;
       Object.assign(args, next);
     },

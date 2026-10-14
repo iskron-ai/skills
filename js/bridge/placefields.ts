@@ -64,6 +64,9 @@ export function rememberStandModel(m: unknown): void {
   rememberModel(m);
 }
 
+/** A satellite's seat with no model known: register alone keeps the earlier one (modelclear.ts). */
+export const satelliteWithoutModel = (): boolean => CFG.satellite && !P.model;
+
 /** Seat fields for connect and register: always the full set. */
 export function placeFields(
   place: Place = {},

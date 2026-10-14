@@ -4343,14 +4343,22 @@ test("satellite: a repeated full stand without a model drops the seat's earlier 
   const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
   assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
   assert.equal(lastModel(), "model-a");
+  // The seat as the api keeps it: register without model leaves the earlier one (#4032).
+  const [id] = [...fake.state.seatModels].find(([, m]) => m === "model-a") ?? [];
+  assert.ok(id, JSON.stringify([...fake.state.seatModels]));
   const registers = fake.state.counts.register_standing;
   const none = await standAs(sat, SAT_ARGS);
   assert.ok(!none.result?.isError, textOf(none));
   assert.ok(fake.state.counts.register_standing > registers, "the repeat registers the seat");
   assert.equal(lastModel(), undefined, "no model from the harness — none on the seat");
+  assert.equal(fake.state.seatModels.get(id), undefined, "the api no longer keeps model-a");
+  const patch = fake.state.seatPatches.find((x) => x.id === id);
+  assert.deepEqual(patch?.body, { model: null }, JSON.stringify(fake.state.seatPatches));
+  assert.match(patch.auth ?? "", /^Bearer /, "with the key that opened the seat");
   const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
   assert.ok(!b.result?.isError, textOf(b));
   assert.equal(lastModel(), "model-b");
+  assert.equal(fake.state.seatModels.get(id), "model-b");
 });
 
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с

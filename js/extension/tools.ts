@@ -72,21 +72,21 @@ async function hostEnv(): Promise<Record<string, string>> {
 }
 
 /**
- * A satellite's stand names the model pi runs (#7591); other calls go as they came. `holds` —
- * the bridge holds a seat (its "held" word).
+ * A satellite's stand names the model pi runs (#7591); other calls go as they came.
+ * `heldRealm` — the graph of the seat the bridge holds (its "held" word), null — none.
  */
-const withModel = (name: string, args: any, ctx: any, holds: boolean) =>
-  name === tool("stand") ? withHarnessModel(args, ctx?.model?.id, holds) : args;
+const withModel = (name: string, args: any, ctx: any, heldRealm: string | null) =>
+  name === tool("stand") ? withHarnessModel(args, ctx?.model?.id, heldRealm) : args;
 
 /** A tool call by the bridge — for the launch line: a service move, not the agent's work (#6510). */
 const callVia =
-  (b: Bridge, ctx: any, holds: () => boolean): LaunchCall =>
+  (b: Bridge, ctx: any, heldRealm: () => string | null): LaunchCall =>
   async (name, args) =>
     textOrThrow(
       name,
       await b.request(
         "tools/call",
-        { name, arguments: withModel(name, args, ctx, holds()) },
+        { name, arguments: withModel(name, args, ctx, heldRealm()) },
         { service: true },
       ),
     );
@@ -109,6 +109,8 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
 
   /** The seat the bridge holds — from its "held" word; the launch line names it. */
   let heldName: string | null = null;
+  /** The graph of that seat — a satellite's busy line goes alone only there (#7591). */
+  let heldRealm: string | null = null;
   /** The bridge came up as a satellite (`--satellite`) — for a launch line with the launcher's seat. */
   let satellite = false;
 
@@ -128,8 +130,11 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
       (method, params) => {
         // Standing frames come as the standard notification with the channel logger.
         if (method === "notifications/message" && params?.logger === LOGGERS.channel) {
-          const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
-          if (typeof name === "string" && name) heldName = name;
+          const place = params?.data?.kind === "held" ? params?.data?.place : null;
+          if (typeof place?.name === "string" && place.name) {
+            heldName = place.name;
+            heldRealm = typeof place.realm === "string" ? place.realm : null;
+          }
           onChannel(params);
         }
         // The server changed its tools under the bridge's reopened session: reread and register (#5406).
@@ -229,7 +234,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
             try {
               const result = await live.request(
                 "tools/call",
-                { name, arguments: withModel(name, params ?? {}, c, heldName !== null) },
+                { name, arguments: withModel(name, params ?? {}, c, heldRealm) },
                 { signal }, // no ceiling: the first call may go to the human's browser
               );
               // A tool's refusal is a throw — only it sets isError.
@@ -326,7 +331,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     const word = live
       ? await enterCase(
           l,
-          callVia(live, ctx, () => heldName !== null),
+          callVia(live, ctx, () => heldRealm),
           of,
           () => heldName,
         )
@@ -341,6 +346,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     bridge = null;
     prompted = false;
     heldName = null;
+    heldRealm = null;
 
     const work = raiseLoud();
     raising = work;

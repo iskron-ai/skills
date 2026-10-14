@@ -51,6 +51,7 @@ import { stoppedSince, stopsNow } from "./holdstate.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
+import { clearSeatModel } from "./modelclear.ts";
 import {
   deriveParts,
   fitName,
@@ -204,8 +205,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   noteStandCwd(cwd);
 
   const here = () => placeFields({ realm, karta, name }, true); // seat fields on every registration (#5174)
-  const register = () =>
-    call(tool("channel"), { action: "register", realm, karta, name, ...here() });
+  const register = async () => {
+    const r = await call(tool("channel"), { action: "register", realm, karta, name, ...here() });
+    if (!r.isError) await clearSeatModel(realm); // register keeps a model it is not given (#7591)
+    return r;
+  };
 
   // 1. The board — before any change.
   const board = await call(tool("channel"), { action: "list", realm });
