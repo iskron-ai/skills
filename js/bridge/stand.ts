@@ -70,7 +70,7 @@ import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
 import { standAgainWord } from "./standagain.ts";
-import { ledIn, refusedWord, releasePrior, throughReissue } from "./standmoves.ts";
+import { besideHoldsMain, ledIn, refusedWord, releasePrior, throughReissue } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -212,6 +212,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     lines.push(noChannel);
     return done(true);
   }
+  // take=true off a main seat with seats beside: no channel move is built — refused before connect (#6499).
+  const holdsMain = prior ? besideHoldsMain(realm, prior, name) : null;
+  if (holdsMain) return (lines.push(holdsMain), done(true));
   const prim = state.standing;
   const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   // The session directory goes into the hold record: a re-raised bridge returns the seat by it (#5140).
@@ -328,6 +331,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const extra: string[] = []; // lines after the answer's header
   // This bridge held the socket before the call (own register, return from disk): no hello wait.
   let socketBefore = false;
+  let priorKept = false;
   // take=true is an explicit new entry cycle: connect even when the socket is already ours.
   if (beside) {
     // A channel holds seats in several graphs: register adds the seat on the same socket;
@@ -435,7 +439,9 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
         : sw().howConnect(!!mine, listensElsewhere, a.take === true);
     // The seat retaken after a return that found no record: cases may have been lost (#6649).
     if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
-    if (prior) extra.push(sw().note((await releasePrior(realm, prior)).note));
+    const freed = prior ? await releasePrior(realm, prior) : null;
+    if (freed) extra.push(sw().note(freed.note));
+    priorKept = !!freed && !freed.ok; // the former seat lives: the call reports it, not success
   }
   lines.push(
     sw().head(mine?.address ?? name, karta, realm, how),
@@ -489,5 +495,5 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   }
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
   if (stale) lines.push(stale);
-  return done();
+  return done(priorKept);
 }

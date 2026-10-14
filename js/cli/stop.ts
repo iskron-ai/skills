@@ -13,7 +13,7 @@ import { setLang, words } from "../shared/lang.ts";
 import { type PlaceSnapshot, type SessionSnapshot } from "../shared/snapshot.ts";
 import { defaultAuthDir, holdFilePathOf } from "../shared/standings.ts";
 import { machine } from "./status.ts";
-import { keyFor, stopSeat } from "./stopapi.ts";
+import { keyFor, sameServer, stopSeat } from "./stopapi.ts";
 
 const sw = (): StopCliWords => words(STOP_CLI);
 
@@ -98,7 +98,15 @@ export async function runStop(argv: string[]): Promise<void> {
   if (!server) return fail(sw().noServer(p.name));
   const base = apiOf(seat);
   if (!base) return fail(sw().noRecord(p.name));
-  setConfig(parseArgs([server, "--auth-dir", authDir, ...rest]));
+  // The personal token belongs to the server its home names (variable or `server` file), not to
+  // every server: for another server's seat it is taken out, that server's grant goes.
+  const patServer = CFG.serverUrl;
+  const cfg = parseArgs([server, "--auth-dir", authDir, ...rest]);
+  if (!sameServer(patServer, server)) {
+    cfg.pat = null;
+    cfg.patSource = null;
+  }
+  setConfig(cfg);
   const key = await keyFor(server);
   if ("why" in key) return fail(key.why);
   const out = await stopSeat(p, p.standing_id, base, key.token);

@@ -88,14 +88,21 @@ function putOrder(st, o, wsFrame) {
  * The human's stop of a seat (graph @nks/nks-dev, nodes #7518, #5085): POST /api/standings/{id}/stop
  * puts an order (with its frame), as api 0.122; an older api (/control orders_route_missing: true)
  * answers it 404, and DELETE /api/standings/{id} revokes the seat. Each request lands in
- * st.orders.human: {method, id, realm, body}.
+ * st.orders.human: {method, id, realm, body, bearer}.
  */
 async function standingsRoute(st, req, res, p, authed, { json, body, wsFrame }) {
   const m = /^\/api\/standings\/([^/]+)(\/stop)?$/.exec(p);
   if (!m) return false;
   const id = decodeURIComponent(m[1]);
   const ask = m[2] ? JSON.parse((await body(req)) || "{}") : null;
-  st.orders.human.push({ method: req.method, id, realm: req.headers["x-nks-realm"], body: ask });
+  const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+  st.orders.human.push({
+    method: req.method,
+    id,
+    realm: req.headers["x-nks-realm"],
+    body: ask,
+    bearer,
+  });
   if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
   if (!seatOf(st, id)) return (json(res, 410, { error: "standing ended" }), true);
   if (m[2] && req.method === "POST") {

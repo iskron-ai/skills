@@ -88,9 +88,12 @@ async function seated(t, name) {
   return { dir, fake, id, session: link.welcome.session };
 }
 
+/** The personal token's home names the seat's server: the token is that server's key. */
+const patOf = (fake) => ({ ...env, ISKRON_BRIDGE_URL: fake.mcpUrl });
+
 test("stop <seat> issues a stop order to the seat by its id, under the bridge's key", async (t) => {
   const { dir, fake, id } = await seated(t, "stop-me");
-  const r = await stop(dir, ["stop-me"]);
+  const r = await stop(dir, ["stop-me"], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /приказ останова выдан месту stop-me/, r.stdout);
   const asked = fake.state.orders.human;
@@ -105,7 +108,7 @@ test("stop <seat> issues a stop order to the seat by its id, under the bridge's 
 test("stop <session id> on an api without the stop route revokes the seat instead", async (t) => {
   const { dir, fake, id, session } = await seated(t, "old-api");
   await fake.control({ orders_route_missing: true });
-  const r = await stop(dir, [session]);
+  const r = await stop(dir, [session], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.match(r.stdout, /404 ручки\) — место old-api \(nks-dev\) снято \(revoke\)/, r.stdout);
   assert.deepEqual(
@@ -155,6 +158,22 @@ test("stop keys the order with the grant of the seat's own server, not the machi
   assert.deepEqual(
     fake.state.orders.human.map((h) => [h.method, h.id]),
     [["POST", id]],
+  );
+});
+
+// Несколько серверов: личный токен другого сервера не уходит api места — ключ места — грант его сервера.
+test("stop sends no personal token of another server to the seat's api: the seat's server grant goes", async (t) => {
+  const { dir, fake, id } = await seated(t, "two-servers");
+  fake.state.access = "grant-of-the-seat-server";
+  grant(dir, fake.mcpUrl, { tokens: { access_token: "grant-of-the-seat-server" } });
+  const r = await stop(dir, ["two-servers"], {
+    ...env,
+    ISKRON_BRIDGE_URL: "https://another-server.example/",
+  });
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.deepEqual(
+    fake.state.orders.human.map((h) => [h.method, h.id, h.bearer]),
+    [["POST", id, "grant-of-the-seat-server"]],
   );
 });
 
@@ -216,7 +235,7 @@ test("stop <satellite session> orders the subagent's seat: no hold record needed
   assert.ok(!stood.result?.isError, JSON.stringify(stood));
   const id = await snapshotId(dir, sat.welcome.session);
   assert.ok(id, "the satellite's seat id in the snapshot");
-  const r = await stop(dir, [sat.welcome.session]);
+  const r = await stop(dir, [sat.welcome.session], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
   assert.deepEqual(
     fake.state.orders.human.map((h) => [h.method, h.id]),
@@ -228,12 +247,12 @@ test("stop <satellite session> orders the subagent's seat: no hold record needed
 // но другим владельцем — не то место; отказ, ничего не отправлено.
 test("stop @another:name refuses a seat of this machine named the same under another owner", async (t) => {
   const { dir, fake, id } = await seated(t, "proba");
-  const r = await stop(dir, ["@other:proba"]);
+  const r = await stop(dir, ["@other:proba"], patOf(fake));
   assert.equal(r.status, 1, r.stdout);
   assert.match(r.stderr, /@other:proba/, r.stderr);
   assert.match(r.stderr, /@tester:proba/, r.stderr);
   assert.equal(fake.state.orders.human.length, 0, "nothing is sent");
-  const own = await stop(dir, ["@tester:proba"]);
+  const own = await stop(dir, ["@tester:proba"], patOf(fake));
   assert.equal(own.status, 0, `${own.stdout}\n${own.stderr}`);
   assert.deepEqual(
     fake.state.orders.human.map((h) => [h.method, h.id]),

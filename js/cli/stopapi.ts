@@ -13,9 +13,23 @@ import { type PlaceSnapshot } from "../shared/snapshot.ts";
 const sw = (): StopCliWords => words(STOP_CLI);
 const TIMEOUT_MS = 10_000;
 
+/** One server under two spellings: origin and path, a trailing slash aside. */
+export const sameServer = (a: string, b: string): boolean => {
+  const at = (u: string): string => {
+    const x = new URL(u);
+    return `${x.origin}${x.pathname.replace(/\/+$/, "")}`;
+  };
+  try {
+    return at(a) === at(b);
+  } catch {
+    return false;
+  }
+};
+
 /**
- * The key of the seat's own server, CFG set to it: the personal token, else that server's
- * grant — refreshed the bridge's way when expired; none — the words why, nothing is sent.
+ * The key of the seat's own server, CFG set to it (a personal token of another server already
+ * taken out of it, stop.ts): the personal token, else that server's grant — refreshed the
+ * bridge's way when expired; none — the words why, nothing is sent.
  */
 export async function keyFor(server: string): Promise<{ token: string } | { why: string }> {
   if (CFG.pat) return { token: CFG.pat };

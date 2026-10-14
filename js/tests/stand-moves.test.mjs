@@ -143,6 +143,46 @@ test("take=true onto another seat of the graph revokes the seat the session stoo
   assert.ok(!w.result?.isError, `the session still writes from the taken seat:\n${textOf(w)}`);
 });
 
+// #7553 с местами рядом: take на другое основное имя открывал новый канал — двери мест рядом
+// терялись, а revoke прежнего основного получал 409 (#6499) при успешном ответе вызова. Отказ до connect.
+test("take=true onto another main seat while seats beside stand is refused before connect: the seats beside and their doors live", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const near = await stand(b, { realm: METH, karta: 12, name: "m-a" });
+  assert.ok(!near.result?.isError, textOf(near));
+  const connects = fake.state.counts.connect;
+  const taken = await stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  const text = textOf(taken);
+  assert.equal(taken.result?.isError, true, text);
+  assert.equal(fake.state.counts.connect, connects, "no connect: the channel is not reopened");
+  assert.match(text, /m-a \(@nks\/methodology\)/, text);
+  assert.match(
+    text,
+    /iskron_channel\(action="revoke", realm="@nks\/methodology", karta="12", standing="m-a"\)/,
+    text,
+  );
+  assert.match(text, /iskron_stand\(realm="\S*nks-dev", karta=931, name="proba"\)/, text);
+  assert.equal(fake.state.closedPlaces.size, 0, "nothing revoked");
+  const w = await write(b, METH);
+  assert.ok(!w.result?.isError, `the seat beside still writes:\n${textOf(w)}`);
+});
+
+// Отказ revoke прежнего места после перехода не глотается: вызов сообщает его ошибкой.
+test("take=true onto another seat whose former seat's revoke is refused reports it as an error", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  await fake.control({ revokeRefuseNext: [{ text: "revoke boom" }] });
+  const taken = await stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  const text = textOf(taken);
+  assert.equal(taken.result?.isError, true, text);
+  assert.match(text, /стояние \S*drugoe — роль #931/, text);
+  assert.match(text, /прежнее место этой сессии proba не снято \(revoke boom\)/, text);
+});
+
 // #7554: после перезапуска плагина iskron_stand(realm, status) отказывал «такого места нет» —
 // без вызова, которым место вернуть.
 test("a status-only call after the seat went from under the bridge names the full call with karta and the former name", async (t) => {

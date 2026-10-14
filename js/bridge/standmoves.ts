@@ -7,7 +7,7 @@ import { holdsStanding } from "./hold.ts";
 import { keyOf } from "./holdrecord.ts";
 import { setRevokingBeside, stoppedSince } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
-import { dropExtra, extraIn, extraOf } from "./places.ts";
+import { dropExtra, extraIn, extraOf, extraPlaces } from "./places.ts";
 import { sameRealm } from "./realms.ts";
 import { sw } from "./standwords.ts";
 import { type Standing, state } from "./transport.ts";
@@ -47,8 +47,29 @@ export async function releasePrior(
     if (beside) dropExtra(beside, holdWords().revokedOwn(), true, "own");
     return { ok: true, note: mw().priorReleased(name) };
   }
-  const revoke = `${tool("channel")}(action="revoke", realm="${realm}", karta="${prior.karta}", standing="${name}")`;
-  return { ok: false, note: mw().priorKept(name, short(r.text, 160), revoke) };
+  return { ok: false, note: mw().priorKept(name, short(r.text, 160), revokeCall(realm, prior)) };
+}
+
+const revokeCall = (realm: string, s: Standing): string =>
+  `${tool("channel")}(action="revoke", realm="${realm}", karta="${s.karta}", standing="${s.name ?? ""}")`;
+
+/**
+ * take=true onto another main seat while seats of other graphs stand on the led main one: the new
+ * channel would drop their doors, and the former main seat is not revoked while they stand (#6499).
+ * Refused before any connect, with the seats beside and the move; null — the move may go.
+ */
+export function besideHoldsMain(realm: string, prior: Standing, asked: string): string | null {
+  const prim = state.standing;
+  if (!prim || !sameRealm(prim.realm, realm) || prim.name !== prior.name) return null;
+  const beside = extraPlaces().map((p) => p.standing);
+  if (!beside.length) return null;
+  return mw().besideHoldsMain(
+    prior.name ?? "",
+    asked,
+    beside.map((s) => `${s.name ?? ""} (${s.realm})`).join(", "),
+    beside.map((s) => revokeCall(s.realm, s)).join("; "),
+    standCall(realm, prior.karta, prior.name ?? ""),
+  );
 }
 
 const REISSUE_MAX_S = 15;
