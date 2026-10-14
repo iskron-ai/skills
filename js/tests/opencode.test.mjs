@@ -2099,6 +2099,38 @@ const pulsesIn = (calls) =>
     .filter((c) => c.name === "iskron/pulse")
     .map((c) => c.arguments);
 
+// OpenCode 2.0.28 sends no session.status: a turn is session.execution.started … succeeded, each
+// with data {sessionID} alone (observed on the live service, case №607). Busy comes from the start.
+test("a turn told only by session.execution.started and succeeded: busy during it, then idle with turn_at", async () => {
+  const calls = join(SANDBOX, "pulse-exec.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-exec", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-exec", location: { directory: "/work/p" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-exec");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "exec--931--nks-dev" }));
+    await until(() => /мост держит стояние exec--931--nks-dev/.test(rec.said()), "the held line");
+    const turn = (type, extra = {}) => rec.emit({ type, data: { sessionID: "s-exec", ...extra } });
+    turn("session.inbox.enqueued", { inboxID: "msg-1", item: { type: "user" } });
+    turn("session.execution.started");
+    turn("session.inbox.delivered", { inboxID: "msg-1" });
+    turn("session.step.started", { assistantMessageID: "a-1", agent: "build" });
+    await until(() => pulsesIn(calls).some((p) => p.state === "busy"), "the busy word");
+    assert.equal(pulsesIn(calls).at(-1).turn_at, undefined, "no turn has ended yet");
+    turn("session.step.ended", { assistantMessageID: "a-1", finish: "stop" });
+    const before = Date.now();
+    turn("session.execution.succeeded");
+    await until(() => pulsesIn(calls).at(-1)?.state === "idle", "the idle word");
+    const end = Date.parse(pulsesIn(calls).at(-1).turn_at);
+    assert.ok(end >= before - 5 && end <= Date.now(), `turn_at at the turn's end: ${end}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A turn heard before the seat (#7529): the session's last word is kept and goes to the bridge
 // as soon as it holds the seat — the seat's first turn is not unknown.
 test("busy heard before the seat reaches the bridge once it holds the seat", async () => {
