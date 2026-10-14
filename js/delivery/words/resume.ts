@@ -63,7 +63,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     noRecord: (key, cwd) =>
       `своей записи держания ${key ? `с ключом ${key}` : `для каталога ${cwd ?? "?"}`} нет`,
     rejoin: () =>
-      `место могло истечь у платформы и выйти из своих дел — после ${via} проверь iskron_case(action="mine"); пусто — войди в свои дела заново (iskron_case action="join")`,
+      `место могло истечь у платформы и выйти из своих дел — после ${via} войди заново в дела, где тебя ждут: iskron_case(action="join", room="№N")`,
     foreignDir: (foreign) =>
       `в каталоге лежат записи мест, на которых эта сессия не стояла (${foreign}); по одному каталогу они не берутся, место займёт ${via}`,
     neighbourKey: (keys) =>
@@ -115,7 +115,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
     noRecord: (key, cwd) =>
       `there is no own hold record ${key ? `with the key ${key}` : `for the directory ${cwd ?? "?"}`}`,
     rejoin: () =>
-      `the seat may have expired at the platform and left its cases — after ${via} check iskron_case(action="mine"); empty — join your cases again (iskron_case action="join")`,
+      `the seat may have expired at the platform and left its cases — after ${via} join again the cases that wait for you: iskron_case(action="join", room="№N")`,
     foreignDir: (foreign) =>
       `the directory holds records of seats this session did not stand on (${foreign}); they are not taken by directory alone, ${via} will take the seat`,
     neighbourKey: (keys) =>

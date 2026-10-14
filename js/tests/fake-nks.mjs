@@ -279,6 +279,7 @@ export async function startFakeNks(opts = {}) {
     silentNewSession: opts.silentNewSession ?? false,
     ignoreStandingHeader: opts.ignoreStandingHeader ?? false, // поверхность старше автопривязки: заголовок молча пропускается
     standingRefuseNext: 0, // столько ближайших register отказать проходящим отказом
+    standingRefuseDelayMs: 0, // и так долго держать ответ этого отказа
     standingSeatGoneNext: 0, // столько ближайших register отказать словами «места нет» — сиденье истекло
     // The resource indicator each leg carried. A real server turns this into
     // the token's audience, so it is the only place a test can see what the
@@ -564,6 +565,10 @@ export async function startFakeNks(opts = {}) {
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
+        "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
+        "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
+        "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
+        "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
@@ -1038,6 +1043,32 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          // Как api (oneSeatPerRealm): канал сессии уже стоит в этом графе другим живым местом.
+          const standsThere = st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm));
+          const another =
+            st.oneSeatPerRealm &&
+            !!standsThere &&
+            standsThere.name !== cleanName(a.name) &&
+            !channelOfPlace(a.realm, cleanName(a.name));
+          if (st.registerStandsInRealmNext > 0 || another) {
+            if (!another) st.registerStandsInRealmNext--;
+            st.counts.register_stands_in_realm = (st.counts.register_stands_in_realm ?? 0) + 1;
+            // Как api: сокет-канал уже несёт живое стояние этого графа под другим именем (#4032).
+            return json(
+              res,
+              200,
+              {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: refused(
+                  "Conflict (409): channel_already_stands_in_realm: this channel already stands in the realm under another name",
+                  "Abgelehnt (409).",
+                  { rule: "channel_already_stands_in_realm", status: 409 },
+                ),
+              },
+              extra,
+            );
+          }
           if (st.registerConcurrentNext > 0) {
             st.registerConcurrentNext--;
             st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
@@ -1059,6 +1090,8 @@ export async function startFakeNks(opts = {}) {
           }
           if (st.standingRefuseNext > 0) {
             st.standingRefuseNext--;
+            if (st.standingRefuseDelayMs)
+              await new Promise((r) => setTimeout(r, st.standingRefuseDelayMs));
             return json(
               res,
               200,
@@ -1246,9 +1279,31 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+        // connect_asked — до задержки: проба видит, что connect ушёл, пока ответа ещё нет.
+        if (a.action === "connect") st.counts.connect_asked = (st.counts.connect_asked ?? 0) + 1;
         // Медленный connect (/control {connect_delay_ms}): ответ позже потолка вызывающего, адрес всё равно повёрнут.
         if (a.action === "connect" && st.connectDelayMs)
           await new Promise((r) => setTimeout(r, st.connectDelayMs));
+        // Переоткрытие сокета места чаще порога api: 429 с «retry in N s» (#7552).
+        if (a.action === "connect" && st.connectThrottleNext > 0) {
+          st.connectThrottleNext--;
+          st.counts.connect_throttled = (st.counts.connect_throttled ?? 0) + 1;
+          const s = st.connectThrottleRetryS ?? 9;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused(
+                `Too Many Requests (429): socket_reissue_throttled — retry in ${s}s`,
+                "Abgelehnt (429).",
+                { rule: "socket_reissue_throttled", status: 429 },
+              ),
+            },
+            extra,
+          );
+        }
         if (
           (a.action === "connect" || a.action === "mint") &&
           st.connectRefuseTtl &&
