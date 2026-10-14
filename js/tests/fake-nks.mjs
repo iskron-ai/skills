@@ -552,6 +552,8 @@ export async function startFakeNks(opts = {}) {
         "mcpHangMs",
         "revokeReplyDelayMs",
         "revokeRefuseNext",
+        "revokeGone", // 404 | 410: revoke of a seat not there — the rule of api 0.124.0 (#7599)
+        "registerRefuseNext", // [{ text, status, rule, data }]: the next registers refused as the api would
         "closeCodeDelayMs",
         "endedFrame",
         "accessTtl",
@@ -1038,6 +1040,16 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
+          const refuseReg = (st.registerRefuseNext ?? []).shift();
+          if (refuseReg) {
+            const { text, status, rule, data } = refuseReg;
+            const result = {
+              isError: true,
+              content: [{ type: "text", text }],
+              _meta: { "iskron/refusal": { rule, status, data } },
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
+          }
           if (st.registerConcurrentNext > 0) {
             st.registerConcurrentNext--;
             st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
@@ -1468,24 +1480,48 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          // revokeRefuseNext: [{ text, status?, rule?, realm? }] — the next revokes refused this way, the
-          // place stays; with status — as an api refusal with data, without — bare prose; with realm —
-          // only a revoke in that graph (№664).
+          // revokeRefuseNext: [{ text, status?, rule?, data?, realm? }] — the next revokes refused this
+          // way, the place stays; with status — as an api refusal with data, without — bare prose; with
+          // realm — only a revoke in that graph (№664).
           const at = (st.revokeRefuseNext ?? []).findIndex(
             (r) => !r.realm || slug(r.realm) === slug(a.realm),
           );
           const refuse = at < 0 ? null : st.revokeRefuseNext.splice(at, 1)[0];
           if (refuse) {
-            const { text, status, rule } = refuse;
+            const { text, status, rule, data } = refuse;
             const result = {
               isError: true,
               content: [{ type: "text", text }],
-              ...(status ? { _meta: { "iskron/refusal": { rule, status } } } : {}),
+              ...(status ? { _meta: { "iskron/refusal": { rule, status, data } } } : {}),
             };
             return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
           }
-          const had = st.places.delete(`${String(a.karta).replace(/^#/, "")}:${name}`);
-          if (had) st.closedPlaces.add(`${String(a.karta).replace(/^#/, "")}:${name}`);
+          const placeKey = `${String(a.karta).replace(/^#/, "")}:${name}`;
+          // revokeGone (api 0.124.0, #7599): a seat that is not there is refused by rule — one revoked
+          // before 410 standing_already_ended, any other 404 standing_not_found; 404 — both 404.
+          if (st.revokeGone && !st.places.has(placeKey)) {
+            const ended = st.revokeGone === 410 && st.closedPlaces.has(placeKey);
+            const result = {
+              isError: true,
+              content: [{ type: "text", text: `Rejected: no standing named «${name}».` }],
+              _meta: {
+                "iskron/refusal": ended
+                  ? {
+                      rule: "standing_already_ended",
+                      status: 410,
+                      data: {
+                        standing_id: name,
+                        ended_by: "self",
+                        ended_at: new Date().toISOString(),
+                      },
+                    }
+                  : { rule: "standing_not_found", status: 404, data: { standing_id: name } },
+              },
+            };
+            return json(res, 200, { jsonrpc: "2.0", id: msg.id, result }, extra);
+          }
+          const had = st.places.delete(placeKey);
+          if (had) st.closedPlaces.add(placeKey);
           // Место снимается с канала; канал без мест закрыт, с местами других графов — жив (#5838).
           const chan =
             channelOfPlace(a.realm, name) ??

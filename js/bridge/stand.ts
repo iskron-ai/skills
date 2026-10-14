@@ -16,6 +16,7 @@ import { tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
 import { alive, listens, nameOf, readBoard } from "./board.ts";
 import {
+  type Answer,
   type AskedHearing,
   besideRefusal,
   callTool as call,
@@ -66,6 +67,7 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberStandModel } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
+import { standingsInRealm } from "./refusal.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
@@ -81,6 +83,14 @@ const R = scoped(() => ({ again: false }));
 
 /** The name of the seat the bridge leads — for the one-standing-per-bridge refusal. */
 const ledName = (): string => state.standing?.name ?? "";
+
+/** A refused register; the channel's seat in this graph named with its call when the api gives it (#7556). */
+const registerRefused = (r: Answer, realm: string, karta: string, taken = false): string[] => {
+  const word = taken
+    ? sw().takenButRegister(short(r.text))
+    : sw().refused("register", short(r.text));
+  return [word, ...standingsInRealm(r.refusal).map((n) => sw().standsAs(n, realm, karta))];
+};
 
 export { STAND_TOOL_NAME, standTool } from "./standtool.ts";
 
@@ -325,7 +335,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     // connect would open a second channel (#5838).
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(...registerRefused(r, realm, karta));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
@@ -335,7 +345,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (resumed) {
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(...registerRefused(r, realm, karta));
       return done(true);
     }
     heardHere = true;
@@ -362,7 +372,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(...registerRefused(r, realm, karta));
       return done(true);
     }
     heardHere = true;
@@ -370,7 +380,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (!take && (holdsStanding(realm, karta, name) || reopening)) {
     const r = await register();
     if (r.isError) {
-      lines.push(sw().refused("register", short(r.text)));
+      lines.push(...registerRefused(r, realm, karta));
       return done(true);
     }
     heardHere = true;
@@ -398,7 +408,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(sw().takenButRegister(short(r.text)));
+      lines.push(...registerRefused(r, realm, karta, true));
       return done(true);
     }
     resetKnocks(realm, karta, name);
