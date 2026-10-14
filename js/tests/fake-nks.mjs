@@ -103,6 +103,33 @@ function wsFrame(opcode, payload) {
   return Buffer.concat([head, data]);
 }
 
+/** Whole client frames from the head of `buf` (masked, as a client sends); each carries the rest. */
+function* clientFrames(buf) {
+  let rest = buf;
+  while (rest.length >= 2) {
+    const masked = (rest[1] & 0x80) !== 0;
+    let len = rest[1] & 0x7f;
+    let at = 2;
+    if (len === 126) {
+      if (rest.length < 4) return;
+      len = rest.readUInt16BE(2);
+      at = 4;
+    } else if (len === 127) {
+      if (rest.length < 10) return;
+      len = Number(rest.readBigUInt64BE(2));
+      at = 10;
+    }
+    const mask = masked ? rest.subarray(at, at + 4) : null;
+    if (masked) at += 4;
+    if (rest.length < at + len) return;
+    const payload = Buffer.from(rest.subarray(at, at + len));
+    if (mask) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
+    const opcode = rest[0] & 0x0f;
+    rest = rest.subarray(at + len);
+    yield { opcode, payload, rest };
+  }
+}
+
 export async function startFakeNks(opts = {}) {
   const st = {
     accessTtl: opts.accessTtl ?? 3600,
@@ -213,6 +240,7 @@ export async function startFakeNks(opts = {}) {
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
     places: new Map(), // "karta:name" → { karta, name, incoming }
     hung: new Set(), // сокеты, в которые служба перестала писать (/control {ws_hang})
+    pulses: [], // { at, place, frame } — кадры pulse, присланные мостом по сокету (#7529)
     placeAttrs: new Map(), // "karta:name" → attrs места, последние принятые; переживают revoke (#6401)
     closedPlaces: new Set(), // "karta:name" снятых revoke: register по ним — 404
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
@@ -560,7 +588,7 @@ export async function startFakeNks(opts = {}) {
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
       // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
       if (patch.ws_say) {
-        const { name, text, id } = patch.ws_say;
+        const { name, text, id, stale } = patch.ws_say;
         for (const [, c] of st.channels) {
           const found = [...c.places].find(([, p]) => p.name === name);
           if (!found) continue;
@@ -569,7 +597,7 @@ export async function startFakeNks(opts = {}) {
             type: "message",
             id: id ?? token("say"),
             received_at: new Date().toISOString(),
-            stale: false,
+            stale: stale === true,
             content_type: "text/plain",
             body_chars: text.length,
             to_standing_id: pl.standing_id,
@@ -1794,9 +1822,21 @@ export async function startFakeNks(opts = {}) {
     if (placeName !== undefined) st.wsNames.set(socket, placeName);
     for (const pl of st.places.values()) if (ofPlace(pl)) pl.listening = true;
     // Сокет апгрейда читается: без чтения поток стоит на паузе, «end» не приходит и место
-    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета.
+    // слушало бы и после смерти моста. Кадр закрытия клиента (opcode 8) — конец сокета;
+    // текстовый кадр pulse (#7529) ложится в st.pulses с местом сокета и временем.
+    let inbound = Buffer.alloc(0);
     socket.on("data", (buf) => {
-      if ((buf[0] & 0x0f) === 0x8) socket.end();
+      inbound = Buffer.concat([inbound, buf]);
+      for (const f of clientFrames(inbound)) {
+        inbound = f.rest;
+        if (f.opcode === 0x8) return socket.end();
+        if (f.opcode !== 0x1) continue;
+        let frame = null;
+        try {
+          frame = JSON.parse(f.payload.toString("utf8"));
+        } catch {}
+        if (frame?.type === "pulse") st.pulses.push({ at: Date.now(), place: placeName, frame });
+      }
     });
     socket.on("end", () => socket.destroy()); // полуоткрытый сокет закрывается целиком
     socket.on("close", () => {

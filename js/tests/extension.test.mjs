@@ -193,6 +193,8 @@ const ENV_KEYS = [
   "FB_REPLY",
   "FB_INIT_CAPS",
   "FB_CALLS",
+  "FB_EVENTS",
+  "FB_PULSE_REFUSE",
   "FB_STAND_HELD",
   "FB_ENV",
   "ISKRON_HARNESS_VERSION",
@@ -613,6 +615,88 @@ test("turn_end hands the session's spend to the bridge as iskron/usage once a pl
       context: 42000,
       window: 200000,
     });
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The turn's word for the seat's pulse (graph nks-dev: #7529) belongs to its session: a new
+// session_start raises a new bridge, and the old session's turn_at and read_at do not ride to it.
+test("a new session's pulse carries none of the previous session's turn and read clocks", async () => {
+  const calls = join(SANDBOX, "pulse-reset.calls");
+  const { env } = bridgeEnv("pulse-reset", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && !pulses().some((p) => p.arguments.turn_at); i++) await delay(40);
+    const old = pulses().at(-1).arguments;
+    assert.ok(old.turn_at && old.read_at, `the old session's clocks: ${JSON.stringify(old)}`);
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    const before = pulses().length;
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && pulses().length === before; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" }, "the new session's own word");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A daemon swapped mid-turn starts with an empty word (thin.ts replays only initialize and
+// resume); its "held" brings the session's last word back to it at once, not at the next event.
+test("a seat held again mid-turn — a new daemon — gets the turn's last word: busy and its clocks", async () => {
+  const calls = join(SANDBOX, "pulse-held.calls");
+  const { events, env } = eventsEnv("pulse-held", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const settle = async (n) => {
+    for (let i = 0; i < 50 && pulses().length < n; i++) await delay(40);
+  };
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await settle(4);
+    const last = pulses().at(-1).arguments;
+    assert.ok(last.state === "busy" && last.turn_at && last.read_at, JSON.stringify(last));
+    push(events, { kind: "held", key: "k", place: { realm: "r5", karta: "931", name: "p" } });
+    await settle(5);
+    assert.equal(pulses().length, 5, "the held seat got the word again");
+    assert.deepEqual(pulses().at(-1).arguments, last);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The turn's end the bridge refused is told again: with no event after it, the seat is not left
+// busy (#7529).
+test("an idle the bridge refused reaches it on the retry: the seat is not left busy", async () => {
+  const calls = join(SANDBOX, "pulse-refused.calls");
+  const refuse = join(SANDBOX, "pulse-refused.refuse");
+  const { env } = bridgeEnv("pulse-refused", { FB_CALLS: calls, FB_PULSE_REFUSE: refuse });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  try {
+    await rec.fire("agent_start");
+    for (let i = 0; i < 50 && !pulses().length; i++) await delay(40);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" });
+    writeFileSync(refuse, "");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    for (let i = 0; i < 50 && existsSync(refuse); i++) await delay(40);
+    assert.ok(!existsSync(refuse), "the idle refused");
+    assert.equal(pulses().length, 1, "the refused idle is not taken");
+    for (let i = 0; i < 125 && pulses().length === 1; i++) await delay(40);
+    const last = pulses().at(-1).arguments;
+    assert.equal(last.state, "idle", "the idle taken on the retry");
+    assert.ok(last.turn_at, "the turn's end comes with it");
   } finally {
     await rec.stop();
   }

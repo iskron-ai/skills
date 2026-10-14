@@ -62,11 +62,17 @@ export const E: {
   stop: ((key: string, code: number, reason: string, ended?: Frame) => void) | null;
   /** every frame of the socket passes the stop orders (stoporder.ts): true — a stop frame, taken, not the agent's */
   order: ((url: string, frame: Frame | null) => boolean) | null;
+  /** The seat's pulse (pulse.ts): a frame or hello came, or `holder` is about to be let go ("last"). */
+  pulse: ((why: "hello" | "frame" | "last", holder?: Holder) => void) | null;
 } = {
   next: null,
   stop: null,
   order: null,
+  pulse: null,
 };
+export function whenPulsed(fn: NonNullable<(typeof E)["pulse"]>): void {
+  E.pulse = fn;
+}
 export function whenOrdered(fn: NonNullable<(typeof E)["order"]>): void {
   E.order = fn;
 }

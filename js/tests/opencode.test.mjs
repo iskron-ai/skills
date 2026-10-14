@@ -211,12 +211,13 @@ function fakeCtx({
       // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
       // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
       // the probes read the text after it.
+      // faults.promptWait(id) — the answer waits for the promise it returns.
       prompt: async (o) => {
         const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
         prompts.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
-        return inboxIds
-          ? { id: `inbox-${prompts.length}`, type: "user", delivery: o.delivery }
-          : {};
+        const id = `inbox-${prompts.length}`;
+        await faults.promptWait?.(id);
+        return inboxIds ? { id, type: "user", delivery: o.delivery } : {};
       },
       // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
       // createNoId — the answer carries no id; removeFails — so many next removes throw.
@@ -354,6 +355,7 @@ const ENV_KEYS = [
   "FB_END_FAILED",
   "FB_END_REVOKED",
   "FB_END_DELAY_MS",
+  "FB_PULSE_REFUSE",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
   "ISKRON_BRIDGE_WATCH_MS",
@@ -1832,7 +1834,8 @@ test("a new root session with a directory asks its bridge to resume that directo
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name !== "iskron/pulse"); // the session's word for the pulse rides beside (#7529)
     assert.equal(sent[0].name, "iskron/resume", "the resume goes first");
     assert.equal(sent[0].arguments.cwd, "/work/of/the-session");
     assert.equal(sent[1].name, "iskron_orient", "the tool call waits for the resume");
@@ -2033,6 +2036,285 @@ test("usage events reach the holding session's bridge as iskron/usage, with the 
       context: 51900,
       window: 200000,
     });
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The session's word on its turn for the seat's pulse (graph nks-dev: #7529): busy on
+// session.status busy, idle with turn_at at the turn's end, interrupted on an interrupt —
+// each change to the holding session's bridge as iskron/pulse.
+test("turn events reach the holding session's bridge as iskron/pulse: busy, then idle with turn_at", async () => {
+  const calls = join(SANDBOX, "pulse.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-pulse", location: { directory: "/work/p" } }],
+  });
+  const pulses = () =>
+    readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron/pulse")
+      .map((c) => c.arguments);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-pulse");
+    const pid = pidOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, event("held", { key: "pulse--931--nks-dev" }));
+    await until(() => /мост держит стояние pulse--931--nks-dev/.test(rec.said()), "the held line");
+    const status = (type) =>
+      rec.emit({ type: "session.status", data: { sessionID: "s-pulse", status: { type } } });
+    status("busy");
+    await until(() => pulses().some((p) => p.state === "busy"), "the busy word");
+    assert.equal(pulses().at(-1).turn_at, undefined, "no turn has ended yet");
+    const before = Date.now();
+    status("idle");
+    await until(() => pulses().at(-1)?.state === "idle", "the idle word");
+    const turn = Date.parse(pulses().at(-1).turn_at);
+    assert.ok(turn >= before - 5 && turn <= Date.now(), `turn_at at the turn's end: ${turn}`);
+    status("busy");
+    rec.emit({
+      type: "session.execution.interrupted",
+      data: { sessionID: "s-pulse", reason: "user" },
+    });
+    await until(() => pulses().at(-1)?.state === "interrupted", "the interrupt word");
+    status("idle");
+    await delay(150);
+    assert.equal(pulses().at(-1).state, "interrupted", "the idle after an interrupt keeps it");
+  } finally {
+    await rec.stop();
+  }
+});
+
+/** The iskron/pulse calls a bridge got, in order (FB_CALLS). */
+const pulsesIn = (calls) =>
+  readFileSync(calls, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l))
+    .filter((c) => c.name === "iskron/pulse")
+    .map((c) => c.arguments);
+
+// A turn heard before the seat (#7529): the session's last word is kept and goes to the bridge
+// as soon as it holds the seat — the seat's first turn is not unknown.
+test("busy heard before the seat reaches the bridge once it holds the seat", async () => {
+  const calls = join(SANDBOX, "pulse-early.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-early", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-early", location: { directory: "/work/p" } }],
+  });
+  try {
+    await serverTools(rec);
+    rec.emit({ type: "session.status", data: { sessionID: "s-early", status: { type: "busy" } } });
+    await rec.call("iskron_channel", { action: "connect" }, "s-early");
+    await delay(150);
+    assert.equal(pulsesIn(calls).length, 0, "the busy came before any seat, nothing sent");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "early--931--nks-dev" }));
+    await until(() => pulsesIn(calls).length > 0, "the word on the held");
+    assert.deepEqual(pulsesIn(calls).at(-1), { state: "busy" });
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A steered word enters the turn when the running tool returns (#5048, #4266): read_at comes
+// with session.inbox.delivered of its inbox item, not with the prompt's acceptance.
+test("a steered frame is read when OpenCode takes its inbox item, not when the prompt is accepted", async () => {
+  const calls = join(SANDBOX, "pulse-steer.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-steer", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-steer", location: { directory: "/work/p" } }],
+    inboxIds: true,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-steer");
+    const events = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(events, event("held", { key: "steer--931--nks-dev" }));
+    await until(() => /мост держит стояние steer--931--nks-dev/.test(rec.said()), "the held line");
+    rec.emit({ type: "session.status", data: { sessionID: "s-steer", status: { type: "busy" } } });
+    await until(() => pulsesIn(calls).some((p) => p.state === "busy"), "the busy word");
+    appendFileSync(events, event("frame", { frame: frame("слово в ход"), raw: "" }));
+    await until(() => rec.prompts.length === 1, "the frame prompted");
+    assert.equal(rec.prompts[0].delivery, "steer");
+    await delay(150);
+    assert.equal(pulsesIn(calls).at(-1).read_at, undefined, "accepted is not read");
+    const before = Date.now();
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-steer", inboxID: "inbox-1" },
+    });
+    await until(() => pulsesIn(calls).at(-1)?.read_at, "read_at on delivered");
+    const read = Date.parse(pulsesIn(calls).at(-1).read_at);
+    assert.ok(read >= before - 5 && read <= Date.now(), `read_at at the taking: ${read}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Inbox items wait by their session: many waiting in other sessions do not push out the first
+// one laid, and its taking is still read.
+test("a frame's inbox item stays awaited behind more than a hundred waiting in two sessions", async () => {
+  const calls = join(SANDBOX, "pulse-many.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-many", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "s-ma", location: { directory: "/work/a" } },
+      { id: "s-mb", location: { directory: "/work/b" } },
+    ],
+    inboxIds: true,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-ma");
+    await rec.call("iskron_channel", { action: "connect" }, "s-mb");
+    const [pidA, pidB] = pidsOf(b.log);
+    const evA = `${b.events}.${pidA}`;
+    const evB = `${b.events}.${pidB}`;
+    appendFileSync(evA, event("held", { key: "ma--931--nks-dev" }));
+    appendFileSync(evB, event("held", { key: "mb--931--nks-dev" }));
+    await until(() => /мост держит стояние mb--931--nks-dev/.test(rec.said()), "the held lines");
+    const laid = (ev, n) =>
+      appendFileSync(
+        ev,
+        event("frame", { frame: { ...frame(`слово ${n}`), id: `m-${n}` }, raw: "" }),
+      );
+    laid(evA, 0);
+    await until(() => rec.prompts.length === 1, "the first frame prompted");
+    assert.equal(rec.prompts[0].sessionID, "s-ma");
+    for (let n = 1; n <= 120; n++) laid(n % 2 ? evB : evA, n);
+    await until(() => rec.prompts.length === 121, "all the frames prompted", 10_000);
+    rec.emit({ type: "session.inbox.delivered", data: { sessionID: "s-ma", inboxID: "inbox-1" } });
+    await until(() => pulsesIn(calls).some((p) => p.read_at), "read_at for the first one laid");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// A word the bridge refused is not kept as told: the turn's end still reaches the bridge — the
+// seat is not left busy after the turn.
+test("an idle the bridge refused reaches it after all: the seat is not left busy", async () => {
+  const calls = join(SANDBOX, "pulse-refused.calls");
+  const refuse = join(SANDBOX, "pulse-refused.refuse");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-refused", { FB_CALLS: calls, FB_PULSE_REFUSE: refuse });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-refused", location: { directory: "/work/p" } }],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-refused");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "refused--931--nks-dev" }));
+    await until(
+      () => /мост держит стояние refused--931--nks-dev/.test(rec.said()),
+      "the held line",
+    );
+    const status = (type) =>
+      rec.emit({ type: "session.status", data: { sessionID: "s-refused", status: { type } } });
+    status("busy");
+    await until(() => pulsesIn(calls).some((p) => p.state === "busy"), "the busy word");
+    writeFileSync(refuse, "");
+    status("idle");
+    await until(() => !existsSync(refuse), "the idle refused");
+    assert.equal(pulsesIn(calls).at(-1).state, "busy", "the refused idle is not taken");
+    status("idle");
+    await until(() => pulsesIn(calls).at(-1)?.state === "idle", "the idle taken after all");
+    assert.ok(pulsesIn(calls).at(-1).turn_at, "the turn's end comes with it");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// An inbox item OpenCode cancelled is waited for no more: cancelled ones do not pile up into an
+// overflow, and their later taking is not read.
+test("inbox items cancelled by OpenCode are not awaited: no overflow, no read", async () => {
+  const calls = join(SANDBOX, "pulse-cancel.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-cancel", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-cancel", location: { directory: "/work/p" } }],
+    inboxIds: true,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-cancel");
+    const events = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(events, event("held", { key: "cancel--931--nks-dev" }));
+    await until(() => /мост держит стояние cancel--931--nks-dev/.test(rec.said()), "the held line");
+    for (let n = 1; n <= 101; n++) {
+      appendFileSync(
+        events,
+        event("frame", { frame: { ...frame(`слово ${n}`), id: `c-${n}` }, raw: "" }),
+      );
+      await until(() => rec.prompts.length === n, `frame ${n} prompted`);
+      rec.emit({
+        type: "session.inbox.cancelled",
+        data: { sessionID: "s-cancel", inboxID: `inbox-${n}` },
+      });
+    }
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-cancel", inboxID: "inbox-1" },
+    });
+    await delay(200);
+    assert.doesNotMatch(rec.said(), /ждут хода уже/, "no overflow of cancelled items");
+    assert.ok(!pulsesIn(calls).some((p) => p.read_at), "a cancelled item's taking is not read");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The cancelling may outrun the prompt's answer that names the item: the late answer does not lay
+// a cancelled item into the awaited ones.
+test("an inbox item cancelled before its prompt's answer is not awaited: no overflow, no read", async () => {
+  const calls = join(SANDBOX, "pulse-cancel-early.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-cancel-early", { FB_CALLS: calls });
+  let answer = null;
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-early-cancel", location: { directory: "/work/p" } }],
+    inboxIds: true,
+    faults: {
+      promptWait: (id) =>
+        new Promise((r) => {
+          answer = { id, r };
+        }),
+    },
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-early-cancel");
+    const events = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(events, event("held", { key: "cearly--931--nks-dev" }));
+    await until(() => /мост держит стояние cearly--931--nks-dev/.test(rec.said()), "the held line");
+    for (let n = 1; n <= 101; n++) {
+      appendFileSync(
+        events,
+        event("frame", { frame: { ...frame(`слово ${n}`), id: `ce-${n}` }, raw: "" }),
+      );
+      await until(() => answer?.id === `inbox-${n}`, `frame ${n} prompted`);
+      rec.emit({
+        type: "session.inbox.cancelled",
+        data: { sessionID: "s-early-cancel", inboxID: `inbox-${n}` },
+      });
+      await delay(10);
+      answer.r();
+    }
+    await delay(100);
+    rec.emit({
+      type: "session.inbox.delivered",
+      data: { sessionID: "s-early-cancel", inboxID: "inbox-1" },
+    });
+    await delay(200);
+    assert.doesNotMatch(rec.said(), /ждут хода уже/, "no cancelled item awaited");
+    assert.ok(!pulsesIn(calls).some((p) => p.read_at), "a cancelled item's taking is not read");
   } finally {
     await rec.stop();
   }
@@ -7769,7 +8051,8 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     const sent = readFileSync(calls, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l));
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name !== "iskron/pulse"); // the session's word for the pulse rides beside (#7529)
     const fresh = pidsOf(b.log)[2];
     assert.ok(
       fresh && fresh !== rootPid && fresh !== childPid,
