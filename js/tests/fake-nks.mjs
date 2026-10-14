@@ -565,7 +565,7 @@ export async function startFakeNks(opts = {}) {
       if (patch.message_full) st.messages.set(patch.message_full.id, patch.message_full.text);
       // Слово одному месту по имени — в сокеты, открытые по его адресу (у разных мостов разные места).
       if (patch.ws_say) {
-        const { name, text, id } = patch.ws_say;
+        const { name, text, id, stale } = patch.ws_say;
         for (const [, c] of st.channels) {
           const found = [...c.places].find(([, p]) => p.name === name);
           if (!found) continue;
@@ -574,7 +574,7 @@ export async function startFakeNks(opts = {}) {
             type: "message",
             id: id ?? token("say"),
             received_at: new Date().toISOString(),
-            stale: false,
+            stale: stale === true,
             content_type: "text/plain",
             body_chars: text.length,
             to_standing_id: pl.standing_id,

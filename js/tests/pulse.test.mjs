@@ -145,6 +145,17 @@ test("pending grows with a frame no watchdog took and falls once one gives it; a
   assert.equal(pulses().length, n, "a left seat sends nothing");
 });
 
+// A stale frame skips the ring: its batch waits out its window (stale.ts) — the bridge holds it
+// all that while, and the board must not read 0 then.
+test("pending counts a stale frame the bridge holds in its batch and falls once the batch is given", async (t) => {
+  const { fake, pulses, until, watchdog } = await bridgeOf(t, "claude-code", 300);
+  await until(() => pulses().length > 0, "a pulse on hello");
+  watchdog();
+  await fake.control({ ws_say: { name: "pulse", text: "лежалое", id: "st-1", stale: true } });
+  await until(() => pulses().at(-1).pending === 1, "pending 1 — the stale batch holds it");
+  await until(() => pulses().at(-1).pending === 0, "pending 0 — the batch went to the watchdog");
+});
+
 test("the last pulse goes past the gap before the seat is left", async (t) => {
   const { call, pulses, until } = await bridgeOf(t, "pi-iskron", 600_000);
   await until(() => pulses().length > 0, "a pulse on hello");

@@ -645,6 +645,35 @@ test("a new session's pulse carries none of the previous session's turn and read
   }
 });
 
+// A daemon swapped mid-turn starts with an empty word (thin.ts replays only initialize and
+// resume); its "held" brings the session's last word back to it at once, not at the next event.
+test("a seat held again mid-turn — a new daemon — gets the turn's last word: busy and its clocks", async () => {
+  const calls = join(SANDBOX, "pulse-held.calls");
+  const { events, env } = eventsEnv("pulse-held", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const settle = async (n) => {
+    for (let i = 0; i < 50 && pulses().length < n; i++) await delay(40);
+  };
+  try {
+    await rec.fire("agent_start");
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
+    await rec.fire("agent_start");
+    await rec.fire("message_start", {
+      message: { role: "custom", customType: "iskron-channel", content: "кадр" },
+    });
+    await settle(4);
+    const last = pulses().at(-1).arguments;
+    assert.ok(last.state === "busy" && last.turn_at && last.read_at, JSON.stringify(last));
+    push(events, { kind: "held", key: "k", place: { realm: "r5", karta: "931", name: "p" } });
+    await settle(5);
+    assert.equal(pulses().length, 5, "the held seat got the word again");
+    assert.deepEqual(pulses().at(-1).arguments, last);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a first prompt «start … дело №N от <seat>» stands as that seat's satellite and joins the case before the model reads", async () => {
   const calls = join(SANDBOX, "launch-tail.calls");
   const { log, env } = bridgeEnv("launch-tail", {
