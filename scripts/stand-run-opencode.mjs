@@ -8,7 +8,8 @@
 //
 // The token file: one line, mode 0600. Model keys come from this machine's `opencode auth export`
 // (key entries of anthropic/openai only) into the isolated home. Exit 0 — passed, 1 — a check
-// failed, 2 — setup failed.
+// failed, 2 — setup failed. --api URL --person U — the owner's stop order (#7519) on a running
+// session's seat and on a satellite's, laid by U through the api's test identity.
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -22,6 +23,8 @@ const URL_ = arg("--url");
 const realm = arg("--realm");
 const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").split("/");
 const keep = process.argv.includes("--keep");
+const apiArg = arg("--api");
+const personArg = arg("--person");
 // --bridge / --plugin — another build (a release output), dist/dev by default.
 const bridge = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 const plugin = arg("--plugin", join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js"));
@@ -109,6 +112,18 @@ const check = (ok, what, seen) => {
   if (!ok) failed++;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The nks api directly: as the person (test identity) or as the plugin's own credential.
+async function nks(method, path, { body, asSeat } = {}) {
+  const h = { "Content-Type": "application/json", "X-NKS-Realm": realm };
+  if (asSeat) h.Authorization = `Bearer ${token}`;
+  else Object.assign(h, { "X-Forwarded-User": personArg, "X-Forwarded-User-Pref-Username": personArg });
+  const r = await fetch(apiArg.replace(/\/$/, "") + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
+  let j = null;
+  try {
+    j = await r.json();
+  } catch {}
+  return { status: r.status, body: j?.data ?? j };
+}
 const port = 40000 + Math.floor(Math.random() * 20000);
 const server = `http://127.0.0.1:${port}`;
 let serve = null;
@@ -262,6 +277,21 @@ try {
     }
     return false;
   };
+  // whoami speaks the session's language: the handle is the first @name that is not a graph.
+  const whoHandle = async () => ((await P.call("iskron_me", { action: "whoami" })).text.match(/(?:^|\s)(@[\w.-]+)(?![\w./-])/m) || [])[1] ?? "";
+  // The owner's stop order on one seat: laid, then judged by the log line, the api and the session.
+  const order = async (label, seat, wait) => {
+    const l0 = log().length;
+    const o = await nks("POST", `/standings/${seat}/stop`, { body: { reason_code: "person_request", client_id: `stand-oc-${stamp}-${label}` } });
+    check(o.status === 201 && !!o.body?.id, `order (${label}): laid, 201`, `${o.status} ${JSON.stringify(o.body).slice(0, 160)}`);
+    const t = Date.now();
+    await sleep(wait);
+    const lines = log().slice(l0).split("\n").filter((l) => o.body?.id && l.includes(`stop order ${o.body.id} for `));
+    check(lines.length === 1 && lines[0].includes(`for ${seat}: stopped`), `order (${label}): one "stop order … stopped" line`, lines.join(" | ").slice(0, 200) || "none");
+    const it = ((await nks("GET", "/me/orders?limit=200", { asSeat: true })).body?.items ?? []).find((x) => x.id === o.body?.id);
+    check(it?.state === "stopped", `order (${label}): the api holds it stopped`, it ? `${it.state} by ${it.by}` : "not listed");
+    return { id: o.body?.id, t };
+  };
   const standText = (name) =>
     `Call the tool iskron_stand with realm="${realm}", karta="#${karta}", name="${name}", model="stand-run". Do not call anything else from iskron.`;
 
@@ -391,7 +421,7 @@ try {
   // satellite; the launcher's revoke takes the satellite seat off on the server, and a word to
   // the ended satellite does not wake its session.
   if (process.argv.includes("--satellite")) {
-    const handle = ((await P.call("iskron_me", { action: "whoami" })).text.match(/You are (@[\w.-]+)/) || [])[1] ?? "";
+    const handle = await whoHandle();
     const nameR = `oc-${stamp}.r`;
     const Rs = newSession("sat-root");
     prompt(Rs.id, `${standText(nameR)} Then answer READY and end your turn.`);
@@ -432,6 +462,49 @@ try {
     const brd3 = await board();
     if (seatId(brd3, nameR)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd3, nameR), as_person: true });
   }
+  // The owner's stop order (#7519): a running session's seat — its turn cut, the stop frame never
+  // the session's; a satellite's seat — the child ends, the root's seat holds.
+  if (apiArg && personArg) {
+    const nameO = `oc-${stamp}.o`;
+    const O = newSession("order-O");
+    prompt(O.id, `${standText(nameO)} Then run the shell command \`sleep 600\` and wait for it to finish. Then answer DONE.`);
+    if (!(await waitSeat(nameO))) throw new Error("O: the model did not take the seat — a probe failure; run again");
+    for (let t = 0; t < 60 && !active().includes(O.id); t++) await sleep(1000);
+    await sleep(15_000);
+    check(active().includes(O.id), "order: the turn is running before it");
+    const o = await order("running", seatId(await board(), nameO), 45_000);
+    check(!active().includes(O.id), "order (running): the turn is cut", active().join(","));
+    check(!seatId(await board(), nameO), "order (running): the seat is gone");
+    const seen = JSON.stringify(messages(O.id));
+    check(!/"type":\s*"stop"/.test(seen) && !(o.id && seen.includes(o.id)), "order (running): the stop frame is not in the session");
+    check(assistantAfter(messages(O.id), o.t + 20_000) === 0, "order (running): no new model turn after it");
+
+    const handle = await whoHandle();
+    const nameS = `oc-${stamp}.s`;
+    const Ss = newSession("order-root");
+    prompt(Ss.id, `${standText(nameS)} Then answer READY and end your turn.`);
+    if (!(await waitSeat(nameS))) throw new Error("order root: the model did not take the seat — a probe failure");
+    for (let t = 0; t < 120 && active().includes(Ss.id); t++) await sleep(1000);
+    const C = api("POST", "/api/session", { title: "order-child", parentID: Ss.id, location: { directory: cwd }, model: { providerID, id: modelID } });
+    const Cs = C.data?.data ?? C.data;
+    if (!Cs?.id) throw new Error(`order child create: ${C.raw.slice(0, 200)}`);
+    prompt(Cs.id, `Call the tool iskron_stand with realm="${realm}", karta="#${karta}", satellite_of="${handle}:${nameS}". Do not call anything else from iskron. Then answer READY and end your turn.`);
+    let sub = null;
+    for (let t = 0; t < 48 && !sub; t++) {
+      sub = ((await board()).match(new RegExp(`:(${nameS.replace(/\./g, "\\.")}\\.sub-\\d+) —`)) || [])[1] ?? null;
+      if (!sub) await sleep(5000);
+    }
+    check(!!sub, "order: the child stands as a satellite", sub);
+    if (sub) {
+      for (let t = 0; t < 120 && active().includes(Cs.id); t++) await sleep(1000);
+      const os = await order("satellite", seatId(await board(), sub), 45_000);
+      check(!seatId(await board(), sub), "order (satellite): the satellite seat is gone");
+      check(!!seatId(await board(), nameS), "order (satellite): the root's seat holds");
+      check(!active().includes(Cs.id) && assistantAfter(messages(Cs.id), os.t + 20_000) === 0, "order (satellite): the child does not run again");
+    }
+    const brd4 = await board();
+    if (seatId(brd4, nameS)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd4, nameS), as_person: true });
+  } else report.push("SKIP stop order — needs --api and --person");
 } catch (e) {
   report.push(`ERROR ${e.message}`);
   failed++;

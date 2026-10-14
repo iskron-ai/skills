@@ -12,6 +12,9 @@
 // --realm2 — a second graph in the token's territory, for the seat beside (one seat per graph per bridge).
 // --realm — the run's graph when the token is scoped to it (a territorial writer PAT);
 // without it the run takes or creates @<self>/bridge-night. --expect-user — whoami must name it.
+// --api, --person — the api beside the MCP and a person it trusts by X-Forwarded-User (a LOCAL
+// carrier's test identity, the graphs' owner): the owner's stop order (#7519) is laid on the
+// seats as the window's button lays it. Without them the order is not run.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -30,6 +33,8 @@ const keep = process.argv.includes("--keep");
 const realmArg = arg("--realm", null);
 const realm2Arg = arg("--realm2", null);
 const expectUser = arg("--expect-user", null);
+const apiArg = arg("--api", null);
+const personArg = arg("--person", null);
 // --bridge — another build of the bridge (a release output), dist/dev by default.
 const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 
@@ -104,6 +109,7 @@ function open(name, e = env) {
     notes,
     stderr: () => stderr,
     call,
+    list: () => request("tools/list", {}),
     async init() {
       const r = await request("initialize", {
         protocolVersion: "2025-06-18",
@@ -124,6 +130,20 @@ function open(name, e = env) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The api directly: as the person (test identity) or as the seats' own credential.
+async function api(method, path, { body, realm, asSeat } = {}) {
+  const h = { "Content-Type": "application/json" };
+  if (asSeat) h.Authorization = `Bearer ${token}`;
+  else Object.assign(h, { "X-Forwarded-User": personArg, "X-Forwarded-User-Pref-Username": personArg });
+  if (realm) h["X-NKS-Realm"] = realm;
+  const r = await fetch(apiArg.replace(/\/$/, "") + path, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
+  let j = null;
+  try {
+    j = await r.json();
+  } catch {}
+  return { status: r.status, body: j?.data ?? j };
+}
+const CYR = /[а-яё]/i;
 const standingsLog = () => {
   const p = join(env.ISKRON_BRIDGE_AUTH_DIR, "standings.log");
   return existsSync(p) ? readFileSync(p, "utf8") : "";
@@ -229,6 +249,7 @@ try {
   check(!again.error && /hello получен/.test(again.text), "explicit stand takes the name again", again.text.split("\n")[0]);
 
   // 3. A seat beside — another graph on the same channel; taken off, it is forgotten without a stop.
+  let karta2;
   if (realm2Arg) {
     const k2 = await P.call("iskron_add_karta", {
       realm: realm2Arg,
@@ -239,7 +260,7 @@ try {
       ontic_mode: "vartamana",
       volitive_mode: "upeksha",
     });
-    const karta2 = (k2.text.match(/\(#(\d+)\)/) || [])[1];
+    karta2 = (k2.text.match(/\(#(\d+)\)/) || [])[1];
     const beside = await A.call("iskron_stand", { realm: realm2Arg, karta: `#${karta2}`, name: nameB, model: "stand-run" });
     check(!beside.error, "seat beside stands in the second graph", beside.text.split("\n")[0].slice(0, 160));
     const idB = channelId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB);
@@ -255,7 +276,8 @@ try {
   // 4. Own revoke in every form the bridge must recognise as its own (graph @nks/nks-dev,
   // node #6987): karta as a JSON number, as "N", as "#N"; standing as the full address and as
   // the name alone. Each is quiet — no stop word; the seat is taken again between them.
-  const handle = (who.text.match(/You are (@[\w.-]+)/) || [])[1] ?? "";
+  // whoami speaks the session's language: the handle is the first @name that is not a graph.
+  const handle = (who.text.match(/(?:^|\s)(@[\w.-]+)(?![\w./-])/m) || [])[1] ?? (expectUser ? `@${expectUser}` : "");
   const forms = [
     ["karta as a JSON number", () => ({ karta: Number(karta) })],
     ['karta as "N"', () => ({ karta: String(karta) })],
@@ -273,6 +295,94 @@ try {
     const notes4 = A.notes.slice(before4).map(noteText);
     check(!notes4.some((t) => /остановлен/.test(t)), `own revoke (${label}): no stop word`, notes4.join(" | ").slice(0, 200));
     check(!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA), `own revoke (${label}): the seat is gone`);
+  }
+
+  // 6. The owner's stop order (#7519): laid on a seat by POST /standings/{id}/stop, it reaches
+  // the bridge as a stop frame the agent never sees; the bridge answers accepted, stops the seat
+  // as at a revoke and answers stopped. On the seat beside it ends that seat alone; on the
+  // founder it ends the channel whole, the seat beside with it.
+  if (apiArg && personArg && realm2Arg) {
+    const standBoth = async () => {
+      for (const [r, k, n] of [[realm, karta, nameA], [realm2Arg, karta2, nameB]])
+        if (!seatId((await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` })).text, n))
+          await A.call("iskron_stand", { realm: r, karta: `#${k}`, name: n, model: "stand-run" });
+      return [
+        seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA),
+        seatId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB),
+      ];
+    };
+    const order = async (label, seat, inRealm, wait) => {
+      const n0 = A.notes.length;
+      const l0 = standingsLog().length;
+      const o = await api("POST", `/standings/${seat}/stop`, {
+        realm: inRealm,
+        body: { reason_code: "person_request", client_id: `stand-run-${stamp}-${label}` },
+      });
+      check(o.status === 201 && !!o.body?.id, `order (${label}): laid, 201`, `${o.status} ${JSON.stringify(o.body).slice(0, 160)}`);
+      await sleep(wait);
+      const notes = A.notes.slice(n0).map(noteText);
+      const log = standingsLog().slice(l0);
+      const lines = log.split("\n").filter((l) => o.body?.id && l.includes(`stop order ${o.body.id} for `));
+      check(!notes.some((t) => /"type":"stop"/.test(t) || /"kind":"frame"/.test(t)), `order (${label}): the stop frame is not the agent's`, notes.filter((t) => /stop/.test(t)).join(" | ").slice(0, 200));
+      check(lines.length === 1 && lines[0].includes(`for ${seat}: stopped`), `order (${label}): one "stop order … stopped" line`, lines.join(" | ").slice(0, 200) || "none");
+      const mine = await api("GET", "/me/orders?limit=200", { asSeat: true });
+      const it = (mine.body?.items ?? []).find((x) => x.id === o.body?.id);
+      check(it?.state === "stopped", `order (${label}): the api holds it stopped`, `${mine.status} ${it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed"}`);
+      return { notes, log };
+    };
+    const [a1, b1] = await standBoth();
+    check(!!a1 && !!b1, "order: the main seat and the seat beside stand", `${a1} ${b1}`);
+    const beside = await order("beside", b1, realm2Arg, 20_000);
+    check(!seatId((await P.call("iskron_channel", { realm: realm2Arg, action: "list", karta: `#${karta2}` })).text, nameB), "order (beside): the seat beside is gone");
+    check(!!seatId((await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text, nameA), "order (beside): the main seat holds");
+    check(!beside.notes.some((t) => /остановлен/.test(t) && t.includes(nameA)), "order (beside): the main seat is not stopped");
+    const [a2, b2] = await standBoth();
+    const founder = await order("founder", a2, realm, 30_000);
+    check(founder.notes.some((t) => /остановлен/.test(t)), "order (founder): the agent told it is stopped", founder.notes.find((t) => /остановлен/.test(t))?.slice(0, 200) ?? `notes: ${founder.notes.length}`);
+    for (const [r, k, n] of [[realm, karta, nameA], [realm2Arg, karta2, nameB]])
+      check(!seatId((await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` })).text, n), `order (founder): ${n} is gone`);
+    const after = founder.log.split("\n");
+    check(!after.some((l) => / held /.test(l) && (l.includes(nameA) || l.includes(nameB))), "order (founder): no held after it", after.filter((l) => / held /.test(l)).join(" | ").slice(0, 200));
+    report.push(`INFO order (founder): 4001 lines — ${after.filter((l) => /4001/.test(l)).join(" | ").slice(0, 300) || "none"} (beside was ${b2})`);
+  } else report.push("SKIP stop order — needs --api, --person and --realm2");
+
+  // 7. The bridge asks the server's prose in its own language (#7593): a ru session reads the
+  // tools and whoami in Russian, an en session in English, whatever the server's default.
+  // The .ai scenario: no language variable, the server's address on .ai names English. The
+  // stand is on loopback, so a preload sends fetch for the .ai name to it (the bridge's bytes
+  // untouched) — a check of the choice by address, not of a live .ai server.
+  const aiHost = "stand-run.iskron-test.ai";
+  const preload = join(run, "ai-dns.mjs");
+  writeFileSync(
+    preload,
+    `const H = ${JSON.stringify(aiHost)}, f = globalThis.fetch;\n` +
+      `globalThis.fetch = (u, o) => {\n` +
+      `  if (typeof u === "string" || u instanceof URL) { const x = new URL(String(u)); if (x.hostname === H) { x.hostname = "127.0.0.1"; u = x.toString(); } }\n` +
+      `  return f(u, o);\n};\n`,
+  );
+  const aiUrl = URL_.replace(/^(https?:\/\/)(127\.0\.0\.1|localhost)(?=[:/])/, `$1${aiHost}`);
+  const sessions = [["ru", A, true]];
+  const E = open("en", { ...env, ISKRON_BRIDGE_LANG: "en" });
+  // Its own auth dir: the session goes through a machine daemon of its own, which inherits the preload.
+  const aiEnv = envFor(join(run, "auth-ai"), token);
+  const AI = aiUrl !== URL_ ? open("ai", { ...aiEnv, ISKRON_BRIDGE_URL: aiUrl, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${preload}`.trim() }) : null;
+  try {
+    await E.init();
+    sessions.push(["en", E, false]);
+    if (AI) {
+      const up = await AI.init().then(() => null, (e) => e.message);
+      if (up) check(false, "language (.ai): the bridge on the .ai address comes up", up.slice(0, 200));
+      else sessions.push([`ai (${aiHost})`, AI, false]);
+    } else report.push("SKIP language (.ai) — the stand is not on loopback");
+    for (const [label, b, ru] of sessions) {
+      const tools = (await b.list()).result?.tools ?? [];
+      const me = tools.find((t) => t.name === "iskron_me")?.description ?? "";
+      check(!!me && CYR.test(me) === ru, `language (${label}): the tools' descriptions in ${ru ? "ru" : "en"}`, me.slice(0, 100));
+      const who = (await b.call("iskron_me", { action: "whoami" })).text;
+      check(ru ? CYR.test(who) && !/You are/.test(who) : /You are/.test(who), `language (${label}): whoami in ${ru ? "ru" : "en"}`, who.split("\n")[0].slice(0, 120));
+    }
+  } finally {
+    await Promise.all([E.close(), AI?.close()]);
   }
 
   // 5. status names what is attached on this (isolated) machine.
@@ -296,7 +406,7 @@ process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 // The machine daemons of this run's auth dirs outlive their sessions by an idle window and
 // would write into the run dir after its removal: put them down first.
-for (const d of [join(run, "auth"), join(run, "auth-bad")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
+for (const d of [join(run, "auth"), join(run, "auth-bad"), join(run, "auth-ai")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
 await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(setup || (failed ? 1 : 0));
