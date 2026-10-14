@@ -1,17 +1,19 @@
 // The outcome of a stop order until the api takes it (graph @nks/nks-dev, node #7510; review in
 // case №669): a bridge's start answers the journal's untaken outcomes with no seat and no
 // socket; a satellite's bridge ending with an order in flight waits for its outcome, bounded,
-// and what it could not answer is answered by the next start; an untaken outcome outlives the
+// and what it could not answer is answered by the next start; an accepted of a predecessor alive
+// at the start is watched until it ends or answers; an untaken outcome outlives the
 // journal's term, a taken one goes.
 //
 // ISKRON_BRIDGE_PATH aims the probe at any copy of the bridge.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
-import { NKS, orderOnDisk, seatId, standing, states } from "./stoporder-kit.mjs";
+import { NKS, orderOnDisk, pause, seatId, standing, states } from "./stoporder-kit.mjs";
 
 const CALLER = "host.repo.opus-5";
 const DAY = 24 * 3600_000;
@@ -34,6 +36,24 @@ test("a bridge's start answers an untaken outcome — no seat, no socket", async
   assert.deepEqual(states(fake, "ord-a"), ["stopped"]);
   assert.equal(fake.state.ws.size, 0, "no socket was opened");
   await until(() => orderOnDisk(dir, "ord-a").acked, "taken on disk");
+});
+
+test("an accepted of a live predecessor, ended without its outcome after the start: unknown", async (t) => {
+  const { fake, dir, up } = await setup(t);
+  const before = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore" });
+  t.after(() => before.kill("SIGKILL"));
+  await inJournal(fake, dir, "ord-o", { state: "accepted", pid: before.pid });
+  const b = await up();
+  await pause(1500);
+  assert.deepEqual(states(fake, "ord-o"), [], "the predecessor is alive: its order is its own");
+  before.kill("SIGKILL");
+  await until(() => states(fake, "ord-o").length, `the outcome:\n${b.stderr}`);
+  assert.deepEqual([...new Set(states(fake, "ord-o"))], ["unknown"]);
+  assert.equal(
+    fake.state.orders.acks.find((a) => a.id === "ord-o").reason_code,
+    "bridge_restarted",
+  );
+  await until(() => orderOnDisk(dir, "ord-o").acked, "taken on disk");
 });
 
 test("an untaken outcome past the journal's term is kept and answered; a taken one goes", async (t) => {

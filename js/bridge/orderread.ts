@@ -29,6 +29,10 @@ async function ordersPage(
         ...(typeof x.seq === "number" ? { seq: x.seq } : {}),
         ...(typeof x.reason_code === "string" ? { reason_code: x.reason_code } : {}),
         ...(typeof x.by === "string" ? { by: x.by } : {}),
+        ...(typeof x.issued_at === "string" ? { issued_at: x.issued_at } : {}),
+        ...(typeof x.ack_window_seconds === "number"
+          ? { ack_window_seconds: x.ack_window_seconds }
+          : {}),
       }));
     const next = typeof body.next_since === "number" ? body.next_since : since;
     return { orders, next };

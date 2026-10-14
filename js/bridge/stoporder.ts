@@ -12,7 +12,7 @@ import { apiBase } from "../shared/channel.ts";
 import { words } from "../shared/lang.ts";
 import { broadcast, notify } from "./hold.ts";
 import { type Frame, whenOrdered } from "./holdstate.ts";
-import { answerOutcome, type Order, repeatLater, sendAck } from "./orderack.ts";
+import { answerOutcome, type Order, repeatLater, sendAck, windowEnd } from "./orderack.ts";
 import { fly } from "./orderflight.ts";
 import { awaitHalt, confirmsHalts, SILENT } from "./orderhalt.ts";
 import { isTerminal, type OrderEntry, readOrder, writeOrder } from "./orderjournal.ts";
@@ -31,7 +31,15 @@ function orderOf(frame: Frame): Order | null {
   const id = str(frame.order_id);
   const standing = str(frame.standing_id);
   if (!id || !standing) return null;
-  return { id, standing_id: standing, reason_code: str(frame.reason_code), by: str(frame.by) };
+  const span = frame.ack_window_seconds;
+  return {
+    id,
+    standing_id: standing,
+    reason_code: str(frame.reason_code),
+    by: str(frame.by),
+    issued_at: str(frame.issued_at),
+    ...(typeof span === "number" ? { ack_window_seconds: span } : {}),
+  };
 }
 
 /** The journal refused an entry: loudly — to the log, the doors and the human. */
@@ -90,14 +98,16 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
 }
 
 async function carry(o: Order, base: string, f: { end: OrderEntry | null }): Promise<void> {
+  const at = Date.now();
   const entry: OrderEntry = {
     id: o.id,
     standing: o.standing_id,
     state: "accepted",
     base,
     acked: false,
-    at: Date.now(),
+    at,
     pid: process.pid,
+    until: windowEnd(o, at),
   };
   if (!holdsSeat(o.standing_id, true))
     return finish({ ...entry, state: "refused", reason: "seat_not_held" });

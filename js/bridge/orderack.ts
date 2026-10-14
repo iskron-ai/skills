@@ -4,6 +4,7 @@
 import { envName } from "../delivery/index.ts";
 import { scoped } from "../shared/scope.ts";
 import {
+  ANSWER_WINDOW_MS,
   type OrderEntry,
   type OrderState,
   readOrder,
@@ -21,6 +22,16 @@ export interface Order {
   seq?: number;
   reason_code?: string;
   by?: string;
+  issued_at?: string;
+  ack_window_seconds?: number;
+}
+
+/** The end of the order's answer window: issued_at + ack_window, each defaulted. */
+export function windowEnd(o: Order, at: number): number {
+  const issued = Date.parse(o.issued_at ?? "");
+  const seconds = o.ack_window_seconds ?? 0;
+  const span = seconds > 0 ? seconds * 1000 : ANSWER_WINDOW_MS;
+  return (Number.isFinite(issued) ? issued : at) + span;
 }
 
 export const TIMEOUT_MS = 5000;
@@ -85,7 +96,10 @@ function markTaken(id: string): void {
 
 const P = scoped(() => ({ timer: null as ReturnType<typeof setTimeout> | null, step: 0 }));
 
-/** Every journal outcome the api has not taken, once more — now and on a growing pause. */
+/**
+ * Every journal outcome the api has not taken, once more — now and on a growing pause; so too
+ * while another live process's accepted waits for its outcome (it may end without one).
+ */
 export function repeatLater(now = false): void {
   if (P.timer) {
     if (!now) return;
@@ -95,9 +109,8 @@ export function repeatLater(now = false): void {
   P.timer = setTimeout(() => {
     P.timer = null;
     void (async () => {
-      const left = unanswered();
-      if (!left.length) return void (P.step = 0);
-      let open = false;
+      const { left, watching } = unanswered();
+      let open = watching;
       for (const e of left) {
         if ((await sendAck(e.base, e.id, e.state, e.reason)) === "taken") markTaken(e.id);
         else open = true;

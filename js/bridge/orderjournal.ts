@@ -28,7 +28,11 @@ export interface OrderEntry {
   at: number;
   /** the process executing it while accepted */
   pid?: number;
+  /** the end of the order's answer window (issued_at + ack_window); absent — `at` + ANSWER_WINDOW_MS */
+  until?: number;
 }
+
+export const ANSWER_WINDOW_MS = 60_000;
 
 /** The bridge that took the order ended before its outcome: the stop was not seen through. */
 export const RESTARTED = "bridge_restarted";
@@ -115,16 +119,19 @@ export function writeSince(base: string, seq: number): void {
 /**
  * Outcomes the api has not taken yet; taken entries past their term go. An accepted whose process is
  * gone (the daemon fell between the stop and its outcome) gets the outcome unknown once, on disk
- * — the harness is not asked again; from there it is repeated as any outcome.
+ * — the harness is not asked again; from there it is repeated as any outcome. watching — an
+ * accepted of another process still alive within the order's answer window (a predecessor daemon
+ * not yet ended): it may end without its outcome, so the journal is to be read again.
  */
-export function unanswered(now = Date.now()): OrderEntry[] {
+export function unanswered(now = Date.now()): { left: OrderEntry[]; watching: boolean } {
   let names: string[];
   try {
     names = readdirSync(dir()).filter((n) => n.endsWith(".json"));
   } catch {
-    return [];
+    return { left: [], watching: false };
   }
   const out: OrderEntry[] = [];
+  let watching = false;
   for (const n of names) {
     const e = readOrder(n.slice(0, -".json".length));
     if (!e) continue;
@@ -140,7 +147,9 @@ export function unanswered(now = Date.now()): OrderEntry[] {
       if (writeOrder(end)) out.push(end);
       continue;
     }
+    if (!isTerminal(e.state) && e.pid !== process.pid)
+      watching ||= now < (e.until ?? e.at + ANSWER_WINDOW_MS);
     if (isTerminal(e.state) && !e.acked) out.push(e);
   }
-  return out;
+  return { left: out, watching };
 }
