@@ -18,8 +18,9 @@
 // The release batch: the seat's pulse on the board (#7529; with --api read from GET /me/channels,
 // else from the board's text), take onto another name refused while a seat beside stands
 // (#6499, needs --realm2), the `stop` subcommand and its refusal of another owner's address
-// (#7518), a bridge killed without a mark — its seat stands until the death window, then goes
-// (#7493). --death-ms — the run's death window (ISKRON_BRIDGE_DEATH_MS of its daemon), 20000.
+// (#7518). Out of the batch: the agent's end (#473 excluded from the release) — a bridge killed
+// without a mark, its seat standing until the death window, then gone (#7493); --with-agent-end
+// runs it, --death-ms is then the run's death window (ISKRON_BRIDGE_DEATH_MS of its daemon), 20000.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -48,7 +49,10 @@ const personArg = arg("--person", null);
 const ackLog = arg("--ack-log", null);
 // --bridge — another build of the bridge (a release output), dist/dev by default.
 const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
+const withAgentEnd = process.argv.includes("--with-agent-end");
+const OUT_AGENT_END = "SKIP вне состава: конец агента (#473 исключён из выпуска) — --with-agent-end включает";
 const deathMs = Number(arg("--death-ms", "20000"));
+if (process.argv.includes("--death-ms") && !withAgentEnd) fail(2, "--death-ms is for --with-agent-end only");
 
 if (!existsSync(bridgePath)) fail(2, `no bridge at ${bridgePath} — make build-js or --bridge`);
 if (!existsSync(tokenFile)) fail(2, `no stand token at ${tokenFile}`);
@@ -519,27 +523,30 @@ try {
   }
 
   // 9. The agent's end (#7493): a bridge killed without an announced absence keeps its seat until
-  // the death window, then the machine daemon closes it — no stop word.
-  const nameK = `night-${stamp}.k`;
-  const K = open("killed");
-  try {
-    await K.init();
-    const kst = await K.call("iskron_stand", { realm, karta: `#${karta}`, name: nameK, model: "stand-run" });
-    check(!kst.error, "end: the agent's seat stands", kst.text.split("\n")[0].slice(0, 160));
-    await sleep(3_000);
-    const d0 = daemonLog().length;
-    const l0 = standingsLog().length;
-    K.child.kill("SIGKILL");
-    await sleep(deathMs / 2);
-    check(!!seatId(await boardOf(), nameK), `end: before the death window (${deathMs} ms) the killed agent's seat stands`);
-    await sleep(deathMs / 2 + 20_000);
-    check(!seatId(await boardOf(), nameK), "end: after the death window the seat is gone");
-    const died = daemonLog().slice(d0).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
-    check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
-    check(!standingsLog().slice(l0).split("\n").some((l) => l.includes(nameK) && / stopped /.test(l)), "end: no stop on a death (standings.log)");
-  } finally {
-    if (K.child.exitCode === null && K.child.signalCode === null) await K.close();
-  }
+  // the death window, then the machine daemon closes it — no stop word. Out of the batch unless
+  // --with-agent-end: #473 is excluded from the release.
+  if (withAgentEnd) {
+    const nameK = `night-${stamp}.k`;
+    const K = open("killed");
+    try {
+      await K.init();
+      const kst = await K.call("iskron_stand", { realm, karta: `#${karta}`, name: nameK, model: "stand-run" });
+      check(!kst.error, "end: the agent's seat stands", kst.text.split("\n")[0].slice(0, 160));
+      await sleep(3_000);
+      const d0 = daemonLog().length;
+      const l0 = standingsLog().length;
+      K.child.kill("SIGKILL");
+      await sleep(deathMs / 2);
+      check(!!seatId(await boardOf(), nameK), `end: before the death window (${deathMs} ms) the killed agent's seat stands`);
+      await sleep(deathMs / 2 + 20_000);
+      check(!seatId(await boardOf(), nameK), "end: after the death window the seat is gone");
+      const died = daemonLog().slice(d0).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
+      check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
+      check(!standingsLog().slice(l0).split("\n").some((l) => l.includes(nameK) && / stopped /.test(l)), "end: no stop on a death (standings.log)");
+    } finally {
+      if (K.child.exitCode === null && K.child.signalCode === null) await K.close();
+    }
+  } else report.push(OUT_AGENT_END);
 
   // 5. status names what is attached on this (isolated) machine.
   const status = await new Promise((res) => {

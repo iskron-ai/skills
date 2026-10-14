@@ -12,9 +12,10 @@
 // session's seat and on a satellite's, laid by U through the api's test identity.
 // The release batch: the seat's pulse — idle after a turn, busy in it, turn_at at its end, read_at
 // when a word went into it (#7529; with --api read from GET /me/channels, else the board's text);
-// the agent's end (#7493) — Esc keeps the seat, a plugin reload returns it to the same session
-// without waiting, a deleted session's seat goes at once without a stop word, a killed harness's
-// seat stands until the death window (--death-ms, 20000) and then goes. With --satellite the
+// Esc keeps the seat. Out of the batch: the agent's end (#7493; #473 excluded from the release) —
+// a plugin reload returns the seat to the same session without waiting, a deleted session's seat
+// goes at once without a stop word, a killed harness's seat stands until the death window and
+// then goes; --with-agent-end runs it, --death-ms is then the death window, 20000. With --satellite the
 // child session runs on --child-model (default anthropic/claude-opus-5-5) and its .sub-N seat
 // carries that model on the board, not the parent's (#7591).
 import { spawn, spawnSync } from "node:child_process";
@@ -35,6 +36,8 @@ const URL_ = arg("--url");
 const realm = arg("--realm");
 const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").split("/");
 const [childProviderID, childModelID] = arg("--child-model", "anthropic/claude-opus-5-5").split("/");
+const withAgentEnd = process.argv.includes("--with-agent-end");
+const OUT_AGENT_END = "SKIP вне состава: конец агента (#473 исключён из выпуска) — --with-agent-end включает";
 const deathMs = Number(arg("--death-ms", "20000"));
 const keep = process.argv.includes("--keep");
 const apiArg = arg("--api");
@@ -45,6 +48,7 @@ const bridge = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts
 const plugin = arg("--plugin", join(root, "dist/dev/skills/establish-mcp/scripts/opencode-plugin.js"));
 const fail = (code, t) => (process.stderr.write(`stand-run-opencode: ${t}\n`), process.exit(code));
 if (!tokenFile || !URL_ || !realm) fail(2, "--token-file, --url and --realm are required");
+if (process.argv.includes("--death-ms") && !withAgentEnd) fail(2, "--death-ms is for --with-agent-end only");
 if (process.argv.includes("--satellite") && childModelID === modelID) fail(2, "--child-model must differ from --model: the satellite's model is told apart by it");
 if (!existsSync(bridge) || !existsSync(plugin)) fail(2, "no bridge or plugin build — make build-js, or --bridge/--plugin");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
@@ -547,57 +551,60 @@ try {
   const pE = await pulseOf(nameL);
   check(pE?.state === "interrupted", "pulse: interrupted after Esc", JSON.stringify(pE));
 
-  // A plugin reload is an announced absence: the same session holds its seat again without
-  // waiting, the seat stands past the death window.
-  const lR = log().length;
-  await stopServe();
-  const tR = Date.now();
-  await startServe();
-  let back = false;
-  for (let t = 0; t < 60 && !back; t++) {
-    await sleep(1000);
-    back = log().slice(lR).split("\n").some((l) => l.includes(nameL) && /\b(held|resumed)\b/.test(l));
-  }
-  check(back, "reload: the same session holds its seat again without waiting", `${Math.round((Date.now() - tR) / 1000)} s · ${log().slice(lR).split("\n").filter((l) => l.includes(nameL)).join(" | ").slice(0, 160)}`);
-  await sleep(deathMs + 10_000);
-  const afterR = log().slice(lR).split("\n").filter((l) => l.includes(nameL));
-  check(!!seatId(await board(), nameL), "reload: the seat stands past the death window");
-  check(!afterR.some((l) => / (stopped|released) /.test(l)), "reload: the seat neither stopped nor released", afterR.join(" | ").slice(0, 200));
+  // The agent's end — out of the batch unless --with-agent-end: #473 is excluded from the release.
+  if (withAgentEnd) {
+    // A plugin reload is an announced absence: the same session holds its seat again without
+    // waiting, the seat stands past the death window.
+    const lR = log().length;
+    await stopServe();
+    const tR = Date.now();
+    await startServe();
+    let back = false;
+    for (let t = 0; t < 60 && !back; t++) {
+      await sleep(1000);
+      back = log().slice(lR).split("\n").some((l) => l.includes(nameL) && /\b(held|resumed)\b/.test(l));
+    }
+    check(back, "reload: the same session holds its seat again without waiting", `${Math.round((Date.now() - tR) / 1000)} s · ${log().slice(lR).split("\n").filter((l) => l.includes(nameL)).join(" | ").slice(0, 160)}`);
+    await sleep(deathMs + 10_000);
+    const afterR = log().slice(lR).split("\n").filter((l) => l.includes(nameL));
+    check(!!seatId(await board(), nameL), "reload: the seat stands past the death window");
+    check(!afterR.some((l) => / (stopped|released) /.test(l)), "reload: the seat neither stopped nor released", afterR.join(" | ").slice(0, 200));
 
-  // A deleted session: its seat goes at once (its bridge's own revoke), no stop word.
-  const nameD = `oc-${stamp}.d`;
-  const D = newSession("end-D");
-  prompt(D.id, `${standText(nameD)} Then answer READY and end your turn.`);
-  if (!(await waitSeat(nameD))) throw new Error("D: the model did not take the seat — a probe failure; run again");
-  await idle(D.id);
-  const lD = log().length;
-  const tD = Date.now();
-  const del = api("DELETE", `/api/session/${D.id}`);
-  let goneD = false;
-  while (!goneD && Date.now() - tD < deathMs / 2) {
-    await sleep(2000);
-    goneD = !seatId(await board(), nameD);
-  }
-  check(goneD, `end: a deleted session's seat goes at once (before ${deathMs / 2} ms)`, `${Math.round((Date.now() - tD) / 1000)} s · ${del.raw.slice(0, 80)}`);
-  check(!hasStop(nameD, log().slice(lD)), "end: no stop word on a deleted session (standings.log)", log().slice(lD).split("\n").filter((l) => l.includes(nameD)).join(" | ").slice(0, 200));
+    // A deleted session: its seat goes at once (its bridge's own revoke), no stop word.
+    const nameD = `oc-${stamp}.d`;
+    const D = newSession("end-D");
+    prompt(D.id, `${standText(nameD)} Then answer READY and end your turn.`);
+    if (!(await waitSeat(nameD))) throw new Error("D: the model did not take the seat — a probe failure; run again");
+    await idle(D.id);
+    const lD = log().length;
+    const tD = Date.now();
+    const del = api("DELETE", `/api/session/${D.id}`);
+    let goneD = false;
+    while (!goneD && Date.now() - tD < deathMs / 2) {
+      await sleep(2000);
+      goneD = !seatId(await board(), nameD);
+    }
+    check(goneD, `end: a deleted session's seat goes at once (before ${deathMs / 2} ms)`, `${Math.round((Date.now() - tD) / 1000)} s · ${del.raw.slice(0, 80)}`);
+    check(!hasStop(nameD, log().slice(lD)), "end: no stop word on a deleted session (standings.log)", log().slice(lD).split("\n").filter((l) => l.includes(nameD)).join(" | ").slice(0, 200));
 
-  // A harness killed without a mark: L's seat stands until the death window, then goes.
-  await idle(L.id, 180);
-  const dK = daemonLog().length;
-  const lK = log().length;
-  const killed = new Promise((r) => serve.once("exit", r));
-  serve.kill("SIGKILL");
-  await Promise.race([killed, sleep(10_000)]);
-  delete env.OPENCODE_PASSWORD;
-  await sleep(deathMs / 2);
-  check(!!seatId(await board(), nameL), `end: before the death window (${deathMs} ms) the killed harness's seat stands`);
-  await sleep(deathMs / 2 + 20_000);
-  check(!seatId(await board(), nameL), "end: after the death window the killed harness's seat is gone");
-  const died = daemonLog().slice(dK).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
-  check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
-  check(!hasStop(nameL, log().slice(lK)), "end: no stop on a death (standings.log)");
-  await startServe();
-  await sleep(15_000); // the plugin's tool list
+    // A harness killed without a mark: L's seat stands until the death window, then goes.
+    await idle(L.id, 180);
+    const dK = daemonLog().length;
+    const lK = log().length;
+    const killed = new Promise((r) => serve.once("exit", r));
+    serve.kill("SIGKILL");
+    await Promise.race([killed, sleep(10_000)]);
+    delete env.OPENCODE_PASSWORD;
+    await sleep(deathMs / 2);
+    check(!!seatId(await board(), nameL), `end: before the death window (${deathMs} ms) the killed harness's seat stands`);
+    await sleep(deathMs / 2 + 20_000);
+    check(!seatId(await board(), nameL), "end: after the death window the killed harness's seat is gone");
+    const died = daemonLog().slice(dK).split("\n").find((l) => /without an announced absence — closing its seats/.test(l));
+    check(!!died, "end: the daemon closes it as a death (daemon.log)", died?.slice(0, 200) ?? "none");
+    check(!hasStop(nameL, log().slice(lK)), "end: no stop on a death (standings.log)");
+    await startServe();
+    await sleep(15_000); // the plugin's tool list
+  } else report.push(OUT_AGENT_END);
 
   // The satellite layer (graph @nks/nks-dev, node #7505): a child session stands as the root's
   // satellite; the launcher's revoke takes the satellite seat off on the server, and a word to
