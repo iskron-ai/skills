@@ -11,27 +11,39 @@ export type CutOutcome = string | null;
 
 /** How long the bridge is given to take the stop's outcome. */
 const HALTED_MS = 10_000;
+/** Past the bridge's own wait for the harness (20 s) its order is answered without us. */
+const ANSWER_CAP_MS = 30_000;
 
 /**
  * A "stopped" event of a stop order (`order` — its id): once the interrupt of the session and its
- * descendants ended, the bridge that said it hears method("halted") {order, ok, code?}.
+ * descendants ended, the bridge that said it hears method("halted") {order, ok, code?}. Settles
+ * when that answer is given (or the cap passed): only then may the bridge go down.
  */
 export function answerHalt(
   bridge: Bridge | null,
   ev: { order?: unknown } | undefined,
   outcome: () => Promise<CutOutcome>,
-): void {
+): Promise<void> {
   const order = ev?.order;
-  if (typeof order !== "string") return;
-  void outcome().then((code) =>
+  if (typeof order !== "string") return Promise.resolve();
+  const answered = outcome().then((code) =>
     bridge
       ?.request(
         method("halted"),
         { order, ok: code === null, ...(code ? { code } : {}) },
         { timeoutMs: HALTED_MS, service: true },
       )
-      .catch(() => {}),
+      .then(
+        () => {},
+        () => {},
+      ),
   );
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<void>((done) => {
+    t = setTimeout(done, ANSWER_CAP_MS);
+    (t as { unref?: () => void }).unref?.();
+  });
+  return Promise.race([answered, cap]).finally(() => clearTimeout(t));
 }
 
 /** How many times a stop's refused interrupt is tried, and how long apart. */

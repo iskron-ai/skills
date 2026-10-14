@@ -118,15 +118,19 @@ export async function setupTools(
         // Taken off by its owner (#7439): the hearing watchdog no longer raises this session's seat.
         if (kind === "stopped" && slot.session) keeper.forget(slot.session);
         // Only a satellite child is a lead (#6550 item 4); a child on a plain bridge is one run (children.ts).
-        const over =
-          !!slot.child &&
-          !!slot.satelliteOf &&
-          !!slot.session &&
-          leads.heard(slot.session, kind, slot.place);
-        // An ended lead gets no channel words — but a stop still interrupts its turn (channel.ts).
-        if (!over || kind === "stopped") relay(slot.session, params, !!slot.child);
-        // A stop by an order: the bridge answers the order once the interrupt ended (cuts.ts).
-        if (kind === "stopped") answerHalt(slot.bridge, params?.data, () => halted(slot.session));
+        const lead = !!slot.child && !!slot.satelliteOf && !!slot.session;
+        const session = slot.session as string;
+        if (kind === "stopped") {
+          // An ended lead gets no channel words — but a stop still interrupts its turn (channel.ts).
+          relay(slot.session, params, !!slot.child);
+          // A stop by an order: the bridge answers the order once the interrupt ended (cuts.ts),
+          // and only then may a lead's end take its bridge down — the answer goes by that bridge.
+          const answered = answerHalt(slot.bridge, params?.data, () => halted(slot.session));
+          if (lead) void answered.then(() => leads.heard(session, kind, slot.place));
+          return;
+        }
+        const over = lead && leads.heard(session, kind, slot.place);
+        if (!over) relay(slot.session, params, !!slot.child);
       },
       (e) => {
         // A holding bridge exited against our will — a word into the session, not a log line (#5140).

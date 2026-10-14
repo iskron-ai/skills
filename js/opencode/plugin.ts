@@ -34,6 +34,8 @@ export type Context = Plugin.Context;
 
 /** How often an instance looks for its children under a stop it was not told of (another server, a reload). */
 const SWEEP_MS = 5_000;
+/** The refusal of an order's stop when the channel half (the interrupt) did not come up. */
+const CHANNEL_DOWN = "channel_down";
 const nothing = (): void => {};
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
@@ -120,7 +122,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       rootOf,
       (s) => flushUsage(s),
       closed,
-      (s) => ch?.halted(s) ?? Promise.resolve(null),
+      // No channel half — no interrupt: the order's stop is refused, not reported executed.
+      (s) => (ch ? ch.halted(s) : Promise.resolve(CHANNEL_DOWN)),
     );
   } catch (e) {
     say(words(PLUGIN).notRaised((e as Error).message), "error");

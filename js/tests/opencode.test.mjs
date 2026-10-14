@@ -406,7 +406,20 @@ async function plugin(env = {}, ctxOpts = {}) {
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
   const restore = captureStderr(rec.stderr);
-  rec.cleanup = await def.setup(rec.ctx);
+  // channelDown — the channel half fails to come up: setupChannel throws (plugin.ts keeps the rest).
+  const RealSet = globalThis.Set;
+  if (ctxOpts.channelDown)
+    globalThis.Set = class extends RealSet {
+      constructor(...args) {
+        if (/setupChannel/.test(new Error().stack)) throw new Error("channel half down");
+        super(...args);
+      }
+    };
+  try {
+    rec.cleanup = await def.setup(rec.ctx);
+  } finally {
+    globalThis.Set = RealSet;
+  }
   rec.said = () => rec.stderr.join("");
   // Captures nest: an instance stopped while a later one still listens keeps its capture
   // (cleanup), and gives it back after the later one's stop (restore).
@@ -1493,6 +1506,31 @@ for (const refused of [false, true])
       await rec.stop();
     }
   });
+
+// Review of #7519, second round in case №669: with the channel half down there is no interrupt,
+// yet the plugin confirmed the order's stop as executed — a false stopped. It is a refusal.
+test("the stop by an order with the channel half down is refused to the bridge, not confirmed", async () => {
+  const calls = join(SANDBOX, "halted-down.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("halted-down", { FB_CALLS: calls });
+  const rec = await plugin(b.env, { channelDown: true });
+  const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+  try {
+    assert.match(rec.said(), /channel half down/, "the channel half did not come up");
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-down");
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-down" }),
+    );
+    await until(() => halted().length === 1, "the answer to the bridge", 8000);
+    assert.deepEqual(halted()[0].arguments, { order: "ord-down", ok: false, code: "channel_down" });
+    assert.equal(rec.interrupts.length, 0, "no interrupt without the channel half");
+  } finally {
+    await rec.stop();
+  }
+});
 
 test("a stale burst is one prompt into the holder's session, bodies included", async () => {
   const b = bridgeEnv("stale");
@@ -4172,11 +4210,19 @@ const SUB = "host.repo.opus-5.sub-1";
 const SUB_PLACE = { ...ROOT_PLACE, name: SUB };
 
 /** A root holding a place and a child standing as its satellite on a bridge of its own; dir — the instance's and both sessions' directory. */
-async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir = undefined) {
+async function leadChild(
+  name,
+  env = {},
+  root = ROOT_PLACE,
+  subName = SUB,
+  dir = undefined,
+  ctxOpts = {},
+) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
+    ...ctxOpts,
     location: dir ? { directory: dir } : undefined,
     sessions: [
       { id: "root", location: { directory: dir ?? "/work/root" } },
@@ -4193,7 +4239,7 @@ async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir =
     const sub = { ...root, name: subName };
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
     await until(() => /мост держит стояние k-sub/.test(rec.said()), "the child's held word");
-    return { b, rec, rootPid, childPid, sent: () => sentCalls(calls) };
+    return { b, rec, rootPid, childPid, calls, sent: () => sentCalls(calls) };
   } catch (e) {
     await rec.stop(); // a failed setup must not keep the probe's process alive
     throw e;
@@ -4436,6 +4482,41 @@ for (const [stop, cut, hears] of [
       await rec.stop();
     }
   });
+
+// Review of #7519, second round in case №669: a stop order to a lead's satellite seat ended the
+// lead at once and took its bridge down before the interrupt answered — the confirmation had no
+// pipe left. The interrupt and its iskron/halted come first, the lead's bridge goes after.
+test("a stop order to a lead's satellite seat is confirmed by its bridge before that bridge goes down", async () => {
+  let open;
+  const faults = { interruptGate: new Promise((r) => (open = r)) };
+  const lead = await leadChild("order-satellite", {}, ROOT_PLACE, SUB, undefined, { faults });
+  const { b, rec, childPid, calls } = lead;
+  const named = (name) => callsIn(calls).filter((c) => c.name === name);
+  try {
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-sat" }),
+    );
+    await until(() => rec.interrupts.some((i) => i.sessionID === "child"), "the child's interrupt");
+    await delay(400);
+    assert.ok(alive(childPid), "the lead's bridge lives while its interrupt is unanswered");
+    assert.equal(named("iskron/end").length, 0, "the lead's run is not ended before the answer");
+    assert.equal(
+      named("iskron/halted").length,
+      0,
+      "no confirmation while the interrupt is unanswered",
+    );
+    open();
+    await until(() => named("iskron/halted").length === 1, "the confirmation", 8000);
+    assert.deepEqual(named("iskron/halted")[0].arguments, { order: "ord-sat", ok: true });
+    assert.equal(named("iskron/halted")[0].pid, childPid, "by the lead's own bridge");
+    await until(() => !alive(childPid), "the lead's bridge down after the confirmation", 8000);
+  } finally {
+    open();
+    await rec.stop();
+  }
+});
 
 // Review of #7440, third round: the delivery ban lived in one plugin instance's memory, while
 // OpenCode loads an instance per location — a child in another folder, served by another

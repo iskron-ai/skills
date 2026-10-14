@@ -26,7 +26,23 @@ export interface OrderEntry {
   /** the api took the answer of `state` (or said the order is closed) */
   acked: boolean;
   at: number;
+  /** the process executing it while accepted */
+  pid?: number;
 }
+
+/** The bridge that took the order ended before its outcome: the stop was not seen through. */
+export const RESTARTED = "bridge_restarted";
+
+const alive = (pid: number | undefined): boolean => {
+  if (pid === process.pid) return true;
+  if (typeof pid !== "number") return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 /** A journal entry outlives any window the api keeps an order open in. */
 const KEEP_MS = 24 * 3600_000;
@@ -96,7 +112,11 @@ export function writeSince(base: string, seq: number): void {
   } catch {}
 }
 
-/** Outcomes the api has not taken yet; entries past their term go. */
+/**
+ * Outcomes the api has not taken yet; entries past their term go. An accepted whose process is
+ * gone (the daemon fell between the stop and its outcome) gets the outcome unknown once, on disk
+ * — the harness is not asked again; from there it is repeated as any outcome.
+ */
 export function unanswered(now = Date.now()): OrderEntry[] {
   let names: string[];
   try {
@@ -112,6 +132,11 @@ export function unanswered(now = Date.now()): OrderEntry[] {
       try {
         unlinkSync(join(dir(), n));
       } catch {}
+      continue;
+    }
+    if (!isTerminal(e.state) && !alive(e.pid)) {
+      const end: OrderEntry = { ...e, state: "unknown", reason: RESTARTED, acked: false };
+      if (writeOrder(end)) out.push(end);
       continue;
     }
     if (isTerminal(e.state) && !e.acked) out.push(e);

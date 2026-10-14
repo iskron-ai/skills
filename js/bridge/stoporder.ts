@@ -92,6 +92,7 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
     base,
     acked: false,
     at: Date.now(),
+    pid: process.pid,
   };
   if (!holdsSeat(o.standing_id, true))
     return finish({ ...entry, state: "refused", reason: "seat_not_held" });
@@ -103,6 +104,7 @@ async function execute(o: Order, base: string, framed: boolean): Promise<void> {
   if (accepted) await Promise.race([accepted, sleep(ACCEPT_CAP_MS)]);
   const end = await stopOf(o, entry);
   // …but the outcome never overtakes the accepted: it waits for its answer (bounded by its timeout).
+  // An accepted the api takes after that timeout, past the outcome, is a harmless 200 idempotent_noop.
   await accepted;
   await finish(end);
 }

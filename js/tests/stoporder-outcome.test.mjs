@@ -3,16 +3,17 @@
 // capability, the OpenCode plugin) answers method("halted"), its refusal is failed with its
 // code, its silence unknown; the journal refusing an entry is said aloud, the stop executed
 // all the same and the outcome sent without accepted; the outcome never overtakes the
-// accepted's answer; the open orders read pages by next_since from the cursor in the home.
+// accepted's answer; an accepted whose bridge ended before the outcome is answered unknown by
+// the next; the open orders read pages by next_since from the cursor in the home.
 //
 // ISKRON_BRIDGE_PATH aims the probe at any copy of the bridge.
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { saidKind, stand, textOf, until } from "./ownseat-kit.mjs";
-import { acks, NKS, pause, seatId, standing, states } from "./stoporder-kit.mjs";
+import { acks, NKS, orderOnDisk, pause, seatId, standing, states } from "./stoporder-kit.mjs";
 
 process.env.ISKRON_ORDER_HALT_MS = "1500"; // the bridges of this file wait so long for the harness
 const HALTS = { experimental: { "iskron/halts": {} } };
@@ -71,6 +72,25 @@ test("the outcome never overtakes a slow accepted", async (t) => {
   await until(() => saidKind(b, "stopped"), "the stop word");
   await until(() => acks(fake, "ord-s").length === 2, "both answers");
   assert.deepEqual(states(fake, "ord-s"), ["accepted", "stopped"]);
+});
+
+test("an accepted left by a bridge that ended before the outcome: the next bridge answers unknown", async (t) => {
+  const { fake, dir, b } = await standing(t);
+  await fake.control({ stop_order: { id: "ord-r", standing_id: "gone-seat", frame: false } });
+  fake.state.orders.list.get("ord-r").state = "accepted";
+  mkdirSync(join(dir, "orders"), { recursive: true });
+  const base = `${new URL(fake.mcpUrl).origin}/api`;
+  const left = { id: "ord-r", standing: "gone-seat", state: "accepted", base, acked: false };
+  writeFileSync(
+    join(dir, "orders", "ord-r.json"),
+    JSON.stringify({ ...left, at: Date.now(), pid: 2 ** 22 + 7 }),
+  );
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 0, standings: [] }) });
+  await until(() => acks(fake, "ord-r").length, `the outcome:\n${b.stderr}`);
+  assert.deepEqual(states(fake, "ord-r"), ["unknown"]);
+  assert.equal(acks(fake, "ord-r")[0].reason_code, "bridge_restarted");
+  assert.equal(orderOnDisk(dir, "ord-r").state, "unknown");
+  assert.ok(!saidKind(b, "stopped"), "the harness is not asked again");
 });
 
 test("the read pages past 200 open orders to the bridge's own", async (t) => {
