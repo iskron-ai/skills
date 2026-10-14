@@ -352,6 +352,7 @@ const ENV_KEYS = [
   "FB_DIE_ONCE",
   "FB_ENV",
   "FB_END_FAILED",
+  "FB_END_REVOKED",
   "FB_END_DELAY_MS",
   "ISKRON_HARNESS_VERSION",
   "ISKRON_SKILLS_ROOT",
@@ -5489,6 +5490,58 @@ test("the launcher's revoke refused for a missing role is loud — «не най
     assert.match(word.content, /отпущен[\s\S]*место снято/);
   } finally {
     await gone.rec.stop();
+  }
+});
+
+// #7599 (live run): the child's bridge revoked its seat at its run's end, then the launcher's
+// revoke met «no standing named …» and the plugin said «место НЕ снято… повтори», nesting the
+// platform's list of the role's seats with a revoke for the launcher's own main seat. A seat the
+// child's bridge revoked itself is not revoked again; a real refusal names only the satellite.
+const ROLE_SEATS = `\nМеста роли #931:\n- ${ROOT_PLACE.name} (id 77): iskron_channel(action="revoke", channel="77")`;
+
+test("the launcher's revoke after the child's bridge revoked its seat itself: no second revoke, «отпущен», no «НЕ снято» and no foreign call", async () => {
+  const { b, rec, rootPid, childPid, sent } = await leadChild("lead-release-self-off", {
+    FB_END_REVOKED: SUB,
+  });
+  try {
+    writeFileSync(`${b.reply}.iskron_channel`, `__ERROR__no standing named ${SUB}${ROLE_SEATS}`);
+    const word = await rec.call(
+      "iskron_channel",
+      { realm: "nks-dev", action: "revoke", standing: SUB },
+      "root",
+    );
+    assert.match(word.content, /отпущен[\s\S]*место снято/);
+    await until(() => !alive(childPid), "the child's bridge to go");
+    await until(() => ends(rec).length === 1, "the end in the parent");
+    await delay(300);
+    const launcher = sent().filter((c) => c.pid === rootPid && c.arguments.action === "revoke");
+    assert.deepEqual(launcher, [], "the seat its bridge revoked is not revoked again");
+    const words = rec.synthetics.filter((s) => s.sessionID === "root").map((s) => s.text);
+    assert.doesNotMatch(words.join("\n"), /НЕ снято|не снято|повтори|channel="77"/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a real refusal of the launcher's revoke is loud, and its hint names only the satellite — never the launcher's own seat from the platform's list", async () => {
+  const { b, rec } = await leadChild("lead-release-refused-list", { FB_END_FAILED: SUB });
+  try {
+    writeFileSync(
+      `${b.reply}.iskron_channel`,
+      `__REFUSAL__404 karta_not_found Роль #931 не найдена${ROLE_SEATS}`,
+    );
+    const err = await rec
+      .call("iskron_channel", { realm: "nks-dev", action: "revoke", standing: SUB }, "root")
+      .then(
+        () => assert.fail("the refusal must be loud"),
+        (e) => e,
+      );
+    assert.match(err.message, /место НЕ снято[\s\S]*Роль #931 не найдена/);
+    assert.match(err.message, new RegExp(`standing="${SUB.replace(/\./g, "\\.")}"`));
+    assert.doesNotMatch(err.message, /channel="77"|id 77/);
+    assert.doesNotMatch(err.message, /host\.repo\.opus-5(?!\.sub-1)/, "the launcher's own seat");
+  } finally {
+    await rec.stop();
   }
 });
 

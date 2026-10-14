@@ -1,9 +1,10 @@
-// The launcher's revoke of its lead subagent's seat (graph @nks/nks-dev, nodes #7505, #6593):
+// The launcher's revoke of its lead subagent's seat (graph @nks/nks-dev, nodes #7505, #6593, #7599):
 // the plugin ends the child first (leads.ts — the outcome to the parent, the child's bridge
 // leaves its cases, revokes and goes down), then the launcher's own revoke goes to the platform
 // by the launcher's bridge, the seat's role filled in. One word of the launcher takes the seat
-// off the board whatever the child's bridge managed; a seat already gone counts as taken off,
-// any other refusal is a loud refusal of the launcher's call, not a quiet "released".
+// off the board whatever the child's bridge managed; a seat the child's bridge revoked itself is
+// not revoked twice — the second call met only "no such seat" (#7599); a seat already gone counts
+// as taken off, any other refusal is a loud refusal of the launcher's call, not a quiet "released".
 import { refusalOf } from "../bridge/refusal.ts";
 import type { JsonRpcMessage } from "../bridge/types.ts";
 import type { Released } from "./leaddoors.ts";
@@ -21,11 +22,19 @@ const seatGone = (e: unknown): boolean => {
   );
 };
 
+/**
+ * The refusal's first line without the calls it suggests: the platform may list the role's
+ * other seats with a revoke for each — the launcher's own seat among them (#7599).
+ */
+const reason = (message: string): string =>
+  (message.split("\n").find((s) => s.trim()) ?? "").replace(/\b\w+\([^()]*\)/g, "…").trim();
+
 export async function revokeAsLauncher(
   freed: Released,
   args: Record<string, unknown>,
   call: (args: Record<string, unknown>) => Promise<unknown>,
 ): Promise<string> {
+  if (freed.off) return freed.word;
   const p = freed.place;
   const full = {
     ...args,
@@ -37,7 +46,7 @@ export async function revokeAsLauncher(
     return freed.word;
   } catch (e) {
     if (seatGone(e)) return freed.word;
-    const why = (e as Error).message;
+    const why = reason((e as Error).message);
     throw new Error(W().unreleased(p?.name ?? String(args.standing ?? ""), why), { cause: e });
   }
 }

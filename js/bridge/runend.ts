@@ -20,17 +20,23 @@ import { type Standing } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
+/** Satellite seats at the run's end: failed to revoke, and revoked by this bridge's own call. */
+export interface RunEnd {
+  failed: string[];
+  revoked: string[];
+}
+
 const R = scoped(() => ({
-  run: null as Promise<string[]> | null,
+  run: null as Promise<RunEnd> | null,
   /** the run's seats and busy address while a handover pause lasts */
   held: null as { places: Standing[]; addr: { url: string } | null } | null,
 }));
 
 /**
- * Release the session's seat; the answer — satellite seats that failed to revoke.
+ * Release the session's seat; the answer — satellite seats that failed to revoke and those it revoked.
  * handover — the daemon hands seats to a successor: a non-satellite seat stays open.
  */
-export function closeRun(why: string, handover: boolean): Promise<string[]> {
+export function closeRun(why: string, handover: boolean): Promise<RunEnd> {
   return (R.run ??= (async () => {
     // Socket and key go FIRST, before any network call: a harness killing us soon must not find a live key (graph @nks/nks-dev, node #4895).
     // Else the watchdog would follow a dead socket; case exits and revoke are session calls, no socket needed.
@@ -53,7 +59,10 @@ export function closeRun(why: string, handover: boolean): Promise<string[]> {
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && closing) await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    return failed;
+    const revoked = paused
+      ? []
+      : places.map((s) => s.name as string).filter((n) => !failed.includes(n));
+    return { failed, revoked };
   })());
 }
 
@@ -82,12 +91,15 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
   if (held.addr) await publishStatusTo(held.addr.url, "", 3000).catch(() => {});
 }
 
-/** The plugin's `end` method — only for a satellite not on pause: the answer — what failed to revoke. */
+/**
+ * The plugin's `end` method — only for a satellite not on pause: the answer — what failed to
+ * revoke and what this bridge revoked itself (the launcher's revoke then goes nowhere, #7599).
+ */
 export function localEnd(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
   if (msg?.method !== method("end")) return null;
   const answer = (result: unknown): JsonRpcMessage => ({ jsonrpc: "2.0", id: msg.id, result });
   if (!CFG.satellite || suspended()) return Promise.resolve(answer({ ended: false }));
   return closeRun(words(RUN_END).pluginEnd(), false)
-    .then((failed) => answer({ ended: true, failed }))
+    .then(({ failed, revoked }) => answer({ ended: true, failed, revoked }))
     .catch((e: Error) => answer({ ended: false, word: e.message }));
 }
