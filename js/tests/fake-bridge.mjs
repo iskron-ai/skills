@@ -49,6 +49,7 @@
 //   FB_INIT_CAPS  file to append the capabilities of every initialize to, one JSON line each.
 //   FB_ENV        file to append one JSON line to at start: the ISKRON_HARNESS_VERSION
 //                 and ISKRON_SKILLS_ROOT the launcher handed this bridge (null — none), #6226.
+//   FB_PULSE_REFUSE file whose presence refuses the next iskron/pulse once (removed on it).
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -379,12 +380,22 @@ process.stdin.on("data", (chunk) => {
       ok(msg.id, { taken: true });
     } else if (msg.method === "iskron/pulse") {
       // The session's word on its turn for the seat's pulse (js/bridge/pulse.ts, #7529).
+      // FB_PULSE_REFUSE: a file whose presence makes this one word refused — and it is
+      // removed, so the next word is taken; the refused one is logged as iskron/pulse:refused.
+      const refuse = process.env.FB_PULSE_REFUSE && existsSync(process.env.FB_PULSE_REFUSE);
+      if (refuse) unlinkSync(process.env.FB_PULSE_REFUSE);
       if (process.env.FB_CALLS)
         appendFileSync(
           process.env.FB_CALLS,
-          JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
+          JSON.stringify({
+            name: refuse ? `${msg.method}:refused` : msg.method,
+            arguments: msg.params,
+            pid: process.pid,
+          }) + "\n",
         );
-      ok(msg.id, { taken: true });
+      if (refuse)
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "pulse refused" } });
+      else ok(msg.id, { taken: true });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).
