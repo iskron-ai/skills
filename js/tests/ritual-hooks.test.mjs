@@ -50,7 +50,12 @@ const cases = [
   ["gh pr merge 12 --squash --delete-branch", "", false, true],
   ["gh pr merge 12 --squash 2>&1 && git checkout main && git pull", "", false, true],
   // push and merge in one chain wake both: two hooks in Claude Code, two words in OpenCode
-  ["git push origin HEAD && gh pr merge 12 --squash", "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  HEAD -> feat/x", true, true],
+  [
+    "git push origin HEAD && gh pr merge 12 --squash",
+    "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  HEAD -> feat/x",
+    true,
+    true,
+  ],
   // a pipe takes the status away — only a printed confirmation speaks then
   ["gh pr merge 12 --squash | tail -3", "", false, false],
   [
