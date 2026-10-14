@@ -31,6 +31,12 @@ export const ID_PREFIX = `${PRODUCT}-`;
 export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 
 /**
+ * Ключ `capabilities.experimental` клиента моста, который подтверждает исполнение стопа
+ * харнесом методом `method("halted")` (плагин OpenCode): приказ останова ждёт его исхода.
+ */
+export const HALTS_CAPABILITY = `${PRODUCT}/halts`;
+
+/**
  * Ключи протокола сервера, которые из имени продукта не выводятся: их значение
  * называет поверхность своего сервера (отказ api — `_meta[refusal]`).
  */

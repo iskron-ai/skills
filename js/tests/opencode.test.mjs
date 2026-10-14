@@ -371,6 +371,7 @@ const ENV_KEYS = [
   "ISKRON_WAKE_MS",
   "ISKRON_OPENCODE_PENDING_MS",
   "ISKRON_OPENCODE_WAKE_HOLD_MS",
+  "ISKRON_OPENCODE_HALT_CAP_MS",
 ];
 
 let seq = 0;
@@ -406,7 +407,20 @@ async function plugin(env = {}, ctxOpts = {}) {
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
   const restore = captureStderr(rec.stderr);
-  rec.cleanup = await def.setup(rec.ctx);
+  // channelDown — the channel half fails to come up: setupChannel throws (plugin.ts keeps the rest).
+  const RealSet = globalThis.Set;
+  if (ctxOpts.channelDown)
+    globalThis.Set = class extends RealSet {
+      constructor(...args) {
+        if (/setupChannel/.test(new Error().stack)) throw new Error("channel half down");
+        super(...args);
+      }
+    };
+  try {
+    rec.cleanup = await def.setup(rec.ctx);
+  } finally {
+    globalThis.Set = RealSet;
+  }
   rec.said = () => rec.stderr.join("");
   // Captures nest: an instance stopped while a later one still listens keeps its capture
   // (cleanup), and gives it back after the later one's stop (restore).
@@ -765,8 +779,8 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
 });
 
 // Поля ответа по запросу (#6637, #6731): плагин объявляет iskron/structured мосту —
-// иначе мост их срезает, как харнесу без ключа.
-test("the plugin asks the bridge for response fields in its handshake", async () => {
+// иначе мост их срезает, как харнесу без ключа; iskron/halts — он подтверждает стоп приказа (#7519).
+test("the plugin asks the bridge for response fields in its handshake and declares its halts", async () => {
   const caps = join(SANDBOX, "fields.caps");
   writeFileSync(caps, "");
   const b = bridgeEnv("fields", { FB_INIT_CAPS: caps });
@@ -774,7 +788,11 @@ test("the plugin asks the bridge for response fields in its handshake", async ()
   try {
     await until(() => readFileSync(caps, "utf8").trim(), "the handshake", 8000);
     const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
-    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
+    assert.deepEqual(
+      seen[0],
+      { experimental: { "iskron/structured": {}, "iskron/halts": {} } },
+      JSON.stringify(seen),
+    );
   } finally {
     await rec.stop();
   }
@@ -1418,6 +1436,102 @@ for (const busy of [true, false])
       await rec.stop();
     }
   });
+
+// #7519: a stop order executed by the bridge says the same "stopped" as the owner's 4001 — no
+// close code, the order's reason — and the plugin halts the session the same way.
+test("the stop by an order halts the session as the stop by taking the seat off", async () => {
+  const b = bridgeEnv("stopped-order");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-order");
+    rec.emit({ type: "session.status", data: { sessionID: "s-order", status: { type: "busy" } } });
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    const pid = pidOf(b.log);
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text }),
+    );
+    await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+    assert.deepEqual(rec.interrupts[0], { sessionID: "s-order", resume: false });
+    appendFileSync(
+      `${b.events}.${pid}`,
+      event("frame", { frame: { type: "message", id: "late-o", body: "после приказа" } }),
+    );
+    await delay(400);
+    assert.equal(rec.prompts.length, 0, "nothing wakes the stopped session");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #7519, review in case №669: the order's outcome is the executed interrupt — the plugin tells
+// its bridge iskron/halted only once the interrupt answered; a refused one is a refusal with code.
+for (const refused of [false, true])
+  test(`the stop by an order is confirmed to the bridge only after the interrupt ${refused ? "is refused for good" : "answered"}`, async () => {
+    const calls = join(SANDBOX, `halted-${refused}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-${refused}`, { FB_CALLS: calls });
+    let open;
+    const interruptGate = new Promise((r) => (open = r));
+    const faults = { interruptGate, interruptFails: refused ? Infinity : 0 };
+    const rec = await plugin(b.env, { faults });
+    const halted = () =>
+      readFileSync(calls, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((c) => c.name === "iskron/halted");
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-halt");
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pidOf(b.log)}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-9" }),
+      );
+      await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+      await delay(300);
+      assert.equal(halted().length, 0, "no confirmation while the interrupt is unanswered");
+      open();
+      await until(() => halted().length === 1, "the confirmation", 8000);
+      assert.deepEqual(
+        halted()[0].arguments,
+        refused
+          ? { order: "ord-9", ok: false, code: "interrupt_refused" }
+          : { order: "ord-9", ok: true },
+      );
+      if (refused) assert.equal(rec.interrupts.length, 3, "the refusal is final after the tries");
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// Review of #7519, second round in case №669: with the channel half down there is no interrupt,
+// yet the plugin confirmed the order's stop as executed — a false stopped. It is a refusal.
+test("the stop by an order with the channel half down is refused to the bridge, not confirmed", async () => {
+  const calls = join(SANDBOX, "halted-down.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("halted-down", { FB_CALLS: calls });
+  const rec = await plugin(b.env, { channelDown: true });
+  const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+  try {
+    assert.match(rec.said(), /channel half down/, "the channel half did not come up");
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-down");
+    const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-down" }),
+    );
+    await until(() => halted().length === 1, "the answer to the bridge", 8000);
+    assert.deepEqual(halted()[0].arguments, { order: "ord-down", ok: false, code: "channel_down" });
+    assert.equal(rec.interrupts.length, 0, "no interrupt without the channel half");
+  } finally {
+    await rec.stop();
+  }
+});
 
 test("a stale burst is one prompt into the holder's session, bodies included", async () => {
   const b = bridgeEnv("stale");
@@ -4097,11 +4211,19 @@ const SUB = "host.repo.opus-5.sub-1";
 const SUB_PLACE = { ...ROOT_PLACE, name: SUB };
 
 /** A root holding a place and a child standing as its satellite on a bridge of its own; dir — the instance's and both sessions' directory. */
-async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir = undefined) {
+async function leadChild(
+  name,
+  env = {},
+  root = ROOT_PLACE,
+  subName = SUB,
+  dir = undefined,
+  ctxOpts = {},
+) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const b = bridgeEnv(name, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
+    ...ctxOpts,
     location: dir ? { directory: dir } : undefined,
     sessions: [
       { id: "root", location: { directory: dir ?? "/work/root" } },
@@ -4118,7 +4240,7 @@ async function leadChild(name, env = {}, root = ROOT_PLACE, subName = SUB, dir =
     const sub = { ...root, name: subName };
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: sub }));
     await until(() => /мост держит стояние k-sub/.test(rec.said()), "the child's held word");
-    return { b, rec, rootPid, childPid, sent: () => sentCalls(calls) };
+    return { b, rec, rootPid, childPid, calls, sent: () => sentCalls(calls) };
   } catch (e) {
     await rec.stop(); // a failed setup must not keep the probe's process alive
     throw e;
@@ -4362,6 +4484,41 @@ for (const [stop, cut, hears] of [
     }
   });
 
+// Review of #7519, second round in case №669: a stop order to a lead's satellite seat ended the
+// lead at once and took its bridge down before the interrupt answered — the confirmation had no
+// pipe left. The interrupt and its iskron/halted come first, the lead's bridge goes after.
+test("a stop order to a lead's satellite seat is confirmed by its bridge before that bridge goes down", async () => {
+  let open;
+  const faults = { interruptGate: new Promise((r) => (open = r)) };
+  const lead = await leadChild("order-satellite", {}, ROOT_PLACE, SUB, undefined, { faults });
+  const { b, rec, childPid, calls } = lead;
+  const named = (name) => callsIn(calls).filter((c) => c.name === name);
+  try {
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-sat" }),
+    );
+    await until(() => rec.interrupts.some((i) => i.sessionID === "child"), "the child's interrupt");
+    await delay(400);
+    assert.ok(alive(childPid), "the lead's bridge lives while its interrupt is unanswered");
+    assert.equal(named("iskron/end").length, 0, "the lead's run is not ended before the answer");
+    assert.equal(
+      named("iskron/halted").length,
+      0,
+      "no confirmation while the interrupt is unanswered",
+    );
+    open();
+    await until(() => named("iskron/halted").length === 1, "the confirmation", 8000);
+    assert.deepEqual(named("iskron/halted")[0].arguments, { order: "ord-sat", ok: true });
+    assert.equal(named("iskron/halted")[0].pid, childPid, "by the lead's own bridge");
+    await until(() => !alive(childPid), "the lead's bridge down after the confirmation", 8000);
+  } finally {
+    open();
+    await rec.stop();
+  }
+});
+
 // Review of #7440, third round: the delivery ban lived in one plugin instance's memory, while
 // OpenCode loads an instance per location — a child in another folder, served by another
 // instance, woke on the next frame after its root's stop. The stop goes by seats: the
@@ -4412,6 +4569,166 @@ test("the owner's stop of a root in one instance takes down its child's satellit
     await A.stop();
   }
 });
+
+// Review of #7519, fourth round in case №669: the order's confirmation waited only for the
+// interrupts of its own instance — a child in another folder, cut by that folder's instance,
+// was still running (or its interrupt refused for good) when the bridge heard stopped (#7510).
+for (const refused of [false, true])
+  test(`a stop order to a root is confirmed only after its child's interrupt in another folder's instance ${refused ? "is refused for good" : "answered"}`, async () => {
+    const calls = join(SANDBOX, `halted-two-${refused}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-two-${refused}`, { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+    const sessions = [
+      { id: "root", location: LOC_A },
+      { id: "child", parentID: "root", location: LOC_B },
+    ];
+    let open;
+    const faults = {
+      interruptGate: new Promise((r) => (open = r)),
+      interruptFails: refused ? Infinity : 0,
+    };
+    const A = await plugin(b.env, { location: LOC_A, sessions });
+    const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true, faults });
+    const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+    try {
+      await until(
+        () => A.tools().has("iskron_case") && B.tools().has("iskron_case"),
+        "tools",
+        8000,
+      );
+      await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+      const rootPid = callsIn(calls).at(-1).pid;
+      await rootHolds(A, b, { pid: rootPid });
+      await B.call("iskron_stand", { realm: "nks-dev" }, "child");
+      const childPid = callsIn(calls).at(-1).pid;
+      appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+      await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+      const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${rootPid}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-two" }),
+      );
+      await until(() => A.interrupts.length === 1, "the root's interrupt");
+      await until(() => B.interrupts.length === 1, "the child's interrupt in its own instance");
+      await delay(400);
+      assert.equal(halted().length, 0, "no confirmation while the child's interrupt is unanswered");
+      open();
+      await until(() => halted().length === 1, "the confirmation", 8000);
+      assert.deepEqual(
+        halted()[0].arguments,
+        refused
+          ? { order: "ord-two", ok: false, code: "interrupt_refused" }
+          : { order: "ord-two", ok: true },
+      );
+      assert.equal(halted()[0].pid, rootPid, "by the root's bridge");
+      if (refused)
+        assert.equal(B.interrupts.length, 3, "the child's refusal is final after the tries");
+    } finally {
+      open();
+      await B.stop();
+      await A.stop();
+    }
+  });
+
+// Review of #7519, fifth round in case №669: the confirmation read the descendants once, before
+// its wait — a child born while it waited was not waited for, the bridge heard stopped first.
+test("a stop order's confirmation waits for a child born while it waits", async () => {
+  const calls = join(SANDBOX, "halted-late.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("halted-late", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
+  const sessions = [
+    { id: "root-late", location: LOC_A },
+    { id: "child-late", parentID: "root-late", location: LOC_B },
+    { id: "late", parentID: "root-late", location: LOC_A },
+  ];
+  let openChild, openLate;
+  const faultsA = {};
+  const faultsB = { interruptGate: new Promise((r) => (openChild = r)) };
+  const A = await plugin(b.env, { location: LOC_A, sessions, faults: faultsA });
+  const B = await plugin(b.env, { location: LOC_B, sessions, keepMarker: true, faults: faultsB });
+  const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+  try {
+    await until(() => A.tools().has("iskron_case") && B.tools().has("iskron_case"), "tools", 8000);
+    await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root-late");
+    const rootPid = callsIn(calls).at(-1).pid;
+    await rootHolds(A, b, { pid: rootPid });
+    await B.call("iskron_stand", { realm: "nks-dev" }, "child-late");
+    const childPid = callsIn(calls).at(-1).pid;
+    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
+    await until(() => /мост держит стояние k-sub/.test(B.said()), "the child's held word");
+    const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+    appendFileSync(
+      `${b.events}.${rootPid}`,
+      event("stopped", { key: "k", reason: "revoked:person", text, order: "ord-late" }),
+    );
+    await until(() => A.interrupts.length === 1, "the root's interrupt");
+    await until(() => B.interrupts.length === 1, "the child's interrupt in its own instance");
+    faultsA.interruptGate = new Promise((r) => (openLate = r));
+    A.emit({ type: "session.created", data: { sessionID: "late", parentID: "root-late" } });
+    await delay(200);
+    openChild();
+    await until(
+      () => A.interrupts.some((i) => i.sessionID === "late"),
+      "the late child's interrupt",
+      8000,
+    );
+    await delay(400);
+    assert.equal(
+      halted().length,
+      0,
+      "no confirmation while the late child's interrupt is unanswered",
+    );
+    openLate();
+    await until(() => halted().length === 1, "the confirmation", 8000);
+    assert.deepEqual(halted()[0].arguments, { order: "ord-late", ok: true });
+  } finally {
+    openChild();
+    openLate?.();
+    await B.stop();
+    await A.stop();
+  }
+});
+
+// The same round: the cap ended the confirmation but left its wait in the process's registry,
+// past the instance's stop too — a descendant nobody cuts held it for good.
+for (const how of ["cap", "stop"])
+  test(`a stop order's wait for an interrupt leaves the process's registry ${how === "cap" ? "past the confirmation's cap" : "with its instance's stop"}`, async () => {
+    const id = `root-wait-${how}`;
+    const calls = join(SANDBOX, `halted-wait-${how}.calls`);
+    writeFileSync(calls, "");
+    const b = bridgeEnv(`halted-wait-${how}`, {
+      FB_CALLS: calls,
+      FB_TOOLS: LEAD_TOOLS,
+      ...(how === "cap" ? { ISKRON_OPENCODE_HALT_CAP_MS: 300 } : {}),
+    });
+    let open;
+    const faults = { interruptGate: new Promise((r) => (open = r)) };
+    const A = await plugin(b.env, { location: LOC_A, sessions: [{ id, location: LOC_A }], faults });
+    const waits = () => globalThis.__iskronCutWaiters?.get(id)?.size ?? 0;
+    let down = false;
+    try {
+      await until(() => A.tools().has("iskron_case"), "tools", 8000);
+      await A.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, id);
+      const pid = callsIn(calls).at(-1).pid;
+      await rootHolds(A, b, { pid });
+      const text = "место снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("stopped", { key: "k", reason: "revoked:person", text, order: `ord-${how}` }),
+      );
+      await until(() => A.interrupts.length === 1, "the root's interrupt");
+      await until(() => waits() === 1, "the confirmation waits for the interrupt");
+      if (how === "cap") await until(() => waits() === 0, "no wait past the cap", 3000);
+      else {
+        down = true;
+        await A.stop();
+        assert.equal(waits(), 0, "no wait of a stopped instance");
+      }
+    } finally {
+      open();
+      if (!down) await A.stop();
+    }
+  });
 
 // The ban survives a plugin reload: the next instance reads it from disk, and nothing reaches
 // the stopped session until it stands again by an explicit call (held).

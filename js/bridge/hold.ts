@@ -434,6 +434,7 @@ function openHolder(url: string, key: string): void {
       onFrame: function onFrame(raw, frame) {
         void Promise.resolve(stampOrigin(frame)).then((full) => {
           if (full?.type === "standing_ended") return E.stop?.(key, 0, "", full); // one seat taken off (stophold.ts)
+          if (E.order?.(url, full)) return; // a stop frame is the bridge's, never the agent's (stoporder.ts)
           const primary = held();
           if (!primary) return H.door ? deliverTo(H.door, raw, frame, full) : undefined; // socket without a standing (env)
           // hello names the channel's places: their ids and canonical graphs (#5838).
