@@ -51,7 +51,7 @@ import { stoppedSince, stopsNow } from "./holdstate.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
-import { clearSeatModel } from "./modelclear.ts";
+import { clearingRegister } from "./modelclear.ts";
 import {
   deriveParts,
   fitName,
@@ -225,15 +225,9 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name);
   // The session directory goes into the hold record: a re-raised bridge returns the seat by it (#5140).
   noteStandCwd(cwd);
-
   const here = () => placeFields({ realm, karta, name }, true); // seat fields on every registration (#5174)
-  let modelKept: string | null = null; // the earlier model's PATCH refused: said aloud, the stand stands
-  const register = async () => {
-    const r = await call(tool("channel"), { action: "register", realm, karta, name, ...here() });
-    if (!r.isError) modelKept = await clearSeatModel(realm); // register keeps a model it is not given (#7591)
-    return r;
-  };
-
+  const reg = () => call(tool("channel"), { action: "register", realm, karta, name, ...here() });
+  const { register, kept: modelKept } = clearingRegister(reg, realm); // register keeps a model (#7591)
   // 1. The board — before any change.
   const board = await call(tool("channel"), { action: "list", realm });
   if (board.isError) {
@@ -452,7 +446,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     sw().head(mine?.address ?? name, karta, realm, how),
     ...nameNotes.map((n) => sw().note(n)),
     ...extra,
-    ...(modelKept ? [sw().modelNotCleared(modelKept)] : []),
+    ...(modelKept() ? [sw().modelNotCleared(modelKept() as string)] : []),
   );
   const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);
