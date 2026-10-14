@@ -205,9 +205,10 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   noteStandCwd(cwd);
 
   const here = () => placeFields({ realm, karta, name }, true); // seat fields on every registration (#5174)
+  let modelKept: string | null = null; // the earlier model's PATCH refused: said aloud, the stand stands
   const register = async () => {
     const r = await call(tool("channel"), { action: "register", realm, karta, name, ...here() });
-    if (!r.isError) await clearSeatModel(realm); // register keeps a model it is not given (#7591)
+    if (!r.isError) modelKept = await clearSeatModel(realm); // register keeps a model it is not given (#7591)
     return r;
   };
 
@@ -412,6 +413,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     sw().head(mine?.address ?? name, karta, realm, how),
     ...nameNotes.map((n) => sw().note(n)),
     ...extra,
+    ...(modelKept ? [sw().modelNotCleared(modelKept)] : []),
   );
   const block = heardHere ? (sat ? satelliteListenWord() : listenBlock(realm)) : null;
   if (block) lines.push(block);

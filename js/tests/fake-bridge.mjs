@@ -224,6 +224,7 @@ function callResult(name, a = {}) {
 
 let buf = "";
 let usageDelayed = false;
+let mainRealm = null; // the graph of the first seat FB_STAND_HELD holds; others stand beside it
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -317,10 +318,13 @@ process.stdin.on("data", (chunk) => {
         );
       // FB_STAND_HELD: the place name an iskron_stand holds — said as «held» before
       // the answer, as the real bridge says it (js/bridge/hold.ts); a satellite
-      // stands as <satellite_of>.sub-1.
+      // stands as <satellite_of>.sub-1. A seat in another graph than the first held one
+      // stands beside it — said as «beside» (js/bridge/places.ts).
       if (process.env.FB_STAND_HELD && msg.params?.name === "iskron_stand") {
         const a = msg.params.arguments ?? {};
         const name = a.satellite_of ? `${a.satellite_of}.sub-1` : process.env.FB_STAND_HELD;
+        mainRealm ??= a.realm;
+        const beside = a.realm !== mainRealm;
         send({
           jsonrpc: "2.0",
           method: "notifications/message",
@@ -328,8 +332,8 @@ process.stdin.on("data", (chunk) => {
             level: "info",
             logger: "iskron-channel",
             data: {
-              kind: "held",
-              key: `k-${name}`,
+              kind: beside ? "beside" : "held",
+              key: beside ? `k-${name}@${a.realm}` : `k-${name}`,
               place: { realm: a.realm, karta: a.karta, name },
             },
           },

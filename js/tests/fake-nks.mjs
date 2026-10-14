@@ -201,7 +201,8 @@ export async function startFakeNks(opts = {}) {
     // standing_id места → его модель, как хранит api (#4032): register без model оставляет
     // прежнюю; снимает только PATCH /api/standings/{id} {"model": null} (api 0.123.0).
     seatModels: new Map(),
-    seatPatches: [], // { id, body, auth } — PATCH места, как дошли
+    seatPatches: [], // { id, body, auth, realm } — PATCH места, как дошли
+    seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
       { short: "r5", canon: "@nks/nks-dev" },
@@ -401,7 +402,15 @@ export async function startFakeNks(opts = {}) {
     if (patched && req.method === "PATCH") {
       const id = decodeURIComponent(patched[1]);
       const b = JSON.parse((await body(req)) || "{}");
-      st.seatPatches.push({ id, body: b, auth: req.headers.authorization ?? null });
+      const realm = req.headers["x-nks-realm"] ?? null;
+      st.seatPatches.push({ id, body: b, auth: req.headers.authorization ?? null, realm });
+      // Как api (#99): без X-NKS-Realm — 400; место ищется в графе заголовка, иначе 404.
+      if (!realm) return json(res, 400, { error: "X-NKS-Realm header is required" });
+      const inRealm = [...st.channels.values()].some(
+        (c) => c.places.get(slug(realm))?.standing_id === id,
+      );
+      if (!inRealm) return json(res, 404, { error: "no such standing" });
+      if (st.seatPatchRefuse) return json(res, st.seatPatchRefuse, { error: "refused" });
       if (b.model === null) st.seatModels.delete(id);
       else if (typeof b.model === "string") st.seatModels.set(id, b.model);
       return json(res, 200, { standing_id: id, model: st.seatModels.get(id) ?? null });

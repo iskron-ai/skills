@@ -108,7 +108,7 @@ export async function setupTools(
       (method, params) => {
         if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
         if (method !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
-        const kind = params?.data?.kind;
+        const kind = models.seen(slot, params?.data); // the graphs of its seats too (#7591)
         // holding follows an observed event — the bridge's "held" word and hello (#5140).
         if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
           keeper.stood(slot);
@@ -360,7 +360,7 @@ export async function setupTools(
       await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
-    if (name === STAND_TOOL) await models.name(args, sessionID, slot.place?.realm ?? null);
+    if (name === STAND_TOOL) await models.name(args, sessionID, slot);
     // The bridge runs in OpenCode's cwd: the standing's repo comes from the session's directory (#5108).
     if (name === STAND_TOOL && !args.cwd) {
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));

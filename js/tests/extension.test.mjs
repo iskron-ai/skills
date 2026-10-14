@@ -688,11 +688,11 @@ test("a satellite's stand carries pi's model; a busy line alone does not", async
 
 // №680 review: a busy line is one only while the bridge holds a seat — the first stand with a
 // status takes the seat and names the model; and the agent's model never stands in for pi's.
-test("a satellite's first stand with a status takes the seat with pi's model, as does a status in another graph; without pi's model there is none, not the agent's", async () => {
+test("a satellite's first stand with a status takes the seat with pi's model, as does a status in another graph, but not one in a graph it holds a seat beside in; without pi's model there is none, not the agent's", async () => {
   const sol = "gpt-6.1-sol";
   for (const [label, model, said, want] of [
-    ["first-busy", { id: sol, provider: "openai" }, {}, [sol, undefined, sol]],
-    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined, undefined]],
+    ["first-busy", { id: sol, provider: "openai" }, {}, [sol, undefined, sol, undefined]],
+    ["no-model", undefined, { model: "agent-says" }, [undefined, undefined, undefined, undefined]],
   ]) {
     const calls = join(SANDBOX, `sat-${label}.calls`);
     const { env } = bridgeEnv(`sat-${label}`, {
@@ -711,6 +711,9 @@ test("a satellite's first stand with a status takes the seat with pi's model, as
       // The seat is held in @nks/nks-dev only: in another graph the bridge takes one.
       const other = { ...args, realm: "@nks/drugoy", status: "там" };
       await stand.execute("id", other, undefined, () => {}, rec.ctx);
+      // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+      const again = { realm: "@nks/drugoy", satellite_of: "@me:host.repo", status: "там же" };
+      await stand.execute("id", again, undefined, () => {}, rec.ctx);
       assert.deepEqual(
         toolCalls(calls)
           .filter((c) => c.name === "iskron_stand")

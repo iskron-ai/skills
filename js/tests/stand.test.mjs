@@ -4355,10 +4355,30 @@ test("satellite: a repeated full stand without a model drops the seat's earlier 
   const patch = fake.state.seatPatches.find((x) => x.id === id);
   assert.deepEqual(patch?.body, { model: null }, JSON.stringify(fake.state.seatPatches));
   assert.match(patch.auth ?? "", /^Bearer /, "with the key that opened the seat");
+  assert.equal(patch.realm, "@nks/nks-dev", "the seat's graph, as the api requires (#99)");
+  assert.doesNotMatch(textOf(none), /not cleared|не снята/, textOf(none));
   const b = await standAs(sat, { ...SAT_ARGS, model: "model-b" });
   assert.ok(!b.result?.isError, textOf(b));
   assert.equal(lastModel(), "model-b");
   assert.equal(fake.state.seatModels.get(id), "model-b");
+});
+
+// The clearing PATCH refused (#7591): the stand still stands, and its answer says in one line
+// that the earlier model stays.
+test("satellite: a refused clearing of the seat's model leaves the stand standing and says so", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const a = await standAs(sat, { ...SAT_ARGS, model: "model-a" });
+  assert.ok(!a.result?.isError, `${textOf(a)}\n${sat.stderr}`);
+  fake.state.seatPatchRefuse = 503;
+  const none = await standAs(sat, SAT_ARGS);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.ok(fake.state.seatPatches.length > 0, "the clearing was tried");
+  const said = textOf(none)
+    .split("\n")
+    .filter((l) => /не снята/.test(l));
+  assert.equal(said.length, 1, textOf(none));
+  assert.match(said[0], /Прежняя модель места не снята \(503/, said[0]);
 });
 
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с

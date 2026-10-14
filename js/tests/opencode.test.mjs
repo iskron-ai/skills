@@ -5970,7 +5970,7 @@ test("real bridges: a child standing as a satellite carries its own session's mo
 // №680 review: a busy line alone is one only while the child's bridge holds a seat — the first
 // stand with a status takes the seat and names the child's model; and when the harness names
 // no model (session.get fails), the satellite has none — not the agent's word for it.
-test("a child's first stand with a status names its model, and so does a status in a graph it holds no seat in; a harness without the model gives none, not the agent's", async () => {
+test("a child's first stand with a status names its model, and so does a status in a graph it holds no seat in, but not one in a graph it holds a seat beside in; a harness without the model gives none, not the agent's", async () => {
   const calls = join(SANDBOX, "sat-model.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("sat-model", {
@@ -6002,6 +6002,8 @@ test("a child's first stand with a status names its model, and so does a status 
     await stand("c1", { status: "дальше" });
     // A seat in another graph: the bridge takes it on the full path — with the model.
     await stand("c1", { realm: "@nks/drugoy", karta: "#931", status: "там" });
+    // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+    await stand("c1", { realm: "@nks/drugoy", status: "там же" });
     await stand("c2", { model: "agent-says" });
     const sat = readFileSync(calls, "utf8")
       .split("\n")
@@ -6013,6 +6015,7 @@ test("a child's first stand with a status names its model, and so does a status 
       ["чиню", "gpt-6.1-sol"],
       ["дальше", null],
       ["там", "gpt-6.1-sol"],
+      ["там же", null],
       [null, null],
     ]);
   } finally {
