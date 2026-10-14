@@ -2445,7 +2445,8 @@ for (const withData of [true, false])
     const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
     assert.ok(b.result?.isError, textOf(b));
     assert.match(textOf(b), /^Отказано \(409\): канал этого моста уже стоит в графе/, textOf(b));
-    const move = `iskron_stand(realm="${DRUGOY}", karta=48, name="proba-old")`;
+    // The api names no role (#5418): the move leaves karta open, not the refused call's 48.
+    const move = `iskron_stand(realm="${DRUGOY}", karta, name="proba-old")`;
     if (withData) assert.ok(textOf(b).includes(move), `the move by the seat's name:\n${textOf(b)}`);
     else {
       assert.doesNotMatch(textOf(b), /proba-old/, textOf(b));
