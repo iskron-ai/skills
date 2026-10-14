@@ -13,12 +13,13 @@ import { dirname } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { envName, LOGGERS, PI, PLUGIN } from "../delivery/index.ts";
+import { envName, LOGGERS, PI, PLUGIN, tool } from "../delivery/index.ts";
 import { Bridge, resultToContent, snippet, toParameters } from "../shared/bridge-client.ts";
 import { HARNESS_VERSION_ENV, PI_CLIENT, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { FIELDS_CAPABILITIES } from "../shared/fields.ts";
 import { words } from "../shared/lang.ts";
 import { enterCase, type LaunchCall, parseLaunch, withWord } from "../shared/launch.ts";
+import { createSeatRealms, type SeatRealms, withHarnessModel } from "../shared/seatmodel.ts";
 import { findBridge, type Notify, packagedBridgePath, refreshHomeBridge } from "./home-copy.ts";
 import { setupUsage } from "./usage.ts";
 
@@ -70,11 +71,25 @@ async function hostEnv(): Promise<Record<string, string>> {
   return env;
 }
 
+/**
+ * A satellite's stand names the model pi runs (#7591); other calls go as they came.
+ * `seats` — the graphs the bridge holds seats in (its "held" and "beside" words).
+ */
+const withModel = (name: string, args: any, ctx: any, seats: SeatRealms) =>
+  name === tool("stand") ? withHarnessModel(args, ctx?.model?.id, seats.realms()) : args;
+
 /** A tool call by the bridge — for the launch line: a service move, not the agent's work (#6510). */
 const callVia =
-  (b: Bridge): LaunchCall =>
+  (b: Bridge, ctx: any, seats: SeatRealms): LaunchCall =>
   async (name, args) =>
-    textOrThrow(name, await b.request("tools/call", { name, arguments: args }, { service: true }));
+    textOrThrow(
+      name,
+      await b.request(
+        "tools/call",
+        { name, arguments: withModel(name, args, ctx, seats) },
+        { service: true },
+      ),
+    );
 
 /**
  * The "tools" half: its own handlers, its own state, its own failure. `onChannel` — the channel
@@ -94,6 +109,8 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
 
   /** The seat the bridge holds — from its "held" word; the launch line names it. */
   let heldName: string | null = null;
+  /** The graphs of the bridge's seats — a satellite's busy line goes alone only there (#7591). */
+  const seats = createSeatRealms();
   /** The bridge came up as a satellite (`--satellite`) — for a launch line with the launcher's seat. */
   let satellite = false;
 
@@ -115,6 +132,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
         if (method === "notifications/message" && params?.logger === LOGGERS.channel) {
           const name = params?.data?.kind === "held" ? params?.data?.place?.name : null;
           if (typeof name === "string" && name) heldName = name;
+          seats.see(params?.data);
           onChannel(params);
         }
         // The server changed its tools under the bridge's reopened session: reread and register (#5406).
@@ -194,7 +212,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
           description: String(tool.description ?? ""),
           promptSnippet: snippet(String(tool.description ?? "")),
           parameters: toParameters(tool.inputSchema) as any,
-          async execute(_toolCallId, params, signal, onUpdate, _c) {
+          async execute(_toolCallId, params, signal, onUpdate, c) {
             const live = bridge;
             if (!live) throw new Error(W.notUp(name));
             const started = Date.now();
@@ -214,7 +232,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
             try {
               const result = await live.request(
                 "tools/call",
-                { name, arguments: params ?? {} },
+                { name, arguments: withModel(name, params ?? {}, c, seats) },
                 { signal }, // no ceiling: the first call may go to the human's browser
               );
               // A tool's refusal is a throw — only it sets isError.
@@ -295,7 +313,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
   // The launch line with a case (shared/launch.ts): the first prompt stands and enters the case
   // before the model's turn. The launcher's seat — the "from <seat>" tail, else the SATELLITE_OF
   // variable: the bridge comes up again as a satellite and stands beside it; no seat — its own.
-  pi.on("input", async (event) => {
+  pi.on("input", async (event, ctx) => {
     if (prompted) return { action: "continue" };
     prompted = true;
     const l = parseLaunch(event.text);
@@ -309,7 +327,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     await raising;
     const live = bridge;
     const word = live
-      ? await enterCase(l, callVia(live), of, () => heldName)
+      ? await enterCase(l, callVia(live, ctx, seats), of, () => heldName)
       : W.launchNoBridge(String(l.no));
     return { action: "transform", text: withWord(event.text, word) };
   });
@@ -321,6 +339,7 @@ export function setupBridge(pi: ExtensionAPI, onChannel: ChannelEventSink): void
     bridge = null;
     prompted = false;
     heldName = null;
+    seats.clear();
 
     const work = raiseLoud();
     raising = work;

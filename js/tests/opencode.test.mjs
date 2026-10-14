@@ -5913,6 +5913,116 @@ test("real bridges: the child's revoke answered by bare prose is not taken as re
   }
 });
 
+// №680 (#7591): the board printed the main seat's model, but a satellite seat only its build and
+// harness — the child's stand named no model, and the plugin did not hand it the harness's. The
+// satellite's seat carries the model its session runs on, from OpenCode, from the take on.
+test("real bridges: a child standing as a satellite carries its own session's model from the harness, not the root's", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-model-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        {
+          id: "root",
+          location: { directory: dir },
+          model: { id: "claude-opus-5-5", providerID: "anthropic" },
+        },
+        {
+          id: "child",
+          parentID: "root",
+          location: { directory: dir },
+          model: { id: "gpt-6.1-sol", providerID: "openai" },
+        },
+      ],
+    },
+  );
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+    const root = await rec.call(
+      "iskron_stand",
+      // A name of its own: the paused satellite of this run must not meet the next test's.
+      { realm: "nks-dev", karta: 931, name: "proba-model", model: "claude-opus-5-5" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    const child = await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const seat = fake.state.placeArgs.filter((p) => /\.sub-\d+$/.test(String(p.name)));
+    assert.ok(seat.length, `the child stood as a satellite:\n${child.content}\n${rec.said()}`);
+    assert.deepEqual(
+      seat.map((p) => [p.action, p.model]),
+      seat.map((p) => [p.action, "gpt-6.1-sol"]),
+      "every connect and register of the satellite names the child's model",
+    );
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
+// №680 review: a busy line alone is one only while the child's bridge holds a seat — the first
+// stand with a status takes the seat and names the child's model; and when the harness names
+// no model (session.get fails), the satellite has none — not the agent's word for it.
+test("a child's first stand with a status names its model, and so does a status in a graph it holds no seat in, but not one in a graph it holds a seat beside in; a harness without the model gives none, not the agent's", async () => {
+  const calls = join(SANDBOX, "sat-model.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("sat-model", {
+    FB_CALLS: calls,
+    FB_TOOLS: LEAD_TOOLS,
+    FB_STAND_HELD: "host.repo.opus-5",
+  });
+  const mute = { id: "c2", parentID: "root" };
+  // The harness's answer for c2 fails where the model is read: session.get refused it.
+  Object.defineProperty(mute, "model", {
+    get: () => {
+      throw new Error("session.get refused");
+    },
+  });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", model: { id: "claude-opus-5-5" } },
+      { id: "c1", parentID: "root", model: { id: "gpt-6.1-sol" } },
+      mute,
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    await rec.call("iskron_stand", { realm: "@nks/nks-dev", karta: "#931" }, "root");
+    await until(() => /мост держит стояние/.test(rec.said()), "the root's held word");
+    const stand = (s, a) => rec.call("iskron_stand", { realm: "@nks/nks-dev", ...a }, s);
+    await stand("c1", { status: "чиню" });
+    await until(() => (rec.said().match(/мост держит стояние/g) ?? []).length > 1, "c1 held");
+    await stand("c1", { status: "дальше" });
+    // A seat in another graph: the bridge takes it on the full path — with the model.
+    await stand("c1", { realm: "@nks/drugoy", karta: "#931", status: "там" });
+    // Now a seat beside the one in @nks/nks-dev: a status there again is the busy line alone.
+    await stand("c1", { realm: "@nks/drugoy", status: "там же" });
+    await stand("c2", { model: "agent-says" });
+    const sat = readFileSync(calls, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_stand" && c.arguments.satellite_of)
+      .map((c) => [c.arguments.status ?? null, c.arguments.model ?? null]);
+    assert.deepEqual(sat, [
+      ["чиню", "gpt-6.1-sol"],
+      ["дальше", null],
+      ["там", "gpt-6.1-sol"],
+      ["там же", null],
+      [null, null],
+    ]);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // №664: one satellite name in two graphs is two seats (#5838). The child's bridge revoked its seat
 // in A and was refused in B: the launcher's revoke for B goes and its refusal is loud; for A it
 // is not sent again. A name-only match let A's success hide B's refusal — «место снято», B hung.
