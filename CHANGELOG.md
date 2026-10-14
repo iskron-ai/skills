@@ -1,5 +1,25 @@
 # Changelog
 
+## [7.11.0](https://github.com/iskron-ai/skills/compare/v7.10.0...v7.11.0) (2026-10-14)
+
+
+### Features
+
+* **bridge:** мост исполняет приказ останова api 0.122 — кадр stop не агенту, accepted до стопа, исход из журнала ([#467](https://github.com/iskron-ai/skills/issues/467)) ([aacb097](https://github.com/iskron-ai/skills/commit/aacb097e65a9f106acec6821ba9e5664223e767c))
+* **bridge:** мост шлёт pulse — живость агента у места ([#472](https://github.com/iskron-ai/skills/issues/472)) ([f96a39b](https://github.com/iskron-ai/skills/commit/f96a39b01a537b0e336695d944789f5d2aef7c12))
+* **scripts:** stand-run — проверки пачки моста: pulse, конец агента, stop, take рядом, модель спутника ([#476](https://github.com/iskron-ai/skills/issues/476)) ([e56ff66](https://github.com/iskron-ai/skills/commit/e56ff663daa523420bfef8a8198b7f4b2cecbb0f))
+* **skills:** C1 ru r2 — проекция C1 в скиллы iskron, справочники доходят до модели целиком ([#477](https://github.com/iskron-ai/skills/issues/477)) ([db12c6b](https://github.com/iskron-ai/skills/commit/db12c6bdec303238d7f5a326bcae2d1f0757fd89))
+
+
+### Bug Fixes
+
+* **bridge:** «место уже снято» — одно правило по отказам api 0.124; 409 называет стоящее место ([#478](https://github.com/iskron-ai/skills/issues/478)) ([93572e7](https://github.com/iskron-ai/skills/commit/93572e7d61c8a4e8faf97a9d076f3c19173e2a30))
+* **bridge:** ru-мост просит русский явно — Accept-Language ru и locale места ru ([#468](https://github.com/iskron-ai/skills/issues/468)) ([08cf6e9](https://github.com/iskron-ai/skills/commit/08cf6e9e683fe07b9fba10733e90e2f4c830ba21))
+* **bridge:** место рядом переживает смену демона — передаётся с основным, без lost и явного stand ([#471](https://github.com/iskron-ai/skills/issues/471)) ([39f8c1f](https://github.com/iskron-ai/skills/commit/39f8c1f9dcfd18a0cb3fc7bacb6e994211cc1290))
+* **bridge:** место-спутник несёт модель субагента от харнесса ([#475](https://github.com/iskron-ai/skills/issues/475)) ([4756222](https://github.com/iskron-ai/skills/commit/47562229808be664dfd426fe9ca548577d158115))
+* **bridge:** слова о месте ведут к рабочему ходу; подкоманда stop ([#474](https://github.com/iskron-ai/skills/issues/474)) ([a8fac4b](https://github.com/iskron-ai/skills/commit/a8fac4b489c227d97ce040c4e288a5bc8a635072))
+* **opencode:** пульс места — busy по session.execution.started (OpenCode 2.0.28 не шлёт session.status) ([#479](https://github.com/iskron-ai/skills/issues/479)) ([b900719](https://github.com/iskron-ai/skills/commit/b900719694478087571081f2fd3a4d644eb90603))
+
 ## [7.10.0](https://github.com/iskron-ai/skills/compare/v7.9.0...v7.10.0) (2026-10-14)
 
 
