@@ -1219,6 +1219,26 @@ export async function startFakeNks(opts = {}) {
         // Медленный connect (/control {connect_delay_ms}): ответ позже потолка вызывающего, адрес всё равно повёрнут.
         if (a.action === "connect" && st.connectDelayMs)
           await new Promise((r) => setTimeout(r, st.connectDelayMs));
+        // Переоткрытие сокета места чаще порога api: 429 с «retry in N s» (#7552).
+        if (a.action === "connect" && st.connectThrottleNext > 0) {
+          st.connectThrottleNext--;
+          st.counts.connect_throttled = (st.counts.connect_throttled ?? 0) + 1;
+          const s = st.connectThrottleRetryS ?? 9;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused(
+                `Too Many Requests (429): socket_reissue_throttled — retry in ${s}s`,
+                "Abgelehnt (429).",
+                { rule: "socket_reissue_throttled", status: 429 },
+              ),
+            },
+            extra,
+          );
+        }
         if (
           (a.action === "connect" || a.action === "mint") &&
           st.connectRefuseTtl &&

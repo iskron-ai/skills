@@ -2154,6 +2154,10 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
   try {
     assert.match(second.said(), /слух был потерян в \d\d:\d\d/);
     assert.match(second.said(), /proba--931--nks-dev/);
+    // The seat is returning by itself: the word says wait, not «call iskron_stand now» —
+    // a call at the moment of the return met its own reopen as 429 (#7552).
+    assert.match(second.said(), /возвращается с диска само — подожди/);
+    assert.doesNotMatch(second.said(), /Не вернулось — iskron_stand/);
     assert.equal(lostMarkers().length, 0, "the marker is said once and gone");
     const sentBy = () =>
       readFileSync(calls, "utf8")

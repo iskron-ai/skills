@@ -10,6 +10,8 @@ export interface StandMovesWords {
   /** take снял прежнее место этой сессии (#7553). */
   priorReleased: (prior: string) => string;
   priorKept: (prior: string, text: string, revoke: string) => string;
+  /** 429 переоткрытия сокета (#7552): вызов дождался исхода; own — сокет переоткрыл сам мост. */
+  reissueWaited: (seconds: number, own: boolean) => string;
 }
 
 export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
@@ -26,6 +28,10 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       `прежнее место этой сессии ${prior} снято: take переносит сессию на взятое место, а не прибавляет второе`,
     priorKept: (prior, text, revoke) =>
       `прежнее место этой сессии ${prior} не снято (${text}) — пока оно живо, дела будут просить from_standing; сними его: ${revoke}`,
+    reissueWaited: (seconds, own) =>
+      own
+        ? `твоё — возвращено: сокет этого места в тот же миг переоткрывал сам мост, вызов дождался его исхода (${seconds} с)`
+        : `сокет этого места только что переоткрывался — вызов переждал порог платформы (${seconds} с) и занял место`,
   },
   en: {
     standsInRealm: (realm, call, board, leave) =>
@@ -40,5 +46,9 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       `this session's former seat ${prior} is revoked: take moves the session to the taken seat, it does not add a second one`,
     priorKept: (prior, text, revoke) =>
       `this session's former seat ${prior} is not revoked (${text}) — while it lives, cases will ask for from_standing; revoke it: ${revoke}`,
+    reissueWaited: (seconds, own) =>
+      own
+        ? `yours — returned: the bridge itself was reopening this seat's socket at that moment, the call waited for its outcome (${seconds} s)`
+        : `this seat's socket was just reopened — the call waited out the platform's threshold (${seconds} s) and took the seat`,
   },
 };

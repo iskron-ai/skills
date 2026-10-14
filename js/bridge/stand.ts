@@ -69,7 +69,14 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
-import { refusedWord, releasePrior, standAgainWord } from "./standmoves.ts";
+import {
+  awaitReissue,
+  refusedWord,
+  reissueNote,
+  reissueThrottled,
+  releasePrior,
+  standAgainWord,
+} from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -395,7 +402,17 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       delete args.ttl_seconds;
       c = await call(tool("channel"), args);
     }
-    if (c.isError) {
+    // 429: the socket was just reissued — mostly by this bridge's own reopening; wait for it
+    // inside the call, the agent gets the outcome, not the refusal (#7552).
+    const throttle = reissueThrottled(c);
+    let ownReopen = false;
+    if (throttle) {
+      const t0 = Date.now();
+      ownReopen = await awaitReissue(throttle, () => holdsStanding(realm, karta, name));
+      if (!ownReopen) c = await call(tool("channel"), args);
+      extra.push(sw().note(reissueNote(Math.round((Date.now() - t0) / 1000), ownReopen)));
+    }
+    if (c.isError && !ownReopen) {
       lines.push(refusedWord("connect", c, realm));
       return done(true);
     }
@@ -406,9 +423,12 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     resetKnocks(realm, karta, name);
     heardHere = true;
-    how = ownSession
-      ? sw().howOwnSession()
-      : sw().howConnect(!!mine, listensElsewhere, a.take === true);
+    socketBefore = ownReopen;
+    how = ownReopen
+      ? sw().howRegister()
+      : ownSession
+        ? sw().howOwnSession()
+        : sw().howConnect(!!mine, listensElsewhere, a.take === true);
     // The seat retaken after a return that found no record: cases may have been lost (#6649).
     if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
     if (prior) extra.push(sw().note(await releasePrior(realm, prior)));

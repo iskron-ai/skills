@@ -83,6 +83,36 @@ export async function releasePrior(realm: string, prior: Standing): Promise<stri
   return mw().priorKept(name, short(r.text, 160), revoke);
 }
 
+const REISSUE_MAX_S = 15;
+
+/** Seconds to wait out a 429 socket reissue refusal of connect (#7552); null — another answer. */
+export function reissueThrottled(r: Answer): number | null {
+  if (!r.isError) return null;
+  const rule = r.refusal?.rule;
+  const hit =
+    rule === "socket_reissue_throttled" ||
+    (!rule && r.refusal?.status === 429) ||
+    r.text.includes("socket_reissue_throttled");
+  if (!hit) return null;
+  const said = Number(/retry in (\d+)\s*s/i.exec(r.text)?.[1] ?? NaN);
+  return Math.min(Math.max(Number.isFinite(said) ? said : 10, 1), REISSUE_MAX_S);
+}
+
+/**
+ * The bridge's own reopening of the seat's socket met this call's connect: wait inside the
+ * call for its outcome instead of passing the 429 to the agent. true — the socket is ours.
+ */
+export async function awaitReissue(seconds: number, held: () => boolean): Promise<boolean> {
+  for (const end = Date.now() + seconds * 1000; Date.now() < end;) {
+    if (held()) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return held();
+}
+
+export const reissueNote = (seconds: number, own: boolean): string =>
+  mw().reissueWaited(seconds, own);
+
 /** The refusal of connect or register as the agent reads it: a known api rule with its move, else as is. */
 export function refusedWord(what: string, r: Answer, realm: string): string {
   if (r.refusal?.rule === STANDS_IN_REALM || r.text.includes(STANDS_IN_REALM)) {
