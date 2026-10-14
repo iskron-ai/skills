@@ -3965,7 +3965,7 @@ const SERVER_TOOLS = [
   ),
   {
     // Описание пишущего тула у сервера длиннее 2048 знаков — предела, до которого
-    // Claude Code режет описание: строка моста в хвосте до агента не доходит.
+    // Claude Code режет описание.
     name: "iskron_add_vimarsha",
     description: "Создаёт вопрошание. ".repeat(160),
     inputSchema: { type: "object", properties: { realm: prop("Адрес графа.") } },
@@ -4007,10 +4007,10 @@ test("every bridge: the harness sees iskron_channel without the place moves and 
       channel.description.indexOf('action="leave"') < channel.description.indexOf("Открывает"),
     channel.description,
   );
+  // Write tools reach the harness as the server sent them: the bridge adds no line (#7557).
   for (const name of ["iskron_add_vimarsha", "iskron_batch"]) {
-    const d = byName[name].description;
-    assert.ok(d.startsWith("[мост] Момент скилла writing"), `${name}: ${d.slice(0, 80)}`);
-    assert.ok(d.length > 2048, "the server's own text follows the line");
+    const served = SERVER_TOOLS.find((x) => x.name === name).description;
+    assert.equal(byName[name].description, served, `${name}: byte for byte`);
   }
   // The shared answers cache keeps the server's whole schema: other bridges read it.
   const cached = JSON.parse(
@@ -4670,7 +4670,7 @@ test("the bridge asks the server for fields on every handshake; a harness that d
   assert.deepEqual(fake.state.initCaps.at(-1), { experimental: { "iskron/structured": {} } });
 });
 
-test("outputSchema rides tools/list to a harness that asked for fields through the narrowing and the moment line", async (t) => {
+test("outputSchema rides tools/list to a harness that asked for fields through the narrowing", async (t) => {
   const schema = (key) => ({
     type: "object",
     properties: { [key]: { type: "array", items: { type: "object" } } },
@@ -4693,7 +4693,8 @@ test("outputSchema rides tools/list to a harness that asked for fields through t
   const byName = Object.fromEntries((list.result?.tools ?? []).map((x) => [x.name, x]));
   assert.ok(!("mute_siblings" in byName.iskron_channel.inputSchema.properties), "narrowed");
   assert.deepEqual(byName.iskron_channel.outputSchema, schema("seats"));
-  assert.ok(byName.iskron_add_vimarsha.description.startsWith("[мост]"), "moment line");
+  const served = SERVER_TOOLS.find((x) => x.name === "iskron_add_vimarsha");
+  assert.equal(byName.iskron_add_vimarsha.description, served.description, "byte for byte");
   assert.deepEqual(byName.iskron_add_vimarsha.outputSchema, schema("nodes"));
 });
 
