@@ -56,6 +56,8 @@ const token = readFileSync(tokenFile, "utf8").trim();
 const opencode = spawnSync("sh", ["-c", "command -v opencode"]).stdout.toString().trim();
 
 const run = mkdtempSync(join(tmpdir(), "stand-oc-"));
+// Every way out, an early setup refusal too, takes the run dir — the token copy and imported keys with it.
+process.on("exit", () => (keep ? process.stderr.write(`run dir kept: ${run}\n`) : rmSync(run, { recursive: true, force: true })));
 const home = join(run, "home");
 const cwd = join(run, "project");
 const auth = join(run, "auth");

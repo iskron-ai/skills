@@ -31,6 +31,8 @@ const token = readFileSync(tokenFile, "utf8").trim();
 const versionOf = (f) => spawnSync(process.execPath, [f, "--version"], { env: envBase(), encoding: "utf8" }).stdout.split("\n")[0].trim();
 
 const run = mkdtempSync(join(tmpdir(), "stand-up-"));
+// Every way out, an early setup refusal too, takes the run dir — the token copy with it.
+process.on("exit", () => (keep ? process.stderr.write(`run dir kept: ${run}\n`) : rmSync(run, { recursive: true, force: true })));
 const home = join(run, "home");
 const bridgeHome = join(home, ".iskron-bridge"); // the home copy and the default auth dir
 mkdirSync(bridgeHome, { recursive: true, mode: 0o700 });

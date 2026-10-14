@@ -61,6 +61,8 @@ if (!token) fail(2, `empty token file ${tokenFile}`);
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `token file ${tokenFile} is readable by others — chmod 600`);
 
 const run = mkdtempSync(join(tmpdir(), "stand-run-"));
+// Every way out, an early setup refusal too, takes the run dir — the token copy with it.
+process.on("exit", () => (keep ? process.stderr.write(`run dir kept: ${run}\n`) : rmSync(run, { recursive: true, force: true })));
 const envFor = (dir, secret) => {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, "token"), secret + "\n", { mode: 0o600 });
