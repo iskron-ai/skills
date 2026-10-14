@@ -33,16 +33,35 @@ const ENDS = new Map<unknown, State>([
   ["session.execution.interrupted", "interrupted"],
 ]);
 
+/**
+ * Per session. Taken before the channel's answer is mostly the session's own prompts, never
+ * answered by the channel: past TAKEN_MAX the oldest goes. Laid and not taken yet is awaited and
+ * never pushed out: past QUEUED_MAX it is only told.
+ */
+const TAKEN_MAX = 100;
+const QUEUED_MAX = 100;
+
 export function createPulseFeed(opts: {
   /** The bridge holding the session's own seat; null — no seat, nowhere to send. */
   bridgeOf: (session: string) => Bridge | null;
+  /** The session holds more inbox items laid by the channel and not taken than QUEUED_MAX. */
+  overflow?: (session: string, waiting: number) => void;
 }): PulseFeed {
   const words = new Map<string, Word>();
-  const queued = new Map<string, string>(); // inbox id → session: laid by the channel, not taken yet
-  const taken = new Map<string, string>(); // inbox id → session: taken before the channel's answer
-  const keep = (m: Map<string, string>, inbox: string, session: string): void => {
-    m.set(inbox, session);
-    for (const old of m.keys()) if (m.size > 100) m.delete(old);
+  // session → inbox ids: laid by the channel, not taken yet; taken before the channel's answer
+  const queued = new Map<string, Set<string>>();
+  const taken = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, session: string, inbox: string): Set<string> => {
+    const ids = m.get(session) ?? new Set<string>();
+    m.set(session, ids.add(inbox));
+    return ids;
+  };
+  /** True — the inbox id was the session's and is gone now. */
+  const drop = (m: Map<string, Set<string>>, session: string, inbox: string): boolean => {
+    const ids = m.get(session);
+    if (!ids?.delete(inbox)) return false;
+    if (!ids.size) m.delete(session);
+    return true;
   };
   const unsent = new Set<string>();
   let stopped = false;
@@ -89,19 +108,18 @@ export function createPulseFeed(opts: {
           const inbox: unknown = ev.data?.inboxID;
           if (typeof inbox !== "string") return;
           // The taking may outrun the prompt's answer: remembered, judged when the answer comes.
-          if (queued.get(inbox) !== session) return keep(taken, inbox, session);
-          queued.delete(inbox);
-          return tell(session, { read_at: at() });
+          if (drop(queued, session, inbox)) return tell(session, { read_at: at() });
+          const ids = add(taken, session, inbox);
+          if (ids.size > TAKEN_MAX) drop(taken, session, ids.values().next().value as string);
+          return;
         }
       }
     },
     prompted(session, inbox): void {
       if (!inbox) return;
-      if (taken.get(inbox) === session) {
-        taken.delete(inbox);
-        return tell(session, { read_at: at() });
-      }
-      keep(queued, inbox, session);
+      if (drop(taken, session, inbox)) return tell(session, { read_at: at() });
+      const waiting = add(queued, session, inbox).size;
+      if (waiting === QUEUED_MAX + 1) opts.overflow?.(session, waiting);
     },
     seated(session): void {
       if (!words.has(session)) return;
@@ -111,8 +129,8 @@ export function createPulseFeed(opts: {
     forget(session): void {
       words.delete(session);
       unsent.delete(session);
-      for (const m of [queued, taken])
-        for (const [inbox, s] of m) if (s === session) m.delete(inbox);
+      queued.delete(session);
+      taken.delete(session);
     },
     stop(): void {
       stopped = true;

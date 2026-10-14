@@ -95,7 +95,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
   // The session's word on its turn goes to the bridge of its own seat (pulse.ts, #7529).
-  const pulse = createPulseFeed({ bridgeOf: (s) => half.bridgeOf(s) });
+  const pulse = createPulseFeed({
+    bridgeOf: (s) => half.bridgeOf(s),
+    overflow: (s, n) => say(W.pulseOverflow(s, n), "warning"),
+  });
   try {
     // The owner's stop goes by seats (#7440): every instance of the process takes its children's seats down.
     // Lead subagents — by the tools half, which comes up after the channel (#7505).

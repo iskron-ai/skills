@@ -2156,6 +2156,46 @@ test("a steered frame is read when OpenCode takes its inbox item, not when the p
   }
 });
 
+// Inbox items wait by their session: many waiting in other sessions do not push out the first
+// one laid, and its taking is still read.
+test("a frame's inbox item stays awaited behind more than a hundred waiting in two sessions", async () => {
+  const calls = join(SANDBOX, "pulse-many.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("pulse-many", { FB_CALLS: calls });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "s-ma", location: { directory: "/work/a" } },
+      { id: "s-mb", location: { directory: "/work/b" } },
+    ],
+    inboxIds: true,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-ma");
+    await rec.call("iskron_channel", { action: "connect" }, "s-mb");
+    const [pidA, pidB] = pidsOf(b.log);
+    const evA = `${b.events}.${pidA}`;
+    const evB = `${b.events}.${pidB}`;
+    appendFileSync(evA, event("held", { key: "ma--931--nks-dev" }));
+    appendFileSync(evB, event("held", { key: "mb--931--nks-dev" }));
+    await until(() => /мост держит стояние mb--931--nks-dev/.test(rec.said()), "the held lines");
+    const laid = (ev, n) =>
+      appendFileSync(
+        ev,
+        event("frame", { frame: { ...frame(`слово ${n}`), id: `m-${n}` }, raw: "" }),
+      );
+    laid(evA, 0);
+    await until(() => rec.prompts.length === 1, "the first frame prompted");
+    assert.equal(rec.prompts[0].sessionID, "s-ma");
+    for (let n = 1; n <= 120; n++) laid(n % 2 ? evB : evA, n);
+    await until(() => rec.prompts.length === 121, "all the frames prompted", 10_000);
+    rec.emit({ type: "session.inbox.delivered", data: { sessionID: "s-ma", inboxID: "inbox-1" } });
+    await until(() => pulsesIn(calls).some((p) => p.read_at), "read_at for the first one laid");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a holding bridge that dies is announced into its session as lost hearing, and the watch raises a fresh bridge that resumes the place", async () => {
   const calls = join(SANDBOX, "lost.calls");
   const resume = join(SANDBOX, "lost.answer");
