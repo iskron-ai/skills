@@ -3,8 +3,17 @@
 import type { Lang } from "../lang.ts";
 
 export interface StandMovesWords {
-  /** 409 channel_already_stands_in_realm (#7556); call — полный вызов места, уже стоящего в графе, либо пусто. */
-  standsInRealm: (realm: string, call: string, board: string, leave: string) => string;
+  /**
+   * 409 channel_already_stands_in_realm (#7556); call — полный вызов места, уже стоящего в графе, либо пусто;
+   * roleOpen — вызов по имени из отказа api, роль места не названа (#5418): её даёт строка на доске.
+   */
+  standsInRealm: (
+    realm: string,
+    call: string,
+    board: string,
+    leave: string,
+    roleOpen: boolean,
+  ) => string;
   /** Полный вызов занятия места, которое эта сессия держала (#7554). */
   standAgain: (call: string) => string;
   /** take снял прежнее место этой сессии (#7553). */
@@ -28,10 +37,10 @@ export interface StandMovesWords {
 
 export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
   ru: {
-    standsInRealm: (realm, call, board, leave) =>
+    standsInRealm: (realm, call, board, leave, roleOpen) =>
       `Отказано (409): канал этого моста уже стоит в графе ${realm} другим местом — второго места одного канала в одном графе платформа не держит. ` +
       (call
-        ? `Встань им: ${call}. `
+        ? `Встань им: ${call}${roleOpen ? ` — karta места в его строке на доске ${board}` : ""}. `
         : `Его имя — строка этого канала на доске ${board}; встань им: iskron_stand(realm="${realm}", karta, name=<то имя>). `) +
       `Нужно именно новое имя — сначала отпусти прежнее: ${leave}, затем повтори вызов.`,
     standAgain: (call) =>
@@ -52,10 +61,10 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       `Только что занятое место ${asked} снять не удалось (${text}) — сними его: ${revoke}`,
   },
   en: {
-    standsInRealm: (realm, call, board, leave) =>
+    standsInRealm: (realm, call, board, leave, roleOpen) =>
       `Refused (409): this bridge's channel already stands in the graph ${realm} with another seat — the platform holds no second seat of one channel in one graph. ` +
       (call
-        ? `Stand as it: ${call}. `
+        ? `Stand as it: ${call}${roleOpen ? ` — the seat's karta is in its line on the board ${board}` : ""}. `
         : `Its name is this channel's line on the board ${board}; stand as it: iskron_stand(realm="${realm}", karta, name=<that name>). `) +
       `If a new name is what you need, release the former one first: ${leave}, then repeat the call.`,
     standAgain: (call) =>

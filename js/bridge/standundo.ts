@@ -105,7 +105,7 @@ export async function stopGuard(
 /**
  * register `r` refused right after connect. A move (`taken` from `prior`) fails: the new seat
  * goes, the former one is held again on its socket and registered, so it stays the session's
- * only seat (#7553). Otherwise the seat stays taken. The answer's words; `karta` — the call's role.
+ * only seat (#7553). Otherwise the seat stays taken. The answer's words.
  */
 export async function registerRefused(
   r: Answer,
@@ -113,12 +113,10 @@ export async function registerRefused(
   taken: Required<Standing> | null,
   prior: Standing | null,
   addr: HeldAddress | null,
-  karta?: string | number,
 ): Promise<string> {
   const text = short(r.text);
-  if (!taken || !prior)
-    return refusedWord("register", r, realm, sw().takenButRegister(text), karta);
-  const refusal = refusedWord("register", r, realm, sw().refused("register", text), karta);
+  if (!taken || !prior) return refusedWord("register", r, realm, sw().takenButRegister(text));
+  const refusal = refusedWord("register", r, realm, sw().refused("register", text));
   // Stopped since the call began: the former seat is not held again (held lifts a harness's
   // wake ban that the stop does not restore); the stop guard takes the new one off and answers.
   if (stoppedInMove()) return refusal;

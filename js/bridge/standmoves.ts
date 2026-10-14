@@ -137,43 +137,31 @@ export async function throughReissue(
 
 /**
  * The channel's seats in the graph by the refusal (data.your_standings, api 0.124.0; #7556): the
- * call standing on each, the role the call named — the api gives none; null — no names given.
+ * call standing on each. The api gives {id, name}, no role, and the seat may be another role's
+ * (#5418) — so the call leaves karta open, the role read off the seat's line on the board;
+ * null — no names given.
  */
-function yourStandingsMove(
-  r: Answer,
-  realm: string,
-  karta?: string | number,
-): {
-  call: string;
-  name: string;
-} | null {
+function yourStandingsMove(r: Answer, realm: string): { call: string; name: string } | null {
   const names = standingsInRealm(r.refusal);
   if (!names.length) return null;
-  const role = karta === undefined || karta === "" ? "karta" : `karta=${karta}`;
-  const call = names.map((n) => `${tool("stand")}(realm="${realm}", ${role}, name="${n}")`);
+  const call = names.map((n) => `${tool("stand")}(realm="${realm}", karta, name="${n}")`);
   return { call: call.join("; "), name: names.join(", ") };
 }
 
 /**
  * The refusal of connect or register as the agent reads it: a known api rule with its move, else as is.
  * `afterConnect` — register refused right after this call's connect: the led seat is the one just
- * taken, not the seat the channel stands on; other refusals read this word. `karta` — the call's role.
+ * taken, not the seat the channel stands on; other refusals read this word.
  */
-export function refusedWord(
-  what: string,
-  r: Answer,
-  realm: string,
-  afterConnect?: string,
-  karta?: string | number,
-): string {
+export function refusedWord(what: string, r: Answer, realm: string, afterConnect?: string): string {
   if (r.refusal?.rule === STANDS_IN_REALM || r.text.includes(STANDS_IN_REALM)) {
     // The api's names first: the bridge's own record of the led seat may lag the platform.
-    const yours = yourStandingsMove(r, realm, karta);
+    const yours = yourStandingsMove(r, realm);
     const led = yours || afterConnect !== undefined ? undefined : ledIn(realm);
     const call = yours?.call ?? (led ? standCall(realm, led.karta, led.name ?? "") : "");
     const board = `${tool("channel")}(action="list", realm="${realm}")`;
     const leave = `${tool("channel")}(action="revoke", realm="${realm}", karta, standing=<${yours?.name ?? led?.name ?? "name"}>)`;
-    return mw().standsInRealm(realm, call, board, leave);
+    return mw().standsInRealm(realm, call, board, leave, !!yours);
   }
   return afterConnect ?? sw().refused(what, short(r.text));
 }

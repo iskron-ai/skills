@@ -346,7 +346,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (freed) extra.push(sw().note(freed.note));
     const r = await register();
     if (r.isError) {
-      lines.push(refusedWord("register", r, realm, undefined, karta));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name);
@@ -356,7 +356,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (resumed) {
     const r = await register();
     if (r.isError) {
-      lines.push(refusedWord("register", r, realm, undefined, karta));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -383,7 +383,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(refusedWord("register", r, realm, undefined, karta));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -391,7 +391,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (!take && (holdsStanding(realm, karta, name) || reopening)) {
     const r = await register();
     if (r.isError) {
-      lines.push(refusedWord("register", r, realm, undefined, karta));
+      lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = true;
@@ -425,7 +425,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     }
     const r = await register();
     if (r.isError) {
-      lines.push(await registerRefused(r, realm, taken, prior, addr, karta));
+      lines.push(await registerRefused(r, realm, taken, prior, addr));
       return done(true);
     }
     resetKnocks(realm, karta, name);
