@@ -32,6 +32,33 @@ test("register refused by channel_already_stands_in_realm reads in the session l
   assert.doesNotMatch(text, /channel_already_stands_in_realm|Conflict|already stands/, text);
 });
 
+// #7556, форма api 0.124: отказ называет место канала в графе (data.your_standings) — ход им.
+test("register refused by channel_already_stands_in_realm with your_standings names that seat in the move", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  // The channel stands in the graph by another hand (an earlier run of the session) and as
+  // another role (#5418): the bridge leads no seat there, the api knows it and names no role.
+  const [ch] = [...fake.state.channels.values()];
+  ch.places.set("@nks/methodology", { karta: "7", name: "m-a", standing_id: "s-m-a" });
+  await fake.control({ structured: true, oneSeatPerRealm: true });
+  const r = await stand(b, { realm: METH, karta: 12, name: "m-b" });
+  const text = textOf(r);
+  assert.equal(r.result?.isError, true, text);
+  assert.equal(fake.state.counts.register_stands_in_realm, 1, `the api refusal was met:\n${text}`);
+  assert.match(
+    text,
+    /^Отказано \(409\): канал этого моста уже стоит в графе @nks\/methodology/,
+    text,
+  );
+  // The refused call's role is not the seat's: the move leaves karta open and points at the board.
+  assert.ok(text.includes(`iskron_stand(realm="${METH}", karta, name="m-a")`), text);
+  assert.doesNotMatch(text, /karta=12/, text);
+  assert.ok(text.includes(`iskron_channel(action="list", realm="${METH}")`), text);
+  assert.match(text, /standing=<m-a>/, text);
+});
+
 // #7552: после перезапуска плагина iskron_stand ловил 429 socket_reissue_throttled от
 // переоткрытия сокета того же места — и отдавал отказ агенту. Вызов пережидает порог сам.
 test("connect refused 429 socket_reissue_throttled is waited out inside the call: the agent gets the seat, not the 429", async (t) => {

@@ -2424,6 +2424,36 @@ test("two graphs: the second place stands beside the first on the same channel �
   assert.ok(fake.state.places.get("48:proba-b")?.listening, "place B listens");
 });
 
+// #7556 (api 0.124.0): a register refused 409 channel_already_stands_in_realm names the channel's
+// seats in that graph (data.your_standings); the answer names the seat and the call to stand on it.
+// Without the data the refusal is as before.
+for (const withData of [true, false])
+  test(`two graphs: register refused 409 channel_already_stands_in_realm ${withData ? "with your_standings — the move names the seat and its iskron_stand" : "without data — the refusal as is"}`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!(await stand({ realm: NKS, karta: 931, name: "proba" })).result?.isError);
+    await fake.control({
+      registerRefuseNext: [
+        {
+          text: "Rejected (409): channel_already_stands_in_realm",
+          status: 409,
+          rule: "channel_already_stands_in_realm",
+          ...(withData ? { data: { your_standings: [{ id: "s-7", name: "proba-old" }] } } : {}),
+        },
+      ],
+    });
+    const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+    assert.ok(b.result?.isError, textOf(b));
+    assert.match(textOf(b), /^Отказано \(409\): канал этого моста уже стоит в графе/, textOf(b));
+    // The api names no role (#5418): the move leaves karta open, not the refused call's 48.
+    const move = `iskron_stand(realm="${DRUGOY}", karta, name="proba-old")`;
+    if (withData) assert.ok(textOf(b).includes(move), `the move by the seat's name:\n${textOf(b)}`);
+    else {
+      assert.doesNotMatch(textOf(b), /proba-old/, textOf(b));
+      assert.ok(textOf(b).includes("karta, name=<то имя>"), `the move by the board:\n${textOf(b)}`);
+    }
+  });
+
 test("two graphs: the busy line of a place beside names it @handle:name, not its record key — the platform sends no new hello for it", async (t) => {
   const { fake, stand, keyB } = await twoGraphs(
     t,
@@ -3146,6 +3176,22 @@ for (const [how, refuse, confirmed] of [
   ["success", null, true],
   ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
   ["a 404 refusal without a rule", { text: "Нет такого места.", status: 404 }, true],
+  // api 0.124.0 (#7599): the seat that is not there, by rule — both «already off».
+  [
+    "a 404 standing_not_found refusal",
+    { text: "Rejected.", status: 404, rule: "standing_not_found", data: { standing_id: "s-1" } },
+    true,
+  ],
+  [
+    "a 410 standing_already_ended refusal",
+    {
+      text: "Rejected.",
+      status: 410,
+      rule: "standing_already_ended",
+      data: { standing_id: "s-1", ended_by: "self", ended_at: "2026-10-14T00:00:00Z" },
+    },
+    true,
+  ],
   ["prose «role #931 not found» without refusal data", { text: "role #931 not found" }, false],
 ])
   test(`satellite: iskron/end on a revoke answered by ${how} — revoked ${confirmed ? "names" : "does not name"} the place`, async (t) => {

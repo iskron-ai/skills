@@ -6114,6 +6114,28 @@ test("the launcher's revoke refused for a missing role is loud — «не най
   }
 });
 
+// api 0.124.0 (#7599): a revoke of a seat that is not there is refused by rule — 404
+// standing_not_found or 410 standing_already_ended; both are «already off», not «НЕ снято».
+for (const [status, rule] of [
+  [404, "standing_not_found"],
+  [410, "standing_already_ended"],
+])
+  test(`the launcher's revoke refused ${status} ${rule} (api 0.124.0) is «отпущен», the seat off — no «НЕ снято»`, async () => {
+    const { b, rec } = await leadChild(`lead-release-${rule}`);
+    try {
+      writeFileSync(`${b.reply}.iskron_channel`, `__REFUSAL__${status} ${rule} Rejected.`);
+      const word = await rec.call(
+        "iskron_channel",
+        { realm: "nks-dev", action: "revoke", standing: SUB },
+        "root",
+      );
+      assert.match(word.content, /отпущен[\s\S]*место снято/);
+      assert.doesNotMatch(word.content, /НЕ снято/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
 // #7599 (live run): the child's bridge revoked its seat at its run's end, then the launcher's
 // revoke met «no standing named …» and the plugin said «место НЕ снято… повтори», nesting the
 // platform's list of the role's seats with a revoke for the launcher's own main seat. A seat the
@@ -6211,6 +6233,59 @@ test("real bridges: the child's revoke answered by bare prose is not taken as re
       (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
     );
     assert.equal(revokes.length, 2, "the child's own revoke, then the launcher's");
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+});
+
+// #7599 after api 0.124.0: the launcher names its graph short («nks-dev»), so the child's confirmed
+// revoke does not match and the launcher's revoke goes — and meets the seat already off, now said
+// by rule (404 standing_not_found). That is «место снято», not the false «НЕ снято… повтори».
+test("real bridges: the launcher's revoke of a seat the child's bridge already revoked meets 404 standing_not_found — «место снято», no «НЕ снято»", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true, revokeGone: 404 });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-lead-gone-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        { id: "root", location: { directory: dir } },
+        { id: "child", parentID: "root", location: { directory: dir } },
+      ],
+    },
+  );
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
+    const root = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "proba-gone" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    const child = await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
+    const sub = [...fake.state.places.keys()].find((k) => /\.sub-\d+$/.test(k));
+    assert.ok(sub, `the child stood as a satellite:\n${child.content}\n${rec.said()}`);
+    const name = sub.replace(/^\d+:/, "");
+    const said = await rec
+      .call("iskron_channel", { realm: "nks-dev", action: "revoke", standing: name }, "root")
+      .then(
+        (r) => r.content,
+        (e) => e.message,
+      );
+    assert.ok(!fake.state.places.has(sub), "the seat is off the board");
+    const revokes = fake.state.calls.filter(
+      (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+    );
+    assert.equal(revokes.length, 2, "the child's own revoke, then the launcher's");
+    assert.match(said, /место снято/, said);
+    assert.doesNotMatch(said, /НЕ снято|повтори/, said);
   } finally {
     await rec.stop();
     await fake.stop();
