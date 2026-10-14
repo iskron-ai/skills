@@ -69,7 +69,7 @@ import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
 import { baseOf, type Resumed, seatFor, theirsByRecord } from "./separate.ts";
-import { refusedWord, standAgainWord } from "./standmoves.ts";
+import { refusedWord, releasePrior, standAgainWord } from "./standmoves.ts";
 import { boardHeaders, needRealmKarta, sw } from "./standwords.ts";
 import { busyLine, publishStatus, standStatusOnly, TAKE_PATH, TURNED_GUIDANCE } from "./status.ts";
 import { state } from "./transport.ts";
@@ -173,6 +173,11 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // A taken seat beside is no return: seatFor picks the next seat beside (#6706).
   const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
   if (ledSuffix && !besideTaken && a.take !== true) name = led0?.name ?? name;
+  // take=true onto another named seat of this graph: the led one is released after the take (#7553).
+  const prior =
+    a.take === true && !sat && led0?.name && (led0.name !== name || String(led0.karta) !== karta)
+      ? { ...led0 }
+      : null;
   if (parts && fitted && fitted.cut.length) {
     const what = fitted.cut.map((k) => sw().cutPart(k)).join(", ");
     nameNotes.push(sw().nameCut(joinName(parts), NAME_MAX, name, what));
@@ -406,6 +411,7 @@ export async function runStand(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       : sw().howConnect(!!mine, listensElsewhere, a.take === true);
     // The seat retaken after a return that found no record: cases may have been lost (#6649).
     if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
+    if (prior) extra.push(sw().note(await releasePrior(realm, prior)));
   }
   lines.push(
     sw().head(mine?.address ?? name, karta, realm, how),

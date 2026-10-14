@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { channel, setup, stand, textOf } from "./ownseat-kit.mjs";
+import { channel, setup, stand, textOf, write } from "./ownseat-kit.mjs";
 
 const METH = "@nks/methodology";
 
@@ -28,6 +28,24 @@ test("register refused by channel_already_stands_in_realm reads in the session l
   assert.match(text, /iskron_channel\(action="list", realm="@nks\/methodology"\)/, text);
   assert.match(text, /iskron_stand\(realm="@nks\/methodology", karta, name=/, text);
   assert.doesNotMatch(text, /channel_already_stands_in_realm|Conflict|already stands/, text);
+});
+
+// #7553: iskron_stand(take=true) на другое имя оставлял сессии два места — и каждый case
+// просил from_standing. take — переход: прежнее место снимается.
+test("take=true onto another seat of the graph revokes the seat the session stood on before", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const first = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const taken = await stand(b, { realm: "nks-dev", karta: 931, name: "drugoe", take: true });
+  const text = textOf(taken);
+  assert.ok(!taken.result?.isError, text);
+  assert.match(text, /стояние \S*drugoe — роль #931/, text);
+  assert.match(text, /прежнее место этой сессии proba снято/, text);
+  assert.ok(fake.state.closedPlaces.has("931:proba"), "the former seat is revoked at the platform");
+  assert.ok(!fake.state.closedPlaces.has("931:drugoe"), "the taken seat lives");
+  const w = await write(b);
+  assert.ok(!w.result?.isError, `the session still writes from the taken seat:\n${textOf(w)}`);
 });
 
 // #7554: после перезапуска плагина iskron_stand(realm, status) отказывал «такого места нет» —

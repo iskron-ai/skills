@@ -7,7 +7,7 @@ import { STAND_MOVES, type StandMovesWords, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { sessionCwd } from "../shared/scope.ts";
 import { standingsDirOf } from "../shared/standings.ts";
-import { type Answer, short } from "./call.ts";
+import { type Answer, callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
 import { type HoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { extraIn } from "./places.ts";
@@ -67,6 +67,20 @@ export function standAgainWord(realm: string, miss: StatusMiss | null): string {
   if (!realm || !miss || !["none", "parked", "elsewhere"].includes(miss.why)) return "";
   const seat = "seat" in miss ? miss.seat : formerSeat(realm);
   return seat ? ` ${mw().standAgain(standCall(seat.realm, seat.karta, seat.name ?? ""))}` : "";
+}
+
+/**
+ * take=true onto another seat of the same graph moves the session, it does not add a seat:
+ * the seat this bridge led before is revoked, or cases ask for from_standing on every call
+ * (#7553). The note after the answer's header.
+ */
+export async function releasePrior(realm: string, prior: Standing): Promise<string> {
+  const name = prior.name ?? "";
+  const args = { action: "revoke", realm, karta: String(prior.karta), standing: name };
+  const r = await callTool(tool("channel"), args);
+  if (!r.isError) return mw().priorReleased(name);
+  const revoke = `${tool("channel")}(action="revoke", realm="${realm}", karta="${prior.karta}", standing="${name}")`;
+  return mw().priorKept(name, short(r.text, 160), revoke);
 }
 
 /** The refusal of connect or register as the agent reads it: a known api rule with its move, else as is. */
