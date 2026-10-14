@@ -359,7 +359,12 @@ try {
   for (let t = 0; t < 120 && !/тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp()); t++) await sleep(500);
   await sleep(10_000); // the reload of the tool list lands after the plugin says so
   report.push(`realm ${realm} · karta #${karta} · serve ${server} · model ${providerID}/${modelID}`);
-  const board = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` })).text;
+  // a refused read is not an empty board: "both seats gone" must not pass on it
+  const board = async () => {
+    const x = await P.call("iskron_channel", { realm, action: "list", karta: `#${karta}` });
+    if (x.error) throw new Error(`board: ${x.text.slice(0, 300)}`);
+    return x.text;
+  };
   const waitSeat = async (name, ms = 240_000) => {
     for (let t = 0; t < ms; t += 5000) {
       if (seatId(await board(), name)) return true;

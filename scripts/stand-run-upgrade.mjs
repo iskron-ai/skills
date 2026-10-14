@@ -142,8 +142,14 @@ try {
   };
   const k1 = await mk(realm);
   const k2 = await mk(realm2);
-  const board = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${k1}` })).text;
-  const board2 = async () => (await P.call("iskron_channel", { realm: realm2, action: "list", karta: `#${k2}` })).text;
+  // a refused read is not an empty board
+  const list = async (r, k) => {
+    const x = await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` });
+    if (x.error) throw new Error(`board of ${r}: ${x.text.slice(0, 300)}`);
+    return x.text;
+  };
+  const board = () => list(realm, k1);
+  const board2 = () => list(realm2, k2);
 
   // The previous release holds the seats.
   const a = await S1.call("iskron_stand", { realm, karta: `#${k1}`, name: n1, model: "stand-run" });
@@ -178,6 +184,12 @@ try {
   const ownB = log.filter((l) => l.includes(`${n1b}--`));
   const resumedB = ownB.some((l) => /resumed-from-disk/.test(l) && Date.parse(l.slice(0, 24)) > tUp);
   check(resumedB, `${n1b} (beside, second graph): resumed by the successor (standings.log)`, ownB.filter((l) => Date.parse(l.slice(0, 24)) >= tUp).map((l) => l.slice(25, 200)).join(" | "));
+  if (resumedB) {
+    // Returned is also heard by the session: a call into the second graph is not refused as lost
+    // (the refusal spares iskron_stand, so the probe is another tool).
+    const w = await S1.call("iskron_channel", { realm: realm2, action: "list", karta: `#${k2}` });
+    check(!w.error && !/потерян|lost/i.test(w.text.split("\n")[0]), `${n1b}: s1 calls into the second graph after the update, not refused`, w.text.split("\n")[0].slice(0, 160));
+  }
   const lostNote = S1.notes.find((m) => /lost|потерян/.test(JSON.stringify(m)) && JSON.stringify(m).includes(n1b));
   if (!resumedB) {
     check(!!lostNote, `${n1b}: the session is told the seat beside was lost`, lostNote ? JSON.stringify(lostNote.params?.data ?? lostNote.params).slice(0, 200) : `notes: ${S1.notes.length}`);
@@ -212,7 +224,7 @@ try {
   check(ver[1]?.includes(vNew.split("+")[0].replace(/^v/, "")) ?? false, "the daemon now runs the new build", ver[1]);
 
   for (const [r, k, n] of [[realm, k1, n1], [realm, k1, n2], [realm2, k2, n1b]]) {
-    const brd = (await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` })).text;
+    const brd = await list(r, k);
     const line = brd.split("\n");
     const i = line.findIndex((l) => l.includes(`:${n} —`));
     const id = i === -1 ? null : line.slice(i, i + 8).map((l) => l.match(/^\s+id ([0-9a-f-]{36})/)?.[1]).find(Boolean);
