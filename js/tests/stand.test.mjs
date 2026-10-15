@@ -2375,7 +2375,7 @@ async function twoGraphs(t, A, B, init = INIT, beforeB = async () => {}, env = {
     textOf(
       await bridge.call("tools/call", {
         name: "iskron_add_phenomenon",
-        arguments: { realm, name: n },
+        arguments: { realm, name: n, given_as: "ding" },
       }),
     );
   return { fake, dir, bridge, stand, a, b, keyA, keyB, idOf, watch, write };

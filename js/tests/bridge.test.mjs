@@ -2212,7 +2212,7 @@ test("an answer lost on the wire: a read is asked again, a write goes out once",
       door.requests = 0;
       const write = await bridge.call("tools/call", 2, {
         name: "iskron_add_phenomenon",
-        arguments: { name: "probe" },
+        arguments: { name: "probe", given_as: "ding" },
       });
       assert.match(
         write.error?.message ?? "",
