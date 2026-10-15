@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.12.0](https://github.com/iskron-ai/skills/compare/v7.11.0...v7.12.0) (2026-10-15)
+
+
+### Features
+
+* **assistant:** поручение агенту — делом на предмете, «что в работе» — из дел ([#482](https://github.com/iskron-ai/skills/issues/482)) ([d72b3e0](https://github.com/iskron-ai/skills/commit/d72b3e09ff928b0a313320f4c27e16e45c8fbf7b))
+* **minding:** личные способы и допустимое применение ([#486](https://github.com/iskron-ai/skills/issues/486)) ([a12aa67](https://github.com/iskron-ai/skills/commit/a12aa67b30f8d3fc4c922ea6c0ebe6842c585e06))
+
+
+### Bug Fixes
+
+* **assistant:** ключ поручения — строки исполнителя; «что в работе» — доска места ([#484](https://github.com/iskron-ai/skills/issues/484)) ([8c4d0ce](https://github.com/iskron-ai/skills/commit/8c4d0ce2ea9f9b8a54745bb0c5d29bc6249b8e57))
+* **bridge:** слова моста и скиллы ведут к делам вместо журнала канала; драйверы — ходы человека через api ([#485](https://github.com/iskron-ai/skills/issues/485)) ([43cdbc6](https://github.com/iskron-ai/skills/commit/43cdbc60284864ad6bb00f93df8d899f003ea0ac))
+
 ## [7.11.0](https://github.com/iskron-ai/skills/compare/v7.10.0...v7.11.0) (2026-10-14)
 
 

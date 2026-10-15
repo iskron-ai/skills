@@ -60,7 +60,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.11.0";
+var VERSION = "7.12.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -90,6 +90,40 @@ var ASK = {
     withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
     inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
     inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
+  }
+};
+
+// js/delivery/words/frame-text.ts
+var FRAME_TEXT = {
+  ru: {
+    myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
+    frame: (id) => `кадр ${id}`,
+    yoursBelow: () => ` — адресованные строками ниже; `,
+    noneYours: () => ` — адресованных месту нет; `,
+    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
+    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  },
+  en: {
+    myCases: () => `${tool("case")}(action="mine"), then read each`,
+    frame: (id) => `frame ${id}`,
+    yoursBelow: () => ` — yours in the lines below; `,
+    noneYours: () => ` — none of them yours; `,
+    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
+    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  }
+};
+var CASE_LINE = {
+  ru: {
+    platform: () => "платформа",
+    quote: (s) => `«${s}»`
+  },
+  en: {
+    platform: () => "platform",
+    quote: (s) => `“${s}”`
   }
 };
 
@@ -124,38 +158,6 @@ var TAKE = {
   },
   en: {
     rule: () => "your own name (the same role, the same account) — by yourself when the holder stays silent 5 minutes to a probe by word (iskron_channel send); another's (another role or account) — only on the human's word"
-  }
-};
-
-// js/delivery/words/frame-text.ts
-var FRAME_TEXT = {
-  ru: {
-    frame: (id) => `кадр ${id}`,
-    yoursBelow: () => ` — адресованные строками ниже; `,
-    noneYours: () => ` — адресованных месту нет; `,
-    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
-    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
-    inFull: (cases) => `целиком — ${cases || `${tool("channel")}(action="history")`}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
-  },
-  en: {
-    frame: (id) => `frame ${id}`,
-    yoursBelow: () => ` — yours in the lines below; `,
-    noneYours: () => ` — none of them yours; `,
-    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
-    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
-    inFull: (cases) => `in full — ${cases || `${tool("channel")}(action="history")`}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
-  }
-};
-var CASE_LINE = {
-  ru: {
-    platform: () => "платформа",
-    quote: (s) => `«${s}»`
-  },
-  en: {
-    platform: () => "platform",
-    quote: (s) => `“${s}”`
   }
 };
 
@@ -336,10 +338,10 @@ var OPENCODE = {
     tact: () => "такт внимания",
     tactWaits: () => "Искрон: такт внимания ждёт конца хода сессии",
     tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
-    childGone: (frame, id, text) => `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
-    childEnded: (frame, id, text) => `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; кадр остаётся в истории стояния — ${text}`,
+    childGone: (frame, id, text) => `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; запись дела остаётся в деле (iskron_case history), прямое слово корню не дошло; место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
+    childEnded: (frame, id, text) => `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; запись дела остаётся в деле (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) => `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
-    nowhere: (frame, text) => `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; кадр остаётся в истории стояния — ` + text,
+    nowhere: (frame, text) => `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; запись дела остаётся в деле (iskron_case history), прямое слово не дошло — ` + text,
     halted: (frame, id) => `Искрон: ${frame} не вложен — сессия ${id} остановлена снятием места, до нового явного занятия места она не будится`,
     pulseOverflow: (id, waiting) => `Искрон: в сессии ${id} ждут хода уже ${waiting} вложенных кадров — OpenCode их не берёт; пульс держит их все`,
     haltUnwritten: (id, message) => `Искрон: остановка сессии ${id} не записана на диск (${message}) — запрет держат лишь живые экземпляры плагина этого процесса, перезагрузку он не переживёт`,
@@ -389,10 +391,10 @@ var OPENCODE = {
     tact: () => "attention tact",
     tactWaits: () => "Iskron: the attention tact waits for the end of the session's turn",
     tactWaitsFolded: () => "Iskron: the attention tact waits for the end of the session's turn — the previous waiting one is folded",
-    childGone: (frame, id, text) => `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; the frame stays in the standing's history (iskron_channel history); the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
-    childEnded: (frame, id, text) => `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; the frame stays in the standing's history — ${text}`,
+    childGone: (frame, id, text) => `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; a case record stays in the case (iskron_case history), a direct word did not reach the root; the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
+    childEnded: (frame, id, text) => `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; a case record stays in the case (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) => `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
-    nowhere: (frame, text) => `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; the frame stays in the standing's history — ` + text,
+    nowhere: (frame, text) => `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; a case record stays in the case (iskron_case history), a direct word did not arrive — ` + text,
     halted: (frame, id) => `Iskron: ${frame} not delivered — session ${id} was stopped by taking its seat off; it is not woken until it takes a seat again explicitly`,
     pulseOverflow: (id, waiting) => `Iskron: ${waiting} frames laid into session ${id} wait for its turn — OpenCode does not take them; the pulse keeps them all`,
     haltUnwritten: (id, message) => `Iskron: the stop of session ${id} was not written to disk (${message}) — only the live plugin instances of this process keep the ban, it will not survive a reload`,

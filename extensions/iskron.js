@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.11.0";
+var VERSION = "7.12.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -83,6 +83,40 @@ var ASK = {
     withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
     inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
     inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
+  }
+};
+
+// js/delivery/words/frame-text.ts
+var FRAME_TEXT = {
+  ru: {
+    myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
+    frame: (id) => `кадр ${id}`,
+    yoursBelow: () => ` — адресованные строками ниже; `,
+    noneYours: () => ` — адресованных месту нет; `,
+    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
+    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  },
+  en: {
+    myCases: () => `${tool("case")}(action="mine"), then read each`,
+    frame: (id) => `frame ${id}`,
+    yoursBelow: () => ` — yours in the lines below; `,
+    noneYours: () => ` — none of them yours; `,
+    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
+    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+  }
+};
+var CASE_LINE = {
+  ru: {
+    platform: () => "платформа",
+    quote: (s) => `«${s}»`
+  },
+  en: {
+    platform: () => "platform",
+    quote: (s) => `“${s}”`
   }
 };
 
@@ -117,38 +151,6 @@ var TAKE = {
   },
   en: {
     rule: () => "your own name (the same role, the same account) — by yourself when the holder stays silent 5 minutes to a probe by word (iskron_channel send); another's (another role or account) — only on the human's word"
-  }
-};
-
-// js/delivery/words/frame-text.ts
-var FRAME_TEXT = {
-  ru: {
-    frame: (id) => `кадр ${id}`,
-    yoursBelow: () => ` — адресованные строками ниже; `,
-    noneYours: () => ` — адресованных месту нет; `,
-    count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
-    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
-    inFull: (cases) => `целиком — ${cases || `${tool("channel")}(action="history")`}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
-  },
-  en: {
-    frame: (id) => `frame ${id}`,
-    yoursBelow: () => ` — yours in the lines below; `,
-    noneYours: () => ` — none of them yours; `,
-    count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
-    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
-    inFull: (cases) => `in full — ${cases || `${tool("channel")}(action="history")`}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
-  }
-};
-var CASE_LINE = {
-  ru: {
-    platform: () => "платформа",
-    quote: (s) => `«${s}»`
-  },
-  en: {
-    platform: () => "platform",
-    quote: (s) => `“${s}”`
   }
 };
 
