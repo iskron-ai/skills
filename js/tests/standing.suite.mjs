@@ -1017,6 +1017,15 @@ test("a connection silent past three ping intervals is reopened aloud; unseen pi
   await waitFor(() => fake.state.counts.ws_upgrades >= 2, "the hung socket to be reopened", 8000);
   assert.match(bridge.stderr, /подвисло без закрытия/, "the reopen is said aloud");
   assert.match(bridge.stderr, /могли пропасть/, "a hung socket's frames are not promised back");
+  assert.match(
+    bridge.stderr,
+    /сверь дела: iskron_case\(action="mine"\)/,
+    "the lost frames are looked for in the seat's cases",
+  );
+  assert.ok(
+    !bridge.stderr.includes('iskron_channel(action="history"'),
+    "no pointer to the channel log the server drops (#7636)",
+  );
   assert.ok(
     bridge.notifications.some((n) => JSON.stringify(n).includes("подвисло")),
     "the harness is told too — pi and OpenCode hear no watchdog",
@@ -2250,7 +2259,15 @@ test("hello with pending and a platform wake each open a backlog window: the fra
   assert.equal(burst.pending, 2);
   assert.match(burst.text, /Побудка: кадров 2 \(ожидало в очереди: 2\)/);
   assert.match(burst.text, /первое в очереди[\s\S]*второе в очереди/);
-  assert.match(burst.text, /action="history"/, "the rest is pointed at, not dropped");
+  assert.match(
+    burst.text,
+    /iskron_case\(action="mine"\)/,
+    "the rest is pointed at the seat's cases, not dropped",
+  );
+  assert.ok(
+    !burst.text.includes('iskron_channel(action="history"'),
+    `no pointer to the channel log the server drops (#7636):\n${burst.text}`,
+  );
   assert.ok(
     !frames().includes("q1") && !frames().includes("q2"),
     "no prompt per frame for a queued frame",
@@ -2559,6 +2576,15 @@ test("the Monitor watchdog marks the frames a stale batch named but did not show
   await waitFor(() => /Лежалых кадров: 25, здесь первые 20/.test(wd.out), "the stale batch");
   await new Promise((r) => setTimeout(r, 300)); // the marks follow the print
   assert.equal(shown(), 20);
+  assert.match(
+    wd.out,
+    /не вошедшее — iskron_case\(action="mine"\)/,
+    "the left-out stale frames are pointed at the seat's cases",
+  );
+  assert.ok(
+    !wd.out.includes('iskron_channel(action="history"'),
+    "no pointer to the channel log the server drops (#7636)",
+  );
   await reconnect(fake);
   await fake.control({
     ws_send_many: staleBurst(25).map((s) => s.replace('"stale":true', '"stale":false')),

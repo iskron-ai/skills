@@ -1,6 +1,6 @@
 // Шапка пачки лежалых кадров (ядро shared/stalebatch.ts).
 import type { Lang } from "../lang.ts";
-import { tool } from "../protocol.ts";
+import { FRAME_TEXT } from "./frame-text.ts";
 
 export interface StaleWords {
   /** count — всех лежалых, shown — сколько вошло текстом. */
@@ -14,7 +14,7 @@ export const STALE: Readonly<Record<Lang, StaleWords>> = {
       (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") +
       " — принятые, пока место не слушали, или повтор службы после пересборки сессии; " +
       "адресованные месту — текстом, прочие — счётом; " +
-      `полностью и не вошедшее — ${tool("channel")}(action="history").`,
+      `целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.`,
   },
   en: {
     head: (count, shown) =>
@@ -22,6 +22,6 @@ export const STALE: Readonly<Record<Lang, StaleWords>> = {
       (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") +
       " — taken while the seat was not listening, or the service repeating after a session rebuild; " +
       "those addressed to the seat as text, the rest by count; " +
-      `in full and the rest — ${tool("channel")}(action="history").`,
+      `in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.`,
   },
 };

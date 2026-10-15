@@ -7,7 +7,10 @@
 // моста до релиза»). No human: a PAT file, an isolated HOME.
 //
 //   node scripts/stand-run-upgrade.mjs --old OLD.mjs --new NEW.mjs --token-file F --url U \
-//     --realm @owner/a --realm2 @owner/b [--keep]
+//     --realm @owner/a --realm2 @owner/b --api A [--person U] [--keep]
+//
+// --api — the api beside the MCP: the person's word to a seat and the seats' removal go through
+// it (scripts/stand-person.mjs), as --person (a LOCAL carrier's test identity), else as the token.
 //
 // NEW must carry a higher version than OLD: the daemon hands over only to a newer build.
 // Exit 0 — passed, 1 — a check failed, 2 — setup failed.
@@ -15,6 +18,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { personApi, seatAddress } from "./stand-person.mjs";
 
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -28,6 +32,8 @@ const fail = (code, t) => (process.stderr.write(`stand-run-upgrade: ${t}\n`), pr
 if (![oldFile, newFile, tokenFile, URL_, realm, realm2].every(Boolean)) fail(2, "--old, --new, --token-file, --url, --realm, --realm2 are required");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
 const token = readFileSync(tokenFile, "utf8").trim();
+if (!arg("--api")) fail(2, "--api is required: the person's word and the seats' removal go through the api (#7636)");
+const person = personApi({ api: arg("--api"), person: arg("--person"), token });
 const versionOf = (f) => spawnSync(process.execPath, [f, "--version"], { env: envBase(), encoding: "utf8" }).stdout.split("\n")[0].trim();
 
 const run = mkdtempSync(join(tmpdir(), "stand-up-"));
@@ -215,7 +221,7 @@ try {
   const st = await S2.call("iskron_stand", { realm, karta: `#${k1}`, status: "after the update" });
   check(!st.error && !/рядом|beside/i.test(st.text), "s2: busy line on its own seat after the update, no seat beside", st.text.split("\n")[0]);
   const before = S1.notes.length;
-  const sent = await P.call("iskron_channel", { realm, action: "send", karta: `#${k1}`, standing: n1, text: "stand-run: after the update", as_person: true });
+  const sent = await person.send(realm, k1, seatAddress(await list(realm, k1), n1), "stand-run: after the update");
   let heard = false;
   for (let t = 0; t < 30 && !heard; t++) {
     await sleep(1000);
@@ -225,12 +231,15 @@ try {
   const ver = spawnSync(process.execPath, [homeCopy, "--version"], { env: envBase(), encoding: "utf8" }).stdout.split("\n");
   check(ver[1]?.includes(vNew.split("+")[0].replace(/^v/, "")) ?? false, "the daemon now runs the new build", ver[1]);
 
-  for (const [r, k, n] of [[realm, k1, n1], [realm, k1, n2], [realm2, k2, n1b]]) {
+  // The seat beside first: a founding seat with a neighbour is refused 409 (node #5085).
+  for (const [r, k, n] of [[realm2, k2, n1b], [realm, k1, n1], [realm, k1, n2]]) {
     const brd = await list(r, k);
     const line = brd.split("\n");
     const i = line.findIndex((l) => l.includes(`:${n} —`));
     const id = i === -1 ? null : line.slice(i, i + 8).map((l) => l.match(/^\s+id ([0-9a-f-]{36})/)?.[1]).find(Boolean);
-    if (id) await P.call("iskron_channel", { realm: r, action: "revoke", karta: `#${k}`, channel: id, as_person: true });
+    if (!id) continue;
+    const rv = await person.revoke(r, id);
+    check(!rv.error, `cleanup: ${n} taken off`, rv.text.slice(0, 160));
   }
 } catch (e) {
   report.push(`ERROR ${e.message}`);
