@@ -6532,6 +6532,11 @@ test("an ended lead is woken by nothing: frames, piles, batches and a held tact 
       "nothing laid into the ended child",
     );
     assert.match(rec.said(), /не вложен — субагент сессии child кончен/);
+    assert.match(rec.said(), /запись дела остаётся в деле \(iskron_case history\)/);
+    assert.ok(
+      !rec.said().includes("iskron_channel history"),
+      "no pointer to the channel log the server drops (#7636)",
+    );
   } finally {
     await rec.stop();
   }
@@ -7956,6 +7961,11 @@ test("a frame on the place of a child session that is gone is not re-addressed t
     await until(() => /корню не переадресую/.test(rec.said()), "the loud line");
     await delay(200);
     assert.equal(rec.prompts.length, 0, "the root must not receive the child's frame");
+    assert.match(rec.said(), /запись дела остаётся в деле \(iskron_case history\)/);
+    assert.ok(
+      !rec.said().includes("iskron_channel history"),
+      "no pointer to the channel log the server drops (#7636)",
+    );
     // The root's own frames still reach the root.
     appendFileSync(`${b.events}.${rootPid}`, event("frame", { frame: frame("корню"), raw: "" }));
     await until(() => rec.prompts.length === 1, "the root's frame");

@@ -111,9 +111,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
     childGone: (frame, id, text) =>
       `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; ` +
-      `кадр остаётся в истории стояния (iskron_channel history); место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
+      `запись дела остаётся в деле (iskron_case history), прямое слово корню не дошло; место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
     childEnded: (frame, id, text) =>
-      `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; кадр остаётся в истории стояния — ${text}`,
+      `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; запись дела остаётся в деле (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
       `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
     nowhere: (frame, text) =>
@@ -187,9 +187,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       "Iskron: the attention tact waits for the end of the session's turn — the previous waiting one is folded",
     childGone: (frame, id, text) =>
       `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; ` +
-      `the frame stays in the standing's history (iskron_channel history); the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
+      `a case record stays in the case (iskron_case history), a direct word did not reach the root; the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
     childEnded: (frame, id, text) =>
-      `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; the frame stays in the standing's history — ${text}`,
+      `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; a case record stays in the case (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
       `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
     nowhere: (frame, text) =>

@@ -4,6 +4,11 @@ import type { Lang } from "../lang.ts";
 import { tool } from "../protocol.ts";
 
 export interface FrameTextWords {
+  /**
+   * Куда вести за не вошедшим и пропавшим: дела места — журнала канала у сервера нет
+   * (граф @nks/nks-dev, узел #7636).
+   */
+  myCases: () => string;
   /** Род кадра без словаря: «кадр <id>». */
   frame: (id: string) => string;
   /** Хвост строки счёта: есть ли адресованные месту строками ниже. */
@@ -12,7 +17,7 @@ export interface FrameTextWords {
   /** head — «№N «зачин»», n — записей после свёртки, mine — адресованных месту. */
   count: (head: string, n: number, mine: number) => string;
   supersededLines: (gone: number) => string;
-  /** Указание, где читать целиком: args — аргументы history дела через «; »; пусто — history канала. */
+  /** Указание, где читать целиком: args — аргументы history дела через «; »; пусто — дела места. */
   inFull: (cases: string) => string;
   /** Вызов history одного дела. */
   caseHistory: (args: string, since: number) => string;
@@ -20,21 +25,23 @@ export interface FrameTextWords {
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
   ru: {
+    myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
     noneYours: () => ` — адресованных месту нет; `,
     count: (head, n, mine) => `${head}: записей ${n}, тебе ${mine}`,
     supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
-    inFull: (cases) => `целиком — ${cases || `${tool("channel")}(action="history")`}`,
+    inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
   },
   en: {
+    myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,
     noneYours: () => ` — none of them yours; `,
     count: (head, n, mine) => `${head}: ${n} records, yours ${mine}`,
     supersededLines: (gone) => `, ${gone} superseded lines of a key`,
-    inFull: (cases) => `in full — ${cases || `${tool("channel")}(action="history")`}`,
+    inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
   },
 };
