@@ -399,7 +399,8 @@ try {
     check(!standingsLog().slice(l3).includes(nameT), "take refused: no connect of the new name (standings.log)", standingsLog().slice(l3).split("\n").filter((l) => l.includes(nameT)).join(" | ").slice(0, 200));
     check(!!seatId((await readBoard(realm2Arg, karta2)), nameB), "take refused: the seat beside stands");
     const before3 = A.notes.length;
-    await person.revoke(realm2Arg, idB);
+    const rvB = await person.revoke(realm2Arg, idB);
+    check(!rvB.error, "person takes the seat beside off", rvB.text.slice(0, 160));
     await sleep(20_000);
     const notes3 = A.notes.slice(before3).map(noteText);
     check(!notes3.some((t) => /остановлен/.test(t) && t.includes(nameA)), "main seat not stopped by the beside removal", notes3.join(" | ").slice(0, 200));

@@ -426,7 +426,10 @@ try {
   // The person takes both seats off.
   const brd = await board();
   const tStop = Date.now();
-  for (const n of [nameA, nameB]) await person.revoke(realm, seatId(brd, n));
+  for (const n of [nameA, nameB]) {
+    const rv = await person.revoke(realm, seatId(brd, n));
+    check(!rv.error, `person takes ${n} off`, rv.text.slice(0, 160));
+  }
   await sleep(45_000);
   check(!active().includes(A.id), "A: the running turn is cut", active().join(","));
   check(!active().includes(B.id), "B: not woken by the stop");
