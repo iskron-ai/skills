@@ -667,11 +667,13 @@ try {
 //    до модели не доходит. Вывод skill — обёртка клиента вокруг тела без фронтматтера, базового
 //    каталога и до десяти файлов скилла (форма — тот же бинарь, сверена с захватом прогона
 //    loaded-stub-20261013T234051Z: дверь 7.9.0 → 252 строки). Каталог берётся длинным —
-//    запас на путь установки. Исключений нет: переросший скилл перекомпонуется — механика
+//    запас на путь установки: путь входит в вывод по разу на базовый каталог и каждый файл скилла,
+//    и при каталоге 64 знака vahta уже упиралась в предел (№709, №726); меряется путь ~140 знаков,
+//    как под Application Support и каталогами оболочек. Исключений нет: переросший скилл перекомпонуется — механика
 //    дословно в references/ с обязательным указателем на месте, ядро в теле.
 const CLIENT_OUTPUT_MAX = { lines: 2000, bytes: 51200 };
 function clientSkillOutput(name) {
-  const dir = `/Users/${"x".repeat(32)}/.config/opencode/skills/${name}`;
+  const dir = `/Users/${"x".repeat(32)}/Library/Application Support/${"x".repeat(60)}/skills/${name}`;
   const text = readFileSync(join(skillsDir, name, "SKILL.md"), "utf8");
   const fm = /^---\n[\s\S]*?\n---\n/.exec(text);
   const body = text.slice(fm ? fm[0].length : 0).trim();
