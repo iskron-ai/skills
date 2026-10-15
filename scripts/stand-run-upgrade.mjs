@@ -231,12 +231,15 @@ try {
   const ver = spawnSync(process.execPath, [homeCopy, "--version"], { env: envBase(), encoding: "utf8" }).stdout.split("\n");
   check(ver[1]?.includes(vNew.split("+")[0].replace(/^v/, "")) ?? false, "the daemon now runs the new build", ver[1]);
 
-  for (const [r, k, n] of [[realm, k1, n1], [realm, k1, n2], [realm2, k2, n1b]]) {
+  // The seat beside first: a founding seat with a neighbour is refused 409 (node #5085).
+  for (const [r, k, n] of [[realm2, k2, n1b], [realm, k1, n1], [realm, k1, n2]]) {
     const brd = await list(r, k);
     const line = brd.split("\n");
     const i = line.findIndex((l) => l.includes(`:${n} —`));
     const id = i === -1 ? null : line.slice(i, i + 8).map((l) => l.match(/^\s+id ([0-9a-f-]{36})/)?.[1]).find(Boolean);
-    if (id) await person.revoke(r, id);
+    if (!id) continue;
+    const rv = await person.revoke(r, id);
+    check(!rv.error, `cleanup: ${n} taken off`, rv.text.slice(0, 160));
   }
 } catch (e) {
   report.push(`ERROR ${e.message}`);
