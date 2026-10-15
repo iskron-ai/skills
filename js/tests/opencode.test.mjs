@@ -1348,6 +1348,11 @@ test("a frame with no session seen at all is said aloud, not lost silently", asy
     appendFileSync(b.events, event("frame", { frame: { type: "message", body: "x" }, raw: "" }));
     await until(() => /ВЛОЖИТЬ НЕКУДА/.test(rec.said()), "the loud refusal");
     assert.equal(rec.prompts.length, 0);
+    assert.match(rec.said(), /запись дела остаётся в деле \(iskron_case history\)/);
+    assert.ok(
+      !/истории стояния/.test(rec.said()),
+      "no pointer to the channel log the server drops (#7636)",
+    );
   } finally {
     await rec.stop();
   }
@@ -6532,6 +6537,11 @@ test("an ended lead is woken by nothing: frames, piles, batches and a held tact 
       "nothing laid into the ended child",
     );
     assert.match(rec.said(), /не вложен — субагент сессии child кончен/);
+    assert.match(rec.said(), /запись дела остаётся в деле \(iskron_case history\)/);
+    assert.ok(
+      !rec.said().includes("iskron_channel history"),
+      "no pointer to the channel log the server drops (#7636)",
+    );
   } finally {
     await rec.stop();
   }
@@ -7929,7 +7939,7 @@ test("a refused join comes back as words in the prompt, and the place stays", as
 // A child's place can outlive the child: OpenCode sends no «subagent finished»
 // event, so the child's bridge keeps holding. A frame on that place must not be
 // re-addressed to the root — there stands another standing (#5167): it is said
-// aloud and stays in the place's history instead.
+// aloud instead; a case record stays in its case.
 test("a frame on the place of a child session that is gone is not re-addressed to the root: loud, and left in the history", async () => {
   const gone = new Set();
   const b = bridgeEnv("child-gone", {
@@ -7956,6 +7966,11 @@ test("a frame on the place of a child session that is gone is not re-addressed t
     await until(() => /корню не переадресую/.test(rec.said()), "the loud line");
     await delay(200);
     assert.equal(rec.prompts.length, 0, "the root must not receive the child's frame");
+    assert.match(rec.said(), /запись дела остаётся в деле \(iskron_case history\)/);
+    assert.ok(
+      !rec.said().includes("iskron_channel history"),
+      "no pointer to the channel log the server drops (#7636)",
+    );
     // The root's own frames still reach the root.
     appendFileSync(`${b.events}.${rootPid}`, event("frame", { frame: frame("корню"), raw: "" }));
     await until(() => rec.prompts.length === 1, "the root's frame");

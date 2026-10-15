@@ -9,7 +9,8 @@
 // The token file: one line, mode 0600. Model keys come from this machine's `opencode auth export`
 // (key entries of anthropic/openai only) into the isolated home. Exit 0 — passed, 1 — a check
 // failed, 2 — setup failed. --api URL --person U — the owner's stop order (#7519) on a running
-// session's seat and on a satellite's, laid by U through the api's test identity.
+// session's seat and on a satellite's, laid by U through the api's test identity. --api is
+// required: the person's words and seat removals go through it (scripts/stand-person.mjs).
 // The release batch: the seat's pulse — idle after a turn, busy in it, turn_at at its end, read_at
 // when a word went into it (#7529; with --api read from GET /me/channels, else the board's text);
 // Esc keeps the seat. Out of the batch: the agent's end (#7493; #473 excluded from the release) —
@@ -23,6 +24,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statS
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { personApi, seatAddress } from "./stand-person.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
@@ -53,6 +55,8 @@ if (process.argv.includes("--satellite") && childModelID === modelID) fail(2, "-
 if (!existsSync(bridge) || !existsSync(plugin)) fail(2, "no bridge or plugin build — make build-js, or --bridge/--plugin");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
 const token = readFileSync(tokenFile, "utf8").trim();
+if (!apiArg) fail(2, "--api is required: the person's words and seat removals go through the api (#7636)");
+const person = personApi({ api: apiArg, person: personArg, token });
 const opencode = spawnSync("sh", ["-c", "command -v opencode"]).stdout.toString().trim();
 
 const run = mkdtempSync(join(tmpdir(), "stand-oc-"));
@@ -422,8 +426,10 @@ try {
   // The person takes both seats off.
   const brd = await board();
   const tStop = Date.now();
-  for (const n of [nameA, nameB])
-    await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd, n), as_person: true });
+  for (const n of [nameA, nameB]) {
+    const rv = await person.revoke(realm, seatId(brd, n));
+    check(!rv.error, `person takes ${n} off`, rv.text.slice(0, 160));
+  }
   await sleep(45_000);
   check(!active().includes(A.id), "A: the running turn is cut", active().join(","));
   check(!active().includes(B.id), "B: not woken by the stop");
@@ -506,14 +512,7 @@ try {
   check(sent2.length > 0 && !sent2.some(systemStop), "B held again: no model request carries the stop word in its system part (wire)", `requests ${sent2.length}`);
   check(seen2 !== "" && !hasStopWord(seen2), "B held again: the model sees no stop word", seen2.match(/"text":"([^"]{0,140})/)?.[1]);
   const before = messages(B.id).length;
-  const sent = await P.call("iskron_channel", {
-    realm,
-    action: "send",
-    karta: `#${karta}`,
-    standing: nameB,
-    text: "stand-run: reply PONG and end your turn",
-    as_person: true,
-  });
+  const sent = await person.send(realm, karta, seatAddress(brd, nameB), "stand-run: reply PONG and end your turn");
   check(!sent.error, "person's word to B's seat accepted", sent.text.split("\n")[0]);
   let reached = false;
   for (let t = 0; t < 90 && !reached; t++) {
@@ -523,7 +522,7 @@ try {
   check(reached, "B: after the explicit stand a word reaches the session again");
   const brd2 = await board();
   if (seatId(brd2, nameB))
-    await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd2, nameB), as_person: true });
+    await person.revoke(realm, seatId(brd2, nameB));
 
   // The release batch on one session L: its pulse (graph @nks/nks-dev, node #7529), then its end
   // (#7493) — Esc, a plugin reload, a killed harness; a session D for the deletion.
@@ -556,7 +555,7 @@ try {
   const p1 = await waitPulse(nameL, (p) => p?.state === "busy");
   check(p1?.state === "busy", "pulse: busy during the turn", JSON.stringify(p1));
   const tWord = Date.now();
-  const w = await P.call("iskron_channel", { realm, action: "send", karta: `#${karta}`, standing: nameL, text: "stand-run: a word into the running turn — no answer needed", as_person: true });
+  const w = await person.send(realm, karta, seatAddress(await board(), nameL), "stand-run: a word into the running turn — no answer needed");
   check(!w.error, "pulse: a word to the seat during the turn accepted", w.text.split("\n")[0]);
   await idle(L.id, 180);
   const p2 = await waitPulse(nameL, (p) => p?.state === "idle" && Date.parse(p.turn_at) >= tTurn);
@@ -672,13 +671,13 @@ try {
       check(!/НЕ снято|NOT taken off|not taken off/.test(told), "satellite: the launcher is not told the seat still hangs");
       check(!/channel=\\*"[0-9a-f-]{36}/.test(told), "satellite: the launcher's answer carries no revoke call for another seat");
       for (let t = 0; t < 120 && active().includes(Rs.id); t++) await sleep(1000);
-      const word = await P.call("iskron_channel", { realm, action: "send", karta: `#${karta}`, standing: sub, text: "stand-run: reply PONG", as_person: true });
+      const word = await person.send(realm, karta, seatAddress(await board(), sub), "stand-run: reply PONG");
       report.push(`INFO word to the ended satellite: ${word.error ? "refused" : "accepted"} — ${word.text.split("\n")[0].slice(0, 140)}`);
       await sleep(30_000);
       check(!active().includes(Cs.id) && assistantAfter(messages(Cs.id), tRev + 20_000) === 0, "satellite: the ended child session does not run again");
     }
     const brd3 = await board();
-    if (seatId(brd3, nameR)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd3, nameR), as_person: true });
+    if (seatId(brd3, nameR)) await person.revoke(realm, seatId(brd3, nameR));
   }
   // The owner's stop order (#7519): a running session's seat — its turn cut, the stop frame never
   // the session's; a satellite's seat — the child ends, the root's seat holds.
@@ -723,7 +722,7 @@ try {
       check(!/"type":\s*"stop"/.test(seenC) && !(os.id && seenC.includes(os.id)), "order (satellite): the stop frame is not in the child session");
     }
     const brd4 = await board();
-    if (seatId(brd4, nameS)) await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: seatId(brd4, nameS), as_person: true });
+    if (seatId(brd4, nameS)) await person.revoke(realm, seatId(brd4, nameS));
   } else report.push("SKIP stop order — needs --api and --person");
 } catch (e) {
   report.push(`ERROR ${e.message}`);

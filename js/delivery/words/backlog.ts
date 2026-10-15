@@ -1,5 +1,6 @@
 // Шапка пачки побудки (граф @nks/nks-dev, узел #5140): накопленное окна одним событием.
 import type { Lang } from "../lang.ts";
+import { FRAME_TEXT } from "./frame-text.ts";
 
 export interface BacklogWords {
   /**
@@ -16,7 +17,7 @@ export const BACKLOG: Readonly<Record<Lang, BacklogWords>> = {
       (expected ? ` (ожидало в очереди: ${expected})` : "") +
       (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") +
       " — адресованные месту — текстом, прочие — счётом; " +
-      'полностью и не вошедшее — iskron_channel(action="history", view="log").' +
+      `целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` +
       (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
   },
   en: {
@@ -25,7 +26,7 @@ export const BACKLOG: Readonly<Record<Lang, BacklogWords>> = {
       (expected ? ` (waiting in the queue: ${expected})` : "") +
       (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") +
       " — those addressed to the seat as text, the rest by count; " +
-      'in full and the rest — iskron_channel(action="history", view="log").' +
+      `in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` +
       (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : ""),
   },
 };

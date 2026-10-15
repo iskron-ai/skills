@@ -2,6 +2,7 @@
 // (граф @nks/nks-dev, узел #5189), подвисшее соединение (#5397, #5380), раскатка.
 import type { Lang } from "../lang.ts";
 import { tool } from "../protocol.ts";
+import { FRAME_TEXT } from "./frame-text.ts";
 
 export interface ChannelWords {
   deadTokenAdvice: (code: number) => string;
@@ -19,7 +20,7 @@ export const CHANNEL: Readonly<Record<Lang, ChannelWords>> = {
         : `закрытие ${code} — токен мёртв, зови connect`,
     binaryFrame: () => "[двоичный кадр]",
     hung: (silent, ping) =>
-      `соединение молчит ${silent} с при пинге раз в ${ping} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь ${tool("channel")}(action="history")`,
+      `соединение молчит ${silent} с при пинге раз в ${ping} с — подвисло без закрытия; переоткрываю тем же адресом. Кадры, пришедшие за время молчания, могли пропасть — сверь дела: ${FRAME_TEXT.ru.myCases()}; прямое слово — попроси переслать`,
     rollout: () => "служба не отвечает — идёт раскатка, держу тот же токен",
   },
   en: {
@@ -29,7 +30,7 @@ export const CHANNEL: Readonly<Record<Lang, ChannelWords>> = {
         : `close ${code} — the token is dead, call connect`,
     binaryFrame: () => "[binary frame]",
     hung: (silent, ping) =>
-      `the connection has been silent for ${silent} s with a ping every ${ping} s — hung without closing; reopening at the same address. Frames that arrived during the silence may be lost — check ${tool("channel")}(action="history")`,
+      `the connection has been silent for ${silent} s with a ping every ${ping} s — hung without closing; reopening at the same address. Frames that arrived during the silence may be lost — check the cases: ${FRAME_TEXT.en.myCases()}; a direct word — ask for it again`,
     rollout: () => "the service is not answering — a rollout is under way, keeping the same token",
   },
 };

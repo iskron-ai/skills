@@ -14,7 +14,8 @@
 // without it the run takes or creates @<self>/bridge-night. --expect-user — whoami must name it.
 // --api, --person — the api beside the MCP and a person it trusts by X-Forwarded-User (a LOCAL
 // carrier's test identity, the graphs' owner): the owner's stop order (#7519) is laid on the
-// seats as the window's button lays it. Without them the order is not run.
+// seats as the window's button lays it. Without them the order is not run. --api is required:
+// the person takes seats off through it (scripts/stand-person.mjs) — as --person, else as the token.
 // The release batch: the seat's pulse on the board (#7529; with --api read from GET /me/channels,
 // else from the board's text), take onto another name refused while a seat beside stands
 // (#6499, needs --realm2), the `stop` subcommand and its refusal of another owner's address
@@ -27,6 +28,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { personApi } from "./stand-person.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (name, dflt) => {
@@ -59,6 +61,8 @@ if (!existsSync(tokenFile)) fail(2, `no stand token at ${tokenFile}`);
 const token = readFileSync(tokenFile, "utf8").trim();
 if (!token) fail(2, `empty token file ${tokenFile}`);
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `token file ${tokenFile} is readable by others — chmod 600`);
+if (!apiArg) fail(2, "--api is required: the person takes seats off through the api (#7636)");
+const person = personApi({ api: apiArg, person: personArg, token });
 
 const run = mkdtempSync(join(tmpdir(), "stand-run-"));
 // Every way out, an early setup refusal too, takes the run dir — the token copy with it.
@@ -338,7 +342,7 @@ try {
   const idA = channelId(board, nameA);
   check(!!idA, "board: seat listed with its id", idA ?? "no id");
   const before = A.notes.length;
-  const rv = await P.call("iskron_channel", { realm, action: "revoke", karta: `#${karta}`, channel: idA, as_person: true });
+  const rv = await person.revoke(realm, idA);
   check(!rv.error, "person revokes the seat", rv.text.split("\n")[0].slice(0, 160));
   await sleep(60_000);
   const after = A.notes.slice(before).map(noteText);
@@ -395,7 +399,8 @@ try {
     check(!standingsLog().slice(l3).includes(nameT), "take refused: no connect of the new name (standings.log)", standingsLog().slice(l3).split("\n").filter((l) => l.includes(nameT)).join(" | ").slice(0, 200));
     check(!!seatId((await readBoard(realm2Arg, karta2)), nameB), "take refused: the seat beside stands");
     const before3 = A.notes.length;
-    await P.call("iskron_channel", { realm: realm2Arg, action: "revoke", karta: `#${karta2}`, channel: idB, as_person: true });
+    const rvB = await person.revoke(realm2Arg, idB);
+    check(!rvB.error, "person takes the seat beside off", rvB.text.slice(0, 160));
     await sleep(20_000);
     const notes3 = A.notes.slice(before3).map(noteText);
     check(!notes3.some((t) => /остановлен/.test(t) && t.includes(nameA)), "main seat not stopped by the beside removal", notes3.join(" | ").slice(0, 200));
