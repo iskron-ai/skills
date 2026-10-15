@@ -269,7 +269,7 @@ test("no daemon to be had: the full bridge runs in the process, and says so", as
     assert.match(b.stderr, /going as the full bridge inside this process/);
     // Ответ фейка на orient — без текста; слово ждёт первого ответа тула с текстом.
     const textOf = (r) => (r.result?.content ?? []).map((c) => c.text).join("\n");
-    const write = { name: "iskron_add_phenomenon", arguments: { name: "probe" } };
+    const write = { name: "iskron_add_phenomenon", arguments: { name: "probe", given_as: "ding" } };
     const first = await b.call("tools/call", 4, write);
     assert.match(textOf(first), /Создан узел/, JSON.stringify(first));
     assert.match(textOf(first), /runs as the full bridge in its own process/, "the answer says it");
