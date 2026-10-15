@@ -58,6 +58,23 @@ for (const file of FILES) {
   });
 }
 
+// The server drops the channel log (graph @nks/nks-dev, node #7636): no word of the
+// bridge or its plugins points there — the seat's cases carry what was lost or left out.
+test("no delivery word points at the channel log the server drops", async () => {
+  const LOG =
+    /channel\(action="history"|channel history|истори[иею] (стояния|места)|(standing|seat)'s history/;
+  for (const file of FILES) {
+    const mod = await import(pathToFileURL(join(DIR, file)).href);
+    for (const [name, dict] of Object.entries(mod))
+      for (const l of LANGS)
+        for (const [k, fn] of Object.entries(dict[l] ?? {})) {
+          if (typeof fn !== "function") continue;
+          const out = String(fn(...Array.from({ length: fn.length }, (_, i) => `x${i}`)));
+          assert.doesNotMatch(out, LOG, `${file} ${name}.${l}.${k}: ${out}`);
+        }
+  }
+});
+
 test("doctor's harness words carry no TODO mark of their own — core puts todo() before them", async () => {
   const { HARNESS } = await import(pathToFileURL(join(DIR, "doctorharness.ts")).href);
   for (const l of LANGS) {
