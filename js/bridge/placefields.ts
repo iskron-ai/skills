@@ -75,16 +75,16 @@ export const satelliteWithoutModel = (): boolean => CFG.satellite && !P.model;
 /**
  * What a stop order for this seat does (stoporder.ts): "agent" — the session's main seat, its
  * stop stops the agent; "seat" — a seat beside on the held channel (another graph than the main
- * one, as stand.ts and call.ts tell it), it goes alone. A satellite's seat is its own main one.
+ * one, as stand.ts and call.ts tell it), it goes alone — a satellite's too.
  * ack — whether stopped is the harness's confirmed stop or the bridge's word given (orderhalt.ts).
  */
 function stopAttrs(place: Place): { effect: "agent" | "seat"; ack: "confirmed" | "word" } {
   const prim = state.standing;
-  // A seat already held beside stays one even when the main binding is lost (#5168).
+  // A seat already held beside stays one even when the main binding is lost (#5168). A
+  // satellite's first seat is its own main one; its seat of another graph is beside it.
   const beside =
-    !CFG.satellite &&
-    ((!!prim && otherRealm(place.realm, prim.realm)) ||
-      !!extraOf(place.realm, place.karta, place.name));
+    (!!prim && otherRealm(place.realm, prim.realm)) ||
+    !!extraOf(place.realm, place.karta, place.name);
   return { effect: beside ? "seat" : "agent", ack: confirmsHalts() ? "confirmed" : "word" };
 }
 

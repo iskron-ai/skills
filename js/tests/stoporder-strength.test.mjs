@@ -8,8 +8,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { saidKind, stand, textOf, until } from "./ownseat-kit.mjs";
-import { orderOnDisk, pause, seatId, standing, states } from "./stoporder-kit.mjs";
+import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
+import { NKS, orderOnDisk, pause, seatId, standing, states } from "./stoporder-kit.mjs";
 
 process.env.ISKRON_ORDER_HALT_MS = "1500";
 const HALTS = { experimental: { "iskron/halts": {} } };
@@ -139,3 +139,23 @@ async function halted(b, order) {
   const r = await b.call("iskron/halted", { order, ok: true });
   assert.equal(r.result?.taken, true, JSON.stringify(r));
 }
+
+test("attrs.stop of a satellite: its own seat agent, its seat of another graph seat", async (t) => {
+  const { fake, dir, up } = await setup(t);
+  const CALLER = "host.repo.opus-5";
+  await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+  const s = await up(dir, undefined, ["--satellite"]);
+  const own = await stand(s, { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` });
+  assert.ok(!own.result?.isError, `${textOf(own)}\n${s.stderr}`);
+  const name = `${CALLER}.sub-1`;
+  await until(() => seatId(fake, NKS, name), "the satellite's seat");
+  assert.deepEqual(registered(fake, "nks-dev", name).at(-1).attrs.stop, {
+    effect: "agent",
+    ack: "word",
+  });
+  const other = await stand(s, { realm: DRUGOY, karta: 48, satellite_of: `@tester:${CALLER}` });
+  assert.ok(!other.result?.isError, `${textOf(other)}\n${s.stderr}`);
+  await until(() => registered(fake, "drugoy", name).length, `the seat beside:\n${s.stderr}`);
+  for (const a of registered(fake, "drugoy", name))
+    assert.deepEqual(a.attrs.stop, { effect: "seat", ack: "word" });
+});
