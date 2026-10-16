@@ -17,8 +17,18 @@ import type { Slot } from "./slot.ts";
 /** How long the first prompt waits for the seating; the variable is for probes. */
 export const rootSeatMs = (): number => Number(process.env[envName("ROOT_SEAT_MS")] || 15_000);
 
-/** The seating's outcome: the seat taken, or the refusal in the bridge's or server's words. */
-export type Seating = { place: string } | { error: string };
+/** A seat as the plugin knows it: the bridge's held word, else the seat's key. */
+export interface HeldSeat {
+  name: string;
+  karta: string;
+  realm: string;
+}
+
+/**
+ * The seating's outcome: the seat taken; the session's own previous seat that returned in
+ * another role or graph than the cover's (not taken as the root's seating); the refusal.
+ */
+export type Seating = { place: string } | { other: HeldSeat } | { error: string };
 
 /** The word is one line: a refusal's prose is folded and cut. */
 const oneLine = (text: string): string => {
@@ -45,8 +55,26 @@ export interface SeatDoors {
   ): Promise<{ content: string }>;
 }
 
-/** The name of the seat a slot holds: the bridge's held word, else its key (bridge/holdrecord.ts keyOf). */
-const seatName = (slot: Slot): string => slot.place?.name ?? slot.key?.split("--")[0] ?? "";
+/** The seat a slot holds: the bridge's held word, else its key "name--karta--realm" (bridge/holdrecord.ts keyOf). */
+function heldSeat(slot: Slot): HeldSeat {
+  if (slot.place) return { ...slot.place };
+  const [name = "", karta = "", realm = ""] = (slot.key ?? "").split("--");
+  return { name, karta, realm };
+}
+
+const keyPart = (t: string): string => t.trim().replace(/[^A-Za-z0-9._-]+/g, "_");
+const short = (t: string): boolean => /^r\d+$/.test(t.trim());
+/**
+ * The held seat is the cover's: the same role, and the same graph. A graph is compared in the
+ * key's spelling, a bare slug matching its @owner/slug; rN against a slug is not resolved here,
+ * and then only the role is compared.
+ */
+export function sameSeat(seat: HeldSeat, realm: string, karta: string): boolean {
+  if (keyPart(seat.karta.replace(/^#/, "")) !== keyPart(karta)) return false;
+  if (short(seat.realm) !== short(realm)) return true;
+  const [x, y] = [keyPart(seat.realm), keyPart(realm)];
+  return x === y || x.endsWith(`_${y}`) || y.endsWith(`_${x}`);
+}
 
 /**
  * A root's seat by its cover: the session's own seat returns from disk first (keep.ts);
@@ -65,10 +93,13 @@ export async function seatBy(
     try {
       await d.awaitReady(slot);
       if (slot.resume) await slot.resume;
-      if (slot.holding) return { place: seatName(slot) };
+      if (slot.holding) {
+        const own = heldSeat(slot);
+        return sameSeat(own, realm, karta) ? { place: own.name } : { other: own };
+      }
       const out = await d.callThrough(slot, STAND_TOOL, { realm, karta }, root, true);
       if (!slot.holding) return { error: out.content || words(PLUGIN).refusalNoText(STAND_TOOL) };
-      return { place: seatName(slot) };
+      return { place: heldSeat(slot).name };
     } finally {
       slot.busy--;
       slot.lastCall = Date.now();
@@ -105,6 +136,7 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
       line = turn.catch(() => {});
       const r = await turn;
       if ("error" in r) return W.notSeated(W.refused(oneLine(r.error)));
+      if ("other" in r) return W.notSeated(W.ownOther(r.other.name, r.other.karta, r.other.realm));
       return W.seated(r.place, cover.karta, cover.realm, COVER.file);
     })().catch((e: Error) => W.notSeated(W.refused(oneLine(e.message))));
     seatings.set(session, p);

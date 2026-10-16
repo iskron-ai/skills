@@ -1,0 +1,62 @@
+// Разбор обложки для автопосадки корня (shared/cover.ts): граф — первый токен
+// @owner/slug или rN, роль — ровно одна ссылка #N в кавычках ПОСТАВКИ в начале значения.
+// Кавычки и ключи — параметр: форма соседней EN-поставки (Graph, Agent role, "…" с
+// одинаковой открывающей и закрывающей) читается тем же правилом.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { COVER } from "../delivery/index.ts";
+import { frontMatter, seatOfPairs } from "../shared/cover.ts";
+
+/** Форма соседней поставки: ключи и кавычки ссылки роли свои. */
+const EN = { file: "AGENTS.md", graph: "Graph", role: "Agent role", roleQuotes: ['"', '"'] };
+const seat = (yaml, keys) => seatOfPairs(frontMatter(`---\n${yaml}\n---\n# x\n`), keys);
+const ru = (role, graph = "'@nks/nks-dev (r5)'") =>
+  seat(`'Граф': ${graph}\n'Роль агента': ${role}`, undefined);
+const en = (role, graph = "'@nks/nks-dev (r5)'") =>
+  seat(`'Graph': ${graph}\n'Agent role': ${role}`, EN);
+const NKS_931 = { realm: "@nks/nks-dev", karta: "931" };
+
+test("RU: живая строка роли — #931, не #1506 и не #844 из той же строки", () => {
+  assert.deepEqual(
+    ru(
+      '\'`#931 «👨‍💻 Разработчик скилл-репозиториев агента»` — adhikarin, стюард #1506 (и соседнего скилл-репо #844); инбокс `iskron_orient(realm="@nks/nks-dev", focus="931")`\'',
+    ),
+    NKS_931,
+  );
+});
+
+test("RU: кавычки поставки — «…»; ссылка в чужих кавычках — не ссылка", () => {
+  assert.ok("why" in ru(`'#931 "Разработчик" — стюард'`));
+  assert.ok("why" in ru(`'#931 «a» или #844 «b»'`), "две ссылки — неоднозначно");
+});
+
+// Дословно строки 'Graph' и 'Agent role' фронтматтера ~/code/verstak-ai/skills/AGENTS.md
+// (2026-10-16): внешняя обёртка YAML одинарная, кавычки имени роли внутри — двойные.
+const VERSTAK_GRAPH = "'@nks/nks-dev (r5)'";
+const VERSTAK_ROLE =
+  '\'#931 "👨‍💻 Agent skill-repository developer" — adhikarin, steward of the holon (also of the sibling delivery holon #1506); inbox verstak_orient(focus="931")\'';
+
+test("EN: живая обложка verstak-ai/skills — граф @nks/nks-dev, роль #931, не #1506", () => {
+  assert.deepEqual(en(VERSTAK_ROLE, VERSTAK_GRAPH), NKS_931);
+});
+
+test("EN: одинаковые кавычки — имя до первой закрывающей, дальше проза", () => {
+  assert.deepEqual(en(`'#931 "dev" — see "notes" and #1506'`), NKS_931);
+  assert.deepEqual(en(`'#931 "dev" — see "notes" #1506'`), NKS_931);
+});
+
+test("EN: внешняя обёртка YAML двойная, внутренние кавычки экранированы — тот же разбор", () => {
+  assert.deepEqual(en(`"#931 \\"dev\\" — steward of #1506"`), NKS_931);
+});
+
+test("EN: две ссылки, ссылка без кавычек, кавычки RU-поставки — места нет", () => {
+  assert.ok("why" in en(`'#931 "a" or #844 "b"'`), "две роли");
+  assert.ok("why" in en(`'developer #931'`), "нет ссылки в начале");
+  assert.ok("why" in en(`'#931 «dev»'`), "кавычки не этой формы");
+});
+
+test("ключи по умолчанию — COVER поставки, с её кавычками", () => {
+  assert.deepEqual(COVER.roleQuotes, ["«", "»"]);
+  assert.ok("why" in seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}`));
+});

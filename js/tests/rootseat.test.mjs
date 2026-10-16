@@ -254,15 +254,15 @@ test(
 // ── T6: своё возвращается, чужое не берётся ──────────────────────────────────
 
 /** Мост OpenCode прежнего экземпляра: стоял за сессию session в project и (kill) умер, не уйдя. */
-async function priorBridge(s, session, name, { kill }) {
+async function priorBridge(s, session, name, { kill, realm = "@nks/nks-dev", karta = 931 }) {
   const b = await s.up(s.dir, undefined, [], OPENCODE);
   await b.call("iskron/resume", { cwd: s.project, session });
-  const r = await stand(b, { realm: "@nks/nks-dev", karta: 931, name, cwd: s.project });
+  const r = await stand(b, { realm, karta, name, cwd: s.project });
   assert.equal(placeOf(r), name, textOf(r));
-  await until(() => heardSeats(s.fake).includes(name), `${name} слушает`);
+  await until(() => heardSeats(s.fake, null).includes(name), `${name} слушает`);
   if (kill) {
     b.kill();
-    await until(() => !heardSeats(s.fake).includes(name), `${name} без сокета`);
+    await until(() => !heardSeats(s.fake, null).includes(name), `${name} без сокета`);
   }
   return b;
 }
@@ -321,3 +321,29 @@ test(
     }
   },
 );
+
+for (const [label, prior] of [
+  ["другой роли (#844)", { karta: 844 }],
+  ["другого графа (@nks/drugoy)", { realm: "@nks/drugoy" }],
+])
+  test(
+    `T6: своё прежнее место ${label}, чем в обложке, не принимается посадкой корня — не посажен, и модель это слышит`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      await priorBridge(s, "root", "proba-other", { kill: true, ...prior });
+      const oc = await rootPlugin(s, s.project);
+      try {
+        oc.create("root");
+        const r = await oc.turn("root", "привет");
+        assert.deepEqual(r.atRequest.seats, [], `места #931 в @nks/nks-dev нет\n${board(r, oc)}`);
+        assert.ok(!r.told.includes(SEATED), `ложного «встал» нет\n${board(r, oc)}`);
+        assert.ok(
+          r.told.includes("proba-other"),
+          `модель слышит, какое своё место вернулось не то\n${board(r, oc)}`,
+        );
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
