@@ -155,9 +155,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   }
 
   // A root of an aligned project seats itself by the cover of its directory (rootseat.ts).
-  const home = homeOf(ctx);
   const rootSeats = createRootSeats({
-    directoryOf: async (s) => (await sessionDirectory(ctx, s)) ?? home?.directory ?? null,
+    directoryOf: (s) => sessionDirectory(ctx, s),
     halted: (s) => ch?.halt(s) ?? true,
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
     cancel: (s) => half.cancelSeat(s),

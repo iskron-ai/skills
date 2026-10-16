@@ -205,8 +205,8 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
     /** Слова плагина в сессию мимо промпта (prompt/synthetic). */
     wordsTo: (id) => prompts.filter((p) => p.sessionID === id).map((p) => p.text),
     /** Сессия есть в project; emit=false — её session.created ушло до загрузки экземпляра. */
-    create(id, { parentID, emit: send = true } = {}) {
-      const s = { id, location: { directory: project }, ...(parentID ? { parentID } : {}) };
+    create(id, { parentID, emit: send = true, directory = project } = {}) {
+      const s = { id, location: { directory }, ...(parentID ? { parentID } : {}) };
       sessions.set(id, s);
       const data = { sessionID: id, projectID: "prj", location: s.location, title: "проба" };
       if (parentID) data.parentID = parentID;

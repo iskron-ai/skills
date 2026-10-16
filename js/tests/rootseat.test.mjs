@@ -11,14 +11,23 @@
 // ISKRON_OPENCODE_PLUGIN и ISKRON_BRIDGE_PATH наводят пробу на любые копии.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readdirSync, realpathSync } from "node:fs";
+import { readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { GLOBAL_PREFIX, ROOT_SEAT } from "../delivery/index.ts";
 import { createHalts } from "../opencode/halts.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
-import { holdRecord, placeArgs, placeOf, setup, stand, textOf, until } from "./ownseat-kit.mjs";
+import {
+  FILE as BRIDGE_UNDER_TEST,
+  holdRecord,
+  placeArgs,
+  placeOf,
+  setup,
+  stand,
+  textOf,
+  until,
+} from "./ownseat-kit.mjs";
 import {
   COVER,
   GRAPH_KEY,
@@ -52,6 +61,101 @@ const resetStops = () => {
   for (const key of ["Halts", "LiftedAt", "StopIds", "StopWords"])
     delete globalThis[`${GLOBAL_PREFIX}${key}`];
 };
+
+test("P3c: неизвестный каталог сессии не заменяется домом экземпляра", T, async (t) => {
+  const s = await stage(t);
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("root", { directory: null, emit: false });
+    const r = await oc.turn("root", "привет");
+    assert.deepEqual(placeArgs(s.fake, "connect"), [], board(r, oc));
+    assert.deepEqual(heldBy(s.dir, "root"), []);
+    assert.equal(r.prompt, "привет");
+  } finally {
+    await oc.stop();
+  }
+});
+
+for (const language of ["ru", "en"])
+  test(
+    `P2 Opus: старый протокол без признака (${language}) не обещает замену без take`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      const proxy = join(s.project, "legacy-bridge.mjs");
+      // The actual built bridge keeps a positive disk mark. Strip only its protocol proof,
+      // modelling an older daemon: disk data alone must not authorize the promise.
+      writeFileSync(
+        proxy,
+        `
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+const p = spawn(process.execPath, [${JSON.stringify(BRIDGE_UNDER_TEST)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
+process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+createInterface({ input: p.stdout }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.params?.data) delete m.params.data.provisional;
+  if (m.result) { delete m.result.provisional; if (m.result.structuredContent) delete m.result.structuredContent.provisional; }
+  process.stdout.write(JSON.stringify(m) + '\\n');
+});
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
+p.on('exit', c => process.exit(c ?? 0));
+`,
+      );
+      const oc = await rootPlugin(s, s.project, {
+        ISKRON_BRIDGE_PATH: proxy,
+        ISKRON_BRIDGE_LANG: language,
+      });
+      try {
+        oc.create("root");
+        const r = await oc.turn("root", "hello");
+        assert.equal(r.atRequest.seats.length, 1, board(r, oc));
+        assert.ok(!/без take|without take/.test(r.told), board(r, oc));
+        assert.match(r.told, language === "ru" ? /своим местом/ : /own seat/);
+        const own = heldBy(s.dir, "root")[0];
+        assert.equal(
+          holdRecord(s.dir, `${own}--931--_nks_nks-dev`)?.provisional,
+          true,
+          "диск намеренно положителен — доказательство должно быть из ответа",
+        );
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
+
+test(
+  "P2 Opus: мост отвечает признаком в stand, held и resume; явный stand снимает признак",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    const b = await s.up(s.dir, undefined, [], OPENCODE);
+    await b.call("iskron/resume", { cwd: s.project, session: "root" });
+    const r = await b.call(
+      "tools/call",
+      {
+        name: "iskron_stand",
+        arguments: { realm: "@nks/nks-dev", karta: "931", provisional: true, cwd: s.project },
+      },
+      true,
+    );
+    assert.equal(r.result?.structuredContent?.provisional, true, textOf(r));
+    assert.ok(
+      b.notifications.some(
+        (n) => n.params?.data?.kind === "held" && typeof n.params.data.provisional === "boolean",
+      ),
+    );
+    const back = await b.call("iskron/resume", { cwd: s.project, session: "root" });
+    assert.equal(back.result?.provisional, true, JSON.stringify(back));
+    const explicit = await stand(b, {
+      realm: "@nks/nks-dev",
+      karta: "931",
+      name: "probe-flag-cleared",
+      cwd: s.project,
+    });
+    assert.equal(explicit.result?.structuredContent?.provisional, false, textOf(explicit));
+  },
+);
 
 test("P1-1: стоп владельца с диска после перезагрузки не снимается автопосадкой", T, async (t) => {
   const s = await stage(t);
@@ -856,7 +960,7 @@ for (const [label, prior] of [
   ["другого графа (@nks/drugoy)", { realm: "@nks/drugoy" }],
 ])
   test(
-    `T6: своё прежнее место ${label}, чем в обложке, не принимается посадкой корня — не посажен, и модель это слышит`,
+    `T6: своё прежнее место ${label} держится, но не совпадает с обложкой — модель это слышит`,
     T,
     async (t) => {
       const s = await stage(t);

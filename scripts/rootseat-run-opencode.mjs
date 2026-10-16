@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real OpenCode serve, built plugin + bridges, loopback MCP and scripted provider only.
 // No imported credentials, no model stand: observe the seat at the first HTTP model request.
-// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted]
+// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge]
 // ISKRON_ROOT_SEAT=0 runs the same first prompt with automatic seating disabled.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -27,6 +27,7 @@ const config = join(home, ".config/opencode");
 const keep = process.argv.includes("--keep");
 const enabled = process.env.ISKRON_ROOT_SEAT !== "0";
 const halted = process.argv.includes("--halted");
+const legacy = process.argv.includes("--legacy-bridge"); // Pair with ISKRON_BRIDGE_PATH of a build without the flag.
 const seats = enabled && !halted;
 const fake = await startFakeNks({ pat: PAT });
 await fake.control({ richTools: true, structured: true, connect_delay_ms: 700 });
@@ -118,9 +119,14 @@ try {
   assert.equal(first.seats.length, seats ? 1 : 0, JSON.stringify(first));
   assert.deepEqual(heldBy(auth, session.id), first.seats, "the root's own bridge holds it");
   if (seats) {
-    const text = JSON.stringify(first.body.messages);
+    const text = JSON.stringify(first.body.messages.filter((m) => m.role === "user"));
     assert.ok(text.includes(first.seats[0]), "model request names the seat");
     assert.ok(!text.includes("граф не сличён"), "fresh rN is resolved by the bridge");
+    if (legacy) {
+      assert.ok(!/без take|without take/.test(text), "no wire flag: no replacement promise");
+      assert.match(text, /своим местом|own seat/, "an older serving bridge gets own-seat wording");
+    }
+    else assert.match(text, /без take|without take/, "the serving bridge proved its provisional semantics");
   } else assert.equal(fake.state.placeArgs.filter((p) => p.action === "connect").length, 0);
   if (halted) {
     assert.ok(JSON.stringify(first.body.messages).includes("ROOTSEAT_OWNER_STOP"), "model gets the stop's word, not a seating word");
@@ -129,7 +135,7 @@ try {
   }
   assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");
   const { stdout: version } = await exec(opencode, ["--version"], { env });
-  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: halted ? "halted" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP; no production server, no scripted tool call" }, null, 2));
+  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP; no production server, no scripted tool call" }, null, 2));
 } catch (e) {
   console.error(e);
   try { console.error(readFileSync(join(run, "serve.log"), "utf8").slice(-12000)); } catch {}

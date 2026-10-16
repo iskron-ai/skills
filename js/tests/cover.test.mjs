@@ -70,7 +70,7 @@ test("F5: короткий граф против слага не считает�
   assert.equal(sameSeat({ name: "x", realm: "r5", karta: "931" }, "r5", "931"), true);
   assert.equal(
     sameSeat({ name: "x", realm: "_nks_nks-dev", karta: "931" }, "@nks/nks-dev", "931"),
-    true,
+    false,
   );
 });
 
@@ -141,5 +141,6 @@ test("R3: свежий stand с ответом нормализующего мо
     "r5",
     "931",
   );
-  assert.ok(disk.error?.includes("граф не сличён"), JSON.stringify(disk));
+  assert.equal(disk.uncompared, "r5", JSON.stringify(disk));
+  assert.deepEqual(disk.other, place);
 });

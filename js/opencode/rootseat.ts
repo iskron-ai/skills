@@ -7,8 +7,8 @@
 // One seating per session (a memoized promise): only the first prompt starts it and
 // waits for it — no longer than ROOT_SEAT_MS, then the request goes without a
 // seat and the word says so; a seat taken after the term is told by the channel's path. Seatings
-// of one instance go one at a time: the second root of the same role reads the board after the
-// first stood and takes a seat beside, not the same name; a seating hung in the bridge holds the
+// of one instance go one at a time; fresh names carry independent random suffixes across instances.
+// The queue bounds service work, not name allocation; a seating hung in the bridge holds the
 // line no longer than its ceiling. The seat is provisional: the agent's own stand in the same
 // graph replaces it (bridge/provisional.ts).
 import { COVER, envName, ROOT_SEAT } from "../delivery/index.ts";
@@ -92,7 +92,17 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
       }
       if ("error" in r) return no(W.notSeated(W.refused(oneLine(r.error))));
       if ("other" in r)
-        return no(W.notSeated(W.ownOther(r.other.name, r.other.karta, r.other.realm)));
+        return {
+          word: r.uncompared
+            ? W.heldUncompared(
+                r.other.name,
+                r.other.karta,
+                r.other.realm || W.unknownRealm(),
+                r.uncompared,
+              )
+            : W.ownOther(r.other.name, r.other.karta, r.other.realm || W.unknownRealm()),
+          seated: true,
+        };
       return {
         word: (r.provisional === true ? W.seated : W.ownSeated)(
           r.place,

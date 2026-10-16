@@ -347,7 +347,7 @@ export async function setupTools(
     input: any,
     sessionID: string,
     service = false, // the launch line is a service move, not the agent's work (#6510)
-  ): Promise<{ content: string; place?: HeldSeat }> {
+  ): Promise<{ content: string; place?: HeldSeat; provisional?: boolean }> {
     await awaitReady(slot);
     if (slot.resume) await slot.resume; // the seat is returning from disk — do not take it twice
     seats.guard(sessionID);
@@ -377,7 +377,7 @@ export async function setupTools(
     if (result?.isError)
       throw Object.assign(new Error(textOf(result) || P.refusalNoText(name)), { result });
     // The tool's answer is an observed holding event; an answer to a busy line alone is not (#6509).
-    if (standsBy(name, args) && !busy) keeper.stood(slot);
+    if (standsBy(name, args) && !busy) seats.stood(slot, result);
     if (standsBy(name, args)) runEnds.clear(sessionID); // stood again — writes go by its own bridge
     // A child stood by its own bridge is a lead; leaving by the outcome is its end (#6625).
     if (slot.child && slot.satelliteOf && slot.session === sessionID)
@@ -385,7 +385,7 @@ export async function setupTools(
     return {
       content: textOf(result),
       ...(service && name === STAND_TOOL && slot.holding && slot.place
-        ? { place: { ...slot.place } }
+        ? { place: { ...slot.place }, provisional: slot.provisional === true }
         : {}),
     };
   }

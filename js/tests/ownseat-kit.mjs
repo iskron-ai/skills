@@ -8,6 +8,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { SERVICE_ID } from "../shared/serviceid.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
@@ -56,8 +57,9 @@ function startBridge(serverUrl, authDir, extra = []) {
     },
     /** Смерть без ухода (плагин убит): место не отпущено, запись держания цела. */
     kill: () => proc.kill("SIGKILL"),
-    call(method, params = {}) {
-      const myId = ++id;
+    call(method, params = {}, service = false) {
+      const next = ++id;
+      const myId = service === true ? `${SERVICE_ID}${next}` : next;
       const p = new Promise((res, rej) => {
         waiters.set(myId, res);
         setTimeout(() => rej(new Error(`no answer for ${method}`)), 20_000).unref();

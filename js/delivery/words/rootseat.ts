@@ -26,6 +26,8 @@ export interface RootSeatWords {
   refused: (text: string) => string;
   /** Вернулось своё прежнее место сессии, но другой роли или графа, чем в обложке. */
   ownOther: (place: string, karta: string, realm: string) => string;
+  heldUncompared: (place: string, karta: string, held: string, cover: string) => string;
+  unknownRealm: () => string;
   uncompared: (cover: string, held: string) => string;
   /** Посадка не уложилась в срок; запрос идёт без места. */
   late: (seconds: number) => string;
@@ -52,7 +54,10 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     refused: (text) => `посадка сорвалась: ${text}`,
     ownOther: (place, karta, realm) =>
-      `вернулось своё прежнее место ${place} другой роли или графа (#${karta} в ${realm}), чем в обложке`,
+      `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
+    heldUncompared: (place, karta, held, cover) =>
+      `Искрон: сессия держит место ${place} — роль #${karta}, ${held}; граф не сличён с ${cover} в обложке. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
+    unknownRealm: () => "граф неизвестен (запись держания недоступна)",
     uncompared: (cover, held) => `граф не сличён: ${cover} в обложке, ${held} у места`,
     late: (seconds) => `посадка не уложилась в ${seconds} с, запрос идёт без места`,
     noBridge: () => "мост не поднят",
@@ -75,7 +80,10 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
       `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
     refused: (text) => `seating failed: ${text}`,
     ownOther: (place, karta, realm) =>
-      `the session's own previous seat ${place} returned in another role or graph (#${karta} in ${realm}) than the cover's`,
+      `Iskron: the session holds seat ${place} — role #${karta} in ${realm}; its role or graph differs from the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
+    heldUncompared: (place, karta, held, cover) =>
+      `Iskron: the session holds seat ${place} — role #${karta}, ${held}; its graph is not compared with ${cover} in the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
+    unknownRealm: () => "graph unknown (hold record unavailable)",
     uncompared: (cover, held) => `graph not compared: ${cover} in the cover, ${held} on the seat`,
     late: (seconds) => `seating did not finish in ${seconds} s, the request goes without a seat`,
     noBridge: () => "no bridge raised",

@@ -31,13 +31,18 @@ export function createSeatLife(d: Doors) {
     deleted.has(s) ||
     attempts.get(s)?.cancelledHere === true ||
     attempts.get(s)?.cancelled() === true;
-  const provisional = (slot: Slot, session: string): boolean => {
-    if (!slot.key) return false;
+  const recorded = (slot: Slot, session: string) => {
+    if (!slot.key) return null;
     try {
       const rec = JSON.parse(readFileSync(holdFilePathOf(d.authDir(), slot.key), "utf8"));
-      return rec.provisional === true && rec.session === session && rec.key === slot.key;
+      return rec.session === session &&
+        rec.key === slot.key &&
+        typeof rec.realm === "string" &&
+        typeof rec.name === "string"
+        ? { name: rec.name, karta: String(rec.karta), realm: rec.realm }
+        : null;
     } catch {
-      return false;
+      return null;
     }
   };
   const cancel = (s: string) => {
@@ -53,22 +58,31 @@ export function createSeatLife(d: Doors) {
     guard(s: string) {
       if (cancelled(s)) throw new Error(words(ROOT_SEAT).cancelled());
     },
+    stood(slot: Slot, result?: { structuredContent?: { provisional?: unknown } }) {
+      d.stood(slot);
+      slot.provisional = result?.structuredContent?.provisional === true;
+    },
     observe(
       slot: Slot,
       kind: string | null,
-      data?: { key?: unknown; place?: Partial<Place>; frame?: { type?: string } },
+      data?: {
+        key?: unknown;
+        place?: Partial<Place>;
+        provisional?: unknown;
+        frame?: { type?: string };
+      },
     ) {
       // Holding follows the bridge's held/hello event, never a tool's apparent success.
       if (kind === "held" || kind === "attached" || data?.frame?.type === "hello") d.stood(slot);
       if ((kind === "held" || kind === "released") && typeof data?.key === "string")
         slot.key = data.key;
-      if (kind === "held") slot.place = heldPlace(data) ?? slot.place;
+      if (kind === "held") {
+        slot.place = heldPlace(data) ?? slot.place;
+        slot.provisional = data?.provisional === true;
+      }
       if (kind === "released" || kind === "dead" || kind === "evicted" || kind === "stopped")
         slot.holding = false;
-      return (
-        kind === "held" &&
-        (attempts.has(slot.session ?? "") || provisional(slot, slot.session ?? ""))
-      );
+      return kind === "held" && (attempts.has(slot.session ?? "") || slot.provisional === true);
     },
     cancel,
     forget(s: string) {
@@ -134,7 +148,8 @@ export function createSeatLife(d: Doors) {
             },
             modelOf: d.modelOf,
             cancelled,
-            provisional,
+            provisional: (slot) => slot.provisional === true,
+            recorded,
           },
           s,
           realm,
