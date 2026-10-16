@@ -241,3 +241,92 @@ test("attrs.stop of a bare register in another graph after a bare one: no field,
   assert.equal(fake.state.orders.list.get("ord-bare-b").state, "issued");
   assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
 });
+
+// The window of a socket reopen (shared/channel.ts: a drop reopens in 2–60 s, alive is false
+// meanwhile): holder, door, key and the seats beside stay, and the stop finds them after the
+// reopen. attrs are replaced whole: a register in that window that left the field out erased it.
+const registers = (fake) =>
+  fake.state.calls.filter((c) => c.name === "iskron_channel" && c.arguments?.action === "register");
+
+// A call into a held seat's graph waits for the reopen's hello (deaf.ts), but the replay of the
+// seats on a turned session goes before it (standing.ts ensureStanding): the drop and the
+// session's end together put that register into the window.
+async function replayInReopenWindow(fake, b, name) {
+  const n = registers(fake).length;
+  await fake.control({ ws_close: 1012, kill_session: true });
+  await until(() => fake.state.ws.size === 0, "the socket dropped");
+  // The fake clears «listening» on a close only for the socket's own place name; a seat beside
+  // listens by the same channel socket (its register: listening — if the channel's socket is
+  // open), so its board line follows the close too, or replayBeside takes it for another
+  // session's seat (deaf.ts) and does not register it.
+  for (const pl of fake.state.places.values()) pl.listening = false;
+  const call = b.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "list", realm: "nks-dev" },
+  });
+  const replayed = () =>
+    registers(fake)
+      .slice(n)
+      .find((c) => c.arguments.name === name);
+  await until(replayed, `the replayed register of ${name}:\n${b.stderr}`);
+  assert.equal(fake.state.ws.size, 0, "the register went in the window, before the reopen");
+  await call;
+  await until(() => fake.state.ws.size === 1, "the socket reopened");
+  await pause(500); // the reopen's hello
+  return replayed().arguments;
+}
+
+test("attrs.stop of the main seat registered while its socket reopens: agent, and its stop stops the agent", async (t) => {
+  const { fake, b, id } = await standing(t);
+  const args = await replayInReopenWindow(fake, b, "proba");
+  assert.deepEqual(args.attrs.stop, { effect: "agent", ack: "word" });
+  await fake.control({ stop_order: { id: "ord-rw", standing_id: id } });
+  await until(() => states(fake, "ord-rw").includes("stopped"), `the outcome:\n${b.stderr}`);
+  assert.deepEqual([...new Set(stoppedCodes(fake, "ord-rw"))], ["word_given"]);
+  assert.ok(saidKind(b, "stopped"), "the agent is stopped");
+});
+
+test("attrs.stop of a seat beside registered while the socket reopens: seat, and its stop is seat_beside", async (t) => {
+  const { fake, b } = await standing(t);
+  const r = await stand(b, { realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!r.result?.isError, textOf(r));
+  await until(() => seatId(fake, DRUGOY, "proba-b"), "the seat beside");
+  const args = await replayInReopenWindow(fake, b, "proba-b");
+  assert.deepEqual(args.attrs.stop, { effect: "seat", ack: "word" });
+  await fake.control({
+    stop_order: { id: "ord-rb", standing_id: seatId(fake, DRUGOY, "proba-b") },
+  });
+  await until(() => fake.state.orders.list.get("ord-rb").state === "stopped", "the outcome");
+  assert.deepEqual(stoppedCodes(fake, "ord-rb"), ["seat_beside"]);
+  assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
+});
+
+// A graph with no seat of this session does not wait for the hello: the agent's own register
+// goes in the window, and addPlace adds no seat beside on a socket that is not alive.
+test("attrs.stop of a new seat of another graph registered while the socket reopens: no field, its stop is not stopped", async (t) => {
+  const { fake, b } = await standing(t);
+  await fake.control({ ws_close: 1012 });
+  await until(() => fake.state.ws.size === 0, "the socket dropped");
+  const reg = await b.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "register", realm: DRUGOY, karta: 48, name: "proba-n" },
+  });
+  assert.ok(!reg.result?.isError, textOf(reg));
+  assert.equal(fake.state.ws.size, 0, "the register went in the window, before the reopen");
+  const regs = registered(fake, "drugoy", "proba-n");
+  assert.ok(regs.length, JSON.stringify(fake.state.calls));
+  assert.ok(!("stop" in (regs.at(-1).attrs ?? {})), JSON.stringify(regs.at(-1).attrs));
+  await until(() => fake.state.ws.size === 1, "the socket reopened");
+  await pause(500); // the reopen's hello
+  const id = seatId(fake, DRUGOY, "proba-n");
+  assert.ok(id, "the seat has an id at the platform");
+  await fake.control({ stop_order: { id: "ord-rn", standing_id: id } });
+  await until(() => states(fake, "ord-rn").length, "the bridge's answer");
+  await pause(500);
+  assert.deepEqual(states(fake, "ord-rn"), ["refused"]);
+  assert.deepEqual(
+    allAcks(fake, "ord-rn").map((a) => a.reason_code),
+    ["seat_not_held"],
+  );
+  assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
+});
