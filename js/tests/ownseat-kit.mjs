@@ -13,7 +13,7 @@ import { startFakeNks } from "./fake-nks.mjs";
 
 export const NODE = process.env.ISKRON_NODE || process.execPath;
 export const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
-const PAT = "nks_pat_stand";
+export const PAT = "nks_pat_stand";
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -121,10 +121,16 @@ export async function setup(t) {
   });
   // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
   // extra — more arguments of the bridge (--satellite).
-  const up = async (authDir = dir, capabilities = INIT.capabilities, extra = []) => {
+  // clientInfo — whose bridge it is: a record's cwd return does not cross harnesses (resumepick.ts).
+  const up = async (
+    authDir = dir,
+    capabilities = INIT.capabilities,
+    extra = [],
+    clientInfo = INIT.clientInfo,
+  ) => {
     const b = startBridge(fake.mcpUrl, authDir, extra);
     bridges.push(b);
-    assert.ok((await b.call("initialize", { ...INIT, capabilities })).result);
+    assert.ok((await b.call("initialize", { ...INIT, capabilities, clientInfo })).result);
     return b;
   };
   return { fake, dir, cwd, up };
