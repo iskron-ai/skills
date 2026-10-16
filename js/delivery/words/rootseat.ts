@@ -39,7 +39,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
     seated: (place, karta, realm, file) =>
-      `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; iskron_stand не нужен.`,
+      `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
     notSeated: (why) =>
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     refused: (text) => `посадка сорвалась: ${text}`,
@@ -57,7 +57,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
     manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
     seated: (place, karta, realm, file) =>
-      `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; no iskron_stand needed.`,
+      `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by this seat. For a watch (room/model) or your own name, call iskron_stand — it replaces a provisional seat without take.`,
     notSeated: (why) =>
       `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
     refused: (text) => `seating failed: ${text}`,

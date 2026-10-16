@@ -118,6 +118,7 @@ const env = {
   ISKRON_BRIDGE_URL: URL_,
   ISKRON_BRIDGE_NO_UPDATE: "1",
   ISKRON_BRIDGE_NO_BROWSER: "1",
+  ISKRON_ROOT_SEAT: "0", // This driver tests explicit stands, not a human root's auto-seating.
   ISKRON_BRIDGE_DEATH_MS: String(deathMs),
 };
 

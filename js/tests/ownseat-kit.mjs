@@ -80,8 +80,8 @@ function startBridge(serverUrl, authDir, extra = []) {
 
 export const textOf = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 export const placeOf = (r) => /стояние (?:@[^:\s]+:)?(\S+) — роль/.exec(textOf(r))?.[1];
-export const until = async (check, what) => {
-  for (const end = Date.now() + 10_000; !(await check());) {
+export const until = async (check, what, ms = 10_000) => {
+  for (const end = Date.now() + ms; !(await check());) {
     assert.ok(Date.now() < end, `timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 50));
   }

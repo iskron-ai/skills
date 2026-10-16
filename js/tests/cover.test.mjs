@@ -92,3 +92,54 @@ test("F6: REALITY называет носитель автопосадки, фа
   ])
     assert.ok(row.includes(text), text);
 });
+
+test("R5: ссылки предварительного места ведут к узлам, не к делу №777", () => {
+  const root = process.env.ISKRON_CORE_SOURCE_ROOT;
+  for (const path of [
+    "js/bridge/provisional.ts",
+    "js/bridge/stand.ts",
+    "js/delivery/words/standmoves.ts",
+  ]) {
+    const text = readFileSync(
+      root ? `${root}/${path}` : new URL(`../../${path}`, import.meta.url),
+      "utf8",
+    );
+    assert.ok(!text.includes("#777"), path);
+    assert.ok(text.includes("#7972"), path);
+    assert.ok(text.includes("#5164"), path);
+  }
+});
+
+test("R3: свежий stand с ответом нормализующего моста доказывает соответствие r5 и слага", async () => {
+  const { seatBy } = await import(
+    process.env.ISKRON_ROOTSEAT_BY_PATH ||
+      new URL("../opencode/rootseat-by.ts", import.meta.url).href
+  );
+  const place = { name: "probe", karta: "931", realm: "@nks/nks-dev" };
+  const slot = { holding: false, busy: 0, lastCall: 0, place: null, key: null };
+  const doors = {
+    slotFor: async () => slot,
+    modelOf: async () => null,
+    awaitReady: async () => {},
+    callThrough: async (_slot, name, args, session, service) => {
+      assert.equal(name, "iskron_stand");
+      assert.equal(session, "root");
+      assert.equal(service, true);
+      assert.equal(args.realm, "r5");
+      slot.place = place;
+      slot.holding = true;
+      return { content: "stood", place };
+    },
+  };
+  const r = await seatBy(doors, "root", "r5", "931");
+  assert.equal(r.place, "probe", JSON.stringify(r));
+  assert.equal(r.realm, "@nks/nks-dev");
+  // The very same seat returned from disk is not evidence of what r5 means.
+  const disk = await seatBy(
+    { ...doors, callThrough: async () => assert.fail("не делать stand при возврате") },
+    "root",
+    "r5",
+    "931",
+  );
+  assert.ok(disk.error?.includes("граф не сличён"), JSON.stringify(disk));
+});

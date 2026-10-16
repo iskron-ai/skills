@@ -170,6 +170,7 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Снять место агента машины | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs stop <место\|id сессии> [--realm <граф>]` — приказ останова месту из снимка демона (api 0.122+), на старом api — снятие места; `--auth-dir <каталог>`, `--lang en\|ru` |
 | Пересобрать производное рабочей копии | `make build` (= `make build-js` + зипы из `skills/`; детерминированно поперёк машин; или pre-commit-хуком) |
 | Собрать выходы JS (dev) | `make build-js` → `dist/dev/` вне индекса (esbuild: `iskron.mjs` и `opencode-plugin.js` в establish-mcp, `extensions/iskron.js`, рендер в шаблон роадмапа); пробы берут их отсюда (`js/tests/built.mjs`), живой прогон — тоже |
+| Служебный безголовый прогон OpenCode, поднятый агентом | `ISKRON_ROOT_SEAT=0 opencode run --standalone …` — не садиться на роль обложки; переменная нужна серверу/плагину, не только клиенту общего сервиса. Прогон самой автопосадки — явное исключение с включённой посадкой (`scripts/rootseat-run-opencode.mjs`). Предел — `REALITY.md` |
 | Собрать выходы выпуска | `make build-release` — только джоб bundle-sync релизного PR: метка канала release, закоммиченные места, бандлы |
 | Сверить закоммиченные выходы JS | `make check-js` (сборка выпуска: метки dev нет, у моста — метка release; байты по 7.2.7 — наследие выпуска до меток) |
 | Замок закоммиченных выходов | `make check-frozen` (`BASE=origin/main`): ветка не `release-please--*` их не меняет против базы; то же — шаг CI на PR и pre-commit-хук |
