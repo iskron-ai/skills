@@ -208,6 +208,12 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
       if (parentID) data.parentID = parentID;
       if (send) emit({ type: "session.created", location: s.location, data });
     },
+    /** Сессию удалили (session.deleted). */
+    remove(id) {
+      const s = sessions.get(id);
+      sessions.delete(id);
+      emit({ type: "session.deleted", location: s?.location, data: { sessionID: id } });
+    },
     /**
      * Ход сессии: prompt-хуки, context-хуки, model.request-хуки — и провайдер. scenario(req)
      * отвечает [{tool, input}] — вызовы тулов модели, по порядку; иначе текстом.

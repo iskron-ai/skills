@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test as probe } from "node:test";
 
 import { ROOT_SEAT } from "../delivery/index.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
@@ -28,6 +28,9 @@ import {
   writeAgents,
 } from "./rootseat-kit.mjs";
 
+// Автопосадка выключена защитным пакетом (rootSeatOn, #7972): пробы посадки ждут её включения;
+// выключенное держит rootseat-off.test.mjs.
+const test = (name, opts, fn) => probe(name, { ...opts, skip: "автопосадка выключена (#7972)" }, fn);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const T = { timeout: 90_000 };
 const OPENCODE = { name: OPENCODE_CLIENT, version: "1" };
