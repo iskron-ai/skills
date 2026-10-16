@@ -75,23 +75,34 @@ export const satelliteWithoutModel = (): boolean => CFG.satellite && !P.model;
 /**
  * What a stop order for this seat does (stoporder.ts): "agent" — the session's main seat, its
  * stop stops the agent; "seat" — a seat beside on the held channel (another graph than the main
- * one, as stand.ts and call.ts tell it), it goes alone — a satellite's too.
+ * one, as stand.ts and call.ts tell it), it goes alone — a satellite's too. A connect or mint
+ * opens the channel it takes and becomes the session's main seat (absorb.ts), so it is "agent"
+ * whatever seat was registered before: the effect follows the move, not the former binding.
  * ack — whether stopped is the harness's confirmed stop or the bridge's word given (orderhalt.ts).
  */
-function stopAttrs(place: Place): { effect: "agent" | "seat"; ack: "confirmed" | "word" } {
+function stopAttrs(
+  place: Place,
+  move: SeatMove,
+): { effect: "agent" | "seat"; ack: "confirmed" | "word" } {
+  const ack = confirmsHalts() ? "confirmed" : "word";
+  if (move !== "register") return { effect: "agent", ack };
   const prim = state.standing;
   // A seat already held beside stays one even when the main binding is lost (#5168). A
   // satellite's first seat is its own main one; its seat of another graph is beside it.
   const beside =
     (!!prim && otherRealm(place.realm, prim.realm)) ||
     !!extraOf(place.realm, place.karta, place.name);
-  return { effect: beside ? "seat" : "agent", ack: confirmsHalts() ? "confirmed" : "word" };
+  return { effect: beside ? "seat" : "agent", ack };
 }
+
+/** The seat move the fields ride on: connect and mint open a channel, register adds a seat. */
+export type SeatMove = "connect" | "mint" | "register";
 
 /** Seat fields for connect and register: always the full set. */
 export function placeFields(
   place: Place = {},
   freshSkills = false,
+  move: SeatMove = "register",
 ): {
   model?: string;
   satellite_of?: string;
@@ -114,7 +125,7 @@ export function placeFields(
       ...(harness ? { harness, harness_version: harnessVersion() } : {}),
       ...(satelliteOf ? { satellite_of: satelliteOf } : {}),
       ...(usage ? { usage } : {}),
-      stop: stopAttrs(place),
+      stop: stopAttrs(place, move),
     },
   };
 }
@@ -152,5 +163,5 @@ export function withPlaceFields(args: Record<string, unknown>): Record<string, u
   rememberModel(args.model);
   if (args.attrs && typeof args.attrs === "object" && !Array.isArray(args.attrs))
     extras.set(placeKey(args), { ...(args.attrs as Record<string, unknown>) });
-  return { ...args, ...placeFields(args, true) };
+  return { ...args, ...placeFields(args, true, String(args.action) as SeatMove) };
 }

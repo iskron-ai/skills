@@ -159,3 +159,17 @@ test("attrs.stop of a satellite: its own seat agent, its seat of another graph s
   for (const a of registered(fake, "drugoy", name))
     assert.deepEqual(a.attrs.stop, { effect: "seat", ack: "word" });
 });
+
+// A connect opens the channel it takes and becomes the main seat: it is "agent" even after a
+// register in another graph left a binding without a held channel (review of the EN candidate).
+test("attrs.stop of a connect after a bare register in another graph: agent", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const channel = (args) => b.call("tools/call", { name: "iskron_channel", arguments: args });
+  const reg = await channel({ action: "register", realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(registered(fake, "nks-dev", "proba").length, JSON.stringify(reg));
+  await channel({ action: "connect", realm: DRUGOY, karta: 48, name: "proba-c" });
+  const conn = registered(fake, "drugoy", "proba-c").filter((a) => a.action === "connect");
+  assert.ok(conn.length, JSON.stringify(fake.state.calls.map((c) => c.arguments?.action)));
+  assert.deepEqual(conn.at(-1).attrs.stop, { effect: "agent", ack: "word" });
+});
