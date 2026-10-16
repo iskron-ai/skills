@@ -14,6 +14,7 @@ import { CFG } from "./config.ts";
 import { seatField } from "./fields.ts";
 import { normKarta, normName } from "./names.ts";
 import { confirmsHalts } from "./orderhalt.ts";
+import { extraOf } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { installedSkills } from "./skillwatch.ts";
 import { log } from "./streams.ts";
@@ -79,7 +80,11 @@ export const satelliteWithoutModel = (): boolean => CFG.satellite && !P.model;
  */
 function stopAttrs(place: Place): { effect: "agent" | "seat"; ack: "confirmed" | "word" } {
   const prim = state.standing;
-  const beside = !CFG.satellite && !!prim && otherRealm(place.realm, prim.realm);
+  // A seat already held beside stays one even when the main binding is lost (#5168).
+  const beside =
+    !CFG.satellite &&
+    ((!!prim && otherRealm(place.realm, prim.realm)) ||
+      !!extraOf(place.realm, place.karta, place.name));
   return { effect: beside ? "seat" : "agent", ack: confirmsHalts() ? "confirmed" : "word" };
 }
 
