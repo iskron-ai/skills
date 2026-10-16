@@ -967,6 +967,15 @@ test("a beside seat comes back with the main one in the daemon change: no lost, 
       ).catch((e) => {
         throw new Error(`${e.message}\n${why()}`);
       });
+      // The successor's registers carry what a stop order does (№851): beside — the seat alone.
+      const registerIn = (realm) =>
+        fake.state.calls
+          .filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
+          .map((c) => c.arguments)
+          .filter((x) => String(x.realm).endsWith(realm))
+          .at(-1);
+      assert.deepEqual(registerIn("drugoy")?.attrs?.stop, { effect: "seat", ack: "word" }, why());
+      assert.deepEqual(registerIn("nks-dev")?.attrs?.stop, { effect: "agent", ack: "word" }, why());
       const before = fake.state.writes.length;
       const there = await a.request("tools/call", {
         name: "iskron_add_phenomenon",
