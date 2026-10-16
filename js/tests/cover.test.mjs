@@ -3,9 +3,11 @@
 // Кавычки и ключи — параметр: форма соседней EN-поставки (Graph, Agent role, "…" с
 // одинаковой открывающей и закрывающей) читается тем же правилом.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { COVER } from "../delivery/index.ts";
+import { sameSeat } from "../opencode/rootseat-by.ts";
 import { frontMatter, seatOfPairs } from "../shared/cover.ts";
 
 /** Форма соседней поставки: ключи и кавычки ссылки роли свои. */
@@ -59,4 +61,34 @@ test("EN: две ссылки, ссылка без кавычек, кавычк�
 test("ключи по умолчанию — COVER поставки, с её кавычками", () => {
   assert.deepEqual(COVER.roleQuotes, ["«", "»"]);
   assert.ok("why" in seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}`));
+});
+
+test("F5: короткий граф против слага не считается соответствием по одной роли", () => {
+  assert.equal(sameSeat({ name: "x", realm: "@nks/nks-dev", karta: "931" }, "r7", "931"), false);
+  assert.equal(sameSeat({ name: "x", realm: "r5", karta: "931" }, "@nks/drugoy", "931"), false);
+  assert.equal(sameSeat({ name: "x", realm: "r5", karta: "931" }, "r7", "931"), false);
+  assert.equal(sameSeat({ name: "x", realm: "r5", karta: "931" }, "r5", "931"), true);
+  assert.equal(
+    sameSeat({ name: "x", realm: "_nks_nks-dev", karta: "931" }, "@nks/nks-dev", "931"),
+    true,
+  );
+});
+
+test("F6: REALITY называет носитель автопосадки, фальсификаторы и предел наблюдения", () => {
+  const reality = readFileSync(
+    process.env.ISKRON_REALITY_PATH || new URL("../../REALITY.md", import.meta.url),
+    "utf8",
+  );
+  const row = reality
+    .split("\n")
+    .find((line) => line.startsWith("| Корень выровненного проекта садится до первого запроса |"));
+  assert.ok(row, "класс заявки записан");
+  for (const text of [
+    "opencode serve",
+    "rootseat-run-opencode.mjs",
+    "Фальсификаторы:",
+    "Наблюдено",
+    "Предел:",
+  ])
+    assert.ok(row.includes(text), text);
 });

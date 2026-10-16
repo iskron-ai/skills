@@ -10,7 +10,9 @@
 // ownseat-kit, ход сессии хуками OpenCode до сценарного провайдера.
 // ISKRON_OPENCODE_PLUGIN и ISKRON_BRIDGE_PATH наводят пробу на любые копии.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { ROOT_SEAT } from "../delivery/index.ts";
@@ -44,6 +46,187 @@ async function stage(t, cover = COVER) {
 const SEATED = ROOT_SEAT.ru.seated("\0", "\0", "\0", "\0").split("\0")[0];
 const board = (r, oc) =>
   `доска в миг запроса: ${JSON.stringify(r.atRequest)}\nсказано модели: ${r.told || "(ничего)"}\nstderr плагина:\n${oc.said()}`;
+
+for (const explicit of [{ model: "probe-model" }, { name: "probe-watch" }])
+  test(
+    `F1: явный stand ${JSON.stringify(explicit)} заменяет автопосадку без take, запись той же сессии подписана`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      await s.fake.control({ richTools: true });
+      const oc = await rootPlugin(s, s.project);
+      try {
+        oc.create("root");
+        const first = await oc.turn("root", "привет");
+        assert.equal(first.atRequest.seats.length, 1, board(first, oc));
+        const old = heldBy(s.dir, "root")[0];
+        const r = await oc.turn("root", "назови место", () => [
+          { tool: "iskron_stand", input: { realm: "@nks/nks-dev", karta: "931", ...explicit } },
+          {
+            tool: "iskron_add_vimarsha",
+            input: { realm: "@nks/nks-dev", name: "probe", given_as: "ding" },
+          },
+        ]);
+        const own = heldBy(s.dir, "root");
+        assert.equal(own.length, 1, JSON.stringify({ own, calls: r.calls }));
+        assert.notEqual(own[0], old, JSON.stringify(r.calls));
+        assert.deepEqual(heardSeats(s.fake), own, "предварительное место снято, новое слушает");
+        assert.equal(
+          s.fake.state.writes.at(-1)?.author,
+          own[0],
+          "подпись нового места той же сессии",
+        );
+        // Аргумент модели не делает явное место предварительным.
+        const spoof = await oc.turn("root", "подделка", () => [
+          {
+            tool: "iskron_stand",
+            input: { realm: "@nks/nks-dev", karta: "931", name: own[0], provisional: true },
+          },
+          {
+            tool: "iskron_stand",
+            input: { realm: "@nks/nks-dev", karta: "931", name: "probe-forbidden" },
+          },
+        ]);
+        assert.deepEqual(heldBy(s.dir, "root"), own, JSON.stringify(spoof.calls));
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
+
+test(
+  "F2: два экземпляра в двух worktree одного репо одновременно садятся, оба сокета целы",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    const git = (...args) => execFileSync("git", args, { cwd: s.project, stdio: "pipe" });
+    git("init", "-q");
+    git(
+      "-c",
+      "user.name=Probe",
+      "-c",
+      "user.email=probe@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-qm",
+      "probe",
+    );
+    const second = join(s.project, "second");
+    git("worktree", "add", "--detach", second, "HEAD");
+    writeAgents(second);
+    await s.fake.control({ connect_delay_ms: 1200 });
+    const a = await rootPlugin(s, s.project);
+    const b = await rootPlugin(s, second);
+    try {
+      a.create("a");
+      b.create("b");
+      const [ra, rb] = await Promise.all([a.turn("a", "привет"), b.turn("b", "привет")]);
+      await sleep(1000);
+      const [sa, sb] = [heldBy(s.dir, "a"), heldBy(s.dir, "b")];
+      assert.equal(sa.length, 1, board(ra, a));
+      assert.equal(sb.length, 1, board(rb, b));
+      assert.notEqual(sa[0], sb[0], "не выбирают общий host.repo по пустой доске");
+      assert.deepEqual(
+        heardSeats(s.fake),
+        [...sa, ...sb].sort(),
+        "оба моста слушают, никто не вытеснен",
+      );
+      assert.ok(![...a.wordsTo("a"), ...b.wordsTo("b")].some((w) => /отняли|evicted/i.test(w)));
+    } finally {
+      await b.stop();
+      await a.stop();
+    }
+  },
+);
+
+test(
+  "F3/F4: повисший connect освобождает очередь; поздний успех сообщён модели вторым словом",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ connect_delay_ms: 6000 });
+    const oc = await rootPlugin(s, s.project, { ISKRON_ROOT_SEAT_MS: "800" });
+    try {
+      oc.create("hung");
+      await until(() => s.fake.state.counts.connect_asked > 0, "первый connect ушёл и повис");
+      const first = await oc.turn("hung", "привет");
+      assert.ok(!first.told.includes(SEATED), board(first, oc));
+      await s.fake.control({ connect_delay_ms: 0 });
+      // После потолка первой посадки следующая обязана идти, не ждать её ответа.
+      await sleep(1800);
+      oc.create("next");
+      const next = await oc.turn("next", "привет");
+      assert.equal(heldBy(s.dir, "next").length, 1, board(next, oc));
+      assert.ok(next.told.includes(SEATED), board(next, oc));
+      assert.deepEqual(heldBy(s.dir, "hung"), [], "первый connect всё ещё висит");
+      await until(() => heldBy(s.dir, "hung").length === 1, "поздняя посадка завершилась");
+      await until(
+        () => oc.wordsTo("hung").some((w) => w.includes(SEATED)),
+        "второе слово модели о позднем успехе",
+      );
+      const words = oc.wordsTo("hung").filter((w) => w.includes(SEATED));
+      assert.equal(words.length, 1, JSON.stringify(words));
+      assert.ok(words[0].includes(heldBy(s.dir, "hung")[0]));
+      assert.deepEqual(
+        heardSeats(s.fake),
+        [...heldBy(s.dir, "hung"), ...heldBy(s.dir, "next")].sort(),
+      );
+    } finally {
+      // The red baseline still has a queued stand: settle it before cleanup so that
+      // it cannot spawn a bridge after its instance stopped.
+      await until(
+        () => heldBy(s.dir, "hung").length && heldBy(s.dir, "next").length,
+        "посадки перед уборкой",
+      ).catch(() => {});
+      await oc.stop();
+    }
+  },
+);
+
+test(
+  "F5: r7 в обложке против своего места в @nks/nks-dev — граф не сличён, ложного успеха нет",
+  T,
+  async (t) => {
+    const s = await stage(t, { ...COVER, [GRAPH_KEY]: "r7" });
+    await priorBridge(s, "root", "probe-uncompared", { kill: true });
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root");
+      const r = await oc.turn("root", "привет");
+      assert.ok(!r.told.includes(SEATED), board(r, oc));
+      assert.ok(r.told.includes("граф не сличён"), board(r, oc));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test(
+  "F4: connect завершился после отказа по сроку — второе слово модели называет позднее место",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ connect_delay_ms: 2200 });
+    const oc = await rootPlugin(s, s.project, { ISKRON_ROOT_SEAT_MS: "600" });
+    try {
+      oc.create("root");
+      const r = await oc.turn("root", "привет");
+      assert.deepEqual(r.atRequest.seats, [], board(r, oc));
+      assert.ok(!r.told.includes(SEATED), board(r, oc));
+      await until(() => heldBy(s.dir, "root").length === 1, "поздний connect открыл место");
+      // Не подменяем посадку явным stand и не просим второй ход: слово само входит в сессию.
+      await until(
+        () => oc.wordsTo("root").some((w) => w.includes(SEATED)),
+        "модель услышала поздний успех",
+      );
+      const late = oc.wordsTo("root").filter((w) => w.includes(SEATED));
+      assert.equal(late.length, 1);
+      assert.ok(late[0].includes(heldBy(s.dir, "root")[0]));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
 
 // ── T1, T2: место к первому запросу ──────────────────────────────────────────
 

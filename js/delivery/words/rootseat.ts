@@ -23,6 +23,7 @@ export interface RootSeatWords {
   refused: (text: string) => string;
   /** Вернулось своё прежнее место сессии, но другой роли или графа, чем в обложке. */
   ownOther: (place: string, karta: string, realm: string) => string;
+  uncompared: (cover: string, held: string) => string;
   /** Посадка не уложилась в срок; запрос идёт без места. */
   late: (seconds: number) => string;
   /** У плагина нет моста. */
@@ -44,6 +45,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     refused: (text) => `посадка сорвалась: ${text}`,
     ownOther: (place, karta, realm) =>
       `вернулось своё прежнее место ${place} другой роли или графа (#${karta} в ${realm}), чем в обложке`,
+    uncompared: (cover, held) => `граф не сличён: ${cover} в обложке, ${held} у места`,
     late: (seconds) => `посадка не уложилась в ${seconds} с, запрос идёт без места`,
     noBridge: () => "мост не поднят",
   },
@@ -61,6 +63,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     refused: (text) => `seating failed: ${text}`,
     ownOther: (place, karta, realm) =>
       `the session's own previous seat ${place} returned in another role or graph (#${karta} in ${realm}) than the cover's`,
+    uncompared: (cover, held) => `graph not compared: ${cover} in the cover, ${held} on the seat`,
     late: (seconds) => `seating did not finish in ${seconds} s, the request goes without a seat`,
     noBridge: () => "no bridge raised",
   },
