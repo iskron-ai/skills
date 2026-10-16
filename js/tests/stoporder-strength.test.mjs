@@ -173,3 +173,49 @@ test("attrs.stop of a connect after a bare register in another graph: agent", as
   assert.ok(conn.length, JSON.stringify(fake.state.calls.map((c) => c.arguments?.action)));
   assert.deepEqual(conn.at(-1).attrs.stop, { effect: "agent", ack: "word" });
 });
+
+// attrs.stop is what the stop itself will do with that seat (stophold.ts seatOf by the id
+// noteStandingId put on a door): told and done are checked on the same seat.
+test("attrs.stop of the agent's own register of a seat beside: seat, and its stop is seat_beside", async (t) => {
+  const { fake, b } = await standing(t);
+  const r = await stand(b, { realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!r.result?.isError, textOf(r));
+  await until(() => seatId(fake, DRUGOY, "proba-b"), "the seat beside");
+  const before = registered(fake, "drugoy", "proba-b").length;
+  const reg = await b.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "register", realm: DRUGOY, karta: 48, name: "proba-b" },
+  });
+  assert.ok(!reg.result?.isError, textOf(reg));
+  const own = registered(fake, "drugoy", "proba-b");
+  assert.ok(own.length > before, JSON.stringify(own));
+  assert.deepEqual(own.at(-1).attrs.stop, { effect: "seat", ack: "word" });
+  await fake.control({
+    stop_order: { id: "ord-ob", standing_id: seatId(fake, DRUGOY, "proba-b") },
+  });
+  await until(() => fake.state.orders.list.get("ord-ob").state === "stopped", "the outcome");
+  assert.deepEqual(stoppedCodes(fake, "ord-ob"), ["seat_beside"]);
+  assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
+});
+
+test("attrs.stop of a bare register without a held channel: no field, and its stop is not stopped", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const reg = await b.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "register", realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!reg.result?.isError, textOf(reg));
+  const regs = registered(fake, "nks-dev", "proba");
+  assert.ok(regs.length, JSON.stringify(fake.state.calls));
+  assert.ok(!("stop" in (regs.at(-1).attrs ?? {})), JSON.stringify(regs.at(-1).attrs));
+  const id = seatId(fake, NKS, "proba");
+  assert.ok(id, "the seat has an id at the platform");
+  // An order comes by the channel's socket only (its frame, or the open orders read on hello):
+  // with no channel held it never reaches this bridge — no answer at all, the agent goes on.
+  await fake.control({ stop_order: { id: "ord-bare", standing_id: id } });
+  await pause(2500);
+  assert.deepEqual(allAcks(fake, "ord-bare"), []);
+  assert.equal(fake.state.orders.list.get("ord-bare").state, "issued");
+  assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
+});
