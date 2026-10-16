@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import { test } from "node:test";
 
+import { ROOT_SEAT } from "../delivery/index.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { placeArgs, placeOf, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 import {
@@ -39,6 +40,8 @@ async function stage(t, cover = COVER) {
   return { ...s, project };
 }
 
+/** Начало слова «встал» — его не должно быть там, где места нет. */
+const SEATED = ROOT_SEAT.ru.seated("\0", "\0", "\0", "\0").split("\0")[0];
 const board = (r, oc) =>
   `доска в миг запроса: ${JSON.stringify(r.atRequest)}\nсказано модели: ${r.told || "(ничего)"}\nstderr плагина:\n${oc.said()}`;
 
@@ -123,7 +126,7 @@ test(
 // ── T4: не посажен — и знает это ─────────────────────────────────────────────
 
 const ROLE = COVER[ROLE_KEY];
-const NEGATIVE = [
+const UNSEATED = [
   ["нет AGENTS.md", null],
   ["в обложке нет полей графа и роли", { Nature: "library", Стек: "markdown" }],
   ["в обложке нет роли агента", { Nature: "library", [GRAPH_KEY]: COVER[GRAPH_KEY] }],
@@ -131,13 +134,14 @@ const NEGATIVE = [
     "роль агента неоднозначна — две роли ссылками",
     { ...COVER, [ROLE_KEY]: "`#931 «👨‍💻 Разработчик»` или `#844 «🔍 Ревьюер»` — по делу" },
   ],
+  ["роль агента без ссылки #N «…»", { ...COVER, [ROLE_KEY]: "разработчик, #931" }],
   [
     "граф неоднозначен — два графа",
     { ...COVER, [GRAPH_KEY]: "@nks/nks-dev (r5) или @nks/drugoy (r7)", [ROLE_KEY]: ROLE },
   ],
 ];
 
-for (const [label, cover] of NEGATIVE) {
+for (const [label, cover] of UNSEATED) {
   test(`T4 (место): ${label} — места нет, роль не угадана`, T, async (t) => {
     const s = await stage(t, cover);
     const oc = await rootPlugin(s, s.project);
@@ -154,22 +158,71 @@ for (const [label, cover] of NEGATIVE) {
     }
   });
 
-  test(`T4 (слово): ${label} — агент к первому запросу слышит, что не посажен`, T, async (t) => {
-    const s = await stage(t, cover);
-    const oc = await rootPlugin(s, s.project);
-    try {
-      oc.create("root");
-      const r = await oc.turn("root", "привет");
-      // Форма слова не фиксирована: в промпте, в системной части запроса или словом в сессию до него.
-      assert.ok(
-        r.told.length > 0,
-        `модель прочла что-то сверх слов человека — что места нет\n${board(r, oc)}`,
-      );
-    } finally {
-      await oc.stop();
-    }
-  });
+  const silent = cover === null;
+  test(
+    `T4 (слово): ${label} — ${silent ? "тишина: проект не выровнен" : "агент к первому запросу слышит, что не посажен"}`,
+    T,
+    async (t) => {
+      const s = await stage(t, cover);
+      const oc = await rootPlugin(s, s.project);
+      try {
+        oc.create("root");
+        const r = await oc.turn("root", "привет");
+        if (silent)
+          assert.equal(r.told, "", `модели не сказано ничего сверх слов человека\n${board(r, oc)}`);
+        else {
+          // Форма слова не фиксирована: в промпте, в системной части запроса или словом в сессию до него.
+          assert.ok(r.told.length > 0, `модель прочла, что места нет\n${board(r, oc)}`);
+          assert.ok(!r.told.includes(SEATED), `ложного «встал» нет\n${board(r, oc)}`);
+        }
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
 }
+
+// ── N4: посадка сорвалась ────────────────────────────────────────────────────
+
+/** Срок посадки под пробой — короче умолчания, чтобы проба не ждала его целиком. */
+const SEAT_MS = 3000;
+const FAILURES = [
+  [
+    "сервер рвёт каждый connect",
+    async (s) => s.fake.control({ mcpDrop: 1000, mcpDropAction: "iskron_channel:connect" }),
+    {},
+  ],
+  ["моста нет", async () => {}, { ISKRON_BRIDGE_PATH: "/nonexistent/bridge.mjs" }],
+  [
+    "connect не отвечает дольше срока посадки",
+    async (s) => s.fake.control({ connect_delay_ms: 20_000 }),
+    {},
+  ],
+];
+
+for (const [label, fail, env] of FAILURES)
+  test(
+    `N4: обложка верна, ${label} — места нет, запрос ушёл в срок, модель слышит о неудаче, ложного «встал» нет`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      await fail(s);
+      const oc = await rootPlugin(s, s.project, { ISKRON_ROOT_SEAT_MS: SEAT_MS, ...env });
+      try {
+        oc.create("root");
+        const r = await oc.turn("root", "привет");
+        assert.deepEqual(r.atRequest.seats, [], board(r, oc));
+        assert.ok(
+          r.atRequest.ms < SEAT_MS + 2000,
+          `запрос не держится дольше срока посадки: ${r.atRequest.ms} мс\n${board(r, oc)}`,
+        );
+        assert.ok(r.told.length > 0, `модель прочла о неудаче посадки\n${board(r, oc)}`);
+        assert.ok(!r.told.includes(SEATED), `ложного «встал» нет\n${board(r, oc)}`);
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
 
 // ── T5: два корня одной роли ─────────────────────────────────────────────────
 
@@ -228,9 +281,12 @@ test(
       oc.create("root");
       const r = await oc.turn("root", "привет");
       assert.deepEqual(r.atRequest.seats, ["proba-own"], `своё место вернулось\n${board(r, oc)}`);
+      // Возврат может открыть сокет прежним адресом записи — без connect вовсе.
       assert.deepEqual(
-        [...new Set(placeArgs(s.fake, "connect").slice(before))],
-        ["proba-own"],
+        placeArgs(s.fake, "connect")
+          .slice(before)
+          .filter((n) => n !== "proba-own"),
+        [],
         "ни одного connect другого имени",
       );
     } finally {

@@ -27,6 +27,10 @@ import { pathToFileURL } from "node:url";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { PAT } from "./ownseat-kit.mjs";
 
+/** The bridge under probe, fixed at load: a probe that names another (none) does not leak into the next. */
+const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
+/** Variables a probe may set for one instance; every instance starts without them. */
+const PER_PROBE = ["ISKRON_ROOT_SEAT_MS"];
 const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-rootseat-"));
 const COPY = join(SANDBOX, "iskron.js");
 copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, COPY);
@@ -90,11 +94,13 @@ export function heldBy(dir, session) {
 
 /**
  * Экземпляр плагина в project для учётки подставного сервера ownseat-kit (fake, dir — каталог
- * гранта); мосты плагина — настоящие, из этой рабочей копии.
+ * гранта); мосты плагина — настоящие, из этой рабочей копии. env — переменные этого экземпляра
+ * (другой мост, срок посадки).
  */
-export async function rootPlugin({ fake, dir }, project) {
+export async function rootPlugin({ fake, dir }, project, env = {}) {
+  for (const k of PER_PROBE) delete process.env[k];
   Object.assign(process.env, {
-    ISKRON_BRIDGE_PATH: process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE,
+    ISKRON_BRIDGE_PATH: BRIDGE,
     ISKRON_BRIDGE_URL: fake.mcpUrl,
     ISKRON_BRIDGE_TOKEN: PAT,
     ISKRON_BRIDGE_NO_BROWSER: "1",
@@ -102,6 +108,7 @@ export async function rootPlugin({ fake, dir }, project) {
     ISKRON_BRIDGE_DAEMON: "0",
     ISKRON_BRIDGE_AUTH_DIR: dir,
     HOME: SANDBOX,
+    ...env,
   });
   const def = (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
   const sessions = new Map(); // id → { id, parentID?, location }
@@ -207,6 +214,7 @@ export async function rootPlugin({ fake, dir }, project) {
      * Возвращает доску в миг запроса и то, что модель прочла.
      */
     async turn(sessionID, text, scenario = () => []) {
+      const t0 = Date.now();
       const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
       const model = { id: "m1", providerID: "p" };
@@ -224,6 +232,7 @@ export async function rootPlugin({ fake, dir }, project) {
       for (const cb of hooks["model.request"] ?? []) await cb(mr);
       // ── провайдер: запрос ушёл ──
       const atRequest = {
+        ms: Date.now() - t0, // сколько хуки держали запрос
         seats: heardSeats(fake),
         connects: fake.state.placeArgs.filter((a) => a.action === "connect").map((a) => a.name),
         words: prompts.filter((w) => w.sessionID === sessionID).map((w) => w.text),
