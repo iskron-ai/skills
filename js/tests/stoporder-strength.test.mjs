@@ -219,3 +219,25 @@ test("attrs.stop of a bare register without a held channel: no field, and its st
   assert.equal(fake.state.orders.list.get("ord-bare").state, "issued");
   assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
 });
+
+// A bare register in another graph than a bare main binding: no channel, so no seat beside is
+// added (hold.ts addPlace) — the stop finds no seat, nothing is claimed (review of 6c1e2ba2).
+test("attrs.stop of a bare register in another graph after a bare one: no field, its stop is not stopped", async (t) => {
+  const { fake, up } = await setup(t);
+  const b = await up();
+  const channel = (args) => b.call("tools/call", { name: "iskron_channel", arguments: args });
+  const first = await channel({ action: "register", realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!first.result?.isError, textOf(first));
+  const reg = await channel({ action: "register", realm: DRUGOY, karta: 48, name: "proba-d" });
+  assert.ok(!reg.result?.isError, textOf(reg));
+  const regs = registered(fake, "drugoy", "proba-d");
+  assert.ok(regs.length, JSON.stringify(fake.state.calls));
+  assert.ok(!("stop" in (regs.at(-1).attrs ?? {})), JSON.stringify(regs.at(-1).attrs));
+  const id = seatId(fake, DRUGOY, "proba-d");
+  assert.ok(id, "the seat has an id at the platform");
+  await fake.control({ stop_order: { id: "ord-bare-b", standing_id: id } });
+  await pause(2500);
+  assert.deepEqual(allAcks(fake, "ord-bare-b"), []);
+  assert.equal(fake.state.orders.list.get("ord-bare-b").state, "issued");
+  assert.ok(!saidKind(b, "stopped"), "no stop of the agent");
+});
