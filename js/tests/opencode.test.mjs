@@ -1157,7 +1157,9 @@ const frame = (body) => ({
     via: "hook",
   },
 });
-const event = (kind, extra) => JSON.stringify({ kind, ...extra }) + "\n";
+// Synthetic held events here model an explicit caller; service-return probes override automatic.
+const event = (kind, extra) =>
+  JSON.stringify({ kind, ...(kind === "held" ? { automatic: false } : {}), ...extra }) + "\n";
 
 /**
  * Корень держит место — его мост сказал «held» с местом: только под ним ребёнок
@@ -8186,9 +8188,11 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     const [rootPid, childPid] = pidsOf(b.log);
+    // The shared fake resume answer also named this key to the root; wait for the child's new event.
+    const beforeChildHeld = rec.said().length;
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));
     await until(
-      () => /мост держит стояние child--931--nks-dev/.test(rec.said()),
+      () => /мост держит стояние child--931--nks-dev/.test(rec.said().slice(beforeChildHeld)),
       "the child's held line",
     );
     process.kill(childPid, "SIGKILL"); // the child's bridge dies — not the plugin's doing

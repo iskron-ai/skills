@@ -11,7 +11,7 @@
 // ISKRON_OPENCODE_PLUGIN и ISKRON_BRIDGE_PATH наводят пробу на любые копии.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -61,6 +61,109 @@ const resetStops = () => {
   for (const key of ["Halts", "LiftedAt", "StopIds", "StopWords"])
     delete globalThis[`${GLOBAL_PREFIX}${key}`];
 };
+
+test(
+  "round3 P2-1: unload during disk return preserves explicit record, marker and next return",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await priorBridge(s, "root", "round3-returned", { kill: true });
+    await s.fake.control({ registerToolDelayMs: 1800 });
+    let oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root", { emit: false });
+      const first = oc.turn("root", "return");
+      await until(
+        () => heardSeats(s.fake).includes("round3-returned"),
+        "returned socket before register reply",
+      );
+      await oc.stop();
+      await first;
+      assert.deepEqual(heldBy(s.dir, "root"), ["round3-returned"]);
+      const markers = readdirSync(s.dir).filter((f) => f.startsWith("opencode-lost."));
+      assert.ok(
+        markers.some((f) =>
+          JSON.parse(readFileSync(join(s.dir, f), "utf8")).entries?.some(
+            (e) => e.session === "root" && e.key?.startsWith("round3-returned--"),
+          ),
+        ),
+        "pending explicit return is in the marker",
+      );
+      await until(
+        () => !heardSeats(s.fake).includes("round3-returned"),
+        "old bridge closed without revoke",
+      );
+      await s.fake.control({ registerToolDelayMs: 0 });
+      oc = await rootPlugin(s, s.project);
+      oc.create("root", { emit: false });
+      const back = await oc.turn("root", "return again");
+      assert.deepEqual(back.atRequest.seats, ["round3-returned"], board(back, oc));
+      assert.equal(s.fake.state.closedPlaces.size, 0, "explicit place was never revoked");
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test("round3 P3b: reading the seating stop does not interrupt a turn", T, async (t) => {
+  const s = await stage(t);
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("pure-gate", { emit: false });
+    createHalts(
+      () => undefined,
+      () => s.dir,
+      () => {},
+      () => {},
+    ).stop("pure-gate", "stop");
+    assert.equal(await oc.promptOnly("pure-gate", "hello"), "hello");
+    assert.equal(oc.interrupts.length, 0);
+  } finally {
+    await oc.stop();
+    resetStops();
+  }
+});
+
+test(
+  "round3 P2-2: explicit stand during automatic connect passes, lifts stop, and survives cleanup",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ richTools: true, connect_delay_ms: 1800 });
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root");
+      const first = oc.turn("root", "hello");
+      await until(() => s.fake.state.counts.connect_asked > 0, "automatic connect in flight");
+      const halts = createHalts(
+        () => undefined,
+        () => s.dir,
+        () => {},
+        () => {},
+      );
+      halts.stop("root", "owner stopped");
+      const explicit = await oc.turn("root", "stand explicitly", () => [
+        {
+          tool: "iskron_stand",
+          input: { realm: "@nks/nks-dev", karta: "931", name: "round3-explicit", take: true },
+        },
+        {
+          tool: "iskron_add_vimarsha",
+          input: { realm: "@nks/nks-dev", name: "probe", given_as: "ding" },
+        },
+      ]);
+      await first;
+      assert.ok(!explicit.calls[0]?.error, JSON.stringify(explicit.calls));
+      assert.ok(!halts.halted("root"), JSON.stringify(explicit.calls));
+      assert.deepEqual(heldBy(s.dir, "root"), ["round3-explicit"]);
+      assert.ok(heardSeats(s.fake).includes("round3-explicit"));
+      assert.equal(s.fake.state.writes.at(-1)?.author, "round3-explicit");
+    } finally {
+      await oc.stop();
+      resetStops();
+    }
+  },
+);
 
 test("P3c: неизвестный каталог сессии не заменяется домом экземпляра", T, async (t) => {
   const s = await stage(t);
@@ -129,7 +232,7 @@ test(
   T,
   async (t) => {
     const s = await stage(t);
-    const b = await s.up(s.dir, undefined, [], OPENCODE);
+    const b = await s.up(s.dir, { experimental: { "iskron/structured": {} } }, [], OPENCODE);
     await b.call("iskron/resume", { cwd: s.project, session: "root" });
     const r = await b.call(
       "tools/call",

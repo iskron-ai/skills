@@ -114,6 +114,7 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
   const sessions = new Map(); // id → { id, parentID?, location }
   const hooks = {};
   const prompts = []; // ctx.session.prompt и synthetic — слова плагина в сессию
+  const interrupts = [];
   const tools = { list: new Map(), transforms: [] };
   const replay = () => {
     const m = new Map();
@@ -160,7 +161,7 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
       create: async (o) => ({ id: `ka-${++seq}`, parentID: o?.parentID }),
       remove: async () => {},
       move: async () => {},
-      interrupt: async () => ({ interrupted: true }),
+      interrupt: async (input) => (interrupts.push(input), { interrupted: true }),
       hook: hook(""),
     },
     skill: { list: async () => ({ location: { directory: SANDBOX }, data: [] }) },
@@ -196,6 +197,12 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
   };
 
   return {
+    interrupts,
+    async promptOnly(sessionID, text) {
+      const p = { sessionID, prompt: { text }, delivery: "queue" };
+      for (const cb of hooks.prompt ?? []) await cb(p);
+      return p.prompt.text;
+    },
     tools: () => tools.list,
     remove(id) {
       sessions.delete(id);

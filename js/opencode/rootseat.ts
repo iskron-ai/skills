@@ -9,8 +9,8 @@
 // seat and the word says so; a seat taken after the term is told by the channel's path. Seatings
 // of one instance go one at a time; fresh names carry independent random suffixes across instances.
 // The queue bounds service work, not name allocation; a seating hung in the bridge holds the
-// line no longer than its ceiling. The seat is provisional: the agent's own stand in the same
-// graph replaces it (bridge/provisional.ts).
+// line no longer than its ceiling. Only proof from the serving bridge makes the seat
+// provisional and promises replacement by an explicit stand in the same graph without take.
 import { COVER, envName, ROOT_SEAT } from "../delivery/index.ts";
 import { readCover } from "../shared/cover.ts";
 import { words } from "../shared/lang.ts";
@@ -130,9 +130,10 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
 
   return {
     async word(session) {
-      if (!rootSeatEnabled() || stopped || dead.has(session) || d.halted(session)) return null;
+      if (!rootSeatEnabled() || stopped || dead.has(session)) return null;
       if (told.has(session)) return null;
       told.add(session);
+      if (d.halted(session)) return null;
       const ms = rootSeatMs();
       const late = W.notSeated(W.late(Math.round(ms / 100) / 10));
       const seating = start(session);

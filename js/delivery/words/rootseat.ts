@@ -20,6 +20,7 @@ export interface RootSeatWords {
   ownSeated: (place: string, karta: string, realm: string, file: string) => string;
   cancelled: () => string;
   cleanupFailed: (place: string, why: string) => string;
+  unproven: () => string;
   /** Не встал: why — причина готовой строкой. */
   notSeated: (why: string) => string;
   /** Отказ моста или сервера на посадке — причина его словами. */
@@ -50,6 +51,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
     cleanupFailed: (place, why) =>
       `Отменённая посадка ${place}: снять место не удалось (${why}); мост закрывается, место может остаться до простоя на сервере.`,
+    unproven: () =>
+      "мост не подтвердил, что это провизорное место взято этой попыткой; revoke не разрешён",
     notSeated: (why) =>
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     refused: (text) => `посадка сорвалась: ${text}`,
@@ -76,6 +79,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     cancelled: () => "The instance or session is stopped; no new seating is allowed.",
     cleanupFailed: (place, why) =>
       `Cancelled seating ${place}: could not revoke the seat (${why}); the bridge is closing, the seat may remain until the server's idle expiry.`,
+    unproven: () =>
+      "the bridge did not prove this attempt took a provisional seat; revoke is not authorized",
     notSeated: (why) =>
       `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
     refused: (text) => `seating failed: ${text}`,

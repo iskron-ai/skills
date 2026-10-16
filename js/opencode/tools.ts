@@ -8,9 +8,8 @@
 //
 // A root owns its bridge/socket/MCP session; a child borrows only reads until its stand (#5154).
 //
-// The tool list is the transform's state: setup does not wait for the sign-in (the cached
-// list at once, the status tool always); the server's list arrives in the background and
-// replaces it through ctx.tool.reload().
+// Tool transforms serve the cached list and status without waiting for sign-in.
+// The server list replaces them in the background via ctx.tool.reload().
 import { LOGGERS, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import { words } from "../shared/lang.ts";
@@ -25,7 +24,6 @@ import {
   retryPause,
   sleep,
   slotReady,
-  textOf,
   writeCache,
 } from "./bridge-io.ts";
 import { createChildren } from "./children.ts";
@@ -46,7 +44,7 @@ import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { revokeAsLauncher } from "./release.ts";
 import type { HeldSeat } from "./rootseat-by.ts";
-import { createSeatLife } from "./rootseat-tools.ts";
+import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
 import { asSatellite, STAND_TOOL, standsBy } from "./satellite.ts";
 import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
@@ -193,6 +191,7 @@ export async function setupTools(
     failed: (word) => say(word, "error"),
     stood: (slot) => keeper.stood(slot),
     forgot: (s) => keeper.forget(s),
+    held: (s, slot) => onChannel(s, explicitHeld(slot), !!slot.child),
   });
   // A previous instance stopped with a holding bridge (or a session moved here): keys to the
   // watchdog, seats back at once, each holding session a word about its own seats (#6626).
@@ -297,41 +296,42 @@ export async function setupTools(
         description: String(t.description ?? ""),
         input: toParameters(t.inputSchema),
         async execute(input, tool) {
-          // The launcher's revoke of its lead's seat ends the child, then goes to the platform
-          // by the launcher's bridge (#6625, #7505); a child ended by a move is answered here (adopt.ts).
-          const caller = String(tool.sessionID);
-          const freed = await leads.release(caller, name, input ?? {});
-          if (freed)
-            return {
-              content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
-                const slot = await slotFor(caller);
-                slot.busy++;
-                try {
-                  return await callThrough(slot, name, args, caller);
-                } finally {
-                  slot.busy--;
-                }
-              }),
-            };
-          const word = adopt.revoked(name, input ?? {});
-          if (word) return { content: word };
-          await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
-          runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // not through the root's bridge (#6361)
-          const slot = await slotFor(String(tool.sessionID));
-          // A child through the root's bridge only reads; it stands by its own satellite in callThrough (#6550 item 2).
-          const no =
-            slot.session !== tool.sessionID && !standsBy(name, input ?? {})
-              ? childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks)
-              : null;
-          if (no) throw new Error(no);
-          // A call in flight keeps the bridge from the reaper; idle time counts from the call's end.
-          slot.busy++;
-          try {
-            return await callThrough(slot, name, input, String(tool.sessionID));
-          } finally {
-            slot.busy--;
-            slot.lastCall = Date.now();
-          }
+          return seats.explicit(String(tool.sessionID), name, input ?? {}, async () => {
+            // The launcher's revoke of its lead's seat ends the child, then goes to the platform
+            // by the launcher's bridge (#6625, #7505); a child ended by a move is answered here (adopt.ts).
+            const caller = String(tool.sessionID);
+            const freed = await leads.release(caller, name, input ?? {});
+            if (freed)
+              return {
+                content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
+                  const slot = await slotFor(caller);
+                  slot.busy++;
+                  try {
+                    return await callThrough(slot, name, args, caller);
+                  } finally {
+                    slot.busy--;
+                  }
+                }),
+              };
+            const word = adopt.revoked(name, input ?? {});
+            if (word) return { content: word };
+            await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
+            runEnds.guard(String(tool.sessionID), name, input ?? {}, asks); // not through the root's bridge (#6361)
+            const slot = await slotFor(String(tool.sessionID));
+            // A child through the root's bridge only reads; it stands by its own satellite in callThrough (#6550 item 2).
+            if (slot.session !== caller && !standsBy(name, input ?? {})) {
+              const no = childWriteRefusal(slot.place?.name ?? null, name, input ?? {}, asks);
+              if (no) throw new Error(no);
+            }
+            // A call in flight keeps the bridge from the reaper; idle time counts from the call's end.
+            slot.busy++;
+            try {
+              return await callThrough(slot, name, input, String(tool.sessionID));
+            } finally {
+              slot.busy--;
+              slot.lastCall = Date.now();
+            }
+          });
         },
       });
     }
@@ -347,10 +347,10 @@ export async function setupTools(
     input: any,
     sessionID: string,
     service = false, // the launch line is a service move, not the agent's work (#6510)
-  ): Promise<{ content: string; place?: HeldSeat; provisional?: boolean }> {
+  ): Promise<{ content: string; place?: HeldSeat; provisional?: boolean; key?: string }> {
     await awaitReady(slot);
     if (slot.resume) await slot.resume; // the seat is returning from disk — do not take it twice
-    seats.guard(sessionID);
+    seats.guard(sessionID, service);
     // No ceiling: the v2 execute context carries no abort signal.
     const args: Record<string, unknown> = { ...(input ?? {}) };
     // One seat per bridge: a child standing by its own call gets its own bridge (#5154).
@@ -362,7 +362,7 @@ export async function setupTools(
         );
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
-      seats.guard(sessionID);
+      seats.guard(sessionID, service);
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
     if (name === STAND_TOOL) await models.name(args, sessionID, slot);
@@ -371,23 +371,23 @@ export async function setupTools(
       const dir = (slot.dir ??= await directoryOf(slot.session ?? sessionID));
       if (dir) args.cwd = dir;
     }
+    seats.guard(sessionID, service);
+    const epoch = seats.epoch(sessionID);
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
-    // A tool's refusal is a throw — so OpenCode shows it as a refusal.
-    // The api refusal's data rides along: the launcher's revoke reads its rule (release.ts).
-    if (result?.isError)
-      throw Object.assign(new Error(textOf(result) || P.refusalNoText(name)), { result });
-    // The tool's answer is an observed holding event; an answer to a busy line alone is not (#6509).
-    if (standsBy(name, args) && !busy) seats.stood(slot, result);
+    const out = seats.answer(
+      slot,
+      name,
+      result,
+      service,
+      standsBy(name, args) && !busy,
+      sessionID,
+      epoch,
+    );
     if (standsBy(name, args)) runEnds.clear(sessionID); // stood again — writes go by its own bridge
     // A child stood by its own bridge is a lead; leaving by the outcome is its end (#6625).
     if (slot.child && slot.satelliteOf && slot.session === sessionID)
       leads.called(sessionID, name, args, slot.place);
-    return {
-      content: textOf(result),
-      ...(service && name === STAND_TOOL && slot.holding && slot.place
-        ? { place: { ...slot.place }, provisional: slot.provisional === true }
-        : {}),
-    };
+    return out;
   }
   if (state.listed.length) say(W.cached(state.listed.length), "info");
 

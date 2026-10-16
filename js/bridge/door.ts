@@ -60,6 +60,8 @@ export interface ChannelEvent {
   place?: { realm: string; karta: string; name: string };
   /** kind="held": this bridge understands the provisional replacement rule (#7972). */
   provisional?: boolean;
+  /** kind="held": true for service/internal transitions, false for the explicit caller. */
+  automatic?: boolean;
   /** kind="backlog": frames pending per hello. */
   pending?: number;
   /**

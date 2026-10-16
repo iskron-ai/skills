@@ -30,7 +30,7 @@ export interface SeatDoors {
     input: Record<string, unknown>,
     session: string,
     service: boolean,
-  ): Promise<{ content: string; place?: HeldSeat; provisional?: boolean }>;
+  ): Promise<{ content: string; place?: HeldSeat; provisional?: boolean; key?: string }>;
 }
 
 /** Bridge's held word, else the real record; a sanitized key cannot recover a graph. */
