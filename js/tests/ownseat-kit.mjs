@@ -120,9 +120,21 @@ export async function setup(t) {
     await fake.stop(); // сервер первым: так мосты выходят по концу stdin, не ждут его
     await Promise.all(bridges.map((b) => b.stop()));
     // Мосты плагина под пробой (rootseat-kit) выходят по концу stdin и дописывают каталог гранта
-    // ещё миг после остановки плагина: каталог убирается с повторами, а не падает ENOTEMPTY.
+    // ещё миг после остановки плагина: каталог убирается с повторами. Не убранный и после них —
+    // слово в вывод, не провал пробы: её тело уже прошло, а каталог — во временном (#8034).
     for (const d of scratches.get(t) ?? [])
-      rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      try {
+        rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      } catch (e) {
+        const left = (() => {
+          try {
+            return readdirSync(d, { recursive: true }).slice(0, 10).join(", ");
+          } catch {
+            return "?";
+          }
+        })();
+        t.diagnostic(`scratch ${d} not removed (${e.code ?? e.message}): ${left}`);
+      }
   });
   // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
   // extra — more arguments of the bridge (--satellite).
