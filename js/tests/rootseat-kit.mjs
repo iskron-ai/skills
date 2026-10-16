@@ -197,6 +197,10 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
 
   return {
     tools: () => tools.list,
+    remove(id) {
+      sessions.delete(id);
+      emit({ type: "session.deleted", location: { directory: project }, data: { sessionID: id } });
+    },
     said: () => stderr.join(""),
     /** Слова плагина в сессию мимо промпта (prompt/synthetic). */
     wordsTo: (id) => prompts.filter((p) => p.sessionID === id).map((p) => p.text),

@@ -6,9 +6,7 @@
 // tool <entry>.<tool> (observed on 2.0.9), and every skill phrase calling a tool by name
 // would turn false.
 //
-// Each root session has its own bridge process: its connect holds its socket, its register
-// binds its MCP session, its frames come to it. A child session (subagent) reads through
-// its parent's bridge and gets its own bridge once it stands by its own call (#5154).
+// A root owns its bridge/socket/MCP session; a child borrows only reads until its stand (#5154).
 //
 // The tool list is the transform's state: setup does not wait for the sign-in (the cached
 // list at once, the status tool always); the server's list arrives in the background and
@@ -42,14 +40,15 @@ import { type Closed, leadDoors } from "./leaddoors.ts";
 import { launcherSeat } from "./leadframes.ts";
 import { createLeads } from "./leads.ts";
 import { createLogin } from "./login.ts";
-import { takeLostMarker, writeLostMarker } from "./marker.ts";
+import { takeLostMarker } from "./marker.ts";
 import { createModels } from "./models.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { revokeAsLauncher } from "./release.ts";
-import { type HeldSeat, seatBy } from "./rootseat-by.ts";
+import type { HeldSeat } from "./rootseat-by.ts";
+import { createSeatLife } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction } from "./runends.ts";
-import { asSatellite, heldPlace, STAND_TOOL, standsBy } from "./satellite.ts";
+import { asSatellite, STAND_TOOL, standsBy } from "./satellite.ts";
 import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
 import { statusLines, statusTool } from "./status.ts";
 
@@ -109,15 +108,10 @@ export async function setupTools(
       (method, params) => {
         if (method === "notifications/tools/list_changed") return void relist(slot.bridge); // #5406
         if (method !== "notifications/message" || params?.logger !== LOGGERS.channel) return;
+        if (slot.ownStop) return; // cleanup's revoke is not a new owner stop or a word to a deleted session
         const kind = models.seen(slot, params?.data); // the graphs of its seats too (#7591)
-        // holding follows an observed event — the bridge's "held" word and hello (#5140).
-        if (kind === "held" || kind === "attached" || params?.data?.frame?.type === "hello")
-          keeper.stood(slot);
-        if ((kind === "held" || kind === "released") && typeof params?.data?.key === "string")
-          slot.key = params.data.key; // the seat's key — the exact address of the record to return
-        if (kind === "held") slot.place = heldPlace(params?.data) ?? slot.place; // #6002
-        if (kind === "released" || kind === "dead" || kind === "evicted" || kind === "stopped")
-          slot.holding = false;
+        if (seats.observe(slot, kind, params?.data))
+          params = { ...params, data: { ...params.data, automatic: true } };
         // Taken off by its owner (#7439): the hearing watchdog no longer raises this session's seat.
         if (kind === "stopped" && slot.session) keeper.forget(slot.session);
         // Only a satellite child is a lead (#6550 item 4); a child on a plain bridge is one run (children.ts).
@@ -188,6 +182,18 @@ export async function setupTools(
     back: (e) => children.back(e),
     endKid: (s, of, why) => runEnds.end(s, of, nothing, false, why),
   });
+  const seats = createSeatLife({
+    stopped: () => stopped,
+    slots,
+    authDir,
+    slotFor,
+    awaitReady: (slot) => awaitReady(slot),
+    callThrough,
+    modelOf: (s) => models.of(s),
+    failed: (word) => say(word, "error"),
+    stood: (slot) => keeper.stood(slot),
+    forgot: (s) => keeper.forget(s),
+  });
   // A previous instance stopped with a holding bridge (or a session moved here): keys to the
   // watchdog, seats back at once, each holding session a word about its own seats (#6626).
   const lost = takeLostMarker(authDir(), home);
@@ -201,6 +207,7 @@ export async function setupTools(
    * touch=false — the watchdog's look, not a call: the idle time is not refreshed.
    */
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
+    seats.guard(sessionID);
     const root = await rootOf(sessionID);
     mv.guard(root, sessionID); // the root moved away — a child does not raise its bridge here
     // A child that stood as its own satellite goes by its own bridge (#5154); the root's is read-only to it (#6550 item 2).
@@ -208,6 +215,7 @@ export async function setupTools(
       adopt.now(); // a previous instance's marker laid after our load (adopt.ts)
       await children.settled(sessionID);
     }
+    seats.guard(sessionID);
     const own = root !== sessionID ? slots.get(sessionID) : undefined;
     if (own) {
       // A dead child bridge is replaced by its own, not by the root's.
@@ -217,6 +225,7 @@ export async function setupTools(
     }
     // A child moved to another directory (#6695): decided on every call, not by slot.
     const far = root !== sessionID && !slots.get(root)?.place ? await mv.farRoot(root) : null;
+    seats.guard(sessionID);
     if (far && far !== "foreign") return far;
     let slot = slots.get(root);
     let dead: Slot | undefined;
@@ -341,6 +350,7 @@ export async function setupTools(
   ): Promise<{ content: string; place?: HeldSeat }> {
     await awaitReady(slot);
     if (slot.resume) await slot.resume; // the seat is returning from disk — do not take it twice
+    seats.guard(sessionID);
     // No ceiling: the v2 execute context carries no abort signal.
     const args: Record<string, unknown> = { ...(input ?? {}) };
     // One seat per bridge: a child standing by its own call gets its own bridge (#5154).
@@ -352,6 +362,7 @@ export async function setupTools(
         );
       slot = children.childSlot(sessionID, slot);
       await awaitReady(slot); // a fresh child bridge may ask for a sign-in too
+      seats.guard(sessionID);
     }
     const busy = name === STAND_TOOL && asSatellite(args, slot.satelliteOf, !!slot.place);
     if (name === STAND_TOOL) await models.name(args, sessionID, slot);
@@ -440,18 +451,15 @@ export async function setupTools(
     runEnds.clear(session); // a deleted session takes its run-end mark along
     launcher.forget(session);
     keeper.forget(session);
-    const slot = slots.get(session);
-    if (!slot) return;
-    slots.delete(session);
-    slot.ownStop = true;
-    slot.bridge.stop(); // the bridge's shutdown releases the standing: key, socket, busy line
+    seats.forget(session);
   }
 
   return {
     launch: launcher.launch,
-    seatRoot: (...a) => seatBy({ slotFor, awaitReady, callThrough, modelOf: models.of }, ...a),
+    ...seats.half,
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
+      seats.cancel(s);
       forget(s);
       runEnds.clear(s, true); // no session — no final mark either
     },
@@ -482,16 +490,8 @@ export async function setupTools(
       clearInterval(reaper);
       keeper.stop();
       await children.pause(); // a reload is not a child's end (#6625): its seat and cases wait
-      // A stop with holding bridges goes to disk: the next instance tells of the loss.
-      const left = writeLostMarker(authDir(), slots.values(), home);
-      if (spare) spare.ownStop = true;
-      spare?.bridge.stop();
+      const left = seats.stopSlots(home, spare);
       spare = null;
-      for (const slot of slots.values()) {
-        slot.ownStop = true;
-        slot.bridge.stop();
-      }
-      slots.clear();
       return left; // to the directory's twin — wake this spelling's instance (twins.ts)
     },
   };

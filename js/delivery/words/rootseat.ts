@@ -17,6 +17,9 @@ export interface RootSeatWords {
   manyRoles: (file: string, key: string, list: string) => string;
   /** Встал: place — имя места, realm и karta — из обложки. */
   seated: (place: string, karta: string, realm: string, file: string) => string;
+  ownSeated: (place: string, karta: string, realm: string, file: string) => string;
+  cancelled: () => string;
+  cleanupFailed: (place: string, why: string) => string;
   /** Не встал: why — причина готовой строкой. */
   notSeated: (why: string) => string;
   /** Отказ моста или сервера на посадке — причина его словами. */
@@ -40,6 +43,11 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
     seated: (place, karta, realm, file) =>
       `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
+    ownSeated: (place, karta, realm, file) =>
+      `Искрон: сессия стоит своим местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
+    cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
+    cleanupFailed: (place, why) =>
+      `Отменённая посадка ${place}: снять место не удалось (${why}); мост закрывается, место может остаться до простоя на сервере.`,
     notSeated: (why) =>
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     refused: (text) => `посадка сорвалась: ${text}`,
@@ -58,6 +66,11 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
     seated: (place, karta, realm, file) =>
       `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by this seat. For a watch (room/model) or your own name, call iskron_stand — it replaces a provisional seat without take.`,
+    ownSeated: (place, karta, realm, file) =>
+      `Iskron: the session holds its own seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by it. A different name requires iskron_stand with take.`,
+    cancelled: () => "The instance or session is stopped; no new seating is allowed.",
+    cleanupFailed: (place, why) =>
+      `Cancelled seating ${place}: could not revoke the seat (${why}); the bridge is closing, the seat may remain until the server's idle expiry.`,
     notSeated: (why) =>
       `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
     refused: (text) => `seating failed: ${text}`,

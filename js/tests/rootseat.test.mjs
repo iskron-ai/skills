@@ -11,11 +11,12 @@
 // ISKRON_OPENCODE_PLUGIN и ISKRON_BRIDGE_PATH наводят пробу на любые копии.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { ROOT_SEAT } from "../delivery/index.ts";
+import { GLOBAL_PREFIX, ROOT_SEAT } from "../delivery/index.ts";
+import { createHalts } from "../opencode/halts.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import { holdRecord, placeArgs, placeOf, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 import {
@@ -36,6 +37,7 @@ const SLOW_CONNECT = { connect_delay_ms: 700 };
 
 /** Каталог и учётка пробы; obj — обложка AGENTS.md, null — файла нет. */
 async function stage(t, cover = COVER) {
+  resetStops(); // each fake account reuses ids; stops persist across reloads only within this stage
   const s = await setup(t);
   const project = realpathSync(s.cwd);
   if (cover) writeAgents(project, cover);
@@ -46,6 +48,170 @@ async function stage(t, cover = COVER) {
 const SEATED = ROOT_SEAT.ru.seated("\0", "\0", "\0", "\0").split("\0")[0];
 const board = (r, oc) =>
   `доска в миг запроса: ${JSON.stringify(r.atRequest)}\nсказано модели: ${r.told || "(ничего)"}\nstderr плагина:\n${oc.said()}`;
+const resetStops = () => {
+  for (const key of ["Halts", "LiftedAt", "StopIds", "StopWords"])
+    delete globalThis[`${GLOBAL_PREFIX}${key}`];
+};
+
+test("P1-1: стоп владельца с диска после перезагрузки не снимается автопосадкой", T, async (t) => {
+  const s = await stage(t);
+  t.after(resetStops);
+  let oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("root");
+    await oc.turn("root", "привет");
+    await s.fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    await until(
+      () => readdirSync(s.dir).some((f) => f.startsWith("opencode-stopped.")),
+      "стоп записан на диск",
+    );
+    await oc.stop();
+    for (const key of ["Halts", "LiftedAt", "StopIds", "StopWords"])
+      delete globalThis[`${GLOBAL_PREFIX}${key}`];
+    const before = placeArgs(s.fake, "connect").length;
+    oc = await rootPlugin(s, s.project);
+    oc.create("root", { emit: false });
+    const r = await oc.turn("root", "после перезагрузки");
+    assert.equal(placeArgs(s.fake, "connect").length, before, board(r, oc));
+    assert.ok(!r.told.includes(SEATED), board(r, oc));
+    assert.match(r.system, /останов/);
+    assert.ok(
+      createHalts(
+        () => undefined,
+        () => s.dir,
+        () => {},
+        () => {},
+      ).halted("root"),
+    );
+  } finally {
+    await oc.stop();
+  }
+});
+
+test("regression: явный stand по слову владельца всё ещё снимает стоп", T, async (t) => {
+  const s = await stage(t);
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("root");
+    await oc.turn("root", "привет");
+    await s.fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    await until(
+      () => readdirSync(s.dir).some((f) => f.startsWith("opencode-stopped.")),
+      "стоп записан",
+    );
+    const r = await oc.turn("root", "встань явно", () => [
+      {
+        tool: "iskron_stand",
+        input: { realm: "@nks/nks-dev", karta: "931", name: "probe-owner-restarted" },
+      },
+    ]);
+    assert.ok(!r.calls[0]?.error, JSON.stringify(r.calls));
+    assert.deepEqual(heldBy(s.dir, "root"), ["probe-owner-restarted"]);
+    assert.ok(
+      !createHalts(
+        () => undefined,
+        () => s.dir,
+        () => {},
+        () => {},
+      ).halted("root"),
+    );
+  } finally {
+    await oc.stop();
+  }
+});
+
+test("P1-1: поздний provisional-held не снимает стоп, пришедший во время connect", T, async (t) => {
+  const s = await stage(t);
+  t.after(resetStops);
+  await s.fake.control({ connect_delay_ms: 1200 });
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("root");
+    const turn = oc.turn("root", "привет");
+    await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
+    const halts = createHalts(
+      () => undefined,
+      () => s.dir,
+      () => {},
+      () => {},
+    );
+    halts.stop("root", "остановлен владельцем");
+    const r = await turn;
+    await sleep(1800);
+    assert.ok(halts.halted("root"), board(r, oc));
+    assert.ok(!r.told.includes(SEATED), board(r, oc));
+    assert.deepEqual(heardSeats(s.fake), []);
+  } finally {
+    await oc.stop();
+  }
+});
+
+for (const end of ["remove", "stop"])
+  test(`P1-2: ${end} во время connect убирает позднее место, без слова посадки`, T, async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ connect_delay_ms: 1400 });
+    const oc = await rootPlugin(s, s.project);
+    let stopped = false;
+    try {
+      oc.create("root");
+      const turn = oc.turn("root", "привет");
+      await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
+      if (end === "remove") oc.remove("root");
+      else {
+        await oc.stop();
+        stopped = true;
+      }
+      const r = await turn;
+      await until(
+        () =>
+          s.fake.state.closedPlaces.size > 0 &&
+          heardSeats(s.fake).length === 0 &&
+          heldBy(s.dir, "root").length === 0,
+        "позднее место снято на сервере, сокет и запись держания убраны",
+      );
+      assert.ok(!r.told.includes(SEATED), board(r, oc));
+      assert.ok(!oc.wordsTo("root").some((w) => w.includes(SEATED)));
+      assert.deepEqual(heardSeats(s.fake), []);
+      assert.deepEqual(heldBy(s.dir, "root"), []);
+      assert.ok(
+        s.fake.state.closedPlaces.size > 0,
+        "позднее место снято на сервере, не только закрыт сокет",
+      );
+      const before = placeArgs(s.fake, "connect").length;
+      const retry = await oc.turn("root", "ещё раз", () => [
+        {
+          tool: "iskron_stand",
+          input: { realm: "@nks/nks-dev", karta: "931", name: "probe-dead-root" },
+        },
+      ]);
+      assert.ok(retry.calls[0]?.error, JSON.stringify(retry.calls));
+      assert.equal(placeArgs(s.fake, "connect").length, before);
+    } finally {
+      if (!stopped) await oc.stop();
+    }
+  });
+
+for (const language of ["ru", "en"])
+  test(
+    `P2: явное место после возврата (${language}) требует take для другого имени`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      await priorBridge(s, "root", "probe-explicit", { kill: true });
+      const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_LANG: language });
+      try {
+        oc.create("root");
+        const r = await oc.turn("root", "привет");
+        assert.deepEqual(r.atRequest.seats, ["probe-explicit"], board(r, oc));
+        assert.ok(!/без take|without take|предварительн|provisional/i.test(r.told), board(r, oc));
+        assert.match(r.told, /iskron_stand/);
+        assert.match(r.told, /take/);
+        assert.match(r.told, language === "ru" ? /сво[иём]|явн/ : /own|explicit/i);
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
 
 test(
   "R1: предварительное место возвращается с диска и заменяется явным stand без take",

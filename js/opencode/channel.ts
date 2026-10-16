@@ -450,6 +450,7 @@ export function setupChannel(
           }
           return;
         case "held":
+          if (params?.data?.automatic) return; // service stands/returns cannot lift the owner's stop
           halts.held(session); // after a stop only an explicit stand holds again (halts.ts)
           // The marks of the session's cuts go with it, its descendants' too.
           for (const s of session ? [session, ...descendantsOf(session, parents)] : []) {

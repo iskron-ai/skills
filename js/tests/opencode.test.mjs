@@ -7665,10 +7665,10 @@ test("a deleted child session takes its run-ended mark with it", async () => {
     rec.emit({ type: "session.deleted", data: { sessionID: "child" } });
     await delay(200);
     const before = sent().length;
-    // Пометки конца нет — вызов судит правило 2: ребёнок без своего спутника не пишет.
+    // Пометки конца нет; удалённая сессия теперь отказана до slotFor и не поднимет новый мост.
     await assert.rejects(rec.call("iskron_case", { action: "say" }, "child"), (e) => {
       assert.doesNotMatch(e.message, /кончена/, "the run-ended mark is gone");
-      assert.match(e.message, /только своим местом-спутником/);
+      assert.match(e.message, /сессия остановлены; новая посадка запрещена/);
       return true;
     });
     assert.equal(sent().length, before);
