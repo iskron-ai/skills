@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real OpenCode serve, built plugin + bridges, loopback MCP and scripted provider only.
 // No imported credentials, no model stand: observe the seat at the first HTTP model request.
-// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge]
+// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge] [--onboarding]
 // ISKRON_ROOT_SEAT=0 runs the same first prompt with automatic seating disabled.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "../js/tests/built.mjs";
+import { ONBOARD_START, ROOT_SEAT } from "../js/delivery/index.ts";
 import { createHalts } from "../js/opencode/halts.ts";
 import { startFakeNks } from "../js/tests/fake-nks.mjs";
 import { PAT } from "../js/tests/ownseat-kit.mjs";
@@ -28,9 +29,14 @@ const keep = process.argv.includes("--keep");
 const enabled = process.env.ISKRON_ROOT_SEAT !== "0";
 const halted = process.argv.includes("--halted");
 const legacy = process.argv.includes("--legacy-bridge"); // Pair with ISKRON_BRIDGE_PATH of a build without the flag.
-const seats = enabled && !halted;
+const onboarding = process.argv.includes("--onboarding"); // No cover, no working realms, same real serve path.
+const seats = enabled && !halted && !onboarding;
 const fake = await startFakeNks({ pat: PAT });
 await fake.control({ richTools: true, structured: true, connect_delay_ms: 700 });
+if (onboarding) {
+  fake.state.realms = [];
+  fake.state.readinessResult = { structuredContent: { wizard_due: true, realms: [] }, content: [{ type: "text", text: "readiness" }] };
+}
 const wire = [];
 const llm = createServer(async (req, res) => {
   try {
@@ -51,7 +57,7 @@ const llm = createServer(async (req, res) => {
 });
 await new Promise((r) => llm.listen(0, "127.0.0.1", r));
 for (const dir of [cwd, auth, join(config, "plugins"), join(home, "tmp")]) mkdirSync(dir, { recursive: true });
-writeAgents(cwd, process.argv.includes("--short-realm") ? { ...COVER, [GRAPH_KEY]: "r5" } : COVER);
+if (!onboarding) writeAgents(cwd, process.argv.includes("--short-realm") ? { ...COVER, [GRAPH_KEY]: "r5" } : COVER);
 copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, join(config, "plugins/iskron.js"));
 writeFileSync(join(config, "opencode.json"), JSON.stringify({
   model: "scripted/probe", snapshots: false, update: "disable",
@@ -133,9 +139,17 @@ try {
     const stop = readdirSync(auth).filter((name) => name.startsWith("opencode-stopped.")).map((name) => JSON.parse(readFileSync(join(auth, name), "utf8"))).find((r) => r.session === session.id);
     assert.ok(stop?.id && !stop.lifted, "the disk stop is not lifted (read disk, not the driver's registry)");
   }
+  const userText = JSON.stringify(first.body.messages.filter((m) => m.role === "user"));
+  if (onboarding && !halted) {
+    assert.ok(userText.includes(ONBOARD_START.ru.start()), "the first real provider request contains onboarding");
+    assert.equal(userText.split(ONBOARD_START.ru.start()).length - 1, 1, "one invitation");
+    assert.ok(!userText.includes(ROOT_SEAT.ru.notSeated("")), "no seating refusal without cover");
+    assert.equal(fake.state.calls.filter((c) => c.name === "iskron_me" && c.arguments.action === "readiness").length, 1);
+    assert.equal(fake.state.counts.register_standing, 0, "onboarding does not register a seat");
+  } else assert.ok(!userText.includes(ONBOARD_START.ru.start()), "cover or owner stop excludes onboarding");
   assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");
   const { stdout: version } = await exec(opencode, ["--version"], { env });
-  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP; no production server, no scripted tool call" }, null, 2));
+  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: onboarding ? halted ? "onboarding-halted" : "onboarding" : halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP; no production server, no scripted tool call" }, null, 2));
 } catch (e) {
   console.error(e);
   try { console.error(readFileSync(join(run, "serve.log"), "utf8").slice(-12000)); } catch {}
