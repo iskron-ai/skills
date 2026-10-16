@@ -55,7 +55,10 @@ test(
       assert.deepEqual(heardSeats(s.fake, null), [], "никто не слушает");
       const rec = JSON.parse(readFileSync(file, "utf8"));
       assert.ok(!rec.lifted && rec.id === "stop-probe", `запрет не снят: ${JSON.stringify(rec)}`);
-      assert.ok(r.system.includes(word), `ход остановленной сессии читает слово стопа:\n${r.system}`);
+      assert.ok(
+        r.system.includes(word),
+        `ход остановленной сессии читает слово стопа:\n${r.system}`,
+      );
       assert.ok(!/стоит местом|is seated as/i.test(r.told), `слова посадки нет:\n${r.told}`);
     } finally {
       await oc.stop();
@@ -79,17 +82,43 @@ test("корень с обложкой, удалённый до промпта: 
   }
 });
 
-test("первый промпт корня с обложкой: служебной посадки нет, модель о месте не слышит", T, async (t) => {
-  const s = await stage(t);
-  const oc = await rootPlugin(s, s.project);
-  try {
-    oc.create("root");
-    const r = await oc.turn("root", "привет");
-    await sleep(2000);
-    assert.deepEqual(placeCalls(s.fake), [], `ни одного занятия места:\n${oc.said()}`);
-    assert.deepEqual(heldBy(s.dir, "root"), []);
-    assert.equal(r.prompt, "привет", "промпт не дополнен словом посадки");
-  } finally {
-    await oc.stop();
-  }
-});
+test(
+  "первый промпт корня с обложкой: служебной посадки нет, модель о месте не слышит",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root");
+      const r = await oc.turn("root", "привет");
+      await sleep(2000);
+      assert.deepEqual(placeCalls(s.fake), [], `ни одного занятия места:\n${oc.said()}`);
+      assert.deepEqual(heldBy(s.dir, "root"), []);
+      assert.equal(r.prompt, "привет", "промпт не дополнен словом посадки");
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test(
+  "создание корня → остановка экземпляра → новый экземпляр, первый промпт: места нет",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    const first = await rootPlugin(s, s.project);
+    first.create("root"); // session.created — в 8e35c9f6 второй вход посадки
+    await first.stop();
+    const next = await rootPlugin(s, s.project);
+    try {
+      next.create("root", { emit: false });
+      await next.turn("root", "привет");
+      await sleep(2000);
+      assert.deepEqual(placeCalls(s.fake), [], `ни одного занятия места:\n${next.said()}`);
+      assert.deepEqual(heldBy(s.dir, "root"), []);
+      assert.deepEqual(heardSeats(s.fake, null), [], "никто не слушает");
+    } finally {
+      await next.stop();
+    }
+  },
+);

@@ -30,7 +30,8 @@ import {
 
 // Автопосадка выключена защитным пакетом (rootSeatOn, #7972): пробы посадки ждут её включения;
 // выключенное держит rootseat-off.test.mjs.
-const test = (name, opts, fn) => probe(name, { ...opts, skip: "автопосадка выключена (#7972)" }, fn);
+const test = (name, opts, fn) =>
+  probe(name, { ...opts, skip: "автопосадка выключена (#7972)" }, fn);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const T = { timeout: 90_000 };
 const OPENCODE = { name: OPENCODE_CLIENT, version: "1" };
