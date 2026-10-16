@@ -1157,7 +1157,9 @@ const frame = (body) => ({
     via: "hook",
   },
 });
-const event = (kind, extra) => JSON.stringify({ kind, ...extra }) + "\n";
+// Synthetic held events here model an explicit caller; service-return probes override automatic.
+const event = (kind, extra) =>
+  JSON.stringify({ kind, ...(kind === "held" ? { automatic: false } : {}), ...extra }) + "\n";
 
 /**
  * Корень держит место — его мост сказал «held» с местом: только под ним ребёнок
@@ -7665,10 +7667,10 @@ test("a deleted child session takes its run-ended mark with it", async () => {
     rec.emit({ type: "session.deleted", data: { sessionID: "child" } });
     await delay(200);
     const before = sent().length;
-    // Пометки конца нет — вызов судит правило 2: ребёнок без своего спутника не пишет.
+    // Пометки конца нет; удалённая сессия теперь отказана до slotFor и не поднимет новый мост.
     await assert.rejects(rec.call("iskron_case", { action: "say" }, "child"), (e) => {
       assert.doesNotMatch(e.message, /кончена/, "the run-ended mark is gone");
-      assert.match(e.message, /только своим местом-спутником/);
+      assert.match(e.message, /сессия остановлены; новая посадка запрещена/);
       return true;
     });
     assert.equal(sent().length, before);
@@ -8186,9 +8188,11 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
     await rootHolds(rec, b);
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "child");
     const [rootPid, childPid] = pidsOf(b.log);
+    // The shared fake resume answer also named this key to the root; wait for the child's new event.
+    const beforeChildHeld = rec.said().length;
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "child--931--nks-dev" }));
     await until(
-      () => /мост держит стояние child--931--nks-dev/.test(rec.said()),
+      () => /мост держит стояние child--931--nks-dev/.test(rec.said().slice(beforeChildHeld)),
       "the child's held line",
     );
     process.kill(childPid, "SIGKILL"); // the child's bridge dies — not the plugin's doing

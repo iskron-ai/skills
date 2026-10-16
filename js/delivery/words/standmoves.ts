@@ -18,6 +18,8 @@ export interface StandMovesWords {
   standAgain: (call: string) => string;
   /** take снял прежнее место этой сессии (#7553). */
   priorReleased: (prior: string) => string;
+  /** The provisional seat (#7972) gave way to the agent's named seat without take (#5164). */
+  provisionalReplaced: (prior: string) => string;
   priorKept: (prior: string, text: string, revoke: string) => string;
   /** take на другое основное имя при местах рядом (#6499): отказ до connect; beside — места, revokes — их снятие, keep — прежнее имя. */
   besideHoldsMain: (
@@ -47,6 +49,8 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       `Место этой сессии мост сейчас не держит — займи его полным вызовом: ${call} (status можно передать в нём же).`,
     priorReleased: (prior) =>
       `прежнее место этой сессии ${prior} снято: take переносит сессию на взятое место, а не прибавляет второе`,
+    provisionalReplaced: (prior) =>
+      `место автопосадки ${prior} заменено: оно было предварительным — явный вызов встал на названное и снял его`,
     priorKept: (prior, text, revoke) =>
       `прежнее место этой сессии ${prior} не снято (${text}) — пока оно живо, дела будут просить from_standing; сними его: ${revoke}`,
     besideHoldsMain: (prior, asked, beside, revokes, keep) =>
@@ -71,6 +75,8 @@ export const STAND_MOVES: Readonly<Record<Lang, StandMovesWords>> = {
       `The bridge does not hold this session's seat now — take it with the full call: ${call} (status can go in the same call).`,
     priorReleased: (prior) =>
       `this session's former seat ${prior} is revoked: take moves the session to the taken seat, it does not add a second one`,
+    provisionalReplaced: (prior) =>
+      `the auto-seating's seat ${prior} is replaced: it was provisional — the explicit call stood on the named one and revoked it`,
     priorKept: (prior, text, revoke) =>
       `this session's former seat ${prior} is not revoked (${text}) — while it lives, cases will ask for from_standing; revoke it: ${revoke}`,
     besideHoldsMain: (prior, asked, beside, revokes, keep) =>

@@ -142,6 +142,24 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
   );
 });
 
+for (const fields of [false, true])
+  test(`round3 P1: stand preserves prose and only gives fields to an opted-in harness (${fields})`, async (t) => {
+    const { bridge } = await ready(t, fields ? ASKS_FIELDS : INIT);
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "@nks/nks-dev", karta: 931, name: "round3-fields" },
+    });
+    assert.ok(!r.result?.isError, textOf(r));
+    assert.match(textOf(r), /стояние round3-fields/);
+    if (fields) assert.equal(r.result?.structuredContent?.provisional, false);
+    else
+      assert.equal(
+        r.result?.structuredContent,
+        undefined,
+        "fields must not hide the stand prose in text-only harnesses",
+      );
+  });
+
 test("iskron_stand: one call takes the place and knocks; a second call neither rotates nor knocks again", async (t) => {
   // «Повтор рано» — внутри окна: окно шва в 300 мс под нагрузкой истекает между вызовами.
   const { fake, bridge } = await ready(t, INIT, { ISKRON_STAND_KNOCK_REPEAT_MS: "120000" });

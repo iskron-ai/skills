@@ -8,6 +8,7 @@
 - Проба `js/tests/coexist.test.mjs`: из тех же файлов ядра со своим слоем собирается мост другого продукта — его справка, дом, переменные окружения и hello шва свои, наш шов его отвергает. Двух мостов разом в одной сессии она не поднимает; опись мест столкновения — #6815.
 
 Файлы:
+
 - `index.ts` — набор экспортов слоя (контракт с ядром), по пути файла.
 - `version.ts` — `VERSION` (штампует release-please, `release-please-config.json`), `BUILD_MARK` и `CHANNEL_MARK`. Форма строки `export const CHANNEL_MARK: string = "<BUILD_MARK>:dev";` — часть контракта: `js/build.mjs` находит её регулярным выражением и в сборке выпуска заменяет `:dev` на `:release`.
 - `product.ts` — `PRODUCT` и выводимое из него: переменные окружения (`ENV_PREFIX`, `envName`), имя моста и дом (`BRIDGE_NAME`, `HOME_DIR`, `HOME_BRIDGE_FILE`), префиксы сокетов, pipes и реестров процесса (`RUNTIME_PREFIX`, `GLOBAL_PREFIX`), раскладка набора (`BRIDGE_SKILL`, `BRIDGE_FILE`, `SKILL_STAMP_MASK` — маска отпечатка набора `*/<файл>` или `*/**`, `PLUGIN_FILE`, `PLUGIN_COPY_FILE`, `SKILL_SET`), распознавание установки (`PLUGIN_NAME`, `SUB_ENTRY_PREFIX`, `CONNECTOR_PATTERN`), имена клиентов MCP (`CLIENTS`), адреса сервера (`SERVER_URLS`, `DEFAULT_SERVER_URL`).
@@ -58,11 +59,13 @@
 - `words/stop.ts` — слово стопа (`STOP`): место снято — агент остановлен, работу кончает, место не занимает; кто снял — по причине закрытия.
 - `words/usage.ts` — почему расход не лёг в attrs места (`USAGE`).
 - `patterns/mine.ts` — проза сервера в ответе `iskron_case` mine (`MINE_ROW` — строка дела, `MINE_NONE` — дел нет), по ней плагин OpenCode решает, последнее ли дело покинул ведущий субагент; наблюдена только русская форма.
+- `patterns/cover.ts` — обложка проекта для автопосадки корня (`COVER`): файл и ключи слотов графа и роли агента, как их пишет iskronify, и кавычки имени в ссылке роли (`roleQuotes`: открывающая и закрывающая, у соседней поставки могут совпадать).
 - `patterns/launch.ts` — строка запуска с делом (`LAUNCH_LINE`), русская и английская форма при любом языке сессии; первое слово строки — своё у поставки (`LAUNCH_WORD`).
 - `words/appserver.ts` — слова двери в тред Codex (`APPSERVER`).
 - `words/bridge-client.ts` — отказы клиента MCP к дочернему мосту и пустой ответ (`BRIDGE_CLIENT`).
 - `words/channel.ts` — слова держателя живого канала (`CHANNEL`): совет на мёртвом токене, подвисшее соединение, раскатка.
 - `words/frame-text.ts` — строки счёта дела и указатель history (`FRAME_TEXT`), автор-платформа и кавычки ответа (`CASE_LINE`).
+- `words/rootseat.ts` — слова автопосадки корня (`ROOT_SEAT`): встал, не посажен и почему (причины обложки: нет фронтматтера, нет слота, нет или несколько графов и ролей), отказ посадки, срок вышел, моста нет.
 - `words/launch.ts` — слова входа в дело по строке запуска (`LAUNCH`).
 - `words/stalebatch.ts` — шапка пачки лежалых кадров (`STALE`).
 - `words/standings.ts` — отказы проверки личного каталога сокетов (`STANDINGS`).

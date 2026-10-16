@@ -8,12 +8,13 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { SERVICE_ID } from "../shared/serviceid.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 
 export const NODE = process.env.ISKRON_NODE || process.execPath;
 export const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
-const PAT = "nks_pat_stand";
+export const PAT = "nks_pat_stand";
 const INIT = {
   protocolVersion: "2025-06-18",
   capabilities: {},
@@ -56,8 +57,9 @@ function startBridge(serverUrl, authDir, extra = []) {
     },
     /** Смерть без ухода (плагин убит): место не отпущено, запись держания цела. */
     kill: () => proc.kill("SIGKILL"),
-    call(method, params = {}) {
-      const myId = ++id;
+    call(method, params = {}, service = false) {
+      const next = ++id;
+      const myId = service === true ? `${SERVICE_ID}${next}` : next;
       const p = new Promise((res, rej) => {
         waiters.set(myId, res);
         setTimeout(() => rej(new Error(`no answer for ${method}`)), 20_000).unref();
@@ -80,8 +82,8 @@ function startBridge(serverUrl, authDir, extra = []) {
 
 export const textOf = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 export const placeOf = (r) => /стояние (?:@[^:\s]+:)?(\S+) — роль/.exec(textOf(r))?.[1];
-export const until = async (check, what) => {
-  for (const end = Date.now() + 10_000; !(await check());) {
+export const until = async (check, what, ms = 10_000) => {
+  for (const end = Date.now() + ms; !(await check());) {
     assert.ok(Date.now() < end, `timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -117,14 +119,23 @@ export async function setup(t) {
   t.after(async () => {
     await fake.stop(); // сервер первым: так мосты выходят по концу stdin, не ждут его
     await Promise.all(bridges.map((b) => b.stop()));
-    for (const d of scratches.get(t) ?? []) rmSync(d, { recursive: true, force: true });
+    // Мосты плагина под пробой (rootseat-kit) выходят по концу stdin и дописывают каталог гранта
+    // ещё миг после остановки плагина: каталог убирается с повторами, а не падает ENOTEMPTY.
+    for (const d of scratches.get(t) ?? [])
+      rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   });
   // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
   // extra — more arguments of the bridge (--satellite).
-  const up = async (authDir = dir, capabilities = INIT.capabilities, extra = []) => {
+  // clientInfo — whose bridge it is: a record's cwd return does not cross harnesses (resumepick.ts).
+  const up = async (
+    authDir = dir,
+    capabilities = INIT.capabilities,
+    extra = [],
+    clientInfo = INIT.clientInfo,
+  ) => {
     const b = startBridge(fake.mcpUrl, authDir, extra);
     bridges.push(b);
-    assert.ok((await b.call("initialize", { ...INIT, capabilities })).result);
+    assert.ok((await b.call("initialize", { ...INIT, capabilities, clientInfo })).result);
     return b;
   };
   return { fake, dir, cwd, up };
