@@ -11,7 +11,6 @@ export const ONBOARD_START: Readonly<Record<Lang, OnboardStartWords>> = {
       "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)",
   },
   en: {
-    start: () =>
-      "You have no working graph — start with the onboarding skill (iskronify branch “First graph”).",
+    start: () => "You have no working graph — start with the onboarding skill.",
   },
 };

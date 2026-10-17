@@ -10,12 +10,7 @@ export { COVER } from "./patterns/cover.ts";
 export { NOTICE_MARK } from "./patterns/deliver.ts";
 export { LAUNCH_LINE } from "./patterns/launch.ts";
 export { MINE_NONE, MINE_ROW } from "./patterns/mine.ts";
-export {
-  REALM_LIST_GROUP,
-  REALM_LIST_HEADER,
-  REALM_LIST_ORG,
-  REALM_LIST_ROW,
-} from "./patterns/onboardstart.ts";
+export { REALM_LIST_GROUP, REALM_LIST_HEADER } from "./patterns/onboardstart.ts";
 export { SAT_LOGIN_RE, SAT_OLD_FLAG_RE } from "./patterns/satprobe.ts";
 export {
   BRIDGE_FILE,

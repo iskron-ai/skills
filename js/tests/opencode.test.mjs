@@ -9262,7 +9262,7 @@ for (const probe of [
   { name: "missing readiness falls back to empty list", realms: [], word: true },
   { name: "missing readiness falls back to mind list", realms: ["@tester/mind"], word: true },
   { name: "missing readiness falls back to working list", realms: ["@tester/work"] },
-  { name: "organization mind is a working graph", realms: ["@nks/mind"] },
+  { name: "organization mind is not a working graph", realms: ["@nks/mind"], word: true },
   { name: "readiness refusal falls back", refusal: true, realms: [], word: true },
   { name: "readiness without field falls back", body: { complete: false }, realms: [], word: true },
   { name: "null readiness falls back", body: null, realms: [], word: true },
@@ -9279,8 +9279,8 @@ for (const probe of [
   { name: "English word", due: true, lang: "en", word: true },
   { name: "JSON text readiness", due: true, textOnly: true, word: true },
   { name: "fields win over text", due: false, conflict: true },
-  { name: "structured empty list", listFields: { realms: [] }, word: true },
-  { name: "structured mind list", listFields: { realms: [{ ref: "@tester/mind" }] }, word: true },
+  { name: "unknown structured empty list", listFields: { realms: [] } },
+  { name: "unknown structured mind list", listFields: { realms: [{ ref: "@tester/mind" }] } },
   { name: "structured working list", listFields: { realms: [{ ref: "@tester/work" }] } },
   { name: "malformed structured list", listFields: { realms: [{}] } },
   { name: "incomplete structured list", listFields: { realms: [], incomplete: true } },
@@ -9380,7 +9380,7 @@ for (const probe of [
       if (probe.word)
         assert.equal(
           text,
-          `hello\n${probe.lang === "en" ? "You have no working graph — start with the onboarding skill (iskronify branch “First graph”)." : "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)"}`,
+          `hello\n${probe.lang === "en" ? "You have no working graph — start with the onboarding skill." : "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)"}`,
         );
       assert.equal(await rec.prompt("onboard", "again"), "again", "second prompt is silent");
       if (probe.slow || probe.listSlow || probe.cold)
