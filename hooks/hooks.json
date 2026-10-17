@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||'','hooks','onboard.mjs')).href).catch(()=>{})\"",
+            "command": "node -e \"const r=process.env.CLAUDE_PLUGIN_ROOT;if(r)import(require('node:url').pathToFileURL(require('node:path').join(r,'hooks','onboard.mjs')).href).catch(()=>{})\"",
             "timeout": 10
           }
         ]
