@@ -3489,7 +3489,7 @@ test("satellite: the era decides, not the record's life — a twin that left lat
   await back.stop();
 });
 
-// Case №954, P3: the cases of a pause are the pause's. A child that left a case after its return
+// Case №954, P3: a satellite's record carries the cases it is in now. A child that left a case after its return
 // does not get it seeded again by a later return by key (its bridge died without a pause).
 test("satellite: a case left after the return is not seeded by a later return by key", async (t) => {
   const fake = await withCaller(t);
@@ -3514,6 +3514,68 @@ test("satellite: a case left after the return is not seeded by a later return by
     caseCalls(fake, "leave"),
     ["№102"],
     `the left case is not seeded and left again at the late run's end:\n${late.stderr}`,
+  );
+});
+
+// Case №954, an earlier build's record: no stoodAt. The return takes its `at` as the seat's era
+// (the take's or the pause's moment) and writes it; the holder's refresh then moves `at`, never the era.
+test("satellite: a record without stoodAt (an earlier build's) — the return writes its at as the era, the holder's refresh moves at and keeps the era", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-legacy-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  await sat.stop();
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const was = JSON.parse(readFileSync(file, "utf8"));
+  delete was.stoodAt;
+  const t0 = Date.now() - 4 * 3600_000; // within the term, past its half
+  writeFileSync(file, JSON.stringify({ ...was, at: t0 }));
+  const sel = { key: paused.key, session: "child" };
+  const back = await satelliteBridge(t, fake, { dir });
+  assert.equal((await back.call("iskron/resume", sel)).result?.resumed, true, back.stderr);
+  const returned = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(
+    returned.stoodAt,
+    t0,
+    `the return writes the record's at as its era: ${JSON.stringify(returned)}`,
+  );
+  // Held on past half the term: the holder's check refreshes the record.
+  writeFileSync(file, JSON.stringify({ ...returned, at: t0 }));
+  const c = (await back.call("iskron/check", sel)).result;
+  assert.equal(c?.holding, true, `${JSON.stringify(c)}\n${back.stderr}`);
+  const kept = JSON.parse(readFileSync(file, "utf8"));
+  assert.ok(Date.now() - kept.at < 60_000, `the refresh moves at: ${kept.at}`);
+  assert.equal(kept.stoodAt, t0, "the refresh keeps the era");
+  await back.stop();
+});
+
+// Case №954: the satellite's record carries the cases it is in now. A case joined before the pause
+// and NOT left after the return comes back with a later return by key (its bridge died without a
+// pause) and is left once at that run's end.
+test("satellite: a case still joined after the return is seeded by a later return by key and left once at its end", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-kept-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  await sat.stop();
+  const sel = { key: paused.key, session: "child" };
+  const back = await satelliteBridge(t, fake, { dir });
+  assert.equal((await back.call("iskron/resume", sel)).result?.resumed, true, back.stderr);
+  const exited = new Promise((r) => back.proc.once("exit", r));
+  back.proc.kill("SIGKILL"); // no pause, no end: the record stays as the return wrote it
+  await exited;
+  back.stop = () => Promise.resolve(); // killed by a signal: no exit code, nothing left to stop
+  assert.deepEqual(caseCalls(fake, "leave"), [], "the killed run left nothing");
+  const late = await satelliteBridge(t, fake, { dir });
+  assert.equal((await late.call("iskron/resume", sel)).result?.resumed, true, late.stderr);
+  await late.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102"],
+    `the case still joined is seeded and left once at the late run's end:\n${late.stderr}`,
   );
 });
 
