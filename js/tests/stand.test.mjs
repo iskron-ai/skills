@@ -3489,7 +3489,7 @@ test("satellite: the era decides, not the record's life — a twin that left lat
   await back.stop();
 });
 
-// Case №954, P3: the cases of a pause are the pause's. A child that left a case after its return
+// Case №954, P3: a satellite's record carries the cases it is in now. A child that left a case after its return
 // does not get it seeded again by a later return by key (its bridge died without a pause).
 test("satellite: a case left after the return is not seeded by a later return by key", async (t) => {
   const fake = await withCaller(t);
