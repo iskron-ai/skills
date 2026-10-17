@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.14.0](https://github.com/iskron-ai/skills/compare/v7.13.0...v7.14.0) (2026-10-17)
+
+
+### Features
+
+* **opencode:** первый промпт корня без рабочего графа зовёт онбординг ([#498](https://github.com/iskron-ai/skills/issues/498)) ([6b3089f](https://github.com/iskron-ai/skills/commit/6b3089f77a1d9c6948a8bb9194d30fd35bd60cb2))
+
+
+### Bug Fixes
+
+* **bridge,opencode:** спутник возвращается на место последней эпохи сессии, запись держимого места не истекает под ним ([#501](https://github.com/iskron-ai/skills/issues/501)) ([9412daf](https://github.com/iskron-ai/skills/commit/9412daf7b718f821e4c12f76441a81a9b49cec50))
+
 ## [7.13.0](https://github.com/iskron-ai/skills/compare/v7.12.0...v7.13.0) (2026-10-17)
 
 
