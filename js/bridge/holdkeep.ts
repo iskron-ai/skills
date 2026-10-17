@@ -69,7 +69,7 @@ export function signHeldRecord(): void {
  * The record of the seat this bridge holds now, past half its term, is rewritten with a fresh
  * `at`: counted from the take (or a satellite's pause), it would expire under the live seat and
  * the next reader would erase it (case №954). Only the held seat's own record (same address);
- * others' and unheld records age as before.
+ * others' and unheld records age as before. The era (stoodAt) stays.
  */
 function refreshHeldRecord(): void {
   const key = H.currentKey;
@@ -77,5 +77,6 @@ function refreshHeldRecord(): void {
   const rec = readHoldRecord(key, true);
   if (!rec || rec.left || rec.url !== H.currentUrl) return;
   if (typeof rec.at === "number" && Date.now() - rec.at < HOLD_RECORD_MAX_AGE_MS / 2) return;
-  writeHoldRecord(key, rec, CFG.satellite);
+  // Cases are a pause's (suspend.ts): a former pause's list is not carried into a live seat's record.
+  writeHoldRecord(key, { ...rec, cases: undefined }, CFG.satellite);
 }

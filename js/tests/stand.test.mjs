@@ -3373,20 +3373,33 @@ for (const kind of ["satellite", "root"])
     sel ??= { key: JSON.parse(readFileSync(file, "utf8")).key, session: "root" };
     // Held past the term: the record's `at` is older than six hours.
     const old = Date.now() - 6 * 3600_000 - 1000;
-    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), at: old }));
+    const taken = JSON.parse(readFileSync(file, "utf8"));
+    // The era is the take's: set by the stand, kept by the pause and the return (case №954).
+    assert.equal(
+      typeof taken.stoodAt,
+      "number",
+      `the record carries the take's era: ${JSON.stringify(taken)}`,
+    );
+    assert.ok(
+      Date.now() - taken.stoodAt < 60_000,
+      `stoodAt is the stand's moment: ${taken.stoodAt}`,
+    );
+    writeFileSync(file, JSON.stringify({ ...taken, at: old }));
     const c = (await b.call("iskron/check", sel)).result;
     assert.equal(c?.holding, true, `the seat listens: ${JSON.stringify(c)}\n${b.stderr}`);
     assert.ok(existsSync(file), `the held seat's record is not erased by its check:\n${b.stderr}`);
     const rec = JSON.parse(readFileSync(file, "utf8"));
     assert.ok(Date.now() - rec.at < 60_000, `rewritten with a fresh at: ${rec.at}`);
+    assert.equal(rec.stoodAt, taken.stoodAt, "the refresh keeps the era");
     await b.stop();
   });
 
-// Case №954, path (a): a satellite's return by key does not take a seat older than another
-// record of the same session in the same role and graph. The fresher one cannot come back
-// (its address is dead) — the former is still not taken, and the refusal is said aloud into
-// the session with what brings the seat back.
-test("satellite: a keyed return refuses a seat older than the session's other record — the fresher fails, the former is not taken, the word is loud", async (t) => {
+// Case №954, path (a): a satellite's return by key does not take a seat of an earlier era than
+// another record of the same session in the same role and graph. The later one cannot come back
+// (its address is dead) — the former is still not taken. A child's return is silent (#6628,
+// #6550 item 3): no word into its session; the refusal goes to the journal and the outcome
+// (`refused`), by which the plugin ends the child with a word to its parent.
+test("satellite: a keyed return refuses a seat of an earlier era than the session's other record — the later fails, the former is not taken, nothing is said into the session", async (t) => {
   const fake = await withCaller(t);
   const dir = mkdtempSync(join(tmpdir(), "iskron-sat-stale-"));
   const sat = await satelliteBridge(t, fake, { dir });
@@ -3395,7 +3408,8 @@ test("satellite: a keyed return refuses a seat older than the session's other re
   await sat.stop();
   const file = join(dir, "standings", holdFiles(dir)[0]);
   const former = JSON.parse(readFileSync(file, "utf8"));
-  writeFileSync(file, JSON.stringify({ ...former, session: "child", at: Date.now() - 60_000 }));
+  const old = Date.now() - 60_000;
+  writeFileSync(file, JSON.stringify({ ...former, session: "child", at: old, stoodAt: old }));
   const name = `${CALLER}.sub-7`;
   const key = `${name}--931--${former.realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
   const { holdFilePathOf } = await import("../shared/standings.ts");
@@ -3409,6 +3423,7 @@ test("satellite: a keyed return refuses a seat older than the session's other re
       statusUrl: null,
       session: "child",
       at: Date.now() - 10_000,
+      stoodAt: Date.now() - 10_000,
     }),
   );
   const sockets = fake.state.counts.ws_upgrades;
@@ -3425,13 +3440,81 @@ test("satellite: a keyed return refuses a seat older than the session's other re
     r.word.includes(`name="${name}"`),
     `the word says what brings the seat back: ${r.word}`,
   );
-  const loud = back.notifications.find(
-    (n) =>
-      n.params?.data?.kind === "lost" &&
-      /не взято возвратом|not taken by the return/.test(n.params.data.text),
+  assert.deepEqual(
+    r.refused,
+    [former.name],
+    `the outcome names the refused seat: ${JSON.stringify(r)}`,
   );
-  assert.ok(loud, `the refusal is said into the session: ${JSON.stringify(back.notifications)}`);
+  const said = back.notifications.filter((n) => n.params?.data?.kind === "lost");
+  assert.deepEqual(said, [], `nothing is said into the child's session: ${JSON.stringify(said)}`);
   assert.match(back.stderr, /resume: .*(не взято возвратом|not taken by the return)/);
+});
+
+// Case №954, the era: a gone twin lived and left LATER (its record's `at` is newer), but the session
+// stood on its current seat later (that record's stoodAt is newer). A return by the twin's key
+// (its marker named it) takes the current seat, not the twin's.
+test("satellite: the era decides, not the record's life — a twin that left later but was stood on earlier is refused, the current seat comes back", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-era-"));
+  const one = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(one, SAT_ARGS)).result?.isError, one.stderr);
+  const twin = (await one.call("iskron/suspend", {})).result;
+  await one.stop();
+  const two = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(two, SAT_ARGS)).result?.isError, two.stderr);
+  const current = (await two.call("iskron/suspend", {})).result;
+  await two.stop();
+  assert.notEqual(twin.key, current.key, "two seats");
+  const { holdFilePathOf } = await import("../shared/standings.ts");
+  const edit = (key, at, stoodAt) => {
+    const f = holdFilePathOf(dir, key);
+    writeFileSync(
+      f,
+      JSON.stringify({ ...JSON.parse(readFileSync(f, "utf8")), session: "child", at, stoodAt }),
+    );
+  };
+  const now = Date.now();
+  edit(twin.key, now - 10_000, now - 2 * 3600_000); // left later, stood on earlier
+  edit(current.key, now - 3600_000, now - 30 * 60_000); // paused earlier, stood on later
+  const back = await satelliteBridge(t, fake, { dir });
+  const r = (await back.call("iskron/resume", { key: twin.key, session: "child" })).result;
+  assert.equal(r?.resumed, true, `${JSON.stringify(r)}\n${back.stderr}`);
+  assert.equal(
+    r.key,
+    current.key,
+    `the current seat comes back, not the twin's: ${JSON.stringify(r)}`,
+  );
+  assert.deepEqual(r.refused, undefined, "a return that took a seat is no refusal");
+  assert.match(back.stderr, /resume: .*(не взято возвратом|not taken by the return)/);
+  await back.stop();
+});
+
+// Case №954, P3: the cases of a pause are the pause's. A child that left a case after its return
+// does not get it seeded again by a later return by key (its bridge died without a pause).
+test("satellite: a case left after the return is not seeded by a later return by key", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-cases-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  await sat.stop();
+  const sel = { key: paused.key, session: "child" };
+  const back = await satelliteBridge(t, fake, { dir });
+  assert.equal((await back.call("iskron/resume", sel)).result?.resumed, true, back.stderr);
+  assert.ok(!(await caseAs(back, "leave", "№102")).result?.isError, back.stderr);
+  const exited = new Promise((r) => back.proc.once("exit", r));
+  back.proc.kill("SIGKILL"); // no pause, no end: the record stays as the return left it
+  await exited;
+  back.stop = () => Promise.resolve(); // killed by a signal: no exit code, nothing left to stop
+  const late = await satelliteBridge(t, fake, { dir });
+  assert.equal((await late.call("iskron/resume", sel)).result?.resumed, true, late.stderr);
+  await late.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102"],
+    `the left case is not seeded and left again at the late run's end:\n${late.stderr}`,
+  );
 });
 
 // Places beside in other graphs are the run's too: the socket going leaves them

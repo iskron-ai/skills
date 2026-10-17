@@ -182,3 +182,49 @@ test(
     }
   },
 );
+
+// The marker carries the seat's era from its hold record (the bridge's stoodAt): two markers
+// are judged by when the session stood on the seat, not by when an instance stopped.
+test("the loss marker carries each child's seat era from its hold record", T, async (t) => {
+  const e = await twoEras(t);
+  const era = (m) => JSON.parse(m).entries.find((x) => x.session === "c1")?.stoodAt;
+  assert.equal(typeof era(e.first), "number", e.first);
+  assert.equal(typeof era(e.second), "number", e.second);
+  assert.ok(era(e.second) > era(e.first), "the second era stood later");
+});
+
+// A child's return is silent (#6628, #6550 item 3): the bridge refused the former era's seat and
+// the later one did not come back (its address is dead) — not a word or steer into the child;
+// the child is ended with a word to its parent naming why: the outdated seat was not taken.
+test(
+  "a lone twin marker, the later seat does not come back: nothing into the child, the parent hears the outdated seat was not taken",
+  T,
+  async (t) => {
+    const e = await twoEras(t);
+    const dir = join(e.s.dir, "standings");
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
+      const r = JSON.parse(readFileSync(join(dir, f), "utf8"));
+      if (r.name === e.fresh)
+        writeFileSync(
+          join(dir, f),
+          JSON.stringify({ ...r, url: "ws://127.0.0.1:9/api/channel/ws/dead" }),
+        );
+    }
+    lay(e.s.dir, e.project, [e.first]);
+    // The watch slow again: each failing return waits its hello 4 s, a 1 s watch would queue checks.
+    const slow = { ISKRON_BRIDGE_WATCH_MS: "600000", ISKRON_CHILD_BACK_PAUSE_MS: "100" };
+    const oc = await rootPlugin(e.s, e.project, slow, e.known);
+    try {
+      const why = /устаревшее место \S+ не взято|outdated seat \S+ was not taken/;
+      await until(
+        () => oc.wordsTo("root").some((w) => why.test(w) && w.includes(e.old)),
+        `the parent hears why: ${JSON.stringify(oc.wordsTo("root"))}\n${oc.said()}`,
+        60_000,
+      );
+      assert.deepEqual(oc.wordsTo("c1"), [], "not a word into the child");
+      assert.ok(!heardSeats(e.s.fake).includes(e.old), "the outdated seat is not taken");
+    } finally {
+      await oc.stop();
+    }
+  },
+);

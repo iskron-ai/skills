@@ -46,6 +46,8 @@ export interface LeadWords {
   reloadUnreadable: () => string;
   reloadNoKey: () => string;
   reloadNotBack: () => string;
+  /** Место прежней эпохи сессии не взято возвратом, свежее не вернулось (дело №954); names — через ", ". */
+  reloadStale: (names: string) => string;
   /** action — пусто, когда действия нет. */
   identity: (name: string, action: string) => string;
   writeUnderParent: (name: string, of: string) => string;
@@ -134,6 +136,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     reloadUnreadable: () => "перезагрузка плагина, сессия субагента не читается",
     reloadNoKey: () => "перезагрузка плагина, ключа места нет",
     reloadNotBack: () => "перезагрузка плагина, место-спутник по ключу не вернулось",
+    reloadStale: (names) =>
+      `перезагрузка плагина: устаревшее место ${names} не взято — у сессии субагента есть место свежее, и оно не вернулось`,
     identity: (name, action) =>
       `Отказано (плагин): ${name}${act(action)} — личность человека, а у дочерней сессии нет своего места: ` +
       "мостом корня она её не получает. Граф и дела читать можно; кто ты — спроси запустившего.",
@@ -229,6 +233,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     reloadUnreadable: () => "plugin reload, the subagent's session is unreadable",
     reloadNoKey: () => "plugin reload, no seat key",
     reloadNotBack: () => "plugin reload, the satellite seat did not return by its key",
+    reloadStale: (names) =>
+      `plugin reload: the outdated seat ${names} was not taken — the subagent's session has a fresher seat, and it did not return`,
     identity: (name, action) =>
       `Refused (plugin): ${name}${act(action)} is the human's identity, and the child session has no seat of its own: ` +
       "it does not get it through the root's bridge. The graph and cases can be read; who you are — ask the launcher.",

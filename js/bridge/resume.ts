@@ -31,6 +31,7 @@ import {
   keyOf,
   noteHarnessSession,
   noteSeatBase,
+  noteStoodAt,
   readHoldRecord,
   restoreHoldRecord,
   sessionOfBridge,
@@ -53,19 +54,6 @@ import { type JsonRpcMessage } from "./types.ts";
 
 /** A return found no record of the named seat (expired): the next stand says so (#6649). */
 const RJ = scoped(() => ({ lapsed: false }));
-/** Stale-key refusals already said into the session (case №954): once per word, not per retry. */
-const SK = scoped(() => new Set<string>());
-
-/** A return that took nothing while a keyed seat was refused as stale: the word goes to the session, once. */
-function sayStale(stale: string[], word: string): void {
-  if (!stale.length || stale.every((w) => SK.has(w))) return;
-  for (const w of stale) SK.add(w);
-  emit({
-    jsonrpc: "2.0",
-    method: "notifications/message",
-    params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text: word } },
-  });
-}
 export function takeLapsed(): boolean {
   const was = RJ.lapsed;
   RJ.lapsed = false;
@@ -107,6 +95,7 @@ export async function resumeFromDisk(
   state.standing = { realm, karta, name };
   const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
   if (rec.base) noteSeatBase(key, rec.base); // the new holder's record no longer carries it after an eviction
+  noteStoodAt(key, rec.stoodAt); // a return is no new stand: the seat keeps its era
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
@@ -194,6 +183,8 @@ export interface ResumeOutcome {
   legacy?: string[];
   /** Own seats whose socket a live bridge of another session holds: not taken (#6626). */
   elsewhere?: string[];
+  /** Keyed seats not taken: older than the session's other record (case №954); names. */
+  refused?: string[];
   /** The seat was taken off by its owner (#7439): no return, the word is the stop word. */
   stopped?: true;
 }
@@ -233,11 +224,14 @@ export async function resumeBy(
   takeOwn = false,
 ): Promise<ResumeOutcome> {
   const { own: recs, sameDir, legacy: legacyRecs, left, neighbour, stale } = recordsFor(sel);
-  // A keyed seat older than the session's other record is said aloud, whatever comes of the return.
-  for (const w of stale) log(`resume: ${w}`);
+  // A keyed seat older than the session's other record: a journal line and the outcome (refused),
+  // no word into the session — a child's return is silent, its end is said to the parent (#6628).
+  const staleWords = stale.map((x) => resumeWords.staleKey(x.name, x.fresher));
+  for (const w of staleWords) log(`resume: ${w}`);
+  const refused = stale.length ? { refused: stale.map((x) => x.name) } : {};
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
-    const said = [...stale, resumeWords.noRecord(sel.key, sel.cwd)];
+    const said = [resumeWords.noRecord(sel.key, sel.cwd)];
     if (neighbour.length) said.push(resumeWords.neighbourKey(neighbour.join(", ")));
     else if (sel.key) {
       // A named key with no record: it expired (#6649).
@@ -248,7 +242,6 @@ export async function resumeBy(
     if (foreign.length) said.push(resumeWords.foreignDir(foreign.join(", ")));
     if (left.length) said.push(resumeWords.left(left.join(", ")));
     if (legacy.length) said.push(legacyWord(legacy));
-    sayStale(stale, said.join(" — "));
     return {
       resumed: false,
       word: said.join(" — "),
@@ -325,7 +318,7 @@ export async function resumeBy(
     if (others.length) lines.push(resumeWords.othersInDir(others.join(", ")));
     // Not proven own — leave, not revoke: the platform refuses to revoke the seat that founded the channel.
     if (!proven) lines.push(resumeWords.notYours());
-    lines.push(...stale);
+    lines.push(...staleWords);
     return {
       resumed: true,
       key,
@@ -335,11 +328,10 @@ export async function resumeBy(
       own: proven,
     };
   }
-  const nothing = resumeWords.nothingToReturn([...stale, ...skipped].join("; "));
-  sayStale(stale, nothing);
   return {
     resumed: false,
-    word: nothing,
+    word: resumeWords.nothingToReturn([...staleWords, ...skipped].join("; ")),
+    ...refused,
     ...(elsewhere.length ? { elsewhere } : {}),
   };
 }

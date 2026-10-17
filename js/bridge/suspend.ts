@@ -112,11 +112,17 @@ export async function pauseSettled(): Promise<void> {
  * A return by key succeeded: the run's cases from the pause record go to this bridge, and the
  * record is rewritten under the live seat — with the pause's `at` it would expire at the end of
  * the previous pause's window and be erased by the next reader while the seat still listens.
+ * The cases leave the record with the pause: a case left after the return is not seeded again
+ * by a later return (the next pause writes the cases of its moment).
  */
 export function afterResume(key: string | undefined): void {
   if (!CFG.satellite || !key) return;
   const rec = readHoldRecord(key);
   seedJoined(rec?.cases);
   if (rec && H.currentKey === key && H.currentUrl)
-    writeHoldRecord(key, { ...rec, url: H.currentUrl, statusUrl: H.currentStatusUrl }, true);
+    writeHoldRecord(
+      key,
+      { ...rec, url: H.currentUrl, statusUrl: H.currentStatusUrl, cases: undefined },
+      true,
+    );
 }
