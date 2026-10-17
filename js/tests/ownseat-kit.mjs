@@ -4,7 +4,7 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -107,6 +107,39 @@ const scratch = (t, prefix) => {
   scratches.get(t)?.push(d);
   return d;
 };
+const removed = (d) => {
+  try {
+    rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    return true;
+  } catch {
+    return false;
+  }
+};
+/** Что лежит в каталоге и когда менялось — чтобы отличить пишущий мост от остатка. */
+const shape = (d) => {
+  try {
+    return readdirSync(d, { recursive: true })
+      .map((f) => {
+        try {
+          const st = statSync(join(d, f));
+          return `${f}:${st.size}:${st.mtimeMs}`;
+        } catch {
+          return `${f}:gone`;
+        }
+      })
+      .sort()
+      .join("\n");
+  } catch {
+    return "?";
+  }
+};
+/** pid и argv мостов плагина, живых после `ms` ожидания; пусто — вышли все. */
+async function bridgesExited(ms) {
+  const live = globalThis.__iskronProbeBridges ?? new Set();
+  for (const end = Date.now() + ms; live.size && Date.now() < end;)
+    await new Promise((r) => setTimeout(r, 50));
+  return [...live].map((c) => `${c.pid} ${c.spawnargs.slice(1).join(" ")}`);
+}
 /** Каталог гранта другой машины — убирается вместе с пробой. */
 export const otherDir = (t) => scratch(t, "iskron-ownseat-m2-");
 
@@ -119,10 +152,17 @@ export async function setup(t) {
   t.after(async () => {
     await fake.stop(); // сервер первым: так мосты выходят по концу stdin, не ждут его
     await Promise.all(bridges.map((b) => b.stop()));
-    // Мосты плагина под пробой (rootseat-kit) выходят по концу stdin и дописывают каталог гранта
-    // ещё миг после остановки плагина: каталог убирается с повторами, а не падает ENOTEMPTY.
+    // Мосты плагина под пробой (rootseat-kit) выходят по концу stdin: уборка ждёт их выхода.
+    // Живой и после предела — провал пробы с pid и тем, что лежит в каталогах; вышли все, а
+    // каталог не убрался — остаток во временном, слово в вывод, не провал (#8034).
+    const alive = await bridgesExited(5_000);
+    assert.deepEqual(
+      alive,
+      [],
+      `мост плагина жив после остановки: ${alive.join(", ")}\n${(scratches.get(t) ?? []).map(shape).join("\n")}`,
+    );
     for (const d of scratches.get(t) ?? [])
-      rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+      if (!removed(d)) t.diagnostic(`scratch ${d} not removed: ${shape(d).slice(0, 300)}`);
   });
   // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
   // extra — more arguments of the bridge (--satellite).
