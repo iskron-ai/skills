@@ -121,9 +121,9 @@ export function heldBy(dir, session) {
 /**
  * Экземпляр плагина в project для учётки подставного сервера ownseat-kit (fake, dir — каталог
  * гранта); мосты плагина — настоящие, из этой рабочей копии. env — переменные этого экземпляра
- * (другой мост, срок посадки).
+ * (другой мост, срок посадки); known — сессии {id, parentID?}, что уже лежат на диске к загрузке.
  */
-export async function rootPlugin({ fake, dir }, project, env = {}) {
+export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
   for (const k of PER_PROBE) delete process.env[k];
   Object.assign(process.env, {
     ISKRON_BRIDGE_PATH: BRIDGE,
@@ -138,6 +138,13 @@ export async function rootPlugin({ fake, dir }, project, env = {}) {
   });
   const def = (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
   const sessions = new Map(); // id → { id, parentID?, location }
+  // Sessions already on disk at load: a previous instance's marker children are read at setup.
+  for (const k of known)
+    sessions.set(k.id, {
+      id: k.id,
+      location: { directory: project },
+      ...(k.parentID ? { parentID: k.parentID } : {}),
+    });
   const hooks = {};
   const prompts = []; // ctx.session.prompt и synthetic — слова плагина в сессию
   const interrupts = [];

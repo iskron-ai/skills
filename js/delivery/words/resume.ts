@@ -17,6 +17,11 @@ export interface ResumeWords {
   neighbourKey: (keys: string) => string;
   /** left — ключи через ", ". */
   left: (left: string) => string;
+  /**
+   * Спутник: место по ключу старее записи другого места той же сессии в той же роли и графе —
+   * ключ не берётся (дело №954); stale — имя места по ключу, fresher — имя свежего места.
+   */
+  staleKey: (stale: string, fresher: string) => string;
   alreadyHolding: () => string;
   byRecord: () => string;
   otherSeat: (key: string, led: string) => string;
@@ -70,6 +75,8 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
       `на месте ${keys} стояла другая сессия — место соседа возврат не берёт; своё место займёт ${via}`,
     left: (left) =>
       `место отпущено словом держателя (leave): ${left} — само не вернётся, вернуть: ${via} тем же именем`,
+    staleKey: (stale, fresher) =>
+      `место ${stale} не взято возвратом: у этой сессии в той же роли есть запись свежее — ${fresher}; вернуть место: ${via}(name="${fresher}"), прежнее — ${via}(name="${stale}")`,
     alreadyHolding: () => "мост уже держит это место",
     byRecord: () => "возврат по записи",
     otherSeat: (key, led) => `${key}: мост ведёт другое место ${led}`,
@@ -122,6 +129,8 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
       `another session stood on the seat ${keys} — a return does not take a neighbour's seat; ${via} will take your own`,
     left: (left) =>
       `the seat was released by the holder's word (leave): ${left} — it will not return by itself, to bring it back: ${via} with the same name`,
+    staleKey: (stale, fresher) =>
+      `the seat ${stale} is not taken by the return: this session has a fresher record in the same role — ${fresher}; to bring the seat back: ${via}(name="${fresher}"), the former one — ${via}(name="${stale}")`,
     alreadyHolding: () => "the bridge already holds this seat",
     byRecord: () => "return by record",
     otherSeat: (key, led) => `${key}: the bridge leads another seat ${led}`,

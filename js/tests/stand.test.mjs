@@ -3302,6 +3302,221 @@ test("satellite: a pause before the stop keeps the place and its cases; the next
   assert.equal(holdFiles(dir).length, 0, "the hold record goes with the place");
 });
 
+// Live 16-17.10: a satellite paused at 19:51 came back from disk at 01:28, and its hold record
+// kept the pause's `at` — at 19:51 + 6 h a reader (the plugin's watchdog check) erased it from
+// under the live seat. The returned seat's record is rewritten on the return: past the
+// previous pause's window it is still on disk, and the seat still listens.
+test("satellite: a seat returned from disk rewrites its hold record — past the previous pause's window the record lives under the listening seat", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-rearm-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  await sat.stop();
+  // The pause was long ago: its window ends in a few seconds.
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const SIX_H = 6 * 3600_000;
+  const LEFT_MS = 3000;
+  writeFileSync(
+    file,
+    JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), at: Date.now() - SIX_H + LEFT_MS }),
+  );
+  const back = await satelliteBridge(t, fake, { dir });
+  const sel = { key: paused.key, session: "child" };
+  const r = (await back.call("iskron/resume", sel)).result;
+  assert.equal(r?.resumed, true, `${JSON.stringify(r)}\n${back.stderr}`);
+  await new Promise((res) => setTimeout(res, LEFT_MS + 1000));
+  // The watchdog's look: it reads the record, an expired one is erased.
+  const c = (await back.call("iskron/check", sel)).result;
+  assert.equal(c?.holding, true, `the seat still listens: ${JSON.stringify(c)}\n${back.stderr}`);
+  assert.ok(existsSync(file), `the record lives past the previous pause's window:\n${back.stderr}`);
+  const rec = JSON.parse(readFileSync(file, "utf8"));
+  assert.ok(
+    Date.now() - rec.at < SIX_H - LEFT_MS,
+    `the record's term counts from the return: at ${rec.at}`,
+  );
+  assert.equal(
+    rec.url.includes(fake.state.wsToken),
+    true,
+    "the record carries the seat's live address",
+  );
+  await back.stop();
+});
+
+// Case №954, the 6 h limit for a live seat: a record counted from the take (or the satellite's
+// return) expires under a seat held longer than its term, and the next reader erases it. The
+// holding bridge's own check rewrites the held seat's record with a fresh `at` instead.
+for (const kind of ["satellite", "root"])
+  test(`${kind}: a seat held longer than the record's term — the holder's check rewrites its record, it is not erased`, async (t) => {
+    const fake = await withCaller(t);
+    const dir = mkdtempSync(join(tmpdir(), "iskron-held-long-"));
+    let b;
+    let sel;
+    if (kind === "satellite") {
+      const sat = await satelliteBridge(t, fake, { dir });
+      assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+      const paused = (await sat.call("iskron/suspend", {})).result;
+      await sat.stop();
+      b = await satelliteBridge(t, fake, { dir });
+      sel = { key: paused.key, session: "child" };
+      assert.equal((await b.call("iskron/resume", sel)).result?.resumed, true, b.stderr);
+    } else {
+      b = startBridge(fake.mcpUrl, dir);
+      t.after(() => b.stop());
+      assert.ok((await b.call("initialize", INIT)).result);
+      const r = await standAs(b, { realm: "nks-dev", karta: 931, name: "held-long" });
+      assert.ok(!r.result?.isError, `${textOf(r)}\n${b.stderr}`);
+    }
+    const file = join(dir, "standings", holdFiles(dir)[0]);
+    assert.equal(holdFiles(dir).length, 1, `one record: ${holdFiles(dir)}`);
+    sel ??= { key: JSON.parse(readFileSync(file, "utf8")).key, session: "root" };
+    // Held past the term: the record's `at` is older than six hours.
+    const old = Date.now() - 6 * 3600_000 - 1000;
+    const taken = JSON.parse(readFileSync(file, "utf8"));
+    // The era is the take's: set by the stand, kept by the pause and the return (case №954).
+    assert.equal(
+      typeof taken.stoodAt,
+      "number",
+      `the record carries the take's era: ${JSON.stringify(taken)}`,
+    );
+    assert.ok(
+      Date.now() - taken.stoodAt < 60_000,
+      `stoodAt is the stand's moment: ${taken.stoodAt}`,
+    );
+    writeFileSync(file, JSON.stringify({ ...taken, at: old }));
+    const c = (await b.call("iskron/check", sel)).result;
+    assert.equal(c?.holding, true, `the seat listens: ${JSON.stringify(c)}\n${b.stderr}`);
+    assert.ok(existsSync(file), `the held seat's record is not erased by its check:\n${b.stderr}`);
+    const rec = JSON.parse(readFileSync(file, "utf8"));
+    assert.ok(Date.now() - rec.at < 60_000, `rewritten with a fresh at: ${rec.at}`);
+    assert.equal(rec.stoodAt, taken.stoodAt, "the refresh keeps the era");
+    await b.stop();
+  });
+
+// Case №954, path (a): a satellite's return by key does not take a seat of an earlier era than
+// another record of the same session in the same role and graph. The later one cannot come back
+// (its address is dead) — the former is still not taken. A child's return is silent (#6628,
+// #6550 item 3): no word into its session; the refusal goes to the journal and the outcome
+// (`refused`), by which the plugin ends the child with a word to its parent.
+test("satellite: a keyed return refuses a seat of an earlier era than the session's other record — the later fails, the former is not taken, nothing is said into the session", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-stale-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  await sat.stop();
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const former = JSON.parse(readFileSync(file, "utf8"));
+  const old = Date.now() - 60_000;
+  writeFileSync(file, JSON.stringify({ ...former, session: "child", at: old, stoodAt: old }));
+  const name = `${CALLER}.sub-7`;
+  const key = `${name}--931--${former.realm}`.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 120);
+  const { holdFilePathOf } = await import("../shared/standings.ts");
+  writeFileSync(
+    holdFilePathOf(dir, key),
+    JSON.stringify({
+      ...former,
+      name,
+      key,
+      url: "ws://127.0.0.1:9/api/channel/ws/dead",
+      statusUrl: null,
+      session: "child",
+      at: Date.now() - 10_000,
+      stoodAt: Date.now() - 10_000,
+    }),
+  );
+  const sockets = fake.state.counts.ws_upgrades;
+  const back = await satelliteBridge(t, fake, { dir });
+  const r = (await back.call("iskron/resume", { key: paused.key, session: "child" })).result;
+  assert.equal(
+    r?.resumed,
+    false,
+    `the former seat is not taken: ${JSON.stringify(r)}\n${back.stderr}`,
+  );
+  assert.equal(fake.state.counts.ws_upgrades, sockets, "no socket opened to the former seat");
+  assert.match(r.word, /не взято возвратом|not taken by the return/, r.word);
+  assert.ok(
+    r.word.includes(`name="${name}"`),
+    `the word says what brings the seat back: ${r.word}`,
+  );
+  assert.deepEqual(
+    r.refused,
+    [former.name],
+    `the outcome names the refused seat: ${JSON.stringify(r)}`,
+  );
+  const said = back.notifications.filter((n) => n.params?.data?.kind === "lost");
+  assert.deepEqual(said, [], `nothing is said into the child's session: ${JSON.stringify(said)}`);
+  assert.match(back.stderr, /resume: .*(не взято возвратом|not taken by the return)/);
+});
+
+// Case №954, the era: a gone twin lived and left LATER (its record's `at` is newer), but the session
+// stood on its current seat later (that record's stoodAt is newer). A return by the twin's key
+// (its marker named it) takes the current seat, not the twin's.
+test("satellite: the era decides, not the record's life — a twin that left later but was stood on earlier is refused, the current seat comes back", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-era-"));
+  const one = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(one, SAT_ARGS)).result?.isError, one.stderr);
+  const twin = (await one.call("iskron/suspend", {})).result;
+  await one.stop();
+  const two = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(two, SAT_ARGS)).result?.isError, two.stderr);
+  const current = (await two.call("iskron/suspend", {})).result;
+  await two.stop();
+  assert.notEqual(twin.key, current.key, "two seats");
+  const { holdFilePathOf } = await import("../shared/standings.ts");
+  const edit = (key, at, stoodAt) => {
+    const f = holdFilePathOf(dir, key);
+    writeFileSync(
+      f,
+      JSON.stringify({ ...JSON.parse(readFileSync(f, "utf8")), session: "child", at, stoodAt }),
+    );
+  };
+  const now = Date.now();
+  edit(twin.key, now - 10_000, now - 2 * 3600_000); // left later, stood on earlier
+  edit(current.key, now - 3600_000, now - 30 * 60_000); // paused earlier, stood on later
+  const back = await satelliteBridge(t, fake, { dir });
+  const r = (await back.call("iskron/resume", { key: twin.key, session: "child" })).result;
+  assert.equal(r?.resumed, true, `${JSON.stringify(r)}\n${back.stderr}`);
+  assert.equal(
+    r.key,
+    current.key,
+    `the current seat comes back, not the twin's: ${JSON.stringify(r)}`,
+  );
+  assert.deepEqual(r.refused, undefined, "a return that took a seat is no refusal");
+  assert.match(back.stderr, /resume: .*(не взято возвратом|not taken by the return)/);
+  await back.stop();
+});
+
+// Case №954, P3: the cases of a pause are the pause's. A child that left a case after its return
+// does not get it seeded again by a later return by key (its bridge died without a pause).
+test("satellite: a case left after the return is not seeded by a later return by key", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-cases-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  await caseAs(sat, "join", "№102");
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  await sat.stop();
+  const sel = { key: paused.key, session: "child" };
+  const back = await satelliteBridge(t, fake, { dir });
+  assert.equal((await back.call("iskron/resume", sel)).result?.resumed, true, back.stderr);
+  assert.ok(!(await caseAs(back, "leave", "№102")).result?.isError, back.stderr);
+  const exited = new Promise((r) => back.proc.once("exit", r));
+  back.proc.kill("SIGKILL"); // no pause, no end: the record stays as the return left it
+  await exited;
+  back.stop = () => Promise.resolve(); // killed by a signal: no exit code, nothing left to stop
+  const late = await satelliteBridge(t, fake, { dir });
+  assert.equal((await late.call("iskron/resume", sel)).result?.resumed, true, late.stderr);
+  await late.stop();
+  assert.deepEqual(
+    caseCalls(fake, "leave"),
+    ["№102"],
+    `the left case is not seeded and left again at the late run's end:\n${late.stderr}`,
+  );
+});
+
 // Places beside in other graphs are the run's too: the socket going leaves them
 // on the board until the channel's term, so each is revoked with the main one.
 test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {
