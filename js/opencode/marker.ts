@@ -140,8 +140,9 @@ export function takeLostMarker(
     if (lost) read.push({ tagged: tag !== null, lost });
   }
   // Own-tag files first: a session's record from an older build's file does not override them.
-  // Then the freshest: a gone twin server's marker lies until this location's next load, and its
-  // record of a session served here since must not override the one this instance's stop wrote.
+  // Then the freshest: a gone twin server's marker lies until this location's next load or a call of
+  // a child without its slot here (adopt.now), and its record of a session served here since must
+  // not override the one this instance's stop wrote.
   read.sort(
     (a, b) =>
       Number(b.tagged) - Number(a.tagged) ||
