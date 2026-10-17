@@ -1,6 +1,5 @@
 // Read-only account evidence for the first prompt. Unknown never invites.
 import { tool } from "../delivery/index.ts";
-import { completeRealmList } from "./realm-list.ts";
 
 type ObjectValue = Record<string, unknown>;
 const object = (v: unknown): ObjectValue | null =>
@@ -18,14 +17,29 @@ function payload(v: ObjectValue): unknown {
   }
 }
 
-/** Only a complete, recognisable list is evidence of absence. */
+/** nks-mcp #466: only the declared data contract, never realm-list prose. */
 function emptyList(v: ObjectValue): boolean | null {
-  // No observed structured realm-list schema exists in the bridge's fixtures/readers.
-  if ("structuredContent" in v) return null;
-  const refs = completeRealmList(textOf(v));
-  return refs === null
-    ? null
-    : refs.every((r) => r.ownerKind === "user" && r.canonical.endsWith("/mind"));
+  const fields = object(v.structuredContent);
+  if (!fields || fields.action !== "list" || !Array.isArray(fields.realms)) return null;
+  if (fields.incomplete === true || (fields.dropped !== undefined && fields.dropped !== 0))
+    return null;
+  let working = false;
+  for (const value of fields.realms) {
+    const row = object(value);
+    if (
+      !row ||
+      typeof row.ref !== "string" ||
+      !/^@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(row.ref) ||
+      typeof row.short !== "string" ||
+      !/^r\d+$/.test(row.short) ||
+      typeof row.owner !== "string" ||
+      !row.owner ||
+      (row.owner_kind !== "user" && row.owner_kind !== "org")
+    )
+      return null;
+    if (row.owner_kind !== "user" || row.ref.split("/")[1] !== "mind") working = true;
+  }
+  return !working;
 }
 
 export type OnboardCall = (

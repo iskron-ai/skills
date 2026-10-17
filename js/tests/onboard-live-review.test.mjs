@@ -27,26 +27,22 @@ test("fake list serializer exactly matches the observed framing, owner blocks an
   assert.equal(realmListText(realms), LIVE_REALM_LIST.trimEnd());
 });
 
-for (const [kind, expected] of [
-  ["personal", true],
-  ["org-mind", false],
-  ["work", false],
-]) {
+for (const kind of ["personal", "org-mind", "work"]) {
   for (const archived of [true, false]) {
-    test(`live list: ${kind}, archive paragraph ${archived}`, async () => {
+    test(`prose-only list is ignored: ${kind}, archive paragraph ${archived}`, async () => {
       assert.equal(
         await wizardDue(
           async (name) =>
             name === "iskron_me" ? unknownAction : response(liveListVariant(kind, archived)),
           new AbortController().signal,
         ),
-        expected,
+        "unsupported",
       );
     });
   }
 }
 
-test("live list: count mismatch and a hidden graph after the tail stay unknown", async () => {
+test("prose count and tail never produce hook evidence", async () => {
   for (const text of [
     LIVE_REALM_LIST.replace("графы (7)", "графы (8)"),
     `${liveListVariant("personal")}\n    @hidden/work  r999  hidden · 2026-10-17`,

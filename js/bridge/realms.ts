@@ -7,7 +7,6 @@
 
 import { REALMS } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import { realmListRows } from "../shared/realm-list.ts";
 import { scoped } from "../shared/scope.ts";
 
 // Per session (shared/scope.ts): daemon sessions may have different servers and accounts.
@@ -63,9 +62,13 @@ export function learnRealm(alias: unknown, canonical: string): void {
  * `    @owner/slug  rN  name · date` (four spaces, two between fields).
  * A bare slug is a name too when it is alone in the list.
  */
+const LIST_LINE_RE = /^ {4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) {2}(r\d+) {2}.* · /;
 export function learnRealmList(text: string): void {
   const slugs = new Map<string, string[]>();
-  for (const { canonical: c, short } of realmListRows(text)) {
+  for (const line of text.split("\n")) {
+    const m = LIST_LINE_RE.exec(line);
+    if (!m) continue;
+    const [, c, short] = m;
     learnRealm(short, c);
     const slug = c.replace(/^@[^/]+\//, "");
     slugs.set(slug, [...new Set([...(slugs.get(slug) ?? []), c])]);

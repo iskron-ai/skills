@@ -19,7 +19,7 @@ import {
   deviceState,
 } from "./fake-device.mjs";
 import { ordersControl, ordersRoute, ordersState } from "./fake-orders.mjs";
-import { realmListText } from "./realm-list-text.mjs";
+import { realmListFields, realmListText } from "./realm-list-text.mjs";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
@@ -274,6 +274,7 @@ export async function startFakeNks(opts = {}) {
     structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
     initAsked: false, // последнее initialize объявило iskron/structured
     initCaps: [], // capabilities каждого initialize, как пришли
+    realmStructuredSessions: new Set(), // list data requires this session's declared capability (#466).
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -925,6 +926,7 @@ export async function startFakeNks(opts = {}) {
         st.initCaps.push(msg.params?.capabilities ?? null);
         st.initAsked = "iskron/structured" in (msg.params?.capabilities?.experimental ?? {});
         const fresh = token("session");
+        if (st.initAsked) st.realmStructuredSessions.add(fresh);
         st.sessions.add(fresh);
         st.sessionTokens.set(fresh, bearer);
         // Автопривязка стояния при открытии сессии (#3800 в nks-dev): заголовок
@@ -1812,13 +1814,20 @@ export async function startFakeNks(opts = {}) {
         // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
         if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
         const text = realmListText(st.realms);
+        const result = structuredClone(
+          st.realmResult ?? {
+            content: [{ type: "text", text }],
+            structuredContent: realmListFields(st.realms),
+          },
+        );
+        if (!st.realmStructuredSessions.has(sid)) delete result.structuredContent;
         return json(
           res,
           200,
           {
             jsonrpc: "2.0",
             id: msg.id,
-            result: st.realmResult ?? { content: [{ type: "text", text }] },
+            result,
           },
           extra,
         );
