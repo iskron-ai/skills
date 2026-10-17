@@ -131,19 +131,29 @@ export function takeLostMarker(
     return null;
   }
   const mine = tagOf(home);
-  // Own-tag files first: a session's record from an older build's file does not override them.
-  files.sort((a, b) => Number(tagIn(b) !== null) - Number(tagIn(a) !== null));
+  const read: { tagged: boolean; lost: Lost }[] = [];
   for (const f of files) {
     const tag = tagIn(f);
     if (tag !== null && tag !== mine) continue; // another location's marker — its instance's
     if (otherLive(f, join(authDir, f))) continue; // another live server's marker — its instance's
     const lost = readOwn(join(authDir, f), tag, home);
+    if (lost) read.push({ tagged: tag !== null, lost });
+  }
+  // Own-tag files first: a session's record from an older build's file does not override them.
+  // Then the freshest: a gone twin server's marker lies until this location's next load, and its
+  // record of a session served here since must not override the one this instance's stop wrote.
+  read.sort(
+    (a, b) =>
+      Number(b.tagged) - Number(a.tagged) ||
+      (Date.parse(b.lost.at) || 0) - (Date.parse(a.lost.at) || 0),
+  );
+  for (const { lost } of read) {
     // A move not taken by the new folder's instance at once is stale: the session went on.
-    const stale = !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS);
-    for (const e of lost?.entries ?? []) {
+    const stale = !(Date.now() - Date.parse(lost.at ?? "") < LEGACY_MS);
+    for (const e of lost.entries ?? []) {
       if (!e?.session || seen.has(e.session) || (e.moved && stale)) continue;
       seen.add(e.session);
-      if (lost && lost.at > at) at = lost.at;
+      if (lost.at > at) at = lost.at;
       entries.push(entryOf(e));
     }
   }

@@ -2848,6 +2848,63 @@ test("a marker written by another live OpenCode server for the same folder is it
   }
 });
 
+// Two servers served one session (seen live 16-17.10): the stdio server stopped
+// at 19:51 and its marker stayed — the service's instance of that folder was already up and
+// took nothing; six hours later the service's plugin reloaded and the new instance read both
+// files. The record of the session from the file read first won, not the latest: the child
+// came back on the stdio era's seat (.sub-2) instead of the one it held at the reload
+// (.sub-3). The freshest marker's record of a session is the one returned; the file order
+// does not decide — both orders are tried, so the probe is red whatever readdir gives.
+test("two gone instances' markers name one session: the freshest marker's key is returned, whatever the file order", async () => {
+  const tag = createHash("sha256").update(`${LOC_A.directory}\0`).digest("hex").slice(0, 12);
+  const gonePid = async () => {
+    const p = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    p.kill();
+    await until(() => !alive(p.pid), "a gone writer");
+    return p.pid;
+  };
+  const [p1, p2] = [await gonePid(), await gonePid()];
+  const stale = { at: new Date(Date.now() - 6 * 3600_000).toISOString(), key: "k-stale" };
+  const fresh = { at: new Date().toISOString(), key: "k-fresh" };
+  for (const [first, second] of [
+    [stale, fresh],
+    [fresh, stale],
+  ]) {
+    for (const f of lostMarkers()) rmSync(f, { force: true });
+    for (const [pid, m, r] of [
+      [p1, first, "a"],
+      [p2, second, "b"],
+    ])
+      writeFileSync(
+        join(process.env.ISKRON_BRIDGE_AUTH_DIR, `opencode-lost.@${tag}.${pid}.${r}.json`),
+        JSON.stringify({
+          at: m.at,
+          entries: [{ session: "a1", dir: LOC_A.directory, key: m.key, child: false }],
+        }),
+      );
+    const name = `two-gone-${first.key}`;
+    const calls = join(SANDBOX, `${name}.calls`);
+    const resume = join(SANDBOX, `${name}.resume`);
+    writeFileSync(calls, "");
+    writeFileSync(resume, JSON.stringify({ bySession: { a1: backAnswer("k-fresh") } }));
+    const b = bridgeEnv(name, { FB_CALLS: calls, FB_RESUME: resume });
+    const rec = await plugin(b.env, { ...inLoc(LOC_A, "a1"), keepMarker: true });
+    try {
+      const asked = () =>
+        callsIn(calls).filter((c) => c.name === "iskron/resume" && c.arguments.session === "a1");
+      await until(() => asked().length > 0, "a1's resume");
+      assert.deepEqual(
+        [...new Set(asked().map((c) => c.arguments.key))],
+        ["k-fresh"],
+        `the freshest marker's key, file "${first.key}" written first`,
+      );
+      assert.equal(lostMarkers().length, 0, "both markers taken");
+    } finally {
+      await rec.stop();
+    }
+  }
+});
+
 // A pid is reused: a process under the writer's pid that STARTED after the marker was
 // written is not its writer — the marker is taken (#147 [100]: the author by the
 // process start against the marker, not by the file's age).
