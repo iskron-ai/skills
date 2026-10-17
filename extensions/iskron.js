@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.13.0";
+var VERSION = "7.14.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -1252,6 +1252,7 @@ var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 
 // js/bridge/holdrecord.ts
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
+var S2 = scoped(() => /* @__PURE__ */ new Map());
 var H = scoped(() => ({ session: null }));
 var B = scoped(() => /* @__PURE__ */ new Map());
 
