@@ -20,6 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -36,6 +37,26 @@ const COPY = join(SANDBOX, "iskron.js");
 copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, COPY);
 process.on("exit", () => rmSync(SANDBOX, { recursive: true, force: true }));
 let seq = 0;
+
+/**
+ * Мосты, поднятые плагином под пробой: spawn обёрнут до загрузки плагина, процесс уходит из
+ * реестра по exit. Уборка пробы (ownseat-kit) ждёт их выхода и называет живых (#8034).
+ */
+const cp = createRequire(import.meta.url)("node:child_process");
+const live = (globalThis.__iskronProbeBridges ??= new Set());
+if (!cp.spawn.__probe) {
+  const real = cp.spawn;
+  cp.spawn = function (...a) {
+    const child = real.apply(this, a);
+    if (a[1]?.[0] === BRIDGE) {
+      live.add(child);
+      child.once("exit", () => live.delete(child));
+    }
+    return child;
+  };
+  cp.spawn.__probe = true;
+  syncBuiltinESMExports();
+}
 
 /** Обложка AGENTS.md: плоский YAML-фронтматтер (skills/iskronify/references/agents-template.md). */
 export const frontmatter = (pairs) =>
