@@ -374,6 +374,7 @@ const ENV_KEYS = [
   "ISKRON_OPENCODE_PENDING_MS",
   "ISKRON_OPENCODE_WAKE_HOLD_MS",
   "ISKRON_OPENCODE_HALT_CAP_MS",
+  "ISKRON_ONBOARD_START_MS",
 ];
 
 let seq = 0;
@@ -9248,6 +9249,173 @@ for (const [lang, chosen, label] of [
       assert.ok(rec.said().includes(`[iskron/error] ${say.dead()}\n`), rec.said());
     } finally {
       await rec.stop();
+    }
+  });
+}
+
+// ReadinessResponse (#932 rev4.1): wizard_due, not complete or personal_mind,
+// decides the invitation. These probes need no model and never touch a live graph.
+for (const probe of [
+  { name: "fresh account", due: true, word: true },
+  { name: "working graph", due: false },
+  { name: "only personal mind", due: true, realms: ["@tester/mind"], word: true },
+  { name: "missing readiness falls back to empty list", realms: [], word: true },
+  { name: "missing readiness falls back to mind list", realms: ["@tester/mind"], word: true },
+  { name: "missing readiness falls back to working list", realms: ["@tester/work"] },
+  { name: "organization mind is a working graph", realms: ["@nks/mind"] },
+  { name: "readiness refusal falls back", refusal: true, realms: [], word: true },
+  { name: "readiness without field falls back", body: { complete: false }, realms: [], word: true },
+  { name: "null readiness falls back", body: null, realms: [], word: true },
+  { name: "everything unknown", unreadable: true },
+  { name: "wrong boolean is unknown", body: { wizard_due: "true" }, unreadable: true },
+  {
+    name: "partial list is unknown",
+    listText: "Доступные графы (2) — адресуй их:\n    @tester/mind  r1  mind · 2026-10-17",
+  },
+  { name: "cover suppresses calls", due: true, cover: true },
+  { name: "child suppresses calls", due: true, child: true },
+  { name: "unreadable session suppresses calls", due: true, gone: true },
+  { name: "deadline", due: true, slow: true },
+  { name: "English word", due: true, lang: "en", word: true },
+  { name: "JSON text readiness", due: true, textOnly: true, word: true },
+  { name: "fields win over text", due: false, conflict: true },
+  { name: "unknown structured empty list", listFields: { realms: [] } },
+  { name: "unknown structured mind list", listFields: { realms: [{ ref: "@tester/mind" }] } },
+  { name: "structured working list", listFields: { realms: [{ ref: "@tester/work" }] } },
+  { name: "malformed structured list", listFields: { realms: [{}] } },
+  { name: "incomplete structured list", listFields: { realms: [], incomplete: true } },
+  { name: "dropped structured rows", listFields: { realms: [], dropped: 1 } },
+  { name: "refused list", listError: true },
+  { name: "list deadline", listSlow: true },
+  { name: "cold bridge deadline", cold: true },
+  { name: "cold child does not wait for bridge", cold: true, child: true },
+]) {
+  test(`onboarding start: ${probe.name}`, async () => {
+    const fake = await startFakeNks({ pat: "nks_pat_onboard" });
+    const cwd = mkdtempSync(join(SANDBOX, "onboard-"));
+    const auth = mkdtempSync(join(SANDBOX, "onboard-auth-"));
+    if (probe.cover)
+      writeFileSync(join(cwd, "AGENTS.md"), "---\n'Граф': '@tester/work (r1)'\n---\n");
+    if (probe.realms)
+      fake.state.realms = probe.realms.map((canon, i) => ({
+        canon,
+        short: `r${i + 1}`,
+        ownerKind: canon.startsWith("@nks/") ? "organization" : "user",
+      }));
+    if (probe.due !== undefined || "body" in probe || probe.refusal) {
+      const body =
+        "body" in probe
+          ? probe.body
+          : {
+              person: { handle: "tester" },
+              realm: null,
+              wizard_due: probe.due,
+              complete: false,
+              realms:
+                probe.due === false
+                  ? [
+                      {
+                        ref: "@tester/work",
+                        owned: true,
+                        member_role: "admin",
+                        karta_linked: false,
+                        ready: false,
+                      },
+                    ]
+                  : [],
+            };
+      fake.state.readinessResult = probe.refusal
+        ? { isError: true, content: [{ type: "text", text: "unsupported action" }] }
+        : {
+            ...(!probe.textOnly ? { structuredContent: body } : {}),
+            content: [
+              { type: "text", text: JSON.stringify(probe.conflict ? { wizard_due: true } : body) },
+            ],
+          };
+    }
+    if (probe.unreadable || probe.listText)
+      fake.state.realmResult = {
+        content: [{ type: "text", text: probe.listText ?? "unreadable" }],
+      };
+    if (probe.slow) fake.state.readinessDelayMs = 1000;
+    if (probe.cold) fake.state.mcpHangMs = 1000;
+    if (probe.listSlow) fake.state.realmDelayMs = 1000;
+    if (probe.listFields)
+      fake.state.realmResult = {
+        structuredContent: probe.listFields,
+        content: [{ type: "text", text: "Доступные графы (0) — пусто" }],
+      };
+    if (probe.listError)
+      fake.state.realmResult = {
+        isError: true,
+        content: [{ type: "text", text: "Доступные графы (0) — пусто" }],
+      };
+    const priorAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+    const priorDaemon = process.env.ISKRON_BRIDGE_DAEMON;
+    const rec = await plugin(
+      {
+        ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+        ISKRON_BRIDGE_URL: fake.mcpUrl,
+        ISKRON_BRIDGE_TOKEN: "nks_pat_onboard",
+        ISKRON_BRIDGE_NO_BROWSER: "1",
+        ISKRON_BRIDGE_AUTH_DIR: auth,
+        ISKRON_BRIDGE_DAEMON: "0",
+        ISKRON_ONBOARD_START_MS: probe.slow || probe.listSlow || probe.cold ? "150" : "4000",
+        ISKRON_BRIDGE_LANG: probe.lang ?? "ru",
+      },
+      {
+        sessions: [
+          {
+            id: "onboard",
+            ...(probe.child ? { parentID: "parent" } : {}),
+            location: { directory: cwd },
+          },
+        ],
+        gone: new Set(probe.gone ? ["onboard"] : []),
+      },
+    );
+    try {
+      if (!probe.cold)
+        await until(() => rec.tools().has("iskron_stand"), "onboarding bridge ready", 15000);
+      const before = Date.now();
+      const text = await rec.prompt("onboard", "hello");
+      const elapsed = Date.now() - before;
+      assert.equal(text.includes("onboarding"), !!probe.word, text);
+      if (probe.word)
+        assert.equal(
+          text,
+          `hello\n${probe.lang === "en" ? "You have no working graph — start with the onboarding skill." : "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)"}`,
+        );
+      assert.equal(await rec.prompt("onboard", "again"), "again", "second prompt is silent");
+      if (probe.slow || probe.listSlow || probe.cold)
+        assert.ok(elapsed < 650, `deadline: ${elapsed}ms`);
+      const calls = fake.state.calls.filter((c) => ["iskron_me", "iskron_realm"].includes(c.name));
+      if (probe.cover || probe.child || probe.gone)
+        assert.equal(calls.length, 0, JSON.stringify(calls));
+      if (
+        typeof probe.due === "boolean" &&
+        !probe.cover &&
+        !probe.child &&
+        !probe.gone &&
+        !probe.slow
+      )
+        assert.deepEqual(
+          calls.map((c) => c.arguments.action),
+          ["readiness"],
+          "authoritative readiness needs no list",
+        );
+      assert.equal(fake.state.counts.connect, 0, "no standing");
+      assert.equal(fake.state.counts.register_standing, 0, "no registration");
+      assert.equal(fake.state.writes.length, 0, "no graph writes");
+    } finally {
+      await rec.stop();
+      await fake.stop();
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(auth, { recursive: true, force: true });
+      if (priorAuth === undefined) delete process.env.ISKRON_BRIDGE_AUTH_DIR;
+      else process.env.ISKRON_BRIDGE_AUTH_DIR = priorAuth;
+      if (priorDaemon === undefined) delete process.env.ISKRON_BRIDGE_DAEMON;
+      else process.env.ISKRON_BRIDGE_DAEMON = priorDaemon;
     }
   });
 }

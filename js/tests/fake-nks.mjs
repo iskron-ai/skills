@@ -19,6 +19,7 @@ import {
   deviceState,
 } from "./fake-device.mjs";
 import { ordersControl, ordersRoute, ordersState } from "./fake-orders.mjs";
+import { realmListFields, realmListText } from "./realm-list-text.mjs";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
@@ -165,6 +166,9 @@ export async function startFakeNks(opts = {}) {
     mcpDropAction: null, // …only those of this "<tool>:<action>"
     listDelayMs: 0,
     realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
+    readinessResult: null, // Future iskron_me readiness MCP result (#932); null = unsupported.
+    readinessDelayMs: 0,
+    realmResult: null, // Override the list result to probe unreadable/structured answers.
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
@@ -232,9 +236,12 @@ export async function startFakeNks(opts = {}) {
     seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
-      { short: "r5", canon: "@nks/nks-dev" },
-      { short: "r7", canon: "@nks/drugoy" },
-      { short: "r2", canon: "@nks/methodology" },
+      { short: "r5", canon: "@nks/nks-dev", ownerKind: "organization" },
+      { short: "r7", canon: "@nks/drugoy", ownerKind: "organization" },
+      { short: "r2", canon: "@nks/methodology", ownerKind: "organization" },
+      { short: "r57", canon: "@nks/mind", ownerKind: "organization" },
+      { short: "r204", canon: "@tester/mind", ownerKind: "user" },
+      { short: "r35", canon: "@other/mind", ownerKind: "user" },
     ],
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
@@ -267,6 +274,7 @@ export async function startFakeNks(opts = {}) {
     structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
     initAsked: false, // последнее initialize объявило iskron/structured
     initCaps: [], // capabilities каждого initialize, как пришли
+    realmStructuredSessions: new Set(), // list data requires this session's declared capability (#466).
     tools: opts.tools ?? null, // список тулов целиком, как его отдал бы сервер: схема, которую API отвергнет, — у doctor
     // Сессия открыта credential'ом и умирает вместе с ним (#188 в nks-dev):
     // сменился bearer — старая сессия закрыта. Как сервер отвечает на мёртвый
@@ -918,6 +926,7 @@ export async function startFakeNks(opts = {}) {
         st.initCaps.push(msg.params?.capabilities ?? null);
         st.initAsked = "iskron/structured" in (msg.params?.capabilities?.experimental ?? {});
         const fresh = token("session");
+        if (st.initAsked) st.realmStructuredSessions.add(fresh);
         st.sessions.add(fresh);
         st.sessionTokens.set(fresh, bearer);
         // Автопривязка стояния при открытии сессии (#3800 в nks-dev): заголовок
@@ -1779,27 +1788,46 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
-      // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
-      if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
-        st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
-        // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
-        if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
-        const lines = [
-          `Доступные графы (${st.realms.length}) — адресуй их как @owner/slug или rN; обе формы показаны ниже:`,
-          "",
-          "▸ @nks (организация)",
-        ];
-        for (const r of st.realms)
-          lines.push(
-            `    ${r.canon}  ${r.short}  ${r.canon.replace(/^@[^/]+\//, "")} · 2026-09-23`,
-          );
+      // Future readiness contract (#932): wizard_due is true iff working realms is empty.
+      if (
+        msg.method === "tools/call" &&
+        msg.params?.name === "iskron_me" &&
+        msg.params.arguments?.action === "readiness"
+      ) {
+        if (st.readinessDelayMs) await new Promise((r) => setTimeout(r, st.readinessDelayMs));
         return json(
           res,
           200,
           {
             jsonrpc: "2.0",
             id: msg.id,
-            result: { content: [{ type: "text", text: lines.join("\n") }] },
+            ...(st.readinessResult === null
+              ? { error: { code: -32602, message: 'неизвестный action "readiness"' } }
+              : { result: st.readinessResult }),
+          },
+          extra,
+        );
+      }
+      // Форма живого list из realm-list-live.txt: блоки владельцев и дословный хвост; имена тестовые.
+      if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
+        st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
+        // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
+        if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
+        const text = realmListText(st.realms);
+        const result = structuredClone(
+          st.realmResult ?? {
+            content: [{ type: "text", text }],
+            structuredContent: realmListFields(st.realms),
+          },
+        );
+        if (!st.realmStructuredSessions.has(sid)) delete result.structuredContent;
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result,
           },
           extra,
         );
