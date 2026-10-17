@@ -1,4 +1,5 @@
 // Hold record when a session leaves an unreleased seat (graph @nks/nks-dev, nodes #5067, #6649).
+import { joinedCases } from "./caseexit.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import {
@@ -77,6 +78,6 @@ function refreshHeldRecord(): void {
   const rec = readHoldRecord(key, true);
   if (!rec || rec.left || rec.url !== H.currentUrl) return;
   if (typeof rec.at === "number" && Date.now() - rec.at < HOLD_RECORD_MAX_AGE_MS / 2) return;
-  // Cases are a pause's (suspend.ts): a former pause's list is not carried into a live seat's record.
-  writeHoldRecord(key, { ...rec, cases: undefined }, CFG.satellite);
+  // The cases joined now, not a former pause's list (suspend.ts): a case left is not seeded again.
+  writeHoldRecord(key, { ...rec, cases: CFG.satellite ? joinedCases() : rec.cases }, CFG.satellite);
 }

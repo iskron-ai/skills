@@ -95,7 +95,7 @@ export async function resumeFromDisk(
   state.standing = { realm, karta, name };
   const prevCwd = rec.cwd ? noteStandCwd(rec.cwd) : null;
   if (rec.base) noteSeatBase(key, rec.base); // the new holder's record no longer carries it after an eviction
-  noteStoodAt(key, rec.stoodAt); // a return is no new stand: the seat keeps its era
+  noteStoodAt(key, rec.stoodAt ?? rec.at); // a return is no new stand: the seat keeps its era (an earlier build's record: its take or pause moment)
   noteResuming(1);
   try {
     holdStanding(rec.url, rec.statusUrl);
