@@ -4,7 +4,7 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -107,6 +107,32 @@ const scratch = (t, prefix) => {
   scratches.get(t)?.push(d);
   return d;
 };
+const removed = (d) => {
+  try {
+    rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    return true;
+  } catch {
+    return false;
+  }
+};
+/** Что лежит в каталоге и когда менялось — чтобы отличить пишущий мост от остатка. */
+const shape = (d) => {
+  try {
+    return readdirSync(d, { recursive: true })
+      .map((f) => {
+        try {
+          const st = statSync(join(d, f));
+          return `${f}:${st.size}:${st.mtimeMs}`;
+        } catch {
+          return `${f}:gone`;
+        }
+      })
+      .sort()
+      .join("\n");
+  } catch {
+    return "?";
+  }
+};
 /** Каталог гранта другой машины — убирается вместе с пробой. */
 export const otherDir = (t) => scratch(t, "iskron-ownseat-m2-");
 
@@ -120,21 +146,17 @@ export async function setup(t) {
     await fake.stop(); // сервер первым: так мосты выходят по концу stdin, не ждут его
     await Promise.all(bridges.map((b) => b.stop()));
     // Мосты плагина под пробой (rootseat-kit) выходят по концу stdin и дописывают каталог гранта
-    // ещё миг после остановки плагина: каталог убирается с повторами. Не убранный и после них —
-    // слово в вывод, не провал пробы: её тело уже прошло, а каталог — во временном (#8034).
-    for (const d of scratches.get(t) ?? [])
-      try {
-        rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
-      } catch (e) {
-        const left = (() => {
-          try {
-            return readdirSync(d, { recursive: true }).slice(0, 10).join(", ");
-          } catch {
-            return "?";
-          }
-        })();
-        t.diagnostic(`scratch ${d} not removed (${e.code ?? e.message}): ${left}`);
-      }
+    // ещё миг после остановки плагина: каталог убирается с повторами. Остался и после них —
+    // различаем: каталог ещё меняется — мост пишет после остановки, проба падает; затих —
+    // остаток во временном, слово в вывод, не провал прошедшей пробы (#8034).
+    for (const d of scratches.get(t) ?? []) {
+      if (removed(d)) continue;
+      const before = shape(d);
+      await new Promise((r) => setTimeout(r, 2_000));
+      const after = shape(d);
+      assert.equal(after, before, `scratch ${d}: bridge still writing after stop\n${after}`);
+      if (!removed(d)) t.diagnostic(`scratch ${d} not removed, idle: ${after.slice(0, 300)}`);
+    }
   });
   // capabilities — what the client declares in initialize (the OpenCode plugin: halts, fields).
   // extra — more arguments of the bridge (--satellite).
