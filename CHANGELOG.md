@@ -1,5 +1,23 @@
 # Changelog
 
+## [7.13.0](https://github.com/iskron-ai/skills/compare/v7.12.0...v7.13.0) (2026-10-17)
+
+
+### Features
+
+* **bridge:** stopped называет силу останова, attrs.stop — что делает стоп места ([#487](https://github.com/iskron-ai/skills/issues/487)) ([5ac7f61](https://github.com/iskron-ai/skills/commit/5ac7f61924f8f0133773423aa7fb7f152ad1faa1))
+* **iskron,iskronify:** стояние на вахту или перед записью; register только называет держимое место ([#494](https://github.com/iskron-ai/skills/issues/494)) ([add571f](https://github.com/iskron-ai/skills/commit/add571f2972a74ce40cc5e350aaeecfca45af9d2))
+* **onboarding:** навык онбординга; ветвь iskronify «Первый граф» при нуле рабочих графов ([#496](https://github.com/iskron-ai/skills/issues/496)) ([d4f18ae](https://github.com/iskron-ai/skills/commit/d4f18aeb29d5f24698551550e29070c726c3b443))
+* **opencode:** корень выровненного проекта садится на своё место до первого запроса ([#495](https://github.com/iskron-ai/skills/issues/495)) ([1229ebb](https://github.com/iskron-ai/skills/commit/1229ebb0ec19118c6a02cb0543eadca0e5b84851))
+
+
+### Bug Fixes
+
+* **bridge:** attrs.stop — так, как место найдёт сам стоп; неизвестное не объявляется ([#490](https://github.com/iskron-ai/skills/issues/490)) ([04dcafc](https://github.com/iskron-ai/skills/commit/04dcafcde1aa41765196ebdebd97af7fe91c8ed5))
+* **bridge:** attrs.stop без живого канала не объявляется ни в каком графе ([#7756](https://github.com/iskron-ai/skills/issues/7756)) ([#491](https://github.com/iskron-ai/skills/issues/491)) ([399c763](https://github.com/iskron-ai/skills/commit/399c76361d66a2d4696f5f8cfaffe07fa5b9a204))
+* **bridge:** attrs.stop сохраняется в окне переоткрытия сокета ([#851](https://github.com/iskron-ai/skills/issues/851)) ([#492](https://github.com/iskron-ai/skills/issues/492)) ([7d688c0](https://github.com/iskron-ai/skills/commit/7d688c060c17eb05c562bbc1f39d4cc11878e114))
+* **bridge:** запись держания места — через переименование, без усечённого окна ([#499](https://github.com/iskron-ai/skills/issues/499)) ([1e159f4](https://github.com/iskron-ai/skills/commit/1e159f4cb9e39828d49bbb9fe7f74d0becc5adf3))
+
 ## [7.12.0](https://github.com/iskron-ai/skills/compare/v7.11.0...v7.12.0) (2026-10-15)
 
 
