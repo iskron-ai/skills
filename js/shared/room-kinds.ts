@@ -204,10 +204,8 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     // A node delta's reasoning is the record's body, not a field (graph @nks/nks-dev, node #6070).
     reasoning: kind === "node" ? line.done || f.body : undefined,
     withdraws: fields.withdraws,
-    after_ack:
-      fields.after_ack === true ||
-      obj(line.data).after_ack === true ||
-      obj(f.data).after_ack === true,
+    // Observed on the wire (#5893 §4.2, case №1010 [8]): line.fields.after_ack.
+    after_ack: fields.after_ack === true,
   };
   const W = words(ROOM);
   const rule = RULES[kind];

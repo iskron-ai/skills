@@ -1,5 +1,5 @@
-// Род записи дела retract (api, #7472, #8074): ответ взят назад. in_reply_to называет
-// ответ, data.after_ack — уже после принятия; будит того, кому ответ был дан, а отзыв
+// Род записи дела retract (#5893 §4.2, наблюдено №1010 [8]): ответ взят назад. in_reply_to
+// называет ответ, line.fields.after_ack — уже после принятия, addressee = fields.to — спросивший; будит того, кому ответ был дан, а отзыв
 // человека чужому месту — не слово мне, как и его ответ (дело №902).
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -17,8 +17,8 @@ const retract = (afterAck, addressee = ME) => ({
     line: {
       refers_to: 347,
       verdict: "partial",
-      ...(afterAck ? { data: { after_ack: true } } : {}),
     },
+    fields: { to: { standing: addressee }, ...(afterAck ? { after_ack: true } : {}) },
     envelope: { addressee, in_reply_to: 347 },
   }),
   provenance: {
