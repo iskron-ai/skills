@@ -34,11 +34,3 @@ suite upgrade)*
 ```
 
 Штампуй деплоированную строку реально установленной версией (`superpowers@<version>`) и режимом, выбранным на Шаге 1 (`full` / `prose-only`) — штамп и есть запись согласованного режима; держи её простой строкой: шаг финализации вычищает HTML-комментарии.
-
-## Чек-лист перепроверки (только мейнтейнерам — при апгрейде superpowers)
-
-Грепни установленный кэш плагина на:
-1. путь спек `docs/superpowers/specs/`, всё ещё несущий "(User preferences for spec location override this default)";
-2. цитируемые скиллы всё ещё зовутся `using-superpowers`, `brainstorming`;
-3. формулировки гейтов не изменились: HARD-GATE "take any implementation action" и передача "writing-plans is the next step";
-4. клаузы приоритета не изменились: "user instructions always take precedence" и пункт "User's explicit instructions (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests)" (using-superpowers, Instruction Priority) — они же цитируются в `skills/entry/SKILL.md` (секция коэкзистенции); обновляй оба места.
