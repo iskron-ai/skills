@@ -27,6 +27,7 @@ outputs=(
   skills/establish-mcp/scripts/opencode-plugin.js
   extensions/iskron.js
   skills/product-roadmap/references/roadmap-template.html
+  hooks/onboard.mjs
 )
 release_branch() { [[ "$1" == release-please--* ]]; }
 release_commit() {

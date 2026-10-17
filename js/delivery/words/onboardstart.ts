@@ -1,4 +1,5 @@
-// Первое слово без рабочего графа — дела №777/№932.
+// Первое слово в репозитории, не выровненном под агента: ни обложки, ни хука старта,
+// ни штампа iskronify (shared/reposigns.ts) — дела №777/№996.
 import type { Lang } from "../lang.ts";
 
 export interface OnboardStartWords {
@@ -8,9 +9,10 @@ export interface OnboardStartWords {
 export const ONBOARD_START: Readonly<Record<Lang, OnboardStartWords>> = {
   ru: {
     start: () =>
-      "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)",
+      "Этот репозиторий ещё не выровнен под агента — начни со скилла onboarding (ветвь iskronify «Первый граф»).",
   },
   en: {
-    start: () => "You have no working graph — start with the onboarding skill.",
+    start: () =>
+      "This repository is not yet aligned for the agent — start with the onboarding skill.",
   },
 };

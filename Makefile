@@ -83,8 +83,8 @@ test-codex:
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/codex-plugin.test.mjs
 
 # Build the shipped JS from js/: one file for the bridge, both watchdogs and
-# doctor, the OpenCode plugin, the pi extension, and the roadmap template with
-# its renderer inlined — as the dev build, into dist/dev (outside the index):
+# doctor, the OpenCode plugin, the pi extension, the roadmap template with
+# its renderer inlined, and the Claude Code plugin's SessionStart hook — as the dev build, into dist/dev (outside the index):
 # probes and live runs take it. Every install channel takes main, so the
 # committed outputs are the release build, written only by build-release
 # (the release job, bundle-sync), never by a working copy (#6650).

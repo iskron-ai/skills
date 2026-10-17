@@ -374,7 +374,6 @@ const ENV_KEYS = [
   "ISKRON_OPENCODE_PENDING_MS",
   "ISKRON_OPENCODE_WAKE_HOLD_MS",
   "ISKRON_OPENCODE_HALT_CAP_MS",
-  "ISKRON_ONBOARD_START_MS",
 ];
 
 let seq = 0;
@@ -9369,103 +9368,62 @@ for (const [lang, chosen, label] of [
   });
 }
 
-// ReadinessResponse (#932 rev4.1): wizard_due, not complete or personal_mind,
-// decides the invitation. These probes need no model and never touch a live graph.
+// The repository's own signs decide the invitation (shared/reposigns.ts): none of the cover,
+// the start hook and the stamp — one line; any of them, or no repository — silence. No call
+// to the graph, no seat. These probes need no model and never touch a live graph.
 for (const probe of [
-  { name: "fresh account", due: true, word: true },
-  { name: "working graph", due: false },
-  { name: "only personal mind", due: true, realms: ["@tester/mind"], word: true },
-  { name: "missing readiness falls back to empty list", realms: [], word: true },
-  { name: "missing readiness falls back to mind list", realms: ["@tester/mind"], word: true },
-  { name: "missing readiness falls back to working list", realms: ["@tester/work"] },
-  { name: "organization mind is a working graph", realms: ["@nks/mind"] },
-  { name: "readiness refusal falls back", refusal: true, realms: [], word: true },
-  { name: "readiness without field falls back", body: { complete: false }, realms: [], word: true },
-  { name: "null readiness falls back", body: null, realms: [], word: true },
-  { name: "everything unknown", unreadable: true },
-  { name: "wrong boolean is unknown", body: { wizard_due: "true" }, unreadable: true },
+  { name: "fresh repository", git: "dir", word: true },
+  { name: "worktree .git file", git: "file", word: true },
+  { name: "subdirectory of a fresh repository", git: "dir", sub: true, word: true },
+  { name: "English word", git: "dir", lang: "en", word: true },
   {
-    name: "partial list is unknown",
-    listText: "Доступные графы (2) — адресуй их:\n    @tester/mind  r1  mind · 2026-10-17",
+    name: "broken front matter is no cover",
+    git: "dir",
+    agents: "---\n'Граф': '@a/b'\n",
+    word: true,
   },
-  { name: "cover suppresses calls", due: true, cover: true },
-  { name: "child suppresses calls", due: true, child: true },
-  { name: "unreadable session suppresses calls", due: true, gone: true },
-  { name: "deadline", due: true, slow: true },
-  { name: "English word", due: true, lang: "en", word: true },
-  { name: "JSON text readiness", due: true, textOnly: true, word: true },
-  { name: "fields win over text", due: false, conflict: true },
-  { name: "unknown structured empty list", listFields: { realms: [] } },
-  { name: "unknown structured mind list", listFields: { realms: [{ ref: "@tester/mind" }] } },
-  { name: "structured working list", listFields: { realms: [{ ref: "@tester/work" }] } },
-  { name: "malformed structured list", listFields: { realms: [{}] } },
-  { name: "incomplete structured list", listFields: { realms: [], incomplete: true } },
-  { name: "dropped structured rows", listFields: { realms: [], dropped: 1 } },
-  { name: "refused list", listError: true },
-  { name: "list deadline", listSlow: true },
-  { name: "cold bridge deadline", cold: true },
-  { name: "cold child does not wait for bridge", cold: true, child: true },
+  { name: "outside a repository", git: null },
+  { name: "aligned repository", git: "dir", cover: true, hook: "rituals", stamp: true },
+  { name: "partial: cover and stamp, no rituals plugin", git: "dir", cover: true, stamp: true },
+  { name: "partial: cover only", git: "dir", cover: true },
+  { name: "partial: Claude Code start hook only", git: "dir", hook: "settings" },
+  { name: "partial: OpenCode rituals only", git: "dir", hook: "rituals" },
+  { name: "partial: stamp only", git: "dir", stamp: true },
+  { name: "foreign SessionStart hook is no sign", git: "dir", hook: "foreign", word: true },
+  { name: "child is silent", git: "dir", child: true },
+  { name: "unreadable session is silent", git: "dir", gone: true },
 ]) {
   test(`onboarding start: ${probe.name}`, async () => {
     const fake = await startFakeNks({ pat: "nks_pat_onboard" });
-    const cwd = mkdtempSync(join(SANDBOX, "onboard-"));
+    const repo = mkdtempSync(join(SANDBOX, "onboard-"));
     const auth = mkdtempSync(join(SANDBOX, "onboard-auth-"));
-    if (probe.cover)
-      writeFileSync(join(cwd, "AGENTS.md"), "---\n'Граф': '@tester/work (r1)'\n---\n");
-    if (probe.realms)
-      fake.state.realms = probe.realms.map((canon, i) => ({
-        canon,
-        short: `r${i + 1}`,
-        ownerKind: canon.startsWith("@nks/") ? "organization" : "user",
-      }));
-    if (probe.due !== undefined || "body" in probe || probe.refusal) {
-      const body =
-        "body" in probe
-          ? probe.body
-          : {
-              person: { handle: "tester" },
-              realm: null,
-              wizard_due: probe.due,
-              complete: false,
-              realms:
-                probe.due === false
-                  ? [
-                      {
-                        ref: "@tester/work",
-                        owned: true,
-                        member_role: "admin",
-                        karta_linked: false,
-                        ready: false,
-                      },
-                    ]
-                  : [],
-            };
-      fake.state.readinessResult = probe.refusal
-        ? { isError: true, content: [{ type: "text", text: "unsupported action" }] }
-        : {
-            ...(!probe.textOnly ? { structuredContent: body } : {}),
-            content: [
-              { type: "text", text: JSON.stringify(probe.conflict ? { wizard_due: true } : body) },
-            ],
-          };
+    if (probe.git === "dir") mkdirSync(join(repo, ".git"));
+    if (probe.git === "file")
+      writeFileSync(join(repo, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
+    const agents = [
+      probe.cover ? "---\n'Граф': '@tester/work (r1)'\n---\n" : "",
+      "# repo\n",
+      probe.stamp ? "*(iskronify: контракт 27, штамп 2026-10-16 — …)*\n" : "",
+    ].join("");
+    if (probe.agents !== undefined) writeFileSync(join(repo, "AGENTS.md"), probe.agents);
+    else if (probe.cover || probe.stamp) writeFileSync(join(repo, "AGENTS.md"), agents);
+    if (probe.hook === "settings" || probe.hook === "foreign") {
+      mkdirSync(join(repo, ".claude"));
+      const command = probe.hook === "foreign" ? "echo hi" : "echo 'read the iskron door Start'";
+      writeFileSync(
+        join(repo, ".claude", "settings.json"),
+        JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } }),
+      );
     }
-    if (probe.unreadable || probe.listText)
-      fake.state.realmResult = {
-        content: [{ type: "text", text: probe.listText ?? "unreadable" }],
-      };
-    if (probe.slow) fake.state.readinessDelayMs = 1000;
-    if (probe.cold) fake.state.mcpHangMs = 1000;
-    if (probe.listSlow) fake.state.realmDelayMs = 1000;
-    if (probe.listFields)
-      fake.state.realmResult = {
-        structuredContent: probe.listFields,
-        content: [{ type: "text", text: "Доступные графы (0) — пусто" }],
-      };
-    if (probe.listError)
-      fake.state.realmResult = {
-        isError: true,
-        content: [{ type: "text", text: "Доступные графы (0) — пусто" }],
-      };
+    if (probe.hook === "rituals") {
+      mkdirSync(join(repo, ".opencode", "plugins"), { recursive: true });
+      writeFileSync(
+        join(repo, ".opencode", "plugins", "iskron-rituals.js"),
+        "export default {};\n",
+      );
+    }
+    const cwd = probe.sub ? join(repo, "a", "b") : repo;
+    if (probe.sub) mkdirSync(cwd, { recursive: true });
     const priorAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
     const priorDaemon = process.env.ISKRON_BRIDGE_DAEMON;
     const rec = await plugin(
@@ -9476,7 +9434,6 @@ for (const probe of [
         ISKRON_BRIDGE_NO_BROWSER: "1",
         ISKRON_BRIDGE_AUTH_DIR: auth,
         ISKRON_BRIDGE_DAEMON: "0",
-        ISKRON_ONBOARD_START_MS: probe.slow || probe.listSlow || probe.cold ? "150" : "4000",
         ISKRON_BRIDGE_LANG: probe.lang ?? "ru",
       },
       {
@@ -9491,42 +9448,28 @@ for (const probe of [
       },
     );
     try {
-      if (!probe.cold)
-        await until(() => rec.tools().has("iskron_stand"), "onboarding bridge ready", 15000);
       const before = Date.now();
       const text = await rec.prompt("onboard", "hello");
       const elapsed = Date.now() - before;
       assert.equal(text.includes("onboarding"), !!probe.word, text);
-      if (probe.word)
-        assert.equal(
-          text,
-          `hello\n${probe.lang === "en" ? "You have no working graph — start with the onboarding skill." : "у тебя нет рабочего графа — начни со скилла onboarding (ветвь iskronify «Первый граф»)"}`,
-        );
+      const line =
+        probe.lang === "en"
+          ? "This repository is not yet aligned for the agent — start with the onboarding skill."
+          : "Этот репозиторий ещё не выровнен под агента — начни со скилла onboarding (ветвь iskronify «Первый граф»).";
+      // A broken cover file also gets the seating's reason line before the invitation.
+      if (probe.word && probe.agents === undefined) assert.equal(text, `hello\n${line}`);
+      if (probe.word) assert.ok(text.endsWith(`\n${line}`) && text.split(line).length === 2, text);
+      assert.ok(elapsed < 1000, `local signs only: ${elapsed}ms`);
       assert.equal(await rec.prompt("onboard", "again"), "again", "second prompt is silent");
-      if (probe.slow || probe.listSlow || probe.cold)
-        assert.ok(elapsed < 650, `deadline: ${elapsed}ms`);
       const calls = fake.state.calls.filter((c) => ["iskron_me", "iskron_realm"].includes(c.name));
-      if (probe.cover || probe.child || probe.gone)
-        assert.equal(calls.length, 0, JSON.stringify(calls));
-      if (
-        typeof probe.due === "boolean" &&
-        !probe.cover &&
-        !probe.child &&
-        !probe.gone &&
-        !probe.slow
-      )
-        assert.deepEqual(
-          calls.map((c) => c.arguments.action),
-          ["readiness"],
-          "authoritative readiness needs no list",
-        );
+      assert.equal(calls.length, 0, JSON.stringify(calls));
       assert.equal(fake.state.counts.connect, 0, "no standing");
       assert.equal(fake.state.counts.register_standing, 0, "no registration");
       assert.equal(fake.state.writes.length, 0, "no graph writes");
     } finally {
       await rec.stop();
       await fake.stop();
-      rmSync(cwd, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
       rmSync(auth, { recursive: true, force: true });
       if (priorAuth === undefined) delete process.env.ISKRON_BRIDGE_AUTH_DIR;
       else process.env.ISKRON_BRIDGE_AUTH_DIR = priorAuth;

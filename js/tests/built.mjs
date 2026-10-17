@@ -13,6 +13,7 @@ export const BUILT_CHANNEL = process.env.ISKRON_BUILT_DIR ? "release" : "dev";
 export const BUILT_BRIDGE = join(BUILT, "skills", "establish-mcp", "scripts", "iskron.mjs");
 export const BUILT_PLUGIN = join(BUILT, "skills", "establish-mcp", "scripts", "opencode-plugin.js");
 export const BUILT_EXTENSION = join(BUILT, "extensions", "iskron.js");
+export const BUILT_ONBOARD_HOOK = join(BUILT, "hooks", "onboard.mjs");
 export const BUILT_TEMPLATE = join(
   BUILT,
   "skills",
