@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.15.0](https://github.com/iskron-ai/skills/compare/v7.14.0...v7.15.0) (2026-10-17)
+
+
+### Features
+
+* онбординг по признакам самого репозитория — обложка, хук старта, штамп ([#507](https://github.com/iskron-ai/skills/issues/507)) ([fa19949](https://github.com/iskron-ai/skills/commit/fa19949d469387a2ccd8cefb058deeb7e008f285))
+* строка дела — рапорт о движении, ответ делом на перегрузку дела ([#504](https://github.com/iskron-ai/skills/issues/504)) ([d8213d2](https://github.com/iskron-ai/skills/commit/d8213d2433b9675d69f90ab970c574e5114897d0))
+
+
+### Bug Fixes
+
+* **bridge:** род записи дела retract — «ответ [N] отозван», после принятия ([#505](https://github.com/iskron-ai/skills/issues/505)) ([bcb99fe](https://github.com/iskron-ai/skills/commit/bcb99fe4a701e6efe3965771a42c6d886f21147a))
+
 ## [7.14.0](https://github.com/iskron-ai/skills/compare/v7.13.0...v7.14.0) (2026-10-17)
 
 
