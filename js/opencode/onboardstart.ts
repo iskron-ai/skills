@@ -27,7 +27,7 @@ export function createOnboardStart(
         const info = (raw?.data ?? raw) as typeof raw;
         if (!info?.id || info.parentID || !info.location?.directory) return null;
         seen.add(session);
-        const invite = repoSigns(info.location.directory).verdict === "invite";
+        const invite = repoSigns(info.location.directory, "opencode").verdict === "invite";
         return invite && !halted(session) ? words(ONBOARD_START).start() : null;
       } catch {
         return null;

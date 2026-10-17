@@ -60,7 +60,7 @@
 - `words/usage.ts` — почему расход не лёг в attrs места (`USAGE`).
 - `patterns/mine.ts` — проза сервера в ответе `iskron_case` mine (`MINE_ROW` — строка дела, `MINE_NONE` — дел нет), по ней плагин OpenCode решает, последнее ли дело покинул ведущий субагент; наблюдена только русская форма.
 - `patterns/cover.ts` — обложка проекта для автопосадки корня (`COVER`): файл и ключи слотов графа и роли агента, как их пишет iskronify, и кавычки имени в ссылке роли (`roleQuotes`: открывающая и закрывающая, у соседней поставки могут совпадать).
-- `patterns/reposigns.ts` — признаки выравнивания репозитория (`REPO_SIGNS`), кроме обложки: файл настроек Claude Code и метка двери в команде `SessionStart`, плагин ритуалов OpenCode, форма штампа iskronify — как их пишет iskronify.
+- `patterns/reposigns.ts` — признаки выравнивания репозитория (`REPO_SIGNS`), кроме обложки: файл настроек Claude Code и метка «Старт» двери в команде `SessionStart` (не имя продукта), плагин ритуалов OpenCode, форма штампа iskronify — как их пишет iskronify.
 - `patterns/launch.ts` — строка запуска с делом (`LAUNCH_LINE`), русская и английская форма при любом языке сессии; первое слово строки — своё у поставки (`LAUNCH_WORD`).
 - `words/appserver.ts` — слова двери в тред Codex (`APPSERVER`).
 - `words/bridge-client.ts` — отказы клиента MCP к дочернему мосту и пустой ответ (`BRIDGE_CLIENT`).

@@ -21,7 +21,7 @@ function sessionDir(): string {
 }
 
 try {
-  if (repoSigns(sessionDir()).verdict === "invite")
+  if (repoSigns(sessionDir(), "claude-code").verdict === "invite")
     process.stdout.write(`${words(ONBOARD_START).start()}\n`);
 } catch {
   /* a hook never fails the session's start */
