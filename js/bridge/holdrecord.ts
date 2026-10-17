@@ -114,7 +114,8 @@ export function writeHoldRecord(
   paused = false,
   at = Date.now(),
 ): void {
-  // A satellite's place lives for the run (satellite.ts); only a plugin-reload pause restores it from disk (suspend.ts).
+  // A satellite's place lives for the run (satellite.ts); only a plugin-reload pause restores it from disk
+  // (suspend.ts): `paused` — the pause, the return after it and the held seat's refresh (holdkeep.ts).
   if (CFG.satellite && !paused) return;
   try {
     const was = onDisk(key);

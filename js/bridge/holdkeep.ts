@@ -1,6 +1,12 @@
 // Hold record when a session leaves an unreleased seat (graph @nks/nks-dev, nodes #5067, #6649).
 import { harnessName } from "./client.ts";
-import { readHoldRecord, sessionOfBridge, writeHoldRecord } from "./holdrecord.ts";
+import { CFG } from "./config.ts";
+import {
+  HOLD_RECORD_MAX_AGE_MS,
+  readHoldRecord,
+  sessionOfBridge,
+  writeHoldRecord,
+} from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { extraPlaces, rememberExtraStatus } from "./places.ts";
 import { state } from "./transport.ts";
@@ -50,10 +56,26 @@ export function keepHoldRecord(): void {
  * take as its own (graph @nks/nks-dev, node #6702).
  */
 export function signHeldRecord(): void {
+  refreshHeldRecord();
   const key = H.currentKey;
   if (!key || !H.holder?.alive || !sessionOfBridge()) return;
   for (const k of [key, ...extraPlaces().map((p) => p.door.key)]) {
     const rec = readHoldRecord(k); // seats beside in other graphs share the channel and its url
     if (rec && !rec.session && rec.url === H.currentUrl) writeHoldRecord(k, rec);
   }
+}
+
+/**
+ * The record of the seat this bridge holds now, past half its term, is rewritten with a fresh
+ * `at`: counted from the take (or a satellite's pause), it would expire under the live seat and
+ * the next reader would erase it (case №954). Only the held seat's own record (same address);
+ * others' and unheld records age as before.
+ */
+function refreshHeldRecord(): void {
+  const key = H.currentKey;
+  if (!key || !H.holder?.alive || !H.currentUrl) return;
+  const rec = readHoldRecord(key, true);
+  if (!rec || rec.left || rec.url !== H.currentUrl) return;
+  if (typeof rec.at === "number" && Date.now() - rec.at < HOLD_RECORD_MAX_AGE_MS / 2) return;
+  writeHoldRecord(key, rec, CFG.satellite);
 }

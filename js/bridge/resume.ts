@@ -53,6 +53,19 @@ import { type JsonRpcMessage } from "./types.ts";
 
 /** A return found no record of the named seat (expired): the next stand says so (#6649). */
 const RJ = scoped(() => ({ lapsed: false }));
+/** Stale-key refusals already said into the session (case №954): once per word, not per retry. */
+const SK = scoped(() => new Set<string>());
+
+/** A return that took nothing while a keyed seat was refused as stale: the word goes to the session, once. */
+function sayStale(stale: string[], word: string): void {
+  if (!stale.length || stale.every((w) => SK.has(w))) return;
+  for (const w of stale) SK.add(w);
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text: word } },
+  });
+}
 export function takeLapsed(): boolean {
   const was = RJ.lapsed;
   RJ.lapsed = false;
@@ -219,10 +232,12 @@ export async function resumeBy(
   register = true,
   takeOwn = false,
 ): Promise<ResumeOutcome> {
-  const { own: recs, sameDir, legacy: legacyRecs, left, neighbour } = recordsFor(sel);
+  const { own: recs, sameDir, legacy: legacyRecs, left, neighbour, stale } = recordsFor(sel);
+  // A keyed seat older than the session's other record is said aloud, whatever comes of the return.
+  for (const w of stale) log(`resume: ${w}`);
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
-    const said = [resumeWords.noRecord(sel.key, sel.cwd)];
+    const said = [...stale, resumeWords.noRecord(sel.key, sel.cwd)];
     if (neighbour.length) said.push(resumeWords.neighbourKey(neighbour.join(", ")));
     else if (sel.key) {
       // A named key with no record: it expired (#6649).
@@ -233,6 +248,7 @@ export async function resumeBy(
     if (foreign.length) said.push(resumeWords.foreignDir(foreign.join(", ")));
     if (left.length) said.push(resumeWords.left(left.join(", ")));
     if (legacy.length) said.push(legacyWord(legacy));
+    sayStale(stale, said.join(" — "));
     return {
       resumed: false,
       word: said.join(" — "),
@@ -309,6 +325,7 @@ export async function resumeBy(
     if (others.length) lines.push(resumeWords.othersInDir(others.join(", ")));
     // Not proven own — leave, not revoke: the platform refuses to revoke the seat that founded the channel.
     if (!proven) lines.push(resumeWords.notYours());
+    lines.push(...stale);
     return {
       resumed: true,
       key,
@@ -318,9 +335,11 @@ export async function resumeBy(
       own: proven,
     };
   }
+  const nothing = resumeWords.nothingToReturn([...stale, ...skipped].join("; "));
+  sayStale(stale, nothing);
   return {
     resumed: false,
-    word: resumeWords.nothingToReturn(skipped.join("; ")),
+    word: nothing,
     ...(elsewhere.length ? { elsewhere } : {}),
   };
 }

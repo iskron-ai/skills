@@ -8,6 +8,7 @@ import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { ledKey } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { resumeWords } from "./resumewords.ts";
 
 export interface ResumeSelector {
   /** Standing key — preferred: the exact record. */
@@ -33,9 +34,11 @@ export function recordsFor(sel: ResumeSelector): {
   legacy: HoldRecord[];
   left: string[];
   neighbour: string[];
+  stale: string[];
 } {
   const dir = standingsDirOf(CFG.authDir);
-  if (!existsSync(dir)) return { own: [], sameDir: [], legacy: [], left: [], neighbour: [] };
+  if (!existsSync(dir))
+    return { own: [], sameDir: [], legacy: [], left: [], neighbour: [], stale: [] };
   const mine = harnessName();
   const led = ledKey();
   const byKey: HoldRecord[] = [];
@@ -74,11 +77,29 @@ export function recordsFor(sel: ResumeSelector): {
       /* foreign or broken file */
     }
   }
+  // A satellite is one seat per session in a role and graph: a keyed record older than another
+  // record of the same session there is a former era's seat (a stale loss marker, a gone twin
+  // server) — not taken; the fresher one is returned instead (case №954).
+  const stale: string[] = [];
+  const keyed = CFG.satellite
+    ? byKey.filter((k) => {
+        const fresher = byCwd.find(
+          (r) =>
+            r.realm === k.realm &&
+            String(r.karta) === String(k.karta) &&
+            r.name !== k.name &&
+            (r.at ?? 0) > (k.at ?? 0),
+        );
+        if (fresher) stale.push(resumeWords.staleKey(k.name, fresher.name));
+        return !fresher;
+      })
+    : byKey;
   return {
-    own: [...byKey, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))],
+    own: [...keyed, ...byCwd.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))],
     sameDir,
     legacy,
     left,
     neighbour,
+    stale,
   };
 }
