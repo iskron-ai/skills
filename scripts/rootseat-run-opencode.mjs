@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Real OpenCode serve, built plugin + bridges, loopback MCP and scripted provider only.
 // No imported credentials, no model stand: observe the seat at the first HTTP model request.
-// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge] [--onboarding] [--known-false] [--realms-mind] [--realms-unsupported]
+// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge] [--onboarding[=fresh|partial|outside]]
 // ISKRON_ROOT_SEAT=0 runs the same first prompt with automatic seating disabled.
+// --onboarding: no cover; the project is a fresh git repository (fresh, the default), one with
+// only an alignment sign — a Claude Code start hook (partial), or no repository (outside).
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,7 +19,6 @@ import { createHalts } from "../js/opencode/halts.ts";
 import { startFakeNks } from "../js/tests/fake-nks.mjs";
 import { PAT } from "../js/tests/ownseat-kit.mjs";
 import { COVER, GRAPH_KEY, heardSeats, heldBy, writeAgents } from "../js/tests/rootseat-kit.mjs";
-import { liveListVariant } from "../js/tests/realm-list-live.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -30,24 +31,14 @@ const keep = process.argv.includes("--keep");
 const enabled = process.env.ISKRON_ROOT_SEAT !== "0";
 const halted = process.argv.includes("--halted");
 const legacy = process.argv.includes("--legacy-bridge"); // Pair with ISKRON_BRIDGE_PATH of a build without the flag.
-const dataList = process.argv.includes("--realms-mind") || process.argv.includes("--realms-unsupported");
-const noRealmFields = process.argv.includes("--realms-unsupported");
-const knownFalse = process.argv.includes("--known-false") || noRealmFields;
-const onboarding = process.argv.includes("--onboarding") || knownFalse || dataList; // No cover, same real serve path.
+const repoArg = process.argv.find((a) => a === "--onboarding" || a.startsWith("--onboarding="));
+const repo = repoArg ? repoArg.split("=")[1] || "fresh" : null; // No cover, same real serve path.
+assert.ok(repo === null || ["fresh", "partial", "outside"].includes(repo), `--onboarding=${repo}`);
+const onboarding = repo !== null;
+const invites = repo === "fresh" && !halted;
 const seats = enabled && !halted && !onboarding;
 const fake = await startFakeNks({ pat: PAT });
 await fake.control({ richTools: true, structured: true, connect_delay_ms: 700 });
-if (onboarding) {
-  fake.state.realms = [];
-  fake.state.readinessResult = { structuredContent: { wizard_due: !knownFalse, realms: knownFalse ? [{ ref: "@tester/work" }] : [] }, content: [{ type: "text", text: "readiness" }] };
-}
-if (dataList) {
-  fake.state.readinessResult = { isError: true, content: [{ type: "text", text: 'неизвестный action "readiness"' }] };
-  fake.state.realmResult = {
-    content: [{ type: "text", text: liveListVariant(noRealmFields ? "personal" : "work") }],
-    ...(!noRealmFields ? { structuredContent: { action: "list", realms: [{ ref: "@ivan/mind", short: "r204", owner: "ivan", owner_kind: "user" }] } } : {}),
-  };
-}
 const wire = [];
 const llm = createServer(async (req, res) => {
   try {
@@ -69,6 +60,12 @@ const llm = createServer(async (req, res) => {
 await new Promise((r) => llm.listen(0, "127.0.0.1", r));
 for (const dir of [cwd, auth, join(config, "plugins"), join(home, "tmp")]) mkdirSync(dir, { recursive: true });
 if (!onboarding) writeAgents(cwd, process.argv.includes("--short-realm") ? { ...COVER, [GRAPH_KEY]: "r5" } : COVER);
+if (repo === "fresh" || repo === "partial") await exec("git", ["init", "-q", cwd]);
+if (repo === "partial") {
+  mkdirSync(join(cwd, ".claude"));
+  const command = "echo 'read the iskron door Start section first'";
+  writeFileSync(join(cwd, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } }));
+}
 copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, join(config, "plugins/iskron.js"));
 writeFileSync(join(config, "opencode.json"), JSON.stringify({
   model: "scripted/probe", snapshots: false, update: "disable",
@@ -151,35 +148,29 @@ try {
     assert.ok(stop?.id && !stop.lifted, "the disk stop is not lifted (read disk, not the driver's registry)");
   }
   const userText = JSON.stringify(first.body.messages.filter((m) => m.role === "user"));
-  if (onboarding && !halted && !knownFalse) {
-    assert.ok(userText.includes(ONBOARD_START.ru.start()), "the first real provider request contains onboarding");
-    assert.equal(userText.split(ONBOARD_START.ru.start()).length - 1, 1, "one invitation");
+  const invitation = ONBOARD_START.ru.start();
+  if (invites) {
+    assert.ok(userText.includes(invitation), "the first real provider request contains onboarding");
+    assert.equal(userText.split(invitation).length - 1, 1, "one invitation");
     assert.ok(!userText.includes(ROOT_SEAT.ru.notSeated("")), "no seating refusal without cover");
-    assert.equal(fake.state.calls.filter((c) => c.name === "iskron_me" && c.arguments.action === "readiness").length, 1);
     assert.equal(fake.state.counts.register_standing, 0, "onboarding does not register a seat");
-  } else assert.ok(!userText.includes(ONBOARD_START.ru.start()), "cover or owner stop excludes onboarding");
-  let secondRoot = null;
-  if (knownFalse) {
-    const calls = () => fake.state.calls.filter((c) => c.name === "iskron_me" && c.arguments.action === "readiness").length;
-    assert.equal(calls(), 1, "first root observes known false");
-    const toolCalls = fake.state.calls.length;
-    const bridges = fake.state.initSids.length;
-    fake.state.readinessDelayMs = 2000;
-    fake.state.realmDelayMs = 2000;
-    const second = await api("POST", "/api/session", { title: "Cached false second root", location: { directory: cwd }, model: { providerID: "scripted", id: "probe" } });
-    const started = Date.now();
-    await api("POST", `/api/session/${second.id}/prompt`, { text: "ONBOARD_SECOND_ROOT_PROBE: reply OK only.", resume: true });
-    for (let i = 0; i < 60 && !wire.some((w) => w.body.tools?.length && JSON.stringify(w.body.messages).includes("ONBOARD_SECOND_ROOT_PROBE")); i++) await sleep(50);
-    assert.ok(wire.some((w) => w.body.tools?.length && JSON.stringify(w.body.messages).includes("ONBOARD_SECOND_ROOT_PROBE")), "second primary request observed");
-    assert.ok(Date.now() - started < 1500, "second root does not wait for readiness's 2s delay");
-    assert.equal(calls(), 1, "no tool call for second root");
-    assert.equal(fake.state.calls.length, toolCalls, "no fallback or other tool call for second root");
-    assert.equal(fake.state.initSids.length, bridges, "no new root bridge");
-    secondRoot = { session: second.id, readinessCalls: calls() - 1, toolCalls: fake.state.calls.length - toolCalls, newBridges: fake.state.initSids.length - bridges };
+  } else assert.ok(!userText.includes(invitation), "cover, a sign, no repository or owner stop excludes onboarding");
+  if (onboarding)
+    assert.equal(fake.state.calls.filter((c) => ["iskron_me", "iskron_realm"].includes(c.name)).length, 0, "the signs are local");
+  let secondPrompt = null;
+  if (onboarding) {
+    // The same root's second prompt carries no second invitation.
+    await api("POST", `/api/session/${session.id}/prompt`, { text: "ONBOARD_SECOND_PROMPT_PROBE: reply OK only.", resume: true });
+    const later = () => wire.find((w) => w.body.tools?.length && JSON.stringify(w.body.messages).includes("ONBOARD_SECOND_PROMPT_PROBE"));
+    for (let i = 0; i < 120 && !later(); i++) await sleep(250);
+    assert.ok(later(), "second primary request observed");
+    const said = JSON.stringify(later().body.messages.filter((m) => m.role === "user")).split(invitation).length - 1;
+    assert.equal(said, invites ? 1 : 0, "the history keeps the first invitation, the second prompt adds none");
+    secondPrompt = { invitations: said };
   }
   assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");
   const { stdout: version } = await exec(opencode, ["--version"], { env });
-  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: dataList ? noRealmFields ? "realms-unsupported" : "realms-mind" : knownFalse ? "known-false" : onboarding ? halted ? "onboarding-halted" : "onboarding" : halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, secondRoot, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP with nks-mcp #466 data contract; no production server, no scripted tool call" }, null, 2));
+  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: onboarding ? `onboarding-${repo}${halted ? "-halted" : ""}` : halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", invited: onboarding ? invites : undefined, seat: first.seats[0] ?? null, session: session.id, secondPrompt, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP and scripted provider; no production server, no scripted tool call" }, null, 2));
 } catch (e) {
   console.error(e);
   try { console.error(readFileSync(join(run, "serve.log"), "utf8").slice(-12000)); } catch {}

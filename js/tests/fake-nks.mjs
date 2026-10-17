@@ -166,8 +166,6 @@ export async function startFakeNks(opts = {}) {
     mcpDropAction: null, // …only those of this "<tool>:<action>"
     listDelayMs: 0,
     realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
-    readinessResult: null, // Future iskron_me readiness MCP result (#932); null = unsupported.
-    readinessDelayMs: 0,
     realmResult: null, // Override the list result to probe unreadable/structured answers.
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
@@ -1785,26 +1783,6 @@ export async function startFakeNks(opts = {}) {
           res,
           200,
           { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
-          extra,
-        );
-      }
-      // Future readiness contract (#932): wizard_due is true iff working realms is empty.
-      if (
-        msg.method === "tools/call" &&
-        msg.params?.name === "iskron_me" &&
-        msg.params.arguments?.action === "readiness"
-      ) {
-        if (st.readinessDelayMs) await new Promise((r) => setTimeout(r, st.readinessDelayMs));
-        return json(
-          res,
-          200,
-          {
-            jsonrpc: "2.0",
-            id: msg.id,
-            ...(st.readinessResult === null
-              ? { error: { code: -32602, message: 'неизвестный action "readiness"' } }
-              : { result: st.readinessResult }),
-          },
           extra,
         );
       }

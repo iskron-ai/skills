@@ -1,13 +1,13 @@
 // Startup composition through the built plugin, real bridges and fake-nks; no paid model.
 import assert from "node:assert/strict";
-import { readFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { GLOBAL_PREFIX, ONBOARD_START, ROOT_SEAT } from "../delivery/index.ts";
 import { createHalts } from "../opencode/halts.ts";
 import { REPO } from "./built.mjs";
-import { setup, until } from "./ownseat-kit.mjs";
+import { setup } from "./ownseat-kit.mjs";
 import { rootPlugin, writeAgents } from "./rootseat-kit.mjs";
 
 const invitation = ONBOARD_START.ru.start();
@@ -18,22 +18,14 @@ const resetStops = () => {
     delete globalThis[`${GLOBAL_PREFIX}${key}`];
 };
 
-for (const mode of ["cover", "no-cover", "halted", "halt-during-read"]) {
+for (const mode of ["cover", "fresh-repo", "outside", "halted"]) {
   test(`startup composition: ${mode}`, async (t) => {
     resetStops();
     const s = await setup(t);
     const project = realpathSync(s.cwd);
+    if (mode !== "outside") mkdirSync(join(project, ".git"));
     if (mode === "cover") writeAgents(project);
-    else s.fake.state.realms = [];
-    s.fake.state.readinessResult = {
-      structuredContent: { wizard_due: true, realms: [] },
-      content: [{ type: "text", text: "readiness" }],
-    };
-    s.fake.state.readinessDelayMs = mode === "cover" ? 2000 : mode === "halt-during-read" ? 300 : 0;
-    const oc = await rootPlugin(s, project, {
-      ISKRON_ROOT_SEAT_MS: "3000",
-      ISKRON_ONBOARD_START_MS: "2500",
-    });
+    const oc = await rootPlugin(s, project, { ISKRON_ROOT_SEAT_MS: "3000" });
     const sid = `onboard-${mode}`;
     const halts = createHalts(
       () => undefined,
@@ -45,34 +37,20 @@ for (const mode of ["cover", "no-cover", "halted", "halt-during-read"]) {
       oc.create(sid);
       if (mode === "halted") halts.stop(sid, "ONBOARD_OWNER_STOP");
       const started = Date.now();
-      const first = oc.promptOnly(sid, "hello");
-      if (mode === "halt-during-read") {
-        await until(
-          () =>
-            s.fake.state.calls.some(
-              (c) => c.name === "iskron_me" && c.arguments.action === "readiness",
-            ),
-          "readiness pending",
-        );
-        halts.stop(sid, "ONBOARD_OWNER_STOP");
-      }
-      const text = await first;
+      const text = await oc.promptOnly(sid, "hello");
       if (mode === "cover") {
         assert.ok(text.includes(seated), text);
         assert.ok(!text.includes(invitation), text);
-        assert.ok(Date.now() - started < 1500, "cover must not wait for readiness's 2s delay");
-        assert.equal(s.fake.state.calls.filter((c) => c.name === "iskron_me").length, 0);
       } else {
-        assert.equal(text, mode === "no-cover" ? `hello\n${invitation}` : "hello");
-        if (mode === "no-cover")
-          assert.ok(
-            Date.now() - started < 1500,
-            "no cover must not wait for the 3s seating window",
-          );
+        assert.equal(text, mode === "fresh-repo" ? `hello\n${invitation}` : "hello");
+        assert.ok(Date.now() - started < 1500, "no cover must not wait for the 3s seating window");
         assert.equal(s.fake.state.counts.connect, 0, "no seating without cover");
-        if (mode === "halted")
-          assert.equal(s.fake.state.calls.length, 0, "halted root is not probed");
       }
+      assert.equal(
+        s.fake.state.calls.filter((c) => ["iskron_me", "iskron_realm"].includes(c.name)).length,
+        0,
+        "the signs are local: no call to the graph",
+      );
       assert.equal(await oc.promptOnly(sid, "second"), "second");
       assert.equal(s.fake.state.writes.length, 0);
       await sleep(20);
@@ -91,6 +69,8 @@ test("startup words name the shipped skill and iskronify branch", () => {
   const bootstrap = readFileSync(join(REPO, "skills/iskronify/SKILL.md"), "utf8");
   assert.match(skill, /^name: onboarding$/m);
   assert.ok(bootstrap.includes("Ветвь «Первый граф»"));
+  assert.ok(ONBOARD_START.ru.start().includes("«Первый граф»"));
+  assert.ok(!ONBOARD_START.en.start().includes("First graph"), "en names only the skill");
   for (const lang of ["ru", "en"]) {
     assert.equal(typeof ROOT_SEAT[lang].seated, "function");
     assert.equal(typeof ONBOARD_START[lang].start, "function");

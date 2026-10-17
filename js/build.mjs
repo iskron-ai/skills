@@ -25,7 +25,13 @@ const OUTPUTS = [
   "extensions/iskron.js",
   "skills/establish-mcp/scripts/opencode-plugin.js",
   "skills/product-roadmap/references/roadmap-template.html",
+  "hooks/onboard.mjs",
 ];
+/**
+ * Выход, ещё не бывший ни в одном выпуске: до выпуска этой версии (по VERSION закоммиченного
+ * моста) его на закоммиченном месте нет — его впервые пишет джоб выпуска, не ветка.
+ */
+const PENDING = new Map([["hooks/onboard.mjs", [7, 15, 0]]]);
 
 const common = {
   bundle: true,
@@ -97,6 +103,10 @@ async function produce() {
     "skills/product-roadmap/references/roadmap-template.html",
     template.replace(RENDER_MARK, () => render.trimEnd()),
   );
+
+  // Хук SessionStart плагина Claude Code (hooks/hooks.json): приглашение в онбординг по
+  // признакам репозитория — отдельный малый файл, не мост: старт сессии его ждёт.
+  outputs.set("hooks/onboard.mjs", await bundleNode("js/cli/onboard-hook.ts"));
   return outputs;
 }
 
@@ -126,16 +136,22 @@ const versionOf = (text) =>
     .exec(text ?? "")
     ?.slice(1)
     .map(Number);
-const legacyBytes = (v) =>
-  !!v && (v[0] - LAST_UNMARKED[0] || v[1] - LAST_UNMARKED[1] || v[2] - LAST_UNMARKED[2]) <= 0;
+const below = (v, w) => !!v && (v[0] - w[0] || v[1] - w[1] || v[2] - w[2]) < 0;
+const legacyBytes = (v) => !!v && !below(LAST_UNMARKED, v);
 
 if (CHECK) {
   let bad = 0;
   const bridge = existsSync(join(ROOT, BRIDGE)) ? readFileSync(join(ROOT, BRIDGE), "utf8") : null;
   const legacy = legacyBytes(versionOf(bridge));
+  let pending = 0;
   for (const rel of OUTPUTS) {
     const path = join(ROOT, rel);
     const have = existsSync(path) ? readFileSync(path, "utf8") : null;
+    if (have === null && PENDING.has(rel) && below(versionOf(bridge), PENDING.get(rel))) {
+      pending++;
+      console.log(`· ${rel}: впервые выйдет с ${PENDING.get(rel).join(".")} — до выпуска его нет`);
+      continue;
+    }
     const why =
       have === null
         ? "отсутствует"
@@ -154,8 +170,8 @@ if (CHECK) {
   if (bad) process.exit(1);
   process.stdout.write(
     legacy
-      ? `✓ ${OUTPUTS.length} закоммиченных выходов JS — наследие выпуска до меток (мост v${versionOf(bridge).join(".")})\n`
-      : `✓ ${OUTPUTS.length} закоммиченных выходов JS — сборка выпуска, метки dev нет\n`,
+      ? `✓ ${OUTPUTS.length - pending} закоммиченных выходов JS — наследие выпуска до меток (мост v${versionOf(bridge).join(".")})\n`
+      : `✓ ${OUTPUTS.length - pending} закоммиченных выходов JS — сборка выпуска, метки dev нет\n`,
   );
 } else {
   const outputs = await produce();

@@ -1,0 +1,17 @@
+{
+  "description": "Onboarding invitation at session start in a repository not yet aligned for the agent",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/onboard.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
