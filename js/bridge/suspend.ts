@@ -10,7 +10,7 @@ import { callTool as call } from "./call.ts";
 import { seedJoined } from "./caseexit.ts";
 import { CFG } from "./config.ts";
 import { parkStanding, releaseStanding } from "./hold.ts";
-import { HOLD_RECORD_MAX_AGE_MS, readHoldRecord } from "./holdrecord.ts";
+import { HOLD_RECORD_MAX_AGE_MS, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { P, pauseRecord } from "./pauserecord.ts";
 import { placeFields } from "./placefields.ts";
@@ -108,8 +108,15 @@ export async function pauseSettled(): Promise<void> {
     log(`satellite pause: the late re-arm turned the address — the pause record follows it`);
 }
 
-/** A return by key succeeded: the run's cases from the pause record go to this bridge. */
+/**
+ * A return by key succeeded: the run's cases from the pause record go to this bridge, and the
+ * record is rewritten under the live seat — with the pause's `at` it would expire at the end of
+ * the previous pause's window and be erased by the next reader while the seat still listens.
+ */
 export function afterResume(key: string | undefined): void {
   if (!CFG.satellite || !key) return;
-  seedJoined(readHoldRecord(key)?.cases);
+  const rec = readHoldRecord(key);
+  seedJoined(rec?.cases);
+  if (rec && H.currentKey === key && H.currentUrl)
+    writeHoldRecord(key, { ...rec, url: H.currentUrl, statusUrl: H.currentStatusUrl }, true);
 }

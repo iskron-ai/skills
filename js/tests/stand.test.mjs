@@ -3302,6 +3302,48 @@ test("satellite: a pause before the stop keeps the place and its cases; the next
   assert.equal(holdFiles(dir).length, 0, "the hold record goes with the place");
 });
 
+// Live 16-17.10: a satellite paused at 19:51 came back from disk at 01:28, and its hold record
+// kept the pause's `at` — at 19:51 + 6 h a reader (the plugin's watchdog check) erased it from
+// under the live seat. The returned seat's record is rewritten on the return: past the
+// previous pause's window it is still on disk, and the seat still listens.
+test("satellite: a seat returned from disk rewrites its hold record — past the previous pause's window the record lives under the listening seat", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sat-rearm-"));
+  const sat = await satelliteBridge(t, fake, { dir });
+  assert.ok(!(await standAs(sat, SAT_ARGS)).result?.isError, sat.stderr);
+  const paused = (await sat.call("iskron/suspend", {})).result;
+  assert.equal(paused?.suspended, true, `${JSON.stringify(paused)}\n${sat.stderr}`);
+  await sat.stop();
+  // The pause was long ago: its window ends in a few seconds.
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const SIX_H = 6 * 3600_000;
+  const LEFT_MS = 3000;
+  writeFileSync(
+    file,
+    JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), at: Date.now() - SIX_H + LEFT_MS }),
+  );
+  const back = await satelliteBridge(t, fake, { dir });
+  const sel = { key: paused.key, session: "child" };
+  const r = (await back.call("iskron/resume", sel)).result;
+  assert.equal(r?.resumed, true, `${JSON.stringify(r)}\n${back.stderr}`);
+  await new Promise((res) => setTimeout(res, LEFT_MS + 1000));
+  // The watchdog's look: it reads the record, an expired one is erased.
+  const c = (await back.call("iskron/check", sel)).result;
+  assert.equal(c?.holding, true, `the seat still listens: ${JSON.stringify(c)}\n${back.stderr}`);
+  assert.ok(existsSync(file), `the record lives past the previous pause's window:\n${back.stderr}`);
+  const rec = JSON.parse(readFileSync(file, "utf8"));
+  assert.ok(
+    Date.now() - rec.at < SIX_H - LEFT_MS,
+    `the record's term counts from the return: at ${rec.at}`,
+  );
+  assert.equal(
+    rec.url.includes(fake.state.wsToken),
+    true,
+    "the record carries the seat's live address",
+  );
+  await back.stop();
+});
+
 // Places beside in other graphs are the run's too: the socket going leaves them
 // on the board until the channel's term, so each is revoked with the main one.
 test("satellite: at the run's end its places in other graphs are revoked too, not left to the term", async (t) => {
