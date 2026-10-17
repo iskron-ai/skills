@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.12.0";
+var VERSION = "7.13.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -1135,14 +1135,14 @@ function caseHead(frame, withZachin) {
 }
 function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
-  const origin = frame.origin ?? classifyOrigin(frame);
-  if (origin === "platform") return W().whoPlatform();
+  const origin2 = frame.origin ?? classifyOrigin(frame);
+  if (origin2 === "platform") return W().whoPlatform();
   if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return W().whoHuman(opt(" @", p.user)) + place;
+  if (origin2 === "human") return W().whoHuman(opt(" @", p.user)) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
-  return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
+  return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 function textOf(frame) {
   if (roomKind(frame)?.aside) return "";
@@ -1163,7 +1163,7 @@ var markFrame = (text) => `${FRAME_MARK} ${text}`;
 function frameToText(frame, raw) {
   if (!frame) return raw;
   const f = frame;
-  const origin = frame.origin ?? classifyOrigin(frame);
+  const origin2 = frame.origin ?? classifyOrigin(frame);
   const text = textOf(frame);
   const c = caseOf(frame);
   if (c) {
@@ -1173,7 +1173,7 @@ function frameToText(frame, raw) {
     const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
     const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
-    const who = origin === "platform" ? "" : whoOf2(frame, false);
+    const who = origin2 === "platform" ? "" : whoOf2(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
     const withReply = rk?.kind !== "body";
     const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
@@ -1317,6 +1317,15 @@ var extras = scoped(() => /* @__PURE__ */ new Map());
 // js/bridge/spool.ts
 var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
+
+// js/bridge/seatorigin.ts
+import { AsyncLocalStorage as AsyncLocalStorage2 } from "node:async_hooks";
+
+// js/shared/serviceid.ts
+var SERVICE_ID = `${ID_PREFIX}service-`;
+
+// js/bridge/seatorigin.ts
+var origin = new AsyncLocalStorage2();
 
 // js/extension/channel.ts
 var ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3e3;
@@ -1497,7 +1506,6 @@ function bridgeRuntime() {
   if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
-var SERVICE_ID = `${ID_PREFIX}service-`;
 var STOP_GRACE_MS = 5e3;
 var Bridge = class {
   proc = null;
