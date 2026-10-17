@@ -9262,7 +9262,7 @@ for (const probe of [
   { name: "missing readiness falls back to empty list", realms: [], word: true },
   { name: "missing readiness falls back to mind list", realms: ["@tester/mind"], word: true },
   { name: "missing readiness falls back to working list", realms: ["@tester/work"] },
-  { name: "organization mind is not a working graph", realms: ["@nks/mind"], word: true },
+  { name: "organization mind is a working graph", realms: ["@nks/mind"] },
   { name: "readiness refusal falls back", refusal: true, realms: [], word: true },
   { name: "readiness without field falls back", body: { complete: false }, realms: [], word: true },
   { name: "null readiness falls back", body: null, realms: [], word: true },
@@ -9297,7 +9297,11 @@ for (const probe of [
     if (probe.cover)
       writeFileSync(join(cwd, "AGENTS.md"), "---\n'Граф': '@tester/work (r1)'\n---\n");
     if (probe.realms)
-      fake.state.realms = probe.realms.map((canon, i) => ({ canon, short: `r${i + 1}` }));
+      fake.state.realms = probe.realms.map((canon, i) => ({
+        canon,
+        short: `r${i + 1}`,
+        ownerKind: canon.startsWith("@nks/") ? "organization" : "user",
+      }));
     if (probe.due !== undefined || "body" in probe || probe.refusal) {
       const body =
         "body" in probe

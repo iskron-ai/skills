@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real OpenCode serve, built plugin + bridges, loopback MCP and scripted provider only.
 // No imported credentials, no model stand: observe the seat at the first HTTP model request.
-// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge] [--onboarding] [--known-false]
+// node scripts/rootseat-run-opencode.mjs [--keep] [--short-realm] [--halted] [--legacy-bridge] [--onboarding] [--known-false] [--live-list] [--live-list-work]
 // ISKRON_ROOT_SEAT=0 runs the same first prompt with automatic seating disabled.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
@@ -17,6 +17,7 @@ import { createHalts } from "../js/opencode/halts.ts";
 import { startFakeNks } from "../js/tests/fake-nks.mjs";
 import { PAT } from "../js/tests/ownseat-kit.mjs";
 import { COVER, GRAPH_KEY, heardSeats, heldBy, writeAgents } from "../js/tests/rootseat-kit.mjs";
+import { liveListVariant } from "../js/tests/realm-list-live.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -29,14 +30,19 @@ const keep = process.argv.includes("--keep");
 const enabled = process.env.ISKRON_ROOT_SEAT !== "0";
 const halted = process.argv.includes("--halted");
 const legacy = process.argv.includes("--legacy-bridge"); // Pair with ISKRON_BRIDGE_PATH of a build without the flag.
-const knownFalse = process.argv.includes("--known-false");
-const onboarding = process.argv.includes("--onboarding") || knownFalse; // No cover, same real serve path.
+const liveList = process.argv.includes("--live-list") || process.argv.includes("--live-list-work");
+const knownFalse = process.argv.includes("--known-false") || process.argv.includes("--live-list-work");
+const onboarding = process.argv.includes("--onboarding") || knownFalse || liveList; // No cover, same real serve path.
 const seats = enabled && !halted && !onboarding;
 const fake = await startFakeNks({ pat: PAT });
 await fake.control({ richTools: true, structured: true, connect_delay_ms: 700 });
 if (onboarding) {
   fake.state.realms = [];
   fake.state.readinessResult = { structuredContent: { wizard_due: !knownFalse, realms: knownFalse ? [{ ref: "@tester/work" }] : [] }, content: [{ type: "text", text: "readiness" }] };
+}
+if (liveList) {
+  fake.state.readinessResult = { isError: true, content: [{ type: "text", text: 'неизвестный action "readiness"' }] };
+  fake.state.realmResult = { content: [{ type: "text", text: liveListVariant(knownFalse ? "work" : "personal") }] };
 }
 const wire = [];
 const llm = createServer(async (req, res) => {
@@ -152,8 +158,10 @@ try {
   if (knownFalse) {
     const calls = () => fake.state.calls.filter((c) => c.name === "iskron_me" && c.arguments.action === "readiness").length;
     assert.equal(calls(), 1, "first root observes known false");
+    const toolCalls = fake.state.calls.length;
     const bridges = fake.state.initSids.length;
     fake.state.readinessDelayMs = 2000;
+    fake.state.realmDelayMs = 2000;
     const second = await api("POST", "/api/session", { title: "Cached false second root", location: { directory: cwd }, model: { providerID: "scripted", id: "probe" } });
     const started = Date.now();
     await api("POST", `/api/session/${second.id}/prompt`, { text: "ONBOARD_SECOND_ROOT_PROBE: reply OK only.", resume: true });
@@ -161,12 +169,13 @@ try {
     assert.ok(wire.some((w) => w.body.tools?.length && JSON.stringify(w.body.messages).includes("ONBOARD_SECOND_ROOT_PROBE")), "second primary request observed");
     assert.ok(Date.now() - started < 1500, "second root does not wait for readiness's 2s delay");
     assert.equal(calls(), 1, "no tool call for second root");
+    assert.equal(fake.state.calls.length, toolCalls, "no fallback or other tool call for second root");
     assert.equal(fake.state.initSids.length, bridges, "no new root bridge");
-    secondRoot = { session: second.id, readinessCalls: calls() - 1, newBridges: fake.state.initSids.length - bridges };
+    secondRoot = { session: second.id, readinessCalls: calls() - 1, toolCalls: fake.state.calls.length - toolCalls, newBridges: fake.state.initSids.length - bridges };
   }
   assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");
   const { stdout: version } = await exec(opencode, ["--version"], { env });
-  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: knownFalse ? "known-false" : onboarding ? halted ? "onboarding-halted" : "onboarding" : halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, secondRoot, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP; no production server, no scripted tool call" }, null, 2));
+  console.log(JSON.stringify({ verdict: "PASS", version: version.trim(), mode: liveList ? knownFalse ? "live-list-work" : "live-list" : knownFalse ? "known-false" : onboarding ? halted ? "onboarding-halted" : "onboarding" : halted ? "halted" : legacy ? "legacy" : enabled ? "auto" : "disabled", seat: first.seats[0] ?? null, session: session.id, secondRoot, requests: wire.length, paidPosts: 0, bridge: env.ISKRON_BRIDGE_PATH, plugin: process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, wire: join(run, "wire.jsonl"), ceiling: "loopback MCP with the observed list text; no production server, no scripted tool call" }, null, 2));
 } catch (e) {
   console.error(e);
   try { console.error(readFileSync(join(run, "serve.log"), "utf8").slice(-12000)); } catch {}

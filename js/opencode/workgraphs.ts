@@ -1,4 +1,4 @@
-// A known working graph is account-wide evidence, not a new root's task.
+// Account-wide quiet: a known working graph or an answered but unsupported detector.
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -15,9 +15,14 @@ const read = (file: string): string => {
     return "";
   }
 };
-const registry = (): Map<string, number> => {
+export type SilenceReason = "work-graph" | "unsupported";
+type Mark = { at: number; reason: SilenceReason };
+const registry = (): Map<string, Mark | number> => {
   const root = globalThis as typeof globalThis & Record<string, unknown>;
-  return (root[`${GLOBAL_PREFIX}WorkGraphs`] ??= new Map<string, number>()) as Map<string, number>;
+  return (root[`${GLOBAL_PREFIX}WorkGraphs`] ??= new Map<string, Mark | number>()) as Map<
+    string,
+    Mark | number
+  >;
 };
 
 /** Server + grant directory + credential fingerprint. A changed grant is a safe cache miss. */
@@ -53,40 +58,40 @@ function address(): { file: string; account: string; key: string } | null {
 const fresh = (at: unknown): at is number =>
   typeof at === "number" && at <= Date.now() && Date.now() - at < TTL_MS;
 
-export function knownWorkGraph(): boolean {
+export function knownStartupSilence(): boolean {
   const a = address();
   if (!a) return false;
-  if (fresh(registry().get(a.key))) return true;
+  const memory = registry().get(a.key);
+  if (fresh(typeof memory === "number" ? memory : memory?.at)) return true;
   try {
     const mark = JSON.parse(read(a.file));
-    if (
-      mark.version !== 1 ||
-      mark.account !== a.account ||
-      mark.has_work_graph !== true ||
-      !fresh(mark.at)
-    )
-      return false;
-    registry().set(a.key, mark.at);
+    if (mark.account !== a.account || !fresh(mark.at)) return false;
+    const reason =
+      mark.version === 1 && mark.has_work_graph === true
+        ? "work-graph"
+        : mark.version === 2
+          ? mark.reason
+          : null;
+    if (reason !== "work-graph" && reason !== "unsupported") return false;
+    registry().set(a.key, { at: mark.at, reason });
     return true;
   } catch {
     return false;
   }
 }
 
-/** Only false wizard_due is retained; no token, account name or graph name is written. */
-export function rememberWorkGraph(): void {
+/** True and transport-unknown are never retained; the marker carries no credentials or names. */
+export function rememberStartupSilence(reason: SilenceReason = "work-graph"): void {
   const a = address();
   if (!a) return;
   const at = Date.now();
-  registry().set(a.key, at);
+  registry().set(a.key, { at, reason });
   const tmp = `${a.file}.${process.pid}.${randomUUID()}.tmp`;
   try {
     mkdirSync(authDir(), { recursive: true, mode: 0o700 });
-    writeFileSync(
-      tmp,
-      JSON.stringify({ version: 1, account: a.account, at, has_work_graph: true }),
-      { mode: 0o600 },
-    );
+    writeFileSync(tmp, JSON.stringify({ version: 2, account: a.account, at, reason }), {
+      mode: 0o600,
+    });
     renameSync(tmp, a.file);
   } catch {
     try {

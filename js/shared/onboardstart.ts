@@ -23,7 +23,9 @@ function emptyList(v: ObjectValue): boolean | null {
   // No observed structured realm-list schema exists in the bridge's fixtures/readers.
   if ("structuredContent" in v) return null;
   const refs = completeRealmList(textOf(v));
-  return refs === null ? null : refs.every((r) => r.endsWith("/mind"));
+  return refs === null
+    ? null
+    : refs.every((r) => r.ownerKind === "user" && r.canonical.endsWith("/mind"));
 }
 
 export type OnboardCall = (
@@ -32,7 +34,15 @@ export type OnboardCall = (
   signal: AbortSignal,
 ) => Promise<unknown>;
 
-export async function wizardDue(call: OnboardCall, signal: AbortSignal): Promise<boolean | null> {
+export type WizardDecision = boolean | "unsupported" | null;
+
+/** Bridge-local failures and a not-yet-available tool can be retried; a server refusal is answered. */
+const answeredError = (e: unknown): boolean => {
+  const code = object(e)?.code;
+  return typeof code === "number" && code < 0 && code !== -32001 && code !== -32601;
+};
+
+export async function wizardDue(call: OnboardCall, signal: AbortSignal): Promise<WizardDecision> {
   try {
     const result = object(await call(tool("me"), { action: "readiness" }, signal));
     if (result && !result.isError) {
@@ -45,8 +55,10 @@ export async function wizardDue(call: OnboardCall, signal: AbortSignal): Promise
   signal.throwIfAborted();
   try {
     const result = object(await call(tool("realm"), { action: "list" }, signal));
-    return result && !result.isError ? emptyList(result) : null;
-  } catch {
-    return null;
+    if (!result) return null;
+    const due = !result.isError ? emptyList(result) : null;
+    return due ?? "unsupported";
+  } catch (e) {
+    return answeredError(e) ? "unsupported" : null;
   }
 }

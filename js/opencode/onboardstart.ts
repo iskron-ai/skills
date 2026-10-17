@@ -1,10 +1,10 @@
-// Up to three unknown attempts; known evidence exhausts the session. Each read has one ceiling.
+// Up to three transport-unknown attempts; answered evidence exhausts the session.
 import { envName, ONBOARD_START } from "../delivery/index.ts";
 import { readCover } from "../shared/cover.ts";
 import { words } from "../shared/lang.ts";
 import { type OnboardCall, wizardDue } from "../shared/onboardstart.ts";
 import type { Context } from "./plugin.ts";
-import { knownWorkGraph, rememberWorkGraph } from "./workgraphs.ts";
+import { knownStartupSilence, rememberStartupSilence } from "./workgraphs.ts";
 
 export function createOnboardStart(
   ctx: Context,
@@ -25,7 +25,7 @@ export function createOnboardStart(
     async prompt(session: string): Promise<string | null> {
       if (seen.has(session) || pending.has(session) || child(session) || halted(session))
         return null;
-      if (knownWorkGraph()) {
+      if (knownStartupSilence()) {
         seen.add(session);
         return null;
       }
@@ -62,7 +62,8 @@ export function createOnboardStart(
         controller.signal.throwIfAborted();
         if (due === null) return null;
         seen.add(session);
-        if (due === false) rememberWorkGraph();
+        if (due === false || due === "unsupported")
+          rememberStartupSilence(due === false ? "work-graph" : "unsupported");
         return due === true && !halted(session) ? words(ONBOARD_START).start() : null;
       };
       try {

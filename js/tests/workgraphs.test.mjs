@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { GLOBAL_PREFIX } from "../delivery/index.ts";
-import { knownWorkGraph, rememberWorkGraph } from "../opencode/workgraphs.ts";
+import {
+  knownStartupSilence as knownWorkGraph,
+  rememberStartupSilence as rememberWorkGraph,
+} from "../opencode/workgraphs.ts";
 
 function stage(t) {
   const dir = mkdtempSync(join(tmpdir(), "workgraphs-"));
@@ -66,7 +69,7 @@ test("negative startup cache: expired, future, malformed and incomplete markers 
     { ...mark, at: Date.now() - 16 * 60_000 },
     { ...mark, at: Date.now() + 60_000 },
     { at: Date.now(), has_work_graph: true },
-    { ...mark, has_work_graph: false },
+    { ...mark, reason: "unknown-reason" },
     "broken",
   ]) {
     s.clear();
@@ -92,4 +95,20 @@ test("negative startup cache: OAuth grant changes invalidate; missing credential
   assert.equal(knownWorkGraph(), true);
   writeFileSync(store, JSON.stringify({ tokens: { access_token: "second" } }));
   assert.equal(knownWorkGraph(), false);
+});
+
+test("answered unsupported uses the same bounded disk cache; old known-false markers still read", (t) => {
+  const s = stage(t);
+  rememberWorkGraph("unsupported");
+  const file = s.file();
+  const mark = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(mark.reason, "unsupported");
+  s.clear();
+  assert.equal(knownWorkGraph(), true);
+  writeFileSync(
+    file,
+    JSON.stringify({ version: 1, account: mark.account, at: Date.now(), has_work_graph: true }),
+  );
+  s.clear();
+  assert.equal(knownWorkGraph(), true, "migration of the existing false cache");
 });

@@ -19,6 +19,7 @@ import {
   deviceState,
 } from "./fake-device.mjs";
 import { ordersControl, ordersRoute, ordersState } from "./fake-orders.mjs";
+import { realmListText } from "./realm-list-text.mjs";
 
 // Аргументы, которые объявляет схема каждого тула в снимке поверхности
 // (fixtures/surface.json, `make surface`). Наблюдено у iskron_channel (r5 #6102):
@@ -235,9 +236,12 @@ export async function startFakeNks(opts = {}) {
     seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
-      { short: "r5", canon: "@nks/nks-dev" },
-      { short: "r7", canon: "@nks/drugoy" },
-      { short: "r2", canon: "@nks/methodology" },
+      { short: "r5", canon: "@nks/nks-dev", ownerKind: "organization" },
+      { short: "r7", canon: "@nks/drugoy", ownerKind: "organization" },
+      { short: "r2", canon: "@nks/methodology", ownerKind: "organization" },
+      { short: "r57", canon: "@nks/mind", ownerKind: "organization" },
+      { short: "r204", canon: "@tester/mind", ownerKind: "user" },
+      { short: "r35", canon: "@other/mind", ownerKind: "user" },
     ],
     // Доска: занятые места по ролям (connect кладёт), комнаты — стояния человека,
     // которые тест объявляет через /control {rooms:[{karta,address}]}.
@@ -1796,33 +1800,25 @@ export async function startFakeNks(opts = {}) {
             jsonrpc: "2.0",
             id: msg.id,
             ...(st.readinessResult === null
-              ? { error: { code: -32602, message: "readiness unavailable" } }
+              ? { error: { code: -32602, message: 'неизвестный action "readiness"' } }
               : { result: st.readinessResult }),
           },
           extra,
         );
       }
-      // Список графов учётки — ровно та форма, что отдаёт живой тул iskron_realm(action="list").
+      // Форма живого list из realm-list-live.txt: блоки владельцев и дословный хвост; имена тестовые.
       if (msg.method === "tools/call" && msg.params?.name === "iskron_realm") {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
         // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
         if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
-        const lines = [
-          `Доступные графы (${st.realms.length}) — адресуй их как @owner/slug или rN; обе формы показаны ниже:`,
-          "",
-          "▸ @nks (организация)",
-        ];
-        for (const r of st.realms)
-          lines.push(
-            `    ${r.canon}  ${r.short}  ${r.canon.replace(/^@[^/]+\//, "")} · 2026-09-23`,
-          );
+        const text = realmListText(st.realms);
         return json(
           res,
           200,
           {
             jsonrpc: "2.0",
             id: msg.id,
-            result: st.realmResult ?? { content: [{ type: "text", text: lines.join("\n") }] },
+            result: st.realmResult ?? { content: [{ type: "text", text }] },
           },
           extra,
         );

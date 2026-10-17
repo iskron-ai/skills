@@ -5,19 +5,21 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { GLOBAL_PREFIX, ONBOARD_START, OPENCODE } from "../delivery/index.ts";
-import { setup } from "./ownseat-kit.mjs";
+import { setup, until } from "./ownseat-kit.mjs";
 import { rootPlugin } from "./rootseat-kit.mjs";
 
 const due = (value) => ({ structuredContent: { wizard_due: value }, content: [] });
 const actions = (fake) => fake.state.calls.filter((c) => c.name === "iskron_me").length;
 
-test("review P2-1: unknown can become true on the next prompt, then is exhausted", async (t) => {
+test("review P2-1: transport unknown can become true on the next prompt, then is exhausted", async (t) => {
   const s = await setup(t);
-  s.fake.state.realmResult = { content: [{ type: "text", text: "unknown" }] };
-  const oc = await rootPlugin(s, realpathSync(s.cwd));
+  s.fake.state.readinessDelayMs = 500;
+  const oc = await rootPlugin(s, realpathSync(s.cwd), { ISKRON_ONBOARD_START_MS: "150" });
   try {
     oc.create("retry");
     assert.equal(await oc.promptOnly("retry", "first"), "first");
+    await until(() => oc.tools().has("iskron_stand"), "cold bridge ready");
+    s.fake.state.readinessDelayMs = 0;
     s.fake.state.readinessResult = due(true);
     assert.equal(await oc.promptOnly("retry", "second"), `second\n${ONBOARD_START.ru.start()}`);
     const count = actions(s.fake);
@@ -28,20 +30,15 @@ test("review P2-1: unknown can become true on the next prompt, then is exhausted
   }
 });
 
-test("review P2-1: unknown retry budget is three; known false stops after one", async (t) => {
+test("review P2-1: transport retry budget is three", async (t) => {
   const s = await setup(t);
-  s.fake.state.realmResult = { content: [{ type: "text", text: "unknown" }] };
-  const oc = await rootPlugin(s, realpathSync(s.cwd));
+  s.fake.state.readinessDelayMs = 500;
+  const oc = await rootPlugin(s, realpathSync(s.cwd), { ISKRON_ONBOARD_START_MS: "150" });
   try {
     oc.create("budget");
+    await until(() => oc.tools().has("iskron_stand"), "bridge ready for timeout probes");
     for (let i = 0; i < 5; i++) assert.equal(await oc.promptOnly("budget", "hello"), "hello");
     assert.equal(actions(s.fake), 3);
-    s.fake.state.readinessResult = due(false);
-    oc.create("known");
-    await oc.promptOnly("known", "hello");
-    const count = actions(s.fake);
-    await oc.promptOnly("known", "hello again");
-    assert.equal(actions(s.fake), count);
   } finally {
     await oc.stop();
   }
@@ -56,6 +53,8 @@ test("review P2-2: false skips a new root, then survives a new instance from dis
     oc.create("account-first");
     await oc.promptOnly("account-first", "first");
     assert.equal(actions(s.fake), 1);
+    assert.equal(await oc.promptOnly("account-first", "again"), "again");
+    assert.equal(actions(s.fake), 1, "known false exhausts the session");
     oc.create("account-second");
     const started = Date.now();
     assert.equal(await oc.promptOnly("account-second", "second"), "second");
@@ -97,11 +96,10 @@ for (const [name, result] of [
     try {
       oc.create("list-unknown");
       assert.equal(await oc.promptOnly("list-unknown", "hello"), "hello");
+      const count = actions(s.fake);
       s.fake.state.readinessResult = due(true);
-      assert.equal(
-        await oc.promptOnly("list-unknown", "retry"),
-        `retry\n${ONBOARD_START.ru.start()}`,
-      );
+      assert.equal(await oc.promptOnly("list-unknown", "retry"), "retry");
+      assert.equal(actions(s.fake), count, "answered unsupported schema is exhausted");
     } finally {
       await oc.stop();
     }
