@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.16.2](https://github.com/iskron-ai/skills/compare/v7.16.1...v7.16.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **skills:** вычитка W4 — противоречия, ссылки и поверхность по холодному чтению ([#516](https://github.com/iskron-ai/skills/issues/516)) ([0656b5c](https://github.com/iskron-ai/skills/commit/0656b5c683cd0c9d926aa2a9cfb9a69bcbd2c1d3))
+
 ## [7.16.1](https://github.com/iskron-ai/skills/compare/v7.16.0...v7.16.1) (2026-10-18)
 
 
