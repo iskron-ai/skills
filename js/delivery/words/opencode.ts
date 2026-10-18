@@ -43,6 +43,10 @@ export interface OpencodeWords {
   tact: () => string;
   tactWaits: () => string;
   tactWaitsFolded: () => string;
+  /** The life check's label in the log (channel.ts). */
+  lifeCheck: () => string;
+  /** The line under the platform's life check text: how to answer it (case #1046). */
+  lifeCheckReply: () => string;
   /** text — начало кадра. */
   childGone: (frame: string, id: string, text: string) => string;
   /** text — начало кадра. */
@@ -109,6 +113,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     tact: () => "такт внимания",
     tactWaits: () => "Искрон: такт внимания ждёт конца хода сессии",
     tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
+    lifeCheck: () => "побудка о живости",
+    lifeCheckReply: () =>
+      "Ответь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
     childGone: (frame, id, text) =>
       `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; ` +
       `запись дела остаётся в деле (iskron_case history), прямое слово корню не дошло; место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
@@ -185,6 +192,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     tactWaits: () => "Iskron: the attention tact waits for the end of the session's turn",
     tactWaitsFolded: () =>
       "Iskron: the attention tact waits for the end of the session's turn — the previous waiting one is folded",
+    lifeCheck: () => "life check",
+    lifeCheckReply: () =>
+      "Answer with an action: update your status — iskron_stand(realm, status=<what you are doing>) — or say a word in the case.",
     childGone: (frame, id, text) =>
       `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; ` +
       `a case record stays in the case (iskron_case history), a direct word did not reach the root; the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,
