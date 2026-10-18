@@ -5131,6 +5131,25 @@ test("#7440: standing_ended for the main seat is the same stop as the owner's 40
   assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
 });
 
+// A seat put out for silence (#8121): standing_ended carries reason "silent" and no `by` —
+// the same stop, worded as the platform's, and nothing takes the seat again.
+test("#8121: standing_ended with reason silent stops and names the silence, no reconnect", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const args = { realm: "nks-dev", karta: 931, name: "proba" };
+  assert.ok(
+    !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+  );
+  await until(() => fake.state.ws.size === 1, "the socket");
+  const id = [...fake.state.channels.values()][0].places.values().next().value.standing_id;
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: id, reason: "silent" }),
+  });
+  await until(() => stoppedEv(bridge), "the stop word");
+  assert.match(stoppedEv(bridge).text, /снято \(платформой: после побудки о живости/);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
+});
+
 // Review of #7440: standing_ended for the main seat outran the answer of the session's own
 // revoke or close and was read as the owner's stop — the quiet release became a stopped session.
 for (const action of ["revoke", "close"])
@@ -5395,6 +5414,7 @@ test("#7440: a stop without a reason names the owner or another session; revoked
   for (const [reason, who] of [
     ["", /снято \(владельцем или другой сессией\)/],
     ["revoked:self", /снято \(сессией той же учётки\)/],
+    ["revoked:silent", /снято \(платформой: после побудки о живости не было твоего действия\)/],
   ]) {
     const { fake, bridge } = await ready(t);
     const args = { realm: "nks-dev", karta: 931, name: "proba" };
