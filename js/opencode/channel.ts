@@ -29,7 +29,7 @@ import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
-import { lifeCheckPrompt, rootAbove } from "./lifecheck.ts";
+import { createLifeChecks } from "./lifecheck.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -302,10 +302,11 @@ export function setupChannel(
     return !!frames?.some((f) => fromLauncher(f, launcher));
   };
 
-  /** The life check (lifecheck.ts): queued, alone, to the root — a child's seat warns its root. */
+  /** The life check (lifecheck.ts): queued, alone, to the root — a child's seat is named to it. */
+  const lives = createLifeChecks(parents);
   function lifeCheck(session: string | null, child: boolean, frame: Frame): void {
-    const { text, what } = lifeCheckPrompt(frame);
-    void deliver(child && session ? rootAbove(session, parents) : session, text, what, "queue");
+    const p = lives.prompt(session, child, frame);
+    void deliver(p.session, p.text, p.what, "queue");
   }
 
   function dropPile(key: string): void {
@@ -355,6 +356,7 @@ export function setupChannel(
     },
     gone(session) {
       tacts.gone(session);
+      lives.gone(session);
       halts.gone(session);
       cuts.forget(session);
     },
@@ -458,6 +460,7 @@ export function setupChannel(
           }
           return;
         case "held":
+          if (child && session) lives.held(session, ev.place);
           if (params?.data?.automatic === false) {
             // only an attributed explicit transition lifts the stop
             halts.held(session);

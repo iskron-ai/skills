@@ -4901,6 +4901,21 @@ test("tacts that waited in the ring: the Monitor watchdog prints the last only",
   await wd.done;
 });
 
+// Дело №1046: побудка о живости у сторожа без push — кадр, как прочие кадры платформы,
+// со строкой хода ответа под текстом платформы (общий текст кадра, shared/frame-text.ts).
+test("a life check reaches the Monitor watchdog as a frame: the platform's text and the way to answer", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: lifeFrame("life-wd") });
+  await waitFor(() => wd.out.includes("обнови занятость"), "the way to answer");
+  assert.match(wd.out, /будешь погашен/);
+  assert.match(wd.out, /iskron_stand\(realm, status=<чем занят>\)/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 test("tacts that waited in the ring: the Codex watchdog puts the last only into the thread", async (t) => {
   const { fake, dir, key } = await connected(t);
   await tactsInRing(fake);

@@ -1,6 +1,7 @@
 // Слова плагина OpenCode (граф @nks/nks-dev, узел #6806 п.7): дверь, половина «тулы»,
 // тул состояния моста, команды «/», вложение кадров в сессию.
 import type { Lang } from "../lang.ts";
+import { tool } from "../protocol.ts";
 
 export interface OpencodeWords {
   channelDown: (message: string) => string;
@@ -45,8 +46,11 @@ export interface OpencodeWords {
   tactWaitsFolded: () => string;
   /** The life check's label in the log (channel.ts). */
   lifeCheck: () => string;
-  /** The line under the platform's life check text: how to answer it (case #1046). */
-  lifeCheckReply: () => string;
+  /**
+   * The root's line about a child session's seat the platform warned (case #1046): the child is
+   * not woken. Empty name, role or graph — a placeholder.
+   */
+  lifeCheckChild: (name: string, karta: string, realm: string) => string;
   /** text — начало кадра. */
   childGone: (frame: string, id: string, text: string) => string;
   /** text — начало кадра. */
@@ -114,8 +118,10 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     tactWaits: () => "Искрон: такт внимания ждёт конца хода сессии",
     tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
     lifeCheck: () => "побудка о живости",
-    lifeCheckReply: () =>
-      "Ответь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
+    lifeCheckChild: (name, karta, realm) =>
+      `Искрон: место субагента ${name || "<имя места>"} предупреждено платформой о живости: ` +
+      `работает — ответит своим ходом; кончён — отпусти: ${tool("channel")}(realm="${realm || "<граф>"}", ` +
+      `action="revoke", standing="${name || "<имя места>"}", karta=${karta || "<роль>"}).`,
     childGone: (frame, id, text) =>
       `Искрон: ${frame} на место дочерней сессии ${id}, которой больше нет, — корню не переадресую; ` +
       `запись дела остаётся в деле (iskron_case history), прямое слово корню не дошло; место дочерней сессии — лишнее на канале, где корень стоит дальше: снимать ли его revoke, решай, зная цену (standing) —${text}`,
@@ -193,8 +199,10 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     tactWaitsFolded: () =>
       "Iskron: the attention tact waits for the end of the session's turn — the previous waiting one is folded",
     lifeCheck: () => "life check",
-    lifeCheckReply: () =>
-      "Answer with an action: update your status — iskron_stand(realm, status=<what you are doing>) — or say a word in the case.",
+    lifeCheckChild: (name, karta, realm) =>
+      `Iskron: the subagent's seat ${name || "<seat name>"} was warned by the platform about liveness: ` +
+      `working — it answers with its own move; ended — release it: ${tool("channel")}(realm="${realm || "<graph>"}", ` +
+      `action="revoke", standing="${name || "<seat name>"}", karta=${karta || "<role>"}).`,
     childGone: (frame, id, text) =>
       `Iskron: ${frame} for the seat of child session ${id}, which no longer exists — not readdressing it to the root; ` +
       `a case record stays in the case (iskron_case history), a direct word did not reach the root; the child session's seat is extra on a channel where the root stands on: whether to revoke it, decide knowing the cost (standing) —${text}`,

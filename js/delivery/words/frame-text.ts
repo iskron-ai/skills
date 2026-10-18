@@ -21,6 +21,8 @@ export interface FrameTextWords {
   inFull: (cases: string) => string;
   /** Вызов history одного дела. */
   caseHistory: (args: string, since: number) => string;
+  /** Под текстом побудки о живости (дело №1046): чем на неё ответить. */
+  lifeCheckReply: () => string;
 }
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
@@ -33,6 +35,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () =>
+      `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -43,6 +47,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     supersededLines: (gone) => `, ${gone} superseded lines of a key`,
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () =>
+      `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
   },
 };
 
