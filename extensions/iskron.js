@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.16.2";
+var VERSION = "7.17.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -96,7 +96,8 @@ var FRAME_TEXT = {
     count: (head, n2, mine) => `${head}: записей ${n2}, тебе ${mine}`,
     supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -106,7 +107,8 @@ var FRAME_TEXT = {
     count: (head, n2, mine) => `${head}: ${n2} records, yours ${mine}`,
     supersededLines: (gone) => `, ${gone} superseded lines of a key`,
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`
   }
 };
 var CASE_LINE = {
@@ -951,6 +953,7 @@ function eventIn(frame, has) {
   return keys.some(has);
 }
 var isTact = (frame) => frame?.provenance?.wake === "look_up";
+var isLifeCheck = (frame) => frame?.provenance?.wake === "life_check";
 var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.received_at === "string" ? f.received_at : "").reduce((a, b) => b > a ? b : a, "");
 var onlyTacts = (frames) => !!frames?.length && frames.every(isTact);
 
@@ -1191,6 +1194,7 @@ function frameToText(frame, raw) {
   }
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
+  if (isLifeCheck(frame)) lines.push(T2().lifeCheckReply());
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
