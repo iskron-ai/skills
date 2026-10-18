@@ -104,7 +104,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.16.2";
+var VERSION = "7.17.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -174,7 +174,8 @@ var FRAME_TEXT = {
     count: (head, n, mine) => `${head}: записей ${n}, тебе ${mine}`,
     supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -184,7 +185,8 @@ var FRAME_TEXT = {
     count: (head, n, mine) => `${head}: ${n} records, yours ${mine}`,
     supersededLines: (gone) => `, ${gone} superseded lines of a key`,
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
-    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`
   }
 };
 var CASE_LINE = {
@@ -5227,6 +5229,7 @@ function eventIn(frame2, has) {
   return keys.some(has);
 }
 var isTact = (frame2) => frame2?.provenance?.wake === "look_up";
+var isLifeCheck = (frame2) => frame2?.provenance?.wake === "life_check";
 function foldedTacts(all2) {
   const tacts = all2.filter((f) => isTact(f));
   const last = tacts.reduce((a, f) => a && tactAt([a]) > tactAt([f]) ? a : f, null);
@@ -5913,6 +5916,7 @@ function frameToText(frame2, raw) {
   }
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
   if (text2) lines.push(text2);
+  if (isLifeCheck(frame2)) lines.push(T2().lifeCheckReply());
   return lines.join("\n");
 }
 var BATCH_TEXT = 160;
@@ -6024,11 +6028,11 @@ var Backlog = class {
     return this.all.splice(0).length;
   }
   /**
-   * false — no window, or a direct word that goes its own way whole.
+   * false — no window, a direct word or a life check: each goes its own way whole.
    * A repeated id already in the window is not counted.
    */
   note(frame2) {
-    if (!this.timer) return false;
+    if (!this.timer || isLifeCheck(frame2)) return false;
     if (isDirectWord(frame2)) {
       this.direct++;
       return false;
@@ -7584,7 +7588,7 @@ function deliverTo(d, raw, frame2, full) {
   if (redundantCopy(full, d)) return;
   if (full?.type === "message") markAddressed(full, seenPath, d.seen);
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
-  if (full?.type === "message" && full.stale === true && !isDirectWord(full))
+  if (full?.type === "message" && full.stale === true && !isDirectWord(full) && !isLifeCheck(full))
     return again ? log(`stale frame ${id} already delivered — dropped`) : d.stale.note(full, (ev2) => {
       if (notifiedClient()) for (const k of ev2.marks ?? []) noteSeen(seenPath, k, d.seen);
       d.broadcast(ev2);
@@ -7610,7 +7614,7 @@ function deliverTo(d, raw, frame2, full) {
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
     if (full?.type === "message") {
-      if (full.origin === "platform") d.backlog.open(0, flushBacklog);
+      if (full.origin === "platform" && !isLifeCheck(full)) d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
     }
     for (const k of deliveryKeys(full)) noteSeen(seenPath, k, d.seen);

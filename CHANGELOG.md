@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.17.0](https://github.com/iskron-ai/skills/compare/v7.16.2...v7.17.0) (2026-10-18)
+
+
+### Features
+
+* **bridge:** побудка о живости — отдельным промптом, с ходом ответа ([#518](https://github.com/iskron-ai/skills/issues/518)) ([d912359](https://github.com/iskron-ai/skills/commit/d91235994a7e292ad8893093c774e0a1841ea71d))
+
 ## [7.16.2](https://github.com/iskron-ai/skills/compare/v7.16.1...v7.16.2) (2026-10-18)
 
 
