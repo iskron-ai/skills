@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.17.3](https://github.com/iskron-ai/skills/compare/v7.17.2...v7.17.3) (2026-10-18)
+
+
+### Bug Fixes
+
+* **onboarding:** карта ассистента — дословным вызовом с persona companion ([#524](https://github.com/iskron-ai/skills/issues/524)) ([c529eff](https://github.com/iskron-ai/skills/commit/c529effa9d6992954445d599bdd5cd055f38ff5b))
+
 ## [7.17.2](https://github.com/iskron-ai/skills/compare/v7.17.1...v7.17.2) (2026-10-18)
 
 
