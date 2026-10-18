@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.15.0";
+var VERSION = "7.16.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
