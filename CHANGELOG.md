@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.17.2](https://github.com/iskron-ai/skills/compare/v7.17.1...v7.17.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* **bridge:** гашение места за молчанием названо словом платформы ([#522](https://github.com/iskron-ai/skills/issues/522)) ([83764ea](https://github.com/iskron-ai/skills/commit/83764eaca0c3d2698f487e05bd7e089cceba4ea5))
+
 ## [7.17.1](https://github.com/iskron-ai/skills/compare/v7.17.0...v7.17.1) (2026-10-18)
 
 
