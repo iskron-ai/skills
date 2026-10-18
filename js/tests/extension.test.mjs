@@ -926,6 +926,45 @@ test("service frames raise no turn, a work frame does", async () => {
   }
 });
 
+// Case #1046: the life check (provenance.wake="life_check", api 0.130.0, not observed on the
+// wire) is a frame of the platform like any other in pi — the same step: it raises an idle
+// agent and enters a running turn; under the platform's text — the way to answer.
+test("a life check in pi: the platform's text and the way to answer, raising an idle agent", async () => {
+  const { events, env } = eventsEnv("life");
+  const rec = await session(env);
+  try {
+    push(
+      events,
+      frame({
+        type: "message",
+        id: "life-1",
+        origin: "platform",
+        provenance: { via: "platform", auth: "none", wake: "life_check", force: true },
+        content_type: "text/plain",
+        body: "8 ч нет твоего действия. Если не обновишь статус, будешь погашен.",
+      }),
+    );
+    await delay(250);
+    assert.equal(rec.messages.length, 1, "the life check did not enter the turn");
+    const { msg, opts } = rec.messages[0];
+    assert.equal(opts.triggerTurn, true, "an idle agent is not raised");
+    assert.equal(opts.deliverAs, "steer");
+    assert.ok(msg.marked, "the frame carries the delivery's mark");
+    assert.match(
+      msg.content,
+      /8 ч нет твоего действия\. Если не обновишь статус, будешь погашен\./,
+    );
+    assert.ok(
+      msg.content.endsWith(
+        "\nОтветь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
+      ),
+      msg.content,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 // #6569: the attention tact comes an hour apart, each its own id, and a turn busy for
 // hours let every one of them into pi's steer queue — they came one after another.
 // While the turn is busy a tact waits and the next replaces it; the end of the turn

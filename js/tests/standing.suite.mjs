@@ -2336,6 +2336,57 @@ test("for a client that hears by notification a delivered frame is remembered in
   assert.match(bridge.stderr, /frame r-1 came again/);
 });
 
+// Case #1046: the life check (provenance.wake="life_check", api 0.130.0, not observed on the
+// wire) goes alone to a client that hears by notification — never in a wake window nor in a
+// stale batch, which mark frames they only count, so an unshown warning would be silenced as
+// seen at the platform's resend on hello. Shown once, its repeat on hello raises nothing.
+const lifeFrame = (id, extra = {}) =>
+  JSON.stringify({
+    type: "message",
+    id,
+    provenance: { via: "platform", auth: "none", wake: "life_check", force: true },
+    content_type: "text/plain",
+    body: "8 ч нет твоего действия. Если не обновишь статус, будешь погашен.",
+    ...extra,
+  });
+test("a life check goes alone to a notified client — beside a wake window and a tact, and stale; its repeat on hello raises nothing", async (t) => {
+  const { fake, bridge } = await connected(t, {
+    env: { ISKRON_BRIDGE_BACKLOG_MS: "600" },
+    init: { ...INIT, clientInfo: { name: "opencode-iskron", version: "1" } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const data = () => bridge.notifications.map((n) => n.params?.data).filter(Boolean);
+  const alone = (id) => data().filter((d) => d.kind === "frame" && d.frame?.id === id).length;
+  const batched = (id) =>
+    data().some((d) => /backlog|stale/.test(d.kind) && d.frames?.some((f) => f?.id === id));
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 2 }) });
+  await fake.control({ ws_send: lifeFrame("life-1") });
+  await fake.control({
+    ws_send: JSON.stringify({
+      type: "message",
+      id: "tact-1",
+      provenance: { via: "platform", wake: "look_up" },
+      body: "Час на «вахта 1» — подними голову",
+    }),
+  });
+  await waitFor(() => data().some((d) => d.kind === "backlog"), "the wake batch");
+  assert.equal(alone("life-1"), 1, "the life check as its own notification");
+  assert.ok(!batched("life-1"), "the life check rode in the wake batch");
+  assert.ok(batched("tact-1"), "the tact still rides in the wake batch");
+  // The platform resends it on hello: shown once — raised no more.
+  await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 1 }) });
+  await fake.control({ ws_send: lifeFrame("life-1") });
+  await fake.control({ ws_send: lifeFrame("life-1", { stale: true }) });
+  await new Promise((r) => setTimeout(r, 2000));
+  assert.equal(alone("life-1"), 1, "a shown life check raised again");
+  assert.ok(!batched("life-1"), "a shown life check counted again");
+  // Stale and never shown — it goes live, alone.
+  await fake.control({ ws_send: lifeFrame("life-2", { stale: true }) });
+  await waitFor(() => alone("life-2") === 1, "the stale life check alone");
+  await new Promise((r) => setTimeout(r, 1800));
+  assert.ok(!batched("life-2"), "the stale life check rode in a stale batch");
+});
+
 // A day's queue handed again (graph nks-dev: #5831, #5828): after a reconnect the
 // platform re-sends frames it already delivered, live and stale alike. None may
 // reach the doer twice — the memory of delivery holds a day's traffic (ids and
@@ -4846,6 +4897,21 @@ test("tacts that waited in the ring: the Monitor watchdog prints the last only",
   await waitFor(() => wd.out.includes("вахта 3"), "the last tact");
   await new Promise((r) => setTimeout(r, 500));
   assert.doesNotMatch(wd.out, /вахта [12]/, `an earlier tact was printed:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дело №1046: побудка о живости у сторожа без push — кадр, как прочие кадры платформы,
+// со строкой хода ответа под текстом платформы (общий текст кадра, shared/frame-text.ts).
+test("a life check reaches the Monitor watchdog as a frame: the platform's text and the way to answer", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await fake.control({ ws_send: lifeFrame("life-wd") });
+  await waitFor(() => wd.out.includes("обнови занятость"), "the way to answer");
+  assert.match(wd.out, /будешь погашен/);
+  assert.match(wd.out, /iskron_stand\(realm, status=<чем занят>\)/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

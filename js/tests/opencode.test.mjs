@@ -1810,6 +1810,98 @@ test("a tact held for a busy session goes past its own bound when no idle comes 
   }
 });
 
+// Case #1046: the platform warns a silent seat once — a frame with provenance.wake="life_check"
+// (api 0.130.0, not observed on the wire). It is its own prompt into the root session, queued:
+// an idle session wakes, a running turn is not cut; the platform's text as is and the way to
+// answer below it, in the session's language. A tact after it does not take its place.
+const lifeCheck = (id = "life-1") => {
+  const frame = {
+    type: "message",
+    id,
+    origin: "platform",
+    provenance: { via: "platform", auth: "none", wake: "life_check", force: true },
+    content_type: "text/plain",
+    body: "8 ч нет твоего действия. Если не обновишь статус, будешь погашен: следующая проверка около 14:00Z.",
+  };
+  return event("frame", { frame, raw: JSON.stringify(frame) });
+};
+const LIFE_REPLY_RU =
+  "Ответь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.";
+
+test("a life check at an idle session is one prompt of its own, queued: the platform's text and the way to answer", async () => {
+  const b = bridgeEnv("life-idle");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-life");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, lifeCheck());
+    await until(() => rec.prompts.length === 1, "the life check prompt");
+    const p = rec.prompts[0];
+    assert.equal(p.sessionID, "s-life");
+    assert.equal(p.delivery, "queue", "a running turn is not cut");
+    assert.ok(p.marked, "the delivery's mark is on the prompt");
+    assert.equal(
+      p.text,
+      "8 ч нет твоего действия. Если не обновишь статус, будешь погашен: следующая проверка около 14:00Z.\n\n" +
+        LIFE_REPLY_RU,
+    );
+    assert.match(rec.said(), /побудка о живости, кадр life-1/);
+    await delay(300);
+    assert.equal(rec.prompts.length, 1, "one warning, one prompt");
+    assert.equal(rec.interrupts.length, 0, "nothing is interrupted");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a life check into a busy session is queued at once, the turn not cut; a tact after it waits and does not take its place", async () => {
+  const b = bridgeEnv("life-busy");
+  const rec = await plugin(b.env, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-life-b");
+    const pid = pidOf(b.log);
+    rec.emit({ type: "session.status", data: { sessionID: "s-life-b", status: { type: "busy" } } });
+    await delay(100);
+    appendFileSync(`${b.events}.${pid}`, lifeCheck());
+    await until(() => rec.prompts.length === 1, "the life check queued behind the turn");
+    assert.equal(rec.prompts[0].delivery, "queue");
+    assert.match(rec.prompts[0].text, /будешь погашен/);
+    appendFileSync(`${b.events}.${pid}`, tactBurst(1));
+    await delay(400);
+    assert.equal(rec.prompts.length, 1, "the tact went into a busy turn");
+    assert.equal(rec.interrupts.length, 0, "the busy turn was cut");
+    rec.emit({ type: "session.idle", data: { sessionID: "s-life-b" } });
+    await until(() => rec.prompts.length === 2, "the tact at idle");
+    assert.match(rec.prompts[1].text, /вахта 1/);
+    assert.doesNotMatch(rec.prompts[1].text, /погашен/, "the tact carries the life check");
+    assert.match(rec.prompts[0].text, /погашен/, "the life check prompt stays as laid");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a life check speaks the session's language: the way to answer in English", async () => {
+  const b = bridgeEnv("life-en");
+  const rec = await plugin({ ...b.env, ISKRON_BRIDGE_LANG: "en" }, { inboxIds: true });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-life-en");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, lifeCheck("life-en"));
+    await until(() => rec.prompts.length === 1, "the life check prompt");
+    assert.match(rec.prompts[0].text, /^8 ч нет твоего действия\./, "the platform's text as is");
+    assert.ok(
+      rec.prompts[0].text.endsWith(
+        "Answer with an action: update your status — iskron_stand(realm, status=<what you are doing>) — or say a word in the case.",
+      ),
+      rec.prompts[0].text,
+    );
+    assert.doesNotMatch(rec.prompts[0].text, /Ответь/);
+  } finally {
+    await rec.stop();
+  }
+});
+
 // A new root session asks its bridge to take back the place of its directory
 // before the first call: the record a previous plugin instance left on disk
 // (an evicted location, a restart) names the directory, and the bridge finds it.
