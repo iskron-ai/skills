@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.16.1](https://github.com/iskron-ai/skills/compare/v7.16.0...v7.16.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* **onboarding:** шаги по готовности — без подтверждения имени, личный граф по ссылке, пропуск ведёт дальше ([#514](https://github.com/iskron-ai/skills/issues/514)) ([d07db2f](https://github.com/iskron-ai/skills/commit/d07db2f79c442b20833364f1609004894e356bb4))
+
 ## [7.16.0](https://github.com/iskron-ai/skills/compare/v7.15.0...v7.16.0) (2026-10-18)
 
 
