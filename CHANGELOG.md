@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.16.0](https://github.com/iskron-ai/skills/compare/v7.15.0...v7.16.0) (2026-10-18)
+
+
+### Miscellaneous Chores
+
+* выпуск вычитки навыков ([#512](https://github.com/iskron-ai/skills/issues/512)) ([06e37e4](https://github.com/iskron-ai/skills/commit/06e37e412b979cb4ff3b6c8dcdbe489cd7ade034))
+
 ## [7.15.0](https://github.com/iskron-ai/skills/compare/v7.14.0...v7.15.0) (2026-10-17)
 
 
