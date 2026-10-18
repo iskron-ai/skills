@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.17.1](https://github.com/iskron-ai/skills/compare/v7.17.0...v7.17.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* **onboarding:** карта ассистента в личном графе — заводится, а не обещается ([#520](https://github.com/iskron-ai/skills/issues/520)) ([fb6fd64](https://github.com/iskron-ai/skills/commit/fb6fd64616a0be5bdcde040ecda7a13bfa882835))
+
 ## [7.17.0](https://github.com/iskron-ai/skills/compare/v7.16.2...v7.17.0) (2026-10-18)
 
 
