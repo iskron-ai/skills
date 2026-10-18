@@ -950,7 +950,10 @@ test("a life check in pi: the platform's text and the way to answer, raising an 
     assert.equal(opts.triggerTurn, true, "an idle agent is not raised");
     assert.equal(opts.deliverAs, "steer");
     assert.ok(msg.marked, "the frame carries the delivery's mark");
-    assert.match(msg.content, /8 ч нет твоего действия\. Если не обновишь статус, будешь погашен\./);
+    assert.match(
+      msg.content,
+      /8 ч нет твоего действия\. Если не обновишь статус, будешь погашен\./,
+    );
     assert.ok(
       msg.content.endsWith(
         "\nОтветь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
