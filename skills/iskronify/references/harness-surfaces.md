@@ -4,15 +4,16 @@ iskronify доставляет **ритуалы** (ориентация на с�
 
 | Харнес | Читает | Нужен файл-указатель | Поверхность автоматизации |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` | **да** — `CLAUDE.md` = `@AGENTS.md` | хуки в `.claude/settings.json` |
+| Claude Code | `CLAUDE.md` | **да** — указатель по Шагу 7 (симлинк, иначе копия или `@AGENTS.md`) | хуки в `.claude/settings.json` |
 | Codex CLI | `AGENTS.md` | нет | `hooks.json` в CODEX_HOME — вне worktree, не прошивается; ритуалы держит проза AGENTS.md |
 | OpenCode | `AGENTS.md` | нет | плагин в `.opencode/plugins/` проекта |
+| pi | `AGENTS.md` | нет | расширение пакета поставки держит слух канала; хука старта iskronify не получает — ему хватает обложки и штампа (Замер двери `iskron`) |
 
 Определи до выбора: `.claude/` или кэш плагинов → Claude Code; `opencode.json` / `.opencode/` → OpenCode; `.codex/` или `~/.codex/` → Codex. Истинным может быть не одно — прошей каждый присутствующий харнес; тело `AGENTS.md` общее.
 
 ## Claude Code
 
-Читает `CLAUDE.md`, не `AGENTS.md` — отсюда однострочный указатель (`@AGENTS.md`-импорт; Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation-1.md` и `delegation-2.md` — обе части по порядку). Хуки и их события названы в Шаге 4 скилла; JSON, фильтры и команда memory-guard — `hooks.md`.
+Читает `CLAUDE.md`, не `AGENTS.md` — отсюда указатель (форма — Шаг 7). Хуки живут в `.claude/settings.json`, коммитятся. Ролевые файлы суб-агентов: `.claude/agents/` (см. `delegation-1.md` и `delegation-2.md` — обе части по порядку). Хуки и их события названы в Шаге 4 скилла; JSON, фильтры и команда memory-guard — `hooks.md`.
 
 ## Codex CLI
 
