@@ -104,7 +104,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.17.1";
+var VERSION = "7.17.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1555,11 +1555,13 @@ var STATUS_POST = {
 var WHO_RU = {
   person: "человеком",
   self: "сессией той же учётки",
+  silent: "платформой: после побудки о живости не было твоего действия",
   other: "владельцем или другой сессией"
 };
 var WHO_EN = {
   person: "by the human",
   self: "by a session of the same account",
+  silent: "by the platform: no action of yours after the liveness wake-up",
   other: "by the owner or another session"
 };
 var STOP = {
@@ -11886,7 +11888,12 @@ wireTakeOwn(async (rec5, cwd) => {
 });
 
 // js/bridge/stophold.ts
-var whoOf3 = (reason) => reason === "revoked:person" ? "person" : reason === "revoked:self" ? "self" : "other";
+var WHO_BY_REASON = {
+  "revoked:person": "person",
+  "revoked:self": "self",
+  "revoked:silent": "silent"
+};
+var whoOf3 = (reason) => WHO_BY_REASON[reason] ?? "other";
 var stopWord = (name2, reason) => words(STOP).stopped(name2, whoOf3(reason));
 function dropUnsent(key2, doors2) {
   const n = doors2.reduce((sum, d) => sum + (d?.dropBatches() ?? 0), 0);
@@ -11933,7 +11940,7 @@ function seatOf(id) {
 var holdsSeat = (id, framed) => framed ? seatOf(id) !== null : H2.door?.standingId === id || extraPlaces().some((p) => p.door.standingId === id);
 function seatEnded(key2, frame2) {
   const id = typeof frame2.standing_id === "string" ? frame2.standing_id : "";
-  const reason = typeof frame2.by === "string" ? `revoked:${frame2.by}` : "";
+  const reason = typeof frame2.by === "string" ? `revoked:${frame2.by}` : frame2.reason === "silent" ? "revoked:silent" : "";
   const beside = id ? extraPlaces().find((p) => p.door.standingId === id) : void 0;
   if (beside) {
     const own = H2.closingOwn ? holdWords().closedOwn() : H2.revokingBeside.has(beside.door.key) ? holdWords().revokedOwn() : null;
