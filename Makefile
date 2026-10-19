@@ -66,7 +66,7 @@ test-extension: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/extension.test.mjs
 
 test-opencode: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/opencode.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/opencode.test.mjs js/tests/opencode-siblings.test.mjs
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
 test-stand: build-js
