@@ -7,6 +7,8 @@ export interface OpencodeWords {
   channelDown: (message: string) => string;
   launchDown: (message: string) => string;
   noticeDown: (message: string) => string;
+  /** Хук тулов не встал: корень с дефектной обложкой пересядет только на промпте. */
+  realignDown: (message: string) => string;
   commandsDown: (message: string) => string;
   noPermissionHooks: () => string;
   skillReadsDown: (message: string) => string;
@@ -74,6 +76,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     channelDown: (message) => `Искрон: канал не встал — ${message}`,
     launchDown: (message) => `Искрон: строка запуска не встала — ${message}`,
     noticeDown: (message) => `Искрон: пометка хода субагента не встала — ${message}`,
+    realignDown: (message) =>
+      `Искрон: слежение за обложкой после тулов не встало, посадка после выравнивания — только на промпте — ${message}`,
     commandsDown: (message) => `Искрон: команды скиллов не встали — ${message}`,
     noPermissionHooks: () =>
       "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
@@ -152,6 +156,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     channelDown: (message) => `Iskron: the channel did not come up — ${message}`,
     launchDown: (message) => `Iskron: the launch line did not come up — ${message}`,
     noticeDown: (message) => `Iskron: the subagent turn note did not come up — ${message}`,
+    realignDown: (message) =>
+      `Iskron: watching the cover after tool calls did not come up, seating after alignment waits for a prompt — ${message}`,
     commandsDown: (message) => `Iskron: the skill commands did not come up — ${message}`,
     noPermissionHooks: () =>
       "Iskron: this OpenCode has no permission hooks — files of the delivery's skills outside the working copy are read with an ask.",
