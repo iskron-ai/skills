@@ -1,8 +1,9 @@
 // Behavioural probe for the OpenCode plugin: a compacted session keeps its role (compaction.ts).
-// The "compaction" hook's system gets the summary's order, the event session.compaction.ended
-// lays one word into the session — only for a session whose bridge holds a seat, once per
-// compaction, none for a stopped one; a failed delivery is a log line. Fake bridge, stand-in
-// context (opencode-kit.mjs); ISKRON_OPENCODE_PLUGIN aims it at any copy.
+// The "compaction" hook's system gets the summary's order; the FIRST "context" request after it
+// gets one word about the role in its system — not the compaction request, not an inbox word,
+// once per compaction, none after session.compaction.failed, only for a session whose bridge
+// holds a seat, none for a stopped one. Fake bridge, stand-in context (opencode-kit.mjs);
+// ISKRON_OPENCODE_PLUGIN aims it at any copy.
 import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -45,46 +46,69 @@ async function holds(rec, events, pid, key) {
   await until(() => rec.said().includes(`мост держит стояние ${key}`), `held ${key}`);
 }
 
-/** The compaction request as OpenCode's "compaction" hook gets it; returns its system text. */
-async function compactionSystem(rec, sessionID) {
+/** A request as OpenCode's `hook` gets it ("compaction" or "context"); returns its system text. */
+async function system(rec, hook, sessionID) {
   const req = { sessionID, system: [], messages: [], tools: {}, options: {} };
-  for (const cb of rec.hooks.compaction ?? []) await cb(req);
+  for (const cb of rec.hooks[hook] ?? []) await cb(req);
   return req.system.map((p) => p.text).join("\n");
 }
 
-const ended = (sessionID, id, seq) => ({
-  type: "session.compaction.ended",
+const compactionEvent = (type, sessionID, id, seq) => ({
+  type,
   id,
   data: { sessionID, text: "summary", reason: "auto", recent: "" },
   durable: { aggregateID: sessionID, seq, version: 1 },
 });
 
-const roleWords = (rec, s) =>
+const words = (text) => text.split("контекст сжат").length - 1;
+const inboxWords = (rec, s) =>
   rec.synthetics.filter((x) => x.sessionID === s && ROLE_WORD.test(x.text));
 
-test("a seated session: the compaction keeps the role, one word at its end, none on a repeat, one on the next", async () => {
+test("a seated session: the first request after the compaction carries one word in its system, the compaction request none", async () => {
   const { rec, events, pids } = await standUp("compact-seated", ["s-c"]);
   try {
     await holds(rec, events, pids[0], "k-c");
-    const system = await compactionSystem(rec, "s-c");
-    assert.match(system, /сводка этого сжатия обязана сохранить роль агента #931/, system);
-    assert.match(system, /host\.repo\.opus-5/);
-    assert.match(system, /живые дела/);
-    assert.match(system, /перечитать дверь/);
-    rec.emit(ended("s-c", "evt-1", 10));
-    await until(() => roleWords(rec, "s-c").length === 1, "the role word after the compaction");
-    const [w] = roleWords(rec, "s-c");
-    assert.match(w.text, /роль #931 в графе @nks\/nks-dev, место host\.repo\.opus-5/);
-    assert.match(w.text, /До первого содержательного хода загрузи дверь/);
-    assert.equal(w.delivery, "steer");
-    assert.equal(w.resume, false, "the word wakes no turn of its own");
-    // (b) the same compaction's event again — no second word.
-    rec.emit(ended("s-c", "evt-1", 10));
+    assert.equal(words(await system(rec, "context", "s-c")), 0, "no compaction — no word");
+    const order = await system(rec, "compaction", "s-c");
+    assert.match(order, /сводка этого сжатия обязана сохранить роль агента #931/, order);
+    assert.match(order, /host\.repo\.opus-5/);
+    assert.match(order, /живые дела/);
+    assert.match(order, /перечитать дверь/);
+    assert.equal(words(order), 0, "the compaction request itself gets no role word");
+    // The compaction request may be retried (an unfilled template): still one word.
+    await system(rec, "compaction", "s-c");
+    rec.emit(compactionEvent("session.compaction.ended", "s-c", "evt-1", 10));
+    const first = await system(rec, "context", "s-c");
+    assert.equal(words(first), 1, first);
+    assert.match(first, /роль #931 в графе @nks\/nks-dev, место host\.repo\.opus-5/);
+    assert.match(first, /До первого содержательного хода загрузи дверь/);
+    assert.equal(
+      words(await system(rec, "context", "s-c")),
+      0,
+      "the next request — no second word",
+    );
     await delay(200);
-    assert.equal(roleWords(rec, "s-c").length, 1, "a repeat of the same compaction says nothing");
-    // (c) a new compaction — one more word.
-    rec.emit(ended("s-c", "evt-2", 20));
-    await until(() => roleWords(rec, "s-c").length === 2, "the word after the second compaction");
+    assert.deepEqual(inboxWords(rec, "s-c"), [], "no inbox word: it would arrive a step late");
+    // A new compaction — one more word.
+    await system(rec, "compaction", "s-c");
+    assert.equal(
+      words(await system(rec, "context", "s-c")),
+      1,
+      "the word after the second compaction",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a failed compaction leaves no word for the next request", async () => {
+  const { rec, events, pids } = await standUp("compact-failed", ["s-f"]);
+  try {
+    await holds(rec, events, pids[0], "k-f");
+    await system(rec, "compaction", "s-f");
+    rec.emit(compactionEvent("session.compaction.failed", "s-f", "evt-f", 5));
+    await delay(200);
+    assert.equal(words(await system(rec, "context", "s-f")), 0, "failed — no word");
   } finally {
     await rec.stop();
   }
@@ -94,12 +118,10 @@ test("a session without a seat gets neither the order nor the word; a seated one
   const { rec, events, pids } = await standUp("compact-unseated", ["s-seat", "s-bare"]);
   try {
     await holds(rec, events, pids[0], "k-seat");
-    assert.equal(await compactionSystem(rec, "s-bare"), "", "no seat — no order");
-    rec.emit(ended("s-bare", "evt-b", 1));
-    rec.emit(ended("s-seat", "evt-s", 1));
-    await until(() => roleWords(rec, "s-seat").length === 1, "the seated session's word");
-    await delay(200);
-    assert.deepEqual(roleWords(rec, "s-bare"), [], "no seat — no word");
+    assert.equal(await system(rec, "compaction", "s-bare"), "", "no seat — no order");
+    await system(rec, "compaction", "s-seat");
+    assert.equal(words(await system(rec, "context", "s-bare")), 0, "no seat — no word");
+    assert.equal(words(await system(rec, "context", "s-seat")), 1, "the seated session's word");
   } finally {
     await rec.stop();
   }
@@ -109,35 +131,21 @@ test("a session stopped by its owner gets neither the order nor the word after i
   const { rec, events, pids } = await standUp("compact-stopped", ["s-stop"]);
   try {
     await holds(rec, events, pids[0], "k-stop");
-    rec.emit(ended("s-stop", "evt-before", 1));
-    await until(() => roleWords(rec, "s-stop").length === 1, "the word before the stop");
+    await system(rec, "compaction", "s-stop");
     const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
     appendFileSync(`${events}.${pids[0]}`, event("stopped", { code: 4001, key: "k-stop", text }));
     await until(() => rec.interrupts.length === 1, "the stop's interrupt");
-    assert.doesNotMatch(await compactionSystem(rec, "s-stop"), /сводка этого сжатия/);
-    rec.emit(ended("s-stop", "evt-after", 2));
-    await delay(300);
-    assert.equal(roleWords(rec, "s-stop").length, 1, "a stopped session gets no word");
-  } finally {
-    await rec.stop();
-  }
-});
-
-test("a failed delivery is one log line — no throw, no retry", async () => {
-  const { rec, events, pids } = await standUp("compact-fail", ["s-f"]);
-  try {
-    await holds(rec, events, pids[0], "k-f");
-    let tries = 0;
-    rec.ctx.session.synthetic = async () => {
-      tries++;
-      throw new Error("inbox refused");
-    };
-    rec.emit(ended("s-f", "evt-f", 1));
-    await until(() => /не вложилось в s-f: inbox refused/.test(rec.said()), "the failure line");
-    rec.emit(ended("s-f", "evt-f", 1));
-    await delay(300);
-    assert.equal(tries, 1, "one try, no retry");
-    assert.equal(rec.said().match(/слово о роли после сжатия не вложилось/g).length, 1);
+    assert.equal(
+      words(await system(rec, "context", "s-stop")),
+      0,
+      "stopped between compaction and request — no word",
+    );
+    assert.doesNotMatch(await system(rec, "compaction", "s-stop"), /сводка этого сжатия/);
+    assert.equal(
+      words(await system(rec, "context", "s-stop")),
+      0,
+      "a stopped session gets no word",
+    );
   } finally {
     await rec.stop();
   }
