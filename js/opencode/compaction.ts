@@ -57,12 +57,13 @@ export function createCompaction(ctx: Context, doors: CompactionDoors) {
       const s: unknown = ev.data?.sessionID;
       const key = keyOf(ev);
       if (typeof s !== "string" || !key) return;
+      const p = seated(s);
+      if (!p) return; // a session without a seat keeps no keys
       const seen = done.get(s) ?? new Set<string>();
       if (seen.has(key)) return;
       seen.add(key);
       done.set(s, seen);
-      const p = seated(s);
-      if (p) void tell(s, W().back(p.karta, p.name, p.realm));
+      void tell(s, W().back(p.karta, p.name, p.realm));
     },
     forget: (session: string): void => void done.delete(session),
   };
