@@ -114,12 +114,25 @@ function seatEnded(key: string, frame: Frame): void {
     }
     return stopBeside(beside, reason);
   }
-  const main = H.door?.standingId;
-  // An id that names neither seat: with seats beside it may be one whose id the bridge never learnt.
-  if (id && (main ? main !== id : extraPlaces().length > 0))
-    return log(`standing_ended for seat ${id}, not one this bridge knows — ignored`);
+  if (!namesMain(id, frame))
+    return log(`standing_ended for seat ${id || "unnamed"}, not one this bridge knows — ignored`);
   if (releasedAsOwn("standing_ended")) return; // the frame outran the answer of the session's own revoke or close
   stopAgent(key, "standing_ended", reason);
+}
+
+/**
+ * Whether a standing_ended frame names the main seat (case #1046): by its known id; the id not
+ * learnt and no seat beside — the frame addressed to the very seat it ends (to_standing_id, and
+ * the main seat's name if it names one). A frame naming no seat, or a seat the bridge cannot
+ * tell for its own, stops nobody: the owner's 4001 on the seat's socket still does.
+ */
+function namesMain(id: string, frame: Frame): boolean {
+  const main = H.door?.standingId;
+  if (!id || main) return !!id && main === id;
+  if (extraPlaces().length > 0) return false;
+  const toId = typeof frame.to_standing_id === "string" ? frame.to_standing_id : "";
+  const to = typeof frame.to_standing === "string" ? frame.to_standing.replace(/^.*:/, "") : "";
+  return toId === id && (!to || to === (state.standing?.name ?? ""));
 }
 
 whenStopped((key, code, reason, ended) =>

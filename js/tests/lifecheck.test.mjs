@@ -86,18 +86,36 @@ const opencode = (parents = new Map()) => {
 const frameEv = (f) => ({ data: { kind: "frame", frame: f, raw: JSON.stringify(f) } });
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test("OpenCode: a life check is one queued prompt, the platform's text and the way to answer, no counts riding", async () => {
+test("OpenCode: a life check is one queued prompt, the platform's text, the warned seat and the way to answer, no counts riding", async () => {
   const { ch, prompts } = opencode();
-  ch.onEvent("A", frameEv(life()));
+  ch.onEvent("A", frameEv(life("life-1", { to_standing: "@alari:host.repo.opus-5" })));
+  ch.onEvent("A", frameEv(life("life-2")));
   await pause(50);
-  assert.equal(prompts.length, 1);
+  assert.equal(prompts.length, 2);
   assert.equal(prompts[0].sessionID, "A");
   assert.equal(prompts[0].delivery, "queue");
+  const head = `${FRAME_MARK} 8 ч нет твоего действия. Если не обновишь статус, будешь погашен.\n\n`;
+  assert.equal(prompts[0].text, `${head}Предупреждено место: host.repo.opus-5.\n${REPLY_RU}`);
   assert.equal(
-    prompts[0].text,
-    `${FRAME_MARK} 8 ч нет твоего действия. Если не обновишь статус, будешь погашен.\n\n` +
-      "Ответь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
+    prompts[1].text,
+    `${head}Предупреждено место: место не названо платформой.\n${REPLY_RU}`,
   );
+});
+
+// Case №1046: the frame names its seat by id only — the bridge gives it the name of its seat with
+// that id, so the prompt names the very seat warned, not a neighbour's (lifeseat.ts).
+test("a life check addressed by id only gets its seat's name from the bridge; an unknown id stays unnamed", async () => {
+  const { nameWarnedSeat } = await import("../bridge/lifeseat.ts");
+  const primary = { standing: { name: "host.repo.opus-5.sub-3" }, door: { standingId: "id-3" } };
+  const byId = life("l1", { to_standing_id: "id-3" });
+  nameWarnedSeat(byId, primary);
+  assert.equal(byId.to_standing, "host.repo.opus-5.sub-3");
+  const other = life("l2", { to_standing_id: "id-5" });
+  nameWarnedSeat(other, primary);
+  assert.equal(other.to_standing, undefined, "a seat of no bridge here is not guessed");
+  const named = life("l3", { to_standing: "@alari:x.sub-5", to_standing_id: "id-3" });
+  nameWarnedSeat(named, primary);
+  assert.equal(named.to_standing, "@alari:x.sub-5", "the platform's name stays");
 });
 
 const REPLY_RU =
@@ -155,7 +173,9 @@ test("the shared frame text of a life check: the platform's text, then the way t
   const { frameToText } = await import("../shared/frame-text.ts");
   const ru = frameToText(life(), "");
   assert.match(ru, /\n8 ч нет твоего действия\. Если не обновишь статус, будешь погашен\.\n/);
-  assert.ok(ru.endsWith(`\n${REPLY_RU}`), ru);
+  assert.ok(ru.endsWith(`\nПредупреждено место: место не названо платформой.\n${REPLY_RU}`), ru);
+  const named = frameToText(life("life-3", { to_standing: "@alari:o.sub-2" }), "");
+  assert.ok(named.endsWith(`\nПредупреждено место: o.sub-2.\n${REPLY_RU}`), named);
   const other = frameToText({ ...life(), provenance: { via: "platform" } }, "");
   assert.ok(!other.includes("Ответь действием"), "another platform frame names a way to answer");
   const { FRAME_TEXT } = await import("../delivery/index.ts");
@@ -163,6 +183,8 @@ test("the shared frame text of a life check: the platform's text, then the way t
     FRAME_TEXT.en.lifeCheckReply(),
     "Answer with an action: update your status — iskron_stand(realm, status=<what you are doing>) — or say a word in the case.",
   );
+  assert.equal(FRAME_TEXT.en.lifeCheckSeat("o.sub-2"), "Seat warned: o.sub-2.");
+  assert.equal(FRAME_TEXT.en.lifeCheckSeat(""), "Seat warned: the platform did not name the seat.");
   const { OPENCODE } = await import("../delivery/index.ts");
   assert.ok(
     OPENCODE.en

@@ -5150,6 +5150,49 @@ test("#8121: standing_ended with reason silent stops and names the silence, no r
   assert.equal(fake.state.counts.connect, 1, "nothing reconnects after the stop");
 });
 
+// Case №1046 (19.10 00:21Z): the platform put out a sibling's seat for silence and a live seat
+// stopped — a bridge that never learnt its seat's id took standing_ended for any id as its own.
+// Without the id the frame must be addressed to the very seat it ends: another seat's frame, or
+// one that names no seat by id, stops nobody; one addressed to this seat by id is still the stop.
+const SOSED = { to_standing: "@tester:sosed.sub-5", to_standing_id: "s5" };
+const ENDED_UNKNOWN = [
+  ["another seat, addressed to it", SOSED, false],
+  [
+    "another seat, addressed to this one",
+    { to_standing: "@tester:proba", to_standing_id: "x" },
+    false,
+  ],
+  ["another seat, no addressee", {}, false],
+  ["a seat addressed by name only", { to_standing: "@tester:proba" }, false],
+  ["this seat by id and name", { to_standing: "@tester:proba", to_standing_id: "own-id" }, true],
+];
+for (const [what, to, stops] of ENDED_UNKNOWN)
+  test(`#1046: standing_ended, the seat id unknown to the bridge — ${what}: ${stops ? "the stop" : "no stop"}`, async (t) => {
+    const { fake, bridge } = await ready(t);
+    await fake.control({ registerNoId: true, helloNoIds: true });
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    assert.ok(
+      !(await bridge.call("tools/call", { name: "iskron_stand", arguments: args })).result?.isError,
+    );
+    await until(() => fake.state.ws.size === 1, "the socket");
+    await new Promise((r) => setTimeout(r, 200));
+    const id = stops ? "own-id" : "s5";
+    await fake.control({
+      ws_send: JSON.stringify({ type: "standing_ended", standing_id: id, reason: "silent", ...to }),
+    });
+    if (stops) {
+      await until(() => stoppedEv(bridge), "the stop word");
+      return;
+    }
+    await until(
+      () => /standing_ended for seat s5, not one this bridge knows/.test(bridge.stderr),
+      "the journal line",
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(!stoppedEv(bridge), `another seat's end stops nobody:\n${bridge.stderr}`);
+    assert.equal(fake.state.ws.size, 1, "the seat's socket stays");
+  });
+
 // Review of #7440: standing_ended for the main seat outran the answer of the session's own
 // revoke or close and was read as the owner's stop — the quiet release became a stopped session.
 for (const action of ["revoke", "close"])
