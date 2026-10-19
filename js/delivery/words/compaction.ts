@@ -1,14 +1,13 @@
 // Слова возврата роли после сжатия контекста сессии OpenCode (opencode/compaction.ts):
-// наказ сводке сжатия и одно слово сессии по концу сжатия.
+// наказ сводке сжатия и одно слово в system первого запроса после сжатия.
 import type { Lang } from "../lang.ts";
 
 export interface CompactionWords {
   /** В system запроса сжатия: что сводка обязана сохранить. */
   keep: (karta: string, name: string, realm: string) => string;
-  /** Одно слово в сессию по концу сжатия. */
+  /** Одно слово в system первого запроса сессии после сжатия. */
   back: (karta: string, name: string, realm: string) => string;
   returned: (sessionID: string) => string;
-  returnFailed: (sessionID: string, message: string) => string;
 }
 
 const role = (karta: string, none: string): string => {
@@ -26,9 +25,8 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
       `Искрон: контекст сжат. Ты — роль ${role(karta, "<роль>")} в графе ${realm}, место ${name} ` +
       `держит мост. До первого содержательного хода загрузи дверь (скилл iskron) и скилы роли — ` +
       `их называет дверь; только их, не все прежние.`,
-    returned: (sessionID) => `Искрон: слово о роли после сжатия вложено в сессию ${sessionID}`,
-    returnFailed: (sessionID, message) =>
-      `Искрон: слово о роли после сжатия не вложилось в ${sessionID}: ${message}`,
+    returned: (sessionID) =>
+      `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`,
   },
   en: {
     keep: (karta, name, realm) =>
@@ -40,8 +38,6 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
       `the bridge holds seat ${name}. Before the first substantive move load the door (the iskron skill) ` +
       `and the role's skills — the door names them; only those, not all the earlier ones.`,
     returned: (sessionID) =>
-      `Iskron: the role word after the compaction was delivered into session ${sessionID}`,
-    returnFailed: (sessionID, message) =>
-      `Iskron: the role word after the compaction was not delivered into ${sessionID}: ${message}`,
+      `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`,
   },
 };

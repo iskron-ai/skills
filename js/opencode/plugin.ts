@@ -194,8 +194,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say(W.launchDown((e as Error).message), "error");
   }
 
-  // A compacted session with a seat keeps its role: the summary's order, one word at the end (compaction.ts).
-  const compaction = createCompaction(ctx, {
+  // A compacted session with a seat keeps its role: the summary's order, one word in the next request (compaction.ts).
+  const compaction = createCompaction({
     placeOf: (s) => half.held(s)?.place ?? null,
     closed,
     say,
@@ -207,6 +207,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       await ctx.session.hook(hook, (req) => {
         annotate(req, (s) => half.leadOf(s));
         if (hook === "compaction") compaction.instruct(req);
+        else compaction.tell(req);
         const stop = hook === "context" ? ch?.stopWord(String(req.sessionID)) : null;
         if (stop) req.system.push({ type: "text", text: stop });
       });
