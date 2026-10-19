@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Real OpenCode serve, built plugin + bridges, loopback MCP and scripted provider only (rootseat-run-opencode.mjs).
-// Observes: auto-compaction → the plugin's role word → the first continued provider request.
-// node scripts/compaction-run-opencode.mjs <out-dir>   (ISKRON_OPENCODE_PLUGIN=<old plugin> for the negative)
+// Falsifies: auto-compaction → the role word in the system of the FIRST continued provider request,
+// not in the compaction request, in one request only, no extra model step; exit 1 otherwise.
+// node scripts/compaction-run-opencode.mjs <out-dir> [--negative]
+// --negative: a plugin without the role return (ISKRON_OPENCODE_PLUGIN=<old plugin>) — expect no word.
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,7 +20,8 @@ import { COVER, heardSeats, writeAgents } from "../js/tests/rootseat-kit.mjs";
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = process.argv[2];
-assert.ok(out, "usage: compaction-run-opencode.mjs <out-dir>");
+assert.ok(out && !out.startsWith("--"), "usage: compaction-run-opencode.mjs <out-dir> [--negative]");
+const negative = process.argv.includes("--negative");
 mkdirSync(out, { recursive: true });
 const run = mkdtempSync(join(tmpdir(), "compaction-serve-"));
 const home = join(run, "home");
@@ -114,11 +117,16 @@ try {
     if (password) env.OPENCODE_PASSWORD = password[1];
   });
   serve.stderr.on("data", (d) => writeFileSync(join(out, "serve.log"), String(d).replace(/^(?=.)/gm, `${new Date().toISOString()} `), { flag: "a" }));
-  let ready = false;
-  for (let i = 0; i < 60; i++) {
-    try { await api("GET", "/api/session/active"); ready = true; break; } catch { await sleep(500); }
-  }
-  assert.ok(ready, "serve unavailable");
+  // The port is ours only if our serve says it listens there with its own per-process password,
+  // the server refuses requests without it, and lsof names our pid as the listener.
+  await until(() => serve.exitCode === null && stdout.includes(`server listening on ${server}`) && env.OPENCODE_PASSWORD, "our serve's listening line and password", 30000);
+  const status = async (auth) => (await fetch(`${server}/api/session/active`, auth ? { headers: { authorization: `Basic ${Buffer.from(auth).toString("base64")}` } } : {})).status;
+  assert.equal(await status(null), 401, "the server requires authentication");
+  assert.equal(await status("opencode:not-this-run"), 401, "another password is refused");
+  assert.equal(await status(`opencode:${env.OPENCODE_PASSWORD}`), 200, "this run's password is accepted");
+  const { stdout: listeners } = await exec("lsof", ["-nP", "-t", `-iTCP@127.0.0.1:${serverPort}`, "-sTCP:LISTEN"]);
+  assert.deepEqual(listeners.trim().split("\n"), [String(serve.pid)], `port ${serverPort} is listened by our serve only`);
+  await api("GET", "/api/session/active");
   // The serve's own event stream, each line stamped on arrival.
   events = new AbortController();
   const headers = env.OPENCODE_PASSWORD ? { authorization: `Basic ${Buffer.from(`opencode:${env.OPENCODE_PASSWORD}`).toString("base64")}` } : {};
@@ -152,10 +160,30 @@ try {
   await sleep(2000);
   const WORD = "контекст сжат. Ты — роль";
   const KEEP = "сводка этого сжатия обязана сохранить роль";
-  const count = (w, s) => JSON.stringify(w.body).split(s).length - 1;
-  const summary = wire.map((w) => ({ i: w.i, kind: w.kind, at: w.at, word: count(w, WORD), keep: count(w, KEEP), bytes: JSON.stringify(w.body).length }));
-  writeFileSync(join(out, "summary.json"), JSON.stringify({ plugin, session: session.id, context: CONTEXT, seat: wire[0].seats[0] ?? null, requests: summary }, null, 2) + "\n");
-  console.log(JSON.stringify({ plugin, requests: summary }, null, 2));
+  const count = (v, s) => JSON.stringify(v).split(s).length - 1;
+  const inSystem = (w, s) => count((w.body.messages ?? []).filter((m) => m.role === "system"), s);
+  const summary = wire.map((w) => ({ i: w.i, kind: w.kind, at: w.at, word: count(w.body, WORD), wordInSystem: inSystem(w, WORD), keep: count(w.body, KEEP), bytes: JSON.stringify(w.body).length }));
+  writeFileSync(join(out, "summary.json"), JSON.stringify({ plugin, mode: negative ? "negative" : "positive", session: session.id, context: CONTEXT, seat: wire[0].seats[0] ?? null, requests: summary }, null, 2) + "\n");
+  console.log(JSON.stringify({ plugin, mode: negative ? "negative" : "positive", requests: summary }, null, 2));
+  // (a) OpenCode compacted this session.
+  const types = readFileSync(eventsFile, "utf8").split("\n").map((l) => l.match(/"type":"([^"]+)".*"sessionID":"([^"]+)"/)).filter((m) => m && m[2] === session.id).map((m) => m[1]);
+  for (const t of ["session.compaction.started", "session.compaction.ended"]) assert.ok(types.includes(t), `${t} in the event stream`);
+  const compactions = wire.filter((w) => w.kind === "compaction");
+  assert.equal(compactions.length, 1, "one compaction request");
+  // (e) Three prompts and one compaction — no extra model step, whatever the plugin.
+  assert.equal(wire.length, 4, `requests: ${wire.map((w) => w.kind).join(", ")}`);
+  const continued = wire.find((w) => w.i > compactions[0].i && w.kind.startsWith("primary"));
+  assert.ok(continued, "a continued request after the compaction");
+  if (negative) {
+    assert.ok(summary.every((r) => r.word === 0 && r.keep === 0), "the old plugin: neither the order nor the word");
+  } else {
+    assert.equal(count(compactions[0].body, KEEP), 1, "the compaction request carries the summary's order");
+    assert.equal(count(compactions[0].body, WORD), 0, "(c) the compaction request carries no role word");
+    assert.equal(inSystem(continued, WORD), 1, `(b) the first continued request (#${continued.i}) carries the word in its system`);
+    assert.ok(summary.every((r) => r.word === r.wordInSystem), "the word only ever rides in system");
+    assert.equal(summary.filter((r) => r.wordInSystem > 0).length, 1, "(d) the word rides in one request only");
+  }
+  console.log(JSON.stringify({ verdict: "PASS", mode: negative ? "negative" : "positive", continued: continued.i }));
 } catch (e) {
   console.error(e);
   process.exitCode = 1;
