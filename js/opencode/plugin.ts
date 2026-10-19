@@ -18,6 +18,7 @@ import { withWord } from "../shared/launch.ts";
 import { authDir } from "./bridge-io.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
+import { createCompaction } from "./compaction.ts";
 import { idleHalf } from "./half.ts";
 import { createHalts } from "./halts.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
@@ -193,12 +194,19 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say(W.launchDown((e as Error).message), "error");
   }
 
+  // A compacted session with a seat keeps its role: the summary's order, one word at the end (compaction.ts).
+  const compaction = createCompaction(ctx, {
+    placeOf: (s) => half.held(s)?.place ?? null,
+    closed,
+    say,
+  });
   // OpenCode's «completed» at the end of a lead subagent's turn — a word to the model that it is a turn (notice.ts).
   // A turn of a stopped session reads the stop word here, not from its inbox (#7585).
   try {
     for (const hook of ["context", "compaction"] as const)
       await ctx.session.hook(hook, (req) => {
         annotate(req, (s) => half.leadOf(s));
+        if (hook === "compaction") compaction.instruct(req);
         const stop = hook === "context" ? ch?.stopWord(String(req.sessionID)) : null;
         if (stop) req.system.push({ type: "text", text: stop });
       });
@@ -248,10 +256,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         keepalive.onEvent(ev);
         waits.onEvent(ev);
         pulse.onEvent(ev);
+        compaction.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
             pulse.forget(id);
+            compaction.forget(id);
             rootSeats.forget(id);
             onboard.forget(id);
             roots.delete(id);
