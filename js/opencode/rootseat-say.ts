@@ -11,6 +11,9 @@ const oneLine = (text: string): string => {
   return t.length > 300 ? `${t.slice(0, 299)}\u2026` : t;
 };
 
+/** The cover names no seat outside a repository: nothing to align, the reason only. */
+export const notSeatedWord = (why: string): string => W().notSeated(why);
+
 /** The bridge or the server refused the seating. */
 export const refusedWord = (text: string): string => W().notSeated(W().refused(oneLine(text)));
 

@@ -12,79 +12,33 @@
 // The queue bounds service work, not name allocation; a seating hung in the bridge holds the
 // line no longer than its ceiling. Only proof from the serving bridge makes the seat
 // provisional and promises replacement by an explicit stand in the same graph without take.
-import { coverIn, createRealign, stamp } from "./rootseat-again.ts";
+import { createRealign } from "./rootseat-again.ts";
+import { type Attempt, attempt } from "./rootseat-attempt.ts";
 import {
-  ceilingMs,
   pause,
   type RootSeatDoors,
   rootSeatEnabled,
   rootSeatMs,
   type RootSeats,
 } from "./rootseat-doors.ts";
-import { heldWord, lateWord, realignWord, refusedWord } from "./rootseat-say.ts";
+import { lateWord, realignWord } from "./rootseat-say.ts";
 
 export function createRootSeats(d: RootSeatDoors): RootSeats {
-  type Told = { word: string | null; seated: boolean };
-  type Attempt = { abort: AbortController; done: boolean; begun: boolean; promise: Promise<Told> };
   const seatings = new Map<string, Attempt>();
   const dead = new Set<string>();
   const told = new Set<string>();
   let stopped = false;
-  let line: Promise<unknown> = Promise.resolve(); // one seating at a time in this instance
+  const line = { at: Promise.resolve() as Promise<unknown> }; // one seating at a time in this instance
   const again = createRealign((s) => stopped || dead.has(s) || d.halted(s));
   const alive = (s: string, a: Attempt): boolean =>
     !stopped && !dead.has(s) && !d.halted(s) && seatings.get(s) === a;
+  const doors = { d, stopped: () => stopped, arm: again.arm, line };
 
   function start(session: string): Attempt {
     const known = seatings.get(session);
     if (known) return known;
-    const no = (word: string | null): Told => ({ word, seated: false });
-    const t: Attempt = {
-      abort: new AbortController(),
-      done: false,
-      begun: false,
-      promise: Promise.resolve(no(null)),
-    };
-    const cancelled = () => stopped || t.abort.signal.aborted || d.halted(session);
+    const t = attempt(session, doors);
     seatings.set(session, t);
-    const p = (async (): Promise<Told> => {
-      const where = await d.directoryOf(session);
-      if (cancelled() || !where) return no(null);
-      const sig = stamp(where);
-      const cover = coverIn(where);
-      if (cover === null) return no(null);
-      if ("why" in cover) {
-        again.arm(session, where, cover.why, sig);
-        return no(realignWord(cover.why));
-      }
-      const before = line;
-      const turn = before.then(() => {
-        if (cancelled()) return { cancelled: true } as const;
-        t.begun = true;
-        return d.seat(session, cover.realm, cover.karta, cancelled);
-      });
-      // A seating hung in the bridge holds the line no longer than its ceiling: the next goes.
-      line = before.then(() => Promise.race([turn, pause(ceilingMs())])).catch(() => {});
-      const r = await turn;
-      if (cancelled() || "cancelled" in r) {
-        if (t.begun) await d.release(session);
-        return no(null);
-      }
-      if ("error" in r) return no(refusedWord(r.error));
-      return { word: heldWord(r, cover.realm, cover.karta), seated: true };
-    })()
-      .catch(async (e: Error) => {
-        if (cancelled()) {
-          if (t.begun) await d.release(session);
-          return no(null);
-        }
-        return no(refusedWord(e.message));
-      })
-      .finally(() => {
-        t.done = true;
-        if (t.begun) d.finished(session);
-      });
-    t.promise = p;
     return t;
   }
 
@@ -99,47 +53,59 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
       return null;
     if (first) return first.word;
     // Seated after the term: the model has read "not seated"; the seat follows by the channel.
-    void seating.promise.then((t) => {
-      if (alive(session, seating) && t.seated && t.word) d.tell(session, t.word);
-    });
+    if (!seating.followed)
+      void seating.promise.then((t) => {
+        if (alive(session, seating) && t.seated && t.word) d.tell(session, t.word);
+      });
+    seating.followed = true;
     return lateWord(ms);
   }
 
-  /** The waiting root's cover became unambiguous: the one seating starts anew. */
-  function restart(session: string): Attempt {
-    seatings.delete(session);
-    return start(session);
+  /**
+   * The seating after the alignment, its word delivered once: a tool hook and a prompt that
+   * both wait for it within the term — the first to have the word gives it, the other none.
+   */
+  async function retried(session: string, a?: Attempt): Promise<string | null> {
+    if (!a) {
+      seatings.delete(session);
+      a = start(session);
+      a.retry = true;
+    }
+    const word = await wait(session, a);
+    if (!word || a.said) return null;
+    a.said = true;
+    return word;
   }
 
   return {
     async word(session) {
       if (!rootSeatEnabled() || stopped || dead.has(session)) return null;
       if (told.has(session)) {
+        const a = seatings.get(session);
+        if (a?.retry && !(a.done && a.said)) return retried(session, a);
         const next = again.check(session, true);
         if (!next) return null;
-        if ("why" in next) return realignWord(next.why);
-        return wait(session, restart(session));
+        return "why" in next ? realignWord(next.why) : retried(session);
       }
       told.add(session);
       if (d.halted(session)) return null;
       return wait(session, start(session));
     },
     aligning: (session) => again.has(session),
-    touched() {
+    async touched() {
       if (!rootSeatEnabled() || stopped) return;
-      for (const session of again.sessions()) {
-        const next = again.check(session, false);
-        if (!next) continue;
-        if ("why" in next) {
-          d.steer(session, realignWord(next.why));
-          continue;
-        }
-        // Into the running turn, no new one: the session's next step reads where it stands.
-        const seating = restart(session);
-        void seating.promise.then((t) => {
-          if (alive(session, seating) && t.word) d.steer(session, t.word);
-        });
-      }
+      // Into the running turn, no new one: the hook holds the turn no longer than the term.
+      await Promise.all(
+        again.sessions().map(async (session) => {
+          const next = again.check(session, false);
+          const word = !next
+            ? null
+            : "why" in next
+              ? realignWord(next.why)
+              : await retried(session);
+          if (word) await d.steer(session, word);
+        }),
+      );
     },
     forget(session) {
       dead.add(session);

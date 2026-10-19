@@ -21,7 +21,7 @@ export interface RootSeatDoors {
   /** A word into the session by the channel's path — it comes before the model's next turn. */
   tell(session: string, text: string): void;
   /** A word into the running turn: steer, no new turn (leaddoors.ts teller). */
-  steer(session: string, text: string): void;
+  steer(session: string, text: string): Promise<void> | void;
 }
 
 export interface RootSeats {
@@ -32,8 +32,11 @@ export interface RootSeats {
   word(session: string): Promise<string | null>;
   /** Not seated for its cover's defect or absence: the word is the alignment's. */
   aligning(session: string): boolean;
-  /** A tool call of the instance: a waiting root whose cover file changed reads it again. */
-  touched(): void;
+  /**
+   * A tool call of the instance: a waiting root whose cover file changed reads it again; a
+   * seating it starts is waited for within the term, so its word lands before the turn ends.
+   */
+  touched(): Promise<void>;
   forget(session: string): void;
   stop(): void;
 }

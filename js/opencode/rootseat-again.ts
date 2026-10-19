@@ -1,10 +1,12 @@
 // A root not seated for a defect of its cover (rootseat.ts) waits for the alignment in the same
 // session: after every tool call of the instance its cover file is looked at by a cheap stat
 // (mtime, size, inode — no watcher), on every prompt of the root it is read again. Unambiguous —
-// the root seats once by the same path; another defect — its exact word. No cover file inside a
-// repository (shared/reposigns.ts: any verdict but "outside") is the alignment's entry too;
-// outside a repository there is no cover to wait for — silence, as before.
-// A stopped session waits no more: automatic alignment does not lift the owner's stop.
+// the root seats once by the same path; another defect — its exact word. A defect is a missing
+// file, broken front matter, a missing or ambiguous graph or role; the contract's number is not
+// the plugin's to know — the cover file itself and the start hook keep it. Alignment is only
+// inside a repository (shared/reposigns.ts: any verdict but "outside"), where no cover file is its
+// entry too; outside one there is nothing to align: no file — silence, a defective one — the plain
+// "not seated", neither waits. A stopped session waits no more: alignment does not lift a stop.
 import { statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -13,11 +15,15 @@ import { type Cover, readCover } from "../shared/cover.ts";
 import { words } from "../shared/lang.ts";
 import { repoRoot } from "../shared/reposigns.ts";
 
-/** The cover of a session's directory; no file inside a repository — a reason, outside — null. */
-export function coverIn(where: string): Cover {
+/** The cover of a session's directory; a reason says whether it leads to the alignment. */
+export type Found = Exclude<Cover, { why: string }> | { why: string; align: boolean };
+
+/** Whether the directory is in a repository is asked before any defect: outside — main's reading. */
+export function coverIn(where: string): Found {
+  const align = repoRoot(where) !== null;
   const cover = readCover(where);
-  if (cover !== null || repoRoot(where) === null) return cover;
-  return { why: words(ROOT_SEAT).noFile(COVER.file) };
+  if (cover === null) return align ? { why: words(ROOT_SEAT).noFile(COVER.file), align } : null;
+  return "why" in cover ? { why: cover.why, align } : cover;
 }
 
 /** The cover file's signature; no file — "". */

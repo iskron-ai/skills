@@ -166,7 +166,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     release: (s) => half.releaseSeat(s),
     finished: (s) => half.finishSeat(s),
     tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "resumed", text } }),
-    steer: (s, text) => void teller(ctx, say, closed)(s, text, false),
+    steer: (s, text) => teller(ctx, say, closed)(s, text, false),
   });
   // A root waiting for its cover's alignment looks at the cover after every tool call.
   await watchCover(ctx, rootSeats, say);

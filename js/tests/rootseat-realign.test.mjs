@@ -6,63 +6,25 @@
 // Стенд — rootseat-kit.mjs: настоящий плагин и мосты, подставной сервер ownseat-kit.
 // ISKRON_OPENCODE_PLUGIN наводит пробу на другую копию плагина.
 import assert from "node:assert/strict";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { test } from "node:test";
 
-import { GLOBAL_PREFIX, ONBOARD_START, ROOT_SEAT } from "../delivery/index.ts";
-import { createHalts } from "../opencode/halts.ts";
-import { placeArgs, setup, until } from "./ownseat-kit.mjs";
-import { COVER, GRAPH_KEY, heardSeats, heldBy, rootPlugin, writeAgents } from "./rootseat-kit.mjs";
-
-const T = { timeout: 90_000 };
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const prefix = (f) => f("\0", "\0", "\0", "\0").split("\0")[0];
-/** Середина слова выравнивания — от причины до имени файла обложки. */
-const ALIGN = ROOT_SEAT.ru.realign("\0", "\0").split("\0")[1];
-const SEATED = prefix(ROOT_SEAT.ru.seated);
-const OWN = prefix(ROOT_SEAT.ru.ownSeated);
-const HUMAN = "словом человека";
-const stood = (w) => w.includes(SEATED) || w.includes(OWN);
-const resetStops = () => {
-  for (const key of ["Halts", "LiftedAt", "StopIds", "StopWords"])
-    delete globalThis[`${GLOBAL_PREFIX}${key}`];
-};
-const halts = (s) =>
-  createHalts(
-    () => undefined,
-    () => s.dir,
-    () => {},
-    () => {},
-  );
-const connects = (s) => placeArgs(s.fake, "connect").length;
-const writeRaw = (dir, text) => writeFileSync(join(dir, "AGENTS.md"), text);
-
-/** Корень пробы в каталоге с AGENTS.md без фронтматтера; первый ход уже прошёл. */
-async function aligning(t, { git = false, agents = true } = {}) {
-  resetStops();
-  // Before setup's own cleanup: the plugins stop first, so their bridges exit before it looks.
-  const up = [];
-  t.after(async () => {
-    for (const p of up) await p.stop();
-    resetStops();
-  });
-  const s = await setup(t);
-  const project = realpathSync(s.cwd);
-  if (git) mkdirSync(join(project, ".git"));
-  if (agents) writeRaw(project, "# проект\n\nОбложки ещё нет.\n");
-  const start = async () => {
-    const p = await rootPlugin(s, project);
-    up.push(p);
-    return p;
-  };
-  const oc = await start();
-  oc.create("root");
-  return { s, project, oc, start };
-}
-
-const look = (oc, r) =>
-  `модель прочла: ${r?.prompt ?? "-"}\nслова в сессию: ${JSON.stringify(oc.wordsTo("root"))}\nstderr:\n${oc.said()}`;
+import { ONBOARD_START, ROOT_SEAT } from "../delivery/index.ts";
+import { until } from "./ownseat-kit.mjs";
+import { COVER, GRAPH_KEY, heardSeats, heldBy, writeAgents } from "./rootseat-kit.mjs";
+import {
+  ALIGN,
+  aligning,
+  connects,
+  halts,
+  HUMAN,
+  look,
+  OWN,
+  resetStops,
+  SEATED,
+  sleep,
+  stood,
+  T,
+} from "./rootseat-realign-kit.mjs";
 
 test("(a) без фронтматтера — слово выравнивания, не «словом человека»; места нет", T, async (t) => {
   const { s, oc } = await aligning(t);
@@ -191,9 +153,11 @@ test("(g) удаление сессии во время посадки — ме�
   await oc.turn("root", "выровняй");
   await s.fake.control({ connect_delay_ms: 1500 });
   writeAgents(project);
-  await oc.toolAfter("root", "write", {});
+  // The hook waits for the seating it started: the session goes while it waits.
+  const after = oc.toolAfter("root", "write", {});
   await until(() => s.fake.state.counts.connect_asked > 0, "посадка в полёте");
   oc.remove("root");
+  await after;
   await sleep(3000);
   assert.deepEqual(heardSeats(s.fake, null), [], look(oc));
   assert.deepEqual(heldBy(s.dir, "root"), [], look(oc));
@@ -201,7 +165,7 @@ test("(g) удаление сессии во время посадки — ме�
 });
 
 test("(h) нет фронтматтера и приглашение онбординга — одно слово", T, async (t) => {
-  const { s, project, oc } = await aligning(t, { git: true });
+  const { s, project, oc } = await aligning(t, { repo: "fresh" });
   const text = await oc.promptOnly("root", "hello");
   assert.equal(text, `hello\n${ONBOARD_START.ru.start()}`);
   writeAgents(project);
@@ -213,7 +177,7 @@ test(
   "(i) свежий git-репо без AGENTS.md — приглашение, ожидание; обложка и тул — одна посадка",
   T,
   async (t) => {
-    const { s, project, oc } = await aligning(t, { git: true, agents: false });
+    const { s, project, oc } = await aligning(t, { repo: "fresh", agents: false });
     const text = await oc.promptOnly("root", "hello");
     assert.equal(text, `hello\n${ONBOARD_START.ru.start()}`, "одно слово — приглашение");
     writeAgents(project);
@@ -231,9 +195,7 @@ test(
   "(i') репо с признаками выравнивания, но без AGENTS.md — слово выравнивания «нет AGENTS.md»",
   T,
   async (t) => {
-    const { s, project, oc } = await aligning(t, { git: true, agents: false });
-    mkdirSync(join(project, ".opencode/plugins"), { recursive: true });
-    writeFileSync(join(project, ".opencode/plugins/iskron-rituals.js"), "export default {};\n");
+    const { s, project, oc } = await aligning(t, { agents: false });
     const r = await oc.turn("root", "привет");
     assert.ok(
       r.prompt.includes(ROOT_SEAT.ru.realign(ROOT_SEAT.ru.noFile("AGENTS.md"), "AGENTS.md")),
@@ -250,7 +212,7 @@ test(
 // Вне репозитория обложки ждать не от чего: ни слова, ни ожидания; появившийся файл этой
 // сессии не сажает — ни после тула, ни на следующем промпте (сядет новая сессия).
 test("(j) каталог вне репо без AGENTS.md — ни слова, ни ожидания", T, async (t) => {
-  const { s, project, oc } = await aligning(t, { agents: false });
+  const { s, project, oc } = await aligning(t, { repo: "none", agents: false });
   const r = await oc.turn("root", "привет");
   assert.equal(r.prompt, "привет", look(oc, r));
   writeAgents(project);
