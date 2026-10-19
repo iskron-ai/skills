@@ -51,7 +51,13 @@ test("a harness that confirms its stop: stopped is halt_confirmed, the same code
 
 test("a harness without halts: stopped is word_given, the same code on the second frame", async (t) => {
   const { fake, dir, b, id } = await standing(t);
-  const frame = JSON.stringify({ type: "stop", order_id: "ord-wg", standing_id: id });
+  const frame = JSON.stringify({
+    type: "stop",
+    order_id: "ord-wg",
+    standing_id: id,
+    to_standing: "@tester:proba",
+    to_standing_id: id,
+  });
   fake.state.orders.list.set("ord-wg", { id: "ord-wg", standing_id: id, state: "issued" });
   await fake.control({ ws_send_many: [frame, frame] });
   await until(() => saidKind(b, "stopped"), "the stop word");
