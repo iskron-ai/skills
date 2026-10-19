@@ -1,10 +1,12 @@
 // Слова автопосадки корня по обложке проекта (ядро opencode/rootseat.ts, shared/cover.ts):
-// одна строка модели до первого запроса — встал или почему не встал. Нет файла обложки —
-// слова нет вовсе: проект не выровнен.
+// одна строка модели до первого запроса — встал или почему не встал. Нет файла обложки вне
+// репозитория — слова нет вовсе.
 import type { Lang } from "../lang.ts";
 
 export interface RootSeatWords {
   // Почему обложка не назвала место; file и key — имена из patterns/cover.ts.
+  /** Файла обложки нет в каталоге сессии внутри репозитория. */
+  noFile: (file: string) => string;
   noFrontmatter: (file: string) => string;
   noKey: (file: string, key: string) => string;
   /** В значении слота нет ни @owner/slug, ни rN в начале. */
@@ -23,6 +25,8 @@ export interface RootSeatWords {
   unproven: () => string;
   /** Не встал: why — причина готовой строкой. */
   notSeated: (why: string) => string;
+  /** Не встал из-за дефекта обложки file: выровнять, посадка повторится сама. */
+  realign: (why: string, file: string) => string;
   /** Отказ моста или сервера на посадке — причина его словами. */
   refused: (text: string) => string;
   /** Вернулось своё прежнее место сессии, но другой роли или графа, чем в обложке. */
@@ -38,6 +42,7 @@ export interface RootSeatWords {
 
 export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
   ru: {
+    noFile: (file) => `нет ${file}`,
     noFrontmatter: (file) => `в ${file} нет YAML-фронтматтера обложки`,
     noKey: (file, key) => `в обложке ${file} нет слота '${key}'`,
     noGraph: (file, key) => `'${key}' в ${file} не начинается с @owner/slug или rN`,
@@ -55,6 +60,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
       "мост не подтвердил, что это провизорное место взято этой попыткой; revoke не разрешён",
     notSeated: (why) =>
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
+    realign: (why, file) =>
+      `Искрон: сессия не посажена — ${why}. Выровняй репозиторий скиллом iskronify по действительным источникам; граф или роль не угадывай — неопределимое спроси по процедуре выравнивания. Посадка повторится сама, как только обложка ${file} станет однозначной.`,
     refused: (text) => `посадка сорвалась: ${text}`,
     ownOther: (place, karta, realm) =>
       `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
@@ -66,6 +73,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     noBridge: () => "мост не поднят",
   },
   en: {
+    noFile: (file) => `there is no ${file}`,
     noFrontmatter: (file) => `${file} carries no YAML front matter`,
     noKey: (file, key) => `the front matter of ${file} has no '${key}' slot`,
     noGraph: (file, key) => `'${key}' in ${file} does not start with @owner/slug or rN`,
@@ -83,6 +91,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
       "the bridge did not prove this attempt took a provisional seat; revoke is not authorized",
     notSeated: (why) =>
       `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
+    realign: (why, file) =>
+      `Iskron: the session is not seated — ${why}. Align the repository with the iskronify skill from valid sources; do not guess the graph or the role — ask what cannot be determined by the alignment procedure. Seating repeats by itself as soon as the cover ${file} becomes unambiguous.`,
     refused: (text) => `seating failed: ${text}`,
     ownOther: (place, karta, realm) =>
       `Iskron: the session holds seat ${place} — role #${karta} in ${realm}; its role or graph differs from the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,

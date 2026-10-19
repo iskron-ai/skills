@@ -232,6 +232,20 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       return p.prompt.text;
     },
     tools: () => tools.list,
+    /** Тул сессии отработал (модель записала файл write или shell): хуки tool.execute.after. */
+    async toolAfter(sessionID, tool, input = {}) {
+      const ev = {
+        tool,
+        sessionID,
+        agent: "build",
+        messageID: `msg-${++seq}`,
+        id: `call-${++seq}`,
+        input,
+        status: "completed",
+        result: { content: "" },
+      };
+      for (const cb of hooks["tool.execute.after"] ?? []) await cb(ev);
+    },
     remove(id) {
       sessions.delete(id);
       emit({ type: "session.deleted", location: { directory: project }, data: { sessionID: id } });
@@ -309,8 +323,10 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       };
     },
     async stop() {
+      const once = cleanup;
+      cleanup = null; // a second stop is a no-op
       try {
-        await cleanup?.();
+        await once?.();
       } finally {
         process.stderr.write = write;
       }

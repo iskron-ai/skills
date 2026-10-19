@@ -28,6 +28,7 @@ import { annotate } from "./notice.ts";
 import { createOnboardStart } from "./onboardstart.ts";
 import { createPulseFeed } from "./pulse.ts";
 import { createRootSeats } from "./rootseat.ts";
+import { startWords, watchCover } from "./rootseat-start.ts";
 import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";
 import { createTwins, sweepAll } from "./twins.ts";
@@ -165,13 +166,17 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     release: (s) => half.releaseSeat(s),
     finished: (s) => half.finishSeat(s),
     tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "resumed", text } }),
+    steer: (s, text) => teller(ctx, say, closed)(s, text, false),
   });
+  // A root waiting for its cover's alignment looks at the cover after every tool call.
+  await watchCover(ctx, rootSeats, say);
 
   const onboard = createOnboardStart(
     ctx,
     (s) => parents.has(s) || (roots.has(s) && roots.get(s) !== s),
     closed,
   );
+  const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
   // The launch line with a case (launch.ts): the prompt hook waits for the standing and the entry.
   // A root's first prompt waits for its seating, bounded (rootseat.ts), before the model's request.
   try {
@@ -180,12 +185,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       const root = (await rootOf(sid)) === sid;
       const word = await half.launch(sid, p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
-      // An invitation needs no cover, so no seat beside it; the seating's ceiling alone bounds both.
-      const [seat, invitation] = root
-        ? await Promise.all([rootSeats.word(sid), onboard.prompt(sid)])
-        : [null, null];
-      if (seat) p.prompt.text = withWord(p.prompt.text, seat);
-      if (invitation && !closed(sid)) p.prompt.text = withWord(p.prompt.text, invitation);
+      for (const w of root ? await started(sid) : []) p.prompt.text = withWord(p.prompt.text, w);
       // Counts of records that woke no turn ride the prompt that starts one (#6574); the root's only into the root.
       const counts = root ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}\n\n${markFrame(counts)}`;
