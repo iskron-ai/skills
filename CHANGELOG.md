@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.17.4](https://github.com/iskron-ai/skills/compare/v7.17.3...v7.17.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* **bridge:** останов — только места, названного в снятии; побудка о живости называет место ([#526](https://github.com/iskron-ai/skills/issues/526)) ([9ea42d7](https://github.com/iskron-ai/skills/commit/9ea42d7a3d10bf024263426d6915f19cb29bd202))
+
 ## [7.17.3](https://github.com/iskron-ai/skills/compare/v7.17.2...v7.17.3) (2026-10-18)
 
 
