@@ -530,6 +530,21 @@ export async function startFakeNks(opts = {}) {
           setTimeout(() => sock.end(), 200).unref();
         }
       }
+      // Гашение одного места (дело №1046): закрытие с кодом и причиной — только сокетам этого места.
+      if (patch.ws_close_name) {
+        const { name, code, reason } = patch.ws_close_name;
+        const why = Buffer.from(String(reason ?? ""));
+        for (const sock of [...st.ws].filter((s) => st.wsNames.get(s) === name)) {
+          sock.write(wsFrame(0x8, Buffer.concat([Buffer.from([code >> 8, code & 0xff]), why])));
+          setTimeout(() => sock.end(), 200).unref();
+        }
+      }
+      // Кадр как есть — только сокетам одного места.
+      if (patch.ws_send_name) {
+        const { name, text } = patch.ws_send_name;
+        for (const sock of st.ws)
+          if (st.wsNames.get(sock) === name && !st.hung.has(sock)) sock.write(wsFrame(0x1, text));
+      }
       // Отъём места новым держателем (#6706): кодом закрываются прежние сокеты места, новейший цел.
       if (patch.ws_close_old) {
         const { name, code } = patch.ws_close_old;
@@ -573,6 +588,7 @@ export async function startFakeNks(opts = {}) {
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
         "registerNoId", // ответ register без standing_id — id места мосту не известен
+        "helloNoIds", // hello без standing_id мест — с registerNoId мост своего id не узнаёт вовсе
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
         "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
@@ -1976,7 +1992,7 @@ export async function startFakeNks(opts = {}) {
             pending: 0,
             realm,
             standing: `@tester:${p.name}`,
-            standing_id: p.standing_id,
+            ...(st.helloNoIds ? {} : { standing_id: p.standing_id }),
           })),
           ping_interval_seconds: opts.helloPingS ?? (opts.pingMs ? opts.pingMs / 1000 : 30),
         }),

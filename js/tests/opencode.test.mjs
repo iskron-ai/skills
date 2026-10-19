@@ -29,11 +29,9 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -45,13 +43,21 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import { Backlog } from "../bridge/backlog.ts";
-import { FRAME_MARK } from "../delivery/protocol.ts";
 import { staleBatch } from "../shared/stalebatch.ts";
-import { BUILT_BRIDGE, BUILT_PLUGIN } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import {
+  BATCH_MS,
+  delay,
+  lostMarkers,
+  plugin,
+  REAL_BRIDGE,
+  SANDBOX,
+  stopMarks,
+  until,
+} from "./opencode-kit.mjs";
 import {
   ack,
   addressed,
@@ -91,353 +97,7 @@ import {
   withheld,
 } from "./room-frames.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN;
-const FAKE_BRIDGE = join(HERE, "fake-bridge.mjs");
-/** The real bridge of this checkout — for the one probe that measures the plugin's stop against it. */
-const REAL_BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
-
-const SANDBOX = mkdtempSync(join(tmpdir(), "iskron-opencode-"));
-const COPY = join(SANDBOX, "iskron.js");
-copyFileSync(SOURCE, COPY);
-process.env.HOME = SANDBOX;
-process.env.ISKRON_BRIDGE_AUTH_DIR = join(SANDBOX, "auth");
-/** The window a case burst gathers in before its one prompt — short under the probes. */
-const BATCH_MS = 150;
-process.env.ISKRON_OPENCODE_BATCH_MS = String(BATCH_MS);
-
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-/** The markers keep.ts leaves next to the grant when a plugin stops with a holding bridge — one file per instance. */
-const lostMarkers = () => {
-  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.startsWith("opencode-lost") && f.endsWith(".json"))
-      .map((f) => join(dir, f));
-  } catch {
-    return [];
-  }
-};
-/** The owner's stops (halts.ts) and leads' ends (leadends.ts) the plugin lays next to the grant — read by every instance. */
-const stopMarks = () => {
-  const dir = process.env.ISKRON_BRIDGE_AUTH_DIR;
-  try {
-    return readdirSync(dir)
-      .filter((f) => f.startsWith("opencode-stopped") || f.startsWith("opencode-ended"))
-      .map((f) => join(dir, f));
-  } catch {
-    return [];
-  }
-};
-
-// ── the context the plugin is handed ─────────────────────────────────────────
-
-/** A replayable registry: every transform callback re-runs on reload, as in OpenCode. */
-function registry() {
-  const transforms = [];
-  let current = new Map();
-  const replay = () => {
-    const m = new Map();
-    const editor = {
-      add: (d) => m.set(d.name, d),
-      remove: (id) => m.delete(id),
-      get: (id) => m.get(id),
-      list: () => [...m.values()],
-      update() {},
-      namespace() {},
-    };
-    for (const t of transforms) t(editor);
-    current = m;
-  };
-  return {
-    transform: async (cb) => {
-      transforms.push(cb);
-      replay();
-      return { dispose: async () => {} };
-    },
-    reload: async () => replay(),
-    get: () => current,
-  };
-}
-
-function fakeCtx({
-  sessions = [],
-  skills = [],
-  gone = new Set(),
-  inboxIds = false,
-  app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
-  location = undefined, // ctx.location — the location this instance is loaded for
-  faults = {}, // the session API's failures a probe asks for (keepalive)
-} = {}) {
-  const prompts = [];
-  const synthetics = [];
-  const interrupts = [];
-  const updates = [];
-  const moves = [];
-  const hooks = {};
-  const tools = registry();
-  const commands = registry();
-  const queue = [];
-  let wake = null;
-  const stderr = [];
-  let calls = 0;
-  const ctx = {
-    app,
-    ...(location ? { location } : {}),
-    tool: {
-      transform: tools.transform,
-      reload: tools.reload,
-      hook: async (name, cb) => {
-        (hooks[`tool.${name}`] ??= []).push(cb);
-        return { dispose: async () => {} };
-      },
-    },
-    // Permission hooks: "evaluate" gets a mutable evaluation, as in OpenCode 2.0.24.
-    permission: {
-      hook: async (name, cb) => {
-        (hooks[`permission.${name}`] ??= []).push(cb);
-        return { dispose: async () => {} };
-      },
-    },
-    command: { transform: commands.transform, reload: commands.reload },
-    session: {
-      // A deleted session is a thrown NotFound in OpenCode; an unlisted one is
-      // simply a root the probe never described.
-      get: async ({ sessionID }) => {
-        if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
-        return sessions.find((x) => x.id === sessionID) ?? { id: sessionID };
-      },
-      // OpenCode answers a prompt with its inbox item; the id comes back in
-      // session.inbox.delivered when a turn takes it. Off by default: most probes need no id.
-      // The channel's text carries the delivery's mark (#6815 item 3): kept as `marked`,
-      // the probes read the text after it.
-      // faults.promptWait(id) — the answer waits for the promise it returns.
-      prompt: async (o) => {
-        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
-        prompts.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
-        const id = `inbox-${prompts.length}`;
-        await faults.promptWait?.(id);
-        return inboxIds ? { id, type: "user", delivery: o.delivery } : {};
-      },
-      // Create and remove — the plugin's keepalive child (keepalive.ts); both are logged in updates.
-      // createNoId — the answer carries no id; removeFails — so many next removes throw.
-      create: async (o) => {
-        updates.push({ create: o });
-        return faults.createNoId ? {} : { id: `ka-${updates.length}`, parentID: o?.parentID };
-      },
-      // noRemove — the context has no remove at all (a future OpenCode).
-      ...(faults.noRemove
-        ? {}
-        : {
-            remove: async (o) => {
-              updates.push({ remove: o });
-              if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
-            },
-          }),
-      // A move — the twin's wake of an unloaded spelling (twins.ts); moveFails — it throws.
-      move: async (o) => {
-        moves.push(o);
-        if (faults.moveFails) throw new Error("move refused");
-      },
-      // An interrupt of the session's running turn (session.interrupt, @opencode/plugin 2.0.4);
-      // interruptFails — so many next interrupts throw.
-      // interruptGate — a promise every interrupt waits for before it answers.
-      interrupt: async (o) => {
-        interrupts.push(o);
-        await faults.interruptGate;
-        if (faults.interruptFails > 0 && faults.interruptFails--)
-          throw new Error("interrupt refused");
-        return { interrupted: true };
-      },
-      // A synthetic message — how OpenCode's own subagent tool reports to the parent.
-      synthetic: async (o) => {
-        const marked = typeof o.text === "string" && o.text.startsWith(`${FRAME_MARK} `);
-        synthetics.push(marked ? { ...o, text: o.text.slice(FRAME_MARK.length + 1), marked } : o);
-        return { id: `synthetic-${synthetics.length}`, type: "synthetic" };
-      },
-      // Session hooks: the probe runs "prompt" the way OpenCode does — awaited,
-      // on a mutable SessionPrompt, before the prompt reaches the model.
-      hook: async (name, cb) => {
-        (hooks[name] ??= []).push(cb);
-        return { dispose: async () => {} };
-      },
-    },
-    skill: { list: async () => ({ location: { directory: SANDBOX }, data: skills }) },
-    model: { list: async () => [{ id: "m1", providerID: "p", limit: { context: 200000 } }] },
-    event: {
-      subscribe: async function* ({ signal } = {}) {
-        while (!signal?.aborted) {
-          if (queue.length) {
-            yield queue.shift();
-            continue;
-          }
-          await new Promise((r) => {
-            wake = r;
-            signal?.addEventListener("abort", r, { once: true });
-          });
-        }
-      },
-    },
-  };
-  return {
-    ctx,
-    prompts,
-    synthetics,
-    interrupts,
-    updates,
-    moves,
-    tools: () => tools.get(),
-    commands: () => commands.get(),
-    hooks,
-    /**
-     * A tool call that meets a permission check, the order OpenCode 2.0.24 runs them in:
-     * tool "execute.before", then permission "evaluate" with the call's id; returns the effect.
-     */
-    ask: async (tool, input, action, resources, effect = "ask") => {
-      const id = `call-${++calls}`;
-      for (const cb of hooks["tool.execute.before"] ?? [])
-        await cb({ tool, sessionID: "s", agent: "build", messageID: "m", id, input });
-      const e = {
-        sessionID: "s",
-        action,
-        resources,
-        effect,
-        source: { type: "tool", messageID: "m", id },
-      };
-      for (const cb of hooks["permission.evaluate"] ?? []) await cb(e);
-      return e.effect;
-    },
-    /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
-    promptRaw: async (sessionID, text) => {
-      const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
-      for (const cb of hooks.prompt ?? []) await cb(p);
-      return p.prompt.text;
-    },
-    /** The same, the delivery's mark on riding counts (#6815 item 3) taken off. */
-    async prompt(sessionID, text) {
-      return (await this.promptRaw(sessionID, text)).replace(`\n\n${FRAME_MARK} `, "\n\n");
-    },
-    emit: (ev) => {
-      queue.push(ev);
-      wake?.();
-    },
-    stderr,
-  };
-}
-
-const ENV_KEYS = [
-  "ISKRON_BRIDGE_PATH",
-  "ISKRON_MCP_HANDSHAKE_MS",
-  "ISKRON_MCP_AUTH_POLL_MS",
-  "ISKRON_BRIDGE_IDLE_MS",
-  "ISKRON_BRIDGE_REAP_MS",
-  "FB_LOG",
-  "FB_MODE",
-  "FB_AUTHED",
-  "FB_DEVICE",
-  "FB_DEVICE_FILE",
-  "FB_DEVICE_LEFT_S",
-  "FB_DEVICE_UNSET",
-  "FB_TOOLS",
-  "FB_PAGINATE",
-  "FB_TOOLS_FILE",
-  "FB_CHANGED",
-  "FB_REPLY",
-  "FB_EVENTS",
-  "FB_CALLS",
-  "FB_RESUME",
-  "FB_STAND_HELD",
-  "FB_INITS",
-  "FB_INIT_CAPS",
-  "FB_NET_UP",
-  "FB_DIE_ONCE",
-  "FB_ENV",
-  "FB_END_FAILED",
-  "FB_END_REVOKED",
-  "FB_END_DELAY_MS",
-  "FB_PULSE_REFUSE",
-  "ISKRON_HARNESS_VERSION",
-  "ISKRON_SKILLS_ROOT",
-  "ISKRON_BRIDGE_WATCH_MS",
-  "ISKRON_BRIDGE_URL",
-  "ISKRON_BRIDGE_TOKEN",
-  "ISKRON_BRIDGE_NO_BROWSER",
-  "ISKRON_BRIDGE_LANG",
-  "ISKRON_LEAD_IDLE_MS",
-  "ISKRON_CHILD_BACK_PAUSE_MS",
-  "ISKRON_CHILD_BACK_MS",
-  "ISKRON_RESUME_PATIENCE_MS",
-  "ISKRON_MOVE_ADOPT_MS",
-  "ISKRON_KEEPALIVE_MS",
-  "ISKRON_PERMISSION_WAIT_MS",
-  "ISKRON_WAKE_MS",
-  "ISKRON_OPENCODE_PENDING_MS",
-  "ISKRON_OPENCODE_WAKE_HOLD_MS",
-  "ISKRON_OPENCODE_HALT_CAP_MS",
-];
-
-let seq = 0;
-async function loadPlugin(env = {}) {
-  for (const k of ENV_KEYS) delete process.env[k];
-  for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
-  return (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
-}
-
-// The plugin speaks to the human through the service's stderr: the probe
-// listens there instead of a TUI toast.
-function captureStderr(into) {
-  const write = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (chunk, ...rest) => {
-    into.push(String(chunk));
-    return write(chunk, ...rest);
-  };
-  return () => (process.stderr.write = write);
-}
-
-/** A loaded plugin: registries in hand, cleanup at hand. */
-async function plugin(env = {}, ctxOpts = {}) {
-  // A plugin stopped with a holding bridge leaves a marker for the next instance
-  // (keep.ts); the probes share one auth dir, so each starts clean unless it is
-  // the marker itself that is under test.
-  if (!ctxOpts.keepMarker) {
-    for (const f of [...lostMarkers(), ...stopMarks()]) rmSync(f, { force: true });
-    // The probes reuse session ids: the process's ended leads go too.
-    globalThis.__iskronEnded?.clear();
-    globalThis.__iskronEndLiftedAt?.clear();
-  }
-  const def = await loadPlugin(env);
-  assert.equal(def.id, "iskron", "the default export must be a definition with an id");
-  const rec = fakeCtx(ctxOpts);
-  const restore = captureStderr(rec.stderr);
-  // channelDown — the channel half fails to come up: setupChannel throws (plugin.ts keeps the rest).
-  const RealSet = globalThis.Set;
-  if (ctxOpts.channelDown)
-    globalThis.Set = class extends RealSet {
-      constructor(...args) {
-        if (/setupChannel/.test(new Error().stack)) throw new Error("channel half down");
-        super(...args);
-      }
-    };
-  try {
-    rec.cleanup = await def.setup(rec.ctx);
-  } finally {
-    globalThis.Set = RealSet;
-  }
-  rec.said = () => rec.stderr.join("");
-  // Captures nest: an instance stopped while a later one still listens keeps its capture
-  // (cleanup), and gives it back after the later one's stop (restore).
-  rec.restore = restore;
-  rec.stop = async () => {
-    await rec.cleanup?.();
-    restore();
-  };
-  rec.call = (name, input, sessionID) => {
-    const t = rec.tools().get(name);
-    assert.ok(t, `tool ${name} must be registered`);
-    return t.execute(input, { sessionID, agent: "build", messageID: "m", id: "c" });
-  };
-  return rec;
-}
+const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
 
 function bridgeEnv(name, extra = {}) {
   const log = join(SANDBOX, `${name}.log`);
@@ -474,15 +134,6 @@ const alive = (pid) => {
     return false;
   }
 };
-
-async function until(check, what, ms = 5000) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (check()) return;
-    await delay(25);
-  }
-  assert.fail(`timed out waiting for ${what}`);
-}
 
 /** The FB_ENV lines a raised bridge has finished writing — the file exists before its line does. */
 const envLines = (log) => {
@@ -1822,6 +1473,7 @@ const lifeCheck = (id = "life-1") => {
     provenance: { via: "platform", auth: "none", wake: "life_check", force: true },
     content_type: "text/plain",
     body: "8 ч нет твоего действия. Если не обновишь статус, будешь погашен: следующая проверка около 14:00Z.",
+    to_standing: "@alari:host.repo.opus-5",
   };
   return event("frame", { frame, raw: JSON.stringify(frame) });
 };
@@ -1843,7 +1495,7 @@ test("a life check at an idle session is one prompt of its own, queued: the plat
     assert.equal(
       p.text,
       "8 ч нет твоего действия. Если не обновишь статус, будешь погашен: следующая проверка около 14:00Z.\n\n" +
-        LIFE_REPLY_RU,
+        `Предупреждено место: host.repo.opus-5.\n${LIFE_REPLY_RU}`,
     );
     assert.match(rec.said(), /побудка о живости, кадр life-1/);
     await delay(300);
@@ -1896,7 +1548,8 @@ test("a life check speaks the session's language: the way to answer in English",
       ),
       rec.prompts[0].text,
     );
-    assert.doesNotMatch(rec.prompts[0].text, /Ответь/);
+    assert.match(rec.prompts[0].text, /\nSeat warned: host\.repo\.opus-5\.\n/);
+    assert.doesNotMatch(rec.prompts[0].text, /Ответь|Предупреждено/);
   } finally {
     await rec.stop();
   }

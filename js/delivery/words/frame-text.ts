@@ -23,6 +23,8 @@ export interface FrameTextWords {
   caseHistory: (args: string, since: number) => string;
   /** Под текстом побудки о живости (дело №1046): чем на неё ответить. */
   lifeCheckReply: () => string;
+  /** Какое место побудка предупредила; пусто — платформа места не назвала. */
+  lifeCheckSeat: (name: string) => string;
 }
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
@@ -37,6 +39,7 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () =>
       `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
+    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -49,6 +52,7 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () =>
       `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
+    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
   },
 };
 

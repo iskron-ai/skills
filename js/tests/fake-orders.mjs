@@ -70,6 +70,12 @@ function putOrder(st, o, wsFrame) {
   };
   st.orders.list.set(order.id, order);
   if (o.frame === false) return order;
+  // Addressed as the api addresses every frame (to_standing, to_standing_id) — to the seat it
+  // names; a seat on no channel goes unaddressed to every socket; `to` — the probe's own address.
+  const at = seatOf(st, o.standing_id);
+  const name = at?.c.places.get(at.realm)?.name;
+  const to =
+    o.to ?? (name ? { to_standing: `@tester:${name}`, to_standing_id: o.standing_id } : {});
   const frame = JSON.stringify({
     type: "stop",
     order_id: order.id,
@@ -78,9 +84,9 @@ function putOrder(st, o, wsFrame) {
     by: order.by,
     issued_at: order.issued_at,
     ack_window_seconds: 60,
+    ...to,
   });
-  for (const s of channelSockets(st, seatOf(st, o.standing_id)?.chan))
-    if (!st.hung.has(s)) s.write(wsFrame(0x1, frame));
+  for (const s of channelSockets(st, at?.chan)) if (!st.hung.has(s)) s.write(wsFrame(0x1, frame));
   return order;
 }
 

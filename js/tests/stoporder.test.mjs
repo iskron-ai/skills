@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { saidKind, stand, textOf, until } from "./ownseat-kit.mjs";
+import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 import {
   acks,
   frames,
@@ -61,7 +61,14 @@ test("a stop frame is never given to the agent as a frame", async (t) => {
 
 test("the same order twice is one stop: one stop word, the same outcome answered", async (t) => {
   const { fake, dir, b, id } = await standing(t);
-  const frame = JSON.stringify({ type: "stop", order_id: "ord-2", standing_id: id, by: "person" });
+  const frame = JSON.stringify({
+    type: "stop",
+    order_id: "ord-2",
+    standing_id: id,
+    by: "person",
+    to_standing: "@tester:proba",
+    to_standing_id: id,
+  });
   fake.state.orders.list.set("ord-2", { id: "ord-2", standing_id: id, state: "issued" });
   await fake.control({ ws_send_many: [frame, frame] });
   await until(() => acks(fake, "ord-2").some((a) => a.state === "stopped"), "the outcome");
@@ -146,6 +153,45 @@ test("an order for a seat the bridge does not hold is refused; nobody stops", as
   );
   assert.ok(!kinds(b).includes("stopped"));
   assert.equal(fake.state.ws.size, 1);
+});
+
+// Case №1046: a bridge that never learnt its seat's id took a stop order for any id as its own —
+// the law of standing_ended: an unknown id is no seat of its; the order stops it only when
+// addressed to that very seat (to_standing_id, and its name if named).
+const NOT_MINE = [
+  ["addressed to that seat", { to_standing: "@tester:sosed.sub-5", to_standing_id: "s5" }],
+  ["addressed to this seat by name only", { to_standing: "@tester:proba" }],
+  ["with no addressee", {}],
+];
+async function blind(t) {
+  const env = await setup(t);
+  await env.fake.control({ registerNoId: true, helloNoIds: true });
+  const b = await env.up();
+  const r = await stand(b, { realm: "nks-dev", karta: 931, name: "proba" });
+  assert.ok(!r.result?.isError, textOf(r));
+  await until(() => env.fake.state.ws.size === 1, "the socket");
+  await pause(200);
+  return { ...env, b };
+}
+for (const [what, to] of NOT_MINE)
+  test(`#1046: the seat id unknown to the bridge — an order for another seat ${what} is refused; nobody stops`, async (t) => {
+    const { fake, b } = await blind(t);
+    await fake.control({ stop_order: { id: "ord-nm", standing_id: "s5", to } });
+    await until(() => acks(fake, "ord-nm").length, `the answer:\n${b.stderr}`);
+    await pause(300);
+    assert.deepEqual(
+      acks(fake, "ord-nm").map((a) => a.state),
+      ["refused"],
+    );
+    assert.ok(!kinds(b).includes("stopped"), `nobody stops: ${kinds(b)}`);
+    assert.equal(fake.state.ws.size, 1, "the seat's socket stays");
+  });
+
+test("#1046: the seat id unknown to the bridge — an order addressed to this seat still stops it", async (t) => {
+  const { fake, b } = await blind(t);
+  await fake.control({ stop_order: { id: "ord-own", standing_id: seatId(fake, NKS, "proba") } });
+  await until(() => saidKind(b, "stopped"), `the stop word:\n${b.stderr}`);
+  await until(() => fake.state.orders.list.get("ord-own").state === "stopped", "the outcome");
 });
 
 test("an order the socket missed is read on hello and executed the same way", async (t) => {
