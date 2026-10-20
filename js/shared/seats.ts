@@ -26,5 +26,21 @@ export function seatOf(frame: Frame, kind: string): boolean | null {
   return seatIs(f, ...seatsOf(f, kind));
 }
 
+const named = (v: unknown): boolean =>
+  typeof v === "string" ? !!v : Object.keys(obj(v)).length > 0;
+
+/**
+ * The record carries an address of its own (#6574, case №1249): fields.to, the envelope's
+ * addressee, an invite's or withdrawal's seat or role. A reply is addressed to the author
+ * of the record it answers only without one.
+ */
+export function namesAddress(f: Rec, kind: string): boolean {
+  const fields = obj(obj(f.line).fields);
+  if (named(fields.to) || named(f.addressee)) return true;
+  return (
+    (kind === "invite" || kind === "withdraw") && (named(fields.standing) || named(fields.karta))
+  );
+}
+
 /** The record names my seat explicitly. */
 export const namedMine = (frame: Frame, kind: string): boolean => seatOf(frame, kind) === true;

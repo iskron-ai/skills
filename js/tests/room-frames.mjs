@@ -595,3 +595,19 @@ export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
   f.line.fields = { ...f.line.fields, cause, gone_standing: "@aleksei:gone" };
   return f;
 };
+
+/**
+ * Зов роли seq на мой вопрос (дело №1249): платформенный invite без автора, cause asked,
+ * in_reply_to — мой вопрос, in_reply_to_from — моё место; адрес записи — роль, не я.
+ * withdraws — отзыв этого зова: in_reply_to — само приглашение.
+ */
+export const roleAsked = (entry_id, seq, in_reply_to, withdraws = false) => {
+  const f = roleInvite(entry_id, seq);
+  if (withdraws) {
+    f.event_kind = "room.withdraw";
+    f.line.kind = "withdraw";
+  } else f.line.fields.cause = "asked";
+  f.line.author = null;
+  f.provenance = { auth: "platform", via: "room" };
+  return { ...f, in_reply_to, in_reply_to_from: { id: ME_ID, standing: ME, name: "proba" } };
+};

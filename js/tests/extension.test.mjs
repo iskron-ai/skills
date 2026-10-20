@@ -76,6 +76,7 @@ import {
   OTHER_KEY,
   progress,
   reask,
+  roleAsked,
   roleCall,
   roleInvite,
   roleOnlyAsk,
@@ -1289,6 +1290,18 @@ test("C: the seat is matched by id: a null or another's addressee string with my
     assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
   for (const f of theirs)
     assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
+});
+
+// Дело №1249: зов чужой роли на мой вопрос и его отзыв — адрес записи роль, не я (#6574).
+test("a platform call of another role in reply to my question, and its withdrawal: one count, тебе 0", async () => {
+  const got = await asideMessages(
+    "role-asked",
+    [roleAsked(97, 99, 90), roleAsked(98, 99, 97, true)],
+    1,
+  );
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0 — `));
+  assert.doesNotMatch(got[0].text, /зовёт/);
 });
 
 // Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.

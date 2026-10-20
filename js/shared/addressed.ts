@@ -5,7 +5,7 @@ import { ASK_KINDS, askedMine, askFromPerson } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
 import { byKind, inviteMine, mineOf, obj, roomKind, seatIs, str } from "./room-kinds.ts";
-import { seatOf } from "./seats.ts";
+import { namesAddress, seatOf } from "./seats.ts";
 
 type Rec = Record<string, unknown>;
 
@@ -107,11 +107,12 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     )
       return true;
   } else if (
-    // A word to me, a reply to my record (#5954), marked important; a word in flight
-    // is remembered, since its body comes as a second phase without these marks.
+    // A word to me, a reply to my record without an address of its own (#5954, #6574),
+    // marked important; a word in flight is remembered, since its body comes as a second
+    // phase without these marks.
     seat === true ||
     (seat === null &&
-      (seatIs(f, f.in_reply_to_from) === true ||
+      ((seatIs(f, f.in_reply_to_from) === true && !namesAddress(f, rk?.kind ?? "")) ||
         str(f.said) === "important" ||
         str(fields.kind) === "important"))
   ) {
