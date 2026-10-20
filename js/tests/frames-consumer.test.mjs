@@ -14,10 +14,11 @@ import {
   branchOutcome,
   intentFor,
   judge,
+  kindOf,
   readSegment,
   textsOf,
 } from "../../scripts/frames-consumer-judge.mjs";
-import { loadSeats } from "../../scripts/frames-consumer-scenarios.mjs";
+import { loadSeats, wireOf } from "../../scripts/frames-consumer-scenarios.mjs";
 import { REPO } from "./built.mjs";
 import {
   ask,
@@ -69,7 +70,13 @@ test("the api's intent is read from the frame's address fields, per seat", () =>
 test("a scenario directory: subdirectories are branches, rows become socket frames, the seat's address is learnt", () => {
   const dir = mkdtempSync(join(tmpdir(), "frames-scenarios-"));
   try {
-    const { room, ...envelope } = { ...ask(60), room: { id: "<room_1>", seq: 1 } };
+    // A queue row's envelope has no receiver: delivery adds it (wireOf).
+    const {
+      room,
+      to_standing_id: _id,
+      to_standing: _addr,
+      ...envelope
+    } = { ...ask(60), room: { id: "<room_1>", seq: 1 } };
     envelope.line.fields.to.standing = { id: "<seat_B>", standing: "@b:beta" };
     const row = { id: "<uuid_1>", channel_id: "<seat_B>", standing_id: "<seat_B>", body: "" };
     const seatB = { standing_id: "<seat_B>", standing: "seat_B", verdict_on_main: "red" };
@@ -116,19 +123,30 @@ test("the full set's seat files: a seat object names no label, a person is told 
       expected: "ожидание API",
       messages: [],
     });
-    file("A", seat("<seat_A>", "<role_A>", "seat A (alpha) — opened the case"));
-    file("window", seat("<seat_window>", "<role_person>", "person's seat, outside"));
+    const labels = { "<role_person>": "person's role (svatantra)" }; // форма полного комплекта
+    writeFileSync(join(dir, "s1", "_scenario.json"), JSON.stringify({ labels }));
+    file("A", seat("<seat_A>", "<role_A>", "seat A — answers the person's question"));
+    file("window", seat("<seat_window>", "<role_person>", "the window"));
     file("R_unmanned_share", {
       standing_id: null,
       standing: { unmanned_share_of_role: "<r>" },
       messages: [],
     });
+    // Плоский формат: один адрес без standing_id — место, а не доля.
+    file("flat", { standing: "@h:flat", messages: [] });
     const got = loadSeats(dir).seats.map((s) => [s.label, s.outside || "", s.expected]);
     assert.deepEqual(got, [
-      ["A", "", "ожидание API"],
+      ["A", "", "ожидание API"], // проза «person's» в описании человеком не делает
       ["R_unmanned_share", "unmanned share: no seat holds it", null],
-      ["window", "a person's seat: its window or bot delivers it", "ожидание API"],
+      ["@h:flat", "", null],
+      [
+        "window",
+        "a person's seat (role <role_person>: svatantra): its window or bot delivers it",
+        "ожидание API",
+      ],
     ]);
+    const human = loadSeats(dir, ["A"]).seats[0].outside;
+    assert.equal(human, "a person's seat (--human): its window or bot delivers it");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -160,6 +178,27 @@ test("withdraw with no author and an invite to a former seat by fields.standing.
   assert.equal(intentFor(call, { standing_id: "<seat_B>", role: "<role_B>" }), "theirs");
   assert.equal(intentFor(call, { standing_id: "<seat_B>" }), null);
   assert.equal(judge(null, { delivered: true, hint: addressHint(call) }).verdict, "unparsed");
+  // Без fields.karta — роль по ключу invite:<id роли>, как читает мост.
+  const keyed = roomFrame("invite", { entry_id: 7, key: "invite:<role_R>", author: PLATFORM });
+  assert.equal(intentFor(keyed, { standing_id: "<seat_R2>", role: "<role_R>" }), "mine");
+  assert.equal(intentFor(keyed, { standing_id: "<seat_B>", role: "<role_B>" }), "theirs");
+  const mineKey = roomFrame("withdraw", { entry_id: 8, key: "invite:<seat_B>" });
+  assert.equal(intentFor(mineKey, { standing_id: "<seat_B>", role: "<role_B>" }), "mine");
+});
+
+test("delivery is emulated: the receiving seat's address goes onto the row, never over a field it carries", () => {
+  const seat = { standing_id: "<seat_R>", standing: "@r:rho", karta_seq: 4 };
+  const room = { id: "<case>", seq: 1, realm: "@o/g" };
+  const row = (env) => ({ id: "<m>", channel_id: "<seat_R>", standing_id: "<seat_R>", room: env });
+  const f = wireOf(row({ event_kind: "room.invite", room }), seat);
+  assert.deepEqual(
+    [f.to_standing_id, f.to_standing, f.realm, f.karta_seq],
+    ["<seat_R>", "@r:rho", "@o/g", 4],
+  );
+  const kept = wireOf(row({ event_kind: "room.invite", room, realm: "@x/y", karta_seq: 9 }), seat);
+  assert.deepEqual([kept.realm, kept.karta_seq], ["@x/y", 9]);
+  const bare = wireOf(row({ event_kind: "room.said", room }), { standing_id: "<seat_R>" });
+  assert.equal("karta_seq" in bare || "to_standing" in bare, false);
 });
 
 test("a kind the judge was not checked against is not covered, not passed", () => {
@@ -167,6 +206,10 @@ test("a kind the judge was not checked against is not covered, not passed", () =
   assert.equal(judge("theirs", { ...seen, kind: "handover" }).verdict, "not-covered");
   assert.equal(judge(null, { ...seen, kind: "joined" }).verdict, "unjudged");
   assert.equal(branchOutcome([{ verdict: "pass" }, { verdict: "not-covered" }]), "not-covered");
+  // Род — один источник: event_kind, иначе line.kind.
+  assert.equal(kindOf({ line: { kind: "handover" } }), "handover");
+  assert.equal(kindOf({ event_kind: "room.said", line: { kind: "x" } }), "said");
+  assert.equal(kindOf({}), "?");
 });
 
 test("verdicts: a handed-over frame is judged, a dropped one is rejected, a repeat and a stale one are not judged", () => {

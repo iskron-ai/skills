@@ -15,7 +15,8 @@
 
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const str = (v) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
-const kindOf = (f) => str(f.event_kind).replace(/^room\./, "") || str(obj(f.line).kind);
+/** The record's kind — one source for intent, the not-covered rule and the table; "?" — none. */
+export const kindOf = (f) => str(obj(f).event_kind).replace(/^room\./, "") || str(obj(obj(f).line).kind) || "?";
 const ASK_KINDS = new Set(["ask", "answer", "ack"]);
 const REPLY_KINDS = new Set(["said", "progress"]);
 /**
@@ -64,8 +65,13 @@ export function intentFor(f, me, refs = []) {
   if (!str(obj(f.room).id) && !str(obj(f.room).seq)) return null; // not a case record: the rule is not about it
   const named = namedSeats(f, refs);
   const reply = REPLY_KINDS.has(kindOf(f)) && f.in_reply_to != null;
-  // An invite or withdraw of a role names the role (fields.karta.id): the seat's role, from its file.
-  const role = ["invite", "withdraw"].includes(kindOf(f)) && str(obj(obj(obj(f.line).fields).karta).id);
+  // An invite or withdraw of a role names the role — fields.karta.id, else the key
+  // invite:<role id> when no seat is in the fields (as the bridge reads it, room-fields.ts
+  // inviteMine); a key naming my own seat id is mine. The seat's role is from its file.
+  const invite = ["invite", "withdraw"].includes(kindOf(f));
+  const target = invite ? str(obj(f.line).key).replace(/^invite:/, "") : "";
+  if (!named.length && invite && target && target === me.standing_id) return "mine";
+  const role = invite && (str(obj(obj(obj(f.line).fields).karta).id) || target);
   if (!named.length && role && me.role) return role === me.role ? "mine" : "theirs";
   if (!named.length) return ASK_KINDS.has(kindOf(f)) || reply ? "nobody" : null;
   const byId = named.find((s) => s.id);
@@ -98,7 +104,7 @@ export function readSegment(text, entry) {
 /** Whether the frame carries some address the intent did not read: addressee, fields.to, word.addressee. */
 export function addressHint(f) {
   const fields = obj(obj(f.line).fields);
-  const role = ["invite", "withdraw"].includes(kindOf(f)) && !!str(obj(fields.karta).id);
+  const role = ["invite", "withdraw"].includes(kindOf(f)) && (!!str(obj(fields.karta).id) || /^invite:./.test(str(obj(f.line).key)));
   return role || f.addressee != null || Object.keys(obj(fields.to)).length > 0 || obj(f.word).addressee != null;
 }
 
