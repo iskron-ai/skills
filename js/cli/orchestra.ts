@@ -1,8 +1,10 @@
-// `orchestra <on|off|status>`: the orchestrator flag of the machine daemon through its local
-// door (graph @nks/nks-dev, nodes #7513, #7514, #8202). The daemon owns the flag and persists
-// it next to the grant; without a daemon every op is refused with its cause. `on` needs the
-// machine's consent — the daemon's own environment admits the orchestrator — and extends the
-// named boundary with each `--realm`; `off` clears it; `status` reads what lies.
+// `orchestra <on|off|status|step>`: the orchestrator flag and one reading tact of the machine
+// daemon through its local door (graph @nks/nks-dev, nodes #7513, #7514, #8202). The daemon
+// owns the flag and persists it next to the grant; without a daemon every op is refused with
+// its cause. `on` needs the machine's consent — the daemon's own environment admits the
+// orchestrator — and extends the named boundary with each `--realm`; `off` clears it;
+// `status` reads what lies, cursors and last outcomes included; `step` reads both queues of
+// every named graph from the daemon's cursor and moves the cursors only when all read.
 import { parseArgs } from "../bridge/config.ts";
 import { orchestraAsk, type OrchestraOp } from "../bridge/orchestra-door.ts";
 import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
@@ -36,7 +38,8 @@ export async function runOrchestra(argv: string[]): Promise<void> {
     process.stderr.write(`${text}\n`);
     process.exitCode = 1;
   };
-  if (op !== "on" && op !== "off" && op !== "status") return fail(w().usage().trimEnd());
+  if (op !== "on" && op !== "off" && op !== "status" && op !== "step")
+    return fail(w().usage().trimEnd());
   parseArgs(["--auth-dir", authDir, ...args.filter((a) => a !== op)]);
   const answer = await orchestraAsk(authDir, op, realms);
   if (!answer.ok) return fail(answer.said);

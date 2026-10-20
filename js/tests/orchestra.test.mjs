@@ -5,13 +5,14 @@
 // executable. ISKRON_BRIDGE_PATH aims both at any copy, as elsewhere.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { BUILT_BRIDGE } from "./built.mjs";
+import { startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -178,6 +179,157 @@ test("orchestra: a line that is no known op is answered in the daemon's tongue, 
     const st = await cli(["status", "--auth-dir", dir]).done;
     assert.equal(st.code, 0, st.err);
     assert.match(st.out, /выключен/);
+  } finally {
+    await d.stop();
+  }
+});
+
+// ── такт: чтение очередей от курсора (#5042, #8202; двери #4951 и #6010) ──
+
+/** A raised signal as the raised door carries it (#6010); cursor — the opaque one it came with. */
+const signal = (i, cause, extra = {}) => ({
+  id: `s${i}`,
+  standing: "@alari:seat.one",
+  n: i,
+  spawned_for: { invite: 9, room: "1260" },
+  cause,
+  room: "1260",
+  rooms: ["1260"],
+  at: `2026-10-20T20:00:0${i}Z`,
+  cursor: `c${i}`,
+  ...extra,
+});
+
+/** An invite as the invites door carries it (#4951): холон с repository по #4518. */
+const invite = {
+  invite: 9,
+  room: "1260",
+  role: 931,
+  holon: { id: 4057, seq: 4057, name: "js-bundle" },
+  repository: "github.com/iskron-ai/skills",
+  author: "@alari:arch",
+  at: "2026-10-20T20:00:00Z",
+  attrs: {},
+};
+
+const cursorsAt = (dir) => join(dir, "run", "orchestra-cursors.json");
+
+/** A daemon that can read a server: the fake's address and a PAT beside the grant. */
+async function raiseReader(dir, fake) {
+  writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
+  writeFileSync(join(dir, "token"), "probe-pat");
+  return raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
+}
+
+test("orchestra: step reads invites and raised from its cursor; a step sees only the new", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseReader(dir, fake);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    const orchestra = (realms) => fake.control({ orchestra: { realms } });
+    await orchestra({
+      "@nks/nks-dev": { invites: [invite], signals: [signal(1, "raised"), signal(2, "joined")] },
+    });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const first = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(first.code, 0, first.err + first.out);
+    assert.match(first.out, /такт прошёл/, first.out);
+    assert.match(first.out, /@nks\/nks-dev/, first.out);
+    assert.match(first.out, /приглашений 1/, first.out);
+    assert.match(first.out, /сигналов 2/, first.out);
+    assert.match(first.out, /raised 1, joined 1/, first.out);
+    const kept = JSON.parse(readFileSync(cursorsAt(dir), "utf8"));
+    assert.equal(kept.realms["@nks/nks-dev"].cursor, "c2", "the cursor lies beside the grant");
+    // Nothing new: the cursor holds, the standing invites stay the queue's truth.
+    const again = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(again.code, 0, again.err);
+    assert.match(again.out, /сигналов 0/, again.out);
+    assert.match(again.out, /приглашений 1/, again.out);
+    // One new signal: only it is seen — the cursor did its work.
+    await orchestra({
+      "@nks/nks-dev": {
+        invites: [invite],
+        signals: [signal(1, "raised"), signal(2, "joined"), signal(3, "left")],
+      },
+    });
+    const third = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(third.code, 0, third.err);
+    assert.match(third.out, /сигналов 1/, third.out);
+    assert.match(third.out, /left 1/, third.out);
+    // status carries the cursors and the last tact (#8202).
+    const st = await cli(["status", "--auth-dir", dir]).done;
+    assert.equal(st.code, 0, st.err);
+    assert.match(st.out, /@nks\/nks-dev/, st.out);
+    assert.match(st.out, /c3/, st.out);
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+test("orchestra: a failed read refuses the whole tact — cursors unmoved, nothing ordered", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseReader(dir, fake);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    await fake.control({
+      orchestra: {
+        realms: {
+          "@nks/nks-dev": { invites: [], signals: [signal(1, "raised"), signal(2, "joined")] },
+          "@nks/drugoy": { refuse: 503 },
+        },
+      },
+    });
+    const on = await cli([
+      "on",
+      "--realm",
+      "@nks/nks-dev",
+      "--realm",
+      "@nks/drugoy",
+      "--auth-dir",
+      dir,
+    ]).done;
+    assert.equal(on.code, 0, on.err);
+    const refused = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(refused.code, 1, refused.out);
+    assert.match(refused.err, /такт отказан целиком/, refused.err);
+    assert.match(refused.err, /@nks\/drugoy/, refused.err);
+    assert.match(refused.err, /503/, refused.err);
+    assert.ok(!existsSync(cursorsAt(dir)), "a refused tact advanced no realm's cursor");
+    // The refusal kept the healthy realm's cursor too: its tape is read whole next time.
+    await fake.control({
+      orchestra: {
+        realms: {
+          "@nks/nks-dev": {
+            invites: [],
+            signals: [signal(1, "raised"), signal(2, "joined"), signal(3, "left")],
+          },
+          "@nks/drugoy": { invites: [], signals: [] },
+        },
+      },
+    });
+    const ok = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(ok.code, 0, ok.err + ok.out);
+    assert.match(ok.out, /сигналов 3/, ok.out);
+    assert.match(ok.out, /@nks\/drugoy/, ok.out);
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+test("orchestra: step with the orchestrator off is an idle tact — honest and quiet", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseDaemon(dir);
+  try {
+    await untilDoor(dir);
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, /такт пуст/, r.out);
+    assert.ok(!existsSync(cursorsAt(dir)), "an idle tact wrote no cursors");
   } finally {
     await d.stop();
   }

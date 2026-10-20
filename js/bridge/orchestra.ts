@@ -3,7 +3,8 @@
 // persists next to the grant, so a restarted daemon keeps it. The door these ops ride is
 // orchestra-door.ts; this file is what they mean. Enabling needs the machine's consent: the
 // daemon's own environment admits the orchestrator, and without it the enabling is refused
-// aloud, the flag untouched. The tact (`step`) and the run registry arrive with the queue wire.
+// aloud, the flag untouched. The tact (`step`) is the reading half — orchestra-tact.ts; the
+// run registry arrives with the raising slice.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -11,6 +12,7 @@ import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import type { OrchestraServe } from "./orchestra-door.ts";
+import { stepTact, tactStateOf } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -49,13 +51,21 @@ function writeOrchestraFlag(authDir: string, flag: OrchestraFlag): void {
   });
 }
 
+/** The daemon's way to its server: the REST doors live on the same origin as /mcp. */
+export interface OrchestraNet {
+  base: () => string;
+  /** The daemon's key (PAT or the grant's access token, as the transport's bearer reads it). */
+  token: () => string | null;
+}
+
 /**
  * The daemon's answers of the door's ops. `on` extends the named boundary — the human adds
- * graphs; `off` clears it; `status` reads what lies. The discovered half of the boundary (the
- * graphs of the machine's live agents) is not kept in the flag: the daemon reads it from its
- * sessions when it reads the queue.
+ * graphs; `off` clears it; `status` reads what lies, cursors and last outcomes included;
+ * `step` is one reading tact over the named boundary. The discovered half of the boundary
+ * (the graphs of the machine's live agents) is not kept in the flag: the daemon reads it
+ * from its sessions when it reads the queue — it arrives with the raising slice.
  */
-export function orchestraServe(authDir: string): OrchestraServe {
+export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraServe {
   return async (op, realms) => {
     if (op === "on") {
       if (!orchestraAdmitted()) return { ok: false, said: w().notAdmitted() };
@@ -68,10 +78,20 @@ export function orchestraServe(authDir: string): OrchestraServe {
       writeOrchestraFlag(authDir, { on: false, realms: [] });
       return { ok: true, said: w().off() };
     }
+    if (op === "step") {
+      const flag = readOrchestraFlag(authDir);
+      if (!flag?.on || !flag.realms.length) return { ok: true, said: w().stepEmpty() };
+      const n = net ?? { base: (): string => "", token: (): null => null };
+      return stepTact(authDir, n.base(), n.token(), flag.realms);
+    }
     const flag = readOrchestraFlag(authDir);
+    const tact = tactStateOf(authDir);
+    const lines = Object.entries(tact.realms).map(([realm, t]) =>
+      w().tactOut(realm, t.invites, t.signals, t.cursor ?? "", t.at),
+    );
     return {
       ok: true,
-      said: w().status(!!flag?.on, flag?.realms.join(", ") ?? ""),
+      said: w().status(!!flag?.on, flag?.realms.join(", ") ?? "", lines.join("; ")),
     };
   };
 }

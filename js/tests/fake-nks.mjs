@@ -213,6 +213,7 @@ export async function startFakeNks(opts = {}) {
       webhooks_listed: 0,
       status_posts: 0,
       status_requests: 0, // every status POST that reached the server, answered or not
+      orchestra_reads: 0, // every invites/raised read that reached the server
       ws_upgrades: 0,
       attributed_send: 0,
       unattributed: 0,
@@ -251,6 +252,9 @@ export async function startFakeNks(opts = {}) {
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
+    // Такт-чтение оркестратора (№1225 [23], двери #4951/#6010): /control кладёт целиком
+    // { realms: { "<canon>": { invites: [], signals: [], refuse?: код } } }.
+    orchestra: null,
     webhookCalls: [], // { action, node_id, realm } — ходы iskron_admin к хукам роли
     sends: [], // { karta, standing, text, bound }
     // Сокет стояния: connect выдаёт адрес ws на этом же сервере, апгрейд принимается,
@@ -439,6 +443,30 @@ export async function startFakeNks(opts = {}) {
 
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
+    // Такт-чтение оркестратора (№1225 [23]): invites — стоячая очередь подъёма (#4951),
+    // raised — лента сигналов состава от непрозрачного курсора (#6010). Носитель тот же,
+    // что у /mcp (PAT или access); состояние кладёт /control {orchestra} целиком.
+    const orchestraRoute = /^\/realms\/([^/]+)\/(invites|raised)$/.exec(p);
+    if (orchestraRoute && req.method === "GET") {
+      const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+      const byPat = !!st.pat && bearer === st.pat;
+      if (!byPat && (!st.access || bearer !== st.access))
+        return json(res, 401, { error: "unauthorized" });
+      st.counts.orchestra_reads++;
+      const realm = slug(decodeURIComponent(orchestraRoute[1]));
+      const state = st.orchestra?.realms?.[realm] ?? null;
+      if (state?.refuse) return json(res, state.refuse, { error: "refused" });
+      if (orchestraRoute[2] === "invites") return json(res, 200, { items: state?.invites ?? [] });
+      const signals = state?.signals ?? [];
+      const since = u.searchParams.get("since");
+      const at = since ? signals.findIndex((s) => s.cursor === since) : -1;
+      const start = since && at >= 0 ? at + 1 : 0; // за пройденным курсором ничего не появляется
+      const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
+      const items = signals.slice(start, start + limit);
+      const cursor = items.length ? items[items.length - 1].cursor : (since ?? null);
+      return json(res, 200, { items, cursor });
+    }
+
     const patched = /^\/api\/standings\/([^/]+)$/.exec(p);
     if (patched && req.method === "PATCH") {
       const id = decodeURIComponent(patched[1]);
@@ -524,6 +552,8 @@ export async function startFakeNks(opts = {}) {
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (patch.case_leave_hang) st.caseLeaveHang = true;
+      // Такт-чтение оркестратора: состояние дверей invites/raised кладётся целиком.
+      if (patch.orchestra !== undefined) st.orchestra = patch.orchestra;
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит

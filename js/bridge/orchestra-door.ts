@@ -1,9 +1,10 @@
 // The daemon's orchestration door (graph @nks/nks-dev, nodes #7513, #8202): one request line,
 // one answer line, NDJSON over a private socket next to the seam (seam-entrance.ts). The door
-// is transport only — what an op means lives in orchestra.ts (the flag and its semantics); the
-// daemon wires the two together. It rides the living daemon and keeps no lock of its own: a
-// stale socket of a dead daemon is removed before this one listens, as the seam does. The tact
-// (`step`) and the run registry arrive with the queue wire and ride this door too.
+// is transport only — what an op means lives in orchestra.ts (the flag and its semantics; the
+// tact's reading in orchestra-tact.ts); the daemon wires the two together. It rides the living
+// daemon and keeps no lock of its own: a stale socket of a dead daemon is removed before this
+// one listens, as the seam does. The run registry arrives with the raising slice and rides
+// this door too.
 import { chmodSync, unlinkSync } from "node:fs";
 import { connect, createServer, type Server, type Socket } from "node:net";
 
@@ -13,7 +14,7 @@ import { orchestraDoorPath } from "../shared/seam-entrance.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
-export type OrchestraOp = "on" | "off" | "status";
+export type OrchestraOp = "on" | "off" | "status" | "step";
 export interface OrchestraAnswer {
   ok: boolean;
   said: string;
@@ -51,7 +52,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       const realms = Array.isArray(msg.realms)
         ? msg.realms.filter((x): x is string => typeof x === "string")
         : [];
-      if (op !== "on" && op !== "off" && op !== "status") {
+      if (op !== "on" && op !== "off" && op !== "status" && op !== "step") {
         socket.end(JSON.stringify({ ok: false, said: w().unknownOp(op) }) + "\n");
         return;
       }

@@ -52,6 +52,7 @@ import { sessionSnapshot } from "./snapshot.ts";
 import { rotateJournal } from "./store.ts";
 import { log, setProcessLog } from "./streams.ts";
 import { localSuspend, pauseSettled } from "./suspend.ts";
+import { bearer } from "./transport.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -350,11 +351,16 @@ export async function daemonMain(argv: string[]): Promise<void> {
     }
   }
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
-  // The orchestrator's local door (bridge/orchestra-door.ts): on, off and status of the flag the
-  // daemon owns; refused aloud when there is no daemon to ask — so it listens with the seam.
+  // The orchestrator's local door (bridge/orchestra-door.ts): on, off, status and the step
+  // tact of the flag the daemon owns; refused aloud when there is no daemon to ask — so it
+  // listens with the seam. The tact reads the api with the daemon's own key (transport's
+  // bearer: PAT or the grant's access token) from the origin of its server URL.
   let door: Server | null = null;
   try {
-    door = await listenOrchestraDoor(authDir, orchestraServe(authDir));
+    door = await listenOrchestraDoor(
+      authDir,
+      orchestraServe(authDir, { base: (): string => cfg.serverUrl, token: bearer }),
+    );
   } catch (e) {
     log(`the orchestration door does not open: ${errorMessage(e)}`);
   }

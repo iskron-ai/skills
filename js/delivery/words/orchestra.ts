@@ -18,13 +18,24 @@ export interface OrchestraWords {
   /** realms — названный перечень границы через запятую (может быть пуст). */
   on: (realms: string) => string;
   off: () => string;
-  status: (on: boolean, realms: string) => string;
+  /** tact — строки курсоров и последних исходов такта через «; » (может быть пуст). */
+  status: (on: boolean, realms: string, tact?: string) => string;
+  /** Такт пуст: выключен или названная граница пуста — читать нечего. */
+  stepEmpty: () => string;
+  /** parts — строки графов такта, уже соединённые через «; ». */
+  step: (parts: string) => string;
+  /** Один граф такта: приглашения, сигналы и их поводы (api-слова поводов). */
+  tactRealm: (realm: string, invites: number, signals: number, causes: string) => string;
+  /** Почему такт отказан: граф не прочитан; курсоры не двинуты, приказов нет. */
+  stepReadError: (realm: string, why: string) => string;
+  /** Строка status о последнем такте графа: исход, курсор и когда. */
+  tactOut: (realm: string, invites: number, signals: number, cursor: string, at: string) => string;
 }
 
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "использование: orchestra <on|off|status|step> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
     doorSilent: () =>
@@ -37,14 +48,23 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `оркестратор включён${realms ? `, названная граница: ${realms}` : " (граница — графы живых на машине агентов)"}; флаг лежит рядом с грантом`,
     off: () =>
       "оркестратор выключен; поднятые агенты доживают свой путь — их не гасит сам факт выключения",
-    status: (on, realms) =>
+    status: (on, realms, tact) =>
       on
-        ? `включён; названная граница: ${realms || "—"} (плюс графы живых на машине агентов)`
-        : "выключен",
+        ? `включён; названная граница: ${realms || "—"} (плюс графы живых на машине агентов)${tact ? `; такт: ${tact}` : ""}`
+        : `выключен${tact ? `; такт: ${tact}` : ""}`,
+    stepEmpty: () =>
+      "такт пуст: оркестратор выключен или названная граница пуста — читать нечего (графы живых на машине агентов подъезжают со срезом подъёма)",
+    step: (parts) => `такт прошёл: ${parts}`,
+    tactRealm: (realm, invites, signals, causes) =>
+      `${realm}: приглашений ${invites}, сигналов ${signals}${causes ? ` (${causes})` : ""}`,
+    stepReadError: (realm, why) =>
+      `такт отказан целиком: ${realm} не прочитан (${why}) — курсоры не двинуты, приказов останова нет`,
+    tactOut: (realm, invites, signals, cursor, at) =>
+      `${realm}: приглашений ${invites}, сигналов ${signals}, курсор ${cursor || "—"} (${at})`,
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "usage: orchestra <on|off|status|step> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",
     doorSilent: () =>
@@ -57,9 +77,18 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the orchestrator is on${realms ? `, named boundary: ${realms}` : " (the boundary is the graphs of the machine's live agents)"}; the flag lies next to the grant`,
     off: () =>
       "the orchestrator is off; raised agents live out their own path — the switching off itself extinguishes none",
-    status: (on, realms) =>
+    status: (on, realms, tact) =>
       on
-        ? `on; named boundary: ${realms || "—"} (plus the graphs of the machine's live agents)`
-        : "off",
+        ? `on; named boundary: ${realms || "—"} (plus the graphs of the machine's live agents)${tact ? `; tact: ${tact}` : ""}`
+        : `off${tact ? `; tact: ${tact}` : ""}`,
+    stepEmpty: () =>
+      "the tact is empty: the orchestrator is off or the named boundary is empty — nothing to read (the graphs of the machine's live agents arrive with the raising slice)",
+    step: (parts) => `the tact passed: ${parts}`,
+    tactRealm: (realm, invites, signals, causes) =>
+      `${realm}: invites ${invites}, signals ${signals}${causes ? ` (${causes})` : ""}`,
+    stepReadError: (realm, why) =>
+      `the tact is refused whole: ${realm} did not read (${why}) — no cursor moved, no stop order went out`,
+    tactOut: (realm, invites, signals, cursor, at) =>
+      `${realm}: invites ${invites}, signals ${signals}, cursor ${cursor || "—"} (${at})`,
   },
 };
