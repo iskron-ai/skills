@@ -87,6 +87,11 @@ const cases = [
   ],
   ["git checkout main && git pull", "", false, true],
   ["fj pr merge 12 && git checkout main && git pull", fjRefusal, false, false],
+  ["fj pr merge 12 --method squash", "", false, true],
+  ["fj pr merge 12 | tail", "Merged PR #12", false, true],
+  ["fj pr merge 12 | tail", "", false, false],
+  ["fj pr merge --help", "", false, false],
+  ["fj pr merge 12", fjRefusal, false, false],
   ["echo gh pr merge", "gh pr merge", false, false],
   // push: the same rule
   ["git add -A && git commit -m x && git push -u origin feat/x", "", true, false],
@@ -412,8 +417,9 @@ const refusal = (groups) => {
 };
 test("memory-guard (hooks.md): the refusal routes through the slots", () => {
   const said = refusal(templateGuard());
-  for (const slot of ["<Граф>", "<Раздел персистентности>", "@handle/mind"])
+  for (const slot of ["<Граф>", "<Раздел персистентности>", "личная память через minding"])
     assert.ok(said.includes(slot), `the refusal names ${slot}: ${said}`);
+  assert.doesNotMatch(said, /@<?handle>?\/mind/, "no constructed personal address");
 });
 test("memory-guard (settings): the refusal names this repo's graph and section", () => {
   const said = refusal(settings.hooks.PreToolUse ?? []);
@@ -425,7 +431,8 @@ test("memory-guard (settings): the refusal names this repo's graph and section",
     [...said.matchAll(/«([^»]+)»/g)].some((m) => headings.has(m[1])),
     `the refusal names a section of AGENTS.md as it is titled: ${said}`,
   );
-  assert.ok(said.includes("@handle/mind"), `the refusal names the personal graph: ${said}`);
+  assert.ok(said.includes("личная память через minding"), `personal route: ${said}`);
+  assert.doesNotMatch(said, /@<?handle>?\/mind/, "no constructed personal address");
   assert.doesNotMatch(said, /<[^>\s]+>/, "no slot is left unfilled");
 });
 
