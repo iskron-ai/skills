@@ -4951,9 +4951,14 @@ for (const [how, env] of [
     await fake.control({ structured: true, structuredGate: true });
     const channel = (a) =>
       bridge.call("tools/call", { name: "iskron_channel", arguments: { realm: "nks-dev", ...a } });
+    const fieldsOf = (reply) => {
+      const sent = fake.state.structuredReplies.filter((r) => r.id === reply.id);
+      assert.equal(sent.length, 1, `one server response for request ${reply.id}`);
+      return sent[0].fields;
+    };
     const taken = await channel({ action: "connect", karta: 931, name: "proba" });
     assert.ok(!taken.result?.isError, textOf(taken));
-    assert.deepEqual(taken.result.structuredContent, fake.state.lastStructured);
+    assert.deepEqual(taken.result.structuredContent, fieldsOf(taken));
     assert.doesNotMatch(
       JSON.stringify(taken.result.structuredContent),
       /wss?:\/\/|\/channel\/status\//,
@@ -4962,7 +4967,7 @@ for (const [how, env] of [
     for (const a of [{ action: "register", karta: 931, name: "proba" }, { action: "list" }]) {
       const got = await channel(a);
       assert.ok(!got.result?.isError, textOf(got));
-      assert.deepEqual(got.result.structuredContent, fake.state.lastStructured, a.action);
+      assert.deepEqual(got.result.structuredContent, fieldsOf(got), a.action);
     }
     if (env.ISKRON_BRIDGE_DAEMON === "1")
       assert.match(bridge.stderr, /through the machine's bridge daemon/, bridge.stderr);

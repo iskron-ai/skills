@@ -139,3 +139,92 @@ for (const [how, put] of Object.entries(SIBLING_STOPS))
         await fake.stop();
       }
     });
+
+// The kit's probe isolation (№1236, node #8240): the stop registry lives on globalThis, shared
+// by the process's plugin instances by design — a ban must outlive a reload (halts.ts). A
+// probe's stop of a reused session id must not outlive the probe itself: the kit clears the
+// disk markers and the ended-leads registry between probes, and the stop registry with them —
+// or the next probe's sweep (plugin.ts, 5 s) cuts the same-id session before any event of its
+// own, the false first interrupt of a second variant in this process.
+test("real bridges: a stop's registry entry does not outlive its recorder — the next probe starts clean", async () => {
+  const fake = await startFakeNks({ pat: "nks_pat_plugin" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-sibling-iso-"));
+  const rec = await plugin(
+    {
+      ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+      ISKRON_BRIDGE_URL: fake.mcpUrl,
+      ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+    },
+    {
+      location: { directory: dir },
+      sessions: [
+        { id: "root", location: { directory: dir } },
+        { id: "zombie", parentID: "root", location: { directory: dir } },
+      ],
+    },
+  );
+  const seatOf = (re) => {
+    const [key, p] = [...fake.state.places].find(([k]) => re.test(k)) ?? [];
+    return key ? { key, name: p.name } : null;
+  };
+  let rec2 = null;
+  try {
+    await until(
+      () => rec.tools().has("iskron_channel") && rec.tools().has("iskron_stand"),
+      "the server's tools",
+      15000,
+    );
+    const root = await rec.call(
+      "iskron_stand",
+      { realm: "nks-dev", karta: 931, name: "sib-stopreg" },
+      "root",
+    );
+    assert.match(root.content, /стояние/, root.content);
+    await rec.call("iskron_stand", { realm: "nks-dev" }, "zombie");
+    const seat = seatOf(/\.sub-1$/);
+    assert.ok(seat, `the satellite stood:\n${rec.said()}`);
+    await until(() => fake.state.ws.size === 2, "two sockets: the root and the satellite");
+    await fake.control({
+      ws_close_name: { name: seat.name, code: 4001, reason: "revoked:silent" },
+    });
+    await until(
+      () => rec.interrupts.some((i) => i.sessionID === "zombie"),
+      "the put-out satellite's turn cut",
+      8000,
+    );
+    // The precondition the false interrupt stood on: the stop put its ban into the process's
+    // registry (halts.ts) — every later instance of this process reads it, sweep included.
+    assert.ok(
+      globalThis.__iskronHalts?.has("zombie"),
+      "the stop banned the session in the process's registry",
+    );
+    // The first instance is gone, as between probes; the next probe's instance loads in this
+    // same process against the same fake — the kit's cleaning runs at the load, and the fresh
+    // instance's sweep must find no ban to cut a same-id session by.
+    await rec.stop();
+    rec2 = await plugin(
+      {
+        ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+        ISKRON_BRIDGE_URL: fake.mcpUrl,
+        ISKRON_BRIDGE_TOKEN: "nks_pat_plugin",
+        ISKRON_BRIDGE_NO_BROWSER: "1",
+      },
+      {
+        location: { directory: dir },
+        sessions: [
+          { id: "root", location: { directory: dir } },
+          { id: "zombie", parentID: "root", location: { directory: dir } },
+        ],
+      },
+    );
+    assert.equal(
+      globalThis.__iskronHalts?.size ?? 0,
+      0,
+      "the kit cleared the process's stop registry between probes",
+    );
+  } finally {
+    await Promise.allSettled([rec2?.stop(), rec.stop(), fake.stop()]);
+  }
+});

@@ -317,9 +317,16 @@ export async function plugin(env = {}, ctxOpts = {}) {
   // the marker itself that is under test.
   if (!ctxOpts.keepMarker) {
     for (const f of [...lostMarkers(), ...stopMarks()]) rmSync(f, { force: true });
-    // The probes reuse session ids: the process's ended leads go too.
+    // The probes reuse session ids: the process's ended leads go too, and the stop registry
+    // with them (№1236, #8240) — it is shared by the process's instances by design, and a
+    // stale ban makes the next probe's sweep cut a same-id session before any event of its own.
     globalThis.__iskronEnded?.clear();
     globalThis.__iskronEndLiftedAt?.clear();
+    globalThis.__iskronHalts?.clear();
+    globalThis.__iskronLiftedAt?.clear();
+    globalThis.__iskronStopIds?.clear();
+    globalThis.__iskronStopWords?.clear();
+    globalThis.__iskronStopAlone?.clear();
   }
   const def = await loadPlugin(env);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
