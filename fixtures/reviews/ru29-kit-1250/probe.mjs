@@ -4,11 +4,12 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const out = dirname(fileURLToPath(import.meta.url));
-const root = join(out, "../../..");
+const home = dirname(fileURLToPath(import.meta.url));
+const out = process.argv[2] ? resolve(process.argv[2]) : home;
+const root = join(home, "../../..");
 const scratch = mkdtempSync(join(tmpdir(), "ru29-kit-"));
 const records = [];
 const git = (...args) => {
