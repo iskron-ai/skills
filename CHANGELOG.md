@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.18.0](https://github.com/iskron-ai/skills/compare/v7.17.4...v7.18.0) (2026-10-20)
+
+
+### Features
+
+* **assembly:** оценка телоса превращения — лёгкая проверка и разбор партиями; вход из двери, architect и vahta ([#532](https://github.com/iskron-ai/skills/issues/532)) ([acf2211](https://github.com/iskron-ai/skills/commit/acf22117c279825bbf1e41d015de67c6c3319e5d))
+* **opencode:** корень без обложки выравнивается и садится в той же сессии ([#531](https://github.com/iskron-ai/skills/issues/531)) ([9a72672](https://github.com/iskron-ai/skills/commit/9a72672be4eb0875b737d0583408770400cb2531))
+* **opencode:** после сжатия сессия получает одно слово о своей роли, сводка — наказ сохранить роль и дела ([#528](https://github.com/iskron-ai/skills/issues/528)) ([4fc44ba](https://github.com/iskron-ai/skills/commit/4fc44ba1d914591d7f3119af1e3d3e1da04a57e6))
+
+
+### Bug Fixes
+
+* **opencode:** выравнивание только в корне репозитория; перенос сессии снимает ожидание; тул будит только свой корень ([#533](https://github.com/iskron-ai/skills/issues/533)) ([ea7c24a](https://github.com/iskron-ai/skills/commit/ea7c24a4a415be4d2d14279cd9659cfe2804fd1c))
+* **opencode:** строка роли после сжатия — в первом запросе, без лишнего шага модели ([#530](https://github.com/iskron-ai/skills/issues/530)) ([eb77d68](https://github.com/iskron-ai/skills/commit/eb77d68879050a88ebf75e39cc094ff73d2af0b1))
+
 ## [7.17.4](https://github.com/iskron-ai/skills/compare/v7.17.3...v7.17.4) (2026-10-19)
 
 
