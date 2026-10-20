@@ -25,7 +25,8 @@ export interface AttemptDoors {
   line: { at: Promise<unknown> };
 }
 
-export function attempt(session: string, x: AttemptDoors): Attempt {
+/** expect — the directory a retry waited in: a session no longer there is not seated by this instance. */
+export function attempt(session: string, x: AttemptDoors, expect?: string): Attempt {
   const { d } = x;
   const no = (word: string | null): Told => ({ word, seated: false });
   const t: Attempt = {
@@ -37,7 +38,7 @@ export function attempt(session: string, x: AttemptDoors): Attempt {
   const cancelled = () => x.stopped() || t.abort.signal.aborted || d.halted(session);
   t.promise = (async (): Promise<Told> => {
     const where = await d.directoryOf(session);
-    if (cancelled() || !where) return no(null);
+    if (cancelled() || !where || (expect !== undefined && where !== expect)) return no(null);
     const sig = stamp(where);
     const cover = coverIn(where);
     if (cover === null) return no(null);

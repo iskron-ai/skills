@@ -4,10 +4,12 @@
 // the root seats once by the same path; another defect — its exact word. A defect is a missing
 // file, broken front matter, a missing or ambiguous graph or role; the contract's number is not
 // the plugin's to know — the cover file itself and the start hook keep it. Alignment is only
-// inside a repository (shared/reposigns.ts: any verdict but "outside"), where no cover file is its
-// entry too; outside one there is nothing to align: no file — silence, a defective one — the plain
-// "not seated", neither waits. A stopped session waits no more: alignment does not lift a stop.
-import { statSync } from "node:fs";
+// at a repository's root (shared/reposigns.ts), where no cover file is its entry too: the cover
+// is read only in the session's own directory, and a subdirectory's never comes from the alignment.
+// Elsewhere — outside a repository or below its root — main's reading: no file — silence, a
+// defective one — the plain "not seated", neither waits. A stopped session waits no more:
+// alignment does not lift a stop.
+import { realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { COVER, ROOT_SEAT } from "../delivery/index.ts";
@@ -18,9 +20,20 @@ import { repoRoot } from "../shared/reposigns.ts";
 /** The cover of a session's directory; a reason says whether it leads to the alignment. */
 export type Found = Exclude<Cover, { why: string }> | { why: string; align: boolean };
 
-/** Whether the directory is in a repository is asked before any defect: outside — main's reading. */
+/** The directory is a repository's root, under any spelling (a symlink, /var → /private/var). */
+function atRepoRoot(where: string): boolean {
+  const root = repoRoot(where);
+  if (root === null) return false;
+  try {
+    return realpathSync(root) === realpathSync(where);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the directory is a repository's root is asked before any defect: else — main's reading. */
 export function coverIn(where: string): Found {
-  const align = repoRoot(where) !== null;
+  const align = atRepoRoot(where);
   const cover = readCover(where);
   if (cover === null) return align ? { why: words(ROOT_SEAT).noFile(COVER.file), align } : null;
   return "why" in cover ? { why: cover.why, align } : cover;
@@ -36,8 +49,8 @@ export function stamp(where: string): string {
   }
 }
 
-/** What a waiting root does now: say the new reason, seat, or nothing. */
-export type Again = { why: string } | { seat: true } | null;
+/** What a waiting root does now: say the new reason, seat in the directory it waited in, or nothing. */
+export type Again = { why: string } | { seat: string } | null;
 
 export function createRealign(halted: (session: string) => boolean) {
   const waiting = new Map<string, { where: string; why: string; sig: string }>();
@@ -47,7 +60,6 @@ export function createRealign(halted: (session: string) => boolean) {
       waiting.set(session, { where, why, sig });
     },
     has: (session: string): boolean => waiting.has(session),
-    sessions: (): string[] => [...waiting.keys()],
     drop: (session: string): void => void waiting.delete(session),
     clear: (): void => waiting.clear(),
     /** always — a prompt reads the cover even when its stamp did not move. */
@@ -69,7 +81,7 @@ export function createRealign(halted: (session: string) => boolean) {
         return { why: cover.why };
       }
       waiting.delete(session);
-      return { seat: true };
+      return { seat: w.where };
     },
   };
 }

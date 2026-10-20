@@ -7,13 +7,22 @@ import type { RootSeats } from "./rootseat-doors.ts";
 import type { Say } from "./tools.ts";
 
 /**
- * After every tool call of the instance (any tool writes AGENTS.md: write, edit, patch, shell) —
- * tool hook "execute.after", @opencode/plugin 2.0.4. No tool domain — the prompt alone rereads.
+ * After every tool call of a session (any tool writes AGENTS.md: write, edit, patch, shell) —
+ * tool hook "execute.after", @opencode/plugin 2.0.4 — its root's wait, a subagent's call
+ * included. No tool domain — the prompt alone rereads.
  */
-export async function watchCover(ctx: Context, seats: RootSeats, say: Say): Promise<void> {
+export async function watchCover(
+  ctx: Context,
+  seats: RootSeats,
+  say: Say,
+  rootOf: (session: string) => Promise<string>,
+): Promise<void> {
   try {
     const tool = (ctx as Partial<Pick<Context, "tool">>).tool;
-    if (typeof tool?.hook === "function") await tool.hook("execute.after", () => seats.touched());
+    if (typeof tool?.hook === "function")
+      await tool.hook("execute.after", async (ev) => {
+        if (ev.sessionID) await seats.touched(await rootOf(String(ev.sessionID)));
+      });
   } catch (e) {
     say(words(OPENCODE).realignDown((e as Error).message), "error");
   }

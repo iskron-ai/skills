@@ -250,6 +250,12 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       sessions.delete(id);
       emit({ type: "session.deleted", location: { directory: project }, data: { sessionID: id } });
     },
+    /** OpenCode перенёс сессию в другой каталог: её session.get читает уже новый. */
+    move(id, directory) {
+      const s = sessions.get(id);
+      if (s) s.location = { directory };
+      emit({ type: "session.moved", data: { sessionID: id, location: { directory } } });
+    },
     said: () => stderr.join(""),
     /** Слова плагина в сессию мимо промпта (prompt/synthetic). */
     wordsTo: (id) => prompts.filter((p) => p.sessionID === id).map((p) => p.text),
