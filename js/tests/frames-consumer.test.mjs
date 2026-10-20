@@ -10,14 +10,26 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  addressHint,
   branchOutcome,
   intentFor,
   judge,
   readSegment,
+  textsOf,
 } from "../../scripts/frames-consumer-judge.mjs";
 import { loadSeats } from "../../scripts/frames-consumer-scenarios.mjs";
 import { REPO } from "./built.mjs";
-import { ask, ME, ME_ID, progress, roleOnlyAsk, SIB, siblingMatrix } from "./room-frames.mjs";
+import {
+  ask,
+  ME,
+  ME_ID,
+  PLATFORM,
+  progress,
+  roleOnlyAsk,
+  roomFrame,
+  SIB,
+  siblingMatrix,
+} from "./room-frames.mjs";
 
 const me = { standing_id: ME_ID, standing: ME };
 const sib = { standing_id: SIB.id, standing: SIB.standing };
@@ -68,14 +80,14 @@ test("a scenario directory: subdirectories are branches, rows become socket fram
     writeFileSync(join(dir, "s1", "seat_B.json"), JSON.stringify({ ...seatB, messages }));
     const person = { standing_id: "<person_window>", standing: "person_window", messages };
     writeFileSync(join(dir, "s1", "person_window.json"), JSON.stringify(person));
-    const named = loadSeats(dir, ["seat_B"]).seats.map((s) => [s.label, s.human]);
+    const named = loadSeats(dir, ["seat_B"]).seats.map((s) => [s.label, !!s.outside]);
     assert.deepEqual(named, [
       ["person_window", true],
       ["seat_B", true],
     ]);
     const { seats: both, scenarios } = loadSeats(dir);
     assert.deepEqual(
-      both.map((s) => s.human),
+      both.map((s) => !!s.outside),
       [true, false],
     );
     const seats = both.slice(1);
@@ -90,6 +102,71 @@ test("a scenario directory: subdirectories are branches, rows become socket fram
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the full set's seat files: a seat object names no label, a person is told by its role, the unmanned share has no seat", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frames-full-"));
+  try {
+    mkdirSync(join(dir, "s1"));
+    const file = (name, s) => writeFileSync(join(dir, "s1", `${name}.json`), JSON.stringify(s));
+    const seat = (id, karta, prose) => ({
+      standing_id: id,
+      standing: { id, karta, name: null, status: "active" },
+      seat: prose,
+      expected: "ожидание API",
+      messages: [],
+    });
+    file("A", seat("<seat_A>", "<role_A>", "seat A (alpha) — opened the case"));
+    file("window", seat("<seat_window>", "<role_person>", "person's seat, outside"));
+    file("R_unmanned_share", {
+      standing_id: null,
+      standing: { unmanned_share_of_role: "<r>" },
+      messages: [],
+    });
+    const got = loadSeats(dir).seats.map((s) => [s.label, s.outside || "", s.expected]);
+    assert.deepEqual(got, [
+      ["A", "", "ожидание API"],
+      ["R_unmanned_share", "unmanned share: no seat holds it", null],
+      ["window", "a person's seat: its window or bot delivers it", "ожидание API"],
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("withdraw with no author and an invite to a former seat by fields.standing.id are judged by the seat they name", () => {
+  const former = { standing_id: "<seat_R1>", standing: "" };
+  const invite = roomFrame("invite", {
+    entry_id: 13,
+    key: "invite:<seat_R1>",
+    author: PLATFORM,
+    fields: { cause: "asked", standing: { id: "<seat_R1>" } },
+  });
+  assert.equal(intentFor(invite, former), "mine");
+  assert.equal(intentFor(invite, sib), "theirs");
+  const withdraw = roomFrame("withdraw", { entry_id: 16, key: "invite:<seat_R1>" });
+  withdraw.line.author = null;
+  withdraw.line.fields = { standing: { id: "<seat_R1>" } };
+  assert.equal(intentFor(withdraw, former), "mine");
+  assert.deepEqual(textsOf(withdraw), []);
+  // Зов роли: место не названо, названа роль — её места по роли из файла места.
+  const call = roomFrame("invite", {
+    entry_id: 6,
+    key: "invite:<role_R>",
+    author: PLATFORM,
+    fields: { cause: "asked", karta: { id: "<role_R>", seq: 4 } },
+  });
+  assert.equal(intentFor(call, { standing_id: "<seat_R2>", role: "<role_R>" }), "mine");
+  assert.equal(intentFor(call, { standing_id: "<seat_B>", role: "<role_B>" }), "theirs");
+  assert.equal(intentFor(call, { standing_id: "<seat_B>" }), null);
+  assert.equal(judge(null, { delivered: true, hint: addressHint(call) }).verdict, "unparsed");
+});
+
+test("a kind the judge was not checked against is not covered, not passed", () => {
+  const seen = { delivered: true, texts: [], shown: [], recordLine: false, yours: 0 };
+  assert.equal(judge("theirs", { ...seen, kind: "handover" }).verdict, "not-covered");
+  assert.equal(judge(null, { ...seen, kind: "joined" }).verdict, "unjudged");
+  assert.equal(branchOutcome([{ verdict: "pass" }, { verdict: "not-covered" }]), "not-covered");
 });
 
 test("verdicts: a handed-over frame is judged, a dropped one is rejected, a repeat and a stale one are not judged", () => {

@@ -7,7 +7,8 @@
 // of an invite, addressee (string or seat), word.line.fields.to, word.addressee; a body
 // inherits its said's seats; a said or progress replying (in_reply_to) without an explicit to
 // names the author of the answered record, in_reply_to_from (#6574, #6867 — as the bridge
-// does). A question kind (ask, answer, ack) naming no seat is nobody's (#6867), and so is a
+// does); an invite or withdraw naming no seat but a role (fields.karta.id) is the role's seats'
+// — the seat's role read from its file. A question kind (ask, answer, ack) naming no seat is nobody's (#6867), and so is a
 // reply naming no author; anything else naming no seat, a frame outside a case and a stale one
 // are not judged. A person's seat is outside the bridge (its window or bot delivers it; the
 // person-only exception of #6908 v4 is theirs): judged neither pass nor fail.
@@ -17,6 +18,15 @@ const str = (v) => (typeof v === "string" ? v : typeof v === "number" ? String(v
 const kindOf = (f) => str(f.event_kind).replace(/^room\./, "") || str(obj(f.line).kind);
 const ASK_KINDS = new Set(["ask", "answer", "ack"]);
 const REPLY_KINDS = new Set(["said", "progress"]);
+/**
+ * Kinds this judge has been checked against (#5893 §4.2, #6867, #8074): read by address, or
+ * of the case's life with no personal address. Any other kind is not covered until checked.
+ */
+const KNOWN_KINDS = new Set([
+  ...ASK_KINDS, "said", "body", "progress", "invite", "withdraw", "retract",
+  "opened", "joined", "left", "node", "lead", "accepted", "link", "auto",
+  "closing", "closed", "objection", "late_objection",
+]);
 
 /** Seats a frame names, each {id, addr}; refs — the file's frames, for a body's said. */
 export function namedSeats(f, refs = []) {
@@ -54,6 +64,9 @@ export function intentFor(f, me, refs = []) {
   if (!str(obj(f.room).id) && !str(obj(f.room).seq)) return null; // not a case record: the rule is not about it
   const named = namedSeats(f, refs);
   const reply = REPLY_KINDS.has(kindOf(f)) && f.in_reply_to != null;
+  // An invite or withdraw of a role names the role (fields.karta.id): the seat's role, from its file.
+  const role = ["invite", "withdraw"].includes(kindOf(f)) && str(obj(obj(obj(f.line).fields).karta).id);
+  if (!named.length && role && me.role) return role === me.role ? "mine" : "theirs";
   if (!named.length) return ASK_KINDS.has(kindOf(f)) || reply ? "nobody" : null;
   const byId = named.find((s) => s.id);
   if (byId && me.standing_id) return byId.id === me.standing_id ? "mine" : "theirs";
@@ -85,17 +98,20 @@ export function readSegment(text, entry) {
 /** Whether the frame carries some address the intent did not read: addressee, fields.to, word.addressee. */
 export function addressHint(f) {
   const fields = obj(obj(f.line).fields);
-  return f.addressee != null || Object.keys(obj(fields.to)).length > 0 || obj(f.word).addressee != null;
+  const role = ["invite", "withdraw"].includes(kindOf(f)) && !!str(obj(fields.karta).id);
+  return role || f.addressee != null || Object.keys(obj(fields.to)).length > 0 || obj(f.word).addressee != null;
 }
 
 /** One record's verdict: pass | fail | rejected | unjudged, with the reasons of a fail. */
 export function judge(intent, obs) {
-  if (obs.outside) return { verdict: "outside-bridge", why: ["a person's seat: its window or bot delivers it"] };
+  if (obs.outside) return { verdict: "outside-bridge", why: [String(obs.outside)] };
   if (!obs.delivered && obs.repeat) return { verdict: "unjudged", why: ["a repeat of a delivered id"] };
   if (!obs.delivered) return { verdict: "rejected", why: ["the bridge handed the frame to no client"] };
   if (obs.stale) return { verdict: "unjudged", why: ["stale: the stale batch, not the address rule"] };
+  if (obs.kind && obs.kind !== "?" && !KNOWN_KINDS.has(obs.kind))
+    return { verdict: "not-covered", why: [`kind ${obs.kind} not checked by this judge`] };
   if (!intent && obs.hint) return { verdict: "unparsed", why: ["an address the judge does not read"] };
-  if (!intent) return { verdict: "unjudged", why: [] };
+  if (!intent) return { verdict: "unjudged", why: ["no personal address: the kind's own rule"] };
   if (intent === "mine" && obs.withheld)
     return { verdict: "unjudged", why: ["the api withheld the text from the seat it names"] };
   const why = [];
@@ -113,15 +129,17 @@ export function judge(intent, obs) {
 }
 
 /**
- * A branch's outcome over its records: fail > rejected > unparsed (an address the judge did
- * not read — not a pass) > pass > unjudged > outside-bridge (only persons' seats) > not-covered
- * (no records). Records of persons' seats decide nothing.
+ * A branch's outcome over its records: setup-error > fail > rejected > unparsed (an address the judge did
+ * not read — not a pass) > not-covered (a kind not checked, or no records) > pass > unjudged >
+ * outside-bridge (only persons' seats). Records of persons' seats decide nothing.
  */
 export function branchOutcome(records) {
   const v = new Set(records.map((r) => r.verdict));
+  if (v.has("setup-error")) return "setup-error";
   if (v.has("fail")) return "fail";
   if (v.has("rejected")) return "rejected";
   if (v.has("unparsed")) return "unparsed";
+  if (v.has("not-covered")) return "not-covered";
   if (v.has("pass")) return "pass";
   if (records.some((r) => r.verdict !== "outside-bridge")) return "unjudged";
   return records.length ? "outside-bridge" : "not-covered";
