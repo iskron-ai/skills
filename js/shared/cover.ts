@@ -44,18 +44,24 @@ const unquote = (v: string): string => {
   return t;
 };
 
-/** Flat front matter: key → value; no opening and closing "---" — null. */
+/**
+ * Flat front matter: key → value; no opening and closing "---" — null. An indented line that is
+ * no pair continues the value above it, kept after a newline: a slot reads its continuation apart.
+ */
 export function frontMatter(text: string): Map<string, string> | null {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return null;
   const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
   if (end < 0) return null;
-  const pairs = new Map<string, string>();
+  const raw = new Map<string, string>();
+  let last: string | null = null;
   for (const line of lines.slice(1, end)) {
     const kv = /^\s*('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)\s*:(?:\s+(.*))?$/.exec(line);
-    if (kv) pairs.set(unquote(kv[1]), unquote(kv[2] ?? ""));
+    if (kv) raw.set((last = unquote(kv[1])), kv[2] ?? "");
+    else if (last !== null && /^\s+\S/.test(line))
+      raw.set(last, `${raw.get(last)}\n${line.trim()}`);
   }
-  return pairs;
+  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
 }
 
 const LEAD = /^[\s`'"<]*/;
