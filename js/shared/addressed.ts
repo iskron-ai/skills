@@ -126,7 +126,7 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   if (closed && rk?.kind === "progress") return true;
   if (closed) f.closes_mine = closed;
   if (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true) return true;
-  if (rk?.kind === "invite" || rk?.kind === "withdraw") return inviteMine(f, rk.kind);
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") return inviteMine(f);
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   // Question kinds have an addressee (#6867): a person's answer to someone else is not a word to me.
   // A retract names the answer it takes back (#8074): like the answer, it is the asker's word, not everyone's.
