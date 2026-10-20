@@ -587,6 +587,30 @@ export function idMatrix() {
   };
 }
 
+/**
+ * Проба D — in_reply_to_from не адрес (#6908, дело №1249): строка хода с in_reply_to на
+ * мою запись, без названного места, — не мне; слово с in_reply_to на мою запись без
+ * другого адресата и ответ на мой вопрос с fields.to — я — мои.
+ */
+export function replyMatrix() {
+  const reply = { in_reply_to: 40, in_reply_to_from: MY_PLACE };
+  const step = roomFrame("progress", {
+    entry_id: 81,
+    key: "по ответу",
+    line: { done: "ХОД-ПО-ОТВЕТУ", verdict: "ok", refers_to: 40 },
+    envelope: reply,
+  });
+  const word = roomFrame("said", {
+    entry_id: 82,
+    key: "said",
+    stack: "defer",
+    body: "СЛОВО-НА-МОЁ",
+  });
+  const answered = answer(83, 40);
+  answered.line.done = "ОТВЕТ-МНЕ";
+  return { mine: [{ ...word, ...reply }, answered], theirs: [step] };
+}
+
 /** Зов роли платформой (#6870): приглашение роли с cause и погасшим местом. */
 export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
   const f = roleInvite(entry_id, seq);

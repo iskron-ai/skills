@@ -67,6 +67,7 @@ import {
   progress,
   reask,
   replyInFlight,
+  replyMatrix,
   roleCall,
   roleInvite,
   roleOnlyAsk,
@@ -6294,6 +6295,28 @@ test("C: the seat is matched by id: a null or another's addressee string with my
     assert.ok(wd.out.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${wd.out}`);
   for (const f of theirs)
     assert.ok(!wd.out.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Проба D (#6908, дело №1249): in_reply_to_from не адрес — строка хода по моей записи
+// не мне; слово по моей записи и ответ на мой вопрос — мои.
+test("D: a progress line replying to my record is a count, тебе 0; a word replying to it and an answer to my question are mine", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const { mine, theirs } = replyMatrix();
+  for (const f of theirs) await sendRoom(fake, f);
+  await quietThenNudge(fake, wd, 2200);
+  assert.ok(wd.out.includes("записей 1, тебе 0"), `the count:\n${wd.out}`);
+  assert.ok(!wd.out.includes("ХОД-ПО-ОТВЕТУ"), `a progress line leaked:\n${wd.out}`);
+  for (const f of mine) await sendRoom(fake, f);
+  await waitFor(
+    () => wd.out.includes("СЛОВО-НА-МОЁ") && wd.out.includes("ОТВЕТ-МНЕ"),
+    "the word and the answer to me",
+    5000,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

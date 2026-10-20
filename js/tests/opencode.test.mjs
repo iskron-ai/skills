@@ -89,6 +89,7 @@ import {
   PLATFORM,
   progress,
   replyInFlight,
+  replyMatrix,
   roleInvite,
   roleOnlyAsk,
   roomFrame,
@@ -8564,6 +8565,21 @@ test("C: the seat is matched by id: a null or another's addressee string with my
     assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
   for (const f of theirs)
     assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
+});
+
+// Проба D (#6908, дело №1249): in_reply_to_from не адрес — строка хода по моей записи не мне.
+test("D: a progress line replying to my record names no seat: a count, тебе 0, no text", async () => {
+  const prompts = await asidePrompts("reply-step", replyMatrix().theirs, 0);
+  assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
+  assert.match(prompts.rode, /записей 1, тебе 0 — адресованных месту нет/);
+  assert.doesNotMatch(prompts.rode, /ХОД-ПО-ОТВЕТУ/);
+});
+
+test("D control: a word replying to my record and an answer to my question come in words", async () => {
+  const prompts = await asidePrompts("reply-mine", replyMatrix().mine, 2);
+  const text = prompts.map((p) => p.text).join("\n");
+  assert.match(text, /СЛОВО-НА-МОЁ/);
+  assert.match(text, /ОТВЕТ-МНЕ/);
 });
 
 // Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.

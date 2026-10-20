@@ -65,7 +65,7 @@ function askMemory(f: Rec): string {
 
 /**
  * Whether the frame is addressed to the reader's seat — rule #6574: a word to it
- * (addressee), a reply to its record (in_reply_to_from, #5954), an invite or its
+ * (addressee), a word replying to its record (in_reply_to_from, #5954, #6908), an invite or its
  * withdrawal to me, or something important: an important word (#4939), closing and
  * objection kinds, a person's word; a two-phase body counts as its word (#5953).
  * An addressed word not to me (#6081) and other case records are counted
@@ -107,11 +107,13 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     )
       return true;
   } else if (
-    // A word to me, a reply to my record (#5954), marked important; a word in flight
+    // A word to me, a word replying to my record (#5954), marked important; a word in flight
     // is remembered, since its body comes as a second phase without these marks.
+    // in_reply_to_from is no address for other kinds: a progress line replying to my
+    // record is not mine (#6908).
     seat === true ||
     (seat === null &&
-      (seatIs(f, f.in_reply_to_from) === true ||
+      ((rk?.kind === "said" && seatIs(f, f.in_reply_to_from) === true) ||
         str(f.said) === "important" ||
         str(fields.kind) === "important"))
   ) {

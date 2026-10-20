@@ -76,6 +76,7 @@ import {
   OTHER_KEY,
   progress,
   reask,
+  replyMatrix,
   roleCall,
   roleInvite,
   roleOnlyAsk,
@@ -1289,6 +1290,21 @@ test("C: the seat is matched by id: a null or another's addressee string with my
     assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
   for (const f of theirs)
     assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
+});
+
+// Проба D (#6908, дело №1249): in_reply_to_from не адрес — строка хода по моей записи не мне.
+test("D: a progress line replying to my record names no seat: a count, тебе 0, no text", async () => {
+  const got = await asideMessages("reply-step", replyMatrix().theirs, 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0].text, /записей 1, тебе 0 — /);
+  assert.doesNotMatch(got[0].text, /ХОД-ПО-ОТВЕТУ/);
+});
+
+test("D control: a word replying to my record and an answer to my question come in words", async () => {
+  const got = await asideMessages("reply-mine", replyMatrix().mine, 2);
+  const text = got.map((m) => m.text).join("\n");
+  assert.match(text, /СЛОВО-НА-МОЁ/);
+  assert.match(text, /ОТВЕТ-МНЕ/);
 });
 
 // Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.
