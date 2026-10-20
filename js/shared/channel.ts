@@ -109,13 +109,12 @@ export type FrameOrigin = "platform" | "human" | "sibling" | "peer";
  */
 export function classifyOrigin(frame: Frame, myKarta?: string | number | null): FrameOrigin {
   const p = frame.provenance ?? {};
-  if (p.from_person === true) return "human";
   // Only in a room is a missing author the platform's word; elsewhere a missing
   // from_standing is honest silence, not a claim (graph @nks/nks-dev, node #2287).
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
   if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
     return "platform";
-  if (p.as_person === true) return "human";
+  if (p.from_person === true || p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";
   if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
