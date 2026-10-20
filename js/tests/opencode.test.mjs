@@ -75,6 +75,7 @@ import {
   closing,
   directWord,
   graphPosed,
+  idMatrix,
   importantBody,
   importantInFlight,
   joinedMember,
@@ -89,9 +90,12 @@ import {
   progress,
   replyInFlight,
   roleInvite,
+  roleOnlyAsk,
   roomFrame,
   said as saidFrame,
   saidInFlight,
+  SIB,
+  siblingMatrix,
   unknownKind,
   withdraw,
   withheld,
@@ -8356,27 +8360,29 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     const s = await send(toSeat, 3);
     assert.equal(s.delivery, "queue", "a question to my seat comes in words");
     assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
-    // A question to a place of my account in my role is mine (any of its places answers, #6867);
-    // to a place of another account in my role — not mine.
-    const sibling = ask(100);
+    // Only the named seat is the addressee (#6574): another seat of my account in my role,
+    // a seat of another account, my role without a seat — not mine.
+    const sibling = ask(100, MY_KARTA, {}, OTHER_KEY);
     sibling.line.fields.to.standing = { id: "id-sibling", standing: "@tester:other" };
-    assert.equal((await send(sibling, 4)).delivery, "queue", "my account, my role — mine");
+    await quiet(sibling);
     const foreign = ask(101, MY_KARTA, {}, OTHER_KEY);
     foreign.line.fields.to.standing = { id: "id-boris", standing: BORIS };
     await quiet(foreign);
+    const roleOnly = ask(103, MY_KARTA, {}, OTHER_KEY);
+    delete roleOnly.line.fields.to.standing;
+    await quiet(roleOnly);
     // The bridge decided the frame (asks_decided): the plugin does not re-decide it by its
-    // own memory — not addressed by the bridge, a count, though it would close 100 here.
-    await quiet({ ...askWithdrawn(98, 100), asks_decided: true });
-    // The withdrawal of the question to me open on the key (the last re-ask, 100) is mine,
-    // in words, without a wake.
-    const w = await send(askWithdrawn(99, 100), 5);
+    // own memory — not addressed by the bridge, a count, though it would close 97 here.
+    await quiet({ ...askWithdrawn(98, 97), asks_decided: true });
+    // The withdrawal of the question to me open on the key (97) is mine, in words, without a wake.
+    const w = await send(askWithdrawn(99, 97), 4);
     assert.equal(w.delivery, "queue", "a withdrawn question to me batches");
     assert.match(
       w.text,
-      /вопрос \[100\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
+      /вопрос \[97\] снят: \[выкат: сегодня\?\] \[снят: выкатили иначе\] = slop/,
     );
     // «Accepted» on my answer is mine, in words, without a wake.
-    const k = await send(ack(102, 91, ME), 6);
+    const k = await send(ack(102, 91, ME), 5);
     assert.equal(k.delivery, "queue", "an ack to me batches");
     assert.match(k.text, /ответ \[91\] принят: «выкатываю после обеда»/);
   } finally {
@@ -8511,10 +8517,53 @@ test("(а) an addressed word not to me with stack interrupt prompts nothing: a c
   assert.equal(prompts.rode, `ход\n\n${countOf(1, 79)}`);
 });
 
-test("(а2) an addressed word whose addressee has left the case (addressee_left) is a word to all: a count, no text", async () => {
+test("(а2) an addressed word whose addressee has left the case (addressee_left) stays its addressee's: a count, no text", async () => {
   const prompts = await asidePrompts("aside-left", [addressedLeft(89)], 0);
   assert.equal(prompts.length, 0);
   assert.equal(prompts.rode, `ход\n\n${countOf(1, 88)}`);
+});
+
+// Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.
+test("records to a sibling seat of my role and account prompt nothing: one count, тебе 0, none of their text", async () => {
+  const { frames, hidden } = siblingMatrix();
+  const prompts = await asidePrompts("sibling-seat", frames, 0);
+  assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
+  assert.match(
+    prompts.rode,
+    new RegExp(`записей ${frames.length}, тебе 0 — адресованных месту нет`),
+  );
+  for (const s of hidden)
+    assert.ok(!prompts.rode.includes(s), `«${s}» reached another seat:\n${prompts.rode}`);
+});
+
+// Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
+test("B: a question to my role alone, the api's choice another seat or none, prompts nothing: a count, тебе 0", async () => {
+  const prompts = await asidePrompts("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 0);
+  assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
+  assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
+  assert.doesNotMatch(prompts.rode, /ВОПРОС-РОЛИ/);
+});
+
+test("B control: a question to my role alone with me the api's choice comes in words", async () => {
+  const prompts = await asidePrompts(
+    "role-chosen",
+    [roleOnlyAsk(74, { id: ME_ID, standing: ME })],
+    1,
+  );
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0].text, /ВОПРОС-РОЛИ-74/);
+});
+
+// Проба C (дело №1249 [19]): место сличается по id; строка addressee — лишь без id, null — ничего.
+test("C: the seat is matched by id: a null or another's addressee string with my id is mine; my string with another's id is not", async () => {
+  const { mine, theirs } = idMatrix();
+  const prompts = await asidePrompts("by-id", [...theirs, ...mine], 1);
+  const text = [...prompts.map((p) => p.text), prompts.rode].join("\n");
+  assert.match(text, new RegExp(`записей ${mine.length + theirs.length}, тебе ${mine.length}`));
+  for (const f of mine)
+    assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
+  for (const f of theirs)
+    assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
 });
 
 // Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.

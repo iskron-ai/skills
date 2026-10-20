@@ -139,15 +139,17 @@ export const addressed = (entry_id, addressee = BORIS, stack = "interrupt") =>
   });
 
 /**
- * Адресное слово, чей адресат вышел из дела: addressee остаётся в конверте,
- * но addressee_left: true велит не сворачивать — слово идёт всем целиком.
+ * Важное адресное слово, чей адресат вышел из дела: addressee остаётся в конверте,
+ * addressee_left: true адреса не расширяет — прочим счёт (#6574). Важность — чтобы
+ * проба различала: прежде такое слово шло всем целиком.
  */
 export const addressedLeft = (entry_id, addressee = BORIS, stack = "interrupt") =>
   roomFrame("said", {
     entry_id,
     key: "said",
     stack,
-    envelope: { addressee, addressee_left: true },
+    fields: { kind: "important" },
+    envelope: { addressee, addressee_left: true, said: "important" },
     body: `явное слово ${entry_id}`,
   });
 
@@ -397,14 +399,20 @@ export const HUMAN = {
   karta: { seq: 1226, name: "Владелец" },
 };
 
-/** Вопрос роли seq (по умолчанию моей): yes_no с рекомендацией. */
+/**
+ * Вопрос роли seq: yes_no с рекомендацией. Моей роли — с моим местом в to.standing:
+ * «тебе» только по явному месту (#6574); роль без места — askRole.
+ */
 export const ask = (entry_id, seq = MY_KARTA, fields = {}, key = ASK_KEY) =>
   roomFrame("ask", {
     entry_id,
     key,
     line: { done: "Выкатывать сегодня?", verdict: "partial" },
     fields: {
-      to: { karta: { id: "k-tile", seq, name: "🚚 Поставщик плитки", realm: MY_REALM } },
+      to: {
+        karta: { id: "k-tile", seq, name: "🚚 Поставщик плитки", realm: MY_REALM },
+        ...(seq === MY_KARTA ? { standing: { id: ME_ID, standing: ME, name: "proba" } } : {}),
+      },
       form: "yes_no",
       recommendation: { option: "yes", why: "гейт зелёный" },
       ...fields,
@@ -484,6 +492,100 @@ export const askWithdrawn = (entry_id, withdraws) =>
     fields: { withdraws },
     envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
   });
+
+// ── Два места одной роли и одной учётки в деле (#6574; дело №1249) ──
+// Сосед — место моей роли и моей учётки с похожим именем. Его записи мне — только счёт.
+export const SIB = { id: "id-sib", standing: "@tester:proba.1", name: "proba.1" };
+const said2 = (entry_id, extra, body) => ({
+  ...roomFrame("said", { entry_id, key: "said", stack: "interrupt", body }),
+  ...extra,
+});
+
+/**
+ * Проба A — явное место. Записи дела соседу (кадры провода) и тексты, которых у
+ * меня быть не должно: вопрос соседу (роль и учётка мои), ответ на его вопрос,
+ * важное слово ушедшему соседу и живому, приглашение соседа, его вход, важное
+ * слово в две фазы (тело без адресата).
+ */
+export function siblingMatrix() {
+  const toSib = ask(60);
+  toSib.line.fields.to.standing = SIB;
+  toSib.line.done = "ВОПРОС-СОСЕДУ";
+  const answered = answer(61, 60, SIB.standing);
+  answered.line.done = "ОТВЕТ-СОСЕДУ";
+  answered.line.fields.to = SIB;
+  answered.in_reply_to_from = SIB;
+  const important = { said: "important" };
+  const left = said2(
+    63,
+    { ...important, addressee: SIB.standing, addressee_left: true },
+    "СЛОВО-УШЕДШЕМУ",
+  );
+  left.line.fields = { kind: "important" };
+  const alive = said2(64, { ...important, addressee: SIB }, "СЛОВО-ЖИВОМУ");
+  const invite = roomFrame("invite", {
+    entry_id: 67,
+    key: `invite:${SIB.id}`,
+    fields: { standing: SIB, karta: roleInvite(0).line.fields.karta },
+    envelope: { realm: MY_REALM, karta_seq: MY_KARTA },
+  });
+  const joined = roomFrame("joined", {
+    entry_id: 68,
+    key: `member:${SIB.id}`,
+    fields: { standing: SIB },
+  });
+  const inFlight = addressedInFlight(65, SIB.standing);
+  const bodyOf = importantBody(66, 65);
+  bodyOf.body = bodyOf.line.done = bodyOf.word.line.done = "ТЕЛО-СОСЕДУ";
+  return {
+    frames: [toSib, answered, left, alive, invite, joined, inFlight, bodyOf],
+    hidden: [
+      "ВОПРОС-СОСЕДУ",
+      "ОТВЕТ-СОСЕДУ",
+      "СЛОВО-УШЕДШЕМУ",
+      "СЛОВО-ЖИВОМУ",
+      "ТЕЛО-СОСЕДУ",
+      "отвечает на [60]",
+      "зовёт proba.1",
+    ],
+  };
+}
+
+/**
+ * Проба B — вопрос только роли (#6867). Текст получает одно место, выбранное API:
+ * провод (дело №1249 [19]) — line.fields.to.standing {id, standing, name?} и строка
+ * addressee конверта. chosen — выбранное место; без него API адреса не разрешил.
+ */
+export const roleOnlyAsk = (entry_id, chosen, done = `ВОПРОС-РОЛИ-${entry_id}`) => {
+  const f = ask(entry_id, MY_KARTA, {}, `роль: ${entry_id}`);
+  delete f.line.fields.to.standing;
+  f.line.done = done;
+  if (!chosen) return f;
+  f.line.fields.to.standing = chosen;
+  return { ...f, addressee: chosen.standing };
+};
+
+/**
+ * Проба C — сличение по id (дело №1249 [19]): id главнее строки addressee, а null
+ * addressee сам ничего не решает. mine — мои записи, theirs — чужие; у каждой свой текст.
+ */
+export function idMatrix() {
+  const asked = (entry_id, standing, addressee) => {
+    const f = roleOnlyAsk(entry_id, standing, `ID-${entry_id}`);
+    return { ...f, addressee };
+  };
+  const word = (entry_id, to, addressee) => {
+    const f = roomFrame("said", { entry_id, key: "said", stack: "defer", body: `ID-${entry_id}` });
+    f.line.fields = { kind: "text", to };
+    return { ...f, addressee };
+  };
+  const me = { id: ME_ID, standing: ME, name: "proba" };
+  const sibAsMe = { id: SIB.id, standing: ME, name: "proba" }; // строка совпала, id чужой
+  return {
+    mine: [asked(75, me, null), asked(76, me, SIB.standing), word(77, me, SIB.standing)],
+    theirs: [asked(78, sibAsMe, ME), word(79, sibAsMe, ME)],
+  };
+}
 
 /** Зов роли платформой (#6870): приглашение роли с cause и погасшим местом. */
 export const roleCall = (entry_id, cause, seq = MY_KARTA) => {

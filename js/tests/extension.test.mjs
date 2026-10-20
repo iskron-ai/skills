@@ -67,6 +67,7 @@ import {
   closing,
   directWord,
   graphPosed,
+  idMatrix,
   joinedMember,
   legacyRoom,
   ME,
@@ -77,9 +78,12 @@ import {
   reask,
   roleCall,
   roleInvite,
+  roleOnlyAsk,
   roomFrame,
   said,
   saidInFlight,
+  SIB,
+  siblingMatrix,
   unknownKind,
   withdraw,
   withheld,
@@ -1188,7 +1192,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     const [q, a, k, gone, waiting] = rec.messages.map((m) => m.msg.content);
     assert.match(
       q,
-      /спрашивает роль 🚚 Поставщик плитки \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
+      /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\) \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
     );
     assert.match(a, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: yes; «после обеда»/);
     assert.match(k, /ответ \[91\] принят: «выкатываю после обеда»/);
@@ -1254,11 +1258,48 @@ test("(а) an addressed word not to me with stack interrupt neither steers nor w
   assert.equal(got[0].text, countOf(1, 79));
 });
 
-test("(а2) an addressed word whose addressee has left the case (addressee_left) is a word to all: a count, no text", async () => {
+test("(а2) an addressed word whose addressee has left the case (addressee_left) stays its addressee's: a count, no text", async () => {
   const got = await asideMessages("aside-left", [addressedLeft(89)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].text, countOf(1, 88));
   assert.doesNotMatch(got[0].text, /явное слово 89/);
+});
+
+// Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
+test("B: a question to my role alone, the api's choice another seat or none: a count, тебе 0, no text", async () => {
+  const got = await asideMessages("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0 — `));
+  assert.doesNotMatch(got[0].text, /ВОПРОС-РОЛИ/);
+});
+
+test("B control: a question to my role alone with me the api's choice comes in words", async () => {
+  const got = await asideMessages("role-chosen", [roleOnlyAsk(74, { id: ME_ID, standing: ME })], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0].text, /ВОПРОС-РОЛИ-74/);
+});
+
+// Проба C (дело №1249 [19]): место сличается по id; строка addressee — лишь без id, null — ничего.
+test("C: the seat is matched by id: a null or another's addressee string with my id is mine; my string with another's id is not", async () => {
+  const { mine, theirs } = idMatrix();
+  const got = await asideMessages("by-id", [...theirs, ...mine], mine.length + 1);
+  const text = got.map((m) => m.text).join("\n");
+  for (const f of mine)
+    assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
+  for (const f of theirs)
+    assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
+});
+
+// Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.
+test("records to a sibling seat of my role and account: one count, тебе 0, none of their text", async () => {
+  const { frames, hidden } = siblingMatrix();
+  const got = await asideMessages("sibling-seat", frames, 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].deliverAs, "nextTurn");
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей ${frames.length}, тебе 0 — `));
+  for (const s of hidden)
+    assert.ok(!got[0].text.includes(s), `«${s}» reached another seat:\n${got[0].text}`);
 });
 
 // Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.
