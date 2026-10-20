@@ -172,7 +172,6 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   const line = obj(f.line);
   const fields = obj(line.fields);
   const key = str(line.key);
-  const mine = mineOf(f);
   const node = obj(fields.node);
   const cause = kind === "invite" ? str(fields.cause) : "";
   // A body line's author is the body record's; the word's author is in_reply_to_from (graph @nks/nks-dev, node #5893).

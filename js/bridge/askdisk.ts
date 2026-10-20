@@ -4,7 +4,7 @@
 // day: it would be pushed out there and its closer would arrive as a count. Open
 // questions are never trimmed; closed ones and per-frame decisions are, oldest first,
 // past a limit — a replay comes within the batch window, long before that.
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 
 import { envName } from "../delivery/index.ts";
 import { type AskStore } from "../shared/askmemory.ts";
@@ -59,9 +59,16 @@ function trim(path: string, m: Memory): void {
     drop(k);
     drop(k.slice(4));
   }
+  // Through a rename: a write cut short leaves the old file whole, not a truncated one.
+  const tmp = `${path}.${process.pid}.tmp`;
   try {
-    writeFileSync(path, [...m.set].map((k) => `${k}\n`).join(""));
-  } catch {}
+    writeFileSync(tmp, [...m.set].map((k) => `${k}\n`).join(""));
+    renameSync(tmp, path);
+  } catch {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+  }
 }
 
 /** In process a set with an index of valued decisions, on disk an append-only file trimmed past the limit. */

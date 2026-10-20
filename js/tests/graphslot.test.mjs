@@ -97,6 +97,13 @@ test("Δ5: YAML-комментарии и пустые строки не про�
   assert.deepEqual(cover("'@a/x'\n    #r7", "'#931 «dev»'"), at("@a/x"));
 });
 
+test("Δ6: конечные точка и дефис не входят в slug", () => {
+  for (const g of ["@a/x.", "@a/x-", "@a/x.-", "`@a/x.`", "@a/x (r5)."])
+    assert.deepEqual(ru(g).realm, "@a/x", g);
+  assert.deepEqual(ru("@a/x-y.").realm, "@a/x-y");
+  none(ru("@a/x. @b/y"), "@a/x. @b/y");
+});
+
 test("EN-форма без слов-связок: разделители перечисляют так же", () => {
   none(en("@nks/nks-dev, @nks/drugoy"), "EN");
   none(en("`@a/x` (`r5`); **`@b/y`**"), "EN");
