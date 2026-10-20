@@ -1,5 +1,22 @@
 # Changelog
 
+## [7.19.0](https://github.com/iskron-ai/skills/compare/v7.18.0...v7.19.0) (2026-10-20)
+
+
+### Features
+
+* resolve personal memory by identity and refresh contract projections ([#535](https://github.com/iskron-ai/skills/issues/535)) ([e28d45e](https://github.com/iskron-ai/skills/commit/e28d45e33449053f27bca330f10431a4f40a8f18))
+* **skills:** одна граница ремесла графа — объёмная правка задетых узлов роли weaver на своём мосту; контракт 28 ([#534](https://github.com/iskron-ai/skills/issues/534)) ([42da402](https://github.com/iskron-ai/skills/commit/42da402497c208675fae579501056f02bb39458e))
+
+
+### Bug Fixes
+
+* **bridge:** «тебе», адресный текст и личный счётчик — только явно названному месту ([#540](https://github.com/iskron-ai/skills/issues/540)) ([f373a01](https://github.com/iskron-ai/skills/commit/f373a01dfdaeccc63af635537af10f129a8609a4))
+* **entry:** основной путь — текущие узлы и связи; история версий и дела — только аудитом по названному сомнению ([#538](https://github.com/iskron-ai/skills/issues/538)) ([5f5d108](https://github.com/iskron-ai/skills/commit/5f5d10883effa40d31d7af08fc28c9bb01c162eb))
+* **onboarding:** репозиторий отдельным ходом, квитанция по ходу человека о предмете шага, существующее не переделывается, занятая роль называется ([#541](https://github.com/iskron-ai/skills/issues/541)) ([6e72ce6](https://github.com/iskron-ai/skills/commit/6e72ce674ec730e7fdcb43ed11dba9a38268b475))
+* **opencode:** слот «Граф» обложки — рабочий граф первый, методология и отрицаемое не кандидаты ([#536](https://github.com/iskron-ai/skills/issues/536)) ([40a665c](https://github.com/iskron-ai/skills/commit/40a665c5d7198c26996ba42e2c65083ab9e655b3))
+* правки полного ревью кандидата 7.19.0 ([#545](https://github.com/iskron-ai/skills/issues/545)) ([deaf6e3](https://github.com/iskron-ai/skills/commit/deaf6e305d2f4c7f7b8dc047210a75a169efa322))
+
 ## [7.18.0](https://github.com/iskron-ai/skills/compare/v7.17.4...v7.18.0) (2026-10-20)
 
 
