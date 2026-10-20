@@ -139,15 +139,17 @@ export const addressed = (entry_id, addressee = BORIS, stack = "interrupt") =>
   });
 
 /**
- * Адресное слово, чей адресат вышел из дела: addressee остаётся в конверте,
- * addressee_left: true адреса не расширяет — прочим счёт (#6574).
+ * Важное адресное слово, чей адресат вышел из дела: addressee остаётся в конверте,
+ * addressee_left: true адреса не расширяет — прочим счёт (#6574). Важность — чтобы
+ * проба различала: прежде такое слово шло всем целиком.
  */
 export const addressedLeft = (entry_id, addressee = BORIS, stack = "interrupt") =>
   roomFrame("said", {
     entry_id,
     key: "said",
     stack,
-    envelope: { addressee, addressee_left: true },
+    fields: { kind: "important" },
+    envelope: { addressee, addressee_left: true, said: "important" },
     body: `явное слово ${entry_id}`,
   });
 
@@ -550,17 +552,40 @@ export function siblingMatrix() {
 }
 
 /**
- * Проба B — вопрос только роли (to.karta моя, to.standing нет; #6867). Текст получает
- * одно место, выбранное API; поле провода для него ПРЕДПОЛОЖЕНО — addressee конверта,
- * как у адресного слова (согласовать с #48). chosen — выбранное место; без него API
- * адреса не разрешил.
+ * Проба B — вопрос только роли (#6867). Текст получает одно место, выбранное API:
+ * провод (дело №1249 [19]) — line.fields.to.standing {id, standing, name?} и строка
+ * addressee конверта. chosen — выбранное место; без него API адреса не разрешил.
  */
 export const roleOnlyAsk = (entry_id, chosen, done = `ВОПРОС-РОЛИ-${entry_id}`) => {
   const f = ask(entry_id, MY_KARTA, {}, `роль: ${entry_id}`);
   delete f.line.fields.to.standing;
   f.line.done = done;
-  return chosen ? { ...f, addressee: chosen } : f;
+  if (!chosen) return f;
+  f.line.fields.to.standing = chosen;
+  return { ...f, addressee: chosen.standing };
 };
+
+/**
+ * Проба C — сличение по id (дело №1249 [19]): id главнее строки addressee, а null
+ * addressee сам ничего не решает. mine — мои записи, theirs — чужие; у каждой свой текст.
+ */
+export function idMatrix() {
+  const asked = (entry_id, standing, addressee) => {
+    const f = roleOnlyAsk(entry_id, standing, `ID-${entry_id}`);
+    return { ...f, addressee };
+  };
+  const word = (entry_id, to, addressee) => {
+    const f = roomFrame("said", { entry_id, key: "said", stack: "defer", body: `ID-${entry_id}` });
+    f.line.fields = { kind: "text", to };
+    return { ...f, addressee };
+  };
+  const me = { id: ME_ID, standing: ME, name: "proba" };
+  const sibAsMe = { id: SIB.id, standing: ME, name: "proba" }; // строка совпала, id чужой
+  return {
+    mine: [asked(75, me, null), asked(76, me, SIB.standing), word(77, me, SIB.standing)],
+    theirs: [asked(78, sibAsMe, ME), word(79, sibAsMe, ME)],
+  };
+}
 
 /** Зов роли платформой (#6870): приглашение роли с cause и погасшим местом. */
 export const roleCall = (entry_id, cause, seq = MY_KARTA) => {

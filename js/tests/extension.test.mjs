@@ -67,6 +67,7 @@ import {
   closing,
   directWord,
   graphPosed,
+  idMatrix,
   joinedMember,
   legacyRoom,
   ME,
@@ -1277,6 +1278,17 @@ test("B control: a question to my role alone with me the api's choice comes in w
   const got = await asideMessages("role-chosen", [roleOnlyAsk(74, { id: ME_ID, standing: ME })], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.match(got[0].text, /ВОПРОС-РОЛИ-74/);
+});
+
+// Проба C (дело №1249 [19]): место сличается по id; строка addressee — лишь без id, null — ничего.
+test("C: the seat is matched by id: a null or another's addressee string with my id is mine; my string with another's id is not", async () => {
+  const { mine, theirs } = idMatrix();
+  const got = await asideMessages("by-id", [...theirs, ...mine], mine.length + 1);
+  const text = got.map((m) => m.text).join("\n");
+  for (const f of mine)
+    assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
+  for (const f of theirs)
+    assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
 });
 
 // Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.

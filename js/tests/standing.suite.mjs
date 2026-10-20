@@ -52,6 +52,8 @@ import {
   closing,
   directWord,
   graphPosed,
+  idMatrix,
+  importantBody,
   joinedMember,
   leftExpired,
   legacyRoom,
@@ -61,6 +63,7 @@ import {
   myAnswer,
   nodeBound,
   nodeOp,
+  OTHER_KEY,
   progress,
   reask,
   replyInFlight,
@@ -5556,9 +5559,9 @@ test("question kinds under the Monitor watchdog: a question to my role waits in 
 });
 
 // #6868: an answer to another's question is a count; an answer by another seat
-// of my role to the question asked of me closes it — in words, not waking, as
-// the ack to me; the answer to another seat does not fold into it.
-test("question kinds under the Monitor watchdog: another seat's answer to my question and an ack to me ride in words; an answer to another's question is a count", async (t) => {
+// of my role to the question asked of me closes it — a closing line in the count,
+// without its text (#6574); the ack to me rides in words.
+test("question kinds under the Monitor watchdog: another seat's answer to my question is a closing line, an ack to me rides in words; an answer to another's question is a count", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -5576,9 +5579,9 @@ test("question kinds under the Monitor watchdog: another seat's answer to my que
   await nudge(fake);
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
   const flat = wd.out.replace(/\n/g, " ");
-  assert.match(flat, /записей 5, тебе 3/, wd.out);
+  assert.match(flat, /записей 5, тебе 2; вопрос \[90\] к тебе закрыт: ответил Дмитрий/, wd.out);
   assert.doesNotMatch(flat, /вопрос \[90\] снят/, `told twice:\n${wd.out}`);
-  assert.match(flat, /отвечает на \[90\]/, `the answer to my question in words:\n${wd.out}`);
+  assert.doesNotMatch(flat, /отвечает на \[90\]/, `another's answer in words:\n${wd.out}`);
   assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
   assert.doesNotMatch(flat, /отвечает на \[95\]/, `another's answer leaked:\n${wd.out}`);
   // The seat's memory of questions grows by questions to me, not by others' lines.
@@ -5627,8 +5630,9 @@ test("question kinds under the Monitor watchdog: a question to me, its withdrawa
 // The withdrawal of a question to me names only the ask's number: the exit
 // watchdog gets it in a new process, and the bridge may have restarted since
 // the ask. The bridge keeps the ask in the seat's .seen and marks the withdrawal.
-// A re-ask of another role on its key, answered or not, puts it out the same way:
-// the last line of the key is no longer my question (#6867, #6778).
+// A re-ask of another role on its key, answered or not, puts it out too: the last
+// line of the key is no longer my question (#6867, #6778) — another's record, so a
+// closing line in the count with the next wake, not its text (#6574).
 // The platform hands a frame again when the bridge died in its batch window: the
 // replayed withdrawal is still mine, though the first receipt put the question out.
 // The open question outlives the day of .seen: its memory is the seat's .asks.
@@ -5637,14 +5641,14 @@ for (const [what, closer, words, answered, replayed, askAgain, evicted] of [
   [
     "a question re-asked of another role",
     () => ask(91, MY_KARTA + 1),
-    "[91] Алексей",
+    "вопрос [90] к тебе переадресован 🚚 Поставщик плитки",
     false,
     false,
   ],
   [
     "a question I answered, re-asked of another role,",
     () => reask(91, MY_KARTA + 1, 89),
-    "[91] Алексей",
+    "вопрос [90] к тебе переадресован 🚚 Поставщик плитки",
     true,
     false,
   ],
@@ -5719,9 +5723,13 @@ for (const [what, closer, words, answered, replayed, askAgain, evicted] of [
     const next = runClient("watchdog-exit", dir, key, 6000);
     await waitFor(() => next.err.includes("hello"), "hello to be noted");
     await sendRoom(fake, closer());
+    // A re-ask to another is another's record: a closing line in the count, no wake of its own (#6574).
+    const reasked = closer().event_kind === "room.ask";
+    if (reasked) await new Promise((r) => setTimeout(r, 1200)).then(() => nudge(fake));
     const r2 = await next.done;
     assert.equal(r2.exit, 0, `${what} must wake after the restart: ${next.err}`);
     assert.ok(next.out.includes(words), `${what} in words:\n${next.out}`);
+    if (reasked) assert.ok(!next.out.includes("[91] Алексей"), `the re-ask's text:\n${next.out}`);
   });
 
 // A batch whose every frame was handed already (#6574): its head went out with
@@ -6266,6 +6274,107 @@ test("B control: a question to my role alone with me the api's choice comes to m
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
   assert.ok(wd.out.includes("ВОПРОС-РОЛИ-74"), `the question chosen for me:\n${wd.out}`);
   assert.ok(wd.out.includes("тебе 1"), wd.out);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Проба C (дело №1249 [19]): место сличается по id; строка addressee — лишь без id, null — ничего.
+test("C: the seat is matched by id: a null or another's addressee string with my id is mine; my string with another's id is not", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const { mine, theirs } = idMatrix();
+  for (const f of [...theirs, ...mine]) await sendRoom(fake, f);
+  await new Promise((r) => setTimeout(r, 2200));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  const all = mine.length + theirs.length;
+  assert.ok(wd.out.includes(`записей ${all}, тебе ${mine.length}`), `the count:\n${wd.out}`);
+  for (const f of mine)
+    assert.ok(wd.out.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${wd.out}`);
+  for (const f of theirs)
+    assert.ok(!wd.out.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// P1 (#6867, #6574): чужая запись, закрывшая вопрос ко мне, — счёт и строка закрытия, без её текста.
+test("another's answer and a re-ask to a sibling that close my question: a closing line in the count, not their text", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const answered = answer(91, 90, BORIS);
+  answered.line.done = "ОТВЕТ-БОРИСУ";
+  const moved = ask(94, MY_KARTA, {}, OTHER_KEY);
+  moved.line.fields.to.standing = SIB;
+  moved.line.done = "ПЕРЕСПРОС-СОСЕДУ";
+  for (const f of [ask(90), answered, ask(93, MY_KARTA, {}, OTHER_KEY), moved])
+    await sendRoom(fake, f);
+  await waitFor(() => wd.out.includes("[93]"), "the batch with the questions to me", 4000);
+  const flat = wd.out.replace(/\n/g, " ");
+  assert.match(
+    flat,
+    /записей 4, тебе 2; вопрос \[90\] к тебе закрыт: ответил Дмитрий \(@dmitry:phone\)/,
+  );
+  assert.match(flat, /вопрос \[93\] к тебе переадресован proba\.1 \(@tester:proba\.1\)/);
+  for (const s of ["ОТВЕТ-БОРИСУ", "ПЕРЕСПРОС-СОСЕДУ", "отвечает на [90]"])
+    assert.ok(!flat.includes(s), `«${s}» reached me:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// P2: тело слова соседу в две фазы приходит новому процессу сторожа — текста нет; так же
+// после перезапуска моста (.seen). У тела нет адресата, а слово важное — решает память моста.
+for (const restart of [false, true])
+  test(`the body of a word to a sibling in two phases reaches a new exit watchdog${restart ? " after a bridge restart" : ""}: no text`, async (t) => {
+    const env = { ISKRON_BRIDGE_ROOM_BATCH_MS: "800" };
+    const { fake, dir, key, bridge } = await connected(t, { env });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const first = runClient("watchdog-exit", dir, key, 15_000);
+    await waitFor(() => first.err.includes("hello"), "hello to be noted");
+    await sendRoom(fake, addressedInFlight(70, SIB.standing));
+    await new Promise((r) => setTimeout(r, 300));
+    await nudge(fake, 998);
+    assert.equal((await first.done).exit, 0, `the word to me wakes: ${first.err}`);
+    if (restart) {
+      bridge.proc.kill("SIGKILL");
+      await waitFor(() => bridge.proc.signalCode !== null, "the first bridge to exit");
+      await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+      const second = startBridge(fake.mcpUrl, dir, env);
+      t.after(() => second.stop());
+      assert.ok((await second.call("initialize", 1, INIT)).result);
+      await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+      const st = await second.call("tools/call", 2, {
+        name: "iskron_stand",
+        arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+      });
+      assert.ok(!st.result?.isError, JSON.stringify(st));
+      await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+    }
+    const next = runClient("watchdog-exit", dir, key, 8000);
+    await waitFor(() => next.err.includes("hello"), "hello to be noted");
+    const bodyOf = importantBody(71, 70);
+    bodyOf.body = bodyOf.line.done = bodyOf.word.line.done = "ТЕЛО-СОСЕДУ-71";
+    await sendRoom(fake, bodyOf);
+    await new Promise((r) => setTimeout(r, 1200));
+    await nudge(fake, 999);
+    assert.equal((await next.done).exit, 0, next.err);
+    assert.ok(!next.out.includes("ТЕЛО-СОСЕДУ-71"), `the body reached another seat:\n${next.out}`);
+  });
+
+// P3: приглашение роли без fields.karta.id — id роли из ключа invite:<id>.
+test("a role invite whose fields carry no karta id is mine by its key and wakes at once", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const inv = roleInvite(96);
+  delete inv.line.fields.karta.id;
+  await sendRoom(fake, inv);
+  await waitFor(() => wd.out.includes("[96]"), "the role invite, at once", 3000);
+  assert.match(wd.out, /зовёт 🚚 Поставщик плитки в дело/);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

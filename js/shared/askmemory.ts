@@ -52,19 +52,19 @@ const isOpen = (store: AskStore, frame: Rec, n: string): boolean => {
 };
 
 /**
- * The frame closes my open question: its withdrawal, an answer to it, a re-ask to
- * another on its key. An own record is an echo. Frequent work lines are checked by
- * number; the memory is scanned only for rare asks.
+ * The number of my open question the frame closes ("" — none): its withdrawal, an
+ * answer to it, a re-ask to another on its key. An own record is an echo. Frequent
+ * work lines are checked by number; the memory is scanned only for rare asks.
  */
-export function closesMine(store: AskStore, frame: Rec): boolean {
-  if (byMe(frame) || !str(lineOf(frame).key)) return false;
+export function closesMine(store: AskStore, frame: Rec): string {
+  if (byMe(frame) || !str(lineOf(frame).key)) return "";
   const kind = kindOf(frame);
-  if (kind === "progress" || kind === "answer") return isOpen(store, frame, namedOf(frame));
-  return (
-    kind === "ask" &&
-    !askedMine(frame, obj(lineOf(frame).fields)) &&
-    openOn(store, frame).length > 0
-  );
+  if (kind === "progress" || kind === "answer") {
+    const n = namedOf(frame);
+    return isOpen(store, frame, n) ? n : "";
+  }
+  if (kind !== "ask" || askedMine(frame, obj(lineOf(frame).fields))) return "";
+  return openOn(store, frame).at(-1) ?? "";
 }
 
 /**

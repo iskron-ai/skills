@@ -75,6 +75,7 @@ import {
   closing,
   directWord,
   graphPosed,
+  idMatrix,
   importantBody,
   importantInFlight,
   joinedMember,
@@ -8551,6 +8552,18 @@ test("B control: a question to my role alone with me the api's choice comes in w
   );
   assert.equal(prompts.length, 1);
   assert.match(prompts[0].text, /ВОПРОС-РОЛИ-74/);
+});
+
+// Проба C (дело №1249 [19]): место сличается по id; строка addressee — лишь без id, null — ничего.
+test("C: the seat is matched by id: a null or another's addressee string with my id is mine; my string with another's id is not", async () => {
+  const { mine, theirs } = idMatrix();
+  const prompts = await asidePrompts("by-id", [...theirs, ...mine], 1);
+  const text = [...prompts.map((p) => p.text), prompts.rode].join("\n");
+  assert.match(text, new RegExp(`записей ${mine.length + theirs.length}, тебе ${mine.length}`));
+  for (const f of mine)
+    assert.ok(text.includes(`ID-${f.entry_id}`), `mine [${f.entry_id}] lost:\n${text}`);
+  for (const f of theirs)
+    assert.ok(!text.includes(`ID-${f.entry_id}`), `[${f.entry_id}] leaked:\n${text}`);
 });
 
 // Строки работы одного ключа сворачиваются в последнюю (#6718): счёт — после свёртки, сменённые — числом.

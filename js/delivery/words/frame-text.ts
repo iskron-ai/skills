@@ -17,6 +17,10 @@ export interface FrameTextWords {
   /** head — «№N «зачин»», n — записей после свёртки, mine — адресованных месту. */
   count: (head: string, n: number, mine: number) => string;
   supersededLines: (gone: number) => string;
+  /** Чужая запись закрыла вопрос ко мне [n] (#6867): ответил by — без её текста. */
+  askAnswered: (n: string, by: string) => string;
+  /** Переспрос на ключе вопроса ко мне [n] другому адресату to. */
+  askMoved: (n: string, to: string) => string;
   /** Указание, где читать целиком: args — аргументы history дела через «; »; пусто — дела места. */
   inFull: (cases: string) => string;
   /** Вызов history одного дела. */
@@ -35,6 +39,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     noneYours: () => ` — адресованных месту нет; `,
     count: (head, n, mine) => `${head}: записей ${n}, тебе ${mine}`,
     supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    askAnswered: (n, by) => `; вопрос [${n}] к тебе закрыт: ответил ${by}`,
+    askMoved: (n, to) => `; вопрос [${n}] к тебе переадресован ${to}`,
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () =>
@@ -48,6 +54,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     noneYours: () => ` — none of them yours; `,
     count: (head, n, mine) => `${head}: ${n} records, yours ${mine}`,
     supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    askAnswered: (n, by) => `; your question [${n}] is closed: answered by ${by}`,
+    askMoved: (n, to) => `; your question [${n}] is re-asked of ${to}`,
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () =>

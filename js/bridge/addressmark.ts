@@ -8,7 +8,7 @@
 // first on disk (.seen for words, .asks for questions — askdisk.ts) across restarts.
 // The bridge's decision on a question frame is final: the frame carries asks_decided, and
 // plugins and watchdogs do not re-decide it with their own question memory.
-import { addressedToMine, asideKeyOf, wordKeyOf } from "../shared/addressed.ts";
+import { addressedToMine, asideKeyOf, namedMine, wordKeyOf } from "../shared/addressed.ts";
 import { closesMine, noteAsk } from "../shared/askmemory.ts";
 import { ASK_KINDS } from "../shared/asks.ts";
 import { type Frame } from "../shared/channel.ts";
@@ -18,7 +18,7 @@ import { diskAsks } from "./askdisk.ts";
 
 const markOf = (frame: Frame): string => `word:${wordKeyOf(frame)}`;
 
-/** A word in flight and a question to me go to memory; a body and a closer get `addressed`. */
+/** A word in flight and a question to me go to memory; a body and a withdrawal get `addressed`, another's closer `closes_mine`. */
 export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>): void {
   const rk = roomKind(frame);
   if (rk?.kind === "said" && rk.aside && frame.body_pending === true) {
@@ -31,12 +31,21 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
   } else if (rk && (ASK_KINDS.has(rk.kind) || rk.kind === "progress")) {
     // One decision per frame, kept in .asks: a platform replay of the same frame
     // (bridge died inside the batch window) finds it though the question is closed.
-    const hit = `hit:${typeof frame.id === "string" ? frame.id : ""}`;
+    // A withdrawal of my question is mine; another's record that closes it is not —
+    // the number it closes rides on the frame for the count's closing line (#6867).
+    const id = typeof frame.id === "string" ? frame.id : "";
+    const hit = `hit:${id}`;
     const store = diskAsks(seenPath);
-    if (store.has(hit)) frame.addressed = true;
-    else if (closesMine(store, frame as Record<string, unknown>)) {
+    const was = id ? [...store.keys()].find((k) => k.startsWith(`closes:${id}#`)) : undefined;
+    const n = was
+      ? was.slice(was.indexOf("#") + 1)
+      : closesMine(store, frame as Record<string, unknown>);
+    if (store.has(hit) || (n && rk.kind === "progress")) {
       frame.addressed = true;
-      if (typeof frame.id === "string") store.add(hit);
+      if (id) store.add(hit);
+    } else if (n && !namedMine(frame, rk.kind)) {
+      Object.assign(frame, { addressed: false, closes_mine: n });
+      if (id) store.add(`closes:${id}#${n}`);
     }
     noteAsk(store, frame as Record<string, unknown>);
     (frame as Record<string, unknown>).asks_decided = true;
