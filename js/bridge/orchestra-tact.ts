@@ -1,11 +1,14 @@
 // The tact's reading half (graph @nks/nks-dev, nodes #5042, #8202; the doors #4951 invites
-// and #6010 raised): both queues per realm of the named boundary, from the daemon's own
-// cursor that lies on disk beside the flag. The doors live under the api BESIDE THE CHANNEL
-// (apiBase of shared/channel.ts) — a live probe against nks-api 0.130.12 confirmed: the mcp
-// server url does not name them, the channel address does; the daemon hands the base in,
-// discovered from its live sessions or the hold records on disk (daemon.ts). The realm's own
-// spelling rides the REST path, URL-encoded — @owner/slug verified live, bare slug and
-// numeric id also answer, rN does not. A failed read is not an empty composition: the whole
+// and #6010 raised): both queues per realm of the boundary, from the daemon's own cursor
+// that lies on disk beside the flag. The doors live under the api BESIDE THE CHANNEL (apiBase
+// of shared/channel.ts) — a live probe against nks-api 0.130.12 confirmed: the mcp server url
+// does not name them, the channel address does; the daemon hands the base in, discovered from
+// its live sessions or the hold records on disk (daemon.ts). The realm's own spelling rides
+// the REST path, URL-encoded — @owner/slug verified live, bare slug and numeric id also
+// answer, rN does not: a short rN of a live place resolves by the realm list the same api
+// serves (GET /realms, short_id → @owner/slug), and one the list does not know refuses the tact
+// with the boundary named incomplete — a live place's graph never vanishes by its record's
+// spelling (#8202, word [27] of №1260). A failed read is not an empty composition: the whole
 // tact is refused, no cursor moves, no stop order goes out (#8202). Taking an invite
 // (register with spawned_for) and the extinguishing arrive with the raising slice, not here.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -63,6 +66,43 @@ const itemsOf = (v: unknown): unknown[] | null => {
   return Array.isArray(items) ? items : null;
 };
 
+/** A short rN resolves by the realm list the same api serves — GET /realms, short_id →
+ * @owner_handle/slug. The boundary keeps every live place's graph whatever its record's
+ * spelling; an rN the list does not know is an explicit refusal, never a silent drop. */
+async function resolveRealms(
+  base: string,
+  token: string | null,
+  realms: string[],
+): Promise<{ realms: string[] } | { unresolved: string; why: string }> {
+  const isShort = (r: string): boolean => /^r\d+$/i.test(r.trim());
+  const short = realms.filter(isShort);
+  if (!short.length) return { realms: [...new Set(realms)] };
+  if (!token) return { unresolved: short[0], why: "no key to the server" };
+  const listed = itemsOf(await getJson(base, token, `/realms?limit=${LIMIT}`));
+  if (!listed) return { unresolved: short[0], why: "realm list is not a list" };
+  const canonById = new Map<number, string>();
+  for (const it of listed) {
+    const x = it as { short_id?: unknown; slug?: unknown; owner_handle?: unknown };
+    if (
+      typeof x.short_id === "number" &&
+      typeof x.slug === "string" &&
+      typeof x.owner_handle === "string"
+    )
+      canonById.set(x.short_id, `@${x.owner_handle}/${x.slug}`);
+  }
+  const out: string[] = [];
+  for (const r of realms) {
+    if (!isShort(r)) {
+      out.push(r);
+      continue;
+    }
+    const canon = canonById.get(Number(r.trim().slice(1)));
+    if (!canon) return { unresolved: r, why: "not in the realm list" };
+    out.push(canon);
+  }
+  return { realms: [...new Set(out)] };
+}
+
 /** One realm's both reads; any failure throws — the caller refuses the whole tact. */
 async function readRealm(
   base: string,
@@ -101,7 +141,8 @@ function causesOf(signals: { cause?: unknown }[]): string {
 }
 
 /**
- * One tact of reading: every named realm's queues from their cursors. The base is the api
+ * One tact of reading: every boundary realm's queues from their cursors — short forms of
+ * live places resolved first, an unresolved one refusing whole. The base is the api
  * beside the channel, handed in by the daemon — "" means unknown, and the tact is refused
  * aloud, never guessed from the mcp server url. All reads first, then all writes — a realm
  * that fails holds every realm's cursor where it lay (#8202: the tact is refused whole,
@@ -114,9 +155,21 @@ export async function stepTact(
   realms: string[],
 ): Promise<OrchestraAnswer> {
   if (!base) return { ok: false, said: w().stepNoApi() };
+  let boundary = [...new Set(realms)];
+  if (boundary.some((r) => /^r\d+$/i.test(r.trim()))) {
+    try {
+      const resolved = await resolveRealms(base, token, boundary);
+      if ("unresolved" in resolved)
+        return { ok: false, said: w().stepUnresolvedRealm(resolved.unresolved, resolved.why) };
+      boundary = resolved.realms;
+    } catch (e) {
+      const first = boundary.find((r) => /^r\d+$/i.test(r.trim())) ?? "?";
+      return { ok: false, said: w().stepUnresolvedRealm(first, (e as Error).message) };
+    }
+  }
   const state = readTactState(authDir);
   const reads: TactRead[] = [];
-  for (const realm of realms) {
+  for (const realm of boundary) {
     try {
       if (!token) throw new Error("no key to the server");
       reads.push(await readRealm(base, token, realm, state.realms[realm]?.cursor ?? null));

@@ -469,6 +469,31 @@ export async function startFakeNks(opts = {}) {
       return json(res, 200, { items, cursor, numbering: "case" });
     }
 
+    // Штатное разрешение локатора (№1260 [27]): список графов под тем же api — короткая
+    // rN разрешается по short_id в @owner/slug до дверей invites/raised; форма зеркалит
+    // живую (app.iskron.ru/api/realms, 2026-10-21).
+    if (p === "/api/realms" && req.method === "GET") {
+      const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+      const byPat = !!st.pat && bearer === st.pat;
+      if (!byPat && (!st.access || bearer !== st.access))
+        return json(res, 401, { error: "unauthorized" });
+      st.counts.orchestra_reads++;
+      const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
+      const items = st.realms.slice(0, limit).map((r) => {
+        const [owner, slug] = r.canon.replace(/^@/, "").split("/");
+        return {
+          id: `realm-${r.short}`,
+          short_id: Number(r.short.slice(1)),
+          slug,
+          name: slug,
+          attrs: {},
+          is_active: true,
+          owner_handle: owner,
+        };
+      });
+      return json(res, 200, { items });
+    }
+
     const patched = /^\/api\/standings\/([^/]+)$/.exec(p);
     if (patched && req.method === "PATCH") {
       const id = decodeURIComponent(patched[1]);

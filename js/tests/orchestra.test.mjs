@@ -390,31 +390,76 @@ test("orchestra: a short rN realm is refused at the boundary — it does not rid
   }
 });
 
-test("orchestra: the tact reads the discovered half too — realms of the machine's live places", async () => {
+test("orchestra: the only live root place recorded rN — its graph resolves and stays in the boundary", async () => {
   const fake = await startFakeNks({ pat: "probe-pat" });
   const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
-  // The hold records' realms are NOT in the named boundary — the tact must find the readable
-  // one anyway; the short r9 (as live records carry, seen on the machine) must not block it.
-  const d = await raiseReader(dir, fake, ["@nks/drugoy", "r9"]);
+  // #7514: the boundary holds the graphs of the machine's live agents whatever the record's
+  // spelling. The single live place is recorded as r5 (as live records carry); a dead r9
+  // record (expired) leaves by liveness, not by name (#8202, word [27] of №1260).
+  const d = await raiseReader(dir, fake, ["r5"]);
+  // The machine's real record shape: the standing act (stoodAt) is hours old while the
+  // record's heartbeat (at) is fresh — liveness follows at, as readHoldRecord reads it.
+  writeFileSync(
+    join(dir, "standings", "probe-1.hold"),
+    JSON.stringify({
+      realm: "r5",
+      karta: 931,
+      name: "probe-1",
+      url: `${fake.base}/channel/ws/probe-1`,
+      stoodAt: Date.now() - 7 * 60 * 60 * 1000,
+      at: Date.now(),
+    }) + "\n",
+  );
+  writeFileSync(
+    join(dir, "standings", "dead-r9.hold"),
+    JSON.stringify({
+      realm: "r9",
+      karta: 931,
+      name: "dead-probe",
+      url: `${fake.base}/channel/ws/dead`,
+      at: Date.now() - 7 * 60 * 60 * 1000,
+    }) + "\n",
+  );
   try {
     await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
     await fake.control({
-      orchestra: { realms: { "@nks/drugoy": { invites: [], signals: [signal(1, "raised")] } } },
+      orchestra: { realms: { "@nks/nks-dev": { invites: [], signals: [signal(1, "raised")] } } },
     });
-    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    // No named boundary at all: the discovered half must carry the resolved graph alone.
+    const on = await cli(["on", "--auth-dir", dir]).done;
     assert.equal(on.code, 0, on.err);
     const r = await cli(["step", "--auth-dir", dir]).done;
     assert.equal(r.code, 0, r.err + r.out);
-    assert.match(r.out, /@nks\/nks-dev/, r.out);
-    assert.match(r.out, /@nks\/drugoy/, r.out);
-    assert.doesNotMatch(r.out, /r9/, `${r.out} — the short form is skipped, not walked`);
+    assert.match(r.out, /@nks\/nks-dev/, `${r.out} — r5 resolved, not skipped`);
     assert.match(r.out, /сигналов 1/, r.out);
+    assert.doesNotMatch(r.out, /r5|такт пуст/, r.out);
     const kept = JSON.parse(readFileSync(cursorsAt(dir), "utf8"));
     assert.equal(
-      kept.realms["@nks/drugoy"].cursor,
+      kept.realms["@nks/nks-dev"].cursor,
       "c1",
-      "the discovered realm keeps its cursor too",
+      "the cursor lies under the canonical name",
     );
+    assert.ok(!("r5" in kept.realms), "no cursor under the short form");
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+test("orchestra: a live rN the realm list does not know — the tact is refused, boundary named incomplete", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseReader(dir, fake, ["r99"]);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.err, /r99/, r.err);
+    assert.match(r.err, /не разрешается/, r.err);
+    assert.match(r.err, /граница неполна/, r.err);
+    assert.ok(!existsSync(cursorsAt(dir)), "a refused tact advanced nothing");
   } finally {
     await d.stop();
     await fake.stop();

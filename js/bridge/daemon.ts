@@ -43,7 +43,7 @@ import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
 import { pruneFallbacks } from "./fallback.ts";
 import { handoffsSettled } from "./handoff.ts";
-import { eraOf, holdRecordsWhere } from "./holdrecord.ts";
+import { eraOf, HOLD_RECORD_MAX_AGE_MS, holdRecordsWhere } from "./holdrecord.ts";
 import { beginHandover, beginSessionHandover, H } from "./holdstate.ts";
 import { orchestraServe } from "./orchestra.ts";
 import { listenOrchestraDoor } from "./orchestra-door.ts";
@@ -379,11 +379,11 @@ export async function daemonMain(argv: string[]): Promise<void> {
           return freshest?.url ? apiBase(freshest.url) : "";
         },
         token: bearer,
-        // The discovered half of the boundary (#8202): realms of the places the machine's
-        // live sessions stand on, plus whatever hold records on disk still name. A record
-        // may carry the short rN form (seen live) — REST refuses it, and the live standings
-        // name the same realm canonically, so the tact skips the short form rather than
-        // refuse whole on a stale record.
+        // The discovered half of the boundary (#8202, word [27] of №1260): realms of the
+        // places the machine's live sessions stand on, plus whatever hold records on disk
+        // are still live by age or departure. The record's spelling is kept as written —
+        // a short rN resolves downstream by the realm list the same api serves, and a dead
+        // record leaves by liveness, never by the form of its name.
         realms: (): string[] => {
           const found = new Set<string>();
           const ofSession = (): string[] => {
@@ -395,8 +395,18 @@ export async function daemonMain(argv: string[]): Promise<void> {
           for (const e of engines.values()) {
             for (const r of e.scope ? runIn(e.scope, ofSession) : ofSession()) if (r) found.add(r);
           }
-          for (const r of holdRecordsWhere(() => true)) if (r.realm) found.add(r.realm);
-          return [...found].filter((r) => !/^r\d+$/i.test(r));
+          // Liveness follows the record's own heartbeat — r.at, as readHoldRecord reads it
+          // (stoodAt names the standing act, which outlives its record's freshness); a
+          // record with no heartbeat at all is not live.
+          for (const r of holdRecordsWhere(() => true))
+            if (
+              r.realm &&
+              r.at !== undefined &&
+              r.left !== true &&
+              Date.now() - r.at < HOLD_RECORD_MAX_AGE_MS
+            )
+              found.add(r.realm);
+          return [...found];
         },
       }),
     );
