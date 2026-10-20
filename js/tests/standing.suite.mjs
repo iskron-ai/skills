@@ -65,6 +65,7 @@ import {
   nodeBound,
   nodeOp,
   OTHER_KEY,
+  personWord,
   progress,
   reask,
   reaskRole,
@@ -6510,6 +6511,23 @@ test("a re-ask to the role alone in reply to my answer comes to me; with a sibli
   assert.ok(wd.out.includes("записей 2, тебе 1"), `the count:\n${wd.out}`);
   assert.ok(wd.out.includes("ПЕРЕСПРОС-103"), `the re-ask to me lost:\n${wd.out}`);
   assert.ok(!wd.out.includes("ПЕРЕСПРОС-102"), `the re-ask to the sibling leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #8281: from_person API — первый признак слова человека; без него и без старых — счёт.
+test("a person's word with from_person and no user_karta_seq comes at once as a person's; without it, a count", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, personWord(110));
+  await waitFor(() => wd.out.includes("СЛОВО-ЧЕЛОВЕКА-110"), "the person's word at once", 1200);
+  assert.match(wd.out, /^№7 [^\n]*\[110\] [^\n]*— человек/m, wd.out);
+  await sendRoom(fake, personWord(111, false));
+  await quietThenNudge(fake, wd, 2200);
+  assert.ok(wd.out.includes("записей 1, тебе 0"), `the count:\n${wd.out}`);
+  assert.ok(!wd.out.includes("СЛОВО-ЧЕЛОВЕКА-111"), `a word without a sign leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
