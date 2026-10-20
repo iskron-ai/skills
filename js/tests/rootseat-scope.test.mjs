@@ -16,6 +16,7 @@ import {
   ALIGN,
   aligning,
   connects,
+  halts,
   look,
   SEATED,
   sleep,
@@ -132,7 +133,7 @@ test("(s4c) перенос в ходе connect, отмена, возврат —
 });
 
 test(
-  "(s4d) возврат до уборки отменённой попытки — мост жив, место держится, stand — сличение",
+  "(s4d) возврат до уборки попытки первого промпта — как в 7.17.4: её место снято, новой посадки нет, явный stand встаёт",
   T,
   async (t) => {
     const { s, project, oc } = await aligning(t, { agents: false });
@@ -142,23 +143,40 @@ test(
     await until(() => s.fake.state.counts.connect_asked > 0, "посадка в полёте");
     oc.move("root", scratch(t));
     await sleep(200);
-    oc.move("root", project); // back while the cancelled attempt's connect is still on the wire
+    oc.move("root", project); // back while the attempt's connect is still on the wire
     await first;
-    await sleep(3500); // the delayed connect answers, the cancelled attempt cleans up
+    await sleep(3500); // the delayed connect answers, the forgotten attempt cleans up
     await s.fake.control({ connect_delay_ms: 0 });
-    assert.equal(heldBy(s.dir, "root").length, 1, `место держится\n${look(oc)}`);
-    assert.equal(heardSeats(s.fake).length, 1, `мост слушает\n${look(oc)}`);
-    // The held seat by its own name: a nameless stand replaces a provisional seat by design.
-    const held = heldBy(s.dir, "root");
+    // half.moved forgot the session's attempt: its provisional seat goes with the cleanup.
+    assert.deepEqual(heardSeats(s.fake, null), [], look(oc));
+    assert.deepEqual(heldBy(s.dir, "root"), [], look(oc));
+    const next = await oc.turn("root", "дальше");
+    await sleep(500);
+    assert.equal(connects(s), 1, `второй автопосадки нет\n${look(oc, next)}`);
     const r = await oc.turn("root", "встань", () => [
-      { tool: "iskron_stand", input: { realm: "@nks/nks-dev", karta: "931", name: held[0] } },
+      { tool: "iskron_stand", input: { realm: "@nks/nks-dev", karta: "931", name: "probe-back" } },
     ]);
     assert.ok(!r.calls[0]?.error, `${JSON.stringify(r.calls)}\n${look(oc, r)}`);
-    await sleep(500);
-    assert.equal(connects(s), 1, `сличение, не новая посадка\n${look(oc, r)}`);
-    assert.deepEqual(heldBy(s.dir, "root"), held, look(oc, r));
+    await until(() => heldBy(s.dir, "root").includes("probe-back"), "явное место", 10_000);
   },
 );
+
+test("(s4e) стоп владельца в ходе connect после переноса и возврата — места нет", T, async (t) => {
+  const { s, project, oc } = await aligning(t, { agents: false });
+  writeAgents(project);
+  await s.fake.control({ connect_delay_ms: 2000 });
+  const first = oc.turn("root", "привет");
+  await until(() => s.fake.state.counts.connect_asked > 0, "посадка в полёте");
+  oc.move("root", scratch(t));
+  await sleep(200);
+  oc.move("root", project);
+  await sleep(100);
+  halts(s).stop("root", "S4E_OWNER_STOP");
+  await first;
+  await sleep(3500); // the delayed connect answers
+  assert.deepEqual(heardSeats(s.fake, null), [], `слушающего места нет\n${look(oc)}`);
+  assert.deepEqual(heldBy(s.dir, "root"), [], `записи держания нет\n${look(oc)}`);
+});
 
 test("(s5) тул сессии B не сажает ждущую A; A садится своим промптом", T, async (t) => {
   const { s, project, oc } = await aligning(t);

@@ -69,11 +69,12 @@ export function createRealign(halted: (session: string) => boolean) {
       waiting.clear();
       left.clear();
     },
-    /** Moved away: the wait is kept aside, not looked at, until the session comes back. */
-    leave(session: string): void {
+    /** Moved away: the wait is kept aside, not looked at, until the session comes back; none — false. */
+    leave(session: string): boolean {
       const w = waiting.get(session);
       waiting.delete(session);
       if (w) left.set(session, { where: w.where, why: w.why });
+      return !!w;
     },
     left: (session: string): boolean => left.has(session),
     /** Back in the folder it waited in: it waits again, the cover read at the next look. */

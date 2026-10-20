@@ -41,8 +41,6 @@ export function createSeatLife(d: Doors) {
       explicit?: Promise<void>;
       closing?: Promise<void>;
       adopted?: boolean;
-      left?: boolean;
-      back?: boolean;
     }
   >();
   const epochs = new Map<string, number>();
@@ -257,28 +255,10 @@ export function createSeatLife(d: Doors) {
         );
       },
       cancelSeat: cancel,
-      /** The session moved away: only the attempt in flight ends; the session may come back and stand. */
-      yieldSeat(s: string) {
-        const a = attempts.get(s);
-        if (!a) return;
-        a.cancelledHere = true;
-        a.left = true;
-      },
-      /**
-       * Back before the yielded attempt cleaned up: what it takes stays the session's — its slot is
-       * the one the session's tools go by here again, so the cleanup neither revokes nor stops it.
-       */
-      reclaimSeat(s: string) {
-        const a = attempts.get(s);
-        if (!a?.left) return;
-        a.left = false;
-        a.back = true;
-      },
       async releaseSeat(s: string) {
         const attempt = attempts.get(s);
         const slot = attempt?.slot;
         if (!slot) return;
-        if (attempt.back && d.slots.get(s) === slot && !d.stopped() && !deleted.has(s)) return;
         let last: Promise<void> | undefined;
         do {
           last = attempt?.explicit;
@@ -300,12 +280,7 @@ export function createSeatLife(d: Doors) {
                 attempt.failure ?? words(ROOT_SEAT).unproven(),
               ),
             );
-          if (
-            d.stopped() ||
-            deleted.has(s) ||
-            attempt?.left ||
-            (attempt?.fresh && !attempt.explicit)
-          ) {
+          if (d.stopped() || deleted.has(s) || (attempt?.fresh && !attempt.explicit)) {
             slot.ownStop = true;
             slot.bridge.stop();
             drop(s, slot);

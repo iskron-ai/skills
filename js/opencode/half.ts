@@ -23,10 +23,6 @@ export interface ToolsHalf {
     cancelled: () => boolean,
   ): Promise<Seating>;
   cancelSeat(session: string): void;
-  /** Moved away: the seating in flight ends, the session is not refused when it comes back. */
-  yieldSeat(session: string): void;
-  /** Back before the yielded seating cleaned up: what it took stays the session's. */
-  reclaimSeat(session: string): void;
   releaseSeat(session: string): Promise<void>;
   finishSeat(session: string): void;
   /** The stop; held seats that went into a marker — upward (twins.ts). */
@@ -60,8 +56,6 @@ export const idleHalf = (): ToolsHalf => ({
   launch: async () => null,
   seatRoot: async () => ({ error: words(ROOT_SEAT).noBridge() }),
   cancelSeat() {},
-  yieldSeat() {},
-  reclaimSeat() {},
   releaseSeat: async () => {},
   finishSeat() {},
   stop() {},

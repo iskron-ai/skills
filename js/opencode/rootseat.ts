@@ -3,10 +3,9 @@
 // own bridge returns the session's seat from disk or stands on the role (seatBy, from tools.ts),
 // and the first prompt carries one line to the model — seated, or why not (rootseat-say.ts).
 // A defective or absent cover — the word to align, and the root waits (rootseat-again.ts); a
-// tool call wakes only its own root's wait. A session moved away leaves this instance without a
-// word: an unfinished seating ends, its wait is set aside, and the seat it holds goes with it
-// (half.moved). Back here, its next prompt is a first one — a returned seat is compared, not
-// taken anew (seatBy) — and a wait set aside waits again for its cover.
+// tool call wakes only its own root's wait. A session moved away while waiting has its wait set
+// aside; back here, it waits again for its cover, and a prompt before that reads the cover anew.
+// A seating in flight and the seat held move by half.moved (moves.ts), first or retried alike.
 // Child sessions are not seated here (launch.ts); the contract and terms — rootseat-doors.ts.
 //
 // One seating per session (a memoized promise): only the first prompt starts it and
@@ -109,7 +108,6 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
     },
     moved(session, here) {
       if (here) {
-        d.reclaimSeat(session);
         if (again.left(session))
           void d.directoryOf(session).then((where) => {
             // A prompt that came first has read the cover itself: the wait set aside is dropped.
@@ -118,14 +116,10 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
           });
         return;
       }
-      again.leave(session);
+      // A seating in flight is half.moved's, as on a first prompt; only a wait is set aside here.
+      if (!again.leave(session)) return;
       told.delete(session);
-      const t = seatings.get(session);
-      seatings.delete(session);
-      if (t && !t.done) {
-        d.yieldSeat(session);
-        t.abort.abort();
-      }
+      if (seatings.get(session)?.done) seatings.delete(session);
     },
     forget(session) {
       dead.add(session);
