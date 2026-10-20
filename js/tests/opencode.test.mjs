@@ -89,6 +89,7 @@ import {
   PLATFORM,
   progress,
   replyInFlight,
+  roleAsked,
   roleInvite,
   roleOnlyAsk,
   roomFrame,
@@ -8534,6 +8535,15 @@ test("records to a sibling seat of my role and account prompt nothing: one count
   );
   for (const s of hidden)
     assert.ok(!prompts.rode.includes(s), `«${s}» reached another seat:\n${prompts.rode}`);
+});
+
+// Дело №1249: зов чужой роли на мой вопрос и его отзыв — адрес записи роль, не я (#6574).
+test("a platform call of another role in reply to my question, and its withdrawal, prompt nothing: тебе 0", async () => {
+  const calls = [roleAsked(97, 99, 90), roleAsked(98, 99, 97, true)];
+  const prompts = await asidePrompts("role-asked", calls, 0);
+  assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
+  assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
+  assert.doesNotMatch(prompts.rode, /зовёт/);
 });
 
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
