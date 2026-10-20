@@ -1,0 +1,616 @@
+TAP version 13
+# Subtest: source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+ok 1 - source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 27.983833
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+ok 2 - source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 17.34625
+  type: 'test'
+  ...
+# Subtest: source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+ok 3 - source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 17.329667
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+ok 4 - source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 17.854958
+  type: 'test'
+  ...
+# Subtest: source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 5 - source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 17.424583
+  type: 'test'
+  ...
+# Subtest: source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 6 - source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 16.411583
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 7 - source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 20.788
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 8 - source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 23.053875
+  type: 'test'
+  ...
+# Subtest: source: file_path docs/ordinary.md exits 0
+ok 9 - source: file_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 19.670667
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+ok 10 - source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 15.752417
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+ok 11 - source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 17.91775
+  type: 'test'
+  ...
+# Subtest: source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+ok 12 - source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 15.926208
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+ok 13 - source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 15.805541
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 14 - source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 15.881709
+  type: 'test'
+  ...
+# Subtest: source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 15 - source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 16.499083
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 16 - source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 18.957667
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 17 - source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 19.922125
+  type: 'test'
+  ...
+# Subtest: source: notebook_path docs/ordinary.md exits 0
+ok 18 - source: notebook_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 22.018875
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+ok 19 - repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 16.80275
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+ok 20 - repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 18.980084
+  type: 'test'
+  ...
+# Subtest: repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+ok 21 - repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 16.347
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+ok 22 - repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 17.461333
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 23 - repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 16.889041
+  type: 'test'
+  ...
+# Subtest: repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 24 - repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 15.398709
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 25 - repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 19.577083
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 26 - repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 29.979334
+  type: 'test'
+  ...
+# Subtest: repository: file_path docs/ordinary.md exits 0
+ok 27 - repository: file_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 19.577875
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+ok 28 - repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 15.937583
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+ok 29 - repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 16.056208
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+ok 30 - repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 18.43975
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+ok 31 - repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 16.452708
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 32 - repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 16.261959
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 33 - repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 15.486667
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 34 - repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 44.023917
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 35 - repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 22.740167
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path docs/ordinary.md exits 0
+ok 36 - repository: notebook_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 20.428958
+  type: 'test'
+  ...
+# Subtest: delivered text: сверка / универсальная пара родов
+ok 37 - delivered text: сверка / универсальная пара родов
+  ---
+  duration_ms: 0.682083
+  type: 'test'
+  ...
+# Subtest: delivered text: замещение / незаконное ребро
+ok 38 - delivered text: замещение / незаконное ребро
+  ---
+  duration_ms: 0.053875
+  type: 'test'
+  ...
+# Subtest: delivered text: способ и наблюдение / только урок
+ok 39 - delivered text: способ и наблюдение / только урок
+  ---
+  duration_ms: 0.039583
+  type: 'test'
+  ...
+# Subtest: delivered text: существенный процесс / только архив
+ok 40 - delivered text: существенный процесс / только архив
+  ---
+  duration_ms: 0.038334
+  type: 'test'
+  ...
+# Subtest: delivered text: личный план / обязательный план проекта
+ok 41 - delivered text: личный план / обязательный план проекта
+  ---
+  duration_ms: 0.114666
+  type: 'test'
+  ...
+# Subtest: delivered text: сегодня иначе / устойчивое
+ok 42 - delivered text: сегодня иначе / устойчивое
+  ---
+  duration_ms: 0.104833
+  type: 'test'
+  ...
+# Subtest: delivered text: мнение / факт мира
+ok 43 - delivered text: мнение / факт мира
+  ---
+  duration_ms: 0.087584
+  type: 'test'
+  ...
+# Subtest: delivered text: ясный акт / догадка
+ok 44 - delivered text: ясный акт / догадка
+  ---
+  duration_ms: 0.032333
+  type: 'test'
+  ...
+# Subtest: delivered text: предпочитаю / род и модусы
+ok 45 - delivered text: предпочитаю / род и модусы
+  ---
+  duration_ms: 0.050916
+  type: 'test'
+  ...
+# Subtest: delivered text: ограниченный промах / отсутствие
+ok 46 - delivered text: ограниченный промах / отсутствие
+  ---
+  duration_ms: 0.128958
+  type: 'test'
+  ...
+# Subtest: delivered text: нет доступа / нет записи
+ok 47 - delivered text: нет доступа / нет записи
+  ---
+  duration_ms: 0.098542
+  type: 'test'
+  ...
+# Subtest: delivered text: два результата / замещение
+ok 48 - delivered text: два результата / замещение
+  ---
+  duration_ms: 0.093333
+  type: 'test'
+  ...
+# Subtest: delivered text: прочитано / санкция
+ok 49 - delivered text: прочитано / санкция
+  ---
+  duration_ms: 0.069708
+  type: 'test'
+  ...
+# Subtest: delivered text: существенная неоднозначность / лишний вопрос
+ok 50 - delivered text: существенная неоднозначность / лишний вопрос
+  ---
+  duration_ms: 0.111375
+  type: 'test'
+  ...
+# Subtest: delivered text: свежее личное / обязательство проекта
+ok 51 - delivered text: свежее личное / обязательство проекта
+  ---
+  duration_ms: 0.09325
+  type: 'test'
+  ...
+# Subtest: delivered text: найти / выбрать допустимое
+ok 52 - delivered text: найти / выбрать допустимое
+  ---
+  duration_ms: 0.100083
+  type: 'test'
+  ...
+# Subtest: delivered text: пересказ / изменённый ход
+ok 53 - delivered text: пересказ / изменённый ход
+  ---
+  duration_ms: 0.099541
+  type: 'test'
+  ...
+# Subtest: delivered text: нашёл / оплатил или опубликовал
+ok 54 - delivered text: нашёл / оплатил или опубликовал
+  ---
+  duration_ms: 0.016042
+  type: 'test'
+  ...
+# Subtest: delivered text: безопасная часть / полная остановка
+ok 55 - delivered text: безопасная часть / полная остановка
+  ---
+  duration_ms: 0.063166
+  type: 'test'
+  ...
+# Subtest: delivered text: анонимный текст / раскрывающее действие
+ok 56 - delivered text: анонимный текст / раскрывающее действие
+  ---
+  duration_ms: 0.092125
+  type: 'test'
+  ...
+# Subtest: delivered text: проектное основание / выдумано задним числом
+ok 57 - delivered text: проектное основание / выдумано задним числом
+  ---
+  duration_ms: 0.021416
+  type: 'test'
+  ...
+# Subtest: delivered text: неизвестный исход / повтор
+ok 58 - delivered text: неизвестный исход / повтор
+  ---
+  duration_ms: 0.025084
+  type: 'test'
+  ...
+# Subtest: delivered text: конфликт версии / слепой повтор
+ok 59 - delivered text: конфликт версии / слепой повтор
+  ---
+  duration_ms: 0.056958
+  type: 'test'
+  ...
+# Subtest: delivered text: новая машина / полная сверка
+ok 60 - delivered text: новая машина / полная сверка
+  ---
+  duration_ms: 0.018208
+  type: 'test'
+  ...
+# Subtest: delivered text: недоступный граф / создание
+ok 61 - delivered text: недоступный граф / создание
+  ---
+  duration_ms: 0.015334
+  type: 'test'
+  ...
+# Subtest: delivered text: длинное условие / attrs
+ok 62 - delivered text: длинное условие / attrs
+  ---
+  duration_ms: 0.014375
+  type: 'test'
+  ...
+# Subtest: delivered text: переносимый способ / общий метод
+ok 63 - delivered text: переносимый способ / общий метод
+  ---
+  duration_ms: 0.019667
+  type: 'test'
+  ...
+# Subtest: delivered text: опыт / обязательный урок
+ok 64 - delivered text: опыт / обязательный урок
+  ---
+  duration_ms: 0.065166
+  type: 'test'
+  ...
+# Subtest: delivered text: один успех / эффективность
+ok 65 - delivered text: один успех / эффективность
+  ---
+  duration_ms: 0.018208
+  type: 'test'
+  ...
+# Subtest: delivered text: другие условия / опровержение
+ok 66 - delivered text: другие условия / опровержение
+  ---
+  duration_ms: 0.021125
+  type: 'test'
+  ...
+# Subtest: delivered text: метод / полное основание
+ok 67 - delivered text: метод / полное основание
+  ---
+  duration_ms: 0.018
+  type: 'test'
+  ...
+# Subtest: delivered text: дверь / поиск прежде вопроса
+ok 68 - delivered text: дверь / поиск прежде вопроса
+  ---
+  duration_ms: 0.068042
+  type: 'test'
+  ...
+# Subtest: delivered text: дверь / чисто проектный обход
+ok 69 - delivered text: дверь / чисто проектный обход
+  ---
+  duration_ms: 0.061292
+  type: 'test'
+  ...
+# Subtest: independent mutations of real instructions are rejected
+ok 70 - independent mutations of real instructions are rejected
+  ---
+  duration_ms: 1.49775
+  type: 'test'
+  ...
+# Subtest: all delivery routes reject old blanket formulas
+ok 71 - all delivery routes reject old blanket formulas
+  ---
+  duration_ms: 1.613125
+  type: 'test'
+  ...
+# Subtest: injected and bootstrap routes retain personal/project distinction
+ok 72 - injected and bootstrap routes retain personal/project distinction
+  ---
+  duration_ms: 0.2515
+  type: 'test'
+  ...
+# Subtest: minding description keeps recall triggers inside the delivery limit
+ok 73 - minding description keeps recall triggers inside the delivery limit
+  ---
+  duration_ms: 0.123166
+  type: 'test'
+  ...
+# Subtest: personal entry text: owned mind uses the API link
+ok 74 - personal entry text: owned mind uses the API link
+  ---
+  duration_ms: 0.870917
+  type: 'test'
+  ...
+# Subtest: negative control: deleting owned mind uses the API link is detected
+ok 75 - negative control: deleting owned mind uses the API link is detected
+  ---
+  duration_ms: 0.559708
+  type: 'test'
+  ...
+# Subtest: personal entry text: foreign mind is no fallback
+ok 76 - personal entry text: foreign mind is no fallback
+  ---
+  duration_ms: 0.050042
+  type: 'test'
+  ...
+# Subtest: negative control: deleting foreign mind is no fallback is detected
+ok 77 - negative control: deleting foreign mind is no fallback is detected
+  ---
+  duration_ms: 0.707458
+  type: 'test'
+  ...
+# Subtest: personal entry text: refusal is not absence
+ok 78 - personal entry text: refusal is not absence
+  ---
+  duration_ms: 0.0485
+  type: 'test'
+  ...
+# Subtest: negative control: deleting refusal is not absence is detected
+ok 79 - negative control: deleting refusal is not absence is detected
+  ---
+  duration_ms: 0.062709
+  type: 'test'
+  ...
+# Subtest: personal entry text: missing role is not missing realm
+ok 80 - personal entry text: missing role is not missing realm
+  ---
+  duration_ms: 0.04425
+  type: 'test'
+  ...
+# Subtest: negative control: deleting missing role is not missing realm is detected
+ok 81 - negative control: deleting missing role is not missing realm is detected
+  ---
+  duration_ms: 0.063292
+  type: 'test'
+  ...
+# Subtest: personal entry text: repeat create rereads after conflict
+ok 82 - personal entry text: repeat create rereads after conflict
+  ---
+  duration_ms: 0.050583
+  type: 'test'
+  ...
+# Subtest: negative control: deleting repeat create rereads after conflict is detected
+ok 83 - negative control: deleting repeat create rereads after conflict is detected
+  ---
+  duration_ms: 0.102834
+  type: 'test'
+  ...
+# Subtest: personal entry text: repeat role provisioning reuses
+ok 84 - personal entry text: repeat role provisioning reuses
+  ---
+  duration_ms: 0.043042
+  type: 'test'
+  ...
+# Subtest: negative control: deleting repeat role provisioning reuses is detected
+ok 85 - negative control: deleting repeat role provisioning reuses is detected
+  ---
+  duration_ms: 0.074125
+  type: 'test'
+  ...
+# Subtest: personal entry text: no persistent locator
+ok 86 - personal entry text: no persistent locator
+  ---
+  duration_ms: 0.029833
+  type: 'test'
+  ...
+# Subtest: negative control: deleting no persistent locator is detected
+ok 87 - negative control: deleting no persistent locator is detected
+  ---
+  duration_ms: 0.061
+  type: 'test'
+  ...
+# Subtest: personal entry text: no progress marker
+ok 88 - personal entry text: no progress marker
+  ---
+  duration_ms: 0.023792
+  type: 'test'
+  ...
+# Subtest: negative control: deleting no progress marker is detected
+ok 89 - negative control: deleting no progress marker is detected
+  ---
+  duration_ms: 0.041084
+  type: 'test'
+  ...
+# Subtest: personal entry text: structural facts need no receipt
+ok 90 - personal entry text: structural facts need no receipt
+  ---
+  duration_ms: 0.029792
+  type: 'test'
+  ...
+# Subtest: negative control: deleting structural facts need no receipt is detected
+ok 91 - negative control: deleting structural facts need no receipt is detected
+  ---
+  duration_ms: 0.050833
+  type: 'test'
+  ...
+# Subtest: personal entry text: another member cannot confer progress
+ok 92 - personal entry text: another member cannot confer progress
+  ---
+  duration_ms: 0.02325
+  type: 'test'
+  ...
+# Subtest: negative control: deleting another member cannot confer progress is detected
+ok 93 - negative control: deleting another member cannot confer progress is detected
+  ---
+  duration_ms: 0.052167
+  type: 'test'
+  ...
+# Subtest: personal entry text: persona is not a progress predicate
+ok 94 - personal entry text: persona is not a progress predicate
+  ---
+  duration_ms: 0.022208
+  type: 'test'
+  ...
+# Subtest: negative control: deleting persona is not a progress predicate is detected
+ok 95 - negative control: deleting persona is not a progress predicate is detected
+  ---
+  duration_ms: 0.0485
+  type: 'test'
+  ...
+# Subtest: personal entry text: operational persona is preserved
+ok 96 - personal entry text: operational persona is preserved
+  ---
+  duration_ms: 0.022708
+  type: 'test'
+  ...
+# Subtest: negative control: deleting operational persona is preserved is detected
+ok 97 - negative control: deleting operational persona is preserved is detected
+  ---
+  duration_ms: 0.0775
+  type: 'test'
+  ...
+# Subtest: personal entry text: cleanup requires provenance
+ok 98 - personal entry text: cleanup requires provenance
+  ---
+  duration_ms: 0.025916
+  type: 'test'
+  ...
+# Subtest: negative control: deleting cleanup requires provenance is detected
+ok 99 - negative control: deleting cleanup requires provenance is detected
+  ---
+  duration_ms: 0.053042
+  type: 'test'
+  ...
+# Subtest: sources carry no constructed address, redirect recipe or assumed envelope
+ok 100 - sources carry no constructed address, redirect recipe or assumed envelope
+  ---
+  duration_ms: 0.275208
+  type: 'test'
+  ...
+# Subtest: negative controls reject the old address and redirect recipe
+ok 101 - negative controls reject the old address and redirect recipe
+  ---
+  duration_ms: 0.323042
+  type: 'test'
+  ...
+1..101
+# tests 101
+# suites 0
+# pass 101
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 839.751458

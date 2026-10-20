@@ -4301,8 +4301,7 @@ test("the back-dated count a watchdog is told on attach is the frames it gets, a
   await new Promise((r) => setTimeout(r, 1000)); // окно дела ушло в пустой сокет; оба в кольце
   const wd = runClient("watchdog", dir, key, 20_000);
   // Живой кадр сразу за прицеплением: названный мостом лишний кадр повтора засчитал бы его.
-  await waitFor(() => fake.state.ws.size === 1, "the socket");
-  await new Promise((r) => setTimeout(r, 200));
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the tested watchdog to attach");
   await fake.control({
     ws_send: JSON.stringify({ id: "live-b", type: "message", body: "живое-б2" }),
   });

@@ -268,7 +268,8 @@ export async function startFakeNks(opts = {}) {
     richTools: false, // /control {richTools:true}: tools/list с пишущими тулами — для проверки того, что мост приписывает и чего нет
     structured: false, // /control {structured:true}: доска, register и connect несут structuredContent (#6637)
     garble: false, // /control {garble:true}: их проза — формой, которой мост не знает (секреты connect остаются в тексте)
-    lastStructured: null, // последний отданный structuredContent — проба сверяет, что харнес получил его нетронутым
+    lastStructured: null, // последний отданный structuredContent — может быть перезаписан фоновым вызовом
+    structuredReplies: [], // снимки ответов по id запроса, до передачи мосту
     structuredGate: false, // /control {structuredGate:true}: поля — только сессии, объявившей iskron/structured (#6731)
     initAsked: false, // последнее initialize объявило iskron/structured
     initCaps: [], // capabilities каждого initialize, как пришли
@@ -354,6 +355,11 @@ export async function startFakeNks(opts = {}) {
     return c.places.get(slug(realm))?.name;
   };
   const json = (res, code, obj, headers = {}) => {
+    if (obj.result?.structuredContent)
+      st.structuredReplies.push({
+        id: obj.id,
+        fields: structuredClone(obj.result.structuredContent),
+      });
     res.writeHead(code, {
       "content-type": "application/json",
       date: new Date(st.snow()).toUTCString(),

@@ -141,7 +141,8 @@ for (const md of sources) {
     await assert.rejects(
       p.call("execute.before", toolCall("write", "mine", { path: memoryPath, content: "x" })),
       (e) =>
-        ["<Граф>", "<Раздел персистентности>", "@handle/mind"].every((slot) =>
+        !/@<?handle>?\/mind/.test(String(e?.message)) &&
+        ["<Граф>", "<Раздел персистентности>", "личная память через minding"].every((slot) =>
           String(e?.message).includes(slot),
         ),
     );

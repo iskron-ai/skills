@@ -1,0 +1,76 @@
+[
+  {
+    "name": "original",
+    "head": "9f2bc1e7ca4e6a120e190a9490f44f8b10bf10f9",
+    "node": "v26.12.0",
+    "args": [
+      "--test",
+      "--test-reporter=tap",
+      "--test-name-pattern=put out by close 4001 revoked:silent",
+      "js/tests/opencode-siblings.test.mjs"
+    ],
+    "flags": {},
+    "carriers": {
+      "loader": "ed4035f27a64fba980e3e0a925d86afc7896770f349143ffaed413f5aae2c08d",
+      "bridge": "0c1d3ecd3f2aa56e208dee3b851e1a4b27baa8cc2b366c7ac91b4b4d8c3572eb",
+      "plugin": "2b634bade72f4a972f32f3a0fd9ae5338fecc76a2ae83f4c0d6b4d1aee78941e"
+    },
+    "exit": 0,
+    "observed": [
+      {
+        "instance": 1,
+        "interrupts": [
+          1792506592969
+        ],
+        "stop": 1792506592963,
+        "cleanup": 1792506594500
+      },
+      {
+        "instance": 2,
+        "interrupts": [
+          1792506599136
+        ],
+        "stop": 1792506599133,
+        "cleanup": 1792506600673
+      }
+    ]
+  },
+  {
+    "name": "delay600",
+    "head": "9f2bc1e7ca4e6a120e190a9490f44f8b10bf10f9",
+    "node": "v26.12.0",
+    "args": [
+      "--test",
+      "--test-reporter=tap",
+      "--test-name-pattern=put out by close 4001 revoked:silent",
+      "js/tests/opencode-siblings.test.mjs"
+    ],
+    "flags": {
+      "MIND_INTERRUPT_DELAY": "600"
+    },
+    "carriers": {
+      "loader": "ed4035f27a64fba980e3e0a925d86afc7896770f349143ffaed413f5aae2c08d",
+      "bridge": "0c1d3ecd3f2aa56e208dee3b851e1a4b27baa8cc2b366c7ac91b4b4d8c3572eb",
+      "plugin": "2b634bade72f4a972f32f3a0fd9ae5338fecc76a2ae83f4c0d6b4d1aee78941e"
+    },
+    "exit": 0,
+    "observed": [
+      {
+        "instance": 1,
+        "interrupts": [
+          1792506601938
+        ],
+        "stop": 1792506601931,
+        "cleanup": 1792506603469
+      },
+      {
+        "instance": 2,
+        "interrupts": [
+          1792506608543
+        ],
+        "stop": 1792506608516,
+        "cleanup": 1792506610055
+      }
+    ]
+  }
+]

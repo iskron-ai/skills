@@ -1,0 +1,16 @@
+[
+  {
+    "command": [
+      "make",
+      "build"
+    ],
+    "exit": 0
+  },
+  {
+    "command": [
+      "make",
+      "check"
+    ],
+    "exit": 0
+  }
+]
