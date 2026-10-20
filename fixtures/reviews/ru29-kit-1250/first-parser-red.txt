@@ -1,0 +1,7 @@
+Command: node fixtures/reviews/ru29-kit-1250/probe.mjs
+Observed wrapper exit: 1 (Node v26.12.0).
+Observed inner original test exit: 0 (commands.json in first-parser-red.tar.gz).
+Failure: SyntaxError: Expected ',' or '}' after property value in JSON at position 680 (line 1 column 681).
+Site: probe.mjs:42:90, JSON.parse of the TAP diagnostic carrying interrupt-call.
+Cause corrected in the next probe: TAP doubles backslashes in diagnostic stdout.
+The original script and raw test streams remain in first-parser-red.tar.gz.
