@@ -18,7 +18,7 @@ const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const str = (v) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
 /** The record's kind — one source for intent, the not-covered rule and the table; "?" — none. */
 export const kindOf = (f) => str(obj(f).event_kind).replace(/^room\./, "") || str(obj(obj(f).line).kind) || "?";
-const ASK_KINDS = new Set(["ask", "answer", "ack"]);
+const ASK_KINDS = new Set(["ask", "answer", "ack", "retract"]);
 const REPLY_KINDS = new Set(["said"]);
 /** Common records of the case (case №1249 [80]): every participant may read their text, in_reply_to addresses nothing. */
 const COMMON_KINDS = new Set(["progress"]);
