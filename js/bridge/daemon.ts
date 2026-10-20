@@ -43,6 +43,8 @@ import { errorMessage } from "./errors.ts";
 import { pruneFallbacks } from "./fallback.ts";
 import { handoffsSettled } from "./handoff.ts";
 import { beginHandover, beginSessionHandover } from "./holdstate.ts";
+import { orchestraServe } from "./orchestra.ts";
+import { listenOrchestraDoor } from "./orchestra-door.ts";
 import { pauseForHandover } from "./pauserecord.ts";
 import { endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
@@ -348,6 +350,14 @@ export async function daemonMain(argv: string[]): Promise<void> {
     }
   }
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
+  // The orchestrator's local door (bridge/orchestra-door.ts): on, off and status of the flag the
+  // daemon owns; refused aloud when there is no daemon to ask — so it listens with the seam.
+  let door: Server | null = null;
+  try {
+    door = await listenOrchestraDoor(authDir, orchestraServe(authDir));
+  } catch (e) {
+    log(`the orchestration door does not open: ${errorMessage(e)}`);
+  }
   // Marks of sessions run past the daemon and killed without exit (doctor, fallback.ts).
   pruneFallbacks(authDir);
 
@@ -373,6 +383,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
     draining = true;
     log(`${sig} — ending ${sessions.size} session(s)`);
     server?.close();
+    door?.close();
     // A session whose bridge is alive is a holder change, not a leave; a dead
     // bridge's seat is released (graph @nks/nks-dev, node #6485). A live bridge (attached or
     // in the reattach window) raises a new daemon and returns the seat by its hold record.

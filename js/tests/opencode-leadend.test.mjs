@@ -24,7 +24,18 @@ function bridgeEnv(name, extra = {}) {
   const events = join(SANDBOX, `${name}.events`);
   writeFileSync(reply, "");
   writeFileSync(events, "");
-  return { log, reply, events, env: { ISKRON_BRIDGE_PATH: FAKE_BRIDGE, FB_LOG: log, FB_REPLY: reply, FB_EVENTS: events, ...extra } };
+  return {
+    log,
+    reply,
+    events,
+    env: {
+      ISKRON_BRIDGE_PATH: FAKE_BRIDGE,
+      FB_LOG: log,
+      FB_REPLY: reply,
+      FB_EVENTS: events,
+      ...extra,
+    },
+  };
 }
 
 const pidsOf = (log) =>
@@ -74,11 +85,10 @@ const CHILD_DIR = "/work/skills-review-1237-en";
 async function leadChild(name, env = {}, sessions) {
   const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS, ...env });
   const rec = await plugin(b.env, {
-    sessions:
-      sessions ?? [
-        { id: "root", location: { directory: PARENT_DIR } },
-        { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
-      ],
+    sessions: sessions ?? [
+      { id: "root", location: { directory: PARENT_DIR } },
+      { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
+    ],
   });
   try {
     await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
@@ -125,12 +135,22 @@ test("the end waits for a live turn it had not seen started: «КОНЧЕН» ca
     await until(() => turnWords(rec).length === 1, "the first turn's word");
     // The second turn is live but its started never reached this instance (another location's):
     // a text part has ended — an intermediate word — and the model keeps streaming.
-    rec.emit({ type: "session.text.ended", data: { sessionID: "child", ordinal: 1, text: "EN-голова закреплена" } });
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 1, text: "EN-голова закреплена" },
+    });
     // The leave call returns inside that live turn; the end must not seal on its answer alone.
     await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
     await delay(300); // the platform's word about the last case settles
     // The turn settles in view: its final text, then its end.
-    rec.emit({ type: "session.text.ended", data: { sessionID: "child", ordinal: 2, text: "Вердикт: CHANGES_REQUESTED — правки по всем пунктам" } });
+    rec.emit({
+      type: "session.text.ended",
+      data: {
+        sessionID: "child",
+        ordinal: 2,
+        text: "Вердикт: CHANGES_REQUESTED — правки по всем пунктам",
+      },
+    });
     rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /вышел из дела №77 по исходу/);
@@ -144,7 +164,10 @@ test("the end waits for a live turn it had not seen started: «КОНЧЕН» ca
     // A late callback of the ended session wakes no one and tells nothing.
     const heard = rec.synthetics.length;
     rec.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
-    rec.emit({ type: "session.text.ended", data: { sessionID: "child", ordinal: 3, text: "ещё слово" } });
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 3, text: "ещё слово" },
+    });
     await delay(400);
     assert.equal(rec.synthetics.length, heard, "no late «продолжает» past the sealed end");
   } finally {
@@ -183,13 +206,16 @@ test("over a sealed end, a marker's back() and the returned bridge's late «held
   const answer = join(SANDBOX, "endword-late-held.answer");
   writeFileSync(answer, JSON.stringify({ resumed: true, key: "k-sub" }));
   const backFrom = callsIn(calls).length;
-  const second = await plugin({ ...b.env, FB_RESUME: answer }, {
-    keepMarker: true,
-    sessions: [
-      { id: "root", location: { directory: PARENT_DIR } },
-      { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
-    ],
-  });
+  const second = await plugin(
+    { ...b.env, FB_RESUME: answer },
+    {
+      keepMarker: true,
+      sessions: [
+        { id: "root", location: { directory: PARENT_DIR } },
+        { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
+      ],
+    },
+  );
   try {
     await until(() => second.tools().has("iskron_case"), "the tools", 8000);
     // The child's bridge returns by its key: the resume call names the child's session.
@@ -203,10 +229,7 @@ test("over a sealed end, a marker's back() and the returned bridge's late «held
     // The returned bridge says «held» again, naming the same seat — over the seal. The seal
     // swallows the relay itself (tools.ts: no channel word of an ended child), so the held
     // prints nothing here — its arrival had its window, its effect must stay nil.
-    appendFileSync(
-      `${b.events}.${resume.pid}`,
-      event("held", { key: "k-sub", place: SUB_PLACE }),
-    );
+    appendFileSync(`${b.events}.${resume.pid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
     await delay(600);
     // The turn's late end, delivered after the return: it must tell nothing.
     second.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
@@ -222,7 +245,6 @@ test("over a sealed end, a marker's back() and the returned bridge's late «held
     rmSync(mark, { force: true });
   }
 });
-
 
 // №1237 [45]: the ended review agent's successor stood under the SAME place name …sub-5. The
 // seal is keyed by the session, not by the seat name: the new session stands freely, its first
@@ -246,7 +268,10 @@ test("a new session under the same place name as an ended lead stands freely; th
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child2");
     const child2Pid = pidsOf(b.log).at(-1);
     appendFileSync(`${b.events}.${child2Pid}`, event("held", { key: "k-sub2", place: SUB_PLACE }));
-    await until(() => rec.said().includes("мост держит стояние k-sub2"), "the new child's held word");
+    await until(
+      () => rec.said().includes("мост держит стояние k-sub2"),
+      "the new child's held word",
+    );
     turn(rec, "новое поручение", "child2");
     await until(() => turnWords(rec).length === 2, "the new child's turn word");
     assert.match(turnWords(rec)[1].text, new RegExp(`standing="${SUB}"`));
@@ -276,7 +301,10 @@ test("a loss marker of a session that ended while the plugin was down raises no 
   try {
     // Mid-turn at the stop: a text part has ended, the turn itself has not — noted stays
     // untold in the marker, exactly the shape №1237 left behind.
-    rec.emit({ type: "session.text.ended", data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" } });
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" },
+    });
     await delay(150);
   } finally {
     await rec.stop(); // the marker goes down with the holding bridge
@@ -331,7 +359,10 @@ test("a dispatch-marked turn is released by an interruption: the leave after it 
     rec.emit({ type: "session.execution.failed", data: { sessionID: "child" } }); // the turn dies before any text
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
     await delay(300); // the last-word question settles
-    rec.emit({ type: "session.execution.interrupted", data: { sessionID: "child", reason: "user" } });
+    rec.emit({
+      type: "session.execution.interrupted",
+      data: { sessionID: "child", reason: "user" },
+    });
     await until(() => ends(rec).length === 1, "the end without any turn text");
     await until(() => !alive(childPid), "the child's bridge to go");
   } finally {
