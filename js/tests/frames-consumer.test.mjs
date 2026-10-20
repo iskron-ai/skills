@@ -28,6 +28,7 @@ import {
   progress,
   roleOnlyAsk,
   roomFrame,
+  said,
   SIB,
   siblingMatrix,
 } from "./room-frames.mjs";
@@ -55,16 +56,31 @@ test("the api's intent is read from the frame's address fields, per seat", () =>
   assert.equal(intentFor(joined, me, refs), null);
   assert.equal(intentFor(roleOnlyAsk(73), sib), "nobody");
   assert.equal(intentFor({ ...ask(80), room: "broken" }, me), null);
-  // Ответ без явного to — автору отвечаемой записи (#6574, #6867); answer — только по fields.to.
-  const reply = { ...progress(81), in_reply_to: 6, in_reply_to_from: SIB };
+  // Слово-ответ без явного to — автору отвечаемой записи (#6574, #6867); answer — только по fields.to.
+  const reply = { ...said("defer", 81), in_reply_to: 6, in_reply_to_from: SIB };
   assert.equal(intentFor(reply, sib), "mine");
   assert.equal(intentFor(reply, me), "theirs");
-  assert.equal(intentFor({ ...progress(82), in_reply_to: 6 }, sib), "nobody");
+  assert.equal(intentFor({ ...said("defer", 82), in_reply_to: 6 }, sib), "nobody");
   const answered = ask(83);
   answered.line.kind = "answer";
   answered.event_kind = "room.answer";
   delete answered.line.fields.to;
   assert.equal(intentFor({ ...answered, in_reply_to: 6, in_reply_to_from: SIB }, sib), "nobody");
+});
+
+test("a progress line is a common record: replying to another seat's record, its text at a participant is no leak", () => {
+  // Строка работы отвечает записи соседа (in_reply_to_from — его место); участник me видит её текст.
+  const line = { ...progress(84), in_reply_to: 6, in_reply_to_from: SIB };
+  line.line.done = "по ответу соседа";
+  assert.equal(intentFor(line, me), null);
+  assert.equal(intentFor(line, sib), null);
+  assert.equal(addressHint(line), false);
+  const seen = { delivered: true, kind: "progress", hint: false, yours: 1 };
+  const atMe = { ...seen, texts: ["по ответу соседа"], shown: ["по ответу соседа"] };
+  assert.notEqual(judge(intentFor(line, me), atMe).verdict, "fail");
+  // «тебе» автору отвечаемой записи у progress не требуется.
+  const atSib = { ...seen, texts: ["по ответу соседа"], shown: [], yours: 0 };
+  assert.notEqual(judge(intentFor(line, sib), atSib).verdict, "fail");
 });
 
 test("a scenario directory: subdirectories are branches, rows become socket frames, the seat's address is learnt", () => {
