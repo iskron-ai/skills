@@ -1,0 +1,430 @@
+SOURCE/CLAUDE/OPENCODE body identical: reader
+SOURCE/CLAUDE/OPENCODE body identical: worker
+SOURCE/CLAUDE/OPENCODE body identical: verifier
+SOURCE/CLAUDE/OPENCODE body identical: reviewer
+SOURCE/CLAUDE/OPENCODE body identical: searcher
+SOURCE/CLAUDE/OPENCODE body identical: designer
+SOURCE/CLAUDE/OPENCODE body identical: weaver
+node:internal/modules/esm/module_job:702
+    return this.module.evaluateSync();
+                       ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /not ok/. Input:
+
+'✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (22.889584ms)\n' +
+  '✖ source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.346375ms)\n' +
+  '✖ source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.761042ms)\n' +
+  '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (23.167375ms)\n' +
+  '✔ source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (18.480583ms)\n' +
+  '✔ source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.017083ms)\n' +
+  '✔ source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.011334ms)\n' +
+  '✔ source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0 (20.552417ms)\n' +
+  '✔ source: file_path docs/ordinary.md exits 0 (22.20425ms)\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.465791ms)\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.382333ms)\n' +
+  '✖ source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.600333ms)\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.39125ms)\n' +
+  '✔ source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (18.670709ms)\n' +
+  '✔ source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.10175ms)\n' +
+  '✔ source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.227291ms)\n' +
+  '✔ source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0 (21.136041ms)\n' +
+  '✔ source: notebook_path docs/ordinary.md exits 0 (19.963958ms)\n' +
+  '✖ repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.828625ms)\n' +
+  '✖ repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.855833ms)\n' +
+  '✖ repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.679916ms)\n' +
+  '✖ repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.480125ms)\n' +
+  '✔ repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (17.747125ms)\n' +
+  '✔ repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.28025ms)\n' +
+  '✔ repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.031542ms)\n' +
+  '✔ repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0 (21.48ms)\n' +
+  '✔ repository: file_path docs/ordinary.md exits 0 (22.300833ms)\n' +
+  '✖ repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.420458ms)\n' +
+  '✖ repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (20.11ms)\n' +
+  '✖ repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (20.767541ms)\n' +
+  '✖ repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (21.496917ms)\n' +
+  '✔ repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (17.342917ms)\n' +
+  '✔ repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (18.270167ms)\n' +
+  '✔ repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0 (20.222709ms)\n' +
+  '✔ repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0 (22.573375ms)\n' +
+  '✔ repository: notebook_path docs/ordinary.md exits 0 (21.506666ms)\n' +
+  'ℹ tests 36\n' +
+  'ℹ suites 0\n' +
+  'ℹ pass 20\n' +
+  'ℹ fail 16\n' +
+  'ℹ cancelled 0\n' +
+  'ℹ skipped 0\n' +
+  'ℹ todo 0\n' +
+  'ℹ duration_ms 875.651375\n' +
+  '\n' +
+  '✖ failing tests:\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (22.889584ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.start (node:internal/test_runner/test:1262:17)\n' +
+  '      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.346375ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.761042ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (23.167375ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.465791ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.382333ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.600333ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+  '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+  '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+  '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+  '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+  '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+  '    generatedMessage: true,\n' +
+  "    code: 'ERR_ASSERTION',\n" +
+  '    actual: 0,\n' +
+  '    expected: 2,\n' +
+  "    operator: 'strictEqual',\n" +
+  "    diff: 'simple'\n" +
+  '  }\n' +
+  '\n' +
+  'test at js/tests/memory-paths.test.mjs:34:7\n' +
+  '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.39125ms)\n' +
+  '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+  '  \n' +
+  '  0 !== 2\n' +
+  '  \n' +
+  '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+  '      at Test.runInAsyncScope (node'... 7708 more characters
+
+    at file:///Users/dmitry/code/iskron/skills-review-1246/fixtures/reviews/ru29-1246/independent.mjs:48:10
+    at #evaluateSync (node:internal/modules/esm/module_job:702:24)
+    at ModuleJobSync.runSync (node:internal/modules/esm/module_job:717:43)
+    at node:internal/modules/esm/loader:383:11
+    at TracingChannel.traceSync (node:diagnostics_channel:557:14)
+    at ModuleLoader.importForEntryPoint (node:internal/modules/esm/loader:372:21)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:184:34)
+    at node:internal/main/run_main_module:33:47 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (22.889584ms)\n' +
+    '✖ source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.346375ms)\n' +
+    '✖ source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.761042ms)\n' +
+    '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (23.167375ms)\n' +
+    '✔ source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (18.480583ms)\n' +
+    '✔ source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.017083ms)\n' +
+    '✔ source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.011334ms)\n' +
+    '✔ source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0 (20.552417ms)\n' +
+    '✔ source: file_path docs/ordinary.md exits 0 (22.20425ms)\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.465791ms)\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.382333ms)\n' +
+    '✖ source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.600333ms)\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.39125ms)\n' +
+    '✔ source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (18.670709ms)\n' +
+    '✔ source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.10175ms)\n' +
+    '✔ source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.227291ms)\n' +
+    '✔ source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0 (21.136041ms)\n' +
+    '✔ source: notebook_path docs/ordinary.md exits 0 (19.963958ms)\n' +
+    '✖ repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.828625ms)\n' +
+    '✖ repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.855833ms)\n' +
+    '✖ repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.679916ms)\n' +
+    '✖ repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.480125ms)\n' +
+    '✔ repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (17.747125ms)\n' +
+    '✔ repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (17.28025ms)\n' +
+    '✔ repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0 (22.031542ms)\n' +
+    '✔ repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0 (21.48ms)\n' +
+    '✔ repository: file_path docs/ordinary.md exits 0 (22.300833ms)\n' +
+    '✖ repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.420458ms)\n' +
+    '✖ repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (20.11ms)\n' +
+    '✖ repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (20.767541ms)\n' +
+    '✖ repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (21.496917ms)\n' +
+    '✔ repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2 (17.342917ms)\n' +
+    '✔ repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2 (18.270167ms)\n' +
+    '✔ repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0 (20.222709ms)\n' +
+    '✔ repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0 (22.573375ms)\n' +
+    '✔ repository: notebook_path docs/ordinary.md exits 0 (21.506666ms)\n' +
+    'ℹ tests 36\n' +
+    'ℹ suites 0\n' +
+    'ℹ pass 20\n' +
+    'ℹ fail 16\n' +
+    'ℹ cancelled 0\n' +
+    'ℹ skipped 0\n' +
+    'ℹ todo 0\n' +
+    'ℹ duration_ms 875.651375\n' +
+    '\n' +
+    '✖ failing tests:\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (22.889584ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.start (node:internal/test_runner/test:1262:17)\n' +
+    '      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.346375ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.761042ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (23.167375ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2 (21.465791ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2 (21.382333ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2 (21.600333ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node:async_hooks:226:14)\n' +
+    '      at Test.run (node:internal/test_runner/test:1402:25)\n' +
+    '      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)\n' +
+    '      at Test.postRun (node:internal/test_runner/test:1542:19)\n' +
+    '      at Test.run (node:internal/test_runner/test:1467:12)\n' +
+    '      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {\n' +
+    '    generatedMessage: true,\n' +
+    "    code: 'ERR_ASSERTION',\n" +
+    '    actual: 0,\n' +
+    '    expected: 2,\n' +
+    "    operator: 'strictEqual',\n" +
+    "    diff: 'simple'\n" +
+    '  }\n' +
+    '\n' +
+    'test at js/tests/memory-paths.test.mjs:34:7\n' +
+    '✖ source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2 (22.39125ms)\n' +
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n' +
+    '  \n' +
+    '  0 !== 2\n' +
+    '  \n' +
+    '      at TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)\n' +
+    '      at Test.runInAsyncScope (node'... 7708 more characters,
+  expected: /not ok/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v26.12.0

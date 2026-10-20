@@ -1,0 +1,57 @@
+SOURCE/CLAUDE/OPENCODE body identical: reader
+SOURCE/CLAUDE/OPENCODE body identical: worker
+SOURCE/CLAUDE/OPENCODE body identical: verifier
+SOURCE/CLAUDE/OPENCODE body identical: reviewer
+SOURCE/CLAUDE/OPENCODE body identical: searcher
+SOURCE/CLAUDE/OPENCODE body identical: designer
+SOURCE/CLAUDE/OPENCODE body identical: weaver
+node:internal/modules/esm/module_job:702
+    return this.module.evaluateSync();
+                       ^
+
+AssertionError [ERR_ASSERTION]: Error: Server process exited with code 1
+Error: Managed service port 49374 on 127.0.0.1 is already in use by another process. Configure another port with `opencode service set port <port>` and start the service again.
+    at <anonymous> (/$bunfs/root/chunk-680z5ykb.js:2:8925) {
+  [cause]: ServeError: 
+      at q (/$bunfs/root/chunk-2388pc86.js:52:7706)
+      at applyHandlers (node:events:64:20)
+      at emitError (node:events:44:27)
+      at emitListenErrorNextTick (node:_http_server:134:12)
+      at processTicksAndRejections (unknown:7:39) {
+    [cause]: Error: Failed to start server. Is port 49374 in use?
+        at serve (unknown)
+        at <anonymous> (node:_http_server:359:39)
+        at <anonymous> (node:_http_server:332:33)
+        at <anonymous> (/$bunfs/root/chunk-2388pc86.js:52:7744)
+  }
+}
+    at map (unknown:1:11)
+    at reap (/$bunfs/root/chunk-3wwjbdge.js:2:1203)
+    at <anonymous> (/$bunfs/root/chunk-3wwjbdge.js:3:6711)
+    at service.ensure (/$bunfs/root/chunk-4yp3z0hm.js:3:732)
+    at service.ensure (definition) (/$bunfs/root/chunk-3wwjbdge.js:3:5523)
+    at cli.server-connection.resolve (/$bunfs/root/chunk-kexdm9a2.js:2:1069)
+    at cli.server-connection.resolve (definition) (/$bunfs/root/chunk-4yp3z0hm.js:2:402)
+    at cli.debug.agents (/$bunfs/root/chunk-rhq1p77r.js:7:21275)
+    at cli.debug.agents (definition) (/$bunfs/root/chunk-kexdm9a2.js:2:1012)
+
+
+1 !== 0
+
+    at file:///Users/dmitry/code/iskron/skills-review-1246/fixtures/reviews/ru29-1246/independent.mjs:64:8
+    at #evaluateSync (node:internal/modules/esm/module_job:702:24)
+    at ModuleJobSync.runSync (node:internal/modules/esm/module_job:717:43)
+    at node:internal/modules/esm/loader:383:11
+    at TracingChannel.traceSync (node:diagnostics_channel:557:14)
+    at ModuleLoader.importForEntryPoint (node:internal/modules/esm/loader:372:21)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:184:34)
+    at node:internal/main/run_main_module:33:47 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v26.12.0

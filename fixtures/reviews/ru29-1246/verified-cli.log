@@ -1,0 +1,7 @@
+{"role":"reader","pin":"anthropic/glm-5.3","systemBytes":1831,"bodyExact":true}
+{"role":"worker","pin":"anthropic/claude-opus-5-5","systemBytes":3860,"bodyExact":true}
+{"role":"verifier","pin":"anthropic/claude-opus-5-5","systemBytes":4749,"bodyExact":true}
+{"role":"reviewer","pin":"anthropic/claude-opus-5-5","systemBytes":9270,"bodyExact":true}
+{"role":"searcher","pin":"anthropic/glm-5.3","systemBytes":3128,"bodyExact":true}
+{"role":"designer","pin":"anthropic/claude-opus-5-5","systemBytes":4610,"bodyExact":true}
+{"role":"weaver","pin":"anthropic/claude-opus-5-5","systemBytes":3557,"bodyExact":true}

@@ -1,0 +1,8 @@
+/api/agent
+/api/agent/{agentID}
+/api/plugin
+/api/plugin/check
+/api/plugin/update
+/api/session
+/api/session/{sessionID}/agent
+/api/experimental/voice/session

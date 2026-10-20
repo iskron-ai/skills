@@ -1,0 +1,544 @@
+TAP version 13
+# Subtest: source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+not ok 1 - source: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 23.666875
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.start (node:internal/test_runner/test:1262:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+# Subtest: source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+not ok 2 - source: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 22.896458
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+# Subtest: source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+not ok 3 - source: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 21.921583
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+not ok 4 - source: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 22.703542
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 5 - source: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 20.444083
+  type: 'test'
+  ...
+# Subtest: source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 6 - source: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 21.241875
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 7 - source: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 23.747417
+  type: 'test'
+  ...
+# Subtest: source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 8 - source: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 23.77375
+  type: 'test'
+  ...
+# Subtest: source: file_path docs/ordinary.md exits 0
+ok 9 - source: file_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 21.896709
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+not ok 10 - source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 23.220875
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+not ok 11 - source: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 25.521792
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+not ok 12 - source: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 23.325833
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+not ok 13 - source: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 22.173917
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 14 - source: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 18.705916
+  type: 'test'
+  ...
+# Subtest: source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 15 - source: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 17.998542
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 16 - source: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 22.7785
+  type: 'test'
+  ...
+# Subtest: source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 17 - source: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 21.66575
+  type: 'test'
+  ...
+# Subtest: source: notebook_path docs/ordinary.md exits 0
+ok 18 - source: notebook_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 22.231541
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+not ok 19 - repository: file_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 26.268667
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+not ok 20 - repository: file_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 26.475125
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+not ok 21 - repository: file_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 24.727542
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+not ok 22 - repository: file_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 23.649375
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 23 - repository: file_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 18.432542
+  type: 'test'
+  ...
+# Subtest: repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 24 - repository: file_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 18.453541
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 25 - repository: file_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 23.314916
+  type: 'test'
+  ...
+# Subtest: repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 26 - repository: file_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 25.343834
+  type: 'test'
+  ...
+# Subtest: repository: file_path docs/ordinary.md exits 0
+ok 27 - repository: file_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 23.245083
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+not ok 28 - repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\memory\\MEMORY.md exits 2
+  ---
+  duration_ms: 23.008458
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+not ok 29 - repository: notebook_path C:\\Users\\review\\.CLAUDE\\Projects\\review\\MeMoRy\\note.md exits 2
+  ---
+  duration_ms: 23.403166
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+not ok 30 - repository: notebook_path \\\\server\\users\\review\\.claude\\projects\\review\\memory\\note.md exits 2
+  ---
+  duration_ms: 22.077375
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+not ok 31 - repository: notebook_path C:\\Users\\review\\.claude\\projects\\review\\other\\..\\memory\\note.md exits 2
+  ---
+  duration_ms: 21.978083
+  type: 'test'
+  location: '/Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:34:7'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/dmitry/code/iskron/skills-review-1246/js/tests/memory-paths.test.mjs:40:16)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1402:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+    Test.postRun (node:internal/test_runner/test:1542:19)
+    Test.run (node:internal/test_runner/test:1467:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  ...
+# Subtest: repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+ok 32 - repository: notebook_path C:/Users/review/.claude/projects/review/memory/MEMORY.md exits 2
+  ---
+  duration_ms: 18.925542
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+ok 33 - repository: notebook_path /nonexistent/.claude/projects/review/memory/note.md exits 2
+  ---
+  duration_ms: 19.251917
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+ok 34 - repository: notebook_path C:\\work\\repo\\docs\\ordinary.md exits 0
+  ---
+  duration_ms: 22.815875
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+ok 35 - repository: notebook_path C:\\work\\repo\\memory\\ordinary.md exits 0
+  ---
+  duration_ms: 21.83375
+  type: 'test'
+  ...
+# Subtest: repository: notebook_path docs/ordinary.md exits 0
+ok 36 - repository: notebook_path docs/ordinary.md exits 0
+  ---
+  duration_ms: 23.476209
+  type: 'test'
+  ...
+1..36
+# tests 36
+# suites 0
+# pass 20
+# fail 16
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 933.620125
