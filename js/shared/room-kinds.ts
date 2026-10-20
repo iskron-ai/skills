@@ -223,16 +223,14 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
   // the body carries its word's addressee and joins the same pair.
   const word = kind === "said" || kind === "body";
   const withheld = word && f.body_withheld === true;
+  // A body names its word's addressee itself or in its word (#5893 §4.6). The addressee
+  // having left the case widens nothing: still not to me (#6574).
   const to = word
-    ? (addresseeOf(f.addressee) ?? (withheld ? { addr: ["?"], label: "?" } : null))
+    ? (addresseeOf(f.addressee) ??
+      addresseeOf(obj(f.word).addressee) ??
+      (withheld ? { addr: ["?"], label: "?" } : null))
     : null;
-  // The addressee left the case: the word goes to everyone, printed as any word.
-  const addresseeLeft = f.addressee_left === true || fields.addressee_left === true;
-  if (
-    to &&
-    !addresseeLeft &&
-    (withheld || (mine.length && !to.addr.some((a) => mine.includes(a))))
-  ) {
+  if (to && (withheld || (mine.length && !to.addr.some((a) => mine.includes(a))))) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);

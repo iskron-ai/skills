@@ -4,7 +4,7 @@
 import { ASK, CASE_LINE } from "../delivery/index.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { words } from "./lang.ts";
-import { addresseeOf, mineOf, myRole, need, obj, opt, pick, type Rec, str } from "./room-fields.ts";
+import { addresseeOf, mineOf, need, obj, opt, pick, type Rec, str } from "./room-fields.ts";
 
 export const ASK_KINDS = new Set(["ask", "answer", "ack"]);
 
@@ -35,22 +35,17 @@ export const askFromPerson = (frame: Rec): boolean => {
   return asking && classifyOrigin(frame as Frame) === "human";
 };
 
-const handleOf = (address: string): string => /^@([^:]+):/.exec(address)?.[1] ?? "";
-
 /**
- * Asked to me: to.standing is my seat; otherwise to.karta is my role and a named
- * seat, if any, belongs to my account (#6867).
+ * Asked to me: to.standing is my seat, or for a question to a role alone the seat the
+ * api chose — the envelope's addressee, the wire form of a word's addressee (#6867,
+ * #6574; the field is assumed, not yet agreed with the api). My role or my account
+ * alone is no address: the bridge never infers it from to.karta.
  */
 export function askedMine(frame: Rec, fields: Rec): boolean {
   const mine = mineOf(frame);
   if (byMe(frame)) return false;
-  const to = toOf(fields);
-  const place = addresseeOf(to.standing);
-  if (place?.addr.some((a) => mine.includes(a))) return true;
-  if (!myRole(frame, { karta: to.karta })) return false;
-  if (!place) return true;
-  const theirs = handleOf(str(obj(to.standing).standing) || str(to.standing));
-  return !!theirs && theirs === handleOf(str(frame.to_standing));
+  const place = addresseeOf(toOf(fields).standing) ?? addresseeOf(frame.addressee);
+  return !!place && place.addr.some((a) => mine.includes(a));
 }
 
 /** Answer or acceptance to me: the addressee (addressee, else fields.to) is my seat and has not left. */

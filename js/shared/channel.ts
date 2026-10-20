@@ -164,7 +164,7 @@ export interface Frame {
   standings?: HelloStanding[];
   /** Who speaks, by provenance. Set by the bridge. */
   origin?: FrameOrigin;
-  /** Body of a two-phase word addressed to the seat (#6574). Set by the bridge that saw its word in flight. */
+  /** Body of a two-phase word addressed to the seat (#6574), false — to another seat. Set by the bridge that saw its word in flight. */
   addressed?: boolean;
   provenance?: {
     from_standing?: string;

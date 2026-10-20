@@ -29,6 +29,14 @@ export function wordKeyOf(frame: Frame): string {
     `${mineOf(f)[0] ?? ""}|${str(obj(f.room).id) || str(obj(f.room).seq)}|${entry}`,
   );
 }
+/** Memory key of a word in flight to another seat: its body is not mine. */
+export const asideKeyOf = (frame: Frame): string => `aside:${wordKeyOf(frame)}`;
+/** The seat a question line names: fields.to.standing of ask, else the api's chosen addressee (asks.ts). */
+function namedSeat(f: Rec, kind: string): unknown {
+  const to = obj(obj(obj(f.line).fields).to);
+  if (kind === "ask") return to.standing ?? f.addressee;
+  return f.addressee ?? (Object.keys(to).length ? to : null);
+}
 function rememberWord(key: string): void {
   addressedWords.add(key);
   for (const old of addressedWords) {
@@ -78,7 +86,11 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   const line = obj(f.line);
   const fields = obj(line.fields);
   const rk = roomKind(frame);
-  if (rk?.aside) return false; // a word not to me (#6081): a fact without a body
+  if (rk?.aside) {
+    // A word not to me (#6081): a fact without a body; in flight, its body is not mine either.
+    if (f.body_pending === true) rememberWord(asideKeyOf(frame));
+    return false;
+  }
   // Question memory before any decision: an accepted answer to me closes the key even if addressed above.
   const closesAsk = !!rk && ASK_CLOSERS.has(rk.kind) && askMemory(f);
   const mine = mineOf(f);
@@ -86,12 +98,18 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     const a = addresseeOf(v);
     return !!a && mine.length > 0 && a.addr.some((x) => mine.includes(x));
   };
+  // An explicit seat other than mine wins over importance and a reply (#6574).
+  const named =
+    rk && (ASK_KINDS.has(rk.kind) || rk.kind === "retract") ? namedSeat(f, rk.kind) : null;
+  const other = !!named && !hit(named);
   if (rk?.kind === "body") {
     // A body's in_reply_to_from is the author of the word itself (#5893 §4.6) and the
     // word's kind is in word.line: the body is addressed when its word was, as
     // remembered at the said phase; the bridge, seeing both phases, marks addressed
-    // (bridge/addressmark.ts) for a watchdog that gets the body in a new process.
+    // (bridge/addressmark.ts) for a watchdog that gets the body in a new process —
+    // false when its word went to another seat.
     const word = obj(f.word);
+    if (f.addressed === false || addressedWords.has(asideKeyOf(frame))) return false;
     if (
       f.addressed === true ||
       hit(f.addressee) ||
@@ -103,9 +121,8 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
     // A word to me, a reply to my record (#5954), marked important; a word in flight
     // is remembered, since its body comes as a second phase without these marks.
     hit(f.addressee) ||
-    hit(f.in_reply_to_from) ||
-    str(f.said) === "important" ||
-    str(fields.kind) === "important"
+    (!other &&
+      (hit(f.in_reply_to_from) || str(f.said) === "important" || str(fields.kind) === "important"))
   ) {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
@@ -114,10 +131,13 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   // another seat's answer, a re-ask to another); answer and accept go by addressee above.
   if (rk?.kind === "ask" && askedMine(f, fields)) return true;
   if (closesAsk || (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true)) return true;
-  // An invite to me or its withdrawal: key invite:<my seat>; a role invite — to my role.
+  // An invite to me or its withdrawal: key invite:<my seat>; a role invite (key — the role,
+  // #6870) — to my role. An invite of another seat names its role too: not mine (#6574).
   if (rk?.kind === "invite" || rk?.kind === "withdraw") {
-    if (mine.includes(after(str(line.key), "invite:"))) return true;
-    if (rk.kind === "invite" && myRole(f, fields)) return true;
+    const target = after(str(line.key), "invite:");
+    if (mine.includes(target)) return true;
+    const ofRole = !target || target === str(obj(fields.karta).id);
+    if (rk.kind === "invite" && ofRole && myRole(f, fields)) return true;
   }
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   // Question kinds have an addressee (#6867): a person's answer to someone else is not a word to me.
