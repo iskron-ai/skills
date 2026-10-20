@@ -74,6 +74,7 @@ import {
   ME_ID,
   MY_KARTA,
   OTHER_KEY,
+  personWord,
   progress,
   reask,
   roleAsked,
@@ -1302,6 +1303,17 @@ test("a platform call of another role in reply to my question, and its withdrawa
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0 — `));
   assert.doesNotMatch(got[0].text, /зовёт/);
+});
+
+// #8281: from_person API — первый признак слова человека; без него и без старых — счёт.
+test("a person's word with from_person and no user_karta_seq wakes as a person's; without it, a count", async () => {
+  const got = await asideMessages("from-person", [personWord(110), personWord(111, false)], 1);
+  const word = got.find((m) => m.text.includes("СЛОВО-ЧЕЛОВЕКА-110"));
+  assert.ok(word, JSON.stringify(got));
+  assert.equal(word.triggerTurn, true, JSON.stringify(word));
+  assert.notEqual(word.deliverAs, "nextTurn");
+  assert.match(word.text, /^№7 «Стенд» \[110\] [^\n]* — человек\n/);
+  assert.ok(!got.some((m) => m.text.includes("СЛОВО-ЧЕЛОВЕКА-111")), JSON.stringify(got));
 });
 
 // Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
