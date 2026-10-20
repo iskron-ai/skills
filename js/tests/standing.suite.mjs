@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -6397,6 +6398,13 @@ test(".asks: a replayed closer of my question is decided the same after a bridge
   assert.equal((await next.done).exit, 0, next.err);
   assert.match(next.out, /вопрос \[90\] к тебе закрыт: ответил Дмитрий/, next.out);
   assert.ok(!next.out.includes("ОТВЕТ-БОРИСУ"), next.out);
+  // A second name for the file's inode: a rewrite in place would cut what it holds — what
+  // a write cut short leaves; a rename leaves it whole.
+  const standings = join(dir, "standings");
+  const asksName = readdirSync(standings).find((x) => x.endsWith(".asks"));
+  const witness = join(standings, `${asksName}.witness`);
+  linkSync(join(standings, asksName), witness);
+  const held = readFileSync(witness, "utf8");
   // Twelve questions to me, each withdrawn: 24 decisions and closings past a limit of 4.
   for (let i = 0; i < 12; i++) {
     await sendRoom(fake, ask(100 + 2 * i, MY_KARTA, {}, `ключ ${i}`));
@@ -6414,6 +6422,15 @@ test(".asks: a replayed closer of my question is decided the same after a bridge
   assert.ok(
     lines.length <= 16,
     `.asks grows without a limit (${lines.length}):\n${lines.join("\n")}`,
+  );
+  assert.ok(
+    readFileSync(witness, "utf8").startsWith(held),
+    `.asks was rewritten in place, not through a rename:\n${readFileSync(witness, "utf8")}`,
+  );
+  assert.deepEqual(
+    readdirSync(standings).filter((x) => x.endsWith(".tmp")),
+    [],
+    "a rewrite left its temporary file",
   );
 });
 

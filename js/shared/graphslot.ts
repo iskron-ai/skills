@@ -7,11 +7,13 @@
 // doubt: an address there that is not already in the pair is ambiguity, never a choice or a
 // second form. A continuation line of the value that names an address is ambiguity. Other framing (*, _, ~) is not read as framing: such a start is no graph.
 
-const ADDRESS = String.raw`(?:@[\w.-]+\/[\w.-]+|r\d+)(?=$|[\s)\x60'",;.:])`;
+/** A slug ends with a word character: a closing dot or dash is the sentence's, not the slug's. */
+const SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
+const ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
 const FRAME = String.raw`[\s\x60'"]*`;
 const HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
 /** Any address anywhere, whatever stands around it. */
-const ANY = /@[\w.-]+\/[\w.-]+|(?<![\w/])r\d+(?!\w)/gu;
+const ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
 /** Prose after the heads: optional punctuation, then a word that is no rN. */
 const PROSE = /^[—–\-:.(]*\s*(?!r\d)\p{L}/u;
 

@@ -42,7 +42,7 @@ const cases = [
   [
     "no progress marker",
     "onboarding",
-    "Признаки прохождения не читаются и не записываются в properties/attrs",
+    "Признаки прохождения не читаются и не записываются в свойства и атрибуты",
   ],
   [
     "structural facts need no receipt",
@@ -57,7 +57,7 @@ const cases = [
   [
     "persona is not a progress predicate",
     "onboarding",
-    "Runtime-поле `persona` не является onboarding-предикатом",
+    "Действующая роль ассистента в сессии не входит в признаки прохождения онбординга",
   ],
   [
     "operational persona is preserved",
@@ -75,16 +75,10 @@ function checkClause(text, key, clause) {
   assert.ok(text.includes(clause), `${files[key]}: ${clause}`);
 }
 
+// Negative control: MINDING_ENTRY_ROOT on old copies of the sources (REALITY.md).
 for (const [name, key, clause] of cases) {
   test(`personal entry text: ${name}`, () => {
     checkClause(texts[key], key, clause);
-  });
-  test(`negative control: deleting ${name} is detected`, () => {
-    checkClause(texts[key], key, clause);
-    assert.throws(() => checkClause(texts[key].replaceAll(clause, ""), key, clause), {
-      code: "ERR_ASSERTION",
-      message: `${files[key]}: ${clause}`,
-    });
   });
 }
 
