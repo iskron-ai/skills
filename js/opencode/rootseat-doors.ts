@@ -33,10 +33,18 @@ export interface RootSeats {
   /** Not seated for its cover's defect or absence: the word is the alignment's. */
   aligning(session: string): boolean;
   /**
-   * A tool call of the instance: a waiting root whose cover file changed reads it again; a
-   * seating it starts is waited for within the term, so its word lands before the turn ends.
+   * A tool call of the root session (its own, or its child's): when it waits and its cover file
+   * changed, the cover is read again; a seating it starts is waited for within the term, so its
+   * word lands before the turn ends. Other waiting roots — on their own tool or prompt.
    */
-  touched(): Promise<void>;
+  touched(session: string): Promise<void>;
+  /**
+   * Moved; here — this instance's folder as the event names it, null — elsewhere. Away while
+   * waiting: the wait is set aside, a prompt back here is a first one again. Back into the
+   * folder it waited in: the wait set aside waits again. A seating in flight is not touched —
+   * half.moved carries it, as on a first prompt.
+   */
+  moved(session: string, here: string | null): void;
   forget(session: string): void;
   stop(): void;
 }

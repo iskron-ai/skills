@@ -168,8 +168,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "resumed", text } }),
     steer: (s, text) => teller(ctx, say, closed)(s, text, false),
   });
-  // A root waiting for its cover's alignment looks at the cover after every tool call.
-  await watchCover(ctx, rootSeats, say);
+  // A root waiting for its cover's alignment looks at the cover after a tool call of its own or its child's.
+  await watchCover(ctx, rootSeats, say, rootOf);
 
   const onboard = createOnboardStart(
     ctx,
@@ -298,7 +298,13 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
               typeof loc?.directory === "string"
                 ? { directory: loc.directory, workspace: loc.workspaceID ?? null }
                 : null;
-            if (id) half.moved(id, to);
+            if (!id) break;
+            half.moved(id, to);
+            // A wait for the old folder's cover ends with the move, and comes back with the session.
+            rootSeats.moved(
+              id,
+              to && to.directory === homeOf(ctx)?.directory ? to.directory : null,
+            );
             break;
           }
           case "skill.updated":

@@ -2,7 +2,10 @@
 // cover of its directory (shared/cover.ts) names the graph and the agent role, the session's
 // own bridge returns the session's seat from disk or stands on the role (seatBy, from tools.ts),
 // and the first prompt carries one line to the model — seated, or why not (rootseat-say.ts).
-// A defective or absent cover — the word to align, and the root waits (rootseat-again.ts).
+// A defective or absent cover — the word to align, and the root waits (rootseat-again.ts); a
+// tool call wakes only its own root's wait. A session moved away while waiting has its wait set
+// aside; back here, it waits again for its cover, and a prompt before that reads the cover anew.
+// A seating in flight and the seat held move by half.moved (moves.ts), first or retried alike.
 // Child sessions are not seated here (launch.ts); the contract and terms — rootseat-doors.ts.
 //
 // One seating per session (a memoized promise): only the first prompt starts it and
@@ -34,10 +37,10 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
     !stopped && !dead.has(s) && !d.halted(s) && seatings.get(s) === a;
   const doors = { d, stopped: () => stopped, arm: again.arm, line };
 
-  function start(session: string): Attempt {
+  function start(session: string, expect?: string): Attempt {
     const known = seatings.get(session);
     if (known) return known;
-    const t = attempt(session, doors);
+    const t = attempt(session, doors, expect);
     seatings.set(session, t);
     return t;
   }
@@ -65,10 +68,10 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
    * The seating after the alignment, its word delivered once: a tool hook and a prompt that
    * both wait for it within the term — the first to have the word gives it, the other none.
    */
-  async function retried(session: string, a?: Attempt): Promise<string | null> {
+  async function retried(session: string, a?: Attempt, where?: string): Promise<string | null> {
     if (!a) {
       seatings.delete(session);
-      a = start(session);
+      a = start(session, where);
       a.retry = true;
     }
     const word = await wait(session, a);
@@ -85,27 +88,35 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
         if (a?.retry && !(a.done && a.said)) return retried(session, a);
         const next = again.check(session, true);
         if (!next) return null;
-        return "why" in next ? realignWord(next.why) : retried(session);
+        return "why" in next ? realignWord(next.why) : retried(session, undefined, next.seat);
       }
       told.add(session);
       if (d.halted(session)) return null;
       return wait(session, start(session));
     },
     aligning: (session) => again.has(session),
-    async touched() {
+    async touched(session) {
       if (!rootSeatEnabled() || stopped) return;
       // Into the running turn, no new one: the hook holds the turn no longer than the term.
-      await Promise.all(
-        again.sessions().map(async (session) => {
-          const next = again.check(session, false);
-          const word = !next
-            ? null
-            : "why" in next
-              ? realignWord(next.why)
-              : await retried(session);
-          if (word) await d.steer(session, word);
-        }),
-      );
+      const next = again.check(session, false);
+      const word = !next
+        ? null
+        : "why" in next
+          ? realignWord(next.why)
+          : await retried(session, undefined, next.seat);
+      if (word) await d.steer(session, word);
+    },
+    moved(session, here) {
+      if (here !== null) {
+        // Synchronous, by the event's own folder: no late answer outlives a later move.
+        const fresh = !stopped && !dead.has(session) && !told.has(session);
+        if (again.back(session, fresh ? here : "")) told.add(session);
+        return;
+      }
+      // A seating in flight is half.moved's, as on a first prompt; only a wait is set aside here.
+      if (!again.leave(session)) return;
+      told.delete(session);
+      if (seatings.get(session)?.done) seatings.delete(session);
     },
     forget(session) {
       dead.add(session);

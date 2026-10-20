@@ -133,6 +133,7 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
   });
   const def = (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
   const sessions = new Map(); // id → { id, parentID?, location }
+  const held = new Map(); // id → a gate session.get answers after (holdGet)
   // Sessions already on disk at load: a previous instance's marker children are read at setup.
   for (const k of known)
     sessions.set(k.id, {
@@ -182,7 +183,11 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       get: async ({ sessionID }) => {
         const s = sessions.get(sessionID);
         if (!s) throw new Error(`Session not found: ${sessionID}`);
-        return s;
+        const gate = held.get(sessionID);
+        if (!gate) return s;
+        const then = { ...s, location: { ...s.location } }; // the answer as of the request
+        await gate;
+        return then;
       },
       prompt: async (o) => (said(o), {}),
       synthetic: async (o) => (said(o), { id: `syn-${prompts.length}`, type: "synthetic" }),
@@ -249,6 +254,21 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     remove(id) {
       sessions.delete(id);
       emit({ type: "session.deleted", location: { directory: project }, data: { sessionID: id } });
+    },
+    /** session.get этой сессии отвечает тем, что было в миг запроса, — после release(). */
+    holdGet(id) {
+      let release;
+      held.set(id, new Promise((r) => (release = r)));
+      return () => {
+        held.delete(id);
+        release();
+      };
+    },
+    /** OpenCode перенёс сессию в другой каталог: её session.get читает уже новый. */
+    move(id, directory) {
+      const s = sessions.get(id);
+      if (s) s.location = { directory };
+      emit({ type: "session.moved", data: { sessionID: id, location: { directory } } });
     },
     said: () => stderr.join(""),
     /** Слова плагина в сессию мимо промпта (prompt/synthetic). */
