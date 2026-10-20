@@ -54,14 +54,36 @@ export type Again = { why: string } | { seat: string } | null;
 
 export function createRealign(halted: (session: string) => boolean) {
   const waiting = new Map<string, { where: string; why: string; sig: string }>();
+  const left = new Map<string, { where: string; why: string }>(); // moved away while waiting
   return {
     /** sig — the stamp taken before the defective read: a write in between is not missed. */
     arm(session: string, where: string, why: string, sig: string): void {
       waiting.set(session, { where, why, sig });
     },
     has: (session: string): boolean => waiting.has(session),
-    drop: (session: string): void => void waiting.delete(session),
-    clear: (): void => waiting.clear(),
+    drop(session: string): void {
+      waiting.delete(session);
+      left.delete(session);
+    },
+    clear(): void {
+      waiting.clear();
+      left.clear();
+    },
+    /** Moved away: the wait is kept aside, not looked at, until the session comes back. */
+    leave(session: string): void {
+      const w = waiting.get(session);
+      waiting.delete(session);
+      if (w) left.set(session, { where: w.where, why: w.why });
+    },
+    left: (session: string): boolean => left.has(session),
+    /** Back in the folder it waited in: it waits again, the cover read at the next look. */
+    back(session: string, where: string): boolean {
+      const w = left.get(session);
+      left.delete(session);
+      if (!w || w.where !== where) return false;
+      waiting.set(session, { ...w, sig: "\0back" });
+      return true;
+    },
     /** always — a prompt reads the cover even when its stamp did not move. */
     check(session: string, always: boolean): Again {
       const w = waiting.get(session);

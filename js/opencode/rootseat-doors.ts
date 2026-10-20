@@ -16,6 +16,10 @@ export interface RootSeatDoors {
   halted(session: string): boolean;
   seat(session: string, realm: string, karta: string, cancelled: () => boolean): Promise<Seating>;
   cancel(session: string): void;
+  /** Moved away: the seating in flight ends without refusing the session's later calls. */
+  yieldSeat(session: string): void;
+  /** Back before that seating cleaned up: what it took stays the session's, neither revoked nor stopped. */
+  reclaimSeat(session: string): void;
   release(session: string): Promise<void>;
   finished(session: string): void;
   /** A word into the session by the channel's path — it comes before the model's next turn. */
@@ -38,8 +42,11 @@ export interface RootSeats {
    * word lands before the turn ends. Other waiting roots — on their own tool or prompt.
    */
   touched(session: string): Promise<void>;
-  /** Moved to another folder: its wait and unfinished seating end; it is not forgotten as dead. */
-  moved(session: string): void;
+  /**
+   * Moved (here — into this instance's folder). Away: its wait and unfinished seating end, its
+   * next prompt here is a first one again. Back after leaving while waiting: it waits again.
+   */
+  moved(session: string, here: boolean): void;
   forget(session: string): void;
   stop(): void;
 }

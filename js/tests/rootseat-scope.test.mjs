@@ -11,7 +11,7 @@ import { test } from "node:test";
 
 import { REPO_SIGNS } from "../delivery/index.ts";
 import { until } from "./ownseat-kit.mjs";
-import { heldBy, writeAgents } from "./rootseat-kit.mjs";
+import { COVER, heardSeats, heldBy, writeAgents } from "./rootseat-kit.mjs";
 import {
   ALIGN,
   aligning,
@@ -72,8 +72,10 @@ test(
   },
 );
 
-test("(s4) ждущий корень перенесён — правка старой обложки и тул не сажают", T, async (t) => {
-  const { s, project, oc } = await aligning(t);
+/** Ждущий корень перенесён, старая обложка исправлена, тул старого экземпляра — посадки нет. */
+async function movedAway(t) {
+  const x = await aligning(t);
+  const { s, project, oc } = x;
   const r = await oc.turn("root", "выровняй");
   assert.ok(r.prompt.includes(ALIGN), look(oc, r));
   const other = scratch(t);
@@ -86,7 +88,77 @@ test("(s4) ждущий корень перенесён — правка ста�
   assert.equal(connects(s), 0, `посадки нет\n${look(oc)}`);
   assert.equal(heldBy(s.dir, "root").length, 0, look(oc));
   assert.ok(!oc.wordsTo("root").some(stood), look(oc));
+  return x;
+}
+
+test("(s4) ждущий корень перенесён — правка старой обложки и тул не сажают", T, movedAway);
+
+test(
+  "(s4b) вернулся без посадки — правка обложки и тул: одна посадка, одно «встал»",
+  T,
+  async (t) => {
+    const { s, project, oc } = await movedAway(t);
+    oc.move("root", project);
+    await sleep(300);
+    writeAgents(project, { ...COVER, Nature: "library, правка" });
+    await oc.toolAfter("root", "write", {});
+    await until(() => heldBy(s.dir, "root").length === 1, "вернувшийся корень встал", 20_000);
+    await until(() => oc.wordsTo("root").some(stood), "«встал» в идущий ход", 10_000);
+    const next = await oc.turn("root", "дальше");
+    await sleep(800);
+    assert.equal(connects(s), 1, `ровно одна посадка\n${look(oc, next)}`);
+    assert.equal(oc.wordsTo("root").filter(stood).length, 1, look(oc, next));
+    assert.ok(!stood(next.prompt), look(oc, next));
+  },
+);
+
+test("(s4c) перенос в ходе connect, отмена, возврат — явный stand проходит", T, async (t) => {
+  const { s, project, oc } = await aligning(t, { agents: false });
+  writeAgents(project);
+  await s.fake.control({ connect_delay_ms: 2000 });
+  const first = oc.turn("root", "привет");
+  await until(() => s.fake.state.counts.connect_asked > 0, "посадка в полёте");
+  oc.move("root", scratch(t));
+  await first;
+  await sleep(3500); // the delayed connect answers, the cancelled attempt cleans up
+  await s.fake.control({ connect_delay_ms: 0 });
+  oc.move("root", project);
+  await sleep(300);
+  const r = await oc.turn("root", "встань", () => [
+    { tool: "iskron_stand", input: { realm: "@nks/nks-dev", karta: "931", name: "probe-back" } },
+  ]);
+  assert.ok(!r.calls[0]?.error, `${JSON.stringify(r.calls)}\n${look(oc, r)}`);
+  await until(() => heldBy(s.dir, "root").includes("probe-back"), "явное место", 10_000);
 });
+
+test(
+  "(s4d) возврат до уборки отменённой попытки — мост жив, место держится, stand — сличение",
+  T,
+  async (t) => {
+    const { s, project, oc } = await aligning(t, { agents: false });
+    writeAgents(project);
+    await s.fake.control({ connect_delay_ms: 2000 });
+    const first = oc.turn("root", "привет");
+    await until(() => s.fake.state.counts.connect_asked > 0, "посадка в полёте");
+    oc.move("root", scratch(t));
+    await sleep(200);
+    oc.move("root", project); // back while the cancelled attempt's connect is still on the wire
+    await first;
+    await sleep(3500); // the delayed connect answers, the cancelled attempt cleans up
+    await s.fake.control({ connect_delay_ms: 0 });
+    assert.equal(heldBy(s.dir, "root").length, 1, `место держится\n${look(oc)}`);
+    assert.equal(heardSeats(s.fake).length, 1, `мост слушает\n${look(oc)}`);
+    // The held seat by its own name: a nameless stand replaces a provisional seat by design.
+    const held = heldBy(s.dir, "root");
+    const r = await oc.turn("root", "встань", () => [
+      { tool: "iskron_stand", input: { realm: "@nks/nks-dev", karta: "931", name: held[0] } },
+    ]);
+    assert.ok(!r.calls[0]?.error, `${JSON.stringify(r.calls)}\n${look(oc, r)}`);
+    await sleep(500);
+    assert.equal(connects(s), 1, `сличение, не новая посадка\n${look(oc, r)}`);
+    assert.deepEqual(heldBy(s.dir, "root"), held, look(oc, r));
+  },
+);
 
 test("(s5) тул сессии B не сажает ждущую A; A садится своим промптом", T, async (t) => {
   const { s, project, oc } = await aligning(t);

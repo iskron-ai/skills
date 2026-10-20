@@ -4,8 +4,9 @@
 // and the first prompt carries one line to the model — seated, or why not (rootseat-say.ts).
 // A defective or absent cover — the word to align, and the root waits (rootseat-again.ts); a
 // tool call wakes only its own root's wait. A session moved away leaves this instance without a
-// word: its wait and an unfinished seating end here, and nothing seats it here again — the seat
-// it holds goes with it (half.moved), and a session moved back is not a new root to seat.
+// word: an unfinished seating ends, its wait is set aside, and the seat it holds goes with it
+// (half.moved). Back here, its next prompt is a first one — a returned seat is compared, not
+// taken anew (seatBy) — and a wait set aside waits again for its cover.
 // Child sessions are not seated here (launch.ts); the contract and terms — rootseat-doors.ts.
 //
 // One seating per session (a memoized promise): only the first prompt starts it and
@@ -106,12 +107,23 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
           : await retried(session, undefined, next.seat);
       if (word) await d.steer(session, word);
     },
-    moved(session) {
-      again.drop(session);
+    moved(session, here) {
+      if (here) {
+        d.reclaimSeat(session);
+        if (again.left(session))
+          void d.directoryOf(session).then((where) => {
+            // A prompt that came first has read the cover itself: the wait set aside is dropped.
+            const fresh = !stopped && !dead.has(session) && !told.has(session);
+            if (again.back(session, fresh && where ? where : "")) told.add(session);
+          });
+        return;
+      }
+      again.leave(session);
+      told.delete(session);
       const t = seatings.get(session);
       seatings.delete(session);
       if (t && !t.done) {
-        d.cancel(session);
+        d.yieldSeat(session);
         t.abort.abort();
       }
     },

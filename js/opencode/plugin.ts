@@ -163,6 +163,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     halted: (s) => !ch || stops.halted(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
     cancel: (s) => half.cancelSeat(s),
+    yieldSeat: (s) => half.yieldSeat(s),
+    reclaimSeat: (s) => half.reclaimSeat(s),
     release: (s) => half.releaseSeat(s),
     finished: (s) => half.finishSeat(s),
     tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "resumed", text } }),
@@ -300,7 +302,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
                 : null;
             if (!id) break;
             half.moved(id, to);
-            rootSeats.moved(id); // a wait for the old folder's cover ends with the move
+            // A wait for the old folder's cover ends with the move, and comes back with the session.
+            rootSeats.moved(id, !!to && to.directory === homeOf(ctx)?.directory);
             break;
           }
           case "skill.updated":
