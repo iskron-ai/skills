@@ -58,6 +58,8 @@ export interface OrchestraNet {
   base: () => string;
   /** The daemon's key (PAT or the grant's access token, as the transport's bearer reads it). */
   token: () => string | null;
+  /** The discovered half of the boundary: realms of the machine's live places (#8202). */
+  realms?: () => string[];
 }
 
 /**
@@ -71,6 +73,10 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
   return async (op, realms) => {
     if (op === "on") {
       if (!orchestraAdmitted()) return { ok: false, said: w().notAdmitted() };
+      // A short rN does not ride REST as is (live probe: 404 "Realm not found") — the door
+      // refuses it aloud instead of storing a boundary the tact cannot walk (#8202).
+      const short = realms.filter((r) => /^r\d+$/i.test(r.trim()));
+      if (short.length) return { ok: false, said: w().onShortRealm(short.join(", ")) };
       const prior = readOrchestraFlag(authDir);
       const named = [...new Set([...(prior?.on ? prior.realms : []), ...realms])];
       writeOrchestraFlag(authDir, { on: true, realms: named });
@@ -82,9 +88,15 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     }
     if (op === "step") {
       const flag = readOrchestraFlag(authDir);
-      if (!flag?.on || !flag.realms.length) return { ok: true, said: w().stepEmpty() };
-      const n = net ?? { base: (): string => "", token: (): null => null };
-      return stepTact(authDir, n.base(), n.token(), flag.realms);
+      if (!flag?.on) return { ok: true, said: w().stepEmpty() };
+      const n = net ?? {
+        base: (): string => "",
+        token: (): string | null => null,
+        realms: (): string[] => [],
+      };
+      const boundary = [...new Set([...flag.realms, ...(n.realms?.() ?? [])])];
+      if (!boundary.length) return { ok: true, said: w().stepEmpty() };
+      return stepTact(authDir, n.base(), n.token(), boundary);
     }
     const flag = readOrchestraFlag(authDir);
     const tact = tactStateOf(authDir);

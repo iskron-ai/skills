@@ -48,13 +48,14 @@ import { beginHandover, beginSessionHandover, H } from "./holdstate.ts";
 import { orchestraServe } from "./orchestra.ts";
 import { listenOrchestraDoor } from "./orchestra-door.ts";
 import { pauseForHandover } from "./pauserecord.ts";
+import { extraPlaces } from "./places.ts";
 import { endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sessionSnapshot } from "./snapshot.ts";
 import { rotateJournal } from "./store.ts";
 import { log, setProcessLog } from "./streams.ts";
 import { localSuspend, pauseSettled } from "./suspend.ts";
-import { bearer } from "./transport.ts";
+import { bearer, state } from "./transport.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -378,6 +379,25 @@ export async function daemonMain(argv: string[]): Promise<void> {
           return freshest?.url ? apiBase(freshest.url) : "";
         },
         token: bearer,
+        // The discovered half of the boundary (#8202): realms of the places the machine's
+        // live sessions stand on, plus whatever hold records on disk still name. A record
+        // may carry the short rN form (seen live) — REST refuses it, and the live standings
+        // name the same realm canonically, so the tact skips the short form rather than
+        // refuse whole on a stale record.
+        realms: (): string[] => {
+          const found = new Set<string>();
+          const ofSession = (): string[] => {
+            const own = new Set<string>();
+            if (state.standing?.realm) own.add(state.standing.realm);
+            for (const x of extraPlaces()) if (x.standing?.realm) own.add(x.standing.realm);
+            return [...own];
+          };
+          for (const e of engines.values()) {
+            for (const r of e.scope ? runIn(e.scope, ofSession) : ofSession()) if (r) found.add(r);
+          }
+          for (const r of holdRecordsWhere(() => true)) if (r.realm) found.add(r.realm);
+          return [...found].filter((r) => !/^r\d+$/i.test(r));
+        },
       }),
     );
   } catch (e) {

@@ -17,6 +17,8 @@ export interface OrchestraWords {
   notAdmitted: () => string;
   /** realms — названный перечень границы через запятую (может быть пуст). */
   on: (realms: string) => string;
+  /** Краткая форма rN не ходит в REST — граница не принята, названо полным адресом. */
+  onShortRealm: (realms: string) => string;
   off: () => string;
   /** tact — строки курсоров и последних исходов такта через «; » (может быть пуст). */
   status: (on: boolean, realms: string, tact?: string) => string;
@@ -48,6 +50,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       "машина не допустила оркестратора: согласие даёт демон — переменная окружения ISKRON_ORCHESTRA=1 в его среде; без неё поднятие агентов запрещено, флаг не двинут",
     on: (realms) =>
       `оркестратор включён${realms ? `, названная граница: ${realms}` : " (граница — графы живых на машине агентов)"}; флаг лежит рядом с грантом`,
+    onShortRealm: (realms) =>
+      `граница не принята: ${realms} — краткая форма rN не ходит в двери REST api (живая проба: 404 «Realm not found»); назовите граф полным адресом @owner/slug`,
     off: () =>
       "оркестратор выключен; поднятые агенты доживают свой путь — их не гасит сам факт выключения",
     status: (on, realms, tact) =>
@@ -55,7 +59,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
         ? `включён; названная граница: ${realms || "—"} (плюс графы живых на машине агентов)${tact ? `; такт: ${tact}` : ""}`
         : `выключен${tact ? `; такт: ${tact}` : ""}`,
     stepEmpty: () =>
-      "такт пуст: оркестратор выключен или названная граница пуста — читать нечего (графы живых на машине агентов подъезжают со срезом подъёма)",
+      "такт пуст: оркестратор выключен или граница пуста — названных графов нет и живых мест на машине нет",
     step: (parts) => `такт прошёл: ${parts}`,
     tactRealm: (realm, invites, signals, causes) =>
       `${realm}: приглашений ${invites}, сигналов ${signals}${causes ? ` (${causes})` : ""}`,
@@ -79,6 +83,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       "the machine has not admitted the orchestrator: the daemon's consent is the ISKRON_ORCHESTRA=1 environment variable of its own process; without it raising agents is refused and the flag is not moved",
     on: (realms) =>
       `the orchestrator is on${realms ? `, named boundary: ${realms}` : " (the boundary is the graphs of the machine's live agents)"}; the flag lies next to the grant`,
+    onShortRealm: (realms) =>
+      `the boundary is not taken: ${realms} — the short rN form does not ride the REST doors of the api (live probe: 404 "Realm not found"); name the graph by its full @owner/slug address`,
     off: () =>
       "the orchestrator is off; raised agents live out their own path — the switching off itself extinguishes none",
     status: (on, realms, tact) =>
@@ -86,7 +92,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
         ? `on; named boundary: ${realms || "—"} (plus the graphs of the machine's live agents)${tact ? `; tact: ${tact}` : ""}`
         : `off${tact ? `; tact: ${tact}` : ""}`,
     stepEmpty: () =>
-      "the tact is empty: the orchestrator is off or the named boundary is empty — nothing to read (the graphs of the machine's live agents arrive with the raising slice)",
+      "the tact is empty: the orchestrator is off or the boundary is empty — no named graphs and no live places on the machine",
     step: (parts) => `the tact passed: ${parts}`,
     tactRealm: (realm, invites, signals, causes) =>
       `${realm}: invites ${invites}, signals ${signals}${causes ? ` (${causes})` : ""}`,

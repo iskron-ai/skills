@@ -216,21 +216,25 @@ const invite = {
 const cursorsAt = (dir) => join(dir, "run", "orchestra-cursors.json");
 
 /** A daemon that can read a server: the fake's address and a PAT beside the grant, and a
- * hold record whose channel url names the api beside it — as a lived session would leave. */
-async function raiseReader(dir, fake) {
+ * hold record per realm whose channel url names the api beside it — as lived sessions would
+ * leave. The records' realms are ALSO the discovered half of the boundary (#8202). */
+async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
   mkdirSync(join(dir, "standings"), { recursive: true });
-  writeFileSync(
-    join(dir, "standings", "probe.hold"),
-    JSON.stringify({
-      realm: "@nks/nks-dev",
-      karta: 931,
-      name: "probe",
-      url: `${fake.base}/channel/ws/probe`,
-      at: Date.now(),
-    }) + "\n",
-  );
+  let n = 0;
+  for (const realm of realms) {
+    writeFileSync(
+      join(dir, "standings", `probe-${++n}.hold`),
+      JSON.stringify({
+        realm,
+        karta: 931,
+        name: `probe-${n}`,
+        url: `${fake.base}/channel/ws/probe-${n}`,
+        at: Date.now(),
+      }) + "\n",
+    );
+  }
   return raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
 }
 
@@ -363,6 +367,54 @@ test("orchestra: no known api — the tact is refused aloud, not guessed from th
     const r = await cli(["step", "--auth-dir", dir]).done;
     assert.equal(r.code, 1, r.out);
     assert.match(r.err, /адрес api неизвестен/, r.err);
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+test("orchestra: a short rN realm is refused at the boundary — it does not ride REST as is", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    const on = await cli(["on", "--realm", "r5", "--auth-dir", dir]).done;
+    assert.equal(on.code, 1, on.out);
+    assert.match(on.err, /r5/, on.err);
+    assert.match(on.err, /@owner\/slug/, on.err);
+    // the flag stays empty: nothing half-accepted lies beside the grant
+    const st = await cli(["status", "--auth-dir", dir]).done;
+    assert.doesNotMatch(st.out, /r5/, st.out);
+  } finally {
+    await d.stop();
+  }
+});
+
+test("orchestra: the tact reads the discovered half too — realms of the machine's live places", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  // The hold records' realms are NOT in the named boundary — the tact must find the readable
+  // one anyway; the short r9 (as live records carry, seen on the machine) must not block it.
+  const d = await raiseReader(dir, fake, ["@nks/drugoy", "r9"]);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    await fake.control({
+      orchestra: { realms: { "@nks/drugoy": { invites: [], signals: [signal(1, "raised")] } } },
+    });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, /@nks\/nks-dev/, r.out);
+    assert.match(r.out, /@nks\/drugoy/, r.out);
+    assert.doesNotMatch(r.out, /r9/, `${r.out} — the short form is skipped, not walked`);
+    assert.match(r.out, /сигналов 1/, r.out);
+    const kept = JSON.parse(readFileSync(cursorsAt(dir), "utf8"));
+    assert.equal(
+      kept.realms["@nks/drugoy"].cursor,
+      "c1",
+      "the discovered realm keeps its cursor too",
+    );
   } finally {
     await d.stop();
     await fake.stop();
