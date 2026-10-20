@@ -6363,6 +6363,60 @@ for (const restart of [false, true])
     assert.ok(!next.out.includes("ТЕЛО-СОСЕДУ-71"), `the body reached another seat:\n${next.out}`);
   });
 
+// .asks — точный ключ решения кадра и обрезка закрытых: повтор чужого закрытия после
+// смерти моста в окне пачки решается тем же, а файл не растёт без предела.
+test(".asks: a replayed closer of my question is decided the same after a bridge restart; closed questions and decisions are trimmed", async (t) => {
+  const env = { ISKRON_BRIDGE_ROOM_BATCH_MS: "800", ISKRON_BRIDGE_ASKS_KEPT: "4" };
+  const { fake, dir, key, bridge } = await connected(t, { env });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = runClient("watchdog-exit", dir, key, 15_000);
+  await waitFor(() => first.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, ask(90));
+  assert.equal((await first.done).exit, 0, `the question to me wakes: ${first.err}`);
+  const closer = answer(91, 90, BORIS);
+  closer.line.done = "ОТВЕТ-БОРИСУ";
+  await sendRoom(fake, closer); // decided, then the bridge dies inside its batch window
+  await new Promise((r) => setTimeout(r, 300));
+  bridge.proc.kill("SIGKILL");
+  await waitFor(() => fake.state.ws.size === 0, "the fake to see the socket close");
+  const second = startBridge(fake.mcpUrl, dir, env);
+  t.after(() => second.stop());
+  assert.ok((await second.call("initialize", 1, INIT)).result);
+  await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+  const st = await second.call("tools/call", 2, {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+  });
+  assert.ok(!st.result?.isError, JSON.stringify(st));
+  await waitFor(() => fake.state.ws.size === 1, "the place resumed");
+  const next = runClient("watchdog-exit", dir, key, 8000);
+  await waitFor(() => next.err.includes("hello"), "hello to be noted");
+  await sendRoom(fake, closer); // the platform hands it again
+  await new Promise((r) => setTimeout(r, 1200));
+  await nudge(fake);
+  assert.equal((await next.done).exit, 0, next.err);
+  assert.match(next.out, /вопрос \[90\] к тебе закрыт: ответил Дмитрий/, next.out);
+  assert.ok(!next.out.includes("ОТВЕТ-БОРИСУ"), next.out);
+  // Twelve questions to me, each withdrawn: 24 decisions and closings past a limit of 4.
+  for (let i = 0; i < 12; i++) {
+    await sendRoom(fake, ask(100 + 2 * i, MY_KARTA, {}, `ключ ${i}`));
+    const w = askWithdrawn(101 + 2 * i, 100 + 2 * i);
+    w.line.key = `ключ ${i}`;
+    await sendRoom(fake, w);
+  }
+  const asksFile = () =>
+    readdirSync(join(dir, "standings"))
+      .filter((x) => x.endsWith(".asks"))
+      .map((x) => readFileSync(join(dir, "standings", x), "utf8"))
+      .join("");
+  await waitFor(() => asksFile().includes("#122"), "the last question in .asks");
+  const lines = asksFile().split("\n").filter(Boolean);
+  assert.ok(
+    lines.length <= 16,
+    `.asks grows without a limit (${lines.length}):\n${lines.join("\n")}`,
+  );
+});
+
 // P3: приглашение роли без fields.karta.id — id роли из ключа invite:<id>.
 test("a role invite whose fields carry no karta id is mine by its key and wakes at once", async (t) => {
   const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" } });

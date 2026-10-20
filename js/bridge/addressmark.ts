@@ -8,11 +8,12 @@
 // first on disk (.seen for words, .asks for questions — askdisk.ts) across restarts.
 // The bridge's decision on a question frame is final: the frame carries asks_decided, and
 // plugins and watchdogs do not re-decide it with their own question memory.
-import { addressedToMine, asideKeyOf, namedMine, wordKeyOf } from "../shared/addressed.ts";
+import { addressedToMine, asideKeyOf, wordKeyOf } from "../shared/addressed.ts";
 import { closesMine, noteAsk } from "../shared/askmemory.ts";
 import { ASK_KINDS } from "../shared/asks.ts";
 import { type Frame } from "../shared/channel.ts";
 import { roomKind } from "../shared/room-kinds.ts";
+import { namedMine } from "../shared/seats.ts";
 import { noteSeen } from "../shared/seen.ts";
 import { diskAsks } from "./askdisk.ts";
 
@@ -36,16 +37,14 @@ export function markAddressed(frame: Frame, seenPath: string, seen: Set<string>)
     const id = typeof frame.id === "string" ? frame.id : "";
     const hit = `hit:${id}`;
     const store = diskAsks(seenPath);
-    const was = id ? [...store.keys()].find((k) => k.startsWith(`closes:${id}#`)) : undefined;
-    const n = was
-      ? was.slice(was.indexOf("#") + 1)
-      : closesMine(store, frame as Record<string, unknown>);
+    const n =
+      (id && store.get?.(`closes:${id}`)) || closesMine(store, frame as Record<string, unknown>);
     if (store.has(hit) || (n && rk.kind === "progress")) {
       frame.addressed = true;
       if (id) store.add(hit);
     } else if (n && !namedMine(frame, rk.kind)) {
       Object.assign(frame, { addressed: false, closes_mine: n });
-      if (id) store.add(`closes:${id}#${n}`);
+      if (id) store.add(`closes:${id}=${n}`);
     }
     noteAsk(store, frame as Record<string, unknown>);
     (frame as Record<string, unknown>).asks_decided = true;

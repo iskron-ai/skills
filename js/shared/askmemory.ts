@@ -18,6 +18,8 @@ export interface AskStore {
   has(s: string): boolean;
   add(s: string): void;
   keys(): Iterable<string>;
+  /** The value of a `key=value` entry, exactly by its key (the disk store). */
+  get?(key: string): string | undefined;
 }
 
 const baseOf = (frame: Rec): string =>

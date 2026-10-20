@@ -1,10 +1,11 @@
 // Whether a case record is addressed to the reader's seat — the delivery rule
 // (graph @nks/nks-dev, node #6574): only addressed records enter the turn as text.
 import { closesMine, noteAsk, processAsks } from "./askmemory.ts";
-import { ASK_KINDS, askedMine, askFromPerson, byMe } from "./asks.ts";
+import { ASK_KINDS, askedMine, askFromPerson } from "./asks.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { numberedKey } from "./numbering.ts";
-import { byKind, inviteMine, mineOf, obj, roomKind, seatIs, str, wordSeats } from "./room-kinds.ts";
+import { byKind, inviteMine, mineOf, obj, roomKind, seatIs, str } from "./room-kinds.ts";
+import { seatOf } from "./seats.ts";
 
 type Rec = Record<string, unknown>;
 
@@ -31,25 +32,6 @@ export function wordKeyOf(frame: Frame): string {
 }
 /** Memory key of a word in flight to another seat: its body is not mine. */
 export const asideKeyOf = (frame: Frame): string => `aside:${wordKeyOf(frame)}`;
-/**
- * Seats a record names (case №1249 [19]): ask — fields.to.standing (the api writes the
- * chosen seat there for a role alone too); answer, ack, retract — fields.to; a word —
- * its fields.to; all — the envelope's addressee, a helper string that may be null.
- */
-function seatsOf(f: Rec, kind: string): unknown[] {
-  const to = obj(obj(obj(f.line).fields).to);
-  if (kind === "said" || kind === "body") return wordSeats(f);
-  return [
-    kind === "ask" ? to.standing : ASK_KINDS.has(kind) || kind === "retract" ? to : null,
-    f.addressee,
-  ];
-}
-/** The record names my seat explicitly (by id first); my own question is an echo. */
-export function namedMine(frame: Frame, kind: string): boolean {
-  const f = frame as Rec;
-  if (kind === "ask" && byMe(f)) return false;
-  return seatIs(f, ...seatsOf(f, kind)) === true;
-}
 function rememberWord(key: string): void {
   addressedWords.add(key);
   for (const old of addressedWords) {
@@ -108,11 +90,7 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   const closed = rk && ASK_CLOSERS.has(rk.kind) ? askMemory(f) : "";
   // The named seat, by id first (seatIs): mine, another's, or none named. Another's wins
   // over importance and a reply (#6574); my own question to my seat is an echo.
-  const seat = !rk
-    ? null
-    : rk.kind === "ask" && byMe(f)
-      ? false
-      : seatIs(f, ...seatsOf(f, rk.kind));
+  const seat = rk ? seatOf(frame, rk.kind) : null;
   if (rk?.kind === "body") {
     // A body's in_reply_to_from is the author of the word itself (#5893 §4.6) and the
     // word's kind is in word.line: the body is addressed when its word was, as
@@ -154,4 +132,13 @@ export function addressedToMine(frame: Frame | null | undefined): boolean {
   if ((rk && (ASK_KINDS.has(rk.kind) || rk.kind === "retract")) || askFromPerson(f)) return false;
   // The bridge marks origin on a person's body (roomstack.ts, #5953): its provenance does not carry it.
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || undefined)) === "human";
+}
+
+/**
+ * The number of my question another's record closes, "" — none (#6867). The decision is
+ * made here, not read off the frame: closes_mine is set by the addressing decision itself
+ * (this process's question memory) or by the bridge, so a reader in any order gets it.
+ */
+export function closedQuestion(frame: Frame): string {
+  return addressedToMine(frame) ? "" : (frame.closes_mine ?? "");
 }

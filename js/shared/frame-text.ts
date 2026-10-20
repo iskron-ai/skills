@@ -1,5 +1,5 @@
 import { FRAME_MARK, FRAME_TEXT, ROOM } from "../delivery/index.ts";
-import { addressedToMine } from "./addressed.ts";
+import { addressedToMine, closedQuestion } from "./addressed.ts";
 import { classifyOrigin, type Frame } from "./channel.ts";
 import { superseded } from "./keyfold.ts";
 import { words as wordsOf } from "./lang.ts";
@@ -196,12 +196,13 @@ export function batchLines(frames: Frame[]): string[] {
  * answered or whom it is re-asked of — its text stays in history (#6867, #6574).
  */
 function closingOf(frame: Frame): string {
-  if (!frame.closes_mine || addressedToMine(frame)) return "";
+  const n = closedQuestion(frame); // decided here: independent of the count's order
+  if (!n) return "";
   const rk = roomKind(frame);
   const to = rec(rec(rec(rec(frame).line).fields).to);
-  if (rk?.kind !== "ask") return T().askAnswered(frame.closes_mine, need(rk?.author));
+  if (rk?.kind !== "ask") return T().askAnswered(n, need(rk?.author));
   const seat = addresseeOf(to.standing)?.label || idOf(rec(to.karta).name);
-  return T().askMoved(frame.closes_mine, need(seat));
+  return T().askMoved(n, need(seat));
 }
 
 /**
