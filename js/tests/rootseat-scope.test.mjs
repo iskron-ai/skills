@@ -161,6 +161,39 @@ test(
   },
 );
 
+test(
+  "(s4f) A→B→A→B при задержанном ответе каталога, тул ребёнка в A, возврат — одна посадка",
+  T,
+  async (t) => {
+    const { s, project, oc } = await aligning(t);
+    assert.ok((await oc.turn("root", "выровняй")).prompt.includes(ALIGN), look(oc));
+    oc.create("kid", { parentID: "root" });
+    await sleep(200);
+    const other = scratch(t);
+    oc.move("root", other);
+    await sleep(100);
+    const release = oc.holdGet("root");
+    oc.move("root", project); // a late answer of this return names A
+    await sleep(100);
+    oc.move("root", other);
+    await sleep(100);
+    release();
+    await sleep(200);
+    writeAgents(project);
+    await oc.toolAfter("kid", "write", {}); // the root is in B: its child's tool in A seats nothing
+    await sleep(800);
+    assert.equal(connects(s), 0, look(oc));
+    oc.move("root", project);
+    await sleep(300);
+    writeAgents(project, { ...COVER, Nature: "library, правка" });
+    await oc.toolAfter("root", "write", {});
+    await until(() => heldBy(s.dir, "root").length === 1, "вернувшийся корень встал", 20_000);
+    await sleep(800);
+    assert.equal(connects(s), 1, `ровно одна посадка\n${look(oc)}`);
+    assert.equal(oc.wordsTo("root").filter(stood).length, 1, look(oc));
+  },
+);
+
 test("(s4e) стоп владельца в ходе connect после переноса и возврата — места нет", T, async (t) => {
   const { s, project, oc } = await aligning(t, { agents: false });
   writeAgents(project);

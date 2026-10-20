@@ -76,7 +76,6 @@ export function createRealign(halted: (session: string) => boolean) {
       if (w) left.set(session, { where: w.where, why: w.why });
       return !!w;
     },
-    left: (session: string): boolean => left.has(session),
     /** Back in the folder it waited in: it waits again, the cover read at the next look. */
     back(session: string, where: string): boolean {
       const w = left.get(session);

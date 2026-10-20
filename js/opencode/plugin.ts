@@ -301,7 +301,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             if (!id) break;
             half.moved(id, to);
             // A wait for the old folder's cover ends with the move, and comes back with the session.
-            rootSeats.moved(id, !!to && to.directory === homeOf(ctx)?.directory);
+            rootSeats.moved(
+              id,
+              to && to.directory === homeOf(ctx)?.directory ? to.directory : null,
+            );
             break;
           }
           case "skill.updated":

@@ -107,13 +107,10 @@ export function createRootSeats(d: RootSeatDoors): RootSeats {
       if (word) await d.steer(session, word);
     },
     moved(session, here) {
-      if (here) {
-        if (again.left(session))
-          void d.directoryOf(session).then((where) => {
-            // A prompt that came first has read the cover itself: the wait set aside is dropped.
-            const fresh = !stopped && !dead.has(session) && !told.has(session);
-            if (again.back(session, fresh && where ? where : "")) told.add(session);
-          });
+      if (here !== null) {
+        // Synchronous, by the event's own folder: no late answer outlives a later move.
+        const fresh = !stopped && !dead.has(session) && !told.has(session);
+        if (again.back(session, fresh ? here : "")) told.add(session);
         return;
       }
       // A seating in flight is half.moved's, as on a first prompt; only a wait is set aside here.
