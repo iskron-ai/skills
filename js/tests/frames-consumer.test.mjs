@@ -4,14 +4,20 @@
 // ISKRON_BRIDGE_PATH=<мост до #540> — ветви краснеют, как красны пробы A и B.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { intentFor, judge } from "../../scripts/frames-consumer-judge.mjs";
+import {
+  branchOutcome,
+  intentFor,
+  judge,
+  readSegment,
+} from "../../scripts/frames-consumer-judge.mjs";
+import { loadSeats } from "../../scripts/frames-consumer-scenarios.mjs";
 import { REPO } from "./built.mjs";
-import { ask, ME, ME_ID, roleOnlyAsk, SIB, siblingMatrix } from "./room-frames.mjs";
+import { ask, ME, ME_ID, progress, roleOnlyAsk, SIB, siblingMatrix } from "./room-frames.mjs";
 
 const me = { standing_id: ME_ID, standing: ME };
 const sib = { standing_id: SIB.id, standing: SIB.standing };
@@ -36,6 +42,54 @@ test("the api's intent is read from the frame's address fields, per seat", () =>
   assert.equal(intentFor(joined, me, refs), null);
   assert.equal(intentFor(roleOnlyAsk(73), sib), "nobody");
   assert.equal(intentFor({ ...ask(80), room: "broken" }, me), null);
+  // Ответ без явного to — автору отвечаемой записи (#6574, #6867); answer — только по fields.to.
+  const reply = { ...progress(81), in_reply_to: 6, in_reply_to_from: SIB };
+  assert.equal(intentFor(reply, sib), "mine");
+  assert.equal(intentFor(reply, me), "theirs");
+  assert.equal(intentFor({ ...progress(82), in_reply_to: 6 }, sib), "nobody");
+  const answered = ask(83);
+  answered.line.kind = "answer";
+  answered.event_kind = "room.answer";
+  delete answered.line.fields.to;
+  assert.equal(intentFor({ ...answered, in_reply_to: 6, in_reply_to_from: SIB }, sib), "nobody");
+});
+
+test("a scenario directory: subdirectories are branches, rows become socket frames, the seat's address is learnt", () => {
+  const dir = mkdtempSync(join(tmpdir(), "frames-scenarios-"));
+  try {
+    const { room, ...envelope } = { ...ask(60), room: { id: "<room_1>", seq: 1 } };
+    envelope.line.fields.to.standing = { id: "<seat_B>", standing: "@b:beta" };
+    const row = { id: "<uuid_1>", channel_id: "<seat_B>", standing_id: "<seat_B>", body: "" };
+    const seatB = { standing_id: "<seat_B>", standing: "seat_B", verdict_on_main: "red" };
+    mkdirSync(join(dir, "s1"));
+    writeFileSync(join(dir, "manifest.json"), "{}");
+    writeFileSync(join(dir, "s1", "_scenario.json"), JSON.stringify({ verdict_on_main: "red" }));
+    const messages = [{ ...row, room: { ...envelope, room } }];
+    writeFileSync(join(dir, "s1", "seat_B.json"), JSON.stringify({ ...seatB, messages }));
+    const person = { standing_id: "<person_window>", standing: "person_window", messages };
+    writeFileSync(join(dir, "s1", "person_window.json"), JSON.stringify(person));
+    const named = loadSeats(dir, ["seat_B"]).seats.map((s) => [s.label, s.human]);
+    assert.deepEqual(named, [
+      ["person_window", true],
+      ["seat_B", true],
+    ]);
+    const { seats: both, scenarios } = loadSeats(dir);
+    assert.deepEqual(
+      both.map((s) => s.human),
+      [true, false],
+    );
+    const seats = both.slice(1);
+    assert.equal(scenarios.get("s1").verdict_on_main, "red");
+    const [f] = seats[0].messages;
+    assert.equal(f.type, "message");
+    assert.equal(f.event_kind, "room.ask");
+    assert.equal(f.to_standing_id, "<seat_B>");
+    assert.equal(f.to_standing, "@b:beta");
+    assert.deepEqual(f.room, room);
+    assert.equal(intentFor(f, seats[0], seats[0].messages), "mine");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("verdicts: a handed-over frame is judged, a dropped one is rejected, a repeat and a stale one are not judged", () => {
@@ -48,10 +102,30 @@ test("verdicts: a handed-over frame is judged, a dropped one is rejected, a repe
   assert.equal(judge("mine", { ...seen, delivered: false }).verdict, "rejected");
   assert.equal(judge("mine", { ...seen, delivered: false, repeat: true }).verdict, "unjudged");
   assert.equal(judge("theirs", { ...seen, shown: ["Т"], stale: true }).verdict, "unjudged");
+  // Адрес, которого судья не прочёл, — не pass ветви.
+  assert.equal(judge(null, { ...seen, hint: true }).verdict, "unparsed");
+  // Место человека — вне моста: ни pass, ни fail; ветвь из одних таких — не pass.
+  assert.equal(judge("theirs", { ...seen, shown: ["Т"], outside: true }).verdict, "outside-bridge");
+  assert.equal(branchOutcome([{ verdict: "outside-bridge" }]), "outside-bridge");
+  assert.equal(branchOutcome([{ verdict: "pass" }, { verdict: "unparsed" }]), "unparsed");
+  // Строка записи без текста — и со стрелкой.
+  assert.equal(readSegment("Алексей → proba.1: [64]", 64).recordLine, true);
+  assert.equal(readSegment("№7 «Стенд»: записей 1, тебе 0 … since=63", 64).recordLine, false);
 });
 
-test("the matrix of probes A and B through the built bridge and watchdog: every branch passes", () => {
+/** Подставной дом с домашним мостом новее: сторож с настоящим HOME перезапустился бы в него. */
+function fakeHome() {
+  const home = mkdtempSync(join(tmpdir(), "frames-home-"));
+  mkdirSync(join(home, ".iskron-bridge"));
+  const stub = `const VERSION = "99.0.0";\nimport { writeFileSync } from "node:fs";\nwriteFileSync(process.env.HOME + "/REEXEC", "x");\nprocess.exit(3);\n`;
+  writeFileSync(join(home, ".iskron-bridge", "iskron-bridge.mjs"), stub);
+  const list = () => readdirSync(home, { recursive: true }).sort().join("\n");
+  return { home, stub, list, before: list() };
+}
+
+test("the matrix of probes A and B through the built bridge and watchdog: every branch passes, the home untouched", () => {
   const dir = mkdtempSync(join(tmpdir(), "frames-consumer-"));
+  const h = fakeHome();
   try {
     for (const [branch, frames] of Object.entries(BRANCHES))
       for (const [name, seat] of [
@@ -62,17 +136,43 @@ test("the matrix of probes A and B through the built bridge and watchdog: every 
         writeFileSync(join(dir, `${branch}-${name}.json`), JSON.stringify(file));
       }
     const out = join(tmpdir(), `frames-consumer-${process.pid}.json`);
+    // Выключатель обновлений make test скрипту не передаётся: его ставит сам скрипт.
+    const { ISKRON_BRIDGE_NO_UPDATE: _off, ...env } = process.env;
     const run = spawnSync(
       process.execPath,
       [join(REPO, "scripts/frames-consumer-run.mjs"), dir, "--json", out],
-      { encoding: "utf8", timeout: 120_000 },
+      {
+        encoding: "utf8",
+        timeout: 120_000,
+        env: {
+          ...env,
+          HOME: h.home,
+          USERPROFILE: h.home,
+          XDG_CONFIG_HOME: join(h.home, ".config"),
+        },
+      },
     );
+    assert.equal(h.list(), h.before, "the run wrote into HOME");
+    assert.equal(readFileSync(join(h.home, ".iskron-bridge", "iskron-bridge.mjs"), "utf8"), h.stub);
     assert.ok(run.status === 0 || run.status === 1, `setup: ${run.status} ${run.stderr}`);
     const summary = JSON.parse(readFileSync(out, "utf8"));
     rmSync(out, { force: true });
     const outcomes = Object.fromEntries(summary.branches.map((b) => [b.branch, b.outcome]));
     assert.deepEqual(outcomes, { "role-only": "pass", sibling: "pass" }, run.stdout);
+    // Судимых записей по месту: pass ветви не держится на одних unjudged.
+    const judged = {};
+    for (const b of summary.branches)
+      for (const r of b.records)
+        if (r.verdict === "pass" || r.verdict === "fail")
+          judged[`${b.branch} ${r.seat}`] = (judged[`${b.branch} ${r.seat}`] ?? 0) + 1;
+    assert.deepEqual(judged, {
+      "role-only @tester:proba": 3,
+      "role-only @tester:proba.1": 3,
+      "sibling @tester:proba": 7,
+      "sibling @tester:proba.1": 7,
+    });
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(h.home, { recursive: true, force: true });
   }
 });
