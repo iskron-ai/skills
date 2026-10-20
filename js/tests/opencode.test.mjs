@@ -8546,6 +8546,14 @@ test("a platform call of another role in reply to my question, and its withdrawa
   assert.doesNotMatch(prompts.rode, /зовёт/);
 });
 
+// Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
+test("the withdrawal of the platform's call of my role reaches me: тебе 1 and the withdrawal line", async () => {
+  const prompts = await asidePrompts("role-withdrawn", [roleAsked(98, MY_KARTA, 97, true)], 1);
+  const text = [...prompts.map((p) => p.text), prompts.rode].join("\n");
+  assert.match(text, /записей 1, тебе 1/);
+  assert.match(text, /\[98\] приглашение отозвано/);
+});
+
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
 test("B: a question to my role alone, the api's choice another seat or none, prompts nothing: a count, тебе 0", async () => {
   const prompts = await asidePrompts("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 0);

@@ -1304,6 +1304,13 @@ test("a platform call of another role in reply to my question, and its withdrawa
   assert.doesNotMatch(got[0].text, /зовёт/);
 });
 
+// Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
+test("the withdrawal of the platform's call of my role reaches me: the withdrawal line, not a count", async () => {
+  const got = await asideMessages("role-withdrawn", [roleAsked(98, MY_KARTA, 97, true)], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0].text, /^№7 «Стенд» \[98\] приглашение отозвано/);
+});
+
 // Точный адрес (#6574, дело №1249): соседнее место моей роли и учётки — не я.
 test("records to a sibling seat of my role and account: one count, тебе 0, none of their text", async () => {
   const { frames, hidden } = siblingMatrix();

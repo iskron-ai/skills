@@ -6479,6 +6479,22 @@ test("control: the platform's call of my role in reply to my question comes to m
   await wd.done;
 });
 
+// Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
+test("the withdrawal of the platform's call of my role is mine: тебе 1 and the withdrawal line", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleAsked(98, MY_KARTA, 97, true));
+  await new Promise((r) => setTimeout(r, 2200));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  assert.ok(wd.out.includes("записей 1, тебе 1"), `the count:\n${wd.out}`);
+  assert.match(wd.out, /\[98\] приглашение отозвано/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
 // #6867: переспрос меняет адресата только явно — to.standing; роль в to адресом не считается,
 // и переспрос на мой ответ приходит мне. С местом соседа в to.standing — не мне.
 test("a re-ask to the role alone in reply to my answer comes to me; with a sibling in to.standing it does not", async (t) => {
