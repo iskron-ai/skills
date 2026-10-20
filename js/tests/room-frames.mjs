@@ -599,7 +599,7 @@ export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
 /**
  * Зов роли seq на мой вопрос (дело №1249): платформенный invite без автора, cause asked,
  * in_reply_to — мой вопрос, in_reply_to_from — моё место; адрес записи — роль, не я.
- * withdraws — отзыв этого зова: in_reply_to — само приглашение.
+ * withdraws — отзыв этого зова: in_reply_to — само приглашение, его автор — платформа (null).
  */
 export const roleAsked = (entry_id, seq, in_reply_to, withdraws = false) => {
   const f = roleInvite(entry_id, seq);
@@ -609,5 +609,18 @@ export const roleAsked = (entry_id, seq, in_reply_to, withdraws = false) => {
   } else f.line.fields.cause = "asked";
   f.line.author = null;
   f.provenance = { auth: "platform", via: "room" };
-  return { ...f, in_reply_to, in_reply_to_from: { id: ME_ID, standing: ME, name: "proba" } };
+  const from = withdraws ? null : { id: ME_ID, standing: ME, name: "proba" };
+  return { ...f, in_reply_to, in_reply_to_from: from };
+};
+
+/**
+ * Переспрос (#6867) на ключе вопроса в ответ на мой ответ refers_to: in_reply_to_from —
+ * моё место. to — роль без места; standing — место, явно выбранное переспросом.
+ */
+export const reaskRole = (entry_id, refers_to, standing) => {
+  const f = reask(entry_id, MY_KARTA, refers_to);
+  delete f.line.fields.to.standing;
+  if (standing) f.line.fields.to.standing = standing;
+  f.line.done = `ПЕРЕСПРОС-${entry_id}`;
+  return { ...f, in_reply_to_from: { id: ME_ID, standing: ME, name: "proba" } };
 };

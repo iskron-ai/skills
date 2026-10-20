@@ -65,8 +65,8 @@ function askMemory(f: Rec): string {
 
 /**
  * Whether the frame is addressed to the reader's seat — rule #6574: a word to it
- * (addressee), a reply to its record (in_reply_to_from, #5954), an invite or its
- * withdrawal to me, or something important: an important word (#4939), closing and
+ * (addressee), a reply to its record (in_reply_to_from, #5954) — only a reply without an
+ * address of its own (namesAddress) — an invite or its withdrawal to me, or something important: an important word (#4939), closing and
  * objection kinds, a person's word; a two-phase body counts as its word (#5953).
  * An addressed word not to me (#6081) and other case records are counted
  * (frame-text.ts). A frame not from a case goes as text; an old-form case frame

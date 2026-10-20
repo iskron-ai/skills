@@ -67,6 +67,7 @@ import {
   OTHER_KEY,
   progress,
   reask,
+  reaskRole,
   replyInFlight,
   roleAsked,
   roleCall,
@@ -6474,6 +6475,25 @@ test("control: the platform's call of my role in reply to my question comes to m
   await sendRoom(fake, roleAsked(95, MY_KARTA, 90));
   await waitFor(() => wd.out.includes("[95]"), "the call of my role, at once", 3000);
   assert.match(wd.out, /зовёт 🚚 Поставщик плитки в дело/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #6867: переспрос меняет адресата только явно — to.standing; роль в to адресом не считается,
+// и переспрос на мой ответ приходит мне. С местом соседа в to.standing — не мне.
+test("a re-ask to the role alone in reply to my answer comes to me; with a sibling in to.standing it does not", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, reaskRole(102, 101, SIB));
+  await sendRoom(fake, reaskRole(103, 101));
+  await new Promise((r) => setTimeout(r, 2200));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  assert.ok(wd.out.includes("записей 2, тебе 1"), `the count:\n${wd.out}`);
+  assert.ok(wd.out.includes("ПЕРЕСПРОС-103"), `the re-ask to me lost:\n${wd.out}`);
+  assert.ok(!wd.out.includes("ПЕРЕСПРОС-102"), `the re-ask to the sibling leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
