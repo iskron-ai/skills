@@ -1,11 +1,11 @@
 // The graph slot of a project cover (shared/cover.ts): which graph it names as the working one
 // (#8066). An address is @owner/slug or rN, bare or in backticks or quotes; a head is an address
-// with at most its other form in parentheses right after it. The heads and every address the
-// slot names outside prose form one pair (slug, rN): two slugs, two rNs, or heads listed one
-// after another that share no address are ambiguity. After the last head, prose that starts with
-// a word (a pointer to the methodology, a graph not used) names no candidate; any other rest is
-// doubt, and its addresses count. A continuation line of the value that names an address is
-// ambiguity. Other framing (*, _, ~) is not read as framing: such a start is no graph.
+// with at most its other form in parentheses right after it — the only way a second form joins
+// the pair (slug, rN). The heads form one pair: two slugs, two rNs, or heads listed one after
+// another that share no address are ambiguity. After the last head, prose that starts with a
+// word (a pointer to the methodology, a graph not used) names no candidate; any other rest is
+// doubt: an address there that is not already in the pair is ambiguity, never a choice or a
+// second form. A continuation line of the value that names an address is ambiguity. Other framing (*, _, ~) is not read as framing: such a start is no graph.
 
 const ADDRESS = String.raw`(?:@[\w.-]+\/[\w.-]+|r\d+)(?=$|[\s)\x60'",;.:])`;
 const FRAME = String.raw`[\s\x60'"]*`;
@@ -36,11 +36,13 @@ export function graphOfSlot(
     rest = rest.slice((list.exec(rest)?.[0] ?? "").length);
   }
   if (!heads.length) return null;
+  const pair = [...new Set(heads.flat())];
+  const slugs = pair.filter((n) => n.startsWith("@"));
   const doubt = rest !== "" && !PROSE.test(rest) ? anyIn(rest) : [];
-  const named = [...new Set([...heads.flat(), ...doubt, ...anyIn(more.join("\n"))])];
-  const slugs = named.filter((n) => n.startsWith("@"));
+  const after = anyIn(more.join("\n"));
   const apart = heads.some((h) => !h.some((a) => heads[0]?.includes(a)));
-  if (slugs.length > 1 || named.length - slugs.length > 1 || apart || anyIn(more.join("\n")).length)
-    return { many: named };
-  return { realm: slugs[0] ?? (named[0] as string) };
+  const strange = doubt.some((a) => !pair.includes(a)) || after.length > 0;
+  if (slugs.length > 1 || pair.length - slugs.length > 1 || apart || strange)
+    return { many: [...new Set([...pair, ...doubt, ...after])] };
+  return { realm: slugs[0] ?? (pair[0] as string) };
 }

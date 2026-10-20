@@ -82,6 +82,21 @@ test("Δ3: строка продолжения YAML с адресом — нео
   assert.deepEqual(ruRaw("'@a/x (r5); методология —\n  общий канон'"), at("@a/x"));
 });
 
+test("Δ4: адрес нераспознанного хвоста не выбирает граф и не дополняет пару", () => {
+  for (const g of ["r5 [@b/y]", "@a/x [r5]", "@a/x (**r5**)", "r5 <@b/y>", "@a/x; **r7**"])
+    none(ru(g), g);
+  assert.deepEqual(ru("r5 [r5]"), at("r5"), "тот же адрес в хвосте — посадка, как на main");
+  assert.deepEqual(ru("`@a/x` (`r5`) [@a/x]"), at("@a/x"));
+});
+
+test("Δ5: YAML-комментарии и пустые строки не продолжают значение", () => {
+  const cover = (graph, role) =>
+    seatOfPairs(frontMatter(`---\n'Граф': ${graph}\n'Роль агента': ${role}\n---\n`));
+  assert.deepEqual(cover("'@a/x'", "'#931 «dev»'\n  #844 «соседняя роль»"), at("@a/x"));
+  assert.deepEqual(cover("'@a/x'\n  # @b/y — прежний граф\n\n", "'#931 «dev»'"), at("@a/x"));
+  assert.deepEqual(cover("'@a/x'\n    #r7", "'#931 «dev»'"), at("@a/x"));
+});
+
 test("EN-форма без слов-связок: разделители перечисляют так же", () => {
   none(en("@nks/nks-dev, @nks/drugoy"), "EN");
   none(en("`@a/x` (`r5`); **`@b/y`**"), "EN");

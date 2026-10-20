@@ -47,6 +47,7 @@ const unquote = (v: string): string => {
 /**
  * Flat front matter: key → value; no opening and closing "---" — null. An indented line that is
  * no pair continues the value above it, kept after a newline: a slot reads its continuation apart.
+ * Comment lines ("#" first after the indent) and blank lines continue nothing.
  */
 export function frontMatter(text: string): Map<string, string> | null {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
@@ -58,7 +59,7 @@ export function frontMatter(text: string): Map<string, string> | null {
   for (const line of lines.slice(1, end)) {
     const kv = /^\s*('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)\s*:(?:\s+(.*))?$/.exec(line);
     if (kv) raw.set((last = unquote(kv[1])), kv[2] ?? "");
-    else if (last !== null && /^\s+\S/.test(line))
+    else if (last !== null && /^\s+[^\s#]/.test(line))
       raw.set(last, `${raw.get(last)}\n${line.trim()}`);
   }
   return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
