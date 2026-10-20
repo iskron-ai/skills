@@ -5,9 +5,10 @@
 // The api's intent is read from the frame's own address fields, never from the bridge's rule:
 // a seat named by id (else by its @-address) in fields.to.standing, fields.to, fields.standing
 // of an invite, addressee (string or seat), word.line.fields.to, word.addressee; a body
-// inherits its said's seats; a said or progress replying (in_reply_to) without an explicit to
-// names the author of the answered record, in_reply_to_from (#6574, #6867 — as the bridge
-// does); an invite or withdraw naming no seat but a role (fields.karta.id) is the role's seats'
+// inherits its said's seats; a said replying (in_reply_to) without an explicit to names the
+// author of the answered record, in_reply_to_from (#6574, #6867 — as the bridge does). A
+// progress line is a common record (case №1249 [80]): any participant may read its text, its
+// in_reply_to addresses nothing, «тебе» for it is not judged; an invite or withdraw naming no seat but a role (fields.karta.id) is the role's seats'
 // — the seat's role read from its file. A question kind (ask, answer, ack) naming no seat is nobody's (#6867), and so is a
 // reply naming no author; anything else naming no seat, a frame outside a case and a stale one
 // are not judged. A person's seat is outside the bridge (its window or bot delivers it; the
@@ -18,7 +19,9 @@ const str = (v) => (typeof v === "string" ? v : typeof v === "number" ? String(v
 /** The record's kind — one source for intent, the not-covered rule and the table; "?" — none. */
 export const kindOf = (f) => str(obj(f).event_kind).replace(/^room\./, "") || str(obj(obj(f).line).kind) || "?";
 const ASK_KINDS = new Set(["ask", "answer", "ack"]);
-const REPLY_KINDS = new Set(["said", "progress"]);
+const REPLY_KINDS = new Set(["said"]);
+/** Common records of the case (case №1249 [80]): every participant may read their text, in_reply_to addresses nothing. */
+const COMMON_KINDS = new Set(["progress"]);
 /**
  * Kinds this judge has been checked against (#5893 §4.2, #6867, #8074): read by address, or
  * of the case's life with no personal address. Any other kind is not covered until checked.
@@ -55,7 +58,7 @@ export function namedSeats(f, refs = []) {
     return said ? namedSeats(said, refs) : [];
   }
   // A reply without an explicit to goes to the author of the answered record (#6574, #6867):
-  // a said or progress names in_reply_to_from; answer and ack only by fields.to (above).
+  // a said names in_reply_to_from; answer and ack only by fields.to (above).
   const author = REPLY_KINDS.has(kind) && f.in_reply_to != null && seat(f.in_reply_to_from);
   return author ? [author] : [];
 }
@@ -63,6 +66,7 @@ export function namedSeats(f, refs = []) {
 /** mine | theirs | nobody | null (not judged) for the seat {standing_id, standing}. */
 export function intentFor(f, me, refs = []) {
   if (!str(obj(f.room).id) && !str(obj(f.room).seq)) return null; // not a case record: the rule is not about it
+  if (COMMON_KINDS.has(kindOf(f))) return null; // a common record: no seat's, its text is anyone's
   const named = namedSeats(f, refs);
   const reply = REPLY_KINDS.has(kindOf(f)) && f.in_reply_to != null;
   // An invite or withdraw of a role names the role — fields.karta.id, else the key
@@ -105,6 +109,7 @@ export function readSegment(text, entry) {
 export function addressHint(f) {
   const fields = obj(obj(f.line).fields);
   const role = ["invite", "withdraw"].includes(kindOf(f)) && (!!str(obj(fields.karta).id) || /^invite:./.test(str(obj(f.line).key)));
+  if (COMMON_KINDS.has(kindOf(f))) return false; // a common record has no address to read
   return role || f.addressee != null || Object.keys(obj(fields.to)).length > 0 || obj(f.word).addressee != null;
 }
 
