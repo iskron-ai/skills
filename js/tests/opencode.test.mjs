@@ -86,6 +86,7 @@ import {
   MY_KARTA,
   OTHER_KEY,
   ownBody,
+  personWord,
   PLATFORM,
   progress,
   replyInFlight,
@@ -8544,6 +8545,17 @@ test("a platform call of another role in reply to my question, and its withdrawa
   assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
   assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
   assert.doesNotMatch(prompts.rode, /зовёт/);
+});
+
+// #8281: from_person API — первый признак слова человека; без него и без старых — счёт.
+test("a person's word with from_person and no user_karta_seq steers as a person's; without it, a count", async () => {
+  const prompts = await asidePrompts("from-person", [personWord(110), personWord(111, false)], 1);
+  assert.equal(prompts.length, 1, JSON.stringify(prompts.map((p) => p.text)));
+  assert.equal(prompts[0].delivery, "steer");
+  assert.match(prompts[0].text, /^№7 «Стенд» \[110\] [^\n]* — человек\n/);
+  assert.match(prompts[0].text, /СЛОВО-ЧЕЛОВЕКА-110$/);
+  assert.match(prompts.rode, /записей 1, тебе 0/);
+  assert.doesNotMatch(prompts.rode, /СЛОВО-ЧЕЛОВЕКА-111/);
 });
 
 // Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.

@@ -624,3 +624,20 @@ export const reaskRole = (entry_id, refers_to, standing) => {
   f.line.done = `ПЕРЕСПРОС-${entry_id}`;
   return { ...f, in_reply_to_from: { id: ME_ID, standing: ME, name: "proba" } };
 };
+
+/**
+ * Слово человека в деле (#8281): место-автор человеческое по PERSONS_SEAT, а user_karta_seq
+ * нет (две привязанные роли или непривязанная svatantra). fromPerson — provenance.from_person
+ * API; без него у кадра нет ни одного признака человека.
+ */
+export const personWord = (entry_id, fromPerson = true) => {
+  const f = roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack: "defer",
+    author: HUMAN,
+    body: `СЛОВО-ЧЕЛОВЕКА-${entry_id}`,
+  });
+  if (fromPerson) f.provenance.from_person = true;
+  return f;
+};
