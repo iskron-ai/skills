@@ -58,6 +58,33 @@ test("EN: две ссылки, ссылка без кавычек, кавычк�
   assert.ok("why" in en(`'#931 «dev»'`), "кавычки не этой формы");
 });
 
+// #8066: слот «Граф» обложки старого контракта — рабочий граф, затем проза о других графах.
+const ROLE_931 = "'#931 «dev»'";
+const OLD_GRAPH =
+  "`@nks/nks-dev` (`r5`); методология — `@alari/methodology` (`r4`); общий `@nks/feedback` не используется";
+
+test("#8066: методология и «не используется» за рабочим графом — не кандидаты", () => {
+  assert.deepEqual(ru(ROLE_931, `'${OLD_GRAPH}'`), NKS_931);
+  assert.deepEqual(ru(ROLE_931, "'r5 — рабочий; @alari/methodology (r4) — канон'"), {
+    realm: "r5",
+    karta: "931",
+  });
+});
+
+test("#8066: равноправные рабочие графы — по-прежнему неоднозначно", () => {
+  for (const g of [
+    "@nks/nks-dev (r5) или @nks/drugoy (r7)",
+    "@nks/nks-dev или @nks/drugoy",
+    "@nks/nks-dev, @nks/drugoy",
+    "`@nks/nks-dev` (`r5`); `@nks/drugoy`",
+    "@nks/nks-dev (r7) и r5",
+    "@nks/nks-dev (@nks/drugoy)",
+    "r5 (r7)",
+  ])
+    assert.ok("why" in ru(ROLE_931, `'${g}'`), g);
+  assert.ok("why" in en(`'#931 "dev"'`, "'@nks/nks-dev, @nks/drugoy'"), "EN: связки — разделители");
+});
+
 test("ключи по умолчанию — COVER поставки, с её кавычками", () => {
   assert.deepEqual(COVER.roleQuotes, ["«", "»"]);
   assert.ok("why" in seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}`));
