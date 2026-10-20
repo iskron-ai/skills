@@ -444,9 +444,11 @@ export async function startFakeNks(opts = {}) {
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
     // Такт-чтение оркестратора (№1225 [23]): invites — стоячая очередь подъёма (#4951),
-    // raised — лента сигналов состава от непрозрачного курсора (#6010). Носитель тот же,
-    // что у /mcp (PAT или access); состояние кладёт /control {orchestra} целиком.
-    const orchestraRoute = /^\/realms\/([^/]+)\/(invites|raised)$/.exec(p);
+    // raised — лента сигналов состава от непрозрачного курсора (#6010). Живут под /api,
+    // как их выводит apiBase из адреса канала (shared/channel.ts; живая проба 0.130.12:
+    // app.iskron.ru/api), — не на сервере MCP. Носитель тот же, что у /mcp (PAT или
+    // access); состояние кладёт /control {orchestra} целиком.
+    const orchestraRoute = /^\/api\/realms\/([^/]+)\/(invites|raised)$/.exec(p);
     if (orchestraRoute && req.method === "GET") {
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       const byPat = !!st.pat && bearer === st.pat;
@@ -463,8 +465,8 @@ export async function startFakeNks(opts = {}) {
       const start = since && at >= 0 ? at + 1 : 0; // за пройденным курсором ничего не появляется
       const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
       const items = signals.slice(start, start + limit);
-      const cursor = items.length ? items[items.length - 1].cursor : (since ?? null);
-      return json(res, 200, { items, cursor });
+      const cursor = items.length ? items[items.length - 1].cursor : (since ?? "0.0");
+      return json(res, 200, { items, cursor, numbering: "case" });
     }
 
     const patched = /^\/api\/standings\/([^/]+)$/.exec(p);

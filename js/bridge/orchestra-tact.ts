@@ -1,10 +1,13 @@
 // The tact's reading half (graph @nks/nks-dev, nodes #5042, #8202; the doors #4951 invites
 // and #6010 raised): both queues per realm of the named boundary, from the daemon's own
-// cursor that lies on disk beside the flag. A failed read is not an empty composition: the
-// whole tact is refused, no cursor moves, no stop order goes out (#8202). The realm's own
-// spelling rides the REST path, URL-encoded — an assumption the live probe against the real
-// api confirms; a mismatch is one line here. Taking an invite (register with spawned_for)
-// and the extinguishing arrive with the raising slice, not here.
+// cursor that lies on disk beside the flag. The doors live under the api BESIDE THE CHANNEL
+// (apiBase of shared/channel.ts) — a live probe against nks-api 0.130.12 confirmed: the mcp
+// server url does not name them, the channel address does; the daemon hands the base in,
+// discovered from its live sessions or the hold records on disk (daemon.ts). The realm's own
+// spelling rides the REST path, URL-encoded — @owner/slug verified live, bare slug and
+// numeric id also answer, rN does not. A failed read is not an empty composition: the whole
+// tact is refused, no cursor moves, no stop order goes out (#8202). Taking an invite
+// (register with spawned_for) and the extinguishing arrive with the raising slice, not here.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -82,7 +85,8 @@ async function readRealm(
   };
   const tape = itemsOf(raised);
   if (!tape) throw new Error("raised: not a list");
-  const cursor = typeof raised.cursor === "string" ? raised.cursor : (since ?? null);
+  const cursor =
+    typeof raised.cursor === "string" && raised.cursor ? raised.cursor : (since ?? null);
   return { realm, invites: invited.length, signals: tape as TactRead["signals"], cursor };
 }
 
@@ -97,29 +101,25 @@ function causesOf(signals: { cause?: unknown }[]): string {
 }
 
 /**
- * One tact of reading: every named realm's queues from their cursors. All reads first, then
- * all writes — a realm that fails holds every realm's cursor where it lay (#8202: the tact
- * is refused whole, never half-passed).
+ * One tact of reading: every named realm's queues from their cursors. The base is the api
+ * beside the channel, handed in by the daemon — "" means unknown, and the tact is refused
+ * aloud, never guessed from the mcp server url. All reads first, then all writes — a realm
+ * that fails holds every realm's cursor where it lay (#8202: the tact is refused whole,
+ * never half-passed).
  */
 export async function stepTact(
   authDir: string,
-  serverUrl: string,
+  base: string,
   token: string | null,
   realms: string[],
 ): Promise<OrchestraAnswer> {
+  if (!base) return { ok: false, said: w().stepNoApi() };
   const state = readTactState(authDir);
   const reads: TactRead[] = [];
   for (const realm of realms) {
     try {
       if (!token) throw new Error("no key to the server");
-      reads.push(
-        await readRealm(
-          new URL(serverUrl).origin,
-          token,
-          realm,
-          state.realms[realm]?.cursor ?? null,
-        ),
-      );
+      reads.push(await readRealm(base, token, realm, state.realms[realm]?.cursor ?? null));
     } catch (e) {
       return { ok: false, said: w().stepReadError(realm, (e as Error).message) };
     }

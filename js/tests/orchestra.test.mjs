@@ -5,7 +5,7 @@
 // executable. ISKRON_BRIDGE_PATH aims both at any copy, as elsewhere.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -200,24 +200,37 @@ const signal = (i, cause, extra = {}) => ({
   ...extra,
 });
 
-/** An invite as the invites door carries it (#4951): холон с repository по #4518. */
+/** An invite as the invites door carries it LIVE (nks-api 0.130.12, #4951): entry_id —
+ * the record number in the case, room_id — the case's uuid, payload — the kind's own. */
 const invite = {
-  invite: 9,
-  room: "1260",
-  role: 931,
-  holon: { id: 4057, seq: 4057, name: "js-bundle" },
-  repository: "github.com/iskron-ai/skills",
-  author: "@alari:arch",
+  entry_id: 9,
+  room_id: "725414c2-7078-4dfa-a5b9-140adb3b3422",
+  zachin: "срез 3: подъём исполнителя",
+  karta_seq: 931,
+  author: "@alari:16-m3.methodology.gpt-6-astra",
   at: "2026-10-20T20:00:00Z",
+  payload: {},
   attrs: {},
 };
 
 const cursorsAt = (dir) => join(dir, "run", "orchestra-cursors.json");
 
-/** A daemon that can read a server: the fake's address and a PAT beside the grant. */
+/** A daemon that can read a server: the fake's address and a PAT beside the grant, and a
+ * hold record whose channel url names the api beside it — as a lived session would leave. */
 async function raiseReader(dir, fake) {
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
+  mkdirSync(join(dir, "standings"), { recursive: true });
+  writeFileSync(
+    join(dir, "standings", "probe.hold"),
+    JSON.stringify({
+      realm: "@nks/nks-dev",
+      karta: 931,
+      name: "probe",
+      url: `${fake.base}/channel/ws/probe`,
+      at: Date.now(),
+    }) + "\n",
+  );
   return raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
 }
 
@@ -332,5 +345,26 @@ test("orchestra: step with the orchestrator off is an idle tact — honest and q
     assert.ok(!existsSync(cursorsAt(dir)), "an idle tact wrote no cursors");
   } finally {
     await d.stop();
+  }
+});
+
+test("orchestra: no known api — the tact is refused aloud, not guessed from the mcp server", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  // No hold record and no live session: the daemon holds no channel, so the api address
+  // beside it is unknown — and the mcp server url does NOT name it (live probe, mcp.iskron.ru).
+  writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
+  writeFileSync(join(dir, "token"), "probe-pat");
+  const d = await raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.err, /адрес api неизвестен/, r.err);
+  } finally {
+    await d.stop();
+    await fake.stop();
   }
 });

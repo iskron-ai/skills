@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BRIDGE_NAME, envName } from "../delivery/index.ts";
+import { apiBase } from "../shared/channel.ts";
 import { homeBridgePath } from "../shared/home.ts";
 import { escapeRe } from "../shared/regex.ts";
 import { runIn, type Scope } from "../shared/scope.ts";
@@ -42,7 +43,8 @@ import { installCrashWords, startEngine } from "./engine.ts";
 import { errorMessage } from "./errors.ts";
 import { pruneFallbacks } from "./fallback.ts";
 import { handoffsSettled } from "./handoff.ts";
-import { beginHandover, beginSessionHandover } from "./holdstate.ts";
+import { eraOf, holdRecordsWhere } from "./holdrecord.ts";
+import { beginHandover, beginSessionHandover, H } from "./holdstate.ts";
 import { orchestraServe } from "./orchestra.ts";
 import { listenOrchestraDoor } from "./orchestra-door.ts";
 import { pauseForHandover } from "./pauserecord.ts";
@@ -353,13 +355,30 @@ export async function daemonMain(argv: string[]): Promise<void> {
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
   // The orchestrator's local door (bridge/orchestra-door.ts): on, off, status and the step
   // tact of the flag the daemon owns; refused aloud when there is no daemon to ask — so it
-  // listens with the seam. The tact reads the api with the daemon's own key (transport's
-  // bearer: PAT or the grant's access token) from the origin of its server URL.
+  // listens with the seam. The tact reads the api BESIDE THE CHANNEL with the daemon's own
+  // key (transport's bearer): a live session's channel names it, else the freshest hold
+  // record on disk; neither — "" and the tact refuses aloud, never guessing from the mcp
+  // server url (live probe 2026-10-20: the api beside the channel answers, the mcp origin
+  // does not).
   let door: Server | null = null;
   try {
     door = await listenOrchestraDoor(
       authDir,
-      orchestraServe(authDir, { base: (): string => cfg.serverUrl, token: bearer }),
+      orchestraServe(authDir, {
+        base: (): string => {
+          for (const e of engines.values()) {
+            const url = e.scope ? runIn(e.scope, (): string | null => H.currentUrl) : H.currentUrl;
+            if (url) return apiBase(url);
+          }
+          const records = holdRecordsWhere(() => true);
+          const freshest = records.reduce<(typeof records)[number] | null>(
+            (best, r) => (!best || eraOf(r) > eraOf(best) ? r : best),
+            null,
+          );
+          return freshest?.url ? apiBase(freshest.url) : "";
+        },
+        token: bearer,
+      }),
     );
   } catch (e) {
     log(`the orchestration door does not open: ${errorMessage(e)}`);

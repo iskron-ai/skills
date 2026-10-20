@@ -51,7 +51,9 @@ function writeOrchestraFlag(authDir: string, flag: OrchestraFlag): void {
   });
 }
 
-/** The daemon's way to its server: the REST doors live on the same origin as /mcp. */
+/** The daemon's way to its server's api: the base beside the channel (shared/channel.ts
+ * apiBase — live-verified: the mcp server url does not name the REST doors), "" when
+ * unknown, discovered from the daemon's live sessions or the hold records on disk. */
 export interface OrchestraNet {
   base: () => string;
   /** The daemon's key (PAT or the grant's access token, as the transport's bearer reads it). */

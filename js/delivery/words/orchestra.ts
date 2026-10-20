@@ -28,6 +28,8 @@ export interface OrchestraWords {
   tactRealm: (realm: string, invites: number, signals: number, causes: string) => string;
   /** Почему такт отказан: граф не прочитан; курсоры не двинуты, приказов нет. */
   stepReadError: (realm: string, why: string) => string;
+  /** Адрес api неизвестен: нет живого канала и записей мест — адрес несёт канал, не сервер MCP. */
+  stepNoApi: () => string;
   /** Строка status о последнем такте графа: исход, курсор и когда. */
   tactOut: (realm: string, invites: number, signals: number, cursor: string, at: string) => string;
 }
@@ -59,6 +61,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `${realm}: приглашений ${invites}, сигналов ${signals}${causes ? ` (${causes})` : ""}`,
     stepReadError: (realm, why) =>
       `такт отказан целиком: ${realm} не прочитан (${why}) — курсоры не двинуты, приказов останова нет`,
+    stepNoApi: () =>
+      "такт отказан: адрес api неизвестен — у демона нет живого канала и записей мест; адрес api несёт канал (ответ connect), не сервер MCP",
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: приглашений ${invites}, сигналов ${signals}, курсор ${cursor || "—"} (${at})`,
   },
@@ -88,6 +92,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `${realm}: invites ${invites}, signals ${signals}${causes ? ` (${causes})` : ""}`,
     stepReadError: (realm, why) =>
       `the tact is refused whole: ${realm} did not read (${why}) — no cursor moved, no stop order went out`,
+    stepNoApi: () =>
+      "the tact is refused: the api address is unknown — the daemon holds no live channel and no hold records; the channel (the connect answer) carries the api address, not the mcp server",
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: invites ${invites}, signals ${signals}, cursor ${cursor || "—"} (${at})`,
   },
