@@ -4446,6 +4446,11 @@ function turn(rec, text, sessionID = "child") {
   rec.emit({ type: "session.execution.succeeded", data: { sessionID } });
 }
 
+/** The turn that carried a bare call settles: the call's dispatch is live-turn evidence (#1237),
+ * so the end it asks for waits for this settlement. */
+const settle = (rec, sessionID = "child") =>
+  rec.emit({ type: "session.execution.succeeded", data: { sessionID } });
+
 const ends = (rec) => rec.synthetics.filter((s) => /КОНЧЕН/.test(s.text));
 
 test("the end of a child's turn ends nothing: its bridge lives, a frame of its case wakes its session and never the root, and the parent hears it is a turn, not the result", async () => {
@@ -4523,6 +4528,7 @@ test("a lead child's end names its last word testimony and says how much of a lo
     turn(rec, "а".repeat(4100));
     await until(() => rec.synthetics.some((s) => /сдал ход/.test(s.text)), "the turn word");
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go");
     await until(() => ends(rec).length === 1, "the end in the parent");
     const text = ends(rec)[0].text;
@@ -5366,6 +5372,7 @@ test("a lead child's end: a place its bridge could not revoke comes after «КО
   const { rec, childPid } = await leadChild("lead-unrevoked", { FB_END_FAILED: SUB });
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go");
     const fix = () => rec.synthetics.find((s) => /место не снято/.test(s.text));
     await until(fix, "the correction in the parent");
@@ -5385,6 +5392,7 @@ test("a lead child's end with its place revoked: no word after «КОНЧЕН»"
   const { rec, childPid } = await leadChild("lead-revoked");
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go");
     await until(() => ends(rec).length === 1, "the end in the parent");
     await delay(300);
@@ -5413,6 +5421,7 @@ test("a lead child's end: «КОНЧЕН» is laid before the child's bridge is 
   };
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.equal(endedBeforeWord, false, "iskron/end went out only after the word");
     await until(runEnded, "the run's end after the word");
@@ -5433,6 +5442,7 @@ for (const kind of ["leave", "evicted"])
       if (kind === "leave")
         await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
       else appendFileSync(`${b.events}.${childPid}`, event("evicted", { code: 4000, text: "x" }));
+      if (kind === "leave") settle(rec);
       await until(() => ends(rec).length === 1, "the end in the parent");
       assert.ok(alive(childPid), "the child's bridge still ends its run");
       const before = sent().length;
@@ -5604,6 +5614,7 @@ test("a satellite of a root place with a long name — its base cut by the bridg
   const { rec, childPid } = await leadChild("lead-long", {}, root, cut);
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the satellite's bridge to go with its end");
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /место снимается/);
@@ -5662,6 +5673,7 @@ test("a child's end: the word into the parent is laid before the child's bridge 
   };
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.equal(bridgeDuringWord, true, "the child's bridge lives while the end's word is laid");
     await until(() => !alive(childPid), "the child's bridge to go after the word");
@@ -5677,6 +5689,7 @@ test("a child's end goes into the parent steer, waking it", async () => {
   const { rec } = await leadChild("lead-steer");
   try {
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.equal(ends(rec)[0].delivery, "steer");
     assert.equal(ends(rec)[0].resume, true);
@@ -5707,6 +5720,7 @@ test("a one-shot child launched into a case is ended by leaving that case — an
     await delay(300);
     assert.ok(alive(childPid), "leaving another case is not the outcome");
     await rec.call("iskron_case", { realm: "@nks/nks-dev", action: "leave", room: "№77" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go with leaving its case");
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /вышел из дела №77 по исходу/);
@@ -5882,6 +5896,7 @@ test("iskron_room does not join or end a child's errand case", async () => {
       assert.equal(ends(rec).length, 0, "no errand outcome sent to the parent");
     }
     await rec.call("iskron_case", { action: "leave", room: "№77" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "iskron_case to end the child's errand");
     await until(() => ends(rec).length === 1, "the case outcome in the parent");
   } finally {
@@ -5906,6 +5921,7 @@ test("iskron_room reads are not case reads by the parent's bridge or after an er
   });
   try {
     await lead.rec.call("iskron_case", { action: "leave" }, "child");
+    settle(lead.rec);
     await until(() => !alive(lead.childPid), "the child's bridge to end");
     for (const action of ["read", "history", "mine", "at"])
       await assert.rejects(lead.rec.call("iskron_room", { action }, "child"), /сессия кончена/);
@@ -5920,6 +5936,7 @@ test("a child's case leave without a room ends it", async () => {
   try {
     await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
     await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go with leaving all its cases");
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /ушёл из дел по исходу/);
@@ -6437,6 +6454,7 @@ test("a grandchild's outcome under an ended child goes to the nearest live ances
     rec.emit({ type: "session.text.ended", data: { sessionID: "grand", text: "Итог внука." } });
     await delay(50);
     await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "grand");
+    settle(rec, "grand");
     await until(() => !alive(pids.grand), "the grandchild's bridge to go with its leave");
     await until(() => ends(rec).length === 2, "the grandchild's end somewhere");
     await delay(300);
@@ -6496,6 +6514,7 @@ test("a grandchild in another location's instance ends after its parent's revoke
     B.emit({ type: "session.text.ended", data: { sessionID: "grand", text: "Итог внука B." } });
     await delay(50);
     await B.call("iskron_case", { realm: "nks-dev", action: "leave" }, "grand");
+    settle(B, "grand");
     await until(() => !alive(pids.grand), "the grandchild's bridge to go with its leave");
     await until(() => ends(B).length === 1, "the grandchild's end somewhere");
     await delay(300);
@@ -6522,6 +6541,7 @@ test("a lead's end survives a plugin reload: a word about its subagent in the ne
   let next = null;
   try {
     await rec.call("iskron_case", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => ends(rec).length === 1, "the end in the parent");
     first = null;
     await rec.stop();
@@ -6635,6 +6655,7 @@ test("a wake-up batch with the launcher's word steers its lead's turn; others' b
       wakeBatch([said(624, launcher, "поздняя поправка"), said(625, undefined, "поздний сосед")]),
     );
     await until(() => /не вложен — субагент сессии child кончен/.test(rec.said()), "the journal");
+    settle(rec); // the deferred end releases only after the late batch had its journal word
     await delay(300);
     assert.equal(own().length, 2, "nothing laid into the ended lead");
   } finally {
@@ -6725,6 +6746,7 @@ test("a lead child in two cases is not ended by leaving the first — only by le
     assert.ok(alive(childPid), "leaving the first of two cases is no outcome");
     assert.equal(ends(rec).length, 0);
     await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "#80" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go with its last case");
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.match(ends(rec)[0].text, /вышел из дела №80 по исходу/);
@@ -6753,6 +6775,7 @@ test("a lead child in case №77 of two graphs is not ended by leaving it in one
       { realm: "@nks/methodology", action: "leave", room: "#77" },
       "child",
     );
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to go with its last case");
     await until(() => ends(rec).length === 1, "the end in the parent");
   } finally {
@@ -6770,6 +6793,7 @@ const caseRun = async (name, steps, env = {}) => {
     for (const [action, realm, ended] of steps) {
       await rec.call("iskron_case", { realm, action, room: "#77" }, "child");
       if (ended) {
+        settle(rec); // the leave rode in a live turn; its settlement is the end's release
         await until(() => !alive(childPid), `the child's bridge to go with ${action} ${realm}`);
         await until(() => ends(rec).length === 1, "the end in the parent");
       } else if (action === "leave") {
@@ -6927,6 +6951,7 @@ test("two children of one parent in one case: A's word to B wakes only B, neithe
       "only B is woken; A and the parent get nothing",
     );
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "A");
+    settle(rec, "A");
     await until(() => !alive(seat.A.pid), "A's bridge to go with its leave");
     await until(() => ends(rec).length === 1, "A's end in the parent");
     assert.match(ends(rec)[0].text, /sub-1 КОНЧЕН/);
@@ -7026,6 +7051,7 @@ test("marker-child: a reload pauses the child's bridge and the next instance tak
     await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
     assert.equal(saidBy(all()), newPid, "the child's write goes by its own new bridge");
     await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    settle(second);
     await until(() => !alive(newPid), "the child's bridge to go with leaving its errand's case");
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
@@ -7076,6 +7102,7 @@ test("marker-child: a marker laid after the next instance loaded is taken at the
     assert.ok(back, "the child's place asked back by key");
     assert.equal(saidBy(all()), back.pid, "the child's write goes by its own satellite");
     await second.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    settle(second);
     await until(() => ends(second).length === 1, "the end in the parent");
     assert.match(ends(second)[0].text, /вышел из дела №77 по исходу/);
   } finally {
@@ -7241,6 +7268,7 @@ test("OpenCode's «completed» notice of a live lead child's turn gets the plugi
     });
     assert.equal(byTool.length, 1, "the task tool's result is read too");
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => ends(rec).length === 1, "the end in the parent");
     assert.deepEqual(
       await ask({ role: "user", content: [{ type: "text", text: notice("child") }] }),
@@ -7332,6 +7360,7 @@ test("usage: a child's spend reaches its own bridge at its end, before the bridg
     await delay(200);
     assert.equal(usageCalls().length, 0, "the debounce holds both snapshots");
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to end with its leave");
     const child = usageCalls().filter((c) => c.pid === childPid);
     assert.deepEqual(child.at(-1)?.arguments, {
@@ -7396,6 +7425,7 @@ test("usage: the child's end waits for the snapshot in flight, then sends the la
     rec.emit({ type: "session.usage.updated", data: { sessionID: "child", tokens: tok(300) } });
     await delay(20); // the event is taken before the leave, as a turn's events precede its tool call
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to end with its leave", 8000);
     assert.deepEqual(
       usageLines()
@@ -7441,6 +7471,7 @@ async function endedChild(name, more = []) {
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
     await until(() => !alive(childPid), "the child's bridge to end with its leave");
     return { b, rec, rootPid, sent: () => sentCalls(calls) };
   } catch (e) {
