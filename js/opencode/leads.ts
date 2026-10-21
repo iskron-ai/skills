@@ -217,17 +217,22 @@ export function createLeads(d: LeadDoors): Leads {
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke by name before "held"
+      // A leave the previous instance had already accepted is not lost to the reload: the
+      // turn's end it waited for may never reach this instance — its end still comes, with
+      // the freshest text the marker carried (the regression of №1317 [19]; a terminal event
+      // that never arrives anywhere stays an open risk, not this path).
+      if (was.leaving && !l.running) void finish(child, was.leaving);
     },
     fail: async (child, why) => void (await finish(child, why, true, false, "lost")),
     away: async (child) => void (await finish(child, "", true, false, "away")),
     snapshot: (child) => {
       const l = leads.get(child);
-      return { noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last, leaving: l?.leaving };
     },
     handoff(child) {
       const l = leads.get(child);
       leads.delete(child); // neither "ended" nor over: the lead lives in the new folder's instance
-      return { noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last, leaving: l?.leaving };
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     upOf: (child) => leads.get(child)?.up ?? null,

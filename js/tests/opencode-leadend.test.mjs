@@ -175,6 +175,54 @@ test("the end waits for a live turn it had not seen started: «КОНЧЕН» ca
   }
 });
 
+// №1317 [19], находка 2 ревью PR #542 (регрессия начатого пути): принятый pending leave —
+// выход из дела, ждущий конца живого хода, — не должен теряться при остановке плагина:
+// следующий экземпляр заканчивает поручение с последним известным текстом. Случай «событие
+// конца вовсе не приходит» — открытый риск, не политика конца: без события хода конец всё
+// равно приходит, потому что leave уже был принят.
+test("a pending leave accepted before the stop survives the reload: the end still comes", async () => {
+  const { b, rec } = await leadChild("endword-pending-reload");
+  try {
+    await rec.call("iskron_case", { realm: "nks-dev", action: "join", room: "#77" }, "child");
+    turn(rec, "первый ход: осмотр");
+    await until(() => turnWords(rec).length === 1, "the first turn's word");
+    // Живой ход, начала этот экземпляр не видел; выход из дела в нём — pending до конца хода.
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 1, text: "EN-голова закреплена" },
+    });
+    await rec.call("iskron_case", { realm: "nks-dev", action: "leave", room: "№77" }, "child");
+    await delay(300); // слово платформы о последнем деле улеглось — leave принят и ждёт
+  } finally {
+    await rec.stop(); // маркер уходит вниз вместе с держащим мостом
+  }
+  const answer = join(SANDBOX, "endword-pending-reload.answer");
+  writeFileSync(answer, JSON.stringify({ resumed: true, key: "k-sub" }));
+  const second = await plugin(
+    { ...b.env, FB_RESUME: answer },
+    {
+      keepMarker: true,
+      sessions: [
+        { id: "root", location: { directory: PARENT_DIR } },
+        { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
+      ],
+    },
+  );
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    // Принятый pending продолжается сам: конец приходит родителю без нового события хода.
+    await until(() => ends(second).length === 1, "the end after the reload", 8000);
+    assert.match(ends(second)[0].text, /вышел из дела №77/);
+    assert.match(
+      ends(second)[0].text,
+      /EN-голова закреплена/,
+      "the end carries the freshest text the marker had",
+    );
+  } finally {
+    await second.stop();
+  }
+});
+
 // №1237 (3): a late «held» of the child's bridge in the window where the sealed end still
 // ends its run revived the lead — a fresh one, its first turn not yet told — and the queued
 // execution.succeeded woke the parent with «сдал ход — продолжает». The marker shape: the

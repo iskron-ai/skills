@@ -75,6 +75,8 @@ export interface RunEnd {
 export interface Snapshot {
   noted: boolean;
   last?: string;
+  /** A leave accepted and waiting for its turn's end — it must survive a reload (№1317 [19]). */
+  leaving?: string;
 }
 
 export interface LeadDoors {
