@@ -1238,6 +1238,82 @@ export async function startFakeNks(opts = {}) {
           }
           if (st.standingRegisterDelayMs)
             await new Promise((r) => setTimeout(r, st.standingRegisterDelayMs));
+          // Взятие зова (№1317, #8202/#7517): register со spawned_for {invite, room} —
+          // отдельной записи taken нет. Зов должен стоять в очереди графа с тем же делом;
+          // повтор тем же местом тих; чужое живое место с этим зовом — 409
+          // spawned_for_claimed; это место уже под другим зовом — 409 spawned_for_held;
+          // неизвестный зов или чужое дело — 422 spawned_for_unknown.
+          let spawnedClaim = null;
+          if (a.spawned_for && typeof a.spawned_for === "object") {
+            const sf = a.spawned_for;
+            const queue = st.orchestra?.realms?.[slug(a.realm)]?.invites ?? [];
+            const open = queue.find((x) => x.entry_id === sf.invite);
+            if (!open || open.room_id !== sf.room) {
+              st.counts.spawned_for_unknown = (st.counts.spawned_for_unknown ?? 0) + 1;
+              return json(
+                res,
+                200,
+                {
+                  jsonrpc: "2.0",
+                  id: msg.id,
+                  result: refused(
+                    `Отказано (422): spawned_for_unknown: зов ${sf.invite} не открыт или дело не то`,
+                    "Abgelehnt (422).",
+                    { rule: "spawned_for_unknown", status: 422 },
+                  ),
+                },
+                extra,
+              );
+            }
+            const holder = [...st.channels.values()]
+              .flatMap((c) => [...c.places.entries()].map(([r, p]) => ({ realm: r, ...p })))
+              .find((p) => p.spawned_for?.invite === sf.invite);
+            const holderIsMe =
+              holder && holder.name === cleanName(a.name) && holder.realm === slug(a.realm);
+            if (holder && !holderIsMe) {
+              st.counts.spawned_for_claimed = (st.counts.spawned_for_claimed ?? 0) + 1;
+              return json(
+                res,
+                200,
+                {
+                  jsonrpc: "2.0",
+                  id: msg.id,
+                  result: refused(
+                    `Conflict (409): spawned_for_claimed: зов ${sf.invite} несёт живое место «${holder.name}»`,
+                    "Abgelehnt (409).",
+                    {
+                      rule: "spawned_for_claimed",
+                      status: 409,
+                      data: { standing: holder.name },
+                    },
+                  ),
+                },
+                extra,
+              );
+            }
+            const mineChannel = channelOfPlace(a.realm, cleanName(a.name));
+            const mineNow = mineChannel
+              ? st.channels.get(mineChannel)?.places.get(slug(a.realm))
+              : null;
+            if (mineNow?.spawned_for && mineNow.spawned_for.invite !== sf.invite) {
+              st.counts.spawned_for_held = (st.counts.spawned_for_held ?? 0) + 1;
+              return json(
+                res,
+                200,
+                {
+                  jsonrpc: "2.0",
+                  id: msg.id,
+                  result: refused(
+                    `Conflict (409): spawned_for_held: место «${cleanName(a.name)}» уже несет зов ${mineNow.spawned_for.invite}`,
+                    "Abgelehnt (409).",
+                    { rule: "spawned_for_held", status: 409 },
+                  ),
+                },
+                extra,
+              );
+            }
+            spawnedClaim = sf;
+          }
           st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
           st.placeArgs.push({
@@ -1248,9 +1324,14 @@ export async function startFakeNks(opts = {}) {
             // Есть только под futureArgs: снимок этих полей не объявляет (#6064, #6080).
             ...("satellite_of" in a ? { satellite_of: a.satellite_of } : {}),
             ...("locale" in a ? { locale: a.locale } : {}),
+            ...("spawned_for" in a ? { spawned_for: a.spawned_for } : {}),
           });
           const existed = !!channelOfPlace(a.realm, cleanName(a.name));
           const reg = registerPlace(sid, a.realm, a.karta, a.name);
+          if (spawnedClaim) {
+            const p = st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm));
+            if (p) p.spawned_for = spawnedClaim;
+          }
           const seatId = st.registerNoId
             ? null
             : st.channels.get(st.standings.get(sid))?.places.get(slug(a.realm))?.standing_id;
