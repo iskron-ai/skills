@@ -70,7 +70,7 @@ export interface OrchestraNet {
  * from its sessions when it reads the queue — it arrives with the raising slice.
  */
 export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraServe {
-  return async (op, realms) => {
+  return async (op, realms, gone) => {
     if (op === "on") {
       if (!orchestraAdmitted()) return { ok: false, said: w().notAdmitted() };
       // A short rN does not ride REST as is (live probe: 404 "Realm not found") — the door
@@ -96,16 +96,20 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
       };
       const boundary = [...new Set([...flag.realms, ...(n.realms?.() ?? [])])];
       if (!boundary.length) return { ok: true, said: w().stepEmpty() };
-      return stepTact(authDir, n.base(), n.token(), boundary);
+      return stepTact(authDir, n.base(), n.token(), boundary, gone);
     }
     const flag = readOrchestraFlag(authDir);
     const tact = tactStateOf(authDir);
     const lines = Object.entries(tact.realms).map(([realm, t]) =>
       w().tactOut(realm, t.invites, t.signals, t.cursor ?? "", t.at),
     );
+    // Both halves of the boundary are said aloud (#8202): the named one from the flag and
+    // the discovered one — the graphs this machine's live places stand on.
+    const named = flag?.realms ?? [];
+    const found = [...new Set(net?.realms?.() ?? [])].filter((r) => !named.includes(r));
     return {
       ok: true,
-      said: w().status(!!flag?.on, flag?.realms.join(", ") ?? "", lines.join("; ")),
+      said: w().status(!!flag?.on, named.join(", "), found.join(", "), lines.join("; ")),
     };
   };
 }

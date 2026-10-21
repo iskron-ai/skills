@@ -168,6 +168,7 @@ export async function startFakeNks(opts = {}) {
     realmDelayMs: 0, // hold the realm list (iskron_realm list) answer open this long
     realmResult: null, // Override the list result to probe unreadable/structured answers.
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
+    orchestraReadDelayMs: 0, // hold each invites/raised answer open this long (№1317 [19])
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -455,6 +456,7 @@ export async function startFakeNks(opts = {}) {
       if (!byPat && (!st.access || bearer !== st.access))
         return json(res, 401, { error: "unauthorized" });
       st.counts.orchestra_reads++;
+      if (st.orchestraReadDelayMs) await new Promise((r) => setTimeout(r, st.orchestraReadDelayMs));
       const realm = slug(decodeURIComponent(orchestraRoute[1]));
       const state = st.orchestra?.realms?.[realm] ?? null;
       if (state?.refuse) return json(res, state.refuse, { error: "refused" });
@@ -579,8 +581,12 @@ export async function startFakeNks(opts = {}) {
       // Подвисшее соединение (#5380): сокет открыт, но служба больше ничего в него не пишет — ни пинга, ни кадра, ни закрытия.
       if (patch.ws_hang) for (const sock of st.ws) st.hung.add(sock);
       if (patch.case_leave_hang) st.caseLeaveHang = true;
-      // Такт-чтение оркестратора: состояние дверей invites/raised кладётся целиком.
+      // Такт-чтение оркестратора: состояние дверей invites/raised кладётся целиком;
+      // orchestraReadDelayMs держит каждый ответ двери открытым эту долготу — различающий
+      // случай ухода клиента до конца такта (№1317 [19]).
       if (patch.orchestra !== undefined) st.orchestra = patch.orchestra;
+      if (patch.orchestraReadDelayMs !== undefined)
+        st.orchestraReadDelayMs = patch.orchestraReadDelayMs;
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит

@@ -153,6 +153,7 @@ export async function stepTact(
   base: string,
   token: string | null,
   realms: string[],
+  gone?: { gone: boolean },
 ): Promise<OrchestraAnswer> {
   if (!base) return { ok: false, said: w().stepNoApi() };
   let boundary = [...new Set(realms)];
@@ -170,6 +171,10 @@ export async function stepTact(
   const state = readTactState(authDir);
   const reads: TactRead[] = [];
   for (const realm of boundary) {
+    // The caller's refusal was already spoken: a tact that outlives its caller commits
+    // nothing — between realms and again before the write, the cursors stay where they lay
+    // (#8202; the refusal of a left caller is final, №1317 [19]).
+    if (gone?.gone) return { ok: false, said: w().stepGone() };
     try {
       if (!token) throw new Error("no key to the server");
       reads.push(await readRealm(base, token, realm, state.realms[realm]?.cursor ?? null));
@@ -177,6 +182,7 @@ export async function stepTact(
       return { ok: false, said: w().stepReadError(realm, (e as Error).message) };
     }
   }
+  if (gone?.gone) return { ok: false, said: w().stepGone() };
   const at = new Date().toISOString();
   for (const r of reads)
     state.realms[r.realm] = {

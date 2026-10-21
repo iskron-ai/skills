@@ -19,8 +19,13 @@ export interface OrchestraAnswer {
   ok: boolean;
   said: string;
 }
-/** What the door calls: the daemon's answer of one op (orchestra.ts serves it). */
-export type OrchestraServe = (op: OrchestraOp, realms: string[]) => Promise<OrchestraAnswer>;
+/** What the door calls: the daemon's answer of one op (orchestra.ts serves it).
+ * gone.gone: the caller left before the answer — a tact must not commit after its refusal (#8202). */
+export type OrchestraServe = (
+  op: OrchestraOp,
+  realms: string[],
+  gone?: { gone: boolean },
+) => Promise<OrchestraAnswer>;
 
 /**
  * The daemon's local entrance. A connection is one request line `{op, realms}` and one answer
@@ -56,7 +61,13 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
         socket.end(JSON.stringify({ ok: false, said: w().unknownOp(op) }) + "\n");
         return;
       }
-      void serve(op, realms)
+      // The caller's leaving is visible here before the answer: a tact that outlives its
+      // caller must not commit — the client's refusal was final (#8202, №1317 [19]).
+      const gone = { gone: false };
+      socket.on("close", () => {
+        gone.gone = true;
+      });
+      void serve(op, realms, gone)
         .then((a) => socket.end(JSON.stringify(a) + "\n"))
         .catch((e: Error) =>
           socket.end(JSON.stringify({ ok: false, said: w().doorError(e.message) }) + "\n"),

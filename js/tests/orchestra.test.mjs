@@ -338,6 +338,63 @@ test("orchestra: a failed read refuses the whole tact — cursors unmoved, nothi
   }
 });
 
+test("orchestra: a step the caller left is a final refusal — no cursor moves after it", async (t) => {
+  // Различающий случай (№1317 [19], находка 1 ревью PR #542): клиент сдаётся раньше
+  // конца такта — отказ обязан быть окончательным, демон не двигает курсоры после ухода
+  // клиента (#8202). До правки курсор двигался после «отказа», лента терялась.
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseReader(dir, fake);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    await fake.control({
+      orchestra: {
+        realms: {
+          "@nks/nks-dev": {
+            invites: [invite],
+            signals: [signal(1, "raised"), signal(2, "joined")],
+          },
+        },
+      },
+    });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const first = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(first.code, 0, first.err + first.out);
+    assert.match(first.out, /сигналов 2/, first.out);
+    // Новый сигнал приходит с задержкой дверей 6 с: дверь молчит дольше потолка клиента
+    // (5 с) — отказ; демон обязан увидеть уход клиента и не коммитить курсор.
+    await fake.control({
+      orchestra: {
+        realms: {
+          "@nks/nks-dev": {
+            invites: [invite],
+            signals: [signal(1, "raised"), signal(2, "joined"), signal(3, "left")],
+          },
+        },
+      },
+      orchestraReadDelayMs: 6000,
+    });
+    const t0 = Date.now();
+    const refused = await cli(["step", "--auth-dir", dir]).done;
+    assert.ok(Date.now() - t0 < 5_500, "the client gave up inside its own ceiling");
+    assert.notEqual(refused.code, 0, "the caller left — the door's answer is a refusal");
+    // Дольше задержки дверей: даже дочитав, демон курсор не двинул — отказ окончателен.
+    await new Promise((r) => setTimeout(r, 8_000));
+    const kept = JSON.parse(readFileSync(cursorsAt(dir), "utf8"));
+    assert.equal(kept.realms["@nks/nks-dev"].cursor, "c2", "no cursor moved after the caller left");
+    // Лента не потеряна: без задержки следующий такт видит новый сигнал.
+    await fake.control({ orchestraReadDelayMs: 0 });
+    const third = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(third.code, 0, third.err);
+    assert.match(third.out, /сигналов 1/, third.out);
+    assert.match(third.out, /left 1/, third.out);
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
 test("orchestra: step with the orchestrator off is an idle tact — honest and quiet", async () => {
   const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
   const d = await raiseDaemon(dir);
