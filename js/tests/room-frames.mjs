@@ -595,3 +595,49 @@ export const roleCall = (entry_id, cause, seq = MY_KARTA) => {
   f.line.fields = { ...f.line.fields, cause, gone_standing: "@aleksei:gone" };
   return f;
 };
+
+/**
+ * Зов роли seq на мой вопрос (дело №1249): платформенный invite без автора, cause asked,
+ * in_reply_to — мой вопрос, in_reply_to_from — моё место; адрес записи — роль, не я.
+ * withdraws — отзыв этого зова: in_reply_to — само приглашение, его автор — платформа (null).
+ */
+export const roleAsked = (entry_id, seq, in_reply_to, withdraws = false) => {
+  const f = roleInvite(entry_id, seq);
+  if (withdraws) {
+    f.event_kind = "room.withdraw";
+    f.line.kind = "withdraw";
+  } else f.line.fields.cause = "asked";
+  f.line.author = null;
+  f.provenance = { auth: "platform", via: "room" };
+  const from = withdraws ? null : { id: ME_ID, standing: ME, name: "proba" };
+  return { ...f, in_reply_to, in_reply_to_from: from };
+};
+
+/**
+ * Переспрос (#6867) на ключе вопроса в ответ на мой ответ refers_to: in_reply_to_from —
+ * моё место. to — роль без места; standing — место, явно выбранное переспросом.
+ */
+export const reaskRole = (entry_id, refers_to, standing) => {
+  const f = reask(entry_id, MY_KARTA, refers_to);
+  delete f.line.fields.to.standing;
+  if (standing) f.line.fields.to.standing = standing;
+  f.line.done = `ПЕРЕСПРОС-${entry_id}`;
+  return { ...f, in_reply_to_from: { id: ME_ID, standing: ME, name: "proba" } };
+};
+
+/**
+ * Слово человека в деле (#8281): место-автор человеческое по PERSONS_SEAT, а user_karta_seq
+ * нет (две привязанные роли или непривязанная svatantra). fromPerson — provenance.from_person
+ * API; без него у кадра нет ни одного признака человека.
+ */
+export const personWord = (entry_id, fromPerson = true) => {
+  const f = roomFrame("said", {
+    entry_id,
+    key: "said",
+    stack: "defer",
+    author: HUMAN,
+    body: `СЛОВО-ЧЕЛОВЕКА-${entry_id}`,
+  });
+  if (fromPerson) f.provenance.from_person = true;
+  return f;
+};

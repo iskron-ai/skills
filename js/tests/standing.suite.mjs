@@ -65,9 +65,12 @@ import {
   nodeBound,
   nodeOp,
   OTHER_KEY,
+  personWord,
   progress,
   reask,
+  reaskRole,
   replyInFlight,
+  roleAsked,
   roleCall,
   roleInvite,
   roleOnlyAsk,
@@ -6445,6 +6448,86 @@ test("a role invite whose fields carry no karta id is mine by its key and wakes 
   await sendRoom(fake, inv);
   await waitFor(() => wd.out.includes("[96]"), "the role invite, at once", 3000);
   assert.match(wd.out, /зовёт 🚚 Поставщик плитки в дело/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дело №1249: зов роли — запись с явным адресом (роль); in_reply_to_from на мой вопрос
+// адреса мне не даёт (#6574). Зов чужой роли и его отзыв — счёт; зов моей роли — как раньше.
+test("a platform call of another role in reply to my question, and its withdrawal: a count, тебе 0, no call line", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleAsked(97, 99, 90));
+  await sendRoom(fake, roleAsked(98, 99, 97, true));
+  await quietThenNudge(fake, wd, 2200);
+  assert.ok(wd.out.includes("записей 2, тебе 0"), `the count:\n${wd.out}`);
+  assert.ok(!wd.out.includes("зовёт"), `the call of another role reached me:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+test("control: the platform's call of my role in reply to my question comes to me as a call", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleAsked(95, MY_KARTA, 90));
+  await waitFor(() => wd.out.includes("[95]"), "the call of my role, at once", 3000);
+  assert.match(wd.out, /зовёт 🚚 Поставщик плитки в дело/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
+test("the withdrawal of the platform's call of my role is mine: тебе 1 and the withdrawal line", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, roleAsked(98, MY_KARTA, 97, true));
+  await new Promise((r) => setTimeout(r, 2200));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  assert.ok(wd.out.includes("записей 1, тебе 1"), `the count:\n${wd.out}`);
+  assert.match(wd.out, /\[98\] приглашение отозвано/);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #6867: переспрос меняет адресата только явно — to.standing; роль в to адресом не считается,
+// и переспрос на мой ответ приходит мне. С местом соседа в to.standing — не мне.
+test("a re-ask to the role alone in reply to my answer comes to me; with a sibling in to.standing it does not", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, reaskRole(102, 101, SIB));
+  await sendRoom(fake, reaskRole(103, 101));
+  await new Promise((r) => setTimeout(r, 2200));
+  await nudge(fake);
+  await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
+  assert.ok(wd.out.includes("записей 2, тебе 1"), `the count:\n${wd.out}`);
+  assert.ok(wd.out.includes("ПЕРЕСПРОС-103"), `the re-ask to me lost:\n${wd.out}`);
+  assert.ok(!wd.out.includes("ПЕРЕСПРОС-102"), `the re-ask to the sibling leaked:\n${wd.out}`);
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+// #8281: from_person API — первый признак слова человека; без него и без старых — счёт.
+test("a person's word with from_person and no user_karta_seq comes at once as a person's; without it, a count", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "1500" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, personWord(110));
+  await waitFor(() => wd.out.includes("СЛОВО-ЧЕЛОВЕКА-110"), "the person's word at once", 1200);
+  assert.match(wd.out, /^№7 [^\n]*\[110\] [^\n]*— человек/m, wd.out);
+  await sendRoom(fake, personWord(111, false));
+  await quietThenNudge(fake, wd, 2200);
+  assert.ok(wd.out.includes("записей 1, тебе 0"), `the count:\n${wd.out}`);
+  assert.ok(!wd.out.includes("СЛОВО-ЧЕЛОВЕКА-111"), `a word without a sign leaked:\n${wd.out}`);
   wd.proc.kill("SIGKILL");
   await wd.done;
 });

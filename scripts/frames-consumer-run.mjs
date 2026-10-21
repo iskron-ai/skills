@@ -8,8 +8,9 @@
 //
 //   node scripts/frames-consumer-run.mjs <dir> [--bridge <iskron.mjs>] [--json <file>] [--human <label,…>]
 //
-// Persons' seats (label person_*, a person mark in the seat file, or --human) are outside the
-// bridge — their window or bot delivers them: their records are outside-bridge, never pass/fail.
+// Persons' seats (label person_*, a person mark in the seat file, or --human) and a role's
+// unmanned share (no standing_id) are outside the bridge — their window or bot delivers them,
+// no seat holds the share: their records are outside-bridge, never pass/fail.
 //
 // A file: {"standing_id": "...", "standing": "@handle:name", "branch": "<matrix branch>",
 // "messages": [channel_messages in delivery order]}; a message that is a string goes as is.
@@ -27,7 +28,9 @@
 // unparsed (an address the judge does not read) | unjudged | not-covered.
 // Bridge and watchdog run with updates off and a home of their own (mkdtemp): the real
 // ~/.iskron-bridge and OpenCode plugin are never read or written. Ctrl-C cleans up.
-// Exit 0 — no branch failed; 1 — a branch failed; 2 — setup failed.
+// Exit 0 — every branch pass, unjudged or outside-bridge; 1 — a branch failed; 2 — setup
+// failed; 3 — no fail, but a branch not-covered (a kind not checked, no records), unparsed (an
+// address the judge does not read) or rejected (a frame dropped): not an acceptance.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -38,7 +41,7 @@ import { BUILT_BRIDGE } from "../js/tests/built.mjs";
 import { startFakeNks } from "../js/tests/fake-nks.mjs";
 import { PAT } from "../js/tests/ownseat-kit.mjs";
 import { roomFrame } from "../js/tests/room-frames.mjs";
-import { addressHint, branchOutcome, intentFor, judge, readSegment, table, textsOf } from "./frames-consumer-judge.mjs";
+import { addressHint, branchOutcome, intentFor, judge, kindOf, readSegment, table, textsOf } from "./frames-consumer-judge.mjs";
 import { loadSeats, scenarioOf, scenarioTable } from "./frames-consumer-scenarios.mjs";
 
 const BATCH_MS = 400;
@@ -171,9 +174,9 @@ async function runSeat(bridgePath, seat) {
       const got = tapped.slice(before).find(same);
       const texts = textsOf(f);
       const repeat = !!f.id && seat.messages.slice(0, i).some((p) => p?.id === f.id);
-      const obs = { outside: seat.human, delivered: !!got, repeat, stale: f.stale === true, withheld: f.body_withheld === true, addressed: got?.frame?.addressed, texts, shown: texts.filter((t) => segment.includes(t)), ...readSegment(segment, f.entry_id) };
+      const obs = { outside: seat.outside, apiWhole: textsOf(f).length > 0 && f.body_withheld !== true, delivered: !!got, repeat, stale: f.stale === true, withheld: f.body_withheld === true, addressed: got?.frame?.addressed, texts, shown: texts.filter((t) => segment.includes(t)), ...readSegment(segment, f.entry_id) };
       const intent = intentFor(f, seat, seat.messages);
-      const rec = { seat: seat.label, entry: f.entry_id ?? `#${i}`, kind: String(f.event_kind ?? f.kind ?? "?").replace(/^room\./, ""), intent, hint: addressHint(f), ...obs, late: [], segment };
+      const rec = { seat: seat.label, entry: f.entry_id ?? `#${i}`, kind: kindOf(f), intent, hint: addressHint(f), ...obs, late: [], segment };
       lateInto(rec, tail);
       records.push(rec);
     }
@@ -211,21 +214,35 @@ try {
 }
 const { seats, scenarios } = loaded;
 if (!seats.length) fail(2, `no seat files in ${dir}`);
+/** Records of a seat no bridge holds (an unmanned share): listed, not run. */
+const unheld = (seat) =>
+  seat.messages.map((f, i) => ({
+    seat: seat.label, entry: f.entry_id ?? `#${i}`, kind: kindOf(f),
+    intent: null, texts: textsOf(f), shown: [], closing: [], count: null, yours: null, late: [], segment: "",
+    verdict: "outside-bridge", why: [seat.outside],
+  }));
 const byBranch = new Map();
+let setupFailed = false;
 for (const seat of seats) {
   let records = [];
   try {
-    if (seat.messages.length) records = await runSeat(bridgePath, seat);
+    if (seat.unmanned) records = unheld(seat);
+    else if (seat.messages.length) records = await runSeat(bridgePath, seat);
   } catch (e) {
-    fail(2, `${seat.file}: ${e.message}`);
+    // One seat's setup failure is its own outcome; the rest of the set still runs.
+    setupFailed = true;
+    process.stderr.write(`frames-consumer-run: ${seat.file}: ${e.message}\n`);
+    records = [{ seat: seat.label, entry: "—", kind: "—", intent: null, texts: [], shown: [], closing: [], count: null, yours: null, late: [], segment: "", verdict: "setup-error", why: [e.message] }];
   }
   byBranch.set(seat.branch, [...(byBranch.get(seat.branch) ?? []), ...records]);
 }
 const branches = [...byBranch].map(([branch, records]) => ({ branch, outcome: branchOutcome(records), records }));
 const scenarioList = scenarios.size ? branches.map((b) => scenarioOf(b.branch, b.outcome, b.records, scenarios.get(b.branch), seats)) : [];
-const summary = { bridge: bridgePath, scenarios: scenarioList, branches: branches.map((b) => ({ branch: b.branch, outcome: b.outcome, records: b.records.map(({ segment: _s, late: _l, ...r }) => ({ ...r, late: _l.length > 0 })) })) };
+const seatList = seats.map((s) => ({ branch: s.branch, seat: s.label, outside: s.outside || null, expected: s.expected }));
+const summary = { bridge: bridgePath, scenarios: scenarioList, seats: seatList, branches: branches.map((b) => ({ branch: b.branch, outcome: b.outcome, records: b.records.map(({ segment: _s, late: _l, ...r }) => ({ ...r, late: _l.length > 0 })) })) };
 const scenarioText = scenarioList.length ? scenarioTable(scenarioList) + "\n\n" : "";
 process.stdout.write(table(branches) + "\n\n" + scenarioText + JSON.stringify(summary, null, 2) + "\n");
 const jsonOut = arg("--json");
 if (jsonOut) writeFileSync(jsonOut, JSON.stringify({ ...summary, segments: branches.flatMap((b) => b.records.map((r) => ({ seat: r.seat, entry: r.entry, segment: r.segment, late: r.late }))) }, null, 2));
-process.exit(branches.some((b) => b.outcome === "fail") ? 1 : 0);
+const has = (o) => branches.some((b) => b.outcome === o);
+process.exit(setupFailed ? 2 : has("fail") ? 1 : ["not-covered", "unparsed", "rejected"].some(has) ? 3 : 0);

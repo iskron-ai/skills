@@ -5,17 +5,22 @@
 // the api's expectation); manifest.json and README.md at the top are skipped. A message is a
 // wire frame, a string, or a raw channel_messages row (envelope in the `room` column, `body`
 // beside it): a row becomes the frame the socket carries (graph @nks/nks-dev, #4939) — the
-// envelope on top, body, provenance, to_standing_id the receiver. A row has no to_standing:
-// the seat's @-address is taken from any seat object with its id in the scenario's frames.
-import { readdirSync, readFileSync } from "node:fs";
+// envelope on top, body, provenance, and the receiving seat's address delivery adds (wireOf).
+// A row has no to_standing: the seat's @-address is taken from any seat object with its id in
+// the scenario's frames, its role's seq likewise (roleSeqOf).
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const isRow = (m) => obj(m) === m && m.type === undefined && "channel_id" in m;
 const SKIP = new Set(["_scenario.json", "manifest.json"]);
 
-/** The @-address of seat `id` named anywhere in `values`; "" — none. */
+/** A row this seat wrote (from_standing_id): its provenance names the author's address and role seq. */
+const authored = (id, rows) => rows.find((m) => id && obj(m).from_standing_id === id && obj(m.provenance).from_standing);
+
+/** The @-address of seat `id` named anywhere in `values`, else in the provenance of a row it wrote; "" — none. */
 function addressOf(id, values) {
+  const by = String(obj(obj(authored(id, values))?.provenance).from_standing ?? "");
   const stack = [...values];
   while (stack.length) {
     const v = stack.pop();
@@ -25,50 +30,115 @@ function addressOf(id, values) {
       stack.push(...Object.values(v));
     }
   }
-  return "";
+  return by.startsWith("@") ? by : "";
 }
 
-/** The socket frame of a channel_messages row; other messages as they are. */
+/**
+ * The seq of the seat's role in `values` ([rows, …]): an object of the role {id: role, seq}, a
+ * seat object of this seat {id: standing_id | standing: address, karta: {seq}}, else the
+ * from_karta_seq of a row it wrote; null — none named.
+ */
+function roleSeqOf(seat, values) {
+  const stack = [...values];
+  while (stack.length) {
+    const v = stack.pop();
+    if (Array.isArray(v)) stack.push(...v);
+    else if (v && typeof v === "object") {
+      if (seat.role && v.id === seat.role && typeof v.seq === "number") return v.seq;
+      const own = (seat.standing_id && v.id === seat.standing_id) || (seat.standing && v.standing === seat.standing);
+      if (own && typeof obj(v.karta).seq === "number") return v.karta.seq;
+      stack.push(...Object.values(v));
+    }
+  }
+  const seq = obj(obj(authored(seat.standing_id, values[0] ?? [])).provenance).from_karta_seq;
+  return typeof seq === "number" ? seq : null;
+}
+
+/**
+ * The socket frame of a channel_messages row; other messages as they are. Delivery (the api's
+ * MessageFrame, case №1249 [65]) adds the RECEIVING seat's address to the row: to_standing_id,
+ * to_standing, realm, karta_seq — emulated here from the seat file (realm — the case's), never
+ * over a field the row already carries.
+ */
 export function wireOf(m, seat) {
   if (!isRow(m)) return m;
   const env = obj(m.room);
   const frame = { ...env, type: "message", id: m.id, body: m.body, content_type: m.content_type, provenance: m.provenance };
   if (m.in_reply_to != null && env.in_reply_to === undefined) frame.in_reply_to = m.in_reply_to;
-  return { ...frame, to_standing_id: m.standing_id ?? seat.standing_id, ...(seat.standing ? { to_standing: seat.standing } : {}) };
+  const delivery = {
+    to_standing_id: m.standing_id ?? seat.standing_id,
+    to_standing: seat.standing || undefined,
+    realm: obj(env.room).realm,
+    karta_seq: seat.karta_seq ?? undefined,
+  };
+  for (const [k, v] of Object.entries(delivery)) if (v != null && v !== "" && frame[k] === undefined) frame[k] = v;
+  return frame;
 }
 
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
 const seatFiles = (dir) => readdirSync(dir).filter((f) => f.endsWith(".json") && !SKIP.has(f)).sort();
 
-/** A person's seat: --human names it, the seat file marks it, or its label is person_*. */
-const isHuman = (label, s, humans) =>
-  humans.includes(label) || /^person_/.test(label) || obj(s.seat).human === true || obj(s.seat).kind === "person";
+/** A role's unmanned share — only by an explicit sign: standing_id null as a key, or standing.unmanned_share_of_role. */
+const isShare = (s) => ("standing_id" in s && s.standing_id === null) || obj(s.standing).unmanned_share_of_role != null;
+
+/**
+ * Why a seat is outside the bridge, "" — it is not; the reason names its sign. Only structural
+ * signs, never the prose of a description: an unmanned share (isShare); a person's seat —
+ * --human, a seat field (seat.human, seat.kind "person"), a person_* label of the set, or the
+ * seat's role node that the scenario's labels call svatantra (a person's role, 主).
+ */
+function outsideOf(label, s, humans, labels) {
+  if (isShare(s)) return "unmanned share: no seat holds it";
+  const role = String(obj(s.standing).karta ?? obj(s.seat).role_id ?? "");
+  // A label is keyed bracketed (<role_person>, full set) or bare (partial set); its meaning is
+  // the value itself or its .meaning.
+  const entry = obj(labels)[role] ?? obj(labels)[role.replace(/^<(.*)>$/, "$1")];
+  const roleMeaning = String(typeof entry === "string" ? entry : (obj(entry).meaning ?? ""));
+  const sign = humans.includes(label)
+    ? "--human"
+    : obj(s.seat).human === true || obj(s.seat).kind === "person"
+      ? "seat field"
+      : /^person_/.test(label)
+        ? "label person_*"
+        : /\bsvatantra\b/.test(roleMeaning)
+          ? `role ${role}: svatantra`
+          : "";
+  return sign ? `a person's seat (${sign}): its window or bot delivers it` : "";
+}
 
 /** Seats to run and the scenario of each branch (null in a flat directory). */
 export function loadSeats(dir, humans = []) {
-  const subs = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  // statSync follows a symlinked scenario (a subset assembled by links).
+  const subs = readdirSync(dir).filter((n) => statSync(join(dir, n)).isDirectory()).sort();
   const groups = subs.length
     ? subs.map((s) => ({ dir: join(dir, s), branch: s, files: seatFiles(join(dir, s)) }))
     : [{ dir, branch: null, files: seatFiles(dir) }];
   const seats = [];
   const scenarios = new Map();
   for (const g of groups) {
+    let sc = null;
+    if (g.branch)
+      try { sc = readJson(join(g.dir, "_scenario.json")); } catch { /* no scenario file */ }
     const raw = g.files.map((f) => ({ f, s: readJson(join(g.dir, f)) }));
     const rows = raw.flatMap(({ s }) => (Array.isArray(s.messages) ? s.messages : []));
+    const discovery = raw.map(({ s }) => s.discovery ?? null);
     for (const { f, s } of raw) {
       if (!s.standing_id && !s.standing) throw new Error(`${f}: needs standing_id or standing`);
       if (!Array.isArray(s.messages)) throw new Error(`${f}: needs messages[]`);
-      const addr = String(s.standing ?? "").startsWith("@") ? s.standing : addressOf(s.standing_id, rows);
-      const label = obj(s.seat).label ?? s.standing ?? addr;
-      const seat = { standing_id: s.standing_id ?? "", standing: addr, label, human: isHuman(label, s, humans) };
+      // standing: an @-address string, or a seat object (the full set) — then the file names it.
+      const named = typeof s.standing === "string" ? s.standing : "";
+      const addr = named.startsWith("@") ? named : addressOf(s.standing_id, rows);
+      const label = obj(s.seat).label ?? (named || f.replace(/\.json$/, ""));
+      const karta = obj(s.standing).karta; // the seat's role: an id label, or {id, seq}
+      const role = typeof karta === "string" ? karta : String(obj(karta).id ?? "");
+      const outside = outsideOf(label, s, humans, obj(sc).labels);
+      const seat = { standing_id: s.standing_id ?? "", standing: addr, label, role, unmanned: isShare(s), outside };
+      seat.karta_seq = typeof obj(karta).seq === "number" ? karta.seq : roleSeqOf(seat, [rows, discovery, sc]);
       const branch = g.branch ?? s.branch ?? "(no branch)";
-      seats.push({ ...seat, branch, file: join(g.branch ?? "", f), verdict_on_main: s.verdict_on_main, messages: s.messages.map((m) => wireOf(m, seat)) });
+      const own = { file: join(g.branch ?? "", f), verdict_on_main: s.verdict_on_main, expected: s.expected ?? null };
+      seats.push({ ...seat, ...own, branch, messages: s.messages.map((m) => wireOf(m, seat)) });
     }
-    if (g.branch) {
-      let sc = null;
-      try { sc = readJson(join(g.dir, "_scenario.json")); } catch { /* no scenario file */ }
-      scenarios.set(g.branch, sc);
-    }
+    if (g.branch) scenarios.set(g.branch, sc);
   }
   return { seats, scenarios };
 }
@@ -101,6 +171,8 @@ export function scenarioOf(branch, outcome, all, scenario, seats) {
     lost: unaddressed.filter((r) => r.verdict === "pass").length,
     leaked_through: [...leaks, ...unaddressed].filter((r) => r.verdict === "fail").length,
     withheld_from_addressee: withheld.length,
+    // The api gave the text whole to a record that names no seat; the bridge printed a count.
+    whole_as_count: records.filter((r) => r.apiWhole && r.intent === null && r.verdict === "unjudged" && !r.shown.length).length,
     rejected: records.filter((r) => r.verdict === "rejected").length,
     outside_bridge: all.length - records.length,
     bridge_match: ["pass", "unjudged", "not-covered", "outside-bridge"].includes(outcome),
@@ -109,9 +181,9 @@ export function scenarioOf(branch, outcome, all, scenario, seats) {
 
 /** The scenario table: bridge outcome, api expectation, match, rescues. */
 export function scenarioTable(list) {
-  const rows = [["scenario", "bridge", "api main", "api seen", "match api", "leaks", "rescued", "unaddressed", "lost", "let through", "withheld→addr", "rejected", "outside"]];
+  const rows = [["scenario", "bridge", "api main", "api seen", "match api", "leaks", "rescued", "unaddressed", "lost", "let through", "withheld→addr", "whole→count", "rejected", "outside"]];
   for (const s of list)
-    rows.push([s.branch, s.bridge, s.api_expected ?? "—", s.api_seen, s.api_match === null ? "—" : s.api_match ? "yes" : "NO", s.leaks, s.rescued, s.unaddressed, s.lost, s.leaked_through, s.withheld_from_addressee, s.rejected, s.outside_bridge]);
+    rows.push([s.branch, s.bridge, s.api_expected ?? "—", s.api_seen, s.api_match === null ? "—" : s.api_match ? "yes" : "NO", s.leaks, s.rescued, s.unaddressed, s.lost, s.leaked_through, s.withheld_from_addressee, s.whole_as_count, s.rejected, s.outside_bridge]);
   const w = rows[0].map((_, i) => Math.max(...rows.map((r) => String(r[i]).length)));
   return rows.map((r) => r.map((c, i) => String(c).padEnd(w[i])).join("  ")).join("\n");
 }

@@ -86,9 +86,11 @@ import {
   MY_KARTA,
   OTHER_KEY,
   ownBody,
+  personWord,
   PLATFORM,
   progress,
   replyInFlight,
+  roleAsked,
   roleInvite,
   roleOnlyAsk,
   roomFrame,
@@ -8565,6 +8567,34 @@ test("records to a sibling seat of my role and account prompt nothing: one count
   );
   for (const s of hidden)
     assert.ok(!prompts.rode.includes(s), `«${s}» reached another seat:\n${prompts.rode}`);
+});
+
+// Дело №1249: зов чужой роли на мой вопрос и его отзыв — адрес записи роль, не я (#6574).
+test("a platform call of another role in reply to my question, and its withdrawal, prompt nothing: тебе 0", async () => {
+  const calls = [roleAsked(97, 99, 90), roleAsked(98, 99, 97, true)];
+  const prompts = await asidePrompts("role-asked", calls, 0);
+  assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
+  assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
+  assert.doesNotMatch(prompts.rode, /зовёт/);
+});
+
+// #8281: from_person API — первый признак слова человека; без него и без старых — счёт.
+test("a person's word with from_person and no user_karta_seq steers as a person's; without it, a count", async () => {
+  const prompts = await asidePrompts("from-person", [personWord(110), personWord(111, false)], 1);
+  assert.equal(prompts.length, 1, JSON.stringify(prompts.map((p) => p.text)));
+  assert.equal(prompts[0].delivery, "steer");
+  assert.match(prompts[0].text, /^№7 «Стенд» \[110\] [^\n]* — человек\n/);
+  assert.match(prompts[0].text, /СЛОВО-ЧЕЛОВЕКА-110$/);
+  assert.match(prompts.rode, /записей 1, тебе 0/);
+  assert.doesNotMatch(prompts.rode, /СЛОВО-ЧЕЛОВЕКА-111/);
+});
+
+// Дело №1249, #6974: снятие зова моей роли доходит месту роли, выбранному API, — как сам зов.
+test("the withdrawal of the platform's call of my role reaches me: тебе 1 and the withdrawal line", async () => {
+  const prompts = await asidePrompts("role-withdrawn", [roleAsked(98, MY_KARTA, 97, true)], 1);
+  const text = [...prompts.map((p) => p.text), prompts.rode].join("\n");
+  assert.match(text, /записей 1, тебе 1/);
+  assert.match(text, /\[98\] приглашение отозвано/);
 });
 
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
