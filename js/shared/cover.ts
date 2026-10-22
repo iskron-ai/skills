@@ -6,8 +6,9 @@
 // form whose keys stand in the front matter is the one read, and its language is the
 // repository's; keys of two forms at once are an ambiguity. Deliveries may share a form's
 // keys, so the stamp tells whose cover it is: the delivery's own stamp, or none — the keys
-// decide; only another delivery's stamp (the delivery's stampShape, none of its own) — a
-// foreign cover, and nothing is said. Another delivery's keys are named nowhere.
+// decide; only another delivery's stamp (the delivery's stampShape, which leaves out the
+// delivery's own older stamps, and none of its current ones) — a foreign cover, and nothing is
+// said. Another delivery's keys are named nowhere.
 //
 // The graph is the value's working graph by the rule of shared/graphslot.ts (#8066): one head at
 // its start, prose after it is no candidate, equal heads or doubt are ambiguity; the joining
@@ -31,11 +32,11 @@ export interface CoverForm {
   readonly graphJoins?: readonly string[];
   readonly role: string;
   readonly roleQuotes: readonly [string, string];
-  /** The delivery's alignment stamp in this language. */
+  /** The delivery's current alignment stamp in this language. */
   readonly stamp: RegExp;
 }
 
-/** A delivery's cover: the file, its forms by language, the shape of any delivery's stamp. */
+/** A delivery's cover: the file, its forms by language, the shape of another delivery's stamp. */
 export interface CoverKeys {
   readonly file: string;
   readonly forms: Readonly<Record<string, CoverForm>>;

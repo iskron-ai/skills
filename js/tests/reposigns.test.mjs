@@ -24,7 +24,8 @@ const STAMP = "*(iskronify: контракт `27`, штамп `2026-10-16` — �
 // The English form of the same cover (#8497); the neighbouring delivery shares its keys.
 const COVER_EN = "---\n'Graph': '@tester/work (r1)'\n'Agent role': '#7 \"agent\"'\n---\n";
 const STAMP_EN = "*(iskronify: contract `29`, stamp `2026-10-22` — …)*\n";
-const STAMP_FOREIGN = "*(verstak align: contract 4, stamped 2026-10-16)*\n";
+const STAMP_FOREIGN = "*(neighbour align: contract 4, stamped 2026-10-16)*\n";
+const STAMP_OLD = "*(iskronify: контракт `5` — перезапусти, когда …)*\n";
 const session = (command) =>
   JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } });
 // Start hooks as iskronify projects them: the template's English form and Russian projections.
@@ -96,6 +97,11 @@ const CASES = [
     name: "another delivery's stamp without a cover",
     spec: { git: "dir", agents: `# x\n${STAMP_FOREIGN}` },
     verdicts: all("foreign"),
+  },
+  {
+    name: "an older stamp of this delivery is no foreign stamp",
+    spec: { git: "dir", agents: COVER + STAMP_OLD },
+    verdicts: all("partial"),
   },
   {
     name: "another delivery's stamp beside this delivery's start hook",

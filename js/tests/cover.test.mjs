@@ -20,11 +20,13 @@ const EN = {
       graph: "Graph",
       role: "Agent role",
       roleQuotes: ['"', '"'],
-      stamp: /\(verstak align:\s*contract\s*\d+/,
+      stamp: /\(neighbour align:\s*contract\s*\d+/,
     },
   },
-  stampShape: /\([^()\n]*?:\s*contract\s*\d+/,
+  stampShape: /^[\s*_]*\((?!neighbour align:)[^()\n]*?:\s*contract\s*\d+/m,
 };
+/** Штамп другой поставки — нейтральное имя: в git бренда соседней поставки нет. */
+const FOREIGN = "*(neighbour align: contract 4, stamped 2026-10-16)*";
 const seat = (yaml, keys) => seatOfPairs(frontMatter(`---\n${yaml}\n---\n# x\n`), keys);
 const ru = (role, graph = "'@nks/nks-dev (r5)'") =>
   seat(`'Граф': ${graph}\n'Роль агента': ${role}`, undefined);
@@ -93,26 +95,34 @@ test("язык формы — язык репозитория; ключи дву
 test("штамп: свой на любом языке, чужой по виду штампа, нет — null", () => {
   assert.equal(stampOf("*(iskronify: контракт `29`, штамп `2026-10-20` — …)*"), "own");
   assert.equal(stampOf("*(iskronify: contract `29`, stamp `2026-10-20` — …)*"), "own");
-  assert.equal(stampOf("*(verstak align: contract 4, stamped 2026-10-16)*"), "foreign");
-  assert.equal(stampOf("*(verstakify: contract 3, stamp 2026-09-01)*"), "foreign");
+  assert.equal(stampOf(`# agents\n\n${FOREIGN}\n`), "foreign");
+  assert.equal(stampOf("(otherkit: contract 3, stamp 2026-09-01)"), "foreign");
   assert.equal(stampOf("# agents\n"), null);
-  assert.equal(stampOf("*(verstak align: contract 4, stamped …)*", EN), "own");
+  assert.equal(stampOf(FOREIGN, EN), "own");
+});
+
+test("свои штампы прежних шаблонов и скобка в прозе — не чужой штамп", () => {
+  // Дословно из истории skills/iskronify/references/agents-template.md.
+  assert.equal(stampOf("*(iskronify: контракт `5` — перезапусти, когда …)*"), null);
+  assert.equal(stampOf("*(iskronify: contract `2026-08-30` — re-run when …)*"), null);
+  const prose = "Правило держит договор (см. там: контракт 3 и раздел «Ритм»).\n";
+  assert.equal(stampOf(prose), null, "внутри строки прозы — не штамп");
 });
 
 test("обложка с чужим штампом — чужая поставка, даже при ключах своей формы", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "cover-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const body = `---\n'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}\n---\n`;
-  writeFileSync(
-    join(dir, "AGENTS.md"),
-    `${body}*(verstak align: contract 4, stamped 2026-10-16)*\n`,
-  );
+  writeFileSync(join(dir, "AGENTS.md"), `${body}${FOREIGN}\n`);
   assert.deepEqual(readCover(dir), { foreign: true });
   assert.deepEqual(readCover(dir, EN), NKS_931, "своя поставка садится по той же обложке");
   writeFileSync(join(dir, "AGENTS.md"), `${body}*(iskronify: contract 29, stamp 2026-10-22)*\n`);
   assert.deepEqual(readCover(dir), NKS_931);
   writeFileSync(join(dir, "AGENTS.md"), body);
   assert.deepEqual(readCover(dir), NKS_931, "штампа нет — решают ключи");
+  const ruBody = `---\n'Граф': ${VERSTAK_GRAPH}\n'Роль агента': '#931 «dev»'\n---\n`;
+  writeFileSync(join(dir, "AGENTS.md"), `${ruBody}*(iskronify: контракт \`5\` — перезапусти)*\n`);
+  assert.deepEqual(readCover(dir), NKS_931, "прежний свой штамп — посадка, как на main");
 });
 
 test("F5: короткий граф против слага не считается соответствием по одной роли", () => {
