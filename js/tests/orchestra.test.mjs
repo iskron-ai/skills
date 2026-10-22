@@ -438,7 +438,8 @@ test("orchestra: a short rN realm is refused at the boundary — it does not rid
     const on = await cli(["on", "--realm", "r5", "--auth-dir", dir]).done;
     assert.equal(on.code, 1, on.out);
     assert.match(on.err, /r5/, on.err);
-    assert.match(on.err, /@owner\/slug/, on.err);
+    assert.match(on.err, /полным адресом|full address/, on.err);
+    assert.doesNotMatch(on.err, /@owner/, on.err);
     // the flag stays empty: nothing half-accepted lies beside the grant
     const st = await cli(["status", "--auth-dir", dir]).done;
     assert.doesNotMatch(st.out, /r5/, st.out);

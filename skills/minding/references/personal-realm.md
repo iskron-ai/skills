@@ -80,7 +80,7 @@ iskron_add_karta(realm=…, name="🤖 Ассистент", motivation="запо
 ```
 iskron_add_phenomenon(realm=…, name="🗂 <имя графа>", given_as="ding",
   description=<ДЛЯ ЧЕГО он и когда маршрутизировать вопрос сюда>,
-  attrs={"key": true, "address": "@owner/slug", "state": "live|dormant"},
+  attrs={"key": true, "address": "<адрес графа>", "state": "live|dormant"},
   arrows=[{arrow_type:"context", target:<контур>, volitive_mode:…}],
   epistemic_mode="pratyakshita", ontic_mode="vartamana", volitive_mode="upeksha")
 ```
