@@ -13,17 +13,39 @@ function langOfServer(url) {
 var COVER = {
   /** Файл обложки в каталоге сессии. */
   file: "AGENTS.md",
-  /** Слот графа: значение начинается с @owner/slug или rN. */
-  graph: "Граф",
+  /** Формы обложки по языку репозитория: действует та, чьи ключи стоят во фронтматтере. */
+  forms: {
+    ru: {
+      /** Слот графа: значение начинается с полного адреса графа (хэндл владельца/slug) или rN. */
+      graph: "Граф",
+      /**
+       * Слова, которыми в слоте графа перечисляют равноправные рабочие графы («@a/x или @b/y» —
+       * неоднозначно); граф за прозой (указатель на методологию, «не используется») — не рабочий (#8066).
+       */
+      graphJoins: ["или", "либо", "и", "or", "and"],
+      /** Слот роли агента: значение начинается с ровно одной ссылки «#N «имя»». */
+      role: "Роль агента",
+      /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
+      roleQuotes: ["«", "»"],
+      /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
+      stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+    },
+    en: {
+      graph: "Graph",
+      graphJoins: ["or", "and"],
+      role: "Agent role",
+      /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
+      roleQuotes: ['"', '"'],
+      stamp: /\(iskronify:\s*contract\s*`?\d+`?\s*,\s*stamp/
+    }
+  },
   /**
-   * Слова, которыми в слоте графа перечисляют равноправные рабочие графы («@a/x или @b/y» —
-   * неоднозначно); граф за прозой (указатель на методологию, «не используется») — не рабочий (#8066).
+   * Штамп выравнивания другой поставки: строка, начатая «(<кто>: contract|контракт N», где кто — не
+   * iskronify (свои штампы прежних шаблонов — без «штамп» или с датой вместо числа — не чужие).
+   * Он без своего — обложка чужой поставки, даже при совпавших ключах английской формы; та же
+   * скобка внутри строки прозы — не штамп.
    */
-  graphJoins: ["или", "либо", "и", "or", "and"],
-  /** Слот роли агента: значение начинается с ровно одной ссылки «#N «имя»». */
-  role: "Роль агента",
-  /** Кавычки имени в ссылке роли: открывающая и закрывающая (у соседней поставки могут совпадать). */
-  roleQuotes: ["«", "»"]
+  stampShape: /^[\s*_]*\((?!iskronify:)[^()\n]*?:\s*(?:contract|контракт)\s*`?\d+/m
 };
 
 // js/delivery/patterns/launch.ts
@@ -49,9 +71,7 @@ var REPO_SIGNS = {
    */
   startMark: /\biskron door\b|двер[иь]\s+iskron\b/i,
   /** Плагин ритуалов OpenCode, который ставит iskronify. */
-  rituals: ".opencode/plugins/iskron-rituals.js",
-  /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
-  stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+  rituals: ".opencode/plugins/iskron-rituals.js"
 };
 
 // js/delivery/product.ts
@@ -93,7 +113,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.19.0";
+var VERSION = "7.20.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -512,7 +532,7 @@ var OPENCODE_KEEP = {
     revokedMoved: (name) => `Искрон: ${name} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`,
     twinUp: (dir) => `Искрон: экземпляр каталога ${dir} поднят заново — место вернул он`,
     markerUntaken: (seconds) => `за ${seconds} с маркер его мест никто не взял`,
-    unloaded: (dir, named, why) => `Искрон: каталог ${dir} выгружен с местом (${named}) и не поднят — ${why}`,
+    unloaded: (dir, named2, why) => `Искрон: каталог ${dir} выгружен с местом (${named2}) и не поднят — ${why}`,
     thisSession: () => "этой сессии",
     seatLost: (key, dir, why) => `Искрон: место ${key} отпущено — экземпляр плагина каталога ${dir} выгружен и не поднялся (${why}). Верни место: iskron_stand.`,
     movedAway: (session, dir) => `Искрон: сессия ${session} перенесена в ${dir} — её место отпускаю экземпляру той папки`,
@@ -554,7 +574,7 @@ var OPENCODE_KEEP = {
     revokedMoved: (name) => `Iskron: ${name} is a subagent ended by the parent's move: the previous instance put its bridge down and revoked its seat, the outcome reached the parent as the word «moved»; no revoke is needed and none was sent.`,
     twinUp: (dir) => `Iskron: the instance of directory ${dir} was raised again — it returned the seat`,
     markerUntaken: (seconds) => `nobody took the marker of its seats within ${seconds} s`,
-    unloaded: (dir, named, why) => `Iskron: directory ${dir} was unloaded with a seat (${named}) and not raised — ${why}`,
+    unloaded: (dir, named2, why) => `Iskron: directory ${dir} was unloaded with a seat (${named2}) and not raised — ${why}`,
     thisSession: () => "of this session",
     seatLost: (key, dir, why) => `Iskron: the seat ${key} was released — the plugin instance of directory ${dir} was unloaded and did not come up (${why}). Return the seat: iskron_stand.`,
     movedAway: (session, dir) => `Iskron: session ${session} was moved to ${dir} — releasing its seat to that folder's instance`,
@@ -732,7 +752,9 @@ var ROOT_SEAT = {
     noFile: (file) => `нет ${file}`,
     noFrontmatter: (file) => `в ${file} нет YAML-фронтматтера обложки`,
     noKey: (file, key) => `в обложке ${file} нет слота '${key}'`,
-    noGraph: (file, key) => `'${key}' в ${file} не начинается с @owner/slug или rN`,
+    noForm: (file, keys) => `в обложке ${file} нет ни одного из слотов ${keys}`,
+    manyForms: (file, keys) => `обложка ${file} смешивает языки: ${keys} сразу`,
+    noGraph: (file, key) => `'${key}' в ${file} не начинается с полного адреса графа или rN`,
     manyGraphs: (file, key, list) => `'${key}' в ${file} называет несколько графов: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
@@ -755,7 +777,9 @@ var ROOT_SEAT = {
     noFile: (file) => `there is no ${file}`,
     noFrontmatter: (file) => `${file} carries no YAML front matter`,
     noKey: (file, key) => `the front matter of ${file} has no '${key}' slot`,
-    noGraph: (file, key) => `'${key}' in ${file} does not start with @owner/slug or rN`,
+    noForm: (file, keys) => `the front matter of ${file} has none of the slots ${keys}`,
+    manyForms: (file, keys) => `the cover of ${file} mixes languages: ${keys} at once`,
+    noGraph: (file, key) => `'${key}' in ${file} does not start with a full graph address or rN`,
     manyGraphs: (file, key, list) => `'${key}' in ${file} names several graphs: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
     manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
@@ -873,7 +897,7 @@ function classifyOrigin(frame, myKarta) {
   const noAuthor = p.via === "room" && p.from_karta_seq == null && !p.from_standing;
   if (p.via === "platform" || p.auth === "none" || p.auth === "platform" || noAuthor)
     return "platform";
-  if (p.as_person === true) return "human";
+  if (p.from_person === true || p.as_person === true) return "human";
   if (p.from_karta_seq != null && p.user_karta_seq != null && p.from_karta_seq === p.user_karta_seq)
     return "human";
   if (myKarta != null && p.from_karta_seq != null && String(p.from_karta_seq) === String(myKarta))
@@ -911,22 +935,21 @@ function myRole(frame, fields) {
   const mine = str(frame.realm) || str(obj(frame.room).realm);
   return !theirs || !mine || theirs === mine;
 }
-function inviteMine(frame, kind) {
+function inviteMine(frame) {
   const fields = obj(obj(frame.line).fields);
   const target = after(str(obj(frame.line).key), "invite:");
   if (target && mineOf(frame).includes(target)) return true;
-  if (kind !== "invite") return false;
   const seat = Object.keys(obj(fields.standing)).length > 0 || !!str(fields.standing);
   const roleId = str(obj(fields.karta).id) || (seat ? "" : target);
   return (!target || target === roleId) && myRole(frame, fields);
 }
-function seatIs(frame, ...named) {
+function seatIs(frame, ...named2) {
   const myId = str(frame.to_standing_id);
   const myAddr = str(frame.to_standing);
   if (!myId && !myAddr) return null;
-  const id = named.map((v) => str(obj(v).id)).find(Boolean);
+  const id = named2.map((v) => str(obj(v).id)).find(Boolean);
   if (id && myId) return id === myId;
-  const addr = named.map((v) => addresseeOf(v)?.addr.filter((a) => a.startsWith("@"))[0]).find(Boolean);
+  const addr = named2.map((v) => addresseeOf(v)?.addr.filter((a) => a.startsWith("@"))[0]).find(Boolean);
   if (addr) return addr === myAddr;
   return id ? false : null;
 }
@@ -1259,9 +1282,9 @@ function roomKind(frame) {
     };
   const word2 = kind === "said" || kind === "body";
   const withheld = word2 && f.body_withheld === true;
-  const named = word2 ? wordSeats(f) : [];
-  const to = word2 ? named.map(addresseeOf).find(Boolean) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
-  if (to && (withheld || seatIs(f, ...named) === false)) {
+  const named2 = word2 ? wordSeats(f) : [];
+  const to = word2 ? named2.map(addresseeOf).find(Boolean) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
+  if (to && (withheld || seatIs(f, ...named2) === false)) {
     const counts = kind === "said";
     const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);
@@ -1281,7 +1304,7 @@ function roomKind(frame) {
     const mayI = !!myId && may.includes(myId);
     text2 += "; " + (mayI ? W5.closingMay(need(values.entry_id)) : W5.closingNot());
   }
-  const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f, kind) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
+  const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
   return { kind, rule: phase ? "batch" : stack, words: text2, author, phase, known: true };
 }
@@ -1301,6 +1324,13 @@ function seatOf(frame, kind) {
   const f = frame;
   if (kind === "ask" && byMe(f)) return false;
   return seatIs(f, ...seatsOf(f, kind));
+}
+var named = (v) => typeof v === "string" ? !!v : Object.keys(obj(v)).length > 0;
+function namesAddress(f, kind) {
+  const fields = obj(obj(f.line).fields);
+  const to = kind === "ask" ? obj(fields.to).standing : fields.to;
+  if (named(to) || named(f.addressee)) return true;
+  return (kind === "invite" || kind === "withdraw") && (named(fields.standing) || named(fields.karta));
 }
 
 // js/shared/addressed.ts
@@ -1361,9 +1391,10 @@ function addressedToMine(frame) {
     if (f.addressed === true || seat === true || seat === null && str(obj(obj(word2.line).fields).kind) === "important" || addressedWords.has(wordKeyOf(frame)))
       return true;
   } else if (
-    // A word to me, a reply to my record (#5954), marked important; a word in flight
-    // is remembered, since its body comes as a second phase without these marks.
-    seat === true || seat === null && (seatIs(f, f.in_reply_to_from) === true || str(f.said) === "important" || str(fields.kind) === "important")
+    // A word to me, a reply to my record without an address of its own (#5954, #6574),
+    // marked important; a word in flight is remembered, since its body comes as a second
+    // phase without these marks.
+    seat === true || seat === null && (seatIs(f, f.in_reply_to_from) === true && !namesAddress(f, rk?.kind ?? "") || str(f.said) === "important" || str(fields.kind) === "important")
   ) {
     if (rk?.phase === "pending") rememberWord(wordKeyOf(frame));
     return true;
@@ -1372,7 +1403,7 @@ function addressedToMine(frame) {
   if (closed && rk?.kind === "progress") return true;
   if (closed) f.closes_mine = closed;
   if (rk && ASK_CLOSERS.has(rk.kind) && f.addressed === true) return true;
-  if (rk?.kind === "invite" || rk?.kind === "withdraw") return inviteMine(f, rk.kind);
+  if (rk?.kind === "invite" || rk?.kind === "withdraw") return inviteMine(f);
   if (rk && LOUD_KINDS.has(rk.kind)) return true;
   if (rk && (ASK_KINDS.has(rk.kind) || rk.kind === "retract") || askFromPerson(f)) return false;
   return (frame.origin ?? classifyOrigin(frame, str(f.karta_seq) || void 0)) === "human";
@@ -1416,11 +1447,11 @@ function eventKeyOf(frame) {
   return evOf(body.event_id);
 }
 var asText = (frame) => addressedToMine(frame);
-function deliveryKeys(frame, named = false) {
+function deliveryKeys(frame, named2 = false) {
   const id = typeof frame?.id === "string" ? frame.id : "";
   const ev = frame && asText(frame) ? eventKeyOf(frame) : "";
   const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
-  return [id, mark && (named ? `c${mark}` : mark)].filter(Boolean);
+  return [id, mark && (named2 ? `c${mark}` : mark)].filter(Boolean);
 }
 function eventIn(frame, has) {
   const ev = frame ? eventKeyOf(frame) : "";
@@ -2673,7 +2704,8 @@ var entryOf = (e) => ({
     of: e.of ?? null,
     ...e.noted ? { noted: true } : {},
     ...e.name ? { name: e.name } : {},
-    ...e.last ? { last: e.last } : {}
+    ...e.last ? { last: e.last } : {},
+    ...e.leaving ? { leaving: e.leaving } : {}
   } : {}
 });
 
@@ -2923,8 +2955,8 @@ function createTwins(ctx, home, d) {
       why = W5.markerUntaken(Math.round(WAKE_MS / 1e3));
     }
     if (gone) return;
-    const named = roots.map((e) => e.key ?? e.session).join(", ");
-    d.say(W5.unloaded(h.directory, named, why), "error");
+    const named2 = roots.map((e) => e.key ?? e.session).join(", ");
+    d.say(W5.unloaded(h.directory, named2, why), "error");
     for (const e of roots)
       d.lost(e.session, W5.seatLost(e.key ?? W5.thisSession(), h.directory, why));
   }
@@ -2999,6 +3031,7 @@ function createChildren(d) {
     for (const s of held) {
       const was = d.leads.snapshot(s.session);
       [s.noted, s.last] = [was.noted, was.last];
+      if (was.leaving) s.leaving = was.leaving;
     }
     await Promise.all(
       held.map(
@@ -3791,12 +3824,18 @@ function createLeads(d) {
     return true;
   }
   return {
+    dispatched(child, name, args) {
+      const l = leads.get(child);
+      if (!l) return;
+      l.running = true;
+      const room = name === tool("case") ? roomNo(args.room) : null;
+      if (room !== null && (args.action === "join" || args.action === "leave")) l.moves++;
+    },
     called(child, name, args, place) {
       if (gone.has(child)) return;
       const l = standsBy(name, args) ? stood(child) : leads.get(child);
       if (!touch(l, place)) return;
       const room = name === tool("case") ? roomNo(args.room) : null;
-      if (room !== null && (args.action === "join" || args.action === "leave")) l.moves++;
       if (args.action !== "leave") return;
       if (name === tool("channel")) leave(child, l, W3().leftSeat());
       else if (room === "") leave(child, l, W3().leftCases());
@@ -3834,30 +3873,32 @@ function createLeads(d) {
         return true;
       }
       if (gone.has(child)) return true;
+      if (over.has(child)) return true;
       if (kind === "held") {
         touch(stood(child), place);
         return false;
       }
-      if (over.has(child)) return true;
       if (kind === "frame") touch(leads.get(child), place);
       return false;
     },
     back(child, was) {
+      if (over.has(child)) return;
       const l = stood(child, false);
       if (was.noted) l.noted = true;
       if (was.last) l.last ??= was.last;
       if (was.name && was.of) l.place ??= { ...was.of, name: was.name };
+      if (was.leaving && !l.running) void finish(child, was.leaving);
     },
     fail: async (child, why) => void await finish(child, why, true, false, "lost"),
     away: async (child) => void await finish(child, "", true, false, "away"),
     snapshot: (child) => {
       const l = leads.get(child);
-      return { noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last, leaving: l?.leaving };
     },
     handoff(child) {
       const l = leads.get(child);
       leads.delete(child);
-      return { noted: !!l?.noted, last: l?.last };
+      return { noted: !!l?.noted, last: l?.last, leaving: l?.leaving };
     },
     nameOf: (child) => leads.get(child)?.place?.name ?? (leads.has(child) ? child : null),
     upOf: (child) => leads.get(child)?.up ?? null,
@@ -4851,6 +4892,8 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
     }
     seats.guard(sessionID, service);
     const epoch = seats.epoch(sessionID);
+    if (!service && slot.child && slot.satelliteOf && slot.session === sessionID)
+      leads.dispatched(sessionID, name, args);
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
     const out2 = seats.answer(
       slot,
@@ -5555,6 +5598,21 @@ ${line.trim()}`);
   }
   return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
 }
+var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
+function stampOf2(text2, cover = COVER) {
+  if (Object.values(cover.forms).some((f) => f.stamp.test(text2))) return "own";
+  return cover.stampShape.test(text2) ? "foreign" : null;
+}
+var hasForm = (pairs, cover = COVER) => formsIn(pairs, cover).length > 0;
+function formOf2(pairs, cover = COVER) {
+  const W5 = words(ROOT_SEAT);
+  const listed = (forms) => forms.map((f) => `'${f.graph}'`).join(", ");
+  const found = formsIn(pairs, cover);
+  if (found.length > 1) return { why: W5.manyForms(cover.file, listed(found.map(([, f]) => f))) };
+  const [lang2, form] = found[0] ?? [];
+  if (!lang2 || !form) return { why: W5.noForm(cover.file, listed(Object.values(cover.forms))) };
+  return { lang: lang2, form };
+}
 var LEAD2 = /^[\s`'"<]*/;
 var esc2 = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var roleRef = (q, flags = "") => new RegExp(
@@ -5564,36 +5622,40 @@ var roleRef = (q, flags = "") => new RegExp(
 var distinct = (re, v) => [
   ...new Set([...v.matchAll(re)].map((m) => m[1]))
 ];
-function seatOfPairs(pairs, keys = COVER) {
+function seatOfPairs(pairs, cover = COVER) {
   const W5 = words(ROOT_SEAT);
+  const of = formOf2(pairs, cover);
+  if ("why" in of) return of;
+  const keys = of.form;
   const graph = pairs.get(keys.graph)?.trim();
-  if (!graph) return { why: W5.noKey(keys.file, keys.graph) };
+  if (!graph) return { why: W5.noKey(cover.file, keys.graph) };
   const role2 = pairs.get(keys.role)?.trim();
-  if (!role2) return { why: W5.noKey(keys.file, keys.role) };
+  if (!role2) return { why: W5.noKey(cover.file, keys.role) };
   const g = graphOfSlot(graph.replace(LEAD2, ""), keys.graphJoins ?? []);
-  if (!g) return { why: W5.noGraph(keys.file, keys.graph) };
-  if ("many" in g) return { why: W5.manyGraphs(keys.file, keys.graph, g.many.join(", ")) };
+  if (!g) return { why: W5.noGraph(cover.file, keys.graph) };
+  if ("many" in g) return { why: W5.manyGraphs(cover.file, keys.graph, g.many.join(", ")) };
   const r = role2.replace(LEAD2, "");
   const roles = distinct(roleRef(keys.roleQuotes, "g"), r);
   if (roles.length > 1)
-    return { why: W5.manyRoles(keys.file, keys.role, roles.map((n2) => `#${n2}`).join(", ")) };
+    return { why: W5.manyRoles(cover.file, keys.role, roles.map((n2) => `#${n2}`).join(", ")) };
   const first = roleRef(keys.roleQuotes).exec(r);
   if (!first)
     return {
-      why: W5.noRoleRef(keys.file, keys.role, `#N ${keys.roleQuotes[0]}…${keys.roleQuotes[1]}`)
+      why: W5.noRoleRef(cover.file, keys.role, `#N ${keys.roleQuotes[0]}…${keys.roleQuotes[1]}`)
     };
   return { realm: g.realm, karta: first[1] };
 }
-function readCover(dir, keys = COVER) {
+function readCover(dir, cover = COVER) {
   let text2;
   try {
-    text2 = readFileSync11(join11(dir, keys.file), "utf8");
+    text2 = readFileSync11(join11(dir, cover.file), "utf8");
   } catch {
     return null;
   }
+  if (stampOf2(text2, cover) === "foreign") return { foreign: true };
   const pairs = frontMatter(text2);
-  if (!pairs) return { why: words(ROOT_SEAT).noFrontmatter(keys.file) };
-  return seatOfPairs(pairs, keys);
+  if (!pairs) return { why: words(ROOT_SEAT).noFrontmatter(cover.file) };
+  return seatOfPairs(pairs, cover);
 }
 
 // js/shared/reposigns.ts
@@ -5642,17 +5704,19 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   if (root === null) return { root, cover: false, stamp: false, hooks, verdict: "outside" };
   const agents = text(join12(root, cover.file));
   const pairs = agents === null ? null : frontMatter(agents);
+  const stamped = agents === null ? null : stampOf2(agents, cover);
   const signs = {
-    cover: !!pairs && (pairs.has(cover.graph) || pairs.has(cover.role)),
-    stamp: agents !== null && keys.stamp.test(agents),
+    cover: !!pairs && stamped !== "foreign" && hasForm(pairs, cover),
+    stamp: stamped === "own",
     hooks: {
       "claude-code": startHook(text(join12(root, keys.settings)), keys.startMark),
       opencode: exists(join12(root, keys.rituals))
     }
   };
-  const any = signs.cover || signs.stamp || signs.hooks["claude-code"] || signs.hooks.opencode;
+  const hooked = signs.hooks["claude-code"] || signs.hooks.opencode;
+  const any = signs.cover || signs.stamp || hooked;
   const complete = signs.cover && signs.stamp && (harness === null || signs.hooks[harness]);
-  const verdict = !any ? "invite" : complete ? "aligned" : "partial";
+  const verdict = stamped === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
 
@@ -5840,6 +5904,7 @@ function coverIn(where) {
   const align = atRepoRoot(where);
   const cover = readCover(where);
   if (cover === null) return align ? { why: words(ROOT_SEAT).noFile(COVER.file), align } : null;
+  if ("foreign" in cover) return null;
   return "why" in cover ? { why: cover.why, align } : cover;
 }
 function stamp(where) {

@@ -16,17 +16,39 @@ function langOfServer(url) {
 var COVER = {
   /** Файл обложки в каталоге сессии. */
   file: "AGENTS.md",
-  /** Слот графа: значение начинается с @owner/slug или rN. */
-  graph: "Граф",
+  /** Формы обложки по языку репозитория: действует та, чьи ключи стоят во фронтматтере. */
+  forms: {
+    ru: {
+      /** Слот графа: значение начинается с полного адреса графа (хэндл владельца/slug) или rN. */
+      graph: "Граф",
+      /**
+       * Слова, которыми в слоте графа перечисляют равноправные рабочие графы («@a/x или @b/y» —
+       * неоднозначно); граф за прозой (указатель на методологию, «не используется») — не рабочий (#8066).
+       */
+      graphJoins: ["или", "либо", "и", "or", "and"],
+      /** Слот роли агента: значение начинается с ровно одной ссылки «#N «имя»». */
+      role: "Роль агента",
+      /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
+      roleQuotes: ["«", "»"],
+      /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
+      stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+    },
+    en: {
+      graph: "Graph",
+      graphJoins: ["or", "and"],
+      role: "Agent role",
+      /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
+      roleQuotes: ['"', '"'],
+      stamp: /\(iskronify:\s*contract\s*`?\d+`?\s*,\s*stamp/
+    }
+  },
   /**
-   * Слова, которыми в слоте графа перечисляют равноправные рабочие графы («@a/x или @b/y» —
-   * неоднозначно); граф за прозой (указатель на методологию, «не используется») — не рабочий (#8066).
+   * Штамп выравнивания другой поставки: строка, начатая «(<кто>: contract|контракт N», где кто — не
+   * iskronify (свои штампы прежних шаблонов — без «штамп» или с датой вместо числа — не чужие).
+   * Он без своего — обложка чужой поставки, даже при совпавших ключах английской формы; та же
+   * скобка внутри строки прозы — не штамп.
    */
-  graphJoins: ["или", "либо", "и", "or", "and"],
-  /** Слот роли агента: значение начинается с ровно одной ссылки «#N «имя»». */
-  role: "Роль агента",
-  /** Кавычки имени в ссылке роли: открывающая и закрывающая (у соседней поставки могут совпадать). */
-  roleQuotes: ["«", "»"]
+  stampShape: /^[\s*_]*\((?!iskronify:)[^()\n]*?:\s*(?:contract|контракт)\s*`?\d+/m
 };
 
 // js/delivery/patterns/launch.ts
@@ -48,9 +70,7 @@ var REPO_SIGNS = {
    */
   startMark: /\biskron door\b|двер[иь]\s+iskron\b/i,
   /** Плагин ритуалов OpenCode, который ставит iskronify. */
-  rituals: ".opencode/plugins/iskron-rituals.js",
-  /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
-  stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+  rituals: ".opencode/plugins/iskron-rituals.js"
 };
 
 // js/delivery/product.ts
@@ -232,6 +252,12 @@ ${line.trim()}`);
   }
   return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
 }
+var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
+function stampOf(text2, cover = COVER) {
+  if (Object.values(cover.forms).some((f) => f.stamp.test(text2))) return "own";
+  return cover.stampShape.test(text2) ? "foreign" : null;
+}
+var hasForm = (pairs, cover = COVER) => formsIn(pairs, cover).length > 0;
 
 // js/shared/reposigns.ts
 var exists = (path) => {
@@ -279,17 +305,19 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   if (root === null) return { root, cover: false, stamp: false, hooks, verdict: "outside" };
   const agents = text(join3(root, cover.file));
   const pairs = agents === null ? null : frontMatter(agents);
+  const stamped = agents === null ? null : stampOf(agents, cover);
   const signs = {
-    cover: !!pairs && (pairs.has(cover.graph) || pairs.has(cover.role)),
-    stamp: agents !== null && keys.stamp.test(agents),
+    cover: !!pairs && stamped !== "foreign" && hasForm(pairs, cover),
+    stamp: stamped === "own",
     hooks: {
       "claude-code": startHook(text(join3(root, keys.settings)), keys.startMark),
       opencode: exists(join3(root, keys.rituals))
     }
   };
-  const any = signs.cover || signs.stamp || signs.hooks["claude-code"] || signs.hooks.opencode;
+  const hooked = signs.hooks["claude-code"] || signs.hooks.opencode;
+  const any = signs.cover || signs.stamp || hooked;
   const complete = signs.cover && signs.stamp && (harness === null || signs.hooks[harness]);
-  const verdict = !any ? "invite" : complete ? "aligned" : "partial";
+  const verdict = stamped === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
 
