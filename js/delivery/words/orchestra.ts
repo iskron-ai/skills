@@ -55,7 +55,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     on: (realms) =>
       `оркестратор включён${realms ? `, названная граница: ${realms}` : " (граница — графы живых на машине агентов)"}; флаг лежит рядом с грантом`,
     onShortRealm: (realms) =>
-      `граница не принята: ${realms} — краткая форма rN не ходит в двери REST api (живая проба: 404 «Realm not found»); назовите граф полным адресом @owner/slug`,
+      `граница не принята: ${realms} — краткая форма rN не ходит в двери REST api (живая проба: 404 «Realm not found»); назовите граф полным адресом — хэндл владельца/slug из листинга графов`,
     off: () =>
       "оркестратор выключен; поднятые агенты доживают свой путь — их не гасит сам факт выключения",
     status: (on, realms, found, tact) =>
@@ -92,7 +92,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     on: (realms) =>
       `the orchestrator is on${realms ? `, named boundary: ${realms}` : " (the boundary is the graphs of the machine's live agents)"}; the flag lies next to the grant`,
     onShortRealm: (realms) =>
-      `the boundary is not taken: ${realms} — the short rN form does not ride the REST doors of the api (live probe: 404 "Realm not found"); name the graph by its full @owner/slug address`,
+      `the boundary is not taken: ${realms} — the short rN form does not ride the REST doors of the api (live probe: 404 "Realm not found"); name the graph by its full address — the owner's handle/slug from the list of graphs`,
     off: () =>
       "the orchestrator is off; raised agents live out their own path — the switching off itself extinguishes none",
     status: (on, realms, found, tact) =>

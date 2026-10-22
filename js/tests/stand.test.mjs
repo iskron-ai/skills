@@ -2798,8 +2798,9 @@ test("a graph name the bridge cannot resolve is refused aloud — stand, bare re
   const registers = fake.state.counts.register_standing;
   const refusedWith = (r, what) => {
     assert.ok(r.result?.isError, `${what} must be refused:\n${textOf(r)}`);
-    assert.match(textOf(r), /не разрешил в @owner\/slug/, what);
-    assert.match(textOf(r), /полным адресом графа @owner\/slug/, what);
+    assert.match(textOf(r), /не разрешил в полный адрес/, what);
+    assert.match(textOf(r), /полным адресом графа из iskron_realm/, what);
+    assert.doesNotMatch(textOf(r), /@owner/, what);
     assert.ok(textOf(r).includes(NKS), `${what} names the held place's graph:\n${textOf(r)}`);
   };
   refusedWith(await stand({ realm: "r99", karta: 931, name: "vtoraya" }), "iskron_stand in r99");
