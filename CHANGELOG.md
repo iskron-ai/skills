@@ -1,5 +1,48 @@
 # Changelog
 
+## [7.20.0](https://github.com/iskron-ai/skills/compare/v7.19.0...v7.20.0) (2026-10-22)
+
+
+### Features
+
+* **bridge:** дверь оркестратора демона — флаг, граница, согласие машины ([4233341](https://github.com/iskron-ai/skills/commit/42333411fd3f662ee6f052f65debbaf07b6afbc1))
+* **bridge:** дверь оркестратора демона — флаг, названная граница, согласие машины ([#7513](https://github.com/iskron-ai/skills/issues/7513), [#7514](https://github.com/iskron-ai/skills/issues/7514)) ([74cf66c](https://github.com/iskron-ai/skills/commit/74cf66ca6041bc54ad21fe7cddae4553d7d08383))
+* **bridge:** короткая rN живого места разрешается списком графов api; неживые записи уходят по живости ([#5042](https://github.com/iskron-ai/skills/issues/5042), [#8202](https://github.com/iskron-ai/skills/issues/8202)) ([9b8054b](https://github.com/iskron-ai/skills/commit/9b8054b87c231512a4595e6c30f0bb01c0a621ae))
+* **bridge:** обложка AGENTS.md на языке репозитория — формы ru и en, свой и чужой штамп ([09d31f5](https://github.com/iskron-ai/skills/commit/09d31f55a86a2ca6a13fabd09d514539b600fabc))
+* **bridge:** обложка AGENTS.md на языке репозитория — формы ru и en, свой и чужой штамп ([b53a584](https://github.com/iskron-ai/skills/commit/b53a584d9715d164825f4b5a96ef875ffeab42e0))
+* **bridge:** обнаруженная половина границы такта и отказ rN — живой прогон step против api ([#5042](https://github.com/iskron-ai/skills/issues/5042), [#8202](https://github.com/iskron-ai/skills/issues/8202)) ([bde989f](https://github.com/iskron-ai/skills/commit/bde989ff29c022f078f1b61cfc9c43273aef3fd1))
+* **bridge:** такт-чтение оркестратора — invites и raised от курсора, подкоманда step ([#5042](https://github.com/iskron-ai/skills/issues/5042), [#8202](https://github.com/iskron-ai/skills/issues/8202)) ([33bb4e9](https://github.com/iskron-ai/skills/commit/33bb4e9140318f227b3ffa674be888368510605f))
+* **iskronify:** дверь и шаблоны хуков называют английские слоты обложки ([4c921d6](https://github.com/iskron-ai/skills/commit/4c921d62cde89f8e0281d1ce6c02e50bdbede2f2))
+* **iskronify:** контракт 30 — вопрос человеку карточкой, адрес графа, английская обложка ([70ccf0d](https://github.com/iskron-ai/skills/commit/70ccf0d74c8bac0412cc48164e677a321ca21e26))
+* **iskronify:** контракт 30 — вопрос человеку карточкой, адрес графа, английская обложка ([0f2b877](https://github.com/iskron-ai/skills/commit/0f2b877d269b29c73f648f5abb983d2a61398063))
+* **iskronify:** обложка на языке репозитория — английские ключи и штамп переводит агент ([429e79e](https://github.com/iskron-ai/skills/commit/429e79e3bcb8c839d5fca5b1b1c77620d26f1d4d))
+* **iskronify:** обложка на языке репозитория — английские ключи и штамп переводит агент ([2dd0dc2](https://github.com/iskron-ai/skills/commit/2dd0dc2644c233d644ba67df4f4a6523b7275815))
+* **skills:** ведущие держат форму системы — контракты, независимая работа, опознание перемен ([baf04ed](https://github.com/iskron-ai/skills/commit/baf04ede30cb96ee93f8de49adb030a47d78761a))
+* **skills:** ведущие держат форму системы — контракты, независимая работа, опознание перемен ([ac8d29f](https://github.com/iskron-ai/skills/commit/ac8d29fc2009b8de5782f9a73f826c9620a38163))
+* **skills:** выход контракта — эффект, положение дел, а не вещь; архитектор проектирует от эффекта ([c80759a](https://github.com/iskron-ai/skills/commit/c80759a86db1aaec54cc2e98b045a2e9adaaa2d3))
+* **skills:** контракт, мера границы и опознание перемен вплетены в architect, design, chief-of-staff, integrity ([df9ff77](https://github.com/iskron-ai/skills/commit/df9ff772992d5ca0d041a187a4a0e5b5774405d1))
+
+
+### Bug Fixes
+
+* **bridge:** отказ спрашивавшему окончателен — такт не коммитит курсоры после ухода клиента ([#8202](https://github.com/iskron-ai/skills/issues/8202), №1317) ([5cb880a](https://github.com/iskron-ai/skills/commit/5cb880a99894530aac93b89d7b24213194e484e3))
+* **bridge:** прежние свои штампы и скобка в прозе — не штамп чужой поставки ([c31ddbb](https://github.com/iskron-ai/skills/commit/c31ddbb724acb708a91350cd47e57d72dce54549))
+* **bridge:** слова моста о графе — полный адрес из листинга, не [@owner](https://github.com/owner); обложка требует полного адреса ([8320c27](https://github.com/iskron-ai/skills/commit/8320c274a12131efbc3ef89d840b93d2266f3211))
+* **bridge:** слово человека узнаётся по provenance.from_person ([#550](https://github.com/iskron-ai/skills/issues/550)) ([309cb56](https://github.com/iskron-ai/skills/commit/309cb56815db2710744aff08bbda262411f02949))
+* **bridge:** снятие зова моей роли — моё, как и сам зов ([#549](https://github.com/iskron-ai/skills/issues/549)) ([8d8c4c5](https://github.com/iskron-ai/skills/commit/8d8c4c51304514a1664b599d639b18fb82a7da78))
+* **bridge:** такт читает api рядом с каналом, не от сервера MCP — живая проба 0.130.12 ([#5042](https://github.com/iskron-ai/skills/issues/5042), [#8202](https://github.com/iskron-ai/skills/issues/8202)) ([d831a79](https://github.com/iskron-ai/skills/commit/d831a793e0a24d00cbc8a8483f3b2689550a4952))
+* **bridge:** явный адрес записи главнее in_reply_to ([#547](https://github.com/iskron-ai/skills/issues/547)) ([ba7c0a4](https://github.com/iskron-ai/skills/commit/ba7c0a44c107f53a7482fe5fbe28cc95ed7dc0d0))
+* **entry:** адресный аудит — вызовами; read full=true не адресно ([#552](https://github.com/iskron-ai/skills/issues/552)) ([54ca59e](https://github.com/iskron-ai/skills/commit/54ca59e230f047b2214dc31266dac25c5faebb26))
+* **iskron:** абзац правила о вопросе текстом отделён ([b251659](https://github.com/iskron-ai/skills/commit/b2516598cb92f0389ba4cfca3301c20a758d4cbc))
+* **iskron:** вопрос человеку — текстом только при ответе сейчас, иначе карточкой в деле ([57acd59](https://github.com/iskron-ai/skills/commit/57acd5989b227b718815010c726759bdd77c7d0b))
+* **iskron:** вопрос человеку — текстом только при ответе сейчас, иначе карточкой в деле ([c0465ec](https://github.com/iskron-ai/skills/commit/c0465ecb4e1eee6f804a0f2c5af5aa5b555f967e))
+* **opencode:** конец поручения ждёт живой ход, которого экземпляр не видел; печать конца не поднимается поздними held/back ([#6593](https://github.com/iskron-ai/skills/issues/6593), [#8230](https://github.com/iskron-ai/skills/issues/8230)) ([32c2290](https://github.com/iskron-ai/skills/commit/32c2290d025a18df904b06fd47c096cbfc677fbf))
+* **opencode:** принятый выход из дела переживает остановку плагина — конец приходит и после перезагрузки ([#6593](https://github.com/iskron-ai/skills/issues/6593), №1317) ([4812f4a](https://github.com/iskron-ai/skills/commit/4812f4a512599fdab66bb6fb46bd181deb4190ad))
+* **skills:** адрес графа — slug или полный адрес с настоящим хэндлом, не [@owner](https://github.com/owner) ([7b0e986](https://github.com/iskron-ai/skills/commit/7b0e986587e57749d0b5d37b8a9088a1be415de0))
+* **skills:** адрес графа — slug или полный адрес с настоящим хэндлом, не [@owner](https://github.com/owner) ([65381b3](https://github.com/iskron-ai/skills/commit/65381b3dd58d0f744e7deac4fcb30d25232d9ee6))
+* **skills:** контракт несёт семантику спора сторон; архитектор требует свести реализации к контракту в коде ([8906978](https://github.com/iskron-ai/skills/commit/8906978edb3d1c6bfd847de0fe562bcd26373fff))
+* **skills:** чтения Sol и glm — orient крии без СУТИ, контракт в коде только при общем переходе, триггер нулевых вимарш ([05d1bb7](https://github.com/iskron-ai/skills/commit/05d1bb762ae85bd4d7306ad6e0370b1bc02c3f13))
+
 ## [7.19.0](https://github.com/iskron-ai/skills/compare/v7.18.0...v7.19.0) (2026-10-20)
 
 
