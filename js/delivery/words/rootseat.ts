@@ -9,6 +9,10 @@ export interface RootSeatWords {
   noFile: (file: string) => string;
   noFrontmatter: (file: string) => string;
   noKey: (file: string, key: string) => string;
+  /** Нет ключей ни одной формы обложки; keys — слоты графа всех форм, списком в кавычках. */
+  noForm: (file: string, keys: string) => string;
+  /** Ключи нескольких языковых форм сразу; keys — слоты графа найденных форм, списком. */
+  manyForms: (file: string, keys: string) => string;
   /** В значении слота нет ни @owner/slug, ни rN в начале. */
   noGraph: (file: string, key: string) => string;
   /** В значении слота графа — несколько разных графов. */
@@ -45,6 +49,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     noFile: (file) => `нет ${file}`,
     noFrontmatter: (file) => `в ${file} нет YAML-фронтматтера обложки`,
     noKey: (file, key) => `в обложке ${file} нет слота '${key}'`,
+    noForm: (file, keys) => `в обложке ${file} нет ни одного из слотов ${keys}`,
+    manyForms: (file, keys) => `обложка ${file} смешивает языки: ${keys} сразу`,
     noGraph: (file, key) => `'${key}' в ${file} не начинается с @owner/slug или rN`,
     manyGraphs: (file, key, list) => `'${key}' в ${file} называет несколько графов: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
@@ -76,6 +82,8 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     noFile: (file) => `there is no ${file}`,
     noFrontmatter: (file) => `${file} carries no YAML front matter`,
     noKey: (file, key) => `the front matter of ${file} has no '${key}' slot`,
+    noForm: (file, keys) => `the front matter of ${file} has none of the slots ${keys}`,
+    manyForms: (file, keys) => `the cover of ${file} mixes languages: ${keys} at once`,
     noGraph: (file, key) => `'${key}' in ${file} does not start with @owner/slug or rN`,
     manyGraphs: (file, key, list) => `'${key}' in ${file} names several graphs: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
