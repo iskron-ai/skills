@@ -27,7 +27,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
       "командой из ответа и ждать. Он же — ход занятости: на месте, которое этот мост уже держит, вызов realm и status (karta и name — те же или опущены; без model, room, take — с ними это занятие места и сверка) " +
       'лишь ставит строку занятости — без доски, connect, register и стука; пустой status снимает; прежний iskron_channel(action="status") оставлен для совместимости. ' +
       "Тул исполняет мост; нет его в сессии — тулы идут мимо моста либо мост старой сборки (doctor скажет), стой по скиллу standing.",
-    realm: () => "Адрес графа: @owner/slug или rN.",
+    realm: () => 'Адрес графа: slug, полный адрес из iskron_realm(action="list") или rN.',
     karta: () =>
       "Роль агента (#N из AGENTS.md или строки запуска). Нужна, чтобы занять место; для занятости на держимом месте её можно опустить.",
     name: () =>
@@ -59,7 +59,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
       "with the command from the reply and wait. It is also the busyness move: on a seat this bridge already holds, a call with realm and status (karta and name — the same or omitted; with model, room or take it is a seat-taking and a check) " +
       'only sets the busyness line — no board, connect, register or knock; an empty status clears; the former iskron_channel(action="status") is kept for compatibility. ' +
       "The bridge executes the tool; if it is not in the session, the tools go past the bridge or the bridge is an old build (doctor will say), stand by the standing skill.",
-    realm: () => "Graph address: @owner/slug or rN.",
+    realm: () => 'Graph address: slug, the full address from iskron_realm(action="list"), or rN.',
     karta: () =>
       "The agent's role (#N from AGENTS.md or the launch line). Needed to take a seat; for busyness on a held seat it may be omitted.",
     name: () =>
