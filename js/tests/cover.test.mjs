@@ -1,17 +1,30 @@
 // Разбор обложки для автопосадки корня (shared/cover.ts): граф — первый токен
 // @owner/slug или rN, роль — ровно одна ссылка #N в кавычках ПОСТАВКИ в начале значения.
-// Кавычки и ключи — параметр: форма соседней EN-поставки (Graph, Agent role, "…" с
-// одинаковой открывающей и закрывающей) читается тем же правилом.
+// Ключи — словарь форм по языку репозитория (#8497): у iskron ru и en (Graph, Agent role, "…" с
+// одинаковой открывающей и закрывающей); форма соседней поставки — параметр, тем же правилом.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { COVER } from "../delivery/index.ts";
 import { sameSeat } from "../opencode/rootseat-by.ts";
-import { frontMatter, seatOfPairs } from "../shared/cover.ts";
+import { formOf, frontMatter, readCover, seatOfPairs, stampOf } from "../shared/cover.ts";
 
-/** Форма соседней поставки: ключи и кавычки ссылки роли свои. */
-const EN = { file: "AGENTS.md", graph: "Graph", role: "Agent role", roleQuotes: ['"', '"'] };
+/** Одна английская форма, как у соседней поставки: ключи, кавычки ссылки роли и штамп свои. */
+const EN = {
+  file: "AGENTS.md",
+  forms: {
+    en: {
+      graph: "Graph",
+      role: "Agent role",
+      roleQuotes: ['"', '"'],
+      stamp: /\(verstak align:\s*contract\s*\d+/,
+    },
+  },
+  stampShape: /\([^()\n]*?:\s*contract\s*\d+/,
+};
 const seat = (yaml, keys) => seatOfPairs(frontMatter(`---\n${yaml}\n---\n# x\n`), keys);
 const ru = (role, graph = "'@nks/nks-dev (r5)'") =>
   seat(`'Граф': ${graph}\n'Роль агента': ${role}`, undefined);
@@ -58,9 +71,48 @@ test("EN: две ссылки, ссылка без кавычек, кавычк�
   assert.ok("why" in en(`'#931 «dev»'`), "кавычки не этой формы");
 });
 
-test("ключи по умолчанию — COVER поставки, с её кавычками", () => {
-  assert.deepEqual(COVER.roleQuotes, ["«", "»"]);
-  assert.ok("why" in seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}`));
+test("ключи по умолчанию — COVER поставки: формы ru и en, у каждой свои кавычки", () => {
+  assert.deepEqual(COVER.forms.ru.roleQuotes, ["«", "»"]);
+  assert.deepEqual(COVER.forms.en.roleQuotes, ['"', '"']);
+  assert.deepEqual(ru(`'#931 «dev»'`), NKS_931);
+  assert.deepEqual(seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}`), NKS_931);
+  assert.ok("why" in seat(`'Graph': ${VERSTAK_GRAPH}\n'Agent role': '#931 «dev»'`), "en с «…»");
+});
+
+test("язык формы — язык репозитория; ключи двух языков сразу и ни одного — причина", () => {
+  const of = (yaml) => formOf(frontMatter(`---\n${yaml}\n---\n`));
+  assert.equal(of(`'Граф': 'r5'\n'Роль агента': '#931 «dev»'`).lang, "ru");
+  assert.equal(of(`'Graph': 'r5'\n'Agent role': '#931 "dev"'`).lang, "en");
+  assert.equal(of(`'Agent role': '#931 "dev"'`).lang, "en", "одного ключа хватает форме");
+  const mixed = of(`'Граф': 'r5'\n'Agent role': '#931 "dev"'`);
+  assert.ok("why" in mixed && mixed.why.includes("'Граф'") && mixed.why.includes("'Graph'"));
+  const none = seat(`Nature: library`);
+  assert.ok("why" in none && none.why.includes("'Граф'") && none.why.includes("'Graph'"));
+});
+
+test("штамп: свой на любом языке, чужой по виду штампа, нет — null", () => {
+  assert.equal(stampOf("*(iskronify: контракт `29`, штамп `2026-10-20` — …)*"), "own");
+  assert.equal(stampOf("*(iskronify: contract `29`, stamp `2026-10-20` — …)*"), "own");
+  assert.equal(stampOf("*(verstak align: contract 4, stamped 2026-10-16)*"), "foreign");
+  assert.equal(stampOf("*(verstakify: contract 3, stamp 2026-09-01)*"), "foreign");
+  assert.equal(stampOf("# agents\n"), null);
+  assert.equal(stampOf("*(verstak align: contract 4, stamped …)*", EN), "own");
+});
+
+test("обложка с чужим штампом — чужая поставка, даже при ключах своей формы", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "cover-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const body = `---\n'Graph': ${VERSTAK_GRAPH}\n'Agent role': ${VERSTAK_ROLE}\n---\n`;
+  writeFileSync(
+    join(dir, "AGENTS.md"),
+    `${body}*(verstak align: contract 4, stamped 2026-10-16)*\n`,
+  );
+  assert.deepEqual(readCover(dir), { foreign: true });
+  assert.deepEqual(readCover(dir, EN), NKS_931, "своя поставка садится по той же обложке");
+  writeFileSync(join(dir, "AGENTS.md"), `${body}*(iskronify: contract 29, stamp 2026-10-22)*\n`);
+  assert.deepEqual(readCover(dir), NKS_931);
+  writeFileSync(join(dir, "AGENTS.md"), body);
+  assert.deepEqual(readCover(dir), NKS_931, "штампа нет — решают ключи");
 });
 
 test("F5: короткий граф против слага не считается соответствием по одной роли", () => {

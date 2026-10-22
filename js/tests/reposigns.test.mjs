@@ -21,6 +21,10 @@ import { BUILT_ONBOARD_HOOK, REPO } from "./built.mjs";
 
 const COVER = "---\n'Граф': '@tester/work (r1)'\n'Роль агента': '#7 «агент»'\n---\n";
 const STAMP = "*(iskronify: контракт `27`, штамп `2026-10-16` — …)*\n";
+// The English form of the same cover (#8497); the neighbouring delivery shares its keys.
+const COVER_EN = "---\n'Graph': '@tester/work (r1)'\n'Agent role': '#7 \"agent\"'\n---\n";
+const STAMP_EN = "*(iskronify: contract `29`, stamp `2026-10-22` — …)*\n";
+const STAMP_FOREIGN = "*(verstak align: contract 4, stamped 2026-10-16)*\n";
 const session = (command) =>
   JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } });
 // Start hooks as iskronify projects them: the template's English form and Russian projections.
@@ -77,6 +81,27 @@ const CASES = [
     verdicts: { "claude-code": "partial", opencode: "partial", other: "aligned" },
   },
   { name: "cover only", spec: { git: "dir", agents: COVER }, verdicts: all("partial") },
+  {
+    name: "English cover, stamp, both start hooks",
+    spec: { git: "dir", agents: COVER_EN + STAMP_EN, settings: START, rituals: true },
+    verdicts: all("aligned"),
+  },
+  { name: "English cover only", spec: { git: "dir", agents: COVER_EN }, verdicts: all("partial") },
+  {
+    name: "another delivery's stamp under the shared English keys",
+    spec: { git: "dir", agents: COVER_EN + STAMP_FOREIGN },
+    verdicts: all("foreign"),
+  },
+  {
+    name: "another delivery's stamp without a cover",
+    spec: { git: "dir", agents: `# x\n${STAMP_FOREIGN}` },
+    verdicts: all("foreign"),
+  },
+  {
+    name: "another delivery's stamp beside this delivery's start hook",
+    spec: { git: "dir", agents: COVER_EN + STAMP_FOREIGN, settings: START },
+    verdicts: all("partial"),
+  },
   { name: "stamp only", spec: { git: "dir", agents: `# x\n${STAMP}` }, verdicts: all("partial") },
   { name: "start hook only", spec: { git: "dir", settings: START }, verdicts: all("partial") },
   { name: "rituals only", spec: { git: "dir", rituals: true }, verdicts: all("partial") },

@@ -7,7 +7,11 @@ import { test } from "node:test";
 
 import { frontMatter, seatOfPairs } from "../shared/cover.ts";
 
-const EN = { file: "AGENTS.md", graph: "Graph", role: "Agent role", roleQuotes: ['"', '"'] };
+const EN = {
+  file: "AGENTS.md",
+  forms: { en: { graph: "Graph", role: "Agent role", roleQuotes: ['"', '"'], stamp: /\(x:/ } },
+  stampShape: /\(x:/,
+};
 const yaml = (v) => `'${v.replace(/'/g, "''")}'`;
 /** raw — значение слота как стоит в YAML, со своими кавычками и строками продолжения. */
 const ruRaw = (raw) =>
