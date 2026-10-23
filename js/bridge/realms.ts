@@ -76,6 +76,25 @@ export function learnRealmList(text: string): void {
   for (const [slug, cs] of slugs) if (cs.length === 1) learnRealm(slug, cs[0]);
 }
 
+/** The caller's own personal graph: the one bare name that stays bare (#8677). */
+export const OWN_REALM = "mind";
+
+/**
+ * The graph name a seat goes to the server with (graph @nks/nks-dev, decision #8200,
+ * inquiry #8677): a bare name without an owner reaches only the caller's own graph, so rN
+ * and a bare slug go as @owner/slug from the graph list. "mind" goes as is; a name the
+ * list does not resolve goes as given — the server refuses it aloud, the bridge does not guess.
+ */
+export async function canonicalRealm(
+  r: unknown,
+  list: () => Promise<string | null>,
+): Promise<string> {
+  const t = trimmed(r);
+  if (!t || t.startsWith("@") || t === OWN_REALM) return t;
+  await resolveRealms([t], list);
+  return canonRealm(t);
+}
+
 /**
  * Resolve graph names: any unresolved one re-reads the graph list (the graph may
  * have appeared since), so a negative answer is not kept. `list` calls the realm list.

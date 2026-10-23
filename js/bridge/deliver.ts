@@ -333,9 +333,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         msg.method === "tools/call" &&
         msg.params?.name === tool("channel") &&
         ["connect", "mint", "register"].includes(String(ch.action));
-      // Own seat's realm in its own spelling; a seat another session hears is not taken
+      // The seat's realm as @owner/slug (hearing.ts); a seat another session hears is not taken
       // raw (graph @nks/nks-dev, node #6706).
-      if (takes && ch.realm != null) ch.realm = await seatRealm(ch.realm, ch.name);
+      if (takes && ch.realm != null) ch.realm = await seatRealm(ch.realm);
       const notOwner = takes
         ? ((await ownerRefusal(ch.realm, ch.karta)) ?? (await rawSeatRefusal(msg)))
         : null;

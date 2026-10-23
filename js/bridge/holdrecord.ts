@@ -50,6 +50,8 @@ export interface HoldRecord {
    * its latest (case №954); `at` only says the record is alive.
    */
   stoodAt?: number;
+  /** The key of an earlier build's record of this seat, whose graph was written as rN or a bare slug (holdcanon.ts). */
+  formerKey?: string;
 }
 
 /** Record lifetime: the idle time the platform grants a socketless place. */
@@ -149,6 +151,7 @@ export function writeHoldRecord(
           (was?.url === rec.url && was.session === session ? was.provisional : undefined),
         base: B.get(key) ?? rec.base ?? was?.base ?? baseOnDisk(key) ?? undefined,
         stoodAt: S.get(key) ?? rec.stoodAt ?? was?.stoodAt,
+        formerKey: rec.formerKey ?? was?.formerKey,
         at,
       }) + "\n",
     );

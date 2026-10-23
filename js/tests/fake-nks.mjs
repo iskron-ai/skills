@@ -660,6 +660,7 @@ export async function startFakeNks(opts = {}) {
         "helloNoIds", // hello без standing_id мест — с registerNoId мост своего id не узнаёт вовсе
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
         "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
+        "bareOwnOnly", // iskron_channel с голым слагом не своего графа — 404 (резолвер после выпуска, #8677)
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
         "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
@@ -1112,6 +1113,31 @@ export async function startFakeNks(opts = {}) {
       // смену id и один помнит выведенное имя.
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
+        // Резолвер после выпуска (решение #8200, вопрос #8677): имя без префикса — только свой
+        // граф учётки (@tester/…); голый слаг чужого — 404, как у api.
+        const bare = String(a.realm ?? "").trim();
+        if (
+          st.bareOwnOnly &&
+          bare &&
+          !bare.startsWith("@") &&
+          !/^r\d+$/.test(bare) &&
+          !st.realms.some((x) => x.canon === `@tester/${bare}`)
+        ) {
+          st.counts.bare_refused = (st.counts.bare_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused(`Отказано (404): Realm not found: ${bare}`, "Abgelehnt (404).", {
+                rule: "realm_not_found",
+                status: 404,
+              }),
+            },
+            extra,
+          );
+        }
         if (a.action === "register") {
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
