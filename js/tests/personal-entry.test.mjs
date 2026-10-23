@@ -11,12 +11,20 @@ const files = {
   mind: "skills/minding/SKILL.md",
   reference: "skills/minding/references/personal-realm.md",
   onboarding: "skills/onboarding/SKILL.md",
+  door: "skills/iskron/SKILL.md",
 };
 const texts = Object.fromEntries(
   Object.entries(files).map(([key, path]) => [key, readFileSync(join(root, path), "utf8")]),
 );
 const cases = [
-  ["personal mind is always addressed as mind", "mind", 'Пиши `realm="mind"` во всех вызовах'],
+  ["personal mind is always addressed as mind", "mind", 'пиши `realm="mind"` во всех вызовах'],
+  [
+    "mind is read only when the own graph is established",
+    "mind",
+    "Читать и писать `mind` — только когда свой граф установлен",
+  ],
+  // Risk #8661 (graph @nks/nks-dev): without an own graph the short name may resolve to a foreign one.
+  ["the start slice reads mind only after readiness", "door", "`mind` не читай вовсе"],
   ["no handle, no constructed address", "onboarding", "Адрес личного графа — всегда `mind`"],
   [
     "refusal is not absence",
