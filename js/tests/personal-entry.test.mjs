@@ -24,7 +24,12 @@ const cases = [
     "Читать и писать `mind` — только когда свой граф установлен",
   ],
   // Risk #8661 (graph @nks/nks-dev): without an own graph the short name may resolve to a foreign one.
-  ["the start slice reads mind only after readiness", "door", "`mind` не читай вовсе"],
+  ["the start slice reads mind only after readiness", "door", "`mind` не читай и не заводи"],
+  [
+    "a missing own graph is created at the start, not skipped",
+    "door",
+    "заведи его сразу, без вопроса",
+  ],
   ["no handle, no constructed address", "onboarding", "Адрес личного графа — всегда `mind`"],
   [
     "refusal is not absence",
