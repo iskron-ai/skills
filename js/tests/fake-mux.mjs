@@ -27,7 +27,8 @@ export function attachMux(fake, opts = {}) {
     superseded: [], // { channel_id, from } — подписка вытеснена другим соединением
     ticks: [], // { at, conn, entries }
   };
-  const live = () => mux.conns.filter((c) => !c.closed);
+  // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
+  const live = () => mux.conns.filter((c) => !c.closed && !c.socket.destroyed);
   const send = (conn, obj) => !conn.closed && conn.socket.write(wsFrame(0x1, JSON.stringify(obj)));
   const holderOf = (chan) => live().find((c) => c.subs.has(chan));
   const standingsOf = (chan) =>
