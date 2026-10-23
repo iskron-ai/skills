@@ -78,11 +78,18 @@ test("all delivery routes reject old blanket formulas", () => {
 });
 
 test("injected and bootstrap routes retain personal/project distinction", () => {
-  for (const key of ["align", "template", "agents"]) {
-    assert.match(texts[key], /Личное|Личн[а-я]+/u);
-    assert.match(texts[key], /даже на тему разработки/u);
+  assert.match(texts.align, /Личн[а-я]+/u);
+  assert.match(texts.align, /даже на тему разработки/u);
+  assert.match(texts.align, /полномочи/u);
+  // AGENTS.md carries no rule about personal memory: where the personal lives and when
+  // it is read is the door's (graph @nks/nks-dev, node #8589).
+  for (const key of ["template", "agents"]) {
+    assert.match(texts[key], /Собственное пользователя сюда не пишется[^\n]+дверь `iskron`/u);
     assert.match(texts[key], /полномочи/u);
-    assert.match(texts[key], /чисто проектная работа[^\n]+mind/u);
+    assert.doesNotMatch(
+      texts[key],
+      /личный mind|Кросс-проектная память|чисто проектная работа|по \*\*minding\*\*/u,
+    );
   }
   assert.match(texts.phrases, /личное рабочее предпочтение[^\n]+правило проекта/u);
 });
