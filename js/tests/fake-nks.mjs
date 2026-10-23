@@ -323,7 +323,13 @@ export async function startFakeNks(opts = {}) {
   };
   const cleanName = (n) => String(n ?? "").trim() || "(unnamed)";
   let chanSeq = 0;
-  const place = (karta, name) => ({ karta, name, standing_id: randomUUID() });
+  // opts.seatIds {name: id} — the platform id of a seat by its name, as the frames of a probe address
+  // it; the bridge gives no frame to an id of no seat of its own (#1551).
+  const place = (karta, name) => ({
+    karta,
+    name,
+    standing_id: opts.seatIds?.[name] ?? randomUUID(),
+  });
   const newChannel = (realm, karta, name) => {
     const id = `ch-${++chanSeq}`;
     // primary — граф места, ради которого канал открыт: его снять нельзя, пока стоят другие (#5186).

@@ -439,12 +439,12 @@ function openHolder(url: string, key: string): void {
           if (full?.type === "hello") learnFromHello(full, primary); // hello names the channel's places: their ids and canonical graphs (#5838)
           if (holdStray(raw, full, held, () => onFrame(raw, frame))) return; // its seat beside is coming back (#7602)
           // A frame goes to its place's door by to_standing_id; an unmatched one to the primary with a note.
-          const { door: d, note } = routeNamed(full?.type === "hello" ? null : full, primary);
+          const { door: d, note, drop } = routeNamed(full?.type === "hello" ? null : full, primary);
           if (note) {
             log(note);
             d.broadcast({ kind: "note", text: note });
           }
-          deliverTo(d, raw, frame, full);
+          if (!drop) deliverTo(d, raw, frame, full); // a message to another seat: journal only (foreign.ts)
           E.pulse?.(full?.type === "hello" ? "hello" : "frame");
           if (full?.type === "hello") drainWhenFree(() => takeSpool(key, held, onFrame)); // the leaving daemon's (#6586), after the seats beside (#7602)
         });

@@ -2541,8 +2541,8 @@ test("two graphs: each write is signed by the place of its own graph, also after
   assert.equal(fake.state.counts.unattributed, 0, "no write went out without its author");
 });
 
-test("two graphs under the SAME derived name: frames route by to_standing_id to their own watchdog; an unmatched frame goes to the first place with a word, never silently", async (t) => {
-  const { fake, keyA, keyB, idOf, watch } = await twoGraphs(
+test("two graphs under the SAME derived name: frames route by to_standing_id to their own watchdog; an unmatched frame goes to the first place with a word, never silently; one to an id of no seat goes to the journal only (#1551)", async (t) => {
+  const { fake, bridge, keyA, keyB, idOf, watch } = await twoGraphs(
     t,
     { realm: NKS, karta: 931, name: "proba" },
     { realm: DRUGOY, karta: 48, name: "proba" },
@@ -2559,14 +2559,20 @@ test("two graphs under the SAME derived name: frames route by to_standing_id to 
   await send(liveFrame("b-1", DRUGOY, "proba", 48, idB, "слово месту B"));
   // Only the id: the address and graph cannot decide it, the id does.
   await send({ type: "message", id: "b-2", to_standing_id: idB, body: "по одному id к B" });
+  await send(liveFrame("x-1", "@nks/chuzhoy", "chuzhoe", 5, undefined, "ничьё"));
   await send(
-    liveFrame("x-1", "@nks/chuzhoy", "chuzhoe", 5, "00000000-0000-0000-0000-000000000000", "ничьё"),
+    liveFrame("x-2", "@nks/chuzhoy", "chuzhoe", 5, "00000000-0000-0000-0000-000000000000", "чужое"),
   );
   await waitUntil(() => wa.out.includes("слово месту A"), "A's frame at watchdog A");
   await waitUntil(() => wb.out.includes("слово месту B"), "B's frame at watchdog B");
   await waitUntil(() => wb.out.includes("по одному id к B"), "the id-only frame at watchdog B");
   await waitUntil(() => wa.out.includes("не сопоставлен"), "the word about the unmatched frame");
+  await waitUntil(
+    () => /message to another seat, not given to the agent: id x-2/.test(bridge.stderr),
+    "the journal line of the frame to another seat",
+  );
   await pause(300);
+  assert.ok(!wa.out.includes("чужое") && !wb.out.includes("чужое"), "another seat's frame leaked");
   assert.ok(!wa.out.includes("слово месту B"), `B's frame leaked to A:\n${wa.out}`);
   assert.ok(!wa.out.includes("по одному id к B"), `B's id frame leaked to A:\n${wa.out}`);
   assert.ok(!wb.out.includes("слово месту A"), `A's frame leaked to B:\n${wb.out}`);

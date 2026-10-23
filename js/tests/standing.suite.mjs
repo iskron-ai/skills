@@ -181,7 +181,7 @@ const authorizeUrlIn = (text) =>
 
 /** A bridge that has authorized and connected a standing; returns everything the tests read. */
 async function connected(t, { env = {}, init = INIT, fakeOpts = {}, dir: given } = {}) {
-  const fake = await startFakeNks(fakeOpts);
+  const fake = await startFakeNks({ seatIds: { proba: ME_ID }, ...fakeOpts }); // room frames name ME_ID
   const dir = given ?? mkdtempSync(join(tmpdir(), "iskron-standing-"));
   const grants = () => readdirSync(dir).filter((f) => f.endsWith(".json")).length;
   const grantsBefore = grants();

@@ -21,9 +21,9 @@
 // Each record is flushed alone: sent, then a word addressed to the seat itself (case
 // №999999, cut from the output) interrupts, so the count before it belongs to that record only
 // (batch folding across records is not run); output after the nudge is read as late for that
-// and earlier records. Not covered: the bridge always holds one seat, connected as `proba` —
-// the seat a frame names is taken from the frame (to_standing_id), so the bridge's own routing
-// between seats (several seats, its own seat id) is not run; a stale frame is not judged.
+// and earlier records. Not covered: the bridge always holds one seat, connected as `proba` and
+// bearing the seat file's standing_id, so the bridge's own routing between several seats is not
+// run; a stale frame is not judged.
 // Outcome per branch: pass | fail | rejected (a frame the bridge handed to no client) |
 // unparsed (an address the judge does not read) | unjudged | not-covered.
 // Bridge and watchdog run with updates off and a home of their own (mkdtemp): the real
@@ -111,7 +111,8 @@ const upToNudge = (out, from, i) => {
 };
 
 async function runSeat(bridgePath, seat) {
-  const fake = await startFakeNks({ pat: PAT });
+  // The bridge's seat bears the seat file's id: a frame to an id of no seat is not delivered (#1551).
+  const fake = await startFakeNks({ pat: PAT, seatIds: { proba: seat.standing_id } });
   live.fakes.add(fake);
   const auth = tempDir("fc-");
   const home = tempDir("fc-home-");

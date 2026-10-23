@@ -9,6 +9,7 @@ import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { type ChannelEvent, Door, type DoorHooks } from "./door.ts";
+import { isForeign } from "./foreign.ts";
 import { dropHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
 import { handoverReason } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
@@ -236,9 +237,16 @@ export function strayOf(frame: Frame | null, primary: Place): string | null {
 /**
  * Whose door a frame is (#5838): by id, else by graph, address and role naming exactly
  * one seat. No address — the main seat; several or none — the main seat with a word, not silently.
+ * A message by an id of no seat, every seat's id known, goes to nobody: `drop` (foreign.ts).
  */
-export function routeFrame(frame: Frame | null, primary: Place): { door: Door; note?: string } {
-  if (!frame || !extras.size) return { door: primary.door };
+export function routeFrame(
+  frame: Frame | null,
+  primary: Place,
+): { door: Door; note?: string; drop?: boolean } {
+  if (!frame) return { door: primary.door };
+  const ids = all(primary).map((p) => p.door.standingId);
+  if (isForeign(frame, ids)) return { door: primary.door, drop: true };
+  if (!extras.size) return { door: primary.door };
   const fits = fitsOf(frame, all(primary));
   if (!fits) return { door: primary.door };
   if (fits.length === 1) return { door: fits[0].door };
