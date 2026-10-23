@@ -1,5 +1,23 @@
 # Changelog
 
+## [7.21.0](https://github.com/iskron-ai/skills/compare/v7.20.0...v7.21.0) (2026-10-23)
+
+
+### Features
+
+* **skills:** widgets уходит из поставки в nks-agents ([f69b2b3](https://github.com/iskron-ai/skills/commit/f69b2b3027865e4d4ed501372a879f1cba76ee62))
+* **skills:** роль, режим, умение — системный архитектор, начальник штаба, ведение дела справкой двери ([4080229](https://github.com/iskron-ai/skills/commit/4080229258b993044a868c6ad387f0ae4368c688))
+
+
+### Bug Fixes
+
+* **skills:** выход архитектуры — контракты, эффект — феномен; переиспользование — ответственность ведущего ([f5234e2](https://github.com/iskron-ai/skills/commit/f5234e21c57ccbd155d9a3d2fc3188d90a96376d))
+* **skills:** выход архитектуры — контракты, эффект — феномен; переиспользование ткани графа — ответственность ведущего ([3bebdea](https://github.com/iskron-ai/skills/commit/3bebdea68e96aa87bc0237d80b3f189908c80a43))
+* **skills:** личное не в AGENTS.md — срез mind «работа с агентами» на старте, адрес личного графа всегда mind; контракт 31 ([8517019](https://github.com/iskron-ai/skills/commit/85170197198f2c55def7ea1c9d35d0b38a049b2d))
+* **skills:** ссылка в коде — адрес графа, знак отказа моста, деление дела волны ходом ([76edc2c](https://github.com/iskron-ai/skills/commit/76edc2c2fb832cca0408706a4d5c8ed1d1d7e810))
+* **skills:** ссылка в коде — адрес графа, знак отказа моста, деление дела волны ходом ([b54eacf](https://github.com/iskron-ai/skills/commit/b54eacf3a5c5ebf200d36f689786822348474853))
+* **skills:** эффект — частный случай положения дел; переиспользование в architect — указателем на design ([582f614](https://github.com/iskron-ai/skills/commit/582f61408abb93825b67aa976c5d8ccdb1b35d72))
+
 ## [7.20.0](https://github.com/iskron-ai/skills/compare/v7.19.0...v7.20.0) (2026-10-22)
 
 
