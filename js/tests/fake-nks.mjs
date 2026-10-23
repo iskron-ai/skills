@@ -86,7 +86,7 @@ function trimToWord(text, max) {
   return (kept || [...text].slice(0, max - 1).join("")) + "…";
 }
 
-function wsFrame(opcode, payload) {
+export function wsFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
   let head;
   if (data.length < 126) head = Buffer.from([0x80 | opcode, data.length]);
@@ -105,7 +105,7 @@ function wsFrame(opcode, payload) {
 }
 
 /** Whole client frames from the head of `buf` (masked, as a client sends); each carries the rest. */
-function* clientFrames(buf) {
+export function* clientFrames(buf) {
   let rest = buf;
   while (rest.length >= 2) {
     const masked = (rest[1] & 0x80) !== 0;
@@ -1967,6 +1967,7 @@ export async function startFakeNks(opts = {}) {
   // сторона моста ничего не шлёт, кроме ответов на закрытие.
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
+    if (st.upgradeHook?.(req, socket, u)) return; // диспетчер каналов (fake-mux.mjs)
     if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
     const token = u.pathname.slice("/channel/ws/".length);
     const seat = st.wsTokens.get(token);
