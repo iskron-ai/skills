@@ -1,9 +1,9 @@
-.PHONY: check deps validate check-bundles check-surface check-core lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface widgets check-widgets hooks
+.PHONY: check deps validate check-bundles check-surface check-core lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface hooks
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
 # behavioural suites of the shipped code). Needs `make deps` once per clone.
-check: validate check-bundles check-surface check-widgets check-core lint format-check typecheck check-js check-frozen test
+check: validate check-bundles check-surface check-core lint format-check typecheck check-js check-frozen test
 
 # The dev toolchain for js/ — typescript, esbuild, eslint, prettier, and pi's
 # own types, which the extension is checked against. Nothing here ships: the
@@ -108,16 +108,6 @@ check-frozen:
 # Refresh fixtures/surface.json from the live server (network + authorized grant).
 surface:
 	@node scripts/export-surface.mjs
-
-# Refresh fixtures/widgets.json from the widget nodes in the graph (network + grant),
-# then render skills/widgets/SKILL.md from it.
-widgets:
-	@node scripts/export-widgets.mjs
-	@node scripts/render-widgets.mjs
-
-# The committed widgets skill matches its snapshot (offline, pure Node).
-check-widgets:
-	@node scripts/render-widgets.mjs --check
 
 # The dev build of the shipped JS, then the <name>.skill bundles from skills/
 # (they carry the committed — release — outputs).
