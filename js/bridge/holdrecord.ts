@@ -192,6 +192,15 @@ export function readHoldRecord(key: string, anyAge = false): HoldRecord | null {
     return null;
   }
 }
+/**
+ * The key an earlier build gave this seat, its graph written as rN or a slug (holdcanon.ts):
+ * that build's watchdog and thin bridge still know the seat by it.
+ */
+export function formerKeysOf(key: string): string[] {
+  const k = readHoldRecord(key, true)?.formerKey;
+  return k && k !== key ? [k] : [];
+}
+
 /** Hold records under this name for any role; the caller judges the graph. */
 export const holdRecordsNamed = (name: string): HoldRecord[] =>
   holdRecordsWhere((r) => r.name === name);
