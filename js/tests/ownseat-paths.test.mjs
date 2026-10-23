@@ -171,7 +171,7 @@ test("left by word, another session turned the address (the platform answers 404
 
 test("left by word, another session turned the address (404), then a watchdog attaches: a write is refused, not signed with its seat", async (t) => {
   const { fake, dir, b1 } = await leftThenTurned(t);
-  const wd = spawn(NODE, [FILE, "watchdog", "proba--931--nks-dev", "--auth-dir", dir], {
+  const wd = spawn(NODE, [FILE, "watchdog", "proba--931--_nks_nks-dev", "--auth-dir", dir], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => wd.kill("SIGKILL"));

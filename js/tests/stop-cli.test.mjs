@@ -110,7 +110,12 @@ test("stop <session id> on an api without the stop route revokes the seat instea
   await fake.control({ orders_route_missing: true });
   const r = await stop(dir, [session], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /404 ручки\) — место old-api \(nks-dev\) снято \(revoke\)/, r.stdout);
+  // The seat's graph as the bridge holds it: @owner/slug (#8677).
+  assert.match(
+    r.stdout,
+    /404 ручки\) — место old-api \(@nks\/nks-dev\) снято \(revoke\)/,
+    r.stdout,
+  );
   assert.deepEqual(
     fake.state.orders.human.map((h) => [h.method, h.id]),
     [

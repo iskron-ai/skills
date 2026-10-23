@@ -37,7 +37,7 @@ test("the seat beside called by its own name on a restarted bridge: its base com
   const s2 = await stand(b2, { realm: "nks-dev", karta: 931, name: "proba.2", cwd });
   assert.equal(placeOf(s2), "proba.2", textOf(s2));
   assert.equal(fake.state.counts.webhooks_added, hooks, `no role-inbox hook:\n${textOf(s2)}`);
-  assert.equal(holdRecord(dir, "proba.2--931--nks-dev")?.base, "proba");
+  assert.equal(holdRecord(dir, "proba.2--931--_nks_nks-dev")?.base, "proba");
 });
 
 test("the seat beside called by its own name by a new bridge of the same session, the former alive: no hook, the base kept, the next eviction stands on proba.3", async (t) => {
@@ -56,7 +56,7 @@ test("the seat beside called by its own name by a new bridge of the same session
   const s2 = await stand(b2, { realm: "nks-dev", karta: 931, name: "proba.2", cwd });
   assert.equal(placeOf(s2), "proba.2", textOf(s2));
   assert.equal(fake.state.counts.webhooks_added, hooks, `no role-inbox hook:\n${textOf(s2)}`);
-  assert.equal(holdRecord(dir, "proba.2--931--nks-dev")?.base, "proba", "the base is kept");
+  assert.equal(holdRecord(dir, "proba.2--931--_nks_nks-dev")?.base, "proba", "the base is kept");
   await fake.control({ ws_close_old: { name: "proba.2", code: 4000 } });
   await until(() => fake.state.ws.size === 1, "b1 yields");
   await fake.control({ ws_close: 4000 });
@@ -86,7 +86,7 @@ test("iskron_stand by name does not take back from disk the seat another named s
   const s2 = await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd });
   assert.doesNotMatch(textOf(s2), /возврат места с диска/, textOf(s2));
   assert.equal(placeOf(s2), "proba.2", textOf(s2));
-  assert.equal(holdRecord(dir, "proba--931--nks-dev")?.session, "ses-sosed");
+  assert.equal(holdRecord(dir, "proba--931--_nks_nks-dev")?.session, "ses-sosed");
 });
 
 test("raw register, connect and mint of a seat another session listens on are refused when the bridge leads nothing", async (t) => {
