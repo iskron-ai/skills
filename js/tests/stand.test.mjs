@@ -4731,6 +4731,27 @@ test("satellite: a refused clearing of the seat's model leaves the stand standin
   assert.match(said[0], /Прежняя модель места не снята \(503/, said[0]);
 });
 
+// After the resolver's release the api reads no rN in a direct call (case №1571 [82]–[89]): the
+// clearing PATCH names a seat held as r5 — no graph list answered, no hello taught its
+// @owner/slug — by its number in X-NKS-Realm.
+test("satellite: the model-clearing PATCH of a seat held as r5 names its graph by number, not as r5", async (t) => {
+  const fake = await withCaller(t);
+  fake.state.realmResult = { isError: true, content: [{ type: "text", text: "list refused" }] };
+  await fake.control({ ws_mute: true, resolverRefs: true }); // no hello: nothing resolves r5
+  const sat = await satelliteBridge(t, fake);
+  const args = { ...SAT_ARGS, realm: "r5" };
+  assert.ok(!(await standAs(sat, { ...args, model: "model-a" })).result?.isError, sat.stderr);
+  const none = await standAs(sat, args);
+  assert.ok(!none.result?.isError, textOf(none));
+  assert.deepEqual(
+    fake.state.seatPatches.map((x) => x.realm),
+    ["5"],
+    `${JSON.stringify(fake.state.apiShortRefused)}\n${textOf(none)}`,
+  );
+  assert.deepEqual(fake.state.apiShortRefused, [], "no rN reached the api");
+  assert.doesNotMatch(textOf(none), /не снята/, textOf(none));
+});
+
 // Поля structuredContent вместо прозы (#6637, дело №186): сервер кладёт их рядом с
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без
