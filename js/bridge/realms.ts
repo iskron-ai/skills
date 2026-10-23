@@ -76,6 +76,16 @@ export function learnRealmList(text: string): void {
   for (const [slug, cs] of slugs) if (cs.length === 1) learnRealm(slug, cs[0]);
 }
 
+/**
+ * The graph a direct api call carries — path, query, X-NKS-Realm (case №1571 [82]–[89]): the
+ * api reads @owner/slug, a UUID and the numeric short id, not rN. A known rN goes as its
+ * @owner/slug, an unknown one as its number; MCP tools are the server's to translate.
+ */
+export function apiRealm(r: unknown): string {
+  const c = canonRealm(r);
+  return c.startsWith("@") ? c : (/^r(\d+)$/i.exec(c)?.[1] ?? c);
+}
+
 /** The caller's own personal graph: the one bare name that stays bare (#8677). */
 export const OWN_REALM = "mind";
 

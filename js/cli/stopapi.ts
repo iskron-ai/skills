@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { ensureAuth } from "../bridge/auth.ts";
 import { CFG } from "../bridge/config.ts";
 import { errorMessage } from "../bridge/errors.ts";
+import { apiRealm } from "../bridge/realms.ts";
 import { loadStore } from "../bridge/store.ts";
 import { STOP_CLI, type StopCliWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
@@ -52,7 +53,7 @@ async function ask(
     method,
     headers: {
       authorization: `Bearer ${token}`,
-      "x-nks-realm": realm,
+      "x-nks-realm": apiRealm(realm), // the api reads no rN (case №1571 [82]–[89])
       ...(body ? { "content-type": "application/json" } : {}),
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
