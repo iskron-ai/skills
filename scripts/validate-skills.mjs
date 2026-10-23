@@ -151,9 +151,9 @@ function validateSkill(name) {
       // description cannot contain XML tags").
       // Its exact matcher is unknown (behaviour over prose), and no
       // description needs angle brackets, so ban them outright: write
-      // placeholders as @handle/mind, not @<handle>/mind.
+      // placeholders as @handle/slug, not @<handle>/slug.
       if (/[<>]/.test(rendered)) {
-        fail(where, "`description` contains `<` or `>` — the claude.ai skill loader rejects XML-tag-shaped descriptions; write placeholders without angle brackets (@handle/mind, not @<handle>/mind)");
+        fail(where, "`description` contains `<` or `>` — the claude.ai skill loader rejects XML-tag-shaped descriptions; write placeholders without angle brackets (@handle/slug, not @<handle>/slug)");
       }
     }
   }

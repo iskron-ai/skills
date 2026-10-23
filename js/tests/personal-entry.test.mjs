@@ -16,8 +16,8 @@ const texts = Object.fromEntries(
   Object.entries(files).map(([key, path]) => [key, readFileSync(join(root, path), "utf8")]),
 );
 const cases = [
-  ["owned mind uses the API link", "mind", "Передавай эту ссылку дословно как `<личный граф>`"],
-  ["foreign mind is no fallback", "mind", "Единственный доступный чужой `mind` не заменяет личный"],
+  ["personal mind is always addressed as mind", "mind", 'Пиши `realm="mind"` во всех вызовах'],
+  ["no handle, no constructed address", "onboarding", "Адрес личного графа — всегда `mind`"],
   [
     "refusal is not absence",
     "mind",
