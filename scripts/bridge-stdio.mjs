@@ -1,6 +1,6 @@
 // A session with the delivery's own bridge (skills/establish-mcp/scripts/iskron.mjs)
-// over stdio, for the scripts that snapshot the live graph (export-surface,
-// export-widgets): auth, refresh and liveness are the bridge's problem.
+// over stdio, for the scripts that snapshot the live graph (export-surface):
+// auth, refresh and liveness are the bridge's problem.
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
