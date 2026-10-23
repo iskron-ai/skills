@@ -6,7 +6,7 @@
 // One socket per channel, places of several graphs on it (#5838, places.ts).
 // The busy text is written by the doer beside the socket (#4231) and published by the bridge.
 import { LOGGERS } from "../delivery/index.ts";
-import { holdSocket, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
+import { type HoldOptions, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
 import { bindAll } from "../shared/scope.ts";
 import { deliveryKeys, isLifeCheck, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
@@ -21,6 +21,7 @@ import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./hol
 import { drainWhenFree, E, type Frame, H, handoverReason } from "./holdstate.ts";
 import { deadWord, holdWords } from "./holdwords.ts";
 import { routeNamed } from "./lifeseat.ts";
+import { holdChannel } from "./muxhold.ts";
 import {
   addExtra,
   type Channel,
@@ -264,12 +265,8 @@ export function releaseStanding(
   for (const w of [...H.helloWaiters]) w(null); // no hello will come from a released socket
   H.door?.close();
   H.door = null;
-  Object.assign(H, { parked: false, unheard: false });
-  H.currentKey = null;
-  H.currentUrl = null;
-  H.currentStatusUrl = null;
-  H.evictedKey = null;
-  H.evictedEvent = null;
+  Object.assign(H, { parked: false, unheard: false, currentKey: null, currentUrl: null });
+  Object.assign(H, { currentStatusUrl: null, evictedKey: null, evictedEvent: null });
 }
 
 /** Take this address and hold it, whatever the previous one was. */
@@ -426,8 +423,8 @@ export function releasedAsOwn(what: string): boolean {
 // Socket handlers get the opening session's scope explicitly (shared/scope.ts); the runtime
 // need not carry it across events.
 function openHolder(url: string, key: string): void {
-  H.holder = holdSocket(
-    bindAll<Parameters<typeof holdSocket>[0]>({
+  H.holder = holdChannel(
+    bindAll<HoldOptions>({
       url,
       onDropped: expectHello,
       onFrame: function onFrame(raw, frame) {

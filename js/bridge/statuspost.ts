@@ -4,6 +4,7 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
+import { tickFor } from "./muxhold.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
@@ -72,6 +73,18 @@ export function trimNudge(t: StatusTrim): string {
   return words(STATUS_POST).trimmed();
 }
 
+/**
+ * A channel the dispatcher carries takes the line into the daemon's tact, no POST (graph
+ * @nks/nks-dev, node #8623): nothing answers it, so a line over the limit is named as the
+ * rule lays it.
+ */
+function byTick(url: string, text: string, standingId: string | null): StatusOutcome | null {
+  if (!tickFor(url, standingId, { status: text })) return null;
+  if ([...text].length <= LIMIT) return { ok: true, body: "", doing: text };
+  const doing = trimToWord(text, LIMIT);
+  return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
+}
+
 /** The same POST to a named address — for the exit, when the standing is already released. */
 export async function publishStatusTo(
   url: string,
@@ -79,6 +92,8 @@ export async function publishStatusTo(
   timeoutMs = 5000,
   standingId: string | null = null,
 ): Promise<StatusOutcome> {
+  const ticked = byTick(url, text, standingId);
+  if (ticked) return ticked;
   const signal = AbortSignal.timeout(timeoutMs);
   const post = (): Promise<Response> =>
     fetch(url, {

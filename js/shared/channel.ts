@@ -28,6 +28,8 @@ const SILENT_INTERVALS = 3;
  */
 const SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 60_000;
 
+export { PING_CHANNEL, SILENT_FLOOR_MS, SILENT_INTERVALS };
+
 /** Closes after which the same token never reopens. */
 export const DEAD_TOKEN_CODES = [4002];
 /**
@@ -52,7 +54,9 @@ const ERROR_GUESS_DELAY_MS = 500;
  * Reopen pauses while the service is up and the socket is cut: grow to the ceiling,
  * reset by a socket living past a fast drop (graph @nks/nks-dev, node #4664).
  */
-const FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000")
+export const FLAP_PAUSES_MS = (
+  process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000"
+)
   .split(",")
   .map(Number)
   .filter((n) => Number.isFinite(n) && n > 0);
