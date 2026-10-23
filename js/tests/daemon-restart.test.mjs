@@ -187,7 +187,11 @@ test("plugin restart with the daemon change: the session's seat comes back to it
   const why = `${JSON.stringify(back)}\nnew:\n${fresh.stderr}\nformer:\n${former.stderr}\n${journal()}`;
   assert.doesNotMatch(back?.word ?? "", /держит живой мост/, why);
   assert.equal(back?.resumed, true, why);
-  assert.equal(back?.key, rec.key, why);
+  // The release's record named the graph as the agent did (nks-dev); the successor moved it to
+  // @owner/slug (#8677) and answers the earlier key with the seat's canonical one.
+  const canonKey = "arch--2270--_nks_nks-dev";
+  assert.equal(rec.key, "arch--2270--nks-dev", "the release keyed the seat by the bare slug");
+  assert.equal(back?.key, canonKey, why);
   assert.ok(fake.state.counts.connect > connects, `the socket is the new bridge's own: ${why}`);
   const again = await fresh.request("tools/call", {
     name: "iskron_stand",
@@ -198,7 +202,11 @@ test("plugin restart with the daemon change: the session's seat comes back to it
     !fake.state.placeArgs.some((p) => /^arch\.\d+$/.test(p.name ?? "")),
     `no seat beside: ${JSON.stringify(fake.state.placeArgs)}`,
   );
-  assert.equal(record().find((r) => r.key === rec.key)?.session, SESSION, why);
+  const moved = record().find((r) => r.key === canonKey);
+  assert.equal(moved?.session, SESSION, why);
+  assert.equal(moved?.realm, "@nks/nks-dev", why);
+  assert.equal(moved?.formerKey, rec.key, "the moved record keeps the release's key");
+  assert.equal(record().length, 1, `the release's record is not left beside: ${why}`);
 });
 
 // Переход с выпуска v7.10.0 (#7602): его демон отпускает место рядом и его тонкий мост

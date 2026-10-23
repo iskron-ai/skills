@@ -5,12 +5,13 @@
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { holdFilePathOf } from "../shared/standings.ts";
-import { setup, stand, textOf, until } from "./ownseat-kit.mjs";
+import { channel, FILE, NODE, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 
 const sent = (fake, action) =>
   fake.state.calls
@@ -36,6 +37,32 @@ for (const given of ["nks-dev", "r5"])
       ["@nks/nks-dev"],
     );
   });
+
+// The graph list is read once, when a name is not resolved yet: the aliases it gave serve the
+// next stand, register and raw channel move of the session; a full address reads no list.
+test("the graph list is read only for a name not yet resolved — not on every stand or register", async (t) => {
+  const { fake, up } = await setup(t);
+  const lists = () => fake.state.counts.realm_list ?? 0;
+  const b = await up();
+  assert.ok(
+    !(await stand(b, { realm: "@nks/nks-dev", karta: 931, name: "proba" })).result?.isError,
+  );
+  assert.equal(lists(), 0, "a full address needs no list");
+  const c = await up();
+  assert.ok(!(await stand(c, { realm: "nks-dev", karta: 932, name: "vtoroy" })).result?.isError);
+  assert.equal(lists(), 1, "a bare slug: one list");
+  assert.ok(!(await stand(c, { realm: "nks-dev", karta: 932, name: "vtoroy" })).result?.isError);
+  assert.ok(!(await stand(c, { realm: "r5", karta: 932, name: "vtoroy" })).result?.isError);
+  const reg = await channel(c, {
+    realm: "nks-dev",
+    action: "register",
+    karta: 932,
+    name: "vtoroy",
+  });
+  assert.ok(!reg.result?.isError, textOf(reg));
+  assert.equal(lists(), 1, "the learnt aliases serve the next moves");
+  assert.deepEqual([...new Set(sent(fake, "register"))], ["@nks/nks-dev"]);
+});
 
 test('iskron_stand(realm="mind") goes as is — the own personal graph', async (t) => {
   const { fake, dir, up } = await setup(t);
@@ -79,4 +106,54 @@ test("an earlier build's hold record of a bare slug: the return by its key after
     ["@nks/nks-dev"],
     "the record is rewritten to @owner/slug",
   );
+});
+
+// The daemon updates under live sessions: an earlier build's thin bridge and watchdog live on
+// with the keys of that build. The moved seat answers them by those keys too — the seat
+// beside is said back by its earlier key (that thin bridge lifts its loss only so), and the
+// door listens at the earlier key's socket (that watchdog attaches only there).
+test("a seat moved from an earlier build's key: its watchdog of that key attaches, and the seat beside is said back by its earlier key too", async (t) => {
+  const { fake, dir, up } = await setup(t);
+  const first = await up();
+  const main = { realm: "@nks/nks-dev", karta: 931, name: "proba" };
+  assert.ok(!(await stand(first, main)).result?.isError, first.stderr);
+  const side = await stand(first, { realm: "@nks/drugoy", karta: 48, name: "proba-b" });
+  assert.ok(!side.result?.isError, `${textOf(side)}\n${first.stderr}`);
+  await until(() => records(dir).length === 2, "both records");
+  first.kill();
+  await until(() => fake.state.ws.size === 0, "the socket to close");
+  // Both records as an earlier build wrote them: graphs and keys as the agent named them.
+  const bare = { "@nks/nks-dev": "nks-dev", "@nks/drugoy": "drugoy" };
+  const oldKeys = {};
+  for (const { f, rec } of records(dir)) {
+    const realm = bare[rec.realm];
+    const key = `${rec.name}--${rec.karta}--${realm}`;
+    oldKeys[rec.realm] = key;
+    unlinkSync(join(dir, "standings", f));
+    writeFileSync(
+      holdFilePathOf(dir, key),
+      JSON.stringify({ ...rec, realm, key, at: Date.now() }) + "\n",
+    );
+  }
+  await fake.control({ bareOwnOnly: true });
+  const next = await up();
+  const back = await next.call("iskron/resume", { key: oldKeys["@nks/nks-dev"] });
+  assert.equal(back.result?.resumed, true, `${JSON.stringify(back)}\n${next.stderr}`);
+  const besideKeys = () =>
+    next.notifications
+      .filter((n) => n.params?.data?.kind === "beside")
+      .map((n) => n.params.data.key);
+  await until(() => besideKeys().length >= 2, `the beside words:\n${next.stderr}`);
+  assert.deepEqual(besideKeys().sort(), ["proba-b--48--_nks_drugoy", oldKeys["@nks/drugoy"]]);
+  assert.equal(fake.state.counts.bare_refused ?? 0, 0, "no bare name reached the server");
+  const wd = spawn(NODE, [FILE, "watchdog", oldKeys["@nks/nks-dev"], "--auth-dir", dir], {
+    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => wd.kill("SIGKILL"));
+  let out = "";
+  wd.stdout.on("data", (c) => (out += c));
+  await until(() => /слушаю стояние/.test(out), `the earlier key's watchdog:\n${out}`);
+  await fake.control({ ws_say: { name: "proba", text: "слово после переезда" } });
+  await until(() => out.includes("слово после переезда"), `the word at that watchdog:\n${out}`);
 });
