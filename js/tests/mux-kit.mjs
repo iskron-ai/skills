@@ -104,10 +104,13 @@ async function seamSession(dir, fake) {
   return s;
 }
 
-/** Тонкий мост: поднимает демон сам и поднимает преемника после SIGTERM. */
-function thinBridge(dir, fake) {
+/**
+ * Тонкий мост: поднимает демон сам и поднимает преемника после SIGTERM; daemon "0" —
+ * полный мост без демона, держит канал сам.
+ */
+function thinBridge(dir, fake, daemon = "1") {
   const proc = spawn(NODE, [BRIDGE, fake.mcpUrl, "--no-browser", "--auth-dir", dir], {
-    env: { ...ENV, ISKRON_BRIDGE_NO_BROWSER: "1", ISKRON_BRIDGE_DAEMON: "1" },
+    env: { ...ENV, ISKRON_BRIDGE_NO_BROWSER: "1", ISKRON_BRIDGE_DAEMON: daemon },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const all = [];
@@ -129,6 +132,7 @@ function thinBridge(dir, fake) {
   proc.stderr.on("data", (c) => (stderr += c));
   let seq = 0;
   const b = {
+    proc,
     all,
     get stderr() {
       return stderr;
@@ -152,9 +156,10 @@ function thinBridge(dir, fake) {
 
 /**
  * Фейк с диспетчером, каталог гранта, демон и сессии; уборка — всегда.
- * own: false — демон поднимают тонкие мосты пробы (смена демона); credit — кредит подписки.
+ * own: false — демон поднимают тонкие мосты пробы (смена демона); credit — кредит подписки;
+ * daemonEnv — окружение своего демона сверх общего.
  */
-export async function withMux(fn, { mode = "mux", own = true, credit } = {}) {
+export async function withMux(fn, { mode = "mux", own = true, credit, daemonEnv = {} } = {}) {
   const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
   const mux = attachMux(fake, { mode, credit });
   const dir = mkdtempSync(join(tmpdir(), "iskron-mux-"));
@@ -162,7 +167,8 @@ export async function withMux(fn, { mode = "mux", own = true, credit } = {}) {
   let daemon = null;
   try {
     if (own) {
-      daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env: ENV, stdio: "ignore" });
+      const env = { ...ENV, ...daemonEnv };
+      daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" });
       (await entrance(dir)).close();
     }
     const session = async () => {
@@ -170,16 +176,18 @@ export async function withMux(fn, { mode = "mux", own = true, credit } = {}) {
       closers.push(() => s.close());
       return s;
     };
-    const thin = async () => {
-      const b = thinBridge(dir, fake);
+    const thin = async (daemonSwitch = "1") => {
+      const b = thinBridge(dir, fake, daemonSwitch);
       closers.push(() => b.stop());
       await b.rpc("initialize", INIT);
       return b;
     };
-    await fn({ fake, mux, dir, session, thin, journal: () => journalOf(dir) });
+    const full = () => thin("0");
+    await fn({ fake, mux, dir, session, thin, full, journal: () => journalOf(dir) });
   } finally {
     await Promise.all(closers.map((c) => c()));
-    if (daemon) {
+    // Демон, остановленный пробой, уже вышел: его exit не повторится.
+    if (daemon && daemon.exitCode === null && daemon.signalCode === null) {
       const exited = new Promise((r) => daemon.once("exit", r));
       daemon.kill("SIGKILL");
       await exited;
@@ -211,6 +219,30 @@ export async function muxCarrying(fake, mux, channels, ms = 6000) {
     );
   }
 }
+
+/**
+ * Уход места на соединении: кадры tick, очищающие его занятость (status ""), и позиции
+ * первого из них и отписки канала в порядке кадров соединения.
+ */
+export function leaveFrames(conn, chan, standingId) {
+  const frames = conn.frames.map((f) => f.frame);
+  const clears = (f) =>
+    f?.type === "tick" &&
+    f.entries.some((e) => e.channel_id === chan && e.standing_id === standingId && e.status === "");
+  return {
+    clearing: frames.filter(clears),
+    clearAt: frames.findIndex(clears),
+    unsubAt: frames.findIndex((f) => f?.type === "unsubscribe" && f.channel_id === chan),
+  };
+}
+
+/** Секрет канала — как его выдал connect. */
+export const secretOf = (fake, chan) => [...fake.state.wsChannel].find(([, c]) => c === chan)?.[0];
+/** События канала этого рода, дошедшие до сессии (уведомления моста). */
+export const told = (s, kind) =>
+  s.frames.filter((f) => JSON.stringify(f).includes(`"kind":"${kind}"`));
+/** Строка занятости места на доске фейка. */
+export const busyOf = (fake, name) => fake.state.placeStatus.get(seatIdOf(fake, name));
 
 /** Канал места по имени в графе фейка. */
 export const channelOf = (fake, name) =>

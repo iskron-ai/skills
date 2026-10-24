@@ -53,6 +53,25 @@ test("5xx on /channel/mux: another try after a pause, never a socket per seat", 
   );
 });
 
+test("cut before any answer on /channel/mux: another try after a pause, never a socket per seat", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "cut-a" }); // слушания нет, пока ответа нет
+      const ca = channelOf(fake, "cut-a");
+      await waitFor("the cut attempt", () => mux.attempts.length >= 1);
+      await sleep(500);
+      assert.equal(fake.state.counts.ws_upgrades, 0, "no fallback on an answer never seen");
+      mux.mode = "mux";
+      await muxCarrying(fake, mux, [ca], 15_000);
+      assert.equal(fake.state.counts.ws_upgrades, 0, "no fallback to a socket per seat");
+      mux.say("cut-a", "A после обрыва до ответа");
+      await waitFor("A to hear", () => a.heard("A после обрыва до ответа"));
+    },
+    { mode: "cut" },
+  );
+});
+
 test("credit: the bridge acks every frame, the window refills; a stalled channel does not stall its neighbour", async () => {
   await withMux(
     async ({ fake, mux, session }) => {

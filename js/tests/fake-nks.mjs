@@ -435,6 +435,7 @@ export async function startFakeNks(opts = {}) {
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, base);
     const p = u.pathname;
+    if (st.requestHook?.(req, res, u)) return; // диспетчер каналов без апгрейда (fake-mux.mjs)
 
     // Службу спрашивают о версии, когда сокет рвут: отвечает — служба жива.
     // Молчит по умолчанию (404), как на выкатке; /control {versionUp:true} её поднимает.

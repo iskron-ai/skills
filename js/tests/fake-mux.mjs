@@ -4,13 +4,15 @@
 // unsubscribe → channel_closed{…, 1000, unsubscribed}; отказ подписки — error{ref, code}.
 // Садится на сервер fake-nks.mjs: секрет — адрес сокета из connect, канал и места — его.
 // mode "old" — сервер без диспетчера: апгрейд по адресу диспетчера отвечает 404;
-// mode "down" — диспетчер есть, но лежит: 503.
+// mode "down" — диспетчер есть, но лежит: 503; mode "cut" — обрыв до всякого ответа.
+// Тот же адрес простым GET без апгрейда: 404 без диспетчера, 426 с ним, 503 лежащий.
 import { createHash, randomUUID } from "node:crypto";
 
 import { clientFrames, wsFrame } from "./fake-nks.mjs";
 
 const ACCEPT = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const REFUSED = { old: 404, down: 503 };
+const PLAIN = { old: 404, down: 503, mux: 426 };
 
 export function attachMux(fake, opts = {}) {
   const st = fake.state;
@@ -19,6 +21,7 @@ export function attachMux(fake, opts = {}) {
     credit: opts.credit ?? 32,
     pingS: opts.pingS ?? 30,
     attempts: [], // { at, path, answered } — каждый апгрейд по адресу диспетчера
+    plain: [], // { at, answered } — простые GET по адресу диспетчера (answered null — обрыв)
     conns: [], // { id, socket, subs: Map(channel_id → подписка), frames: [], closed }
     refuse: new Map(), // секрет → код отказа подписки (secret_invalid, secret_dead…)
     refuseWhen: null, // (секрет) → код отказа или null — для секретов, ещё не выданных
@@ -178,10 +181,24 @@ export function attachMux(fake, opts = {}) {
 
   st.upgradeHook = (req, socket, u) => {
     if (!u.pathname.endsWith("/channel/mux")) return false;
+    if (mux.mode === "cut") {
+      mux.attempts.push({ at: Date.now(), path: u.pathname, answered: null });
+      socket.destroy();
+      return true;
+    }
     const answered = REFUSED[mux.mode] ?? 101;
     mux.attempts.push({ at: Date.now(), path: u.pathname, answered });
     if (answered !== 101) socket.end(`HTTP/1.1 ${answered} Refused\r\nContent-Length: 0\r\n\r\n`);
     else open(req, socket);
+    return true;
+  };
+
+  st.requestHook = (req, res, u) => {
+    if (!u.pathname.endsWith("/channel/mux")) return false;
+    const answered = PLAIN[mux.mode] ?? null;
+    mux.plain.push({ at: Date.now(), answered });
+    if (answered === null) req.socket.destroy();
+    else res.writeHead(answered, { "content-length": "0" }).end();
     return true;
   };
 
@@ -223,6 +240,19 @@ export function attachMux(fake, opts = {}) {
         c.socket.write(wsFrame(0x8, payload));
         c.socket.end();
       }
+    },
+    /**
+     * Конец подписки сервером без отписки моста: 4004 revoked:* — отзыв места, секрет канала
+     * мёртв, повторная подписка — secret_dead (#8620 v13); иной код — как есть.
+     */
+    endSub(chan, code, reason) {
+      const conn = holderOf(chan);
+      if (!conn) return;
+      conn.subs.delete(chan);
+      if (code === 4004)
+        for (const [secret, c] of st.wsChannel)
+          if (c === chan) mux.refuse.set(secret, "secret_dead");
+      send(conn, { type: "channel_closed", channel_id: chan, code, reason });
     },
     /** Кадр сервера как есть — во все живые соединения. */
     push(obj) {
