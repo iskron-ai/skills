@@ -1,6 +1,7 @@
 // How the server's word ends a subscription (graph @nks/nks-dev, node #8620 v15): a refused
 // subscribe by its code, a channel_closed by its class. The router (muxroute.ts) does the acts.
 import { type Sub } from "./muxsub.ts";
+import { GAP_MS } from "./muxtick.ts";
 import { log } from "./streams.ts";
 
 const DEAD_SECRET = new Set(["secret_invalid", "secret_dead"]);
@@ -25,10 +26,11 @@ export function refusedBy(e: Ends, s: Sub, code: string): void {
 }
 
 /**
- * By class (#8620 v19): 1000 — own unsubscribe answered; 4000 — another holds the channel; 4002
+ * By class (#8620): 1000 — own unsubscribe answered; 4000 — another holds the channel; 4002
  * expired — subscribed again; 4004 revoked:person|self|gone — the seat is over, the stop. A 1000
- * nobody asked for is a server defect: subscribed again once; a second in a row (no hello between)
- * is the end, as a dead token; any other code — subscribed again.
+ * nobody asked for is a server defect: subscribed again once; a second in a row is the end, as a
+ * dead token. "In a row" as proposed in №1583, not yet written: the subscription did not live a
+ * tact interval after its hello. Any other code — subscribed again.
  */
 export function closedBy(e: Ends, s: Sub, code: number, reason: string): void {
   if (s.closed) return e.end(s);
@@ -40,7 +42,10 @@ export function closedBy(e: Ends, s: Sub, code: number, reason: string): void {
     return e.again(s);
   }
   log(`dispatcher: ${s.channel} closed with ${code} (${reason}) — a server defect`);
-  if (code === 1000 && s.resubscribed) return e.end(s, () => s.o.onDeadToken(code));
-  if (code === 1000) s.resubscribed = true;
+  if (code === 1000) {
+    const lived = s.helloAt > 0 && Date.now() - s.helloAt >= GAP_MS;
+    if (s.resubscribed && !lived) return e.end(s, () => s.o.onDeadToken(code));
+    Object.assign(s, { resubscribed: true, helloAt: 0 });
+  }
   e.again(s);
 }

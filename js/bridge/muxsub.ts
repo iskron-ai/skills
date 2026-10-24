@@ -22,8 +22,9 @@ export interface Sub {
   /** Seat ids of the channel from the last hello, and how many seats it named, ids or not. */
   standings: string[];
   seats: number;
-  /** An unasked channel_closed 1000 was answered by one subscription again; hello clears it. */
+  /** An unasked 1000 had its one resubscribe; the next ends it unless a tact passed from helloAt. */
   resubscribed: boolean;
+  helloAt: number;
   handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null;
   /** No dispatcher: the holder holds its own socket now. */
   fallback: Holder | null;
@@ -42,12 +43,11 @@ export interface Sub {
 export const EVERY = Symbol("every seat");
 export type SeatScope = string | null | typeof EVERY;
 
+/** `url` — the address the line was given for; `lost` — no dispatcher after all: the old way. */
 export interface Early {
-  /** The address the line was given for. */
   url: string;
   scope: SeatScope;
   fields: Pick<TickEntry, "status" | "usage">;
-  /** No dispatcher after all: the line goes the old way. */
   lost?: () => void;
 }
 
@@ -63,10 +63,8 @@ export function holdEarly(s: Sub, e: Early): void {
   s.early = s.early.filter((x) => !covered(x)).concat(e);
 }
 
-/**
- * The seat ids a line goes to (#8620 v15): each record names its seat on a channel of several;
- * without a known id only a channel of one seat takes a line — none fans out to all.
- */
+// The seat ids a line goes to (#8620 v15): each record names its seat on a channel of several;
+// without a known id only a channel of one seat takes a line — none fans out to all.
 export function seatsFor(s: Sub, scope: SeatScope): (string | null)[] {
   if (typeof scope === "string") return [scope];
   if (scope === EVERY && s.standings.length) return s.standings;
@@ -96,6 +94,7 @@ export function newSub(secret: string, o: HoldOptions): Sub {
     standings: [],
     seats: 0,
     resubscribed: false,
+    helloAt: 0,
     handing: null,
     fallback: null,
     heardAt: 0,

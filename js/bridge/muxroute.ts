@@ -93,8 +93,8 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     if (s.closed) return void link.send({ type: "unsubscribe", channel_id: channel });
     const named = f.standings ?? [];
     const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
-    // A hello between two unasked 1000s makes the second no longer "in a row" (#8620 v19).
-    Object.assign(s, { live: true, tries: 0, standings, seats: named.length, resubscribed: false });
+    // From its hello the subscription earns back its resubscribe after an unasked 1000 (muxends.ts).
+    Object.assign(s, { live: true, tries: 0, standings, seats: named.length, helloAt: Date.now() });
     earlyLines(s, channel).forEach(ticker.put);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);

@@ -5,7 +5,7 @@
 import { envName } from "../delivery/index.ts";
 
 /** The tact interval is the pulse gap of today (pulse.ts): one seam for both. */
-const GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 30_000;
+export const GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 30_000;
 
 export interface TickEntry {
   channel_id: string;
