@@ -39,8 +39,8 @@ export function watchAnswer(wsUrl: string): () => number | undefined {
 }
 
 /**
- * The status of the dispatcher address asked by a plain GET — for an upgrade that failed with
- * its answer unseen (Bun, a cut): 404/405 there is the same "no dispatcher"; undefined — no
+ * The status of the dispatcher address asked by a plain GET without Upgrade — for an upgrade
+ * that failed with no readable code (Bun always, a cut, a proxy breaking it); undefined — no
  * answer at all.
  */
 export async function askAnswer(wsUrl: string): Promise<number | undefined> {
@@ -53,26 +53,22 @@ export async function askAnswer(wsUrl: string): Promise<number | undefined> {
   }
 }
 
-const NO_DISPATCHER = [404, 405];
-
-/** The runtime publishes the upgrade's status (undici under Node); Bun does not. */
-const SEES_UPGRADE = !process.versions.bun;
-
 /**
- * A failed opening judged (#8620 v11): `none` — a seen 404/405, no dispatcher; anything else
- * (a 5xx, a timeout, a cut, no answer even to the plain GET) — another try after a pause.
+ * A failed opening judged (#8620 v19): `none` — no dispatcher: the upgrade answered 404/405, or,
+ * its code unreadable on any runtime, the plain GET answered 404 (405 there is the router's
+ * answer to a method, not "no dispatcher"). Anything else — a 5xx, a timeout, 426 or 400 to the
+ * GET, no answer to it — another try after a pause.
  */
 export async function verdictOf(
   wsUrl: string,
   e: { code: number; status: number | undefined; timedOut: boolean },
 ): Promise<{ none: boolean; why: string }> {
-  // Where the upgrade's answer is never seen (Bun) the address is asked plainly; under Node an
-  // unseen answer is a cut, not "no dispatcher" — the plain GET is not asked.
-  const ask = !SEES_UPGRADE && !e.timedOut && e.status === undefined;
-  const status = e.status ?? (ask ? await askAnswer(wsUrl) : undefined);
-  if (NO_DISPATCHER.includes(status ?? 0)) return { none: true, why: `answered ${status}` };
-  const seen = [e.timedOut ? "timeout" : `refused (${e.code})`, status].filter(Boolean);
-  return { none: false, why: `not reached (${seen.join(", ")})` };
+  if (e.status === 404 || e.status === 405)
+    return { none: true, why: `the upgrade answered ${e.status}` };
+  const plain = e.status === undefined && !e.timedOut ? await askAnswer(wsUrl) : undefined;
+  if (plain === 404) return { none: true, why: "the plain GET answered 404" };
+  const seen = [e.timedOut ? "timeout" : `refused (${e.code})`, e.status, plain && `GET ${plain}`];
+  return { none: false, why: `not reached (${seen.filter(Boolean).join(", ")})` };
 }
 
 /** The dispatcher address beside the channel: <apiBase>/channel/mux, ws scheme. */
