@@ -2,7 +2,8 @@
 // OpenCode plugin and the pi extension send numbers by method("usage"), the bridge
 // puts them under attrs.usage (placefields.ts) and replays its register — at most
 // once a minute, on a notable usage shift or a changed installed skill set (register is
-// a server call; the numbers move every step). The last snapshot bypasses the
+// a server call; the numbers move every step). Under the dispatcher the numbers go in the
+// tact instead (#8617), register only for the skill set. The last snapshot bypasses the
 // threshold before the seat is left or closed: a closed seat answers 404.
 import { envName, method, USAGE } from "../delivery/index.ts";
 import { HOSTED_CLIENTS } from "../shared/clients.ts";
@@ -10,9 +11,11 @@ import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { isParked } from "./hold.ts";
+import { onDispatcher, tickFor } from "./muxhold.ts";
 import { rememberUsage } from "./placefields.ts";
 import { skillsNeedRegister } from "./skillwatch.ts";
 import { replayRegister } from "./standing.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -74,9 +77,30 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   U.latest = u;
   rememberUsage(u);
   const s = usagePlace();
+  const tact = !!s && byTact(u);
+  // register stays for a changed skill set; the numbers it no longer carries under the tact.
   const due =
-    !!s && Date.now() - U.at >= MIN_GAP_MS && (moved(U.published, u) || skillsNeedRegister(s));
-  return answer({ pushed: due && s ? await publish(s, u) : false, usage: u });
+    !!s &&
+    Date.now() - U.at >= MIN_GAP_MS &&
+    ((!tact && moved(U.published, u)) || skillsNeedRegister(s));
+  const registered = due && s ? await publish(s, u) : false;
+  return answer({ pushed: tact || registered, usage: u });
+}
+
+const numbers = (u: Usage | null): string => JSON.stringify({ ...u, at: null });
+
+/**
+ * Under the dispatcher the numbers go in the daemon's tact (graph @nks/nks-dev, nodes #8617,
+ * #8620): every change, merged till the tact, no register for them; the leaving seat's last
+ * numbers go in its leaving tick. False — a socket per seat: register, as before.
+ */
+function byTact(u: Usage): boolean {
+  const addr = statusAddress();
+  if (!addr || !onDispatcher(addr.url)) return false;
+  if (numbers(u) === numbers(U.published)) return true;
+  if (!tickFor(addr.url, addr.standingId, { usage: { ...u } })) return false;
+  U.published = u;
+  return true;
 }
 
 /** The last snapshot, bypassing the threshold, strictly before the seat closes (leave, satellite revoke). */
