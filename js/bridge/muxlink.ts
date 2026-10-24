@@ -1,7 +1,6 @@
 // The daemon's one dispatcher connection per api (graph @nks/nks-dev, nodes #8620, #8622): GET
-// <apiBase>/channel/mux, no secret in it. Only a seen 404/405 is "no dispatcher": a socket per
-// seat until the daemon restarts (muxprobe.ts judges); anything else and a drop after opening —
-// another try after a jittered ladder pause.
+// <apiBase>/channel/mux, no secret in it. A seen 404/405 — a socket per seat till the restart
+// (muxprobe.ts judges); anything else and a drop after opening — a jittered ladder pause.
 import { CHANNEL } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Attempt, attempt, type AttemptEnd } from "./muxattempt.ts";
@@ -24,7 +23,10 @@ export interface LinkHooks {
 
 export interface Link {
   readonly open: boolean;
-  /** "fallback" — no dispatcher: a socket per seat until the process restarts; "mux" — it opened once. */
+  /**
+   * "probing" — never opened yet; "mux" — opened at least once, stays so across drops;
+   * "fallback" — a seen 404/405: a socket per seat until the process restarts.
+   */
   readonly mode: "probing" | "mux" | "fallback";
   connect(): void;
   send(frame: object): boolean;

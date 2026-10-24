@@ -55,16 +55,21 @@ export async function askAnswer(wsUrl: string): Promise<number | undefined> {
 
 const NO_DISPATCHER = [404, 405];
 
+/** The runtime publishes the upgrade's status (undici under Node); Bun does not. */
+const SEES_UPGRADE = !process.versions.bun;
+
 /**
  * A failed opening judged (#8620 v11): `none` — a seen 404/405, no dispatcher; anything else
- * (a 5xx, a timeout, no answer even to the plain GET) — another try after a pause.
+ * (a 5xx, a timeout, a cut, no answer even to the plain GET) — another try after a pause.
  */
 export async function verdictOf(
   wsUrl: string,
   e: { code: number; status: number | undefined; timedOut: boolean },
 ): Promise<{ none: boolean; why: string }> {
-  // The upgrade's answer unseen (Bun, a cut): the address is asked plainly, never guessed.
-  const status = e.status ?? (e.timedOut ? undefined : await askAnswer(wsUrl));
+  // Where the upgrade's answer is never seen (Bun) the address is asked plainly; under Node an
+  // unseen answer is a cut, not "no dispatcher" — the plain GET is not asked.
+  const ask = !SEES_UPGRADE && !e.timedOut && e.status === undefined;
+  const status = e.status ?? (ask ? await askAnswer(wsUrl) : undefined);
   if (NO_DISPATCHER.includes(status ?? 0)) return { none: true, why: `answered ${status}` };
   const seen = [e.timedOut ? "timeout" : `refused (${e.code})`, status].filter(Boolean);
   return { none: false, why: `not reached (${seen.join(", ")})` };
