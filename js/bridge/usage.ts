@@ -92,7 +92,7 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 const numbers = (u: Usage | null): string => JSON.stringify({ ...u, at: null });
 
 /** The contract's limit of a usage object in a tact record, bytes (#8620 v20): over it — a journal line. */
-const USAGE_MAX = 2048;
+const USAGE_MAX = Number(process.env[envName("USAGE_MAX_BYTES")]) || 2048; // the variable — a seam for probes
 const TOO_LARGE = "too large";
 
 /**
