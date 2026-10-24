@@ -11,7 +11,7 @@ import { scoped } from "../shared/scope.ts";
 
 // Per session (shared/scope.ts): daemon sessions may have different servers and accounts.
 const aliases = scoped(() => new Map<string, string>()); // rN or slug → @owner/slug
-const R = scoped(() => ({ listing: null as Promise<void> | null })); // one list read in flight for all waiters
+const R = scoped(() => ({ listing: null as Promise<boolean> | null })); // one list read in flight for all waiters
 
 const CANON_RE = /@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/;
 const trimmed = (r: unknown): string => String(r ?? "").trim();
@@ -108,22 +108,25 @@ export async function canonicalRealm(
 /**
  * Resolve graph names: any unresolved one re-reads the graph list (the graph may
  * have appeared since), so a negative answer is not kept. `list` calls the realm list.
+ * true — nothing to ask, or the list answered: a name still unresolved is not in it;
+ * false — the list was refused or did not answer.
  */
 export async function resolveRealms(
   names: unknown[],
   list: () => Promise<string | null>,
-): Promise<void> {
+): Promise<boolean> {
   const open = names.map(trimmed).filter((t) => t && !resolvedRealm(t));
-  if (!open.length) return;
+  if (!open.length) return true;
   R.listing ??= list()
     .then(
       (text) => {
         if (text) learnRealmList(text);
+        return !!text;
       },
-      () => {},
+      () => false,
     )
     .finally(() => {
       R.listing = null;
     });
-  await R.listing;
+  return R.listing;
 }

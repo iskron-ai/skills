@@ -14,12 +14,15 @@ import { holdFilePathOf, socketPathOf, standingsDirOf } from "../shared/standing
 import { realmList } from "./call.ts";
 import { CFG } from "./config.ts";
 import { writeOwned } from "./doorfiles.ts";
-import { type HoldRecord, keyOf } from "./holdrecord.ts";
+import { formerKeysIn, HOLD_RECORD_MAX_AGE_MS, type HoldRecord, keyOf } from "./holdrecord.ts";
 import { canonRealm, OWN_REALM, resolveRealms } from "./realms.ts";
 import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
 
-/** Graph names already said unresolved in this session: said once, not re-asked on every read. */
+/**
+ * Graph names an answered list did not hold, said once in this session and not re-asked on every
+ * read; a refused or silent list leaves no name here.
+ */
 const unsaid = scoped(() => new Set<string>());
 /** One move at a time per session: a stand and a return reading at once wait for it. */
 const R = scoped(() => ({ run: null as Promise<void> | null }));
@@ -33,12 +36,22 @@ const bare = (r: unknown): boolean => {
 
 const hashOf = (key: string): string => basename(holdFilePathOf(CFG.authDir, key), ".hold");
 
+/** A record a return could still take, as readHoldRecord reads one: an address and a live age. */
+const live = (rec: HoldRecord | null): rec is HoldRecord =>
+  !!rec &&
+  typeof rec.url === "string" &&
+  !!rec.realm &&
+  rec.karta != null &&
+  typeof rec.at === "number" &&
+  Date.now() - rec.at <= HOLD_RECORD_MAX_AGE_MS;
+
 function readAll(dir: string): { file: string; rec: HoldRecord }[] {
   const out: { file: string; rec: HoldRecord }[] = [];
   for (const f of readdirSync(dir).filter((x) => x.endsWith(".hold"))) {
     try {
-      const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord;
-      if (rec && rec.karta != null && bare(rec.realm)) out.push({ file: join(dir, f), rec });
+      const rec = JSON.parse(readFileSync(join(dir, f), "utf8")) as HoldRecord | null;
+      // An expired record no return takes: the sweep erases it, the graph list is not asked for it.
+      if (live(rec) && bare(rec.realm)) out.push({ file: join(dir, f), rec });
     } catch {
       /* foreign or broken file */
     }
@@ -63,10 +76,17 @@ function move(dir: string, file: string, rec: HoldRecord, canon: string): boolea
   const from = keyOf(rec.realm, rec.karta, rec.name);
   const to = keyOf(canon, rec.karta, rec.name);
   const dest = holdFilePathOf(CFG.authDir, to);
+  const formerKey = (kept: HoldRecord | null): string | string[] => {
+    const all = [...new Set([...formerKeysIn(kept, to), from, ...formerKeysIn(rec, to)])];
+    return all.length === 1 ? all[0] : all;
+  };
   try {
-    // A record under the canonical key is the seat's newer word: the old one goes.
-    if (!existsSync(dest))
-      writeOwned(dest, JSON.stringify({ ...rec, realm: canon, key: to, formerKey: from }) + "\n");
+    // A record under the canonical key is the seat's newer word: the old one goes, its key stays.
+    const there = existsSync(dest) ? (JSON.parse(readFileSync(dest, "utf8")) as HoldRecord) : null;
+    const next = there
+      ? { ...there, formerKey: formerKey(there) }
+      : { ...rec, realm: canon, key: to, formerKey: formerKey(null) };
+    writeOwned(dest, JSON.stringify(next) + "\n");
     unlinkSync(file);
     moveMemory(dir, from, to);
     log(`hold record ${from}: the graph ${rec.realm} is ${canon} — moved to ${to}`);
@@ -102,15 +122,20 @@ async function moveAll(): Promise<void> {
   const ask = open
     .map((x) => x.rec.realm)
     .filter((r) => !unsaid.has(r) && !canonRealm(r).startsWith("@"));
-  if (ask.length) await resolveRealms(ask, realmList);
+  // A refused or silent list keeps no negative: the next stand or return asks again.
+  const answered = ask.length ? await resolveRealms(ask, realmList) : true;
   for (const { file, rec } of open) {
     const canon = canonRealm(rec.realm);
     if (canon.startsWith("@")) move(dir, file, rec, canon);
-    else if (!unsaid.has(rec.realm)) {
+    else if (unsaid.has(rec.realm)) continue;
+    else if (answered) {
       unsaid.add(rec.realm);
       log(
         `hold record ${keyOf(rec.realm, rec.karta, rec.name)}: the graph ${rec.realm} is not in the graph list — left as it is; a bare name reaches only the own graph`,
       );
-    }
+    } else
+      log(
+        `hold record ${keyOf(rec.realm, rec.karta, rec.name)}: the graph list did not answer — ${rec.realm} left as it is, asked again at the next stand or return`,
+      );
   }
 }

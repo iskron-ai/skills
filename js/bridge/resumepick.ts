@@ -7,7 +7,7 @@ import { standingsDirOf } from "../shared/standings.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { ledKey } from "./hold.ts";
-import { eraOf, type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { eraOf, formerKeysIn, type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 
 export interface ResumeSelector {
   /** Standing key — preferred: the exact record. */
@@ -54,7 +54,7 @@ export function recordsFor(sel: ResumeSelector): {
       if (!rec || rec.client !== mine) continue;
       const key = keyOf(rec.realm, rec.karta, rec.name);
       // A record moved to @owner/slug answers to its earlier key too (holdcanon.ts).
-      const keyed = !!sel.key && (key === sel.key || rec.formerKey === sel.key);
+      const keyed = !!sel.key && (key === sel.key || formerKeysIn(rec).includes(sel.key));
       const inDir = oneDir(rec.cwd, sel.cwd); // /tmp and /private/tmp are one directory (#5048)
       // Stood by this session — taken outside the directory too: sessions move (#6550).
       const stoodBy = !!sel.session && rec.session === sel.session;
