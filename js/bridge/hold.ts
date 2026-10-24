@@ -312,7 +312,8 @@ export function parkStanding(reason: string): string | null {
   H.heardAt = Math.max(H.heardAt, H.holder.heardAt);
   letGo(H.holder, null, reason);
   H.holder = null;
-  H.parked = true;
+  // A left seat awaits no hello: a drop's wait (expectHello) is not the return's (heardOnReturn).
+  Object.assign(H, { parked: true, unheard: false });
   standingLog(`parked ${H.currentKey}: ${reason}`);
   const text = holdWords().parked(reason);
   broadcast({ kind: "note", text });
