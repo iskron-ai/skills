@@ -12,6 +12,10 @@ export interface StatusPostWords {
   refused: (status: number, body: string) => string;
   /** The channel goes through the dispatcher and no subscription carries it now. */
   notSubscribed: () => string;
+  /** A live subscription carries the channel, but the line names no seat of it. */
+  seatUnnamed: () => string;
+  /** Why the line did not go: its time limit passed while it waited its turn. */
+  late: () => string;
 }
 
 export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
@@ -24,6 +28,9 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     refused: (status, body) => `Отказано (${status}) поверхностью: ${body || "без тела"}`,
     notSubscribed: () =>
       "Отказано (мост): канал идёт через диспетчер, а подписки на него сейчас нет — строка не ушла; старый адрес статуса мост зовёт только при откате на сокет",
+    seatUnnamed: () =>
+      "Отказано (мост): подписка на канал жива, но место строки не названо — на канале несколько мест, а id своего мост не знает; строка не ушла",
+    late: () => "предел вышел, пока строка ждала очереди",
   },
   en: {
     trimmedBy: (message) => `the server trimmed the line: ${message}`,
@@ -34,5 +41,8 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     refused: (status, body) => `Refused (${status}) by the surface: ${body || "no body"}`,
     notSubscribed: () =>
       "Refused (bridge): the channel goes through the dispatcher and no subscription carries it now — the line did not go; the old status address is called only after falling back to a socket",
+    seatUnnamed: () =>
+      "Refused (bridge): the channel's subscription lives, but the line names no seat — the channel carries several and the bridge does not know its own id; the line did not go",
+    late: () => "its limit passed in the turn",
   },
 };
