@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.22.0](https://github.com/iskron-ai/skills/compare/v7.21.1...v7.22.0) (2026-10-24)
+
+
+### Features
+
+* **bridge:** одно соединение каналов на демон — диспетчер, разводка по каналу, ack, пачечный такт, откат только по 404/405 ([#8620](https://github.com/iskron-ai/skills/issues/8620)) ([95fb976](https://github.com/iskron-ai/skills/commit/95fb9768b6355f11e930195459ab04eefcf6aef4))
+
+
+### Bug Fixes
+
+* **agents:** живой прогон моста до релиза — стенд или изолированный LOCAL, не бой ([#7544](https://github.com/iskron-ai/skills/issues/7544)) ([#574](https://github.com/iskron-ai/skills/issues/574)) ([931d952](https://github.com/iskron-ai/skills/commit/931d9520da98dfbcb2d341f3c7eb054e24a42400))
+* **agents:** итоговое ревью кандидата тега — пара семейств из Sol, opus, glm ([#7142](https://github.com/iskron-ai/skills/issues/7142)) ([#575](https://github.com/iskron-ai/skills/issues/575)) ([2625ec3](https://github.com/iskron-ai/skills/commit/2625ec3ecbdd93b4c4ae0ff1ba09c32effd69917))
+
 ## [7.21.1](https://github.com/iskron-ai/skills/compare/v7.21.0...v7.21.1) (2026-10-24)
 
 
