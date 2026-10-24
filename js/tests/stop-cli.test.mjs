@@ -144,6 +144,18 @@ for (const [held, sent, missing, listDown] of [
     );
   });
 
+// A bare slug the api's list does not resolve would reach the caller's own graph: refused aloud.
+test("stop of a seat held as a bare slug, the api's graph list silent, sends nothing and says why", async (t) => {
+  const { dir, fake } = await seated(t, "bare-s", "nks-dev", (f) => {
+    f.state.realmResult = { isError: true, content: [{ type: "text", text: "list refused" }] };
+  });
+  await fake.control({ resolverRefs: true, apiRealmsDown: true });
+  const r = await stop(dir, ["bare-s"], patOf(fake));
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(`${r.stdout}${r.stderr}`, /граф «nks-dev» без владельца/, `${r.stdout}${r.stderr}`);
+  assert.deepEqual(fake.state.orders.human, [], "nothing reached the api");
+});
+
 test("stop <session id> on an api without the stop route revokes the seat instead", async (t) => {
   const { dir, fake, id, session } = await seated(t, "old-api");
   await fake.control({ orders_route_missing: true });

@@ -66,9 +66,10 @@ async function ask(
 /**
  * The seat's graph as the api reads it (case №1571 [82]–[89]): no rN, and a bare slug reaches
  * only the caller's own graph — so both go as @owner/slug from the api's graph list; one the
- * list does not resolve, or a list that does not answer, leaves rN as its number, a slug as is.
+ * list does not resolve, or a list that does not answer, leaves rN as its number; such a slug —
+ * null: the api would read it as the caller's own graph, so nothing is sent.
  */
-async function realmForApi(base: string, token: string, realm: string): Promise<string> {
+async function realmForApi(base: string, token: string, realm: string): Promise<string | null> {
   const t = realm.trim();
   if (!t || t.startsWith("@") || t === OWN_REALM) return t;
   try {
@@ -83,7 +84,7 @@ async function realmForApi(base: string, token: string, realm: string): Promise<
   } catch {
     /* the list did not answer: the number below */
   }
-  return apiRealm(t);
+  return /^r\d+$/i.test(t) ? apiRealm(t) : null;
 }
 
 /** The order (or the revoke) and its outcome in words; true — the seat goes. */
@@ -92,6 +93,7 @@ export async function stopSeat(p: PlaceSnapshot, id: string, base: string, token
   const at = `${base}/standings/${encodeURIComponent(id)}`;
   try {
     const realm = await realmForApi(base, token, p.realm);
+    if (realm === null) return { ok: false, said: sw().unnamedGraph(seat, p.realm) };
     const order = await ask(`${at}/stop`, "POST", realm, token, {
       reason_code: "person_request",
       client_id: `stop-${randomUUID()}`,
