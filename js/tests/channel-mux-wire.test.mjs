@@ -159,26 +159,50 @@ test("usage numbers held for hello go by register when the dispatcher turns out 
   );
 });
 
-test("a cut upgrade with a plain GET 404: under Node no verdict, another try; under Bun — the fallback", async () => {
-  const bun = !!process.env.BUN_BE_BUN;
+// Апгрейд без читаемого кода (Bun всегда; Node — обрыв, прокси рвёт апгрейд): вердикт — простым
+// GET без Upgrade на любом рантайме, «нет диспетчера» — только 404 на нём (#8620 v19, (м)).
+test("a cut upgrade, the plain GET answers 404: no dispatcher — a socket per seat, on any runtime", async () => {
   await withMux(
     async ({ fake, mux, session }) => {
       const a = await session();
       await a.stand({ realm: REALM, karta: 931, name: "get-a" });
-      await waitFor("the cut attempt", () => mux.attempts.length >= 1);
+      await waitFor("the fallback socket", () => fake.state.counts.ws_upgrades >= 1, 10_000);
+      assert.equal(mux.plain.at(-1)?.answered, 404, "the verdict by the plain GET");
       await sleep(1500);
-      if (bun) {
-        // Под Bun статус апгрейда не виден: вердикт — по простому GET (ответ сервера на него
-        // договор пока не записал, №1583).
-        await waitFor("the fallback socket", () => fake.state.counts.ws_upgrades >= 1, 10_000);
-        return;
-      }
-      assert.equal(mux.plain.length, 0, "no plain GET under Node");
-      assert.equal(fake.state.counts.ws_upgrades, 0, "no fallback on a cut");
-      mux.mode = "mux";
-      await muxCarrying(fake, mux, [channelOf(fake, "get-a")], 15_000);
+      assert.equal(mux.attempts.length, 1, "the dispatcher asked once, then sockets");
     },
     { mode: "cutGet404" },
+  );
+});
+
+test("a cut upgrade, the plain GET answers 405: no verdict — another try, never a socket per seat", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "get-b" });
+      await waitFor("the plain GET", () => mux.plain.length >= 1);
+      await sleep(1000);
+      assert.equal(fake.state.counts.ws_upgrades, 0, "405 to the plain GET is no verdict");
+      mux.mode = "mux";
+      await muxCarrying(fake, mux, [channelOf(fake, "get-b")], 15_000);
+    },
+    { mode: "cutGet405" },
+  );
+});
+
+// Bun кода апгрейда не видит: там это случай GET-пробы выше.
+const SEEN = {
+  skip: process.env.BUN_BE_BUN ? "the runtime does not show the upgrade's code" : false,
+};
+test("the upgrade answers 405: no dispatcher — a socket per seat, no plain GET", SEEN, async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "get-c" });
+      await waitFor("the fallback socket", () => fake.state.counts.ws_upgrades >= 1, 10_000);
+      assert.equal(mux.plain.length, 0, "the seen code is the verdict");
+    },
+    { mode: "old405" },
   );
 });
 

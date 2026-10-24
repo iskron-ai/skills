@@ -158,6 +158,12 @@ test("N sessions: one tick frame per interval whatever N, busy lines in it, no P
       assert.equal(fake.state.placeStatus.get(id), `занят ${name}`, `${name}'s busy line by tick`);
     }
     assert.equal(fake.state.counts.status_requests, 0, "no POST to /channel/status");
+    // Пульс — головы, по каналу (#8620 v19): его запись места не называет.
+    const pulses = mux.ticks.flatMap((t) => t.entries).filter((e) => e.pulse);
+    assert.ok(pulses.length, "the pulse goes in the tact");
+    for (const e of pulses)
+      assert.ok(!("standing_id" in e), `the pulse's record names no seat: ${JSON.stringify(e)}`);
+    for (const name of names) assert.ok(mux.pulses.has(channelOf(fake, name)), `${name}'s pulse`);
   });
 });
 

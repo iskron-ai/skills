@@ -65,7 +65,7 @@ test("channel_closed 4001 on a subscription — not a code of it: no stop, subsc
   });
 });
 
-test("two channel_closed 1000 the bridge did not ask for: a journal line, one resubscribe, then the end as a dead token; B lives", async () => {
+test("two unasked channel_closed 1000 in a row (no hello between): a journal line, one resubscribe, then the end as a dead token; B lives", async () => {
   await withMux(async ({ fake, mux, session, journal }) => {
     const [a, b] = [await session(), await session()];
     ok(await a.stand({ realm: REALM, karta: 931, name: "one-a" }), "A stands");
@@ -74,11 +74,9 @@ test("two channel_closed 1000 the bridge did not ask for: a journal line, one re
     const conn = await muxCarrying(fake, mux, [ca, cb]);
     const sa = secretOf(fake, ca);
     const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
+    mux.closeNext.set(sa, 1); // ответ на переподписку — снова 1000, hello не будет
     mux.endSub(ca, 1000, "unsubscribed");
-    await waitFor("A subscribed again once", () => conn.subs.has(ca), 15_000);
-    assert.equal(told(a, "dead").length, 0, "the first one is no end");
-    mux.endSub(ca, 1000, "unsubscribed");
-    await waitFor("A told as of a dead token", () => told(a, "dead").length);
+    await waitFor("A told as of a dead token", () => told(a, "dead").length, 15_000);
     await sleep(6000); // дольше первой ступени отступа: цикла переподписок нет
     assert.equal(asked(), 2, "one resubscribe, not a loop");
     assert.ok(!conn.closed && conn.subs.has(cb), "B's subscription lives");
@@ -89,6 +87,63 @@ test("two channel_closed 1000 the bridge did not ask for: a journal line, one re
       /closed with 1000 \(unsubscribed\) — a server defect/,
       "a journal line",
     );
+  });
+});
+
+test("an unasked 1000, a hello, later another unasked 1000: not in a row — subscribed again, no end", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "two-a" }), "A stands");
+    const ca = channelOf(fake, "two-a");
+    const conn = await muxCarrying(fake, mux, [ca]);
+    const sa = secretOf(fake, ca);
+    const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
+    mux.endSub(ca, 1000, "unsubscribed");
+    await waitFor(
+      "the first resubscribe's hello",
+      () => asked() === 2 && conn.subs.has(ca),
+      15_000,
+    );
+    await sleep(500);
+    mux.endSub(ca, 1000, "unsubscribed");
+    await waitFor("the second resubscribe", () => asked() === 3 && conn.subs.has(ca), 15_000);
+    assert.equal(told(a, "dead").length, 0, "a hello between: not the end");
+    mux.say("two-a", "A после двух 1000 с hello между");
+    await waitFor("A to hear", () => a.heard("A после двух 1000 с hello между"));
+  });
+});
+
+test("busy on the subscribe — error{ref, busy}: that subscription again after a pause, the connection lives", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "busy-a" }), "A stands");
+    const ca = channelOf(fake, "busy-a");
+    const conn = await muxCarrying(fake, mux, [ca]);
+    const sa = secretOf(fake, ca);
+    let busy = 1;
+    mux.refuseWhen = (s) => (s === sa && busy-- > 0 ? "busy" : null);
+    mux.endSub(ca, 4002, "expired"); // переподписка встречает busy
+    await waitFor("subscribed again past busy", () => conn.subs.has(ca), 20_000);
+    assert.equal(mux.conns.length, 1, "the connection lives");
+    assert.equal(fake.state.counts.ws_upgrades, 0, "no socket per seat");
+    assert.equal(told(a, "stopped").length + told(a, "dead").length, 0, "no end of the seat");
+  });
+});
+
+test("channel_closed 4004 revoked:gone — the seat is taken off; 4002 expired — subscribed again", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const [a, b] = [await session(), await session()];
+    ok(await a.stand({ realm: REALM, karta: 931, name: "gone-a" }), "A stands");
+    ok(await b.stand({ realm: REALM, karta: 931, name: "exp-b" }), "B stands");
+    const [ca, cb] = [channelOf(fake, "gone-a"), channelOf(fake, "exp-b")];
+    const conn = await muxCarrying(fake, mux, [ca, cb]);
+    mux.endSub(cb, 4002, "expired");
+    await waitFor("B subscribed again", () => conn.subs.has(cb), 15_000);
+    assert.equal(told(b, "stopped").length + told(b, "dead").length, 0, "expired is no end");
+    mux.endSub(ca, 4004, "revoked:gone");
+    await waitFor("A told it is stopped", () => told(a, "stopped").length);
+    mux.say("exp-b", "B после 4002");
+    await waitFor("B to hear", () => b.heard("B после 4002"));
   });
 });
 

@@ -5,17 +5,19 @@
 // Садится на сервер fake-nks.mjs: секрет — адрес сокета из connect, канал и места — его.
 // mode "old" — сервер без диспетчера: апгрейд по адресу диспетчера отвечает 404;
 // mode "down" — диспетчер есть, но лежит: 503; mode "cut" — обрыв до всякого ответа;
-// "cutGet404" — апгрейд рвётся, а простой GET отвечает 404.
+// "cutGet404"/"cutGet405" — апгрейд рвётся, а простой GET отвечает 404/405; "old405" — апгрейд 405.
 // Тот же адрес простым GET без апгрейда: 404 без диспетчера, 426 с ним, 503 лежащий.
 import { createHash, randomUUID } from "node:crypto";
 
 import { clientFrames, wsFrame } from "./fake-nks.mjs";
 
 const ACCEPT = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-const REFUSED = { old: 404, down: 503 };
-const PLAIN = { old: 404, down: 503, mux: 426, cutGet404: 404 };
+const REFUSED = { old: 404, down: 503, old405: 405 };
+const PLAIN = { old: 404, down: 503, mux: 426, cutGet404: 404, cutGet405: 405, old405: 405 };
 /** Апгрейд рвётся до ответа. */
-const CUT = new Set(["cut", "cutGet404"]);
+const CUT = new Set(["cut", "cutGet404", "cutGet405"]);
+/** Предел объекта usage в записи такта, байт (#8620 v19). */
+const USAGE_MAX = 2048;
 
 export function attachMux(fake, opts = {}) {
   const st = fake.state;
@@ -37,7 +39,9 @@ export function attachMux(fake, opts = {}) {
     superseded: [], // { channel_id, from } — подписка вытеснена другим соединением
     ticks: [], // { at, conn, entries }
     usage: new Map(), // standing_id → расход места из последнего tick
-    refusedRows: [], // записи такта, отказанные standing_required
+    refusedRows: [], // записи такта, отказанные строкой ({…запись, code})
+    pulses: new Map(), // channel_id → последний пульс канала
+    closeNext: new Map(), // секрет → сколько подписок ответить channel_closed 1000 вместо hello
     noIds: opts.noIds ?? false, // hello называет места без standing_id
   };
   // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
@@ -79,6 +83,12 @@ export function attachMux(fake, opts = {}) {
     const code =
       mux.refuse.get(secret) ?? mux.refuseWhen?.(secret) ?? (chan ? null : "secret_invalid");
     if (code) return send(conn, { type: "error", ref, code, reason: code });
+    // closeNext: ответ на подписку — снова непрошеный channel_closed 1000, до hello.
+    if (mux.closeNext.get(secret) > 0) {
+      mux.closeNext.set(secret, mux.closeNext.get(secret) - 1);
+      const reason = "unsubscribed";
+      return send(conn, { type: "channel_closed", channel_id: chan, code: 1000, reason });
+    }
     if (conn.subs.size >= (opts.limit ?? 256))
       return send(conn, { type: "error", ref, code: "limit_subscriptions" });
     const other = holderOf(chan);
@@ -129,21 +139,32 @@ export function attachMux(fake, opts = {}) {
     if (e.standing_id) return e.standing_id;
     const places = [...(st.channels.get(e.channel_id)?.places.values() ?? [])];
     if (places.length === 1) return places[0].standing_id;
-    mux.refusedRows.push(e);
-    send(conn, { type: "error", channel_id: e.channel_id, code: "standing_required" });
+    refuseRow(conn, e, "standing_required");
     return null;
+  };
+
+  /** Отказ строки такта: error{channel_id, code}, прочие строки пачки идут. */
+  const refuseRow = (conn, e, code) => {
+    mux.refusedRows.push({ ...e, code });
+    send(conn, { type: "error", channel_id: e.channel_id, code });
   };
 
   const tick = (conn, { entries }) => {
     mux.ticks.push({ at: Date.now(), conn: conn.id, entries });
     for (const e of Array.isArray(entries) ? entries : []) {
+      // Пульс — головы, хранится по каналу: места записи не требует (#8620 v19).
+      if (e.pulse) mux.pulses.set(e.channel_id, e.pulse);
+      if (typeof e.status !== "string" && !e.usage) continue;
+      if (e.usage && Buffer.byteLength(JSON.stringify(e.usage)) > USAGE_MAX) {
+        refuseRow(conn, e, "usage_too_large");
+        continue;
+      }
       const id = seatOfEntry(conn, e);
       if (!id) continue;
       if (typeof e.status === "string") {
         st.placeStatus.set(id, e.status);
         st.status = e.status;
       }
-      if (e.pulse) st.pulses.push({ at: Date.now(), place: id, frame: e.pulse });
       if (e.usage) mux.usage.set(id, e.usage);
     }
   };

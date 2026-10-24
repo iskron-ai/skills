@@ -162,6 +162,56 @@ test("leave while the dispatcher subscription is broken: no refusal to the agent
   });
 });
 
+test("usage in the tact stays under the contract's 2048 bytes, the longest snapshot too", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "big-a" }), "A stands");
+    await muxCarrying(fake, mux, [channelOf(fake, "big-a")]);
+    const n = Number.MAX_SAFE_INTEGER;
+    const longest = { tokens: n, input: n, output: n, cache_read: n, cache_write: n };
+    const big = await a.rpc("iskron/usage", {
+      ...longest,
+      context: n,
+      window: n,
+      model: "🜂".repeat(2100),
+    });
+    assert.equal(big.result?.pushed, true, JSON.stringify(big).slice(0, 300));
+    await waitFor("the numbers by tick", () => mux.usage.size === 1);
+    const [usage] = [...mux.usage.values()];
+    assert.ok(Buffer.byteLength(JSON.stringify(usage)) <= 2048, `${JSON.stringify(usage)}`);
+    assert.deepEqual(mux.refusedRows, [], "nothing for the server to refuse");
+  });
+});
+
+test("a satellite leaves by word while the dispatcher subscription is broken: told the truth, the line stays, no POST", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const s = await session(["--satellite"]);
+    const satellite_of = `@tester:${CALLER}`;
+    ok(await s.stand({ realm: REALM, karta: 931, satellite_of, status: "занят S" }), "it stands");
+    const name = `${CALLER}.sub-1`;
+    await muxCarrying(fake, mux, [channelOf(fake, name)]);
+    await waitFor("the line by tick", () => busyOf(fake, name) === "занят S");
+    mux.mode = "down";
+    mux.drop();
+    await waitFor(
+      "a try on the down dispatcher",
+      () => mux.attempts.some((x) => x.answered === 503),
+      15_000,
+    );
+    const left = await s.rpc("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "leave", realm: REALM },
+    });
+    ok(left, "leave by word");
+    assert.doesNotMatch(textOf(left), /занятость снята|busyness cleared/, "no false «cleared»");
+    assert.match(textOf(left), /до истечения пульса|till the pulse runs out/);
+    assert.equal(fake.state.counts.status_requests, 0, "no POST");
+    assert.equal(busyOf(fake, name), "занят S", "the line stays on the board");
+  });
+});
+
 test("leave by word clears the line by tick before the unsubscribe; the return brings it back by tick, no POST", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const a = await session();

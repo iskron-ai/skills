@@ -67,11 +67,11 @@ export const alive = (pid) => {
 };
 
 /** Одна MCP-сессия демона по шву: кадры копятся, ответы — по id. */
-async function seamSession(dir, fake) {
+async function seamSession(dir, fake, extra = []) {
   const hello = helloFrame({
     build: "v7.9.0+test",
     path: BRIDGE,
-    argv: [fake.mcpUrl, "--auth-dir", dir],
+    argv: [fake.mcpUrl, "--auth-dir", dir, ...extra],
     patSha: patShaOf(PAT),
   });
   const link = await connectSeam(seamSocketPath(dir), hello, 3000);
@@ -174,8 +174,9 @@ export async function withMux(
       daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" });
       (await entrance(dir)).close();
     }
-    const session = async () => {
-      const s = await seamSession(dir, fake);
+    /** extra — аргументы моста сессии сверх общих (например, --satellite). */
+    const session = async (extra = []) => {
+      const s = await seamSession(dir, fake, extra);
       closers.push(() => s.close());
       return s;
     };
