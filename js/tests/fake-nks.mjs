@@ -2014,6 +2014,9 @@ export async function startFakeNks(opts = {}) {
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
     if (st.upgradeHook?.(req, socket, u)) return; // диспетчер каналов (fake-mux.mjs)
+    // Сервер без диспетчера отвечает на его адрес 404, как живой api (#8620): не рвёт апгрейд.
+    if (u.pathname.endsWith("/channel/mux"))
+      return socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
     if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
     const token = u.pathname.slice("/channel/ws/".length);
     const seat = st.wsTokens.get(token);
