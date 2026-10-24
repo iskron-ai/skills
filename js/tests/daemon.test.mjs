@@ -403,7 +403,7 @@ test("the daemon updates under live sessions: the places stay, the thin bridges 
       assert.ok(!ra.result?.isError && !rb.result?.isError, `${textOf(ra)}\n${textOf(rb)}`);
       await waitFor("both sockets", () => fake.state.ws.size === 2);
       // Сторож места A — под монитором харнеса: смену демона он переживает.
-      const keyA = "upd-a--931--nks-dev";
+      const keyA = "upd-a--931--_nks_nks-dev";
       let wdOut = "";
       watchdog = spawn(NODE, [BRIDGE, "watchdog", keyA, "--auth-dir", dir], {
         env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1" },
@@ -1271,7 +1271,7 @@ test("a lost seat refuses only its own graph: no-realm calls and rN into a held 
       await waitFor("the beside word", () =>
         a.notifications.some((n) => n.params?.data?.kind === "beside"),
       );
-      dropRecordsIn(dir, "drugoy");
+      dropRecordsIn(dir, "@nks/drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -1333,7 +1333,7 @@ test("the bridge's own realm list is past --tools: rN into the held graph goes t
         a.notifications.some((n) => n.params?.data?.kind === "beside"),
       );
       const listsForA = fake.state.counts.realm_list ?? 0;
-      dropRecordsIn(dir, "drugoy");
+      dropRecordsIn(dir, "@nks/drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -1479,7 +1479,7 @@ test("the gate holds harness calls until the bridge's own realm list answers: rN
       // алиасов из него, — приговорённый до ответа получил бы unresolved-отказ.
       await fake.control({ realmDelayMs: 1200 });
       const listsBefore = fake.state.counts.realm_list ?? 0;
-      dropRecordsIn(dir, "drugoy");
+      dropRecordsIn(dir, "@nks/drugoy");
       d.bump();
       await waitFor(
         "the lost word for the beside seat",
@@ -1691,7 +1691,7 @@ test("SIGTERM of the daemon: the watchdog hears the place again and prints a wor
     assert.ok(!r.result?.isError, textOf(r));
     await waitFor("the place's socket", () => fake.state.ws.size === 1);
     const before = new Set(fake.state.ws);
-    const wd = startWatchdog(dir, "term-w--931--nks-dev");
+    const wd = startWatchdog(dir, "term-w--931--_nks_nks-dev");
     try {
       await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
       const [first] = daemonPids(dir);
@@ -1741,7 +1741,7 @@ test("the harness closes stdin: the place is released and the watchdog leaves lo
     const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-x" });
     assert.ok(!r.result?.isError, textOf(r));
     await waitFor("the place's socket", () => fake.state.ws.size === 1);
-    const wd = startWatchdog(dir, "term-x--931--nks-dev");
+    const wd = startWatchdog(dir, "term-x--931--_nks_nks-dev");
     try {
       await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
       a.proc.stdin.end();
@@ -1765,7 +1765,9 @@ test("SIGTERM of the daemon and the place does not come back: the watchdog leave
     const r = await stand(a, { realm: "nks-dev", karta: 931, name: "term-y" });
     assert.ok(!r.result?.isError, textOf(r));
     await waitFor("the place's socket", () => fake.state.ws.size === 1);
-    const wd = startWatchdog(dir, "term-y--931--nks-dev", { ISKRON_WATCHDOG_ATTACH_MS: "3000" });
+    const wd = startWatchdog(dir, "term-y--931--_nks_nks-dev", {
+      ISKRON_WATCHDOG_ATTACH_MS: "3000",
+    });
     try {
       await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
       const standings = join(dir, "standings");
@@ -1814,9 +1816,9 @@ for (const [label, after] of [
       // Передача была (после SIGKILL моста — всегда) — строку снимает предел, и журнал это называет.
       if (
         label.startsWith("SIGKILL") ||
-        /place term-k--931--nks-dev handed over/.test(journalOf(dir))
+        /place term-k--931--_nks_nks-dev handed over/.test(journalOf(dir))
       )
-        assert.match(journalOf(dir), /place term-k--931--nks-dev: busy line cleared/);
+        assert.match(journalOf(dir), /place term-k--931--_nks_nks-dev: busy line cleared/);
     });
   });
 }
@@ -1837,7 +1839,7 @@ test("SIGTERM of the daemon, the place's door up again at the limit: the busy li
     process.kill(first, "SIGTERM");
     await waitFor("the SIGTERM taken", () => /SIGTERM — ending/.test(journalOf(dir)));
     a.proc.kill("SIGKILL");
-    const path = socketPathOf(dir, "term-r--931--nks-dev");
+    const path = socketPathOf(dir, "term-r--931--_nks_nks-dev");
     await waitFor("the outgoing door closed", () => !existsSync(path), 10_000);
     const door = createServer().listen(path);
     try {
@@ -1950,7 +1952,9 @@ test("SIGTERM of the daemon while a live thin bridge is between seams: the place
     });
     assert.ok(!r.result?.isError, JSON.stringify(r));
     await waitFor("the place's socket", () => [...fake.state.wsNames.values()].includes("term-z"));
-    const wd = startWatchdog(dir, "term-z--931--nks-dev", { ISKRON_WATCHDOG_ATTACH_MS: "3000" });
+    const wd = startWatchdog(dir, "term-z--931--_nks_nks-dev", {
+      ISKRON_WATCHDOG_ATTACH_MS: "3000",
+    });
     try {
       await waitFor("the watchdog to attach", () => /слушаю стояние/.test(wd.out));
       link.close(); // шов оборван без bye: окно переподхвата
@@ -2198,7 +2202,7 @@ test("a spooled frame of a beside seat that came back reaches that seat as its f
       await new Promise((res) => setTimeout(res, 500));
       assert.deepEqual(
         carrying().map((n) => `${n.params.data.kind}:${n.params.data.key ?? ""}`),
-        ["frame:side-t--48--drugoy"],
+        ["frame:side-t--48--_nks_drugoy"],
         `the frame of the seat beside, at its door: ${a.stderr}`,
       );
     } finally {
@@ -2257,7 +2261,7 @@ test("a live frame of a beside seat between the successor's hello and its regist
       await new Promise((res) => setTimeout(res, 500));
       assert.deepEqual(
         carrying().map((n) => `${n.params.data.kind}:${n.params.data.key ?? ""}`),
-        ["frame:side-w--48--drugoy"],
+        ["frame:side-w--48--_nks_drugoy"],
         `the frame of the seat beside, at its door: ${a.stderr}`,
       );
       const standings = join(dir, "standings");
@@ -2294,7 +2298,7 @@ test("a spooled frame of a beside seat that did not come back is not given to th
         .find(([, p]) => p.name === "side-s");
       const before = new Set(fake.state.ws);
       const [first] = daemonPids(dir);
-      dropRecordsIn(dir, "drugoy"); // без записи место рядом не вернётся (#7602)
+      dropRecordsIn(dir, "@nks/drugoy"); // без записи место рядом не вернётся (#7602)
       d.bump(1500);
       await waitFor(
         "the outgoing session's end",

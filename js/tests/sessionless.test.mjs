@@ -19,7 +19,7 @@ import {
   until,
 } from "./ownseat-kit.mjs";
 
-const KEY = "proba--931--nks-dev";
+const KEY = "proba--931--_nks_nks-dev"; // the seat's graph as @owner/slug (#8677)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Место proba держит живой мост без сессии из каталога cwd — сирота возврата с диска. */

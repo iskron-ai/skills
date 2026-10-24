@@ -38,10 +38,11 @@ const stop = (dir, args, childEnv = env) =>
     });
   });
 
-/** A daemon with one session standing on `name`; the seat's id is on the fake. */
-async function seated(t, name) {
+/** A daemon with one session standing on `name` in `realm`; the seat's id is on the fake. */
+async function seated(t, name, realm = "nks-dev", before = () => {}) {
   const dir = mkdtempSync(join(tmpdir(), "stop-cli-"));
   const fake = await startFakeNks({ pat: "status-pat" });
+  before(fake);
   const d = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], { env, stdio: "ignore" });
   let link;
   t.after(async () => {
@@ -68,7 +69,7 @@ async function seated(t, name) {
   const stood = await rpc(
     link,
     "tools/call",
-    { name: "iskron_stand", arguments: { realm: "nks-dev", karta: 931, name } },
+    { name: "iskron_stand", arguments: { realm, karta: 931, name } },
     2,
   );
   assert.ok(!stood.result?.isError, JSON.stringify(stood));
@@ -105,12 +106,67 @@ test("stop <seat> issues a stop order to the seat by its id, under the bridge's 
   assert.equal([...fake.state.orders.list.values()][0]?.standing_id, id, "the order is put");
 });
 
+// After the resolver's release the api reads no rN in a direct call, and a bare slug reaches
+// only the caller's own graph (case №1571 [82]–[89], #8677): a seat the bridge holds as r5 or
+// as a bare slug — the graph list did not answer when it stood — goes to the stop and the
+// revoke as @owner/slug from the api's own graph list; that list silent, rN goes by number.
+for (const [held, sent, missing, listDown] of [
+  ["r5", "@nks/nks-dev", false, false],
+  ["r5", "@nks/nks-dev", true, false],
+  ["nks-dev", "@nks/nks-dev", false, false],
+  ["r5", "5", false, true],
+])
+  test(`stop of a seat held as ${held} names its graph to the api as ${sent}${missing ? " — the revoke too" : ""}${listDown ? " (the api's graph list silent)" : ""}`, async (t) => {
+    const { dir, fake, id, session } = await seated(t, "short-r", held, (f) => {
+      f.state.realmResult = { isError: true, content: [{ type: "text", text: "list refused" }] };
+    });
+    await fake.control({
+      resolverRefs: true,
+      apiRealmsDown: listDown,
+      ...(missing ? { orders_route_missing: true } : {}),
+    });
+    const r = await stop(dir, [missing ? session : "short-r"], patOf(fake));
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    assert.match(
+      r.stdout,
+      missing ? new RegExp(`место short-r \\(${held}\\) снято`) : /выдан месту short-r/,
+      r.stdout,
+    );
+    assert.deepEqual(fake.state.apiShortRefused, [], "no rN reached the api");
+    assert.deepEqual(
+      fake.state.orders.human.map((h) => [h.method, h.id, h.realm]),
+      missing
+        ? [
+            ["POST", id, sent],
+            ["DELETE", id, sent],
+          ]
+        : [["POST", id, sent]],
+    );
+  });
+
+// A bare slug the api's list does not resolve would reach the caller's own graph: refused aloud.
+test("stop of a seat held as a bare slug, the api's graph list silent, sends nothing and says why", async (t) => {
+  const { dir, fake } = await seated(t, "bare-s", "nks-dev", (f) => {
+    f.state.realmResult = { isError: true, content: [{ type: "text", text: "list refused" }] };
+  });
+  await fake.control({ resolverRefs: true, apiRealmsDown: true });
+  const r = await stop(dir, ["bare-s"], patOf(fake));
+  assert.notEqual(r.status, 0, r.stdout);
+  assert.match(`${r.stdout}${r.stderr}`, /граф «nks-dev» без владельца/, `${r.stdout}${r.stderr}`);
+  assert.deepEqual(fake.state.orders.human, [], "nothing reached the api");
+});
+
 test("stop <session id> on an api without the stop route revokes the seat instead", async (t) => {
   const { dir, fake, id, session } = await seated(t, "old-api");
   await fake.control({ orders_route_missing: true });
   const r = await stop(dir, [session], patOf(fake));
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  assert.match(r.stdout, /404 ручки\) — место old-api \(nks-dev\) снято \(revoke\)/, r.stdout);
+  // The seat's graph as the bridge holds it: @owner/slug (#8677).
+  assert.match(
+    r.stdout,
+    /404 ручки\) — место old-api \(@nks\/nks-dev\) снято \(revoke\)/,
+    r.stdout,
+  );
   assert.deepEqual(
     fake.state.orders.human.map((h) => [h.method, h.id]),
     [
