@@ -78,6 +78,8 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   rememberUsage(u);
   const s = usagePlace();
   const tact = !!s && byTact(u);
+  if (tact === TOO_LARGE)
+    return answer({ pushed: false, usage: u, why: words(USAGE).tooLarge(USAGE_MAX) });
   // register stays for a changed skill set; the numbers it no longer carries under the tact.
   const due =
     !!s &&
@@ -89,14 +91,24 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
 
 const numbers = (u: Usage | null): string => JSON.stringify({ ...u, at: null });
 
+/** The contract's limit of a usage object in a tact record, bytes (#8620 v19). */
+const USAGE_MAX = 2048;
+const TOO_LARGE = "too large";
+
 /**
  * Under the dispatcher the numbers go in the daemon's tact (graph @nks/nks-dev, nodes #8617,
  * #8620): every change, merged till the tact, no register for them; the leaving seat's last
- * numbers go in its leaving tick. False — a socket per seat: register, as before.
+ * numbers go in its leaving tick. False — a socket per seat: register, as before. Over the
+ * limit — not sent at all: the server would refuse the row.
  */
-function byTact(u: Usage): boolean {
+function byTact(u: Usage): boolean | typeof TOO_LARGE {
   const addr = statusAddress();
   if (!addr || !onDispatcher(addr.url)) return false;
+  const bytes = Buffer.byteLength(JSON.stringify(u));
+  if (bytes > USAGE_MAX) {
+    log(`usage: ${bytes} bytes, over ${USAGE_MAX} — not sent`);
+    return TOO_LARGE;
+  }
   if (numbers(u) === numbers(U.published)) return true;
   if (
     !tickFor(
