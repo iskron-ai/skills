@@ -78,20 +78,20 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   rememberUsage(u);
   const s = usagePlace();
   const tact = !!s && byTact(u);
-  if (tact === TOO_LARGE)
-    return answer({ pushed: false, usage: u, why: words(USAGE).tooLarge(USAGE_MAX) });
-  // register stays for a changed skill set; the numbers it no longer carries under the tact.
+  // register stays for a changed skill set — over the tact's limit too (it is the record's
+  // only, #8620 v20); the numbers it no longer carries under the dispatcher.
   const due =
     !!s &&
     Date.now() - U.at >= MIN_GAP_MS &&
     ((!tact && moved(U.published, u)) || skillsNeedRegister(s));
   const registered = due && s ? await publish(s, u) : false;
-  return answer({ pushed: tact || registered, usage: u });
+  const big = tact === TOO_LARGE ? { why: words(USAGE).tooLarge(USAGE_MAX) } : {};
+  return answer({ pushed: tact === true || registered, usage: u, ...big });
 }
 
 const numbers = (u: Usage | null): string => JSON.stringify({ ...u, at: null });
 
-/** The contract's limit of a usage object in a tact record, bytes (#8620 v19). */
+/** The contract's limit of a usage object in a tact record, bytes (#8620 v20): over it — a journal line. */
 const USAGE_MAX = 2048;
 const TOO_LARGE = "too large";
 
