@@ -35,6 +35,12 @@ test("a busy line waiting for the tact when the connection breaks goes after the
         () => mux.live().some((c) => c !== first && c.subs.has(chan)),
         20_000,
       );
+      // The cause, not a timeout: a line sent between subscribe and hello is refused not_subscribed.
+      assert.deepEqual(
+        mux.refusedRows.filter((r) => r.code === "not_subscribed").map((r) => r.status),
+        [],
+        "the line went before the new subscription's hello and was refused not_subscribed",
+      );
       await waitFor("the fresh line after hello", () => busyOf(fake, "rh-a") === "занят 2").catch(
         (e) => {
           throw new Error(`${e.message}: refused ${JSON.stringify(mux.refusedRows)}\n${journal()}`);
