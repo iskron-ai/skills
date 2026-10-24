@@ -66,8 +66,8 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     if (!active().length) link.idle();
   }
 
+  // The channel stays routed meanwhile: a channel_closed before the new hello is still its word.
   function again(s: Sub): void {
-    if (s.channel && byChannel.get(s.channel) === s) byChannel.delete(s.channel);
     s.live = false;
     s.o.onDropped?.();
     s.retry = setTimeout(() => subscribe(s), pauseOf(s.tries++));
@@ -93,7 +93,8 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     if (s.closed) return void link.send({ type: "unsubscribe", channel_id: channel });
     const named = f.standings ?? [];
     const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
-    Object.assign(s, { live: true, tries: 0, standings, seats: named.length });
+    // A hello between two unasked 1000s makes the second no longer "in a row" (#8620 v19).
+    Object.assign(s, { live: true, tries: 0, standings, seats: named.length, resubscribed: false });
     earlyLines(s, channel).forEach(ticker.put);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);

@@ -130,8 +130,8 @@ export async function publishStatusTo(
 }
 
 // No dispatcher after all: the lines held for hello go to the old address (muxhold.ts).
-onFellBack((url, text, standingId) => {
-  void publishStatusTo(url, text, 5000, standingId).then((st) => {
+onFellBack((url, text, standingId) =>
+  publishStatusTo(url, text, 5000, standingId).then((st) => {
     if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
-  });
-});
+  }),
+);

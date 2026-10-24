@@ -20,18 +20,24 @@ import {
 export { EVERY, type SeatScope };
 
 const muxes = new Map<string, Mux>();
-type Replay = (url: string, text: string, scope: SeatScope) => void;
+type Replay = (url: string, text: string, scope: SeatScope) => Promise<unknown>;
 let replay: Replay | null = null;
 
 /** Busy lines a subscription held for hello go by POST if its channel falls back to a socket. */
 export const onFellBack = (fn: Replay): void => void (replay = fn);
 
-/** No dispatcher after all: the last held line of each seat goes the old way (#8620 v15). */
+/**
+ * No dispatcher after all (#8620 v15): the held busy lines (the last per seat, holdEarly) go by
+ * POST one after another in their order; held numbers go their own way (`lost`).
+ */
 function fell(s: Sub): void {
-  for (const { url, scope, fields, lost } of s.early.splice(0)) {
-    if (typeof fields.status === "string") replay?.(url, fields.status, scope);
-    lost?.();
-  }
+  const held = s.early.splice(0);
+  const lines = held.filter((e) => typeof e.fields.status === "string");
+  void lines.reduce<Promise<unknown>>(
+    (prev, e) => prev.then(() => replay?.(e.url, String(e.fields.status), e.scope)),
+    Promise.resolve(),
+  );
+  for (const e of held) e.lost?.();
 }
 
 function muxOf(url: string): Mux {
@@ -41,8 +47,8 @@ function muxOf(url: string): Mux {
 }
 
 /**
- * A pulse frame the holding sends goes into the tact. The pulse is the channel's (pulse.ts):
- * the line names the first seat hello named on it.
+ * A pulse frame the holding sends goes into the tact. The pulse is the channel's (pulse.ts), the
+ * head's, kept by channel: its record names no seat, whatever the channel carries (#8620 v19).
  */
 function pulseFrom(m: Mux, s: Sub, text: string): boolean {
   if (!s.live || !s.channel) return false;
@@ -53,10 +59,8 @@ function pulseFrom(m: Mux, s: Sub, text: string): boolean {
     return false;
   }
   if (f?.type !== "pulse") return false;
-  const [id] = s.standings.length ? s.standings : seatsFor(s, null);
-  if (id === undefined) return false;
   const { type: _t, ...pulse } = f;
-  m.ticker.put({ ...entryOf(s.channel, id, {}), pulse });
+  m.ticker.put({ channel_id: s.channel, pulse });
   return true;
 }
 

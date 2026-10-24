@@ -22,7 +22,7 @@ export interface Sub {
   /** Seat ids of the channel from the last hello, and how many seats it named, ids or not. */
   standings: string[];
   seats: number;
-  /** A channel_closed 1000 nobody asked for was answered by one subscription again (#8620 v15). */
+  /** An unasked channel_closed 1000 was answered by one subscription again; hello clears it. */
   resubscribed: boolean;
   handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null;
   /** No dispatcher: the holder holds its own socket now. */
@@ -53,9 +53,14 @@ export interface Early {
 
 const kindOf = (e: Early): string => ("status" in e.fields ? "status" : "usage");
 
-/** Held for hello: a newer line of the same seat and kind replaces the older. */
+/**
+ * Held for hello: a newer line replaces every older one of its kind it covers — one without a
+ * seat id (the own seat unknown, or each seat) covers them all, one with an id covers that seat.
+ */
 export function holdEarly(s: Sub, e: Early): void {
-  s.early = s.early.filter((x) => x.scope !== e.scope || kindOf(x) !== kindOf(e)).concat(e);
+  const covered = (x: Early): boolean =>
+    kindOf(x) === kindOf(e) && (typeof e.scope !== "string" || x.scope === e.scope);
+  s.early = s.early.filter((x) => !covered(x)).concat(e);
 }
 
 /**
