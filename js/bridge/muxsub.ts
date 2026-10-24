@@ -3,6 +3,7 @@
 // subscription's, not the connection's: a frame sent again in a new subscription after a break
 // or a resubscribe is known by its id (the last 1000 ids of the channel).
 import { type Frame, type Holder, type HoldOptions } from "../shared/channel.ts";
+import { type TickEntry } from "./muxtick.ts";
 
 const SEEN_MAX = 1000;
 
@@ -27,6 +28,8 @@ export interface Sub {
   tries: number;
   retry: ReturnType<typeof setTimeout> | null;
   seen: Set<string>;
+  /** Busy and usage lines given before hello: they go into the tact once hello names the seats. */
+  early: { standingId: string | null; fields: Pick<TickEntry, "status" | "usage"> }[];
 }
 
 export function newSub(secret: string, o: HoldOptions): Sub {
@@ -45,6 +48,7 @@ export function newSub(secret: string, o: HoldOptions): Sub {
     tries: 0,
     retry: null,
     seen: new Set(),
+    early: [],
   };
 }
 
@@ -54,6 +58,29 @@ export function firstSeen(s: Sub, id: string): boolean {
   s.seen.add(id);
   if (s.seen.size > SEEN_MAX) s.seen.delete(s.seen.values().next().value as string);
   return true;
+}
+
+/** A frame of the subscription to its holder, once by its id; true — it carries a seq to ack. */
+export function deliver(s: Sub, f: Frame): boolean {
+  s.heardAt = Date.now();
+  const id = typeof f.id === "string" ? f.id : "";
+  if (!id || firstSeen(s, id)) {
+    const seat = asSeatFrame(f);
+    if (s.handing) s.handing.onFrame(seat.raw);
+    else s.o.onFrame(seat.raw, seat.frame);
+  }
+  return typeof f.seq === "number";
+}
+
+/** Lines given before hello, now that hello named the channel and its seats. */
+export function earlyLines(s: Sub, channel: string): TickEntry[] {
+  return s.early.splice(0).flatMap(({ standingId, fields }) =>
+    (standingId ? [standingId] : s.standings).map((id) => ({
+      channel_id: channel,
+      standing_id: id,
+      ...fields,
+    })),
+  );
 }
 
 /** The frame as a seat's own socket gives it: the connection's labels stripped. */

@@ -6,28 +6,28 @@ import { type Frame, holdSocket } from "../shared/channel.ts";
 import { type FrameRoutes, routeFrame } from "./muxframe.ts";
 import { createLink, type Link } from "./muxlink.ts";
 import { pauseOf } from "./muxprobe.ts";
-import { asSeatFrame, firstSeen, type Sub } from "./muxsub.ts";
+import { asSeatFrame, deliver, earlyLines, type Sub } from "./muxsub.ts";
+import { createTable, type SubTable } from "./muxtable.ts";
 import { createTicker, type Ticker } from "./muxtick.ts";
 import { log } from "./streams.ts";
 
 const DEAD_SECRET = new Set(["secret_invalid", "secret_dead"]);
+const REVOKED = 4004; // channel_closed of a revoked seat
 
-export interface Mux {
+export interface Mux extends Pick<SubTable, "liveOf" | "heldOf" | "settled"> {
   readonly link: Link;
   readonly ticker: Ticker;
   add(s: Sub): void;
-  /** The holder lets the subscription go: its last lines in a tick, then unsubscribe. */
+  /** The holder lets the subscription go: its leaving lines in one tick, then unsubscribe. */
   release(s: Sub): void;
-  /** A live subscription of this seat secret, if the dispatcher carries it now. */
-  liveOf(secret: string): Sub | null;
+  /** The secret's channel goes through the dispatcher, not a socket per seat. */
+  carries(secret: string): boolean;
 }
 
 export function createMux(url: string): Mux {
-  const subs = new Set<Sub>();
-  const byRef = new Map<string, Sub>();
-  const byChannel = new Map<string, Sub>();
+  const table = createTable();
+  const { subs, byRef, byChannel, onSockets, active } = table;
   let refs = 0;
-  const active = (): Sub[] => [...subs].filter((s) => !s.closed && !s.fallback);
   const link: Link = createLink(url, {
     wanted: () => active().length > 0,
     onOpen: () => active().forEach(subscribe),
@@ -51,6 +51,7 @@ export function createMux(url: string): Mux {
   function toSocket(s: Sub): void {
     subs.delete(s);
     if (s.handing) return end(s, () => s.handing?.onGone(0));
+    onSockets.add(s.secret);
     if (!s.closed) s.fallback = holdSocket(s.o);
   }
 
@@ -60,7 +61,7 @@ export function createMux(url: string): Mux {
     subs.delete(s);
     if (s.channel && byChannel.get(s.channel) === s) byChannel.delete(s.channel);
     if (s.retry) clearTimeout(s.retry);
-    if (word && s.channel) ticker.drop(s.channel);
+    if (s.channel) ticker.drop(s.channel); // its leaving lines went before the unsubscribe
     word?.();
     s.handing = null;
     if (!active().length) link.idle();
@@ -92,6 +93,7 @@ export function createMux(url: string): Mux {
     if (s.closed) return void link.send({ type: "unsubscribe", channel_id: channel });
     const standings = (f.standings ?? []).map((x) => x.standing_id ?? "").filter(Boolean);
     Object.assign(s, { live: true, tries: 0, standings });
+    earlyLines(s, channel).forEach(ticker.put);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);
     s.o.onFrame(seat.raw, seat.frame);
@@ -105,26 +107,20 @@ export function createMux(url: string): Mux {
     again(s);
   }
 
+  // By class (#8620 v13): 1000 — own unsubscribe answered; 4000 — another holds it; 4004 — the
+  // seat revoked, the stop. Any other code, an unasked 1000 too — subscribed again (dead: secret_dead).
   function closed(s: Sub, code: number, reason: string): void {
     if (s.closed) return end(s);
     if (s.handing) return end(s, () => s.handing?.onGone(code));
     if (code === 4000) return end(s, () => (s.o.onEvicted ?? s.o.onDeadToken)(code));
-    if (code === 4001) return end(s, () => s.o.onStopped(code, reason));
-    if (code === 4002) return end(s, () => s.o.onDeadToken(code));
+    if (code === REVOKED) return end(s, () => s.o.onStopped(code, reason));
+    log(`dispatcher: ${s.channel} closed with ${code} (${reason}) — subscribed again`);
     byChannel.delete(s.channel ?? "");
     again(s);
   }
 
   function frame(s: Sub, f: Frame, channel: string): void {
-    s.heardAt = Date.now();
-    const id = typeof f.id === "string" ? f.id : "";
-    if (!id || firstSeen(s, id)) {
-      const seat = asSeatFrame(f);
-      if (s.handing) s.handing.onFrame(seat.raw);
-      else s.o.onFrame(seat.raw, seat.frame);
-    }
-    if (typeof f.seq === "number")
-      link.send({ type: "ack", channel_id: channel, sub: f.sub, seq: f.seq });
+    if (deliver(s, f)) link.send({ type: "ack", channel_id: channel, sub: f.sub, seq: f.seq });
   }
 
   const routes: FrameRoutes = { byRef, byChannel, hello, refused, closed, frame };
@@ -133,6 +129,7 @@ export function createMux(url: string): Mux {
     link,
     ticker,
     add(s) {
+      onSockets.delete(s.secret);
       subs.add(s);
       subscribe(s);
     },
@@ -146,6 +143,9 @@ export function createMux(url: string): Mux {
       if (!s.live && !(s.ref && byRef.has(s.ref))) end(s);
       else if (!active().length) link.idle();
     },
-    liveOf: (secret) => active().find((s) => s.live && s.secret === secret) ?? null,
+    liveOf: table.liveOf,
+    heldOf: table.heldOf,
+    settled: table.settled,
+    carries: (secret) => !link.fallen && !onSockets.has(secret),
   };
 }
