@@ -15,3 +15,23 @@ export function inTurn<T>(url: string, fn: () => Promise<T>, open = false): Prom
   });
   return next;
 }
+
+/**
+ * `fn` in the turn of `url` within `ms` counted from now, the wait included — a leave keeps its
+ * own cap whatever waits ahead (`fn` gets the deadline and must not send past it); past the
+ * limit — `late()`, at once.
+ */
+export function inTurnWithin<T>(
+  url: string,
+  ms: number,
+  fn: (until: number) => Promise<T>,
+  late: () => T,
+): Promise<T> {
+  const until = Date.now() + ms;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(late()), ms);
+    timer.unref?.();
+  });
+  return Promise.race([inTurn(url, () => fn(until)), expired]).finally(() => clearTimeout(timer));
+}
