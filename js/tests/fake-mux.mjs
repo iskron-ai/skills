@@ -207,6 +207,7 @@ export function attachMux(fake, opts = {}) {
     }
     const answered = REFUSED[mux.mode] ?? 101;
     mux.attempts.push({ at: Date.now(), path: u.pathname, answered });
+    socket.on("error", () => {}); // a refused upgrade may be reset by the bridge first
     if (answered !== 101) socket.end(`HTTP/1.1 ${answered} Refused\r\nContent-Length: 0\r\n\r\n`);
     else open(req, socket);
     return true;
