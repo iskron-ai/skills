@@ -162,25 +162,35 @@ test("leave while the dispatcher subscription is broken: no refusal to the agent
   });
 });
 
-test("usage in the tact stays under the contract's 2048 bytes, the longest snapshot too", async () => {
-  await withMux(async ({ fake, mux, session }) => {
-    const a = await session();
-    ok(await a.stand({ realm: REALM, karta: 931, name: "big-a" }), "A stands");
-    await muxCarrying(fake, mux, [channelOf(fake, "big-a")]);
-    const n = Number.MAX_SAFE_INTEGER;
-    const longest = { tokens: n, input: n, output: n, cache_read: n, cache_write: n };
-    const big = await a.rpc("iskron/usage", {
-      ...longest,
-      context: n,
-      window: n,
-      model: "🜂".repeat(2100),
-    });
-    assert.equal(big.result?.pushed, true, JSON.stringify(big).slice(0, 300));
-    await waitFor("the numbers by tick", () => mux.usage.size === 1);
-    const [usage] = [...mux.usage.values()];
-    assert.ok(Buffer.byteLength(JSON.stringify(usage)) <= 2048, `${JSON.stringify(usage)}`);
-    assert.deepEqual(mux.refusedRows, [], "nothing for the server to refuse");
-  });
+// Снимок моста кратно меньше 2048 байт (девять чисел, model до 120 знаков): снаружи предел не
+// превысить — проба опускает его наводкой ISKRON_USAGE_MAX_BYTES (#8620 (н)).
+test("usage over the limit goes nowhere: no tact record, not remembered, no register carries it on leave or return", async () => {
+  await withMux(
+    async ({ fake, mux, session, journal }) => {
+      const a = await session();
+      ok(await a.stand({ realm: REALM, karta: 931, name: "big-a" }), "A stands");
+      await muxCarrying(fake, mux, [channelOf(fake, "big-a")]);
+      const big = await a.rpc("iskron/usage", { tokens: 7, model: "m".repeat(120) });
+      assert.equal(big.result?.pushed, false, JSON.stringify(big).slice(0, 300));
+      assert.match(String(big.result?.why), /150/);
+      await waitFor("the journal line", () => /usage: \d+ bytes, over 150/.test(journal()));
+      const carries = () =>
+        JSON.stringify(fake.state.placeAttrs.get("931:big-a") ?? {}).includes("m".repeat(120));
+      ok(
+        await a.rpc("tools/call", {
+          name: "iskron_channel",
+          arguments: { action: "leave", realm: REALM },
+        }),
+        "leave by word",
+      );
+      assert.ok(!carries(), "the leave's last snapshot does not carry it");
+      ok(await a.stand({ realm: REALM, karta: 931, name: "big-a" }), "A returns");
+      assert.ok(!carries(), "the return's register does not carry it");
+      const rows = mux.ticks.flatMap((t) => t.entries).filter((e) => e.usage);
+      assert.deepEqual(rows, [], "no usage record in the tact");
+    },
+    { daemonEnv: { ISKRON_USAGE_MAX_BYTES: "150", ISKRON_USAGE_GAP_MS: "1" } },
+  );
 });
 
 test("a satellite leaves by word while the dispatcher subscription is broken: told the truth, the line stays, no POST", async () => {
@@ -245,6 +255,26 @@ test("SIGINT of a full bridge on the dispatcher: the cleared line in a tick befo
     await sleep(300);
     clearedBeforeUnsubscribe(fake, conn, "int-a");
   });
+});
+
+test("SIGINT after a fallback, a slow held POST in the turn: the leave's cleared line keeps its 2 s cap from the queue, not after it", async () => {
+  await withMux(
+    async ({ fake, mux, full }) => {
+      const f = await full();
+      await f.stand({ realm: REALM, karta: 931, name: "cap-a", status: "занят C" });
+      await waitFor("the dispatcher's 503", () => mux.attempts.length >= 1);
+      fake.state.statusDelayMs = 6000; // придержанная строка застревает в очереди
+      mux.mode = "old";
+      await waitFor("the held line's POST", () => fake.state.counts.status_requests >= 1, 15_000);
+      const exited = new Promise((r) => f.proc.once("exit", r));
+      const at = Date.now();
+      f.proc.kill("SIGINT");
+      await exited;
+      const took = Date.now() - at;
+      assert.ok(took < 4000, `the bridge left in ${took} ms — the 2 s cap counts from the queue`);
+    },
+    { mode: "down" },
+  );
 });
 
 test("a handover no successor takes: the seat keeps its last busy line, nothing cleared, no POST", async () => {

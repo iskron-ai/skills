@@ -14,7 +14,6 @@ import {
   secretOf,
   sleep,
   textOf,
-  TICK_MS,
   told,
   waitFor,
   withMux,
@@ -91,45 +90,55 @@ test("two unasked channel_closed 1000 in a row (no hello between): a journal lin
   });
 });
 
+// Интервал такта под пробой — наводка ISKRON_PULSE_GAP_MS: здесь широкое окно (3 с), чтобы
+// второй 1000 «сразу» не вышел за него на загруженной машине; у пробы ниже — своё, узкое.
+const WIDE_GAP_MS = 3000;
+const NARROW_GAP_MS = 200;
+
 test("an unasked 1000, a hello, another unasked 1000 before the tact interval: the end as a dead token", async () => {
-  await withMux(async ({ fake, mux, session }) => {
-    const a = await session();
-    ok(await a.stand({ realm: REALM, karta: 931, name: "fast-a" }), "A stands");
-    const ca = channelOf(fake, "fast-a");
-    const conn = await muxCarrying(fake, mux, [ca]);
-    const sa = secretOf(fake, ca);
-    const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
-    mux.endSub(ca, 1000, "unsubscribed");
-    await waitFor("the resubscribe's hello", () => asked() === 2 && conn.subs.has(ca), 15_000);
-    mux.endSub(ca, 1000, "unsubscribed"); // сразу после hello — раньше интервала такта
-    await waitFor("A told as of a dead token", () => told(a, "dead").length, 10_000);
-    await sleep(6000); // дольше первой ступени отступа: переподписок больше нет
-    assert.equal(asked(), 2, "no resubscribe after the second");
-  });
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      ok(await a.stand({ realm: REALM, karta: 931, name: "fast-a" }), "A stands");
+      const ca = channelOf(fake, "fast-a");
+      const conn = await muxCarrying(fake, mux, [ca]);
+      const sa = secretOf(fake, ca);
+      const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
+      mux.endSub(ca, 1000, "unsubscribed");
+      await waitFor("the resubscribe's hello", () => asked() === 2 && conn.subs.has(ca), 15_000);
+      mux.endSub(ca, 1000, "unsubscribed"); // сразу после hello — раньше интервала такта
+      await waitFor("A told as of a dead token", () => told(a, "dead").length, 10_000);
+      await sleep(6000); // дольше первой ступени отступа: переподписок больше нет
+      assert.equal(asked(), 2, "no resubscribe after the second");
+    },
+    { daemonEnv: { ISKRON_PULSE_GAP_MS: String(WIDE_GAP_MS) } },
+  );
 });
 
-// Интервал такта под пробой — наводка ISKRON_PULSE_GAP_MS (mux-kit, TICK_MS).
 test("an unasked 1000, a hello, the subscription lives past the tact interval, another unasked 1000: subscribed again, no end", async () => {
-  await withMux(async ({ fake, mux, session }) => {
-    const a = await session();
-    ok(await a.stand({ realm: REALM, karta: 931, name: "two-a" }), "A stands");
-    const ca = channelOf(fake, "two-a");
-    const conn = await muxCarrying(fake, mux, [ca]);
-    const sa = secretOf(fake, ca);
-    const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
-    mux.endSub(ca, 1000, "unsubscribed");
-    await waitFor(
-      "the first resubscribe's hello",
-      () => asked() === 2 && conn.subs.has(ca),
-      15_000,
-    );
-    await sleep(TICK_MS * 2); // прожила дольше интервала такта
-    mux.endSub(ca, 1000, "unsubscribed");
-    await waitFor("the second resubscribe", () => asked() === 3 && conn.subs.has(ca), 15_000);
-    assert.equal(told(a, "dead").length, 0, "lived the interval: not the end");
-    mux.say("two-a", "A после двух 1000 с hello между");
-    await waitFor("A to hear", () => a.heard("A после двух 1000 с hello между"));
-  });
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      ok(await a.stand({ realm: REALM, karta: 931, name: "two-a" }), "A stands");
+      const ca = channelOf(fake, "two-a");
+      const conn = await muxCarrying(fake, mux, [ca]);
+      const sa = secretOf(fake, ca);
+      const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
+      mux.endSub(ca, 1000, "unsubscribed");
+      await waitFor(
+        "the first resubscribe's hello",
+        () => asked() === 2 && conn.subs.has(ca),
+        15_000,
+      );
+      await sleep(NARROW_GAP_MS * 5); // прожила с запасом дольше интервала такта
+      mux.endSub(ca, 1000, "unsubscribed");
+      await waitFor("the second resubscribe", () => asked() === 3 && conn.subs.has(ca), 15_000);
+      assert.equal(told(a, "dead").length, 0, "lived the interval: not the end");
+      mux.say("two-a", "A после двух 1000 с hello между");
+      await waitFor("A to hear", () => a.heard("A после двух 1000 с hello между"));
+    },
+    { daemonEnv: { ISKRON_PULSE_GAP_MS: String(NARROW_GAP_MS) } },
+  );
 });
 
 test("busy on the subscribe — error{ref, busy}: that subscription again after a pause, the connection lives", async () => {
