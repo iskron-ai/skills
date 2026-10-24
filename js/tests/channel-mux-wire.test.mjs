@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { channelOf, muxCarrying, sleep, textOf, waitFor, withMux } from "./mux-kit.mjs";
+import { busyOf, channelOf, muxCarrying, sleep, textOf, waitFor, withMux } from "./mux-kit.mjs";
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
@@ -69,6 +69,22 @@ test("cut before any answer on /channel/mux: another try after a pause, never a 
       await waitFor("A to hear", () => a.heard("A после обрыва до ответа"));
     },
     { mode: "cut" },
+  );
+});
+
+test("a busy line given while the dispatcher is down waits, no POST; 404 later — it goes to the old address", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "held-a", status: "занят Q" });
+      await waitFor("the dispatcher's 503", () => mux.attempts.length >= 1);
+      await sleep(500);
+      assert.equal(fake.state.counts.status_requests, 0, "no POST while no fallback");
+      mux.mode = "old";
+      await waitFor("the fallback socket", () => fake.state.counts.ws_upgrades >= 1, 15_000);
+      await waitFor("the held line by POST", () => busyOf(fake, "held-a") === "занят Q");
+    },
+    { mode: "down" },
   );
 });
 
