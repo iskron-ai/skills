@@ -86,7 +86,7 @@ function trimToWord(text, max) {
   return (kept || [...text].slice(0, max - 1).join("")) + "…";
 }
 
-function wsFrame(opcode, payload) {
+export function wsFrame(opcode, payload) {
   const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
   let head;
   if (data.length < 126) head = Buffer.from([0x80 | opcode, data.length]);
@@ -105,7 +105,7 @@ function wsFrame(opcode, payload) {
 }
 
 /** Whole client frames from the head of `buf` (masked, as a client sends); each carries the rest. */
-function* clientFrames(buf) {
+export function* clientFrames(buf) {
   let rest = buf;
   while (rest.length >= 2) {
     const masked = (rest[1] & 0x80) !== 0;
@@ -439,6 +439,7 @@ export async function startFakeNks(opts = {}) {
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, base);
     const p = u.pathname;
+    if (st.requestHook?.(req, res, u)) return; // диспетчер каналов без апгрейда (fake-mux.mjs)
 
     // Службу спрашивают о версии, когда сокет рвут: отвечает — служба жива.
     // Молчит по умолчанию (404), как на выкатке; /control {versionUp:true} её поднимает.
@@ -2012,6 +2013,12 @@ export async function startFakeNks(opts = {}) {
   // сторона моста ничего не шлёт, кроме ответов на закрытие.
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
+    if (st.upgradeHook?.(req, socket, u)) return; // диспетчер каналов (fake-mux.mjs)
+    // Сервер без диспетчера отвечает на его адрес 404, как живой api (#8620): не рвёт апгрейд.
+    if (u.pathname.endsWith("/channel/mux")) {
+      socket.on("error", () => {}); // the bridge may reset it before reading the answer
+      return socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    }
     if (!u.pathname.startsWith("/channel/ws/")) return socket.destroy();
     const token = u.pathname.slice("/channel/ws/".length);
     const seat = st.wsTokens.get(token);

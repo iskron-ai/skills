@@ -4,6 +4,9 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
+import { onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
+import { inTurn, inTurnWithin } from "./statusturn.ts";
+import { log } from "./streams.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
@@ -72,19 +75,52 @@ export function trimNudge(t: StatusTrim): string {
   return words(STATUS_POST).trimmed();
 }
 
-/** The same POST to a named address — for the exit, when the standing is already released. */
+// A channel the dispatcher carries takes the line into the tact, no POST (graph @nks/nks-dev,
+// node #8623): nothing answers it, so a line over the limit is named as the rule lays it.
+function byTick(url: string, text: string, scope: SeatScope): StatusOutcome | null {
+  if (!tickFor(url, scope, { status: text })) return null;
+  if ([...text].length <= LIMIT) return { ok: true, body: "", doing: text };
+  const doing = trimToWord(text, LIMIT);
+  return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
+}
+
+// The same POST to a named address — for the exit, when the standing is already released.
+// `standingId`: a seat's id; EVERY — each seat of the channel; null — the own seat, id unknown.
 export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
-  standingId: string | null = null,
+  standingId: SeatScope = null,
 ): Promise<StatusOutcome> {
-  const signal = AbortSignal.timeout(timeoutMs);
+  const ticked = byTick(url, text, standingId);
+  if (ticked) return ticked;
+  // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
+  if (onDispatcher(url)) return { ok: false, body: words(STATUS_POST).notSubscribed() };
+  return inTurnWithin<StatusOutcome>(
+    url,
+    timeoutMs,
+    (until) => postStatus(url, text, until, standingId),
+    () => ({ ok: false, body: words(STATUS_POST).noAnswer(LATE) }),
+  );
+}
+
+const LATE = "its limit passed in the turn";
+async function postStatus(
+  url: string,
+  text: string,
+  until: number,
+  standingId: SeatScope,
+): Promise<StatusOutcome> {
+  const left = until - Date.now();
+  if (left <= 0) return { ok: false, body: words(STATUS_POST).noAnswer(LATE) };
+  const signal = AbortSignal.timeout(left);
   const post = (): Promise<Response> =>
     fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+      body: JSON.stringify(
+        typeof standingId === "string" ? { text, standing_id: standingId } : { text },
+      ),
       signal,
     });
   let res: Response;
@@ -105,3 +141,10 @@ export async function publishStatusTo(
     return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
   return { ok: true, body, ...acceptedIn(body, text) };
 }
+
+// No dispatcher after all: the lines held for hello open the turn of the old address (muxhold.ts).
+onFellBack((url, text, standingId) =>
+  inTurn(url, () => postStatus(url, text, Date.now() + 5000, standingId), true).then((st) => {
+    if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
+  }),
+);
