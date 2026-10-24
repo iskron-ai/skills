@@ -491,6 +491,7 @@ export async function startFakeNks(opts = {}) {
     // rN разрешается по short_id в @owner/slug до дверей invites/raised; форма зеркалит
     // живую (app.iskron.ru/api/realms, 2026-10-21).
     if (p === "/api/realms" && req.method === "GET") {
+      if (st.apiRealmsDown) return json(res, 503, { error: "unavailable" });
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       const byPat = !!st.pat && bearer === st.pat;
       if (!byPat && (!st.access || bearer !== st.access))
@@ -678,6 +679,7 @@ export async function startFakeNks(opts = {}) {
         "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
         "bareOwnOnly", // iskron_channel с голым слагом не своего графа — 404 (резолвер после выпуска, #8677)
         "resolverRefs", // прямой вызов api с «rN» в пути или X-NKS-Realm — 404 (№1571 [82]–[89])
+        "apiRealmsDown", // GET /api/realms — 503: список графов api не отвечает
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
         "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",

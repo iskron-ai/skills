@@ -106,20 +106,30 @@ test("stop <seat> issues a stop order to the seat by its id, under the bridge's 
   assert.equal([...fake.state.orders.list.values()][0]?.standing_id, id, "the order is put");
 });
 
-// After the resolver's release the api reads no rN in a direct call (case №1571 [82]–[89]): a
-// seat the bridge holds as r5 — the graph list did not answer when it stood — goes to the
-// stop and to the revoke under its number.
-for (const missing of [false, true])
-  test(`stop of a seat held as r5 names its graph to the api by number${missing ? " — the revoke too" : ""}`, async (t) => {
-    const { dir, fake, id, session } = await seated(t, "short-r", "r5", (f) => {
+// After the resolver's release the api reads no rN in a direct call, and a bare slug reaches
+// only the caller's own graph (case №1571 [82]–[89], #8677): a seat the bridge holds as r5 or
+// as a bare slug — the graph list did not answer when it stood — goes to the stop and the
+// revoke as @owner/slug from the api's own graph list; that list silent, rN goes by number.
+for (const [held, sent, missing, listDown] of [
+  ["r5", "@nks/nks-dev", false, false],
+  ["r5", "@nks/nks-dev", true, false],
+  ["nks-dev", "@nks/nks-dev", false, false],
+  ["r5", "5", false, true],
+])
+  test(`stop of a seat held as ${held} names its graph to the api as ${sent}${missing ? " — the revoke too" : ""}${listDown ? " (the api's graph list silent)" : ""}`, async (t) => {
+    const { dir, fake, id, session } = await seated(t, "short-r", held, (f) => {
       f.state.realmResult = { isError: true, content: [{ type: "text", text: "list refused" }] };
     });
-    await fake.control({ resolverRefs: true, ...(missing ? { orders_route_missing: true } : {}) });
+    await fake.control({
+      resolverRefs: true,
+      apiRealmsDown: listDown,
+      ...(missing ? { orders_route_missing: true } : {}),
+    });
     const r = await stop(dir, [missing ? session : "short-r"], patOf(fake));
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
     assert.match(
       r.stdout,
-      missing ? /место short-r \(r5\) снято/ : /выдан месту short-r/,
+      missing ? new RegExp(`место short-r \\(${held}\\) снято`) : /выдан месту short-r/,
       r.stdout,
     );
     assert.deepEqual(fake.state.apiShortRefused, [], "no rN reached the api");
@@ -127,10 +137,10 @@ for (const missing of [false, true])
       fake.state.orders.human.map((h) => [h.method, h.id, h.realm]),
       missing
         ? [
-            ["POST", id, "5"],
-            ["DELETE", id, "5"],
+            ["POST", id, sent],
+            ["DELETE", id, sent],
           ]
-        : [["POST", id, "5"]],
+        : [["POST", id, sent]],
     );
   });
 
