@@ -9,6 +9,7 @@ import { socketPathOf, spoolFilePathOf } from "../shared/standings.ts";
 import { CFG } from "./config.ts";
 import { type ChannelEvent } from "./door.ts";
 import { E, liveWhenFree } from "./holdstate.ts";
+import { onDispatcher } from "./muxhold.ts";
 import { type Place, strayOf } from "./places.ts";
 import { closeSpool, drainSpool, HANDOFF_MS, openSpool, spoolFrame } from "./spool.ts";
 import { publishStatusTo } from "./statuspost.ts";
@@ -60,6 +61,9 @@ function keepUntilEvicted(holder: Holder, key: string, statusUrl: string | null)
  * One window remains: the successor opened the service socket but has not raised its door.
  */
 async function clearBusy(key: string, statusUrl: string, door: string): Promise<void> {
+  // On the dispatcher the line stays till the pulse runs out, as on a break (#8620 v11).
+  if (onDispatcher(statusUrl))
+    return log(`place ${key}: busy line left — the dispatcher's channel`);
   if (await localSocketAlive(door)) {
     log(`place ${key}: busy line left — the successor's door is up`);
     return;

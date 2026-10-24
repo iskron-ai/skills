@@ -4,7 +4,7 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { tickFor } from "./muxhold.ts";
+import { onDispatcher, tickFor } from "./muxhold.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
@@ -85,12 +85,6 @@ function byTick(url: string, text: string, standingId: string | null): StatusOut
   return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
 }
 
-/**
- * The seat's last busy line — cleared — into the tact while its subscription lives, so it
- * leaves before the unsubscribe (graph @nks/nks-dev, node #8620): true — taken, no POST later.
- */
-export const clearBusyInTact = (url: string): boolean => tickFor(url, null, { status: "" });
-
 /** The same POST to a named address — for the exit, when the standing is already released. */
 export async function publishStatusTo(
   url: string,
@@ -100,6 +94,8 @@ export async function publishStatusTo(
 ): Promise<StatusOutcome> {
   const ticked = byTick(url, text, standingId);
   if (ticked) return ticked;
+  // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
+  if (onDispatcher(url)) return { ok: false, body: words(STATUS_POST).notSubscribed() };
   const signal = AbortSignal.timeout(timeoutMs);
   const post = (): Promise<Response> =>
     fetch(url, {

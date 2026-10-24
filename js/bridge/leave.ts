@@ -28,9 +28,11 @@ import {
 } from "./hold.ts";
 import { markLeft } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
+import { liveOnDispatcher } from "./muxhold.ts";
 import { otherRealm } from "./realms.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishedStatus, publishStatus } from "./status.ts";
+import { statusAddress } from "./statusaddr.ts";
 import { emit, log } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -65,11 +67,16 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   // Seats of the channel share the socket: leaving closes it for all (#5838).
   const leaving = heldPlaces().map((p) => p.key);
   if (leaving.length) await flushUsage(usagePlace()); // last usage snapshot while the seat is held (#6401)
+  const status = publishedStatus();
+  // On the dispatcher the cleared line goes in the tact before the unsubscribe (#8620 v11);
+  // a socket per seat is cleared after it closes, as before.
+  const url = statusAddress()?.url ?? null;
+  const early = url && liveOnDispatcher(url) ? await publishStatus("", undefined, true) : null;
   const parked = parkStanding(reason);
   if (!parked) return W.notHolding();
   K.beside = beside;
-  K.status = publishedStatus();
-  const st = await publishStatus("", undefined, true); // cleared on all seats of the channel
+  K.status = status;
+  const st = early ?? (await publishStatus("", undefined, true)); // cleared on all seats of the channel
   // Kept in the hold record; restored only when the same session returns (#6017).
   if (st.ok && K.status) rememberStatus(K.status);
   // A leave by word holds: only a stand by name raises the seat again (#6017).
