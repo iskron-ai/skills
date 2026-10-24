@@ -4,7 +4,8 @@
 // unsubscribe → channel_closed{…, 1000, unsubscribed}; отказ подписки — error{ref, code}.
 // Садится на сервер fake-nks.mjs: секрет — адрес сокета из connect, канал и места — его.
 // mode "old" — сервер без диспетчера: апгрейд по адресу диспетчера отвечает 404;
-// mode "down" — диспетчер есть, но лежит: 503; mode "cut" — обрыв до всякого ответа.
+// mode "down" — диспетчер есть, но лежит: 503; mode "cut" — обрыв до всякого ответа;
+// "cutGet404" — апгрейд рвётся, а простой GET отвечает 404.
 // Тот же адрес простым GET без апгрейда: 404 без диспетчера, 426 с ним, 503 лежащий.
 import { createHash, randomUUID } from "node:crypto";
 
@@ -12,7 +13,9 @@ import { clientFrames, wsFrame } from "./fake-nks.mjs";
 
 const ACCEPT = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const REFUSED = { old: 404, down: 503 };
-const PLAIN = { old: 404, down: 503, mux: 426 };
+const PLAIN = { old: 404, down: 503, mux: 426, cutGet404: 404 };
+/** Апгрейд рвётся до ответа. */
+const CUT = new Set(["cut", "cutGet404"]);
 
 export function attachMux(fake, opts = {}) {
   const st = fake.state;
@@ -34,6 +37,8 @@ export function attachMux(fake, opts = {}) {
     superseded: [], // { channel_id, from } — подписка вытеснена другим соединением
     ticks: [], // { at, conn, entries }
     usage: new Map(), // standing_id → расход места из последнего tick
+    refusedRows: [], // записи такта, отказанные standing_required
+    noIds: opts.noIds ?? false, // hello называет места без standing_id
   };
   // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
   const live = () => mux.conns.filter((c) => !c.closed && !c.socket.destroyed);
@@ -45,7 +50,7 @@ export function attachMux(fake, opts = {}) {
       pending: 0,
       realm,
       standing: `@tester:${p.name}`,
-      standing_id: p.standing_id,
+      ...(mux.noIds ? {} : { standing_id: p.standing_id }),
     }));
   const listen = (chan, on) => {
     for (const p of st.channels.get(chan)?.places.values() ?? []) {
@@ -119,15 +124,27 @@ export function attachMux(fake, opts = {}) {
     pump(channel_id);
   };
 
+  /** Место записи такта: её standing_id; без него — единственное место канала, иначе отказ (#8620 v15 (л)). */
+  const seatOfEntry = (conn, e) => {
+    if (e.standing_id) return e.standing_id;
+    const places = [...(st.channels.get(e.channel_id)?.places.values() ?? [])];
+    if (places.length === 1) return places[0].standing_id;
+    mux.refusedRows.push(e);
+    send(conn, { type: "error", channel_id: e.channel_id, code: "standing_required" });
+    return null;
+  };
+
   const tick = (conn, { entries }) => {
     mux.ticks.push({ at: Date.now(), conn: conn.id, entries });
     for (const e of Array.isArray(entries) ? entries : []) {
+      const id = seatOfEntry(conn, e);
+      if (!id) continue;
       if (typeof e.status === "string") {
-        st.placeStatus.set(e.standing_id, e.status);
+        st.placeStatus.set(id, e.status);
         st.status = e.status;
       }
-      if (e.pulse) st.pulses.push({ at: Date.now(), place: e.standing_id, frame: e.pulse });
-      if (e.usage) mux.usage.set(e.standing_id, e.usage);
+      if (e.pulse) st.pulses.push({ at: Date.now(), place: id, frame: e.pulse });
+      if (e.usage) mux.usage.set(id, e.usage);
     }
   };
 
@@ -183,7 +200,7 @@ export function attachMux(fake, opts = {}) {
 
   st.upgradeHook = (req, socket, u) => {
     if (!u.pathname.endsWith("/channel/mux")) return false;
-    if (mux.mode === "cut") {
+    if (CUT.has(mux.mode)) {
       mux.attempts.push({ at: Date.now(), path: u.pathname, answered: null });
       socket.destroy();
       return true;

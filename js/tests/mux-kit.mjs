@@ -157,11 +157,14 @@ function thinBridge(dir, fake, daemon = "1") {
 /**
  * Фейк с диспетчером, каталог гранта, демон и сессии; уборка — всегда.
  * own: false — демон поднимают тонкие мосты пробы (смена демона); credit — кредит подписки;
- * daemonEnv — окружение своего демона сверх общего.
+ * noIds — hello называет места без standing_id; daemonEnv — окружение своего демона сверх общего.
  */
-export async function withMux(fn, { mode = "mux", own = true, credit, daemonEnv = {} } = {}) {
+export async function withMux(
+  fn,
+  { mode = "mux", own = true, credit, noIds, daemonEnv = {} } = {},
+) {
   const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
-  const mux = attachMux(fake, { mode, credit });
+  const mux = attachMux(fake, { mode, credit, noIds });
   const dir = mkdtempSync(join(tmpdir(), "iskron-mux-"));
   const closers = [];
   let daemon = null;

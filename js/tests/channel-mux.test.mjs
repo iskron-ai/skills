@@ -77,6 +77,21 @@ test("fake self-check: the dispatcher answers by the contract on its own", async
     });
     await waitFor("the tick", () => st.placeStatus.get("id-self-a") === "s", 2000);
     assert.equal(st.counts.status_requests, 0);
+    // Канал с двумя местами: строка без standing_id — отказ standing_required, прочие идут.
+    const two = { karta: "931", name: "self-a2", standing_id: "id-self-a2" };
+    st.channels.get("ch-a").places.set("@nks/other", two);
+    c.send({
+      type: "tick",
+      entries: [
+        { channel_id: "ch-a", status: "без места" },
+        { channel_id: "ch-a", standing_id: "id-self-a2", status: "z" },
+      ],
+    });
+    const refused = await c.next((f) => f.type === "error" && f.code === "standing_required");
+    assert.equal(refused.channel_id, "ch-a");
+    await waitFor("the row with its seat", () => st.placeStatus.get("id-self-a2") === "z", 2000);
+    assert.equal(st.placeStatus.get("id-self-a"), "s", "the row without a seat landed nowhere");
+    st.channels.get("ch-a").places.delete("@nks/other");
     c.send({ type: "unsubscribe", channel_id: "ch-a" });
     const closed = await c.next((f) => f.type === "channel_closed");
     assert.deepEqual(

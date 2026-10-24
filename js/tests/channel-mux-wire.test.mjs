@@ -4,7 +4,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { busyOf, channelOf, muxCarrying, sleep, textOf, waitFor, withMux } from "./mux-kit.mjs";
+import {
+  busyOf,
+  channelOf,
+  muxCarrying,
+  seatIdOf,
+  sleep,
+  textOf,
+  waitFor,
+  withMux,
+} from "./mux-kit.mjs";
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
@@ -85,6 +94,91 @@ test("a busy line given while the dispatcher is down waits, no POST; 404 later �
       await waitFor("the held line by POST", () => busyOf(fake, "held-a") === "занят Q");
     },
     { mode: "down" },
+  );
+});
+
+/** Три строки места, пока диспетчер лежит (503): ни одного POST. */
+async function threeLinesWhileDown(fake, mux, a, name) {
+  await a.stand({ realm: REALM, karta: 931, name, status: "занят 1" });
+  await waitFor("the dispatcher's 503", () => mux.attempts.length >= 1);
+  for (const status of ["занят 2", "занят 3"])
+    await a.stand({ realm: REALM, karta: 931, name, status });
+  await sleep(300);
+  assert.equal(fake.state.counts.status_posts, 0, "no POST while no fallback");
+}
+
+test("busy lines given before hello collapse to the last per seat: after hello — the tact, the last only", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await threeLinesWhileDown(fake, mux, a, "last-h");
+      mux.mode = "mux";
+      await muxCarrying(fake, mux, [channelOf(fake, "last-h")], 15_000);
+      await waitFor("the last line by tick", () => busyOf(fake, "last-h") === "занят 3");
+      const id = seatIdOf(fake, "last-h");
+      const lines = mux.ticks.flatMap((t) =>
+        t.entries.filter((e) => e.standing_id === id && "status" in e).map((e) => e.status),
+      );
+      assert.deepEqual(lines, ["занят 3"], "only the last line goes");
+      assert.equal(fake.state.counts.status_posts, 0, "no POST");
+    },
+    { mode: "down" },
+  );
+});
+
+test("busy lines given before hello, then 404: one POST to the old address — the last line", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await threeLinesWhileDown(fake, mux, a, "last-p");
+      mux.mode = "old";
+      await waitFor("the last line by POST", () => busyOf(fake, "last-p") === "занят 3", 15_000);
+      await sleep(500);
+      assert.equal(fake.state.counts.status_posts, 1, "one POST, the last line");
+    },
+    { mode: "down" },
+  );
+});
+
+test("usage numbers held for hello go by register when the dispatcher turns out to be none", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "num-a" });
+      await waitFor("the dispatcher's 503", () => mux.attempts.length >= 1);
+      const held = await a.rpc("iskron/usage", { tokens: 4242, model: "m1" });
+      assert.equal(held.result?.pushed, true, JSON.stringify(held));
+      mux.mode = "old";
+      await waitFor(
+        "the numbers by register",
+        () => fake.state.placeAttrs.get("931:num-a")?.usage?.tokens === 4242,
+        15_000,
+      );
+    },
+    { mode: "down", daemonEnv: { ISKRON_USAGE_GAP_MS: "1" } },
+  );
+});
+
+test("a cut upgrade with a plain GET 404: under Node no verdict, another try; under Bun — the fallback", async () => {
+  const bun = !!process.env.BUN_BE_BUN;
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "get-a" });
+      await waitFor("the cut attempt", () => mux.attempts.length >= 1);
+      await sleep(1500);
+      if (bun) {
+        // Под Bun статус апгрейда не виден: вердикт — по простому GET (ответ сервера на него
+        // договор пока не записал, №1583).
+        await waitFor("the fallback socket", () => fake.state.counts.ws_upgrades >= 1, 10_000);
+        return;
+      }
+      assert.equal(mux.plain.length, 0, "no plain GET under Node");
+      assert.equal(fake.state.counts.ws_upgrades, 0, "no fallback on a cut");
+      mux.mode = "mux";
+      await muxCarrying(fake, mux, [channelOf(fake, "get-a")], 15_000);
+    },
+    { mode: "cutGet404" },
   );
 });
 

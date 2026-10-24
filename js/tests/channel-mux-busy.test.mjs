@@ -3,6 +3,8 @@
 // моста) пустая строка — кадром tick до unsubscribe; возврат — тактом; после superseded и
 // при передаче, не взятой преемником, место не трогается; POST статуса — только в откате.
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -89,6 +91,75 @@ test("usage goes in the tact, no register replay for it; the last numbers before
     },
     { daemonEnv: { ISKRON_USAGE_GAP_MS: "1" } },
   );
+});
+
+test("a seat id unknown on a channel of one seat: the tact line goes without standing_id and lands; standing_required is a journal line", async () => {
+  await withMux(
+    async ({ fake, mux, session, journal }) => {
+      await fake.control({ registerNoId: true, helloNoIds: true });
+      const a = await session();
+      ok(await a.stand({ realm: REALM, karta: 931, name: "noid-a", status: "занят N" }), "A");
+      const chan = channelOf(fake, "noid-a");
+      const conn = await muxCarrying(fake, mux, [chan]);
+      await waitFor("the line on the one seat", () => busyOf(fake, "noid-a") === "занят N");
+      const rows = mux.ticks.flatMap((t) => t.entries).filter((e) => e.status === "занят N");
+      assert.ok(rows.length && rows.every((e) => !("standing_id" in e)), JSON.stringify(rows));
+      assert.equal(fake.state.counts.status_requests, 0, "no POST");
+      mux.push({ type: "error", channel_id: chan, code: "standing_required" });
+      await waitFor("the refusal in the journal", () =>
+        /refused a frame: standing_required/.test(journal()),
+      );
+      assert.ok(!conn.closed && conn.subs.has(chan), "the connection and the subscription live");
+    },
+    { noIds: true },
+  );
+});
+
+test("leave while the dispatcher subscription is broken: no refusal to the agent, the line stays, no POST; the return brings it back by tick", async () => {
+  await withMux(async ({ fake, mux, dir, session, journal }) => {
+    const [a, b] = [await session(), await session()];
+    ok(await a.stand({ realm: REALM, karta: 931, name: "brk-l", status: "занят L" }), "A");
+    ok(await b.stand({ realm: REALM, karta: 931, name: "brk-b" }), "B keeps the connection wanted");
+    const [chan, cb] = [channelOf(fake, "brk-l"), channelOf(fake, "brk-b")];
+    const first = await muxCarrying(fake, mux, [chan, cb]);
+    await waitFor("the line by tick", () => busyOf(fake, "brk-l") === "занят L");
+    mux.mode = "down";
+    mux.drop();
+    await waitFor(
+      "a try on the down dispatcher",
+      () => mux.attempts.some((x) => x.answered === 503),
+      15_000,
+    );
+    const left = await a.rpc("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "leave", realm: REALM },
+    });
+    ok(left, "leave by word");
+    assert.doesNotMatch(textOf(left), /Отказано|Refused/, "no refusal to the agent");
+    assert.match(textOf(left), /до истечения пульса|till the pulse runs out/);
+    assert.equal(fake.state.counts.status_requests, 0, "no POST");
+    assert.equal(busyOf(fake, "brk-l"), "занят L", "the line stays on the board");
+    const kept = readdirSync(join(dir, "standings"))
+      .filter((f) => f.endsWith(".hold"))
+      .map((f) => JSON.parse(readFileSync(join(dir, "standings", f), "utf8")))
+      .find((r) => r.name === "brk-l");
+    assert.equal(kept?.status, "занят L", "the hold record keeps the line");
+    mux.mode = "mux";
+    await waitFor(
+      "the connection back",
+      () => mux.live().find((c) => c !== first && c.subs.has(cb)),
+      30_000,
+    );
+    const before = mux.ticks.length;
+    ok(await a.stand({ realm: REALM, karta: 931, name: "brk-l" }), "A returns");
+    await waitFor(
+      "the line back by tick",
+      () => mux.ticks.slice(before).some((t) => t.entries.some((e) => e.status === "занят L")),
+      10_000,
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journal()}`);
+    });
+  });
 });
 
 test("leave by word clears the line by tick before the unsubscribe; the return brings it back by tick, no POST", async () => {
