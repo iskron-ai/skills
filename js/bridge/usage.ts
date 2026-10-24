@@ -40,13 +40,13 @@ export function usagePlace(): Standing | null {
   return s && !isParked(s.realm, s.karta, s.name ?? "") ? s : null;
 }
 
-/** register of the seat with the last snapshot; true — attrs taken. */
-async function publish(place: Standing, u: Usage): Promise<boolean> {
+/** register of the seat with the last snapshot kept (`u`; null — none new); true — attrs taken. */
+async function publish(place: Standing, u: Usage | null): Promise<boolean> {
   U.at = Date.now();
   const got = await replayRegister(place, false);
   const ok = !!got && !got.error && !got.result?.isError;
   if (ok) {
-    U.published = u;
+    if (u) U.published = u;
   } else
     log(
       `usage: register did not take the attrs this time — ${JSON.stringify(got?.error ?? got?.result ?? null).slice(0, 200)}`,
@@ -74,41 +74,39 @@ export async function runUsage(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       usage: null,
       why: words(USAGE).noNumbers(),
     });
+  const s = usagePlace();
+  const gap = !!s && Date.now() - U.at >= MIN_GAP_MS;
+  const bytes = Buffer.byteLength(JSON.stringify(u));
+  if (bytes > USAGE_MAX) {
+    // Over the contract's limit the snapshot goes nowhere — neither the tact nor a register — and
+    // is not kept for the next register; a changed skill set still registers, with the last
+    // snapshot within the limit, if any (#8620).
+    log(`usage: ${bytes} bytes, over ${USAGE_MAX} — not sent, not kept`);
+    if (gap && s && skillsNeedRegister(s)) await publish(s, null);
+    return answer({ pushed: false, usage: u, why: words(USAGE).tooLarge(USAGE_MAX) });
+  }
   U.latest = u;
   rememberUsage(u);
-  const s = usagePlace();
   const tact = !!s && byTact(u);
-  // register stays for a changed skill set — over the tact's limit too (it is the record's
-  // only, #8620 v20); the numbers it no longer carries under the dispatcher.
-  const due =
-    !!s &&
-    Date.now() - U.at >= MIN_GAP_MS &&
-    ((!tact && moved(U.published, u)) || skillsNeedRegister(s));
+  // register stays for a changed skill set; the numbers it no longer carries under the dispatcher.
+  const due = gap && ((!tact && moved(U.published, u)) || (!!s && skillsNeedRegister(s)));
   const registered = due && s ? await publish(s, u) : false;
-  const big = tact === TOO_LARGE ? { why: words(USAGE).tooLarge(USAGE_MAX) } : {};
-  return answer({ pushed: tact === true || registered, usage: u, ...big });
+  return answer({ pushed: tact || registered, usage: u });
 }
 
 const numbers = (u: Usage | null): string => JSON.stringify({ ...u, at: null });
 
-/** The contract's limit of a usage object in a tact record, bytes (#8620 v20): over it — a journal line. */
-const USAGE_MAX = Number(process.env[envName("USAGE_MAX_BYTES")]) || 2048; // the variable — a seam for probes
-const TOO_LARGE = "too large";
+/** The contract's limit of a usage object, bytes (#8620); the variable — a seam for probes. */
+const USAGE_MAX = Number(process.env[envName("USAGE_MAX_BYTES")]) || 2048;
 
 /**
  * Under the dispatcher the numbers go in the daemon's tact (graph @nks/nks-dev, nodes #8617,
  * #8620): every change, merged till the tact, no register for them; the leaving seat's last
- * numbers go in its leaving tick. False — a socket per seat: register, as before. Over the
- * limit — not sent at all: the server would refuse the row.
+ * numbers go in its leaving tick. False — a socket per seat: register, as before.
  */
-function byTact(u: Usage): boolean | typeof TOO_LARGE {
+function byTact(u: Usage): boolean {
   const addr = statusAddress();
   if (!addr || !onDispatcher(addr.url)) return false;
-  const bytes = Buffer.byteLength(JSON.stringify(u));
-  if (bytes > USAGE_MAX) {
-    log(`usage: ${bytes} bytes, over ${USAGE_MAX} — not sent`);
-    return TOO_LARGE;
-  }
   if (numbers(u) === numbers(U.published)) return true;
   if (
     !tickFor(
