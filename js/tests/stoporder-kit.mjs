@@ -28,5 +28,8 @@ export async function standing(t, name = "proba", capabilities) {
   assert.ok(!r.result?.isError, textOf(r));
   await until(() => env.fake.state.ws.size === 1, "the socket");
   await until(() => seatId(env.fake, NKS, name), "the seat id");
+  // The open orders read of the socket's hello: an order the probe puts before it would be read
+  // too, and a refused or settled one answered again (an idempotent repeat the probe would count).
+  await until(() => env.fake.state.orders.reads >= 1, "the open orders read");
   return { ...env, b, id: seatId(env.fake, NKS, name) };
 }
