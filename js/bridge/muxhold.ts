@@ -26,7 +26,7 @@ let replay: Replay | null = null;
 /** Busy lines a subscription held for hello go by POST if its channel falls back to a socket. */
 export const onFellBack = (fn: Replay): void => void (replay = fn);
 
-/** No dispatcher after all: the last held line of each seat goes the old way (#8620 v15 (з)). */
+/** No dispatcher after all: the last held line of each seat goes the old way (#8620 v15). */
 function fell(s: Sub): void {
   for (const { url, scope, fields, lost } of s.early.splice(0)) {
     if (typeof fields.status === "string") replay?.(url, fields.status, scope);

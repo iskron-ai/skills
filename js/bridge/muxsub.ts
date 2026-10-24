@@ -32,7 +32,7 @@ export interface Sub {
   retry: ReturnType<typeof setTimeout> | null;
   seen: Set<string>;
   /**
-   * Busy and usage lines given before hello, the last per seat and kind (#8620 v15 (з)): into the
+   * Busy and usage lines given before hello, the last per seat and kind (#8620 v15): into the
    * tact once hello names the seats; if no dispatcher turns out to be there, the old way.
    */
   early: Early[];
@@ -59,7 +59,7 @@ export function holdEarly(s: Sub, e: Early): void {
 }
 
 /**
- * The seat ids a line goes to (#8620 v15 (л)): each record names its seat on a channel of several;
+ * The seat ids a line goes to (#8620 v15): each record names its seat on a channel of several;
  * without a known id only a channel of one seat takes a line — none fans out to all.
  */
 export function seatsFor(s: Sub, scope: SeatScope): (string | null)[] {

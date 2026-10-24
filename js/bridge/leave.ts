@@ -71,7 +71,7 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   // On the dispatcher the cleared line goes in the tact before the unsubscribe (#8620 v11);
   // a socket per seat is cleared after it closes, as before.
   // A dispatcher subscription broken and not back: the line stays on the board till the pulse
-  // runs out, as on any break (#8620 v11 (е)) — no POST, and no refusal to the agent.
+  // runs out, as on any break (#8620 v11) — no POST, and no refusal to the agent.
   const url = statusAddress()?.url ?? null;
   const live = !!url && liveOnDispatcher(url);
   const kept = !live && !!url && onDispatcher(url);

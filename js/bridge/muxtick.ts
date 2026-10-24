@@ -9,7 +9,7 @@ const GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 30_000;
 
 export interface TickEntry {
   channel_id: string;
-  /** Required on a channel of several seats; absent — the channel's one seat (#8620 v15 (л)). */
+  /** Required on a channel of several seats; absent — the channel's one seat (#8620 v15). */
   standing_id?: string;
   pulse?: Record<string, unknown>;
   status?: string;
