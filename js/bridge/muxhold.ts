@@ -9,10 +9,20 @@ import { newSub, secretOf, type Sub } from "./muxsub.ts";
 import { type TickEntry } from "./muxtick.ts";
 
 const muxes = new Map<string, Mux>();
+type Replay = (url: string, text: string, standingId: string | null) => void;
+let replay: Replay | null = null;
+
+/** Busy lines a subscription held for hello go by POST if its channel falls back to a socket. */
+export const onFellBack = (fn: Replay): void => void (replay = fn);
+
+function fell(s: Sub): void {
+  for (const { url, standingId, fields } of s.early.splice(0))
+    if (typeof fields.status === "string") replay?.(url, fields.status, standingId);
+}
 
 function muxOf(url: string): Mux {
   let m = muxes.get(url);
-  if (!m) muxes.set(url, (m = createMux(url)));
+  if (!m) muxes.set(url, (m = createMux(url, fell)));
   return m;
 }
 
@@ -40,7 +50,7 @@ function pulseFrom(m: Mux, s: Sub, text: string): boolean {
 export function holdChannel(o: HoldOptions): Holder {
   const secret = secretOf(o.url);
   const m = secret ? muxOf(muxUrlOf(o.url)) : null;
-  if (!secret || !m || m.link.fallen) return holdSocket(o);
+  if (!secret || !m || m.link.mode === "fallback") return holdSocket(o);
   const s = newSub(secret, o);
   m.add(s);
   return {
@@ -79,8 +89,8 @@ export function tickFor(
 ): boolean {
   const h = at(url);
   const s = h?.m.heldOf(h.secret);
-  if (!h || !s) return false;
-  if (!s.live || !s.channel) return (s.early.push({ standingId, fields }), true);
+  if (!h || !s || !h.m.carries(h.secret)) return false;
+  if (!s.live || !s.channel) return (s.early.push({ url: url ?? "", standingId, fields }), true);
   const seats = standingId ? [standingId] : s.standings;
   if (!seats.length) return false;
   for (const id of seats) h.m.ticker.put({ channel_id: s.channel, standing_id: id, ...fields });

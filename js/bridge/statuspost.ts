@@ -4,7 +4,8 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { onDispatcher, tickFor } from "./muxhold.ts";
+import { onDispatcher, onFellBack, tickFor } from "./muxhold.ts";
+import { log } from "./streams.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
@@ -122,3 +123,10 @@ export async function publishStatusTo(
     return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
   return { ok: true, body, ...acceptedIn(body, text) };
 }
+
+// No dispatcher after all: the lines held for hello go to the old address (muxhold.ts).
+onFellBack((url, text, standingId) => {
+  void publishStatusTo(url, text, 5000, standingId).then((st) => {
+    if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
+  });
+});

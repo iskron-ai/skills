@@ -28,8 +28,11 @@ export interface Sub {
   tries: number;
   retry: ReturnType<typeof setTimeout> | null;
   seen: Set<string>;
-  /** Busy and usage lines given before hello: they go into the tact once hello names the seats. */
-  early: { standingId: string | null; fields: Pick<TickEntry, "status" | "usage"> }[];
+  /**
+   * Busy and usage lines given before hello (`url` — the address they were given for): into the
+   * tact once hello names the seats; busy lines by POST if no dispatcher turns out to be there.
+   */
+  early: { url: string; standingId: string | null; fields: Pick<TickEntry, "status" | "usage"> }[];
 }
 
 export function newSub(secret: string, o: HoldOptions): Sub {

@@ -24,8 +24,8 @@ export interface LinkHooks {
 
 export interface Link {
   readonly open: boolean;
-  /** No dispatcher: a socket per seat until the process restarts. */
-  readonly fallen: boolean;
+  /** "fallback" — no dispatcher: a socket per seat until the process restarts; "mux" — it opened once. */
+  readonly mode: "probing" | "mux" | "fallback";
   connect(): void;
   send(frame: object): boolean;
   /** A hello came: the connection works — the ladder starts over, the silence watch arms. */
@@ -35,7 +35,7 @@ export interface Link {
 }
 
 export function createLink(url: string, h: LinkHooks): Link {
-  let fallen = false;
+  let mode: Link["mode"] = "probing";
   let now: Attempt | null = null;
   let open = false;
   let asking = false;
@@ -77,7 +77,7 @@ export function createLink(url: string, h: LinkHooks): Link {
   }
 
   function fallBack(why: string): void {
-    fallen = true;
+    mode = "fallback";
     log(`dispatcher ${url}: ${why} — a socket per seat until the daemon restarts`);
     h.onFallback(why);
   }
@@ -85,12 +85,12 @@ export function createLink(url: string, h: LinkHooks): Link {
   function connect(): void {
     if (idler) clearTimeout(idler);
     idler = null;
-    if (fallen || now || retry || asking) return;
+    if (mode === "fallback" || now || retry || asking) return;
     try {
       const a: Attempt = attempt(url, {
         onOpen: () => {
           if (now !== a) return a.end(1000);
-          open = true;
+          [open, mode] = [true, "mux"];
           silence.life();
           h.onOpen();
         },
@@ -124,8 +124,8 @@ export function createLink(url: string, h: LinkHooks): Link {
     get open() {
       return open;
     },
-    get fallen() {
-      return fallen;
+    get mode() {
+      return mode;
     },
     connect,
     send(frame) {

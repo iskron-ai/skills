@@ -24,7 +24,8 @@ export interface Mux extends Pick<SubTable, "liveOf" | "heldOf" | "settled"> {
   carries(secret: string): boolean;
 }
 
-export function createMux(url: string): Mux {
+/** `onSocket` — a subscription went to a socket per seat: what it held for hello is its. */
+export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
   const table = createTable();
   const { subs, byRef, byChannel, onSockets, active } = table;
   let refs = 0;
@@ -52,7 +53,9 @@ export function createMux(url: string): Mux {
     subs.delete(s);
     if (s.handing) return end(s, () => s.handing?.onGone(0));
     onSockets.add(s.secret);
-    if (!s.closed) s.fallback = holdSocket(s.o);
+    if (s.closed) return;
+    s.fallback = holdSocket(s.o);
+    onSocket?.(s);
   }
 
   /** The subscription is over: `word` tells the holder why (nothing — its own release). */
@@ -146,6 +149,6 @@ export function createMux(url: string): Mux {
     liveOf: table.liveOf,
     heldOf: table.heldOf,
     settled: table.settled,
-    carries: (secret) => !link.fallen && !onSockets.has(secret),
+    carries: (secret) => link.mode !== "fallback" && !onSockets.has(secret),
   };
 }
