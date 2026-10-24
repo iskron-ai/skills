@@ -28,15 +28,12 @@ export const onFellBack = (fn: Replay): void => void (replay = fn);
 
 /**
  * No dispatcher after all (#8620 v15): the held busy lines (the last per seat, holdEarly) go by
- * POST one after another in their order; held numbers go their own way (`lost`).
+ * POST in their order, ahead of any fresh one (statuspost.ts); held numbers go their own way.
  */
 function fell(s: Sub): void {
   const held = s.early.splice(0);
-  const lines = held.filter((e) => typeof e.fields.status === "string");
-  void lines.reduce<Promise<unknown>>(
-    (prev, e) => prev.then(() => replay?.(e.url, String(e.fields.status), e.scope)),
-    Promise.resolve(),
-  );
+  for (const e of held)
+    if (typeof e.fields.status === "string") void replay?.(e.url, e.fields.status, e.scope);
   for (const e of held) e.lost?.();
 }
 

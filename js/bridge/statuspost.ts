@@ -5,6 +5,7 @@ import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
 import { onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
+import { inTurn } from "./statusturn.ts";
 import { log } from "./streams.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
@@ -100,6 +101,15 @@ export async function publishStatusTo(
   if (ticked) return ticked;
   // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
   if (onDispatcher(url)) return { ok: false, body: words(STATUS_POST).notSubscribed() };
+  return inTurn(url, () => postStatus(url, text, timeoutMs, standingId));
+}
+
+async function postStatus(
+  url: string,
+  text: string,
+  timeoutMs: number,
+  standingId: SeatScope,
+): Promise<StatusOutcome> {
   const signal = AbortSignal.timeout(timeoutMs);
   const post = (): Promise<Response> =>
     fetch(url, {
@@ -129,9 +139,9 @@ export async function publishStatusTo(
   return { ok: true, body, ...acceptedIn(body, text) };
 }
 
-// No dispatcher after all: the lines held for hello go to the old address (muxhold.ts).
+// No dispatcher after all: the lines held for hello open the turn of the old address (muxhold.ts).
 onFellBack((url, text, standingId) =>
-  publishStatusTo(url, text, 5000, standingId).then((st) => {
+  inTurn(url, () => postStatus(url, text, 5000, standingId), true).then((st) => {
     if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
   }),
 );
