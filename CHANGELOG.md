@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.21.1](https://github.com/iskron-ai/skills/compare/v7.21.0...v7.21.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **bridge:** граф места — @owner/slug до register и в записи держания; прямые вызовы api без rN ([1d5aaf8](https://github.com/iskron-ai/skills/commit/1d5aaf89414b58ad1b8cc27c08c084804cd6e5fe))
+* **skills:** mind читается только при своём графе — readiness до среза на старте и до чтения minding ([7f720c3](https://github.com/iskron-ai/skills/commit/7f720c3a4c80cd0165fcd66cb30b4ab77249e346))
+* **skills:** дверь заводит личный mind при missing и дооснащает карту ([1299df1](https://github.com/iskron-ai/skills/commit/1299df14298d881c2ea25f1855853352b33f763e))
+
 ## [7.21.0](https://github.com/iskron-ai/skills/compare/v7.20.0...v7.21.0) (2026-10-23)
 
 
