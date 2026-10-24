@@ -23,6 +23,8 @@ export interface Ticker {
   flushChannel(channel: string): void;
   /** The channel's waiting lines go nowhere (the subscription ended without a leave). */
   drop(channel: string): void;
+  /** The channel's waiting lines out of the tact, to the caller (they wait for a new hello). */
+  take(channel: string): TickEntry[];
 }
 
 /** `send` — the frame to the connection; false: not open now, the lines wait for the next tact. */
@@ -52,6 +54,11 @@ export function createTicker(
 
   const ofChannel = (channel: string): [string, TickEntry][] =>
     [...waiting].filter(([, e]) => e.channel_id === channel);
+  const take = (channel: string): TickEntry[] => {
+    const mine = ofChannel(channel);
+    for (const [k] of mine) waiting.delete(k);
+    return mine.map(([, e]) => e);
+  };
 
   return {
     put(e) {
@@ -65,8 +72,7 @@ export function createTicker(
       if (send({ type: "tick", entries: mine.map(([, e]) => e) }))
         for (const [k] of mine) waiting.delete(k);
     },
-    drop(channel) {
-      for (const [k] of ofChannel(channel)) waiting.delete(k);
-    },
+    drop: (channel) => void take(channel),
+    take,
   };
 }

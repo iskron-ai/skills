@@ -2,12 +2,12 @@
 // #8622, #8616, #8621): a subscription per seat channel, the table channel_id → the session
 // holding it; a frame goes to that session only and is acked {channel_id, sub, seq}, a repeat
 // of its id is acked and goes to no one; a frame without a channel — the journal, no one.
-import { type Frame, holdSocket } from "../shared/channel.ts";
+import { type Frame, holdSocket, statusUrl } from "../shared/channel.ts";
 import { closedBy, type Ends, refusedBy } from "./muxends.ts";
 import { type FrameRoutes, routeFrame } from "./muxframe.ts";
 import { createLink, type Link } from "./muxlink.ts";
 import { pauseOf } from "./muxprobe.ts";
-import { asSeatFrame, deliver, earlyLines, type Sub } from "./muxsub.ts";
+import { asSeatFrame, deliver, earlyLines, holdEarly, type Sub } from "./muxsub.ts";
 import { createTable, type SubTable } from "./muxtable.ts";
 import { createTicker, type Ticker } from "./muxtick.ts";
 
@@ -66,9 +66,21 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     if (!active().length) link.idle();
   }
 
+  // Lines put for the tact while the subscription lived wait for its next hello (#8620 v15): the
+  // server refuses them before it. The pulse is not held: the holding sends one on hello.
+  function holdBack(s: Sub): void {
+    if (!s.channel) return;
+    const url = statusUrl(s.o.url);
+    for (const { standing_id: id, status, usage } of ticker.take(s.channel)) {
+      if (typeof status === "string") holdEarly(s, { url, scope: id ?? null, fields: { status } });
+      if (usage) holdEarly(s, { url, scope: id ?? null, fields: { usage } });
+    }
+  }
+
   // The channel stays routed meanwhile: a channel_closed before the new hello is still its word.
   function again(s: Sub): void {
     s.live = false;
+    holdBack(s);
     s.o.onDropped?.();
     s.retry = setTimeout(() => subscribe(s), pauseOf(s.tries++));
   }
@@ -82,6 +94,7 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
       else {
         if (s.live) s.o.onDropped?.();
         Object.assign(s, { live: false, ref: null });
+        holdBack(s);
       }
     }
   }
