@@ -234,6 +234,8 @@ export async function startFakeNks(opts = {}) {
     seatModels: new Map(),
     seatPatches: [], // { id, body, auth, realm } — PATCH места, как дошли
     seatPatchRefuse: 0, // код отказа следующих PATCH места; 0 — принимает
+    resolverRefs: false, // /control {resolverRefs:true}: прямой вызов api с «rN» — 404, как после выпуска
+    apiShortRefused: [], // { method, path, realm } — прямые вызовы, отвергнутые за «rN»
     // Графы учётки: iskron_realm list печатает оба имени — rN и @owner/slug.
     realms: [
       { short: "r5", canon: "@nks/nks-dev", ownerKind: "organization" },
@@ -318,7 +320,9 @@ export async function startFakeNks(opts = {}) {
   const slug = (r) => {
     const t = String(r ?? "").trim();
     if (t.startsWith("@")) return t;
-    const known = st.realms.find((x) => x.short === t || x.canon.replace(/^@[^/]+\//, "") === t);
+    const known = st.realms.find(
+      (x) => x.short === t || x.short === `r${t}` || x.canon.replace(/^@[^/]+\//, "") === t,
+    );
     return known ? known.canon : t;
   };
   const cleanName = (n) => String(n ?? "").trim() || "(unnamed)";
@@ -443,6 +447,18 @@ export async function startFakeNks(opts = {}) {
       return st.versionUp ? json(res, 200, { version: "fake-9" }) : json(res, 404, {});
     }
 
+    // Резолвер api после выпуска (дело №1571 [82]–[89]): прямой вызов читает @owner/slug, UUID и
+    // числовой short_id; «rN» в пути или в X-NKS-Realm — 404. Тулы MCP переводит сервер сам.
+    const rN = /^r\d+$/i;
+    if (
+      st.resolverRefs &&
+      p.startsWith("/api/") &&
+      (rN.test(String(req.headers["x-nks-realm"] ?? "").trim()) ||
+        rN.test(decodeURIComponent(/^\/api\/realms\/([^/]+)/.exec(p)?.[1] ?? "")))
+    ) {
+      st.apiShortRefused.push({ method: req.method, path: p, realm: req.headers["x-nks-realm"] });
+      return json(res, 404, { error: "Realm not found" });
+    }
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
     // Такт-чтение оркестратора (№1225 [23]): invites — стоячая очередь подъёма (#4951),
@@ -476,6 +492,7 @@ export async function startFakeNks(opts = {}) {
     // rN разрешается по short_id в @owner/slug до дверей invites/raised; форма зеркалит
     // живую (app.iskron.ru/api/realms, 2026-10-21).
     if (p === "/api/realms" && req.method === "GET") {
+      if (st.apiRealmsDown) return json(res, 503, { error: "unavailable" });
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       const byPat = !!st.pat && bearer === st.pat;
       if (!byPat && (!st.access || bearer !== st.access))
@@ -661,6 +678,9 @@ export async function startFakeNks(opts = {}) {
         "helloNoIds", // hello без standing_id мест — с registerNoId мост своего id не узнаёт вовсе
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
         "oneSeatPerRealm", // register в граф, где канал сессии уже стоит другим местом, — 409 channel_already_stands_in_realm, как у api
+        "bareOwnOnly", // iskron_channel с голым слагом не своего графа — 404 (резолвер после выпуска, #8677)
+        "resolverRefs", // прямой вызов api с «rN» в пути или X-NKS-Realm — 404 (№1571 [82]–[89])
+        "apiRealmsDown", // GET /api/realms — 503: список графов api не отвечает
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
         "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
@@ -1113,6 +1133,31 @@ export async function startFakeNks(opts = {}) {
       // смену id и один помнит выведенное имя.
       if (msg.method === "tools/call" && msg.params?.name === "iskron_channel") {
         const a = msg.params.arguments ?? {};
+        // Резолвер после выпуска (решение #8200, вопрос #8677): имя без префикса — только свой
+        // граф учётки (@tester/…); голый слаг чужого — 404, как у api.
+        const bare = String(a.realm ?? "").trim();
+        if (
+          st.bareOwnOnly &&
+          bare &&
+          !bare.startsWith("@") &&
+          !/^r\d+$/.test(bare) &&
+          !st.realms.some((x) => x.canon === `@tester/${bare}`)
+        ) {
+          st.counts.bare_refused = (st.counts.bare_refused ?? 0) + 1;
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: refused(`Отказано (404): Realm not found: ${bare}`, "Abgelehnt (404).", {
+                rule: "realm_not_found",
+                status: 404,
+              }),
+            },
+            extra,
+          );
+        }
         if (a.action === "register") {
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));

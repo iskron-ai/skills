@@ -23,6 +23,8 @@ export interface StopCliWords {
   gone: (seat: string) => string;
   refused: (seat: string, how: string, status: number, body: string) => string;
   unreachable: (seat: string, why: string) => string;
+  /** Граф места — голое имя, список графов api его не разрешил: адресовать нечем. */
+  unnamedGraph: (seat: string, realm: string) => string;
 }
 
 export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
@@ -56,6 +58,8 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
     gone: (seat) => `место ${seat} уже снято (410)`,
     refused: (seat, how, status, body) => `место ${seat}: ${how} отказан (${status}) — ${body}`,
     unreachable: (seat, why) => `место ${seat}: api не ответил — ${why}`,
+    unnamedGraph: (seat, realm) =>
+      `место ${seat}: граф «${realm}» без владельца, а список графов api его не разрешил — ничего не отправлено; повтори stop, когда список ответит`,
   },
   en: {
     usage: () =>
@@ -87,5 +91,7 @@ export const STOP_CLI: Readonly<Record<Lang, StopCliWords>> = {
     gone: (seat) => `the seat ${seat} is already ended (410)`,
     refused: (seat, how, status, body) => `seat ${seat}: ${how} refused (${status}) — ${body}`,
     unreachable: (seat, why) => `seat ${seat}: the api did not answer — ${why}`,
+    unnamedGraph: (seat, realm) =>
+      `seat ${seat}: the graph «${realm}» names no owner and the api's graph list did not resolve it — nothing is sent; repeat stop once the list answers`,
   },
 };
