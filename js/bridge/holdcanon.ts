@@ -109,6 +109,8 @@ function move(dir: string, file: string, rec: HoldRecord, canon: string): boolea
 
 /** Move this bridge's directory's hold records of rN or bare-slug graphs to @owner/slug. */
 export function canonHoldRecords(): Promise<void> {
+  // A satellite's seat is not returned from disk (satellite.ts): no move of its own, none joined.
+  if (CFG.satellite) return Promise.resolve();
   run ??= moveAll().finally(() => {
     run = null;
   });
@@ -116,7 +118,6 @@ export function canonHoldRecords(): Promise<void> {
 }
 
 async function moveAll(): Promise<void> {
-  if (CFG.satellite) return; // a satellite's seat is not returned from disk (satellite.ts)
   const dir = standingsDirOf(CFG.authDir);
   if (!existsSync(dir)) return;
   const all = readAll(dir);
