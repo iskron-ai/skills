@@ -3,12 +3,14 @@
 // сервера с меткой канала, sub и seq; ack{channel_id, sub, seq}; пачка такта tick{entries};
 // unsubscribe → channel_closed{…, 1000, unsubscribed}; отказ подписки — error{ref, code}.
 // Садится на сервер fake-nks.mjs: секрет — адрес сокета из connect, канал и места — его.
-// mode "old" — сервер без диспетчера: апгрейд по адресу диспетчера отвечает 404.
+// mode "old" — сервер без диспетчера: апгрейд по адресу диспетчера отвечает 404;
+// mode "down" — диспетчер есть, но лежит: 503.
 import { createHash, randomUUID } from "node:crypto";
 
 import { clientFrames, wsFrame } from "./fake-nks.mjs";
 
 const ACCEPT = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const REFUSED = { old: 404, down: 503 };
 
 export function attachMux(fake, opts = {}) {
   const st = fake.state;
@@ -21,8 +23,10 @@ export function attachMux(fake, opts = {}) {
     refuse: new Map(), // секрет → код отказа подписки (secret_invalid, secret_dead…)
     refuseWhen: null, // (секрет) → код отказа или null — для секретов, ещё не выданных
     holdAcks: false, // квитанции пишутся, но не метят доставленным (потеря ack)
+    stalled: new Map(), // channel_id → [{ conn, frame }] — квитанции, придержанные до unstall
     ignoredAcks: [], // ack с чужим sub — сервер их игнорирует
     queues: new Map(), // channel_id → [{ id, frame }] — недоставленное (до ack)
+    peak: new Map(), // channel_id → наибольшее число кадров без ack в подписке
     oldClosed: [], // каналы, чей старый сокет закрыт 4000 подпиской
     superseded: [], // { channel_id, from } — подписка вытеснена другим соединением
     ticks: [], // { at, conn, entries }
@@ -56,6 +60,7 @@ export function attachMux(fake, opts = {}) {
       if (sub.sent.size >= mux.credit) return;
       const seq = ++sub.seq;
       sub.sent.set(item.id, seq);
+      mux.peak.set(chan, Math.max(mux.peak.get(chan) ?? 0, sub.sent.size));
       send(conn, { ...item.frame, channel_id: chan, sub: sub.sub, seq });
     }
   };
@@ -95,10 +100,12 @@ export function attachMux(fake, opts = {}) {
     pump(chan);
   };
 
-  const ack = (conn, { channel_id, sub, seq }) => {
+  const ack = (conn, frame) => {
+    const { channel_id, sub, seq } = frame;
     const mine = conn.subs.get(channel_id);
     if (!mine || mine.sub !== sub) return mux.ignoredAcks.push({ channel_id, sub, seq });
     if (mux.holdAcks) return;
+    if (mux.stalled.has(channel_id)) return mux.stalled.get(channel_id).push({ conn, frame });
     const done = new Set([...mine.sent].filter(([, s]) => s <= seq).map(([id]) => id));
     for (const id of done) mine.sent.delete(id);
     mux.queues.set(
@@ -171,9 +178,9 @@ export function attachMux(fake, opts = {}) {
 
   st.upgradeHook = (req, socket, u) => {
     if (!u.pathname.endsWith("/channel/mux")) return false;
-    const answered = mux.mode === "old" ? 404 : 101;
+    const answered = REFUSED[mux.mode] ?? 101;
     mux.attempts.push({ at: Date.now(), path: u.pathname, answered });
-    if (answered === 404) socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
+    if (answered !== 101) socket.end(`HTTP/1.1 ${answered} Refused\r\nContent-Length: 0\r\n\r\n`);
     else open(req, socket);
     return true;
   };
@@ -208,6 +215,24 @@ export function attachMux(fake, opts = {}) {
     /** Обрыв: соединения диспетчера рвутся без кадра закрытия. */
     drop() {
       for (const c of live()) c.socket.destroy();
+    },
+    /** Закрытие соединений диспетчера сервером: кадр закрытия с кодом (4001 idle). */
+    close(code, reason) {
+      const payload = Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason)]);
+      for (const c of live()) {
+        c.socket.write(wsFrame(0x8, payload));
+        c.socket.end();
+      }
+    },
+    /** Кадр сервера как есть — во все живые соединения. */
+    push(obj) {
+      for (const c of live()) send(c, obj);
+    },
+    /** Придержанные квитанции канала — в дело: кредит пополняется. */
+    unstall(chan) {
+      const held = mux.stalled.get(chan) ?? [];
+      mux.stalled.delete(chan);
+      for (const { conn, frame } of held) ack(conn, frame);
     },
     /** Кадры клиента данного типа по всем соединениям. */
     sent(type) {

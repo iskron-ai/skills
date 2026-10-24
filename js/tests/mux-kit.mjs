@@ -34,6 +34,20 @@ export async function waitFor(what, fn, ms = 6000) {
 }
 export const textOf = (r) => (r?.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 
+/** Клиент диспетчера без моста: кадры по типу, ожидание следующего. */
+export async function rawClient(url) {
+  const ws = new WebSocket(url);
+  const got = [];
+  ws.onmessage = (e) => got.push(JSON.parse(String(e.data)));
+  await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
+  return {
+    got,
+    send: (o) => ws.send(JSON.stringify(o)),
+    next: (pred) => waitFor("a dispatcher frame", () => got.find(pred), 2000),
+    close: () => ws.close(),
+  };
+}
+
 const journalOf = (dir) => {
   try {
     return readFileSync(join(dir, "run", "daemon.log"), "utf8");
@@ -138,11 +152,11 @@ function thinBridge(dir, fake) {
 
 /**
  * Фейк с диспетчером, каталог гранта, демон и сессии; уборка — всегда.
- * own: false — демон поднимают тонкие мосты пробы (смена демона).
+ * own: false — демон поднимают тонкие мосты пробы (смена демона); credit — кредит подписки.
  */
-export async function withMux(fn, { mode = "mux", own = true } = {}) {
+export async function withMux(fn, { mode = "mux", own = true, credit } = {}) {
   const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
-  const mux = attachMux(fake, { mode });
+  const mux = attachMux(fake, { mode, credit });
   const dir = mkdtempSync(join(tmpdir(), "iskron-mux-"));
   const closers = [];
   let daemon = null;

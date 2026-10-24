@@ -14,6 +14,7 @@ import {
   channelOf,
   daemonPids,
   muxCarrying,
+  rawClient,
   seatIdOf,
   sleep,
   textOf,
@@ -24,20 +25,6 @@ import {
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
-
-/** Клиент диспетчера без моста: кадры по типу, ожидание следующего. */
-async function rawClient(url) {
-  const ws = new WebSocket(url);
-  const got = [];
-  ws.onmessage = (e) => got.push(JSON.parse(String(e.data)));
-  await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));
-  return {
-    got,
-    send: (o) => ws.send(JSON.stringify(o)),
-    next: (pred) => waitFor("a dispatcher frame", () => got.find(pred), 2000),
-    close: () => ws.close(),
-  };
-}
 
 test("fake self-check: the dispatcher answers by the contract on its own", async () => {
   const fake = await startFakeNks({ pat: "self" });
