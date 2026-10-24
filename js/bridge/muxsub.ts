@@ -3,7 +3,7 @@
 // subscription's, not the connection's: a frame sent again in a new subscription after a break
 // or a resubscribe is known by its id (the last 1000 ids of the channel).
 import { type Frame, type Holder, type HoldOptions } from "../shared/channel.ts";
-import { type TickEntry } from "./muxtick.ts";
+import { type Lost, type TickEntry } from "./muxtick.ts";
 
 const SEEN_MAX = 1000;
 
@@ -125,11 +125,13 @@ export function deliver(s: Sub, f: Frame): boolean {
   return typeof f.seq === "number";
 }
 
-/** Lines given before hello, now that hello named the channel and its seats. */
-export function earlyLines(s: Sub, channel: string): TickEntry[] {
+/** Lines given before hello, now that hello named the channel and its seats; `lost` rides on. */
+export function earlyLines(s: Sub, channel: string): [TickEntry, Lost][] {
   return s.early
     .splice(0)
-    .flatMap(({ scope, fields }) => seatsFor(s, scope).map((id) => entryOf(channel, id, fields)));
+    .flatMap(({ scope, fields, lost }) =>
+      seatsFor(s, scope).map((id): [TickEntry, Lost] => [entryOf(channel, id, fields), lost]),
+    );
 }
 
 /** The frame as a seat's own socket gives it: the connection's labels stripped. */

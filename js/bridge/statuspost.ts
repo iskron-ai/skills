@@ -4,7 +4,7 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
+import { liveOnDispatcher, onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
 import { inTurn, inTurnWithin } from "./statusturn.ts";
 import { log } from "./streams.ts";
 
@@ -95,16 +95,18 @@ export async function publishStatusTo(
   const ticked = byTick(url, text, standingId);
   if (ticked) return ticked;
   // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
-  if (onDispatcher(url)) return { ok: false, body: words(STATUS_POST).notSubscribed() };
+  const w = words(STATUS_POST);
+  if (onDispatcher(url))
+    return { ok: false, body: liveOnDispatcher(url) ? w.seatUnnamed() : w.notSubscribed() };
   return inTurnWithin<StatusOutcome>(
     url,
     timeoutMs,
     (until) => postStatus(url, text, until, standingId),
-    () => ({ ok: false, body: words(STATUS_POST).noAnswer(LATE) }),
+    () => ({ ok: false, body: late() }),
   );
 }
 
-const LATE = "its limit passed in the turn";
+const late = (): string => words(STATUS_POST).noAnswer(words(STATUS_POST).late());
 async function postStatus(
   url: string,
   text: string,
@@ -112,7 +114,7 @@ async function postStatus(
   standingId: SeatScope,
 ): Promise<StatusOutcome> {
   const left = until - Date.now();
-  if (left <= 0) return { ok: false, body: words(STATUS_POST).noAnswer(LATE) };
+  if (left <= 0) return { ok: false, body: late() };
   const signal = AbortSignal.timeout(left);
   const post = (): Promise<Response> =>
     fetch(url, {

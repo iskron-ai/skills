@@ -43,6 +43,7 @@ export function attachMux(fake, opts = {}) {
     pulses: new Map(), // channel_id → последний пульс канала
     closeNext: new Map(), // секрет → сколько подписок ответить channel_closed 1000 вместо hello
     noIds: opts.noIds ?? false, // hello называет места без standing_id
+    helloLagMs: 0, // подписка разбирается с задержкой: hello приходит позже на столько мс
   };
   // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
   const live = () => mux.conns.filter((c) => !c.closed && !c.socket.destroyed);
@@ -143,15 +144,21 @@ export function attachMux(fake, opts = {}) {
     return null;
   };
 
-  /** Отказ строки такта: error{channel_id, code}, прочие строки пачки идут. */
+  /** Отказ строки такта: error{code, reason, channel_id} без sub, как живой API; прочие идут. */
   const refuseRow = (conn, e, code) => {
     mux.refusedRows.push({ ...e, code });
-    send(conn, { type: "error", channel_id: e.channel_id, code });
+    send(conn, { type: "error", code, reason: code, channel_id: e.channel_id });
   };
 
   const tick = (conn, { entries }) => {
     mux.ticks.push({ at: Date.now(), conn: conn.id, entries });
     for (const e of Array.isArray(entries) ? entries : []) {
+      // Канал без подписки на этом соединении (её hello ещё не ушёл) записей такта не берёт:
+      // not_subscribed, как живой API.
+      if (!conn.subs.has(e.channel_id)) {
+        refuseRow(conn, e, "not_subscribed");
+        continue;
+      }
       // Пульс — головы, хранится по каналу: места записи не требует (#8620 v19).
       if (e.pulse) mux.pulses.set(e.channel_id, e.pulse);
       if (typeof e.status !== "string" && !e.usage) continue;
@@ -171,6 +178,8 @@ export function attachMux(fake, opts = {}) {
 
   const onFrame = (conn, frame) => {
     conn.frames.push({ at: Date.now(), frame });
+    if (frame?.type === "subscribe" && mux.helloLagMs)
+      return void setTimeout(() => subscribe(conn, frame), mux.helloLagMs).unref();
     if (frame?.type === "subscribe") return subscribe(conn, frame);
     if (frame?.type === "ack") return ack(conn, frame);
     if (frame?.type === "tick") return tick(conn, frame);

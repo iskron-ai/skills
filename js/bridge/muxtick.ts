@@ -16,13 +16,18 @@ export interface TickEntry {
   usage?: Record<string, unknown>;
 }
 
+/** What to do with a seat's numbers if they never go in a tact (no dispatcher after all). */
+export type Lost = (() => void) | undefined;
+
 export interface Ticker {
-  /** A change of one seat: merged with what waits for the tact. */
-  put(e: TickEntry): void;
+  /** A change of one seat: merged with what waits for the tact; `lost` — of its numbers. */
+  put(e: TickEntry, lost?: Lost): void;
   /** The channel's waiting lines now, in a frame of their own (the seat leaves). */
   flushChannel(channel: string): void;
   /** The channel's waiting lines go nowhere (the subscription ended without a leave). */
   drop(channel: string): void;
+  /** The channel's waiting lines out of the tact, to the caller (they wait for a new hello). */
+  take(channel: string): [TickEntry, Lost][];
 }
 
 /** `send` — the frame to the connection; false: not open now, the lines wait for the next tact. */
@@ -30,6 +35,7 @@ export function createTicker(
   send: (frame: { type: "tick"; entries: TickEntry[] }) => boolean,
 ): Ticker {
   const waiting = new Map<string, TickEntry>();
+  const losts = new Map<string, () => void>();
   let lastAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const keyOf = (e: Pick<TickEntry, "channel_id" | "standing_id">): string =>
@@ -46,27 +52,34 @@ export function createTicker(
     if (!waiting.size) return;
     const entries = [...waiting.values()];
     lastAt = Date.now();
-    if (send({ type: "tick", entries })) waiting.clear();
+    if (send({ type: "tick", entries })) [waiting, losts].forEach((m) => m.clear());
     schedule();
   }
 
   const ofChannel = (channel: string): [string, TickEntry][] =>
     [...waiting].filter(([, e]) => e.channel_id === channel);
+  const forget = (k: string): void => void (waiting.delete(k), losts.delete(k));
+  const take = (channel: string): [TickEntry, Lost][] =>
+    ofChannel(channel).map(([k, e]) => {
+      const lost = losts.get(k);
+      forget(k);
+      return [e, lost];
+    });
 
   return {
-    put(e) {
+    put(e, lost) {
       const k = keyOf(e);
       waiting.set(k, { ...waiting.get(k), ...e });
+      if (lost) losts.set(k, lost);
       schedule();
     },
     flushChannel(channel) {
       const mine = ofChannel(channel);
       if (!mine.length) return;
       if (send({ type: "tick", entries: mine.map(([, e]) => e) }))
-        for (const [k] of mine) waiting.delete(k);
+        for (const [k] of mine) forget(k);
     },
-    drop(channel) {
-      for (const [k] of ofChannel(channel)) waiting.delete(k);
-    },
+    drop: (channel) => void take(channel),
+    take,
   };
 }
