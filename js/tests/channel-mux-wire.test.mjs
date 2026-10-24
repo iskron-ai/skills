@@ -140,6 +140,25 @@ test("busy lines given before hello, then 404: one POST to the old address — t
   );
 });
 
+test("after a fallback a fresh busy line waits behind the held one: the board ends with the fresh line", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      await a.stand({ realm: REALM, karta: 931, name: "turn-a", status: "занят старая" });
+      await waitFor("the dispatcher's 503", () => mux.attempts.length >= 1);
+      fake.state.statusDelayMs = 1500; // придержанная строка ложится медленно
+      mux.mode = "old";
+      await waitFor("the held line's POST", () => fake.state.counts.status_requests >= 1, 15_000);
+      fake.state.statusDelayMs = 0;
+      await a.stand({ realm: REALM, karta: 931, name: "turn-a", status: "занят свежая" });
+      await waitFor("both POSTs", () => fake.state.counts.status_posts >= 2, 10_000);
+      await sleep(300);
+      assert.equal(busyOf(fake, "turn-a"), "занят свежая", "the older line never lands last");
+    },
+    { mode: "down" },
+  );
+});
+
 test("usage numbers held for hello go by register when the dispatcher turns out to be none", async () => {
   await withMux(
     async ({ fake, mux, session }) => {

@@ -14,6 +14,7 @@ import {
   secretOf,
   sleep,
   textOf,
+  TICK_MS,
   told,
   waitFor,
   withMux,
@@ -90,7 +91,25 @@ test("two unasked channel_closed 1000 in a row (no hello between): a journal lin
   });
 });
 
-test("an unasked 1000, a hello, later another unasked 1000: not in a row — subscribed again, no end", async () => {
+test("an unasked 1000, a hello, another unasked 1000 before the tact interval: the end as a dead token", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "fast-a" }), "A stands");
+    const ca = channelOf(fake, "fast-a");
+    const conn = await muxCarrying(fake, mux, [ca]);
+    const sa = secretOf(fake, ca);
+    const asked = () => mux.sent("subscribe").filter((s) => s.secret === sa).length;
+    mux.endSub(ca, 1000, "unsubscribed");
+    await waitFor("the resubscribe's hello", () => asked() === 2 && conn.subs.has(ca), 15_000);
+    mux.endSub(ca, 1000, "unsubscribed"); // сразу после hello — раньше интервала такта
+    await waitFor("A told as of a dead token", () => told(a, "dead").length, 10_000);
+    await sleep(6000); // дольше первой ступени отступа: переподписок больше нет
+    assert.equal(asked(), 2, "no resubscribe after the second");
+  });
+});
+
+// Интервал такта под пробой — наводка ISKRON_PULSE_GAP_MS (mux-kit, TICK_MS).
+test("an unasked 1000, a hello, the subscription lives past the tact interval, another unasked 1000: subscribed again, no end", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const a = await session();
     ok(await a.stand({ realm: REALM, karta: 931, name: "two-a" }), "A stands");
@@ -104,10 +123,10 @@ test("an unasked 1000, a hello, later another unasked 1000: not in a row — sub
       () => asked() === 2 && conn.subs.has(ca),
       15_000,
     );
-    await sleep(500);
+    await sleep(TICK_MS * 2); // прожила дольше интервала такта
     mux.endSub(ca, 1000, "unsubscribed");
     await waitFor("the second resubscribe", () => asked() === 3 && conn.subs.has(ca), 15_000);
-    assert.equal(told(a, "dead").length, 0, "a hello between: not the end");
+    assert.equal(told(a, "dead").length, 0, "lived the interval: not the end");
     mux.say("two-a", "A после двух 1000 с hello между");
     await waitFor("A to hear", () => a.heard("A после двух 1000 с hello между"));
   });
