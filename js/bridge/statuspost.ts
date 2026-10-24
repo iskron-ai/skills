@@ -4,7 +4,7 @@
 import { STATUS_POST } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { onDispatcher, onFellBack, tickFor } from "./muxhold.ts";
+import { onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
 import { log } from "./streams.ts";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
@@ -79,19 +79,22 @@ export function trimNudge(t: StatusTrim): string {
  * @nks/nks-dev, node #8623): nothing answers it, so a line over the limit is named as the
  * rule lays it.
  */
-function byTick(url: string, text: string, standingId: string | null): StatusOutcome | null {
-  if (!tickFor(url, standingId, { status: text })) return null;
+function byTick(url: string, text: string, scope: SeatScope): StatusOutcome | null {
+  if (!tickFor(url, scope, { status: text })) return null;
   if ([...text].length <= LIMIT) return { ok: true, body: "", doing: text };
   const doing = trimToWord(text, LIMIT);
   return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
 }
 
-/** The same POST to a named address — for the exit, when the standing is already released. */
+/**
+ * The same POST to a named address — for the exit, when the standing is already released.
+ * `standingId`: a seat's id; EVERY — each seat of the channel; null — the own seat, id unknown.
+ */
 export async function publishStatusTo(
   url: string,
   text: string,
   timeoutMs = 5000,
-  standingId: string | null = null,
+  standingId: SeatScope = null,
 ): Promise<StatusOutcome> {
   const ticked = byTick(url, text, standingId);
   if (ticked) return ticked;
@@ -102,7 +105,9 @@ export async function publishStatusTo(
     fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(standingId ? { text, standing_id: standingId } : { text }),
+      body: JSON.stringify(
+        typeof standingId === "string" ? { text, standing_id: standingId } : { text },
+      ),
       signal,
     });
   let res: Response;

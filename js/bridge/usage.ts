@@ -8,7 +8,7 @@
 import { envName, method, USAGE } from "../delivery/index.ts";
 import { HOSTED_CLIENTS } from "../shared/clients.ts";
 import { words } from "../shared/lang.ts";
-import { scoped } from "../shared/scope.ts";
+import { bindScope, scoped } from "../shared/scope.ts";
 import { harnessName } from "./client.ts";
 import { isParked } from "./hold.ts";
 import { onDispatcher, tickFor } from "./muxhold.ts";
@@ -98,9 +98,24 @@ function byTact(u: Usage): boolean {
   const addr = statusAddress();
   if (!addr || !onDispatcher(addr.url)) return false;
   if (numbers(u) === numbers(U.published)) return true;
-  if (!tickFor(addr.url, addr.standingId, { usage: { ...u } })) return false;
+  if (
+    !tickFor(
+      addr.url,
+      addr.standingId,
+      { usage: { ...u } },
+      bindScope(() => fellBack(u)),
+    )
+  )
+    return false;
   U.published = u;
   return true;
+}
+
+/** Numbers held for hello on a channel that fell back to a socket: by register, as there. */
+function fellBack(u: Usage): void {
+  if (U.published === u) U.published = null;
+  const s = usagePlace();
+  if (s) void publish(s, U.latest ?? u).catch(() => {});
 }
 
 /** The last snapshot, bypassing the threshold, strictly before the seat closes (leave, satellite revoke). */

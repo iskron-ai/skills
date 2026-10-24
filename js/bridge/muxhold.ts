@@ -5,19 +5,33 @@
 import { type Holder, type HoldOptions, holdSocket } from "../shared/channel.ts";
 import { muxUrlOf } from "./muxprobe.ts";
 import { createMux, type Mux } from "./muxroute.ts";
-import { newSub, secretOf, type Sub } from "./muxsub.ts";
-import { type TickEntry } from "./muxtick.ts";
+import {
+  type Early,
+  entryOf,
+  EVERY,
+  holdEarly,
+  newSub,
+  type SeatScope,
+  seatsFor,
+  secretOf,
+  type Sub,
+} from "./muxsub.ts";
+
+export { EVERY, type SeatScope };
 
 const muxes = new Map<string, Mux>();
-type Replay = (url: string, text: string, standingId: string | null) => void;
+type Replay = (url: string, text: string, scope: SeatScope) => void;
 let replay: Replay | null = null;
 
 /** Busy lines a subscription held for hello go by POST if its channel falls back to a socket. */
 export const onFellBack = (fn: Replay): void => void (replay = fn);
 
+/** No dispatcher after all: the last held line of each seat goes the old way (#8620 v15 (з)). */
 function fell(s: Sub): void {
-  for (const { url, standingId, fields } of s.early.splice(0))
-    if (typeof fields.status === "string") replay?.(url, fields.status, standingId);
+  for (const { url, scope, fields, lost } of s.early.splice(0)) {
+    if (typeof fields.status === "string") replay?.(url, fields.status, scope);
+    lost?.();
+  }
 }
 
 function muxOf(url: string): Mux {
@@ -39,10 +53,10 @@ function pulseFrom(m: Mux, s: Sub, text: string): boolean {
     return false;
   }
   if (f?.type !== "pulse") return false;
-  const standing = s.standings[0];
-  if (!standing) return false;
+  const [id] = s.standings.length ? s.standings : seatsFor(s, null);
+  if (id === undefined) return false;
   const { type: _t, ...pulse } = f;
-  m.ticker.put({ channel_id: s.channel, standing_id: standing, pulse });
+  m.ticker.put({ ...entryOf(s.channel, id, {}), pulse });
   return true;
 }
 
@@ -79,22 +93,22 @@ const at = (url: string | null): { m: Mux; secret: string } | null => {
 
 /**
  * Lines of seats on a channel the dispatcher carries (`url` — its socket or status address) go
- * into the tact instead of a POST: true — taken. `standingId` null — every seat hello named on
- * the channel; before hello they wait in the subscription.
+ * into the tact instead of a POST: true — taken; false — not this path, or no seat to name
+ * (seatsFor). Before hello they wait in the subscription; `lost` — what to do if no dispatcher.
  */
 export function tickFor(
   url: string | null,
-  standingId: string | null,
-  fields: Pick<TickEntry, "status" | "usage">,
+  scope: SeatScope,
+  fields: Early["fields"],
+  lost?: () => void,
 ): boolean {
   const h = at(url);
   const s = h?.m.heldOf(h.secret);
   if (!h || !s || !h.m.carries(h.secret)) return false;
-  if (!s.live || !s.channel) return (s.early.push({ url: url ?? "", standingId, fields }), true);
-  const seats = standingId ? [standingId] : s.standings;
-  if (!seats.length) return false;
-  for (const id of seats) h.m.ticker.put({ channel_id: s.channel, standing_id: id, ...fields });
-  return true;
+  if (!s.live || !s.channel) return (holdEarly(s, { url: url ?? "", scope, fields, lost }), true);
+  const seats = seatsFor(s, scope);
+  for (const id of seats) h.m.ticker.put(entryOf(s.channel, id, fields));
+  return seats.length > 0;
 }
 
 /** The channel of this address goes through the dispatcher: its busy line is never POSTed. */
@@ -110,7 +124,7 @@ export const onDispatcher = (url: string | null): boolean => {
  */
 export function leavingLine(url: string): "tick" | "post" | "none" {
   if (!onDispatcher(url)) return "post";
-  return liveOnDispatcher(url) && tickFor(url, null, { status: "" }) ? "tick" : "none";
+  return liveOnDispatcher(url) && tickFor(url, EVERY, { status: "" }) ? "tick" : "none";
 }
 
 /** A live subscription carries the channel of this address now. */

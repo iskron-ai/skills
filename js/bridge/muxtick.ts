@@ -9,7 +9,8 @@ const GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 30_000;
 
 export interface TickEntry {
   channel_id: string;
-  standing_id: string;
+  /** Required on a channel of several seats; absent — the channel's one seat (#8620 v15 (л)). */
+  standing_id?: string;
   pulse?: Record<string, unknown>;
   status?: string;
   usage?: Record<string, unknown>;
@@ -32,7 +33,7 @@ export function createTicker(
   let lastAt = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const keyOf = (e: Pick<TickEntry, "channel_id" | "standing_id">): string =>
-    `${e.channel_id}\n${e.standing_id}`;
+    `${e.channel_id}\n${e.standing_id ?? ""}`;
 
   function schedule(): void {
     if (timer || !waiting.size) return;

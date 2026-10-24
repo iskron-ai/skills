@@ -19,8 +19,11 @@ export interface Sub {
   live: boolean;
   /** The holder let it go: unsubscribed or about to be. */
   closed: boolean;
-  /** Seat ids of the channel from the last hello. */
+  /** Seat ids of the channel from the last hello, and how many seats it named, ids or not. */
   standings: string[];
+  seats: number;
+  /** A channel_closed 1000 nobody asked for was answered by one subscription again (#8620 v15). */
+  resubscribed: boolean;
   handing: { onFrame: (raw: string) => void; onGone: (code: number) => void } | null;
   /** No dispatcher: the holder holds its own socket now. */
   fallback: Holder | null;
@@ -29,11 +32,52 @@ export interface Sub {
   retry: ReturnType<typeof setTimeout> | null;
   seen: Set<string>;
   /**
-   * Busy and usage lines given before hello (`url` — the address they were given for): into the
-   * tact once hello names the seats; busy lines by POST if no dispatcher turns out to be there.
+   * Busy and usage lines given before hello, the last per seat and kind (#8620 v15 (з)): into the
+   * tact once hello names the seats; if no dispatcher turns out to be there, the old way.
    */
-  early: { url: string; standingId: string | null; fields: Pick<TickEntry, "status" | "usage"> }[];
+  early: Early[];
 }
+
+/** Whom a line is for: a seat id; EVERY — each seat of the channel; null — the own seat, id unknown. */
+export const EVERY = Symbol("every seat");
+export type SeatScope = string | null | typeof EVERY;
+
+export interface Early {
+  /** The address the line was given for. */
+  url: string;
+  scope: SeatScope;
+  fields: Pick<TickEntry, "status" | "usage">;
+  /** No dispatcher after all: the line goes the old way. */
+  lost?: () => void;
+}
+
+const kindOf = (e: Early): string => ("status" in e.fields ? "status" : "usage");
+
+/** Held for hello: a newer line of the same seat and kind replaces the older. */
+export function holdEarly(s: Sub, e: Early): void {
+  s.early = s.early.filter((x) => x.scope !== e.scope || kindOf(x) !== kindOf(e)).concat(e);
+}
+
+/**
+ * The seat ids a line goes to (#8620 v15 (л)): each record names its seat on a channel of several;
+ * without a known id only a channel of one seat takes a line — none fans out to all.
+ */
+export function seatsFor(s: Sub, scope: SeatScope): (string | null)[] {
+  if (typeof scope === "string") return [scope];
+  if (scope === EVERY && s.standings.length) return s.standings;
+  if (s.standings.length === 1) return s.standings;
+  return s.seats <= 1 && !s.standings.length ? [null] : [];
+}
+
+export const entryOf = (
+  channel: string,
+  id: string | null,
+  fields: Early["fields"],
+): TickEntry => ({
+  channel_id: channel,
+  ...(id ? { standing_id: id } : {}),
+  ...fields,
+});
 
 export function newSub(secret: string, o: HoldOptions): Sub {
   return {
@@ -45,6 +89,8 @@ export function newSub(secret: string, o: HoldOptions): Sub {
     live: false,
     closed: false,
     standings: [],
+    seats: 0,
+    resubscribed: false,
     handing: null,
     fallback: null,
     heardAt: 0,
@@ -77,13 +123,9 @@ export function deliver(s: Sub, f: Frame): boolean {
 
 /** Lines given before hello, now that hello named the channel and its seats. */
 export function earlyLines(s: Sub, channel: string): TickEntry[] {
-  return s.early.splice(0).flatMap(({ standingId, fields }) =>
-    (standingId ? [standingId] : s.standings).map((id) => ({
-      channel_id: channel,
-      standing_id: id,
-      ...fields,
-    })),
-  );
+  return s.early
+    .splice(0)
+    .flatMap(({ scope, fields }) => seatsFor(s, scope).map((id) => entryOf(channel, id, fields)));
 }
 
 /** The frame as a seat's own socket gives it: the connection's labels stripped. */

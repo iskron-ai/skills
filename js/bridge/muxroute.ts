@@ -3,16 +3,13 @@
 // holding it; a frame goes to that session only and is acked {channel_id, sub, seq}, a repeat
 // of its id is acked and goes to no one; a frame without a channel — the journal, no one.
 import { type Frame, holdSocket } from "../shared/channel.ts";
+import { closedBy, type Ends, refusedBy } from "./muxends.ts";
 import { type FrameRoutes, routeFrame } from "./muxframe.ts";
 import { createLink, type Link } from "./muxlink.ts";
 import { pauseOf } from "./muxprobe.ts";
 import { asSeatFrame, deliver, earlyLines, type Sub } from "./muxsub.ts";
 import { createTable, type SubTable } from "./muxtable.ts";
 import { createTicker, type Ticker } from "./muxtick.ts";
-import { log } from "./streams.ts";
-
-const DEAD_SECRET = new Set(["secret_invalid", "secret_dead"]);
-const REVOKED = 4004; // channel_closed of a revoked seat
 
 export interface Mux extends Pick<SubTable, "liveOf" | "heldOf" | "settled"> {
   readonly link: Link;
@@ -58,7 +55,6 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     onSocket?.(s);
   }
 
-  /** The subscription is over: `word` tells the holder why (nothing — its own release). */
   function end(s: Sub, word?: () => void): void {
     Object.assign(s, { closed: true, live: false });
     subs.delete(s);
@@ -71,6 +67,7 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
   }
 
   function again(s: Sub): void {
+    if (s.channel && byChannel.get(s.channel) === s) byChannel.delete(s.channel);
     s.live = false;
     s.o.onDropped?.();
     s.retry = setTimeout(() => subscribe(s), pauseOf(s.tries++));
@@ -94,38 +91,22 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     Object.assign(s, { channel, sub: String(f.sub), heardAt: Date.now() });
     byChannel.set(channel, s);
     if (s.closed) return void link.send({ type: "unsubscribe", channel_id: channel });
-    const standings = (f.standings ?? []).map((x) => x.standing_id ?? "").filter(Boolean);
-    Object.assign(s, { live: true, tries: 0, standings });
+    const named = f.standings ?? [];
+    const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
+    Object.assign(s, { live: true, tries: 0, standings, seats: named.length });
     earlyLines(s, channel).forEach(ticker.put);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);
     s.o.onFrame(seat.raw, seat.frame);
   }
 
-  function refused(s: Sub, code: string): void {
-    if (s.closed) return end(s);
-    if (DEAD_SECRET.has(code)) return end(s, () => s.o.onDeadToken(4002));
-    if (code === "limit_subscriptions") return toSocket(s);
-    log(`dispatcher: subscription refused (${code}) — again later`);
-    again(s);
-  }
-
-  // By class (#8620 v13): 1000 — own unsubscribe answered; 4000 — another holds it; 4004 — the
-  // seat revoked, the stop. Any other code, an unasked 1000 too — subscribed again (dead: secret_dead).
-  function closed(s: Sub, code: number, reason: string): void {
-    if (s.closed) return end(s);
-    if (s.handing) return end(s, () => s.handing?.onGone(code));
-    if (code === 4000) return end(s, () => (s.o.onEvicted ?? s.o.onDeadToken)(code));
-    if (code === REVOKED) return end(s, () => s.o.onStopped(code, reason));
-    log(`dispatcher: ${s.channel} closed with ${code} (${reason}) — subscribed again`);
-    byChannel.delete(s.channel ?? "");
-    again(s);
-  }
-
   function frame(s: Sub, f: Frame, channel: string): void {
     if (deliver(s, f)) link.send({ type: "ack", channel_id: channel, sub: f.sub, seq: f.seq });
   }
 
+  const ends: Ends = { end, again, toSocket };
+  const refused = (s: Sub, code: string): void => refusedBy(ends, s, code);
+  const closed = (s: Sub, code: number, why: string): void => closedBy(ends, s, code, why);
   const routes: FrameRoutes = { byRef, byChannel, hello, refused, closed, frame };
 
   return {
