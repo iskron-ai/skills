@@ -111,7 +111,11 @@ function thin(file, { url, dir, cwd, env }) {
 
 const textOf = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
 
-test("plugin restart with the daemon change: the session's seat comes back to its new bridge though its former bridge still holds it — no take, no «held by a live bridge»", async (t) => {
+// `resolver` — the api's resolver released between the stand and the update (#8677): a bare
+// name reaches only the caller's own graph, the release's record names the graph as nks-dev.
+const RESOLVER = " — the resolver released meanwhile: a bare slug is the own graph only";
+
+async function pluginRestart(t, resolver) {
   const scratch = mkdtempSync(join(tmpdir(), "iskron-restart-"));
   const old = oldRelease(join(scratch, "home", "release", "iskron.mjs"));
   if (!old) return t.skip("the v7.5.0 tag is not in this clone");
@@ -169,6 +173,7 @@ test("plugin restart with the daemon change: the session's seat comes back to it
   assert.ok(!stood.result?.isError, textOf(stood));
   const [rec] = record();
   assert.equal(rec?.session, SESSION, "the record names the session that stood");
+  if (resolver) await fake.control({ bareOwnOnly: true });
 
   // Обновление: новая сборка в дом — демон уходит к преемнику; прежний тонкий мост
   // переподхватывается и возвращает место себе, а плагин уже поднял новый мост сессии.
@@ -207,13 +212,18 @@ test("plugin restart with the daemon change: the session's seat comes back to it
   assert.equal(moved?.realm, "@nks/nks-dev", why);
   assert.equal(moved?.formerKey, rec.key, "the moved record keeps the release's key");
   assert.equal(record().length, 1, `the release's record is not left beside: ${why}`);
-});
+  assert.equal(fake.state.counts.bare_refused ?? 0, 0, `no bare name refused: ${why}`);
+}
+
+for (const resolver of [false, true])
+  test(`plugin restart with the daemon change: the session's seat comes back to its new bridge though its former bridge still holds it — no take, no «held by a live bridge»${resolver ? RESOLVER : ""}`, (t) =>
+    pluginRestart(t, resolver));
 
 // Переход с выпуска v7.10.0 (#7602): его демон отпускает место рядом и его тонкий мост
 // при переподхвате сразу говорит lost, но преемник этой ветки возвращает место рядом
 // вместе с основным — прежний тонкий мост снимает отказ по слову beside до конца ворот:
 // запись во второй граф проходит без iskron_stand, нового места на доске нет.
-test("from v7.10.0: the successor brings the beside seat back — the former thin bridge's lost is lifted before its gate opens", async (t) => {
+async function besideBack(t, resolver) {
   const scratch = mkdtempSync(join(tmpdir(), "iskron-beside-"));
   const old = oldRelease(join(scratch, "home", "release", "iskron.mjs"), "v7.10.0");
   if (!old) return t.skip("the v7.10.0 tag is not in this clone");
@@ -273,6 +283,7 @@ test("from v7.10.0: the successor brings the beside seat back — the former thi
   const besideKey = "two--48--drugoy";
   await waitFor("the beside word", () => kinds().includes(`beside:${besideKey}`));
   const connects = fake.state.counts.connect;
+  if (resolver) await fake.control({ bareOwnOnly: true });
 
   // Ветка в дом под старшей версией — демон выпуска уходит к её преемнику.
   const newer = readFileSync(BRIDGE, "utf8").replace(
@@ -305,7 +316,12 @@ test("from v7.10.0: the successor brings the beside seat back — the former thi
   assert.equal(fake.state.counts.connect, connects, "no new connect");
   const drugoy = [...fake.state.channels.values()].filter((c) => c.places.has("@nks/drugoy"));
   assert.equal(drugoy.length, 1, `one seat in drugoy on the board: ${why()}`);
-});
+  assert.equal(fake.state.counts.bare_refused ?? 0, 0, `no bare name refused: ${why()}`);
+}
+
+for (const resolver of [false, true])
+  test(`from v7.10.0: the successor brings the beside seat back — the former thin bridge's lost is lifted before its gate opens${resolver ? RESOLVER : ""}`, (t) =>
+    besideBack(t, resolver));
 
 // Переполнение журнала приходится на шумный миг — смену демона, — и журнал, стёртый
 // целиком, терял ровно то, что после неё разбирают (поле 7.5.0→7.6.0: daemon.log
