@@ -113,7 +113,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.21.1";
+var VERSION = "7.22.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -807,6 +807,26 @@ var TWO_ENTRIES_RU = "Если место — твоё и держит его м
 var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
 var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
 var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
+
+// js/delivery/words/statuspost.ts
+var STATUS_POST = {
+  ru: {
+    trimmedBy: (message) => `строка обрезана сервером: ${message}`,
+    trimmed: () => "сервер обрезал строку; переназови короче",
+    noAnswer: (error) => `Отказано (мост): статусный адрес не ответил — ${error}`,
+    gone: (body) => `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
+    refused: (status, body) => `Отказано (${status}) поверхностью: ${body || "без тела"}`,
+    notSubscribed: () => "Отказано (мост): канал идёт через диспетчер, а подписки на него сейчас нет — строка не ушла; старый адрес статуса мост зовёт только при откате на сокет"
+  },
+  en: {
+    trimmedBy: (message) => `the server trimmed the line: ${message}`,
+    trimmed: () => "the server trimmed the line; rename it shorter",
+    noAnswer: (error) => `Refused (bridge): the status address did not answer — ${error}`,
+    gone: (body) => `Refused (404) by the surface: ${body || "no body"} — this seat address no longer addresses: another holder's connect may have turned it, or another instance of the same session's bridge may have held it. Whose it is now, the bridge cannot know from here.`,
+    refused: (status, body) => `Refused (${status}) by the surface: ${body || "no body"}`,
+    notSubscribed: () => "Refused (bridge): the channel goes through the dispatcher and no subscription carries it now — the line did not go; the old status address is called only after falling back to a socket"
+  }
+};
 
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
@@ -2092,7 +2112,33 @@ async function refreshToolList(b, state2, reload, say, live) {
 var BUILD = buildOf(import.meta.url);
 
 // js/bridge/streams.ts
+var deadStreams = /* @__PURE__ */ new WeakSet();
 var out = scoped(() => ({ stream: null }));
+var processLog = null;
+function canWrite(s) {
+  return !!s && !deadStreams.has(s) && !s.destroyed && s.writable !== false;
+}
+var backlogged = /* @__PURE__ */ new WeakSet();
+function writeTo(s, text2) {
+  if (!canWrite(s)) return false;
+  try {
+    const fit = s.write(text2);
+    if (!fit && !backlogged.has(s)) s.once("drain", () => backlogged.delete(s));
+    if (fit) backlogged.delete(s);
+    else backlogged.add(s);
+    return true;
+  } catch {
+    deadStreams.add(s);
+    return false;
+  }
+}
+function log(msg) {
+  const line = `[${BRIDGE_NAME} ${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`;
+  const sink = currentScope().log ?? processLog;
+  if (sink) sink(line);
+  else writeTo(process.stderr, line);
+}
 
 // js/bridge/config.ts
 var PRODUCTION_URLS = new Set(LANGS.map((l) => strip(SERVER_URLS[l])));
@@ -2104,6 +2150,13 @@ var CFG = new Proxy({}, {
   get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
   has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
 });
+
+// js/bridge/errors.ts
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
 
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
@@ -2268,6 +2321,13 @@ var H2 = scoped(() => ({
   taken: null
 }));
 
+// js/bridge/muxtick.ts
+var GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 3e4;
+
+// js/bridge/muxhold.ts
+var replay = null;
+var onFellBack = (fn) => void (replay = fn);
+
 // js/bridge/realms.ts
 var aliases = scoped(() => /* @__PURE__ */ new Map());
 var R = scoped(() => ({ listing: null }));
@@ -2278,6 +2338,79 @@ var extras = scoped(() => /* @__PURE__ */ new Map());
 // js/bridge/spool.ts
 var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
+
+// js/bridge/statusturn.ts
+var tails = /* @__PURE__ */ new Map();
+function inTurn(url, fn, open = false) {
+  const prev = tails.get(url) ?? (open ? Promise.resolve() : null);
+  if (!prev) return fn();
+  const next = prev.then(fn, fn);
+  const tail2 = next.catch(() => {
+  });
+  tails.set(url, tail2);
+  void tail2.then(() => {
+    if (tails.get(url) === tail2) tails.delete(url);
+  });
+  return next;
+}
+
+// js/bridge/statuspost.ts
+var TRIMMED = "trimmed_to_limit";
+var LIMIT = 64;
+var obj2 = (v) => v && typeof v === "object" ? v : {};
+function trimToWord(text2, max) {
+  const chars = [...text2];
+  const head = chars.slice(0, max - 1).join("");
+  const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
+}
+function acceptedIn(body, sent) {
+  let parsed = {};
+  try {
+    parsed = obj2(JSON.parse(body));
+  } catch {
+  }
+  const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+  const w = obj2(warnings.find((x) => obj2(x).code === TRIMMED));
+  const told = typeof parsed.doing === "string" ? parsed.doing : null;
+  if (!w.code) return told === null ? {} : { doing: told };
+  const doing = told ?? trimToWord(sent, LIMIT);
+  const message = typeof w.message === "string" ? w.message.trim() : "";
+  return { doing, trimmed: { doing, message } };
+}
+var LATE = "its limit passed in the turn";
+async function postStatus(url, text2, until, standingId) {
+  const left = until - Date.now();
+  if (left <= 0) return { ok: false, body: words(STATUS_POST).noAnswer(LATE) };
+  const signal = AbortSignal.timeout(left);
+  const post2 = () => fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(
+      typeof standingId === "string" ? { text: text2, standing_id: standingId } : { text: text2 }
+    ),
+    signal
+  });
+  let res;
+  try {
+    res = await post2().catch((e) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post2();
+    });
+  } catch (e) {
+    return { ok: false, body: words(STATUS_POST).noAnswer(e.message) };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
+  if (!res.ok)
+    return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
+  return { ok: true, body, ...acceptedIn(body, text2) };
+}
+onFellBack(
+  (url, text2, standingId) => inTurn(url, () => postStatus(url, text2, Date.now() + 5e3, standingId), true).then((st) => {
+    if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
+  })
+);
 
 // js/bridge/seatorigin.ts
 import { AsyncLocalStorage as AsyncLocalStorage2 } from "node:async_hooks";
@@ -2693,7 +2826,7 @@ function processStart(pid) {
 }
 
 // js/opencode/records.ts
-var entryOf = (e) => ({
+var entryOf2 = (e) => ({
   session: e.session,
   dir: e.dir ?? null,
   key: e.key ?? null,
@@ -2737,7 +2870,7 @@ function stoodAtOf(authDir2, key) {
 }
 function writeLostMarker(authDir2, slots, home) {
   const entries = [...slots].filter((s) => s.holding && s.session).map(
-    (s) => entryOf({
+    (s) => entryOf2({
       ...s,
       session: s.session,
       of: s.satelliteOf,
@@ -2817,7 +2950,7 @@ function takeLostMarker(authDir2, home) {
   }
   for (const { e, lost } of best.values()) {
     if (lost.at > at) at = lost.at;
-    entries.push(entryOf(e));
+    entries.push(entryOf2(e));
   }
   if (!entries.length) return null;
   const when = new Date(at);
@@ -4402,33 +4535,33 @@ function createSeatLife(d) {
     half: {
       async seatRoot(s, realm, karta, isCancelled) {
         if (cancelled(s) || isCancelled()) return { cancelled: true };
-        const attempt2 = {
+        const attempt3 = {
           cancelled: isCancelled,
           cancelledHere: false,
           slot: void 0
         };
-        attempts.set(s, attempt2);
+        attempts.set(s, attempt3);
         return seatBy(
           {
             slotFor: async (root) => {
               const slot = await d.slotFor(root);
-              attempt2.slot = slot;
+              attempt3.slot = slot;
               return slot;
             },
             awaitReady: d.awaitReady,
             callThrough: async (...args) => {
-              attempt2.onWire = true;
-              attempt2.fresh = true;
+              attempt3.onWire = true;
+              attempt3.fresh = true;
               try {
                 const out2 = await d.callThrough(...args);
                 if (out2.provisional === true && out2.key && out2.place)
-                  attempt2.owned = { key: out2.key, place: out2.place };
+                  attempt3.owned = { key: out2.key, place: out2.place };
                 return out2;
               } catch (e) {
-                attempt2.failure = e.message;
+                attempt3.failure = e.message;
                 throw e;
               } finally {
-                attempt2.onWire = false;
+                attempt3.onWire = false;
               }
             },
             modelOf: d.modelOf,
@@ -4443,24 +4576,24 @@ function createSeatLife(d) {
       },
       cancelSeat: cancel,
       async releaseSeat(s) {
-        const attempt2 = attempts.get(s);
-        const slot = attempt2?.slot;
+        const attempt3 = attempts.get(s);
+        const slot = attempt3?.slot;
         if (!slot) return;
         let last;
         do {
-          last = attempt2?.explicit;
+          last = attempt3?.explicit;
           await last;
-        } while (attempt2?.explicit !== last);
-        const owned = attempt2?.owned;
-        if (!owned || attempt2?.adopted || !slot.holding || slot.key !== owned.key || slot.provisional !== true) {
-          if (attempt2?.fresh && !owned && !attempt2.explicit && (slot.holding || attempt2.failure))
+        } while (attempt3?.explicit !== last);
+        const owned = attempt3?.owned;
+        if (!owned || attempt3?.adopted || !slot.holding || slot.key !== owned.key || slot.provisional !== true) {
+          if (attempt3?.fresh && !owned && !attempt3.explicit && (slot.holding || attempt3.failure))
             d.failed(
               words(ROOT_SEAT).cleanupFailed(
                 slot.key ?? s,
-                attempt2.failure ?? words(ROOT_SEAT).unproven()
+                attempt3.failure ?? words(ROOT_SEAT).unproven()
               )
             );
-          if (d.stopped() || deleted.has(s) || attempt2?.fresh && !attempt2.explicit) {
+          if (d.stopped() || deleted.has(s) || attempt3?.fresh && !attempt3.explicit) {
             slot.ownStop = true;
             slot.bridge.stop();
             drop2(s, slot);
@@ -4470,8 +4603,8 @@ function createSeatLife(d) {
         slot.ownStop = true;
         let finished = () => {
         };
-        if (attempt2)
-          attempt2.closing = new Promise((r) => {
+        if (attempt3)
+          attempt3.closing = new Promise((r) => {
             finished = r;
           });
         try {
@@ -5099,7 +5232,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
       return false;
     }
   }
-  async function deliver(session2, text2, frame = W5.frame(), delivery = "steer", child = false) {
+  async function deliver2(session2, text2, frame = W5.frame(), delivery = "steer", child = false) {
     let id = session2;
     if (child && (!id || !await accepting(id))) {
       say(W5.childGone(frame, id ?? "?", text2.slice(0, 120)), "error");
@@ -5138,7 +5271,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
   const piles = /* @__PURE__ */ new Map();
   const takenEarly = /* @__PURE__ */ new Set();
   const tacts = setupTacts(
-    (session2, text2, what, child) => deliver(session2, text2, what, "queue", child),
+    (session2, text2, what, child) => deliver2(session2, text2, what, "queue", child),
     takenEarly,
     freshestRoot,
     say
@@ -5170,7 +5303,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
       batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
       ...batchLines(frames)
     ].join("\n");
-    void deliver(p.session, text2, W5.caseBatch(frames.length), "queue", p.child).then((got) => {
+    void deliver2(p.session, text2, W5.caseBatch(frames.length), "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
       p.pending = got && inbox ? { session: got.session, inbox, at } : null;
       if (p.held.length) schedule(p);
@@ -5213,14 +5346,14 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
   }
   function loud(session2, text2, child = false) {
     say(text2, "error");
-    void deliver(session2, text2, W5.frame(), "steer", child);
+    void deliver2(session2, text2, W5.frame(), "steer", child);
   }
   function batch(session2, child, ev, what) {
     noteOwn(piles.get(`${child ? "child" : "root"}:${session2 ?? ""}`), ev.marks);
     if (!ev.text) return;
     if (launcherWordIn(session2, child, ev.frames))
-      void deliver(session2, ev.text, what, "steer", child);
-    else if (!tact(session2, child, ev, what)) void deliver(session2, ev.text, what, "queue", child);
+      void deliver2(session2, ev.text, what, "steer", child);
+    else if (!tact(session2, child, ev, what)) void deliver2(session2, ev.text, what, "queue", child);
   }
   const launcherWordIn = (session2, child, frames) => {
     const launcher = child ? leads.launcherOf(session2 ?? "") : null;
@@ -5229,7 +5362,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
   const lives = createLifeChecks(parents);
   function lifeCheck(session2, child, frame) {
     const p = lives.prompt(session2, child, frame);
-    void deliver(p.session, p.text, p.what, "queue");
+    void deliver2(p.session, p.text, p.what, "queue");
   }
   function dropPile(key) {
     const p = piles.get(key);
@@ -5336,7 +5469,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
           if (frame && !steers && toPile(frame)) return pile(session2, child, frame);
           const own = piles.get(`${child ? "child" : "root"}:${session2 ?? ""}`);
           noteOwn(own, deliveryKeys(frame));
-          void deliver(
+          void deliver2(
             session2,
             [...riding(own ? [own] : []), frameToText(frame, ev.raw ?? "")].join("\n"),
             frame?.id != null ? W5.frameId(String(frame.id)) : W5.frameNoId(),
@@ -5362,7 +5495,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
         case "resumed":
           if (ev.text) {
             say(ev.text, "warning");
-            void deliver(session2, ev.text, W5.resumedLabel(), "steer", child);
+            void deliver2(session2, ev.text, W5.resumedLabel(), "steer", child);
           }
           return;
         case "held":
@@ -6001,7 +6134,7 @@ function heldWord(r, realm, karta) {
 }
 
 // js/opencode/rootseat-attempt.ts
-function attempt(session, x, expect) {
+function attempt2(session, x, expect) {
   const { d } = x;
   const no = (word2) => ({ word: word2, seated: false });
   const t = {
@@ -6063,7 +6196,7 @@ function createRootSeats(d) {
   function start(session, expect) {
     const known = seatings.get(session);
     if (known) return known;
-    const t = attempt(session, doors, expect);
+    const t = attempt2(session, doors, expect);
     seatings.set(session, t);
     return t;
   }
