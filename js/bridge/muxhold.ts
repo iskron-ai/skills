@@ -95,7 +95,8 @@ const at = (url: string | null): { m: Mux; secret: string } | null => {
 /**
  * Lines of seats on a channel the dispatcher carries (`url` — its socket or status address) go
  * into the tact instead of a POST: true — taken; false — not this path, or no seat to name
- * (seatsFor). Before hello they wait in the subscription; `lost` — what to do if no dispatcher.
+ * (seatsFor). Before hello they wait in the subscription; `lost` — what to do if no dispatcher,
+ * then or after a break with the line still in the tact (muxroute.ts holdBack).
  */
 export function tickFor(
   url: string | null,
@@ -108,7 +109,7 @@ export function tickFor(
   if (!h || !s || !h.m.carries(h.secret)) return false;
   if (!s.live || !s.channel) return (holdEarly(s, { url: url ?? "", scope, fields, lost }), true);
   const seats = seatsFor(s, scope);
-  for (const id of seats) h.m.ticker.put(entryOf(s.channel, id, fields));
+  for (const id of seats) h.m.ticker.put(entryOf(s.channel, id, fields), lost);
   return seats.length > 0;
 }
 

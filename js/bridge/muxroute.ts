@@ -71,9 +71,9 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
   function holdBack(s: Sub): void {
     if (!s.channel) return;
     const url = statusUrl(s.o.url);
-    for (const { standing_id: id, status, usage } of ticker.take(s.channel)) {
+    for (const [{ standing_id: id, status, usage }, lost] of ticker.take(s.channel)) {
       if (typeof status === "string") holdEarly(s, { url, scope: id ?? null, fields: { status } });
-      if (usage) holdEarly(s, { url, scope: id ?? null, fields: { usage } });
+      if (usage) holdEarly(s, { url, scope: id ?? null, fields: { usage }, lost });
     }
   }
 
@@ -108,7 +108,7 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
     // From its hello the subscription earns back its resubscribe after an unasked 1000 (muxends.ts).
     Object.assign(s, { live: true, tries: 0, standings, seats: named.length, helloAt: Date.now() });
-    earlyLines(s, channel).forEach(ticker.put);
+    for (const [e, lost] of earlyLines(s, channel)) ticker.put(e, lost);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);
     s.o.onFrame(seat.raw, seat.frame);
