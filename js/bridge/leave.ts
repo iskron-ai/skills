@@ -102,10 +102,14 @@ async function leaveSatellite(reason: string): Promise<string> {
   const place = heldPlaces()[0]?.key;
   if (!place) return W.notHolding();
   await flushUsage(usagePlace());
-  const st = await publishStatus("", undefined, true);
+  // A broken dispatcher subscription: the line would wait for a hello the release never lets
+  // come — it stays on the board till the pulse runs out, and the agent is told so (#8620 v11).
+  const url = statusAddress()?.url ?? null;
+  const kept = !!url && onDispatcher(url) && !liveOnDispatcher(url);
+  const st = kept ? null : await publishStatus("", undefined, true);
   releaseStanding(`${reason}: ${W.satelliteReleased()}`, true, false, true);
   releaseSatelliteClaims(); // the name is free for the next run
-  const line = clearedLine(st);
+  const line = st ? clearedLine(st) : W.keptOnBoard();
   log(`left the satellite place: ${reason}; ${line}`);
   return W.leftSatellite(place, line);
 }
