@@ -1,17 +1,15 @@
 // The daemon's one dispatcher connection per api (graph @nks/nks-dev, nodes #8620, #8622): GET
-// <apiBase>/channel/mux, no secret in it. 404/405 — no dispatcher: a socket per seat until the
-// daemon restarts, never asked again; a 5xx or a timeout — another try after a pause; refused with
-// no status seen (Bun, a cut before any answer) while none was ever seen — no dispatcher too, the
-// old path is safe. A drop after opening — one reconnection after a jittered ladder pause.
+// <apiBase>/channel/mux, no secret in it. Only a seen 404/405 is "no dispatcher": a socket per
+// seat until the daemon restarts (muxprobe.ts judges); anything else and a drop after opening —
+// another try after a jittered ladder pause.
 import { CHANNEL } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Attempt, attempt, type AttemptEnd } from "./muxattempt.ts";
 import { watchSilence } from "./muxlife.ts";
-import { pauseOf } from "./muxprobe.ts";
+import { pauseOf, verdictOf } from "./muxprobe.ts";
 import { log } from "./streams.ts";
 
 const IDLE_MS = 1_000;
-const NO_DISPATCHER = [404, 405];
 
 export interface LinkHooks {
   /** Whether any subscription waits for the connection. */
@@ -37,9 +35,10 @@ export interface Link {
 }
 
 export function createLink(url: string, h: LinkHooks): Link {
-  let mode: "probing" | "mux" | "fallback" = "probing";
+  let fallen = false;
   let now: Attempt | null = null;
   let open = false;
+  let asking = false;
   let tries = 0;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let idler: ReturnType<typeof setTimeout> | null = null;
@@ -68,15 +67,17 @@ export function createLink(url: string, h: LinkHooks): Link {
       h.onDrop(e.code);
       return later();
     }
-    const unknown = e.status === undefined && !e.timedOut && mode === "probing";
-    if (unknown) return fallBack(`refused (${e.code}) with no answer seen`);
-    if (NO_DISPATCHER.includes(e.status ?? 0)) return fallBack(`answered ${e.status}`);
-    log(`dispatcher ${url}: not reached (${e.timedOut ? "timeout" : (e.status ?? e.code)})`);
-    later();
+    asking = true;
+    void verdictOf(url, e).then((v) => {
+      asking = false;
+      if (v.none) return fallBack(v.why);
+      log(`dispatcher ${url}: ${v.why}`);
+      later();
+    });
   }
 
   function fallBack(why: string): void {
-    mode = "fallback";
+    fallen = true;
     log(`dispatcher ${url}: ${why} — a socket per seat until the daemon restarts`);
     h.onFallback(why);
   }
@@ -84,13 +85,12 @@ export function createLink(url: string, h: LinkHooks): Link {
   function connect(): void {
     if (idler) clearTimeout(idler);
     idler = null;
-    if (mode === "fallback" || now || retry) return;
+    if (fallen || now || retry || asking) return;
     try {
       const a: Attempt = attempt(url, {
         onOpen: () => {
           if (now !== a) return a.end(1000);
           open = true;
-          mode = "mux";
           silence.life();
           h.onOpen();
         },
@@ -113,11 +113,11 @@ export function createLink(url: string, h: LinkHooks): Link {
     if (h.wanted()) return;
     if (retry) clearTimeout(retry);
     retry = null;
-    const a = now;
-    now = null;
-    open = false;
+    const [a, was] = [now, open];
+    [now, open] = [null, false];
     silence.stop();
     a?.end(1000);
+    if (was) h.onDrop(1000); // the router forgets what this connection carried
   }
 
   return {
@@ -125,14 +125,12 @@ export function createLink(url: string, h: LinkHooks): Link {
       return open;
     },
     get fallen() {
-      return mode === "fallback";
+      return fallen;
     },
     connect,
     send(frame) {
-      if (!open || !now) return false;
       try {
-        now.sock.send(JSON.stringify(frame));
-        return true;
+        return !!(open && now) && (now.sock.send(JSON.stringify(frame)), true);
       } catch {
         return false;
       }

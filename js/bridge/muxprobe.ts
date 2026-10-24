@@ -38,6 +38,38 @@ export function watchAnswer(wsUrl: string): () => number | undefined {
   };
 }
 
+/**
+ * The status of the dispatcher address asked by a plain GET — for an upgrade that failed with
+ * its answer unseen (Bun, a cut): 404/405 there is the same "no dispatcher"; undefined — no
+ * answer at all.
+ */
+export async function askAnswer(wsUrl: string): Promise<number | undefined> {
+  try {
+    const r = await fetch(wsUrl.replace(/^ws/, "http"), { signal: AbortSignal.timeout(5000) });
+    void r.body?.cancel().catch(() => {});
+    return r.status;
+  } catch {
+    return undefined;
+  }
+}
+
+const NO_DISPATCHER = [404, 405];
+
+/**
+ * A failed opening judged (#8620 v11): `none` — a seen 404/405, no dispatcher; anything else
+ * (a 5xx, a timeout, no answer even to the plain GET) — another try after a pause.
+ */
+export async function verdictOf(
+  wsUrl: string,
+  e: { code: number; status: number | undefined; timedOut: boolean },
+): Promise<{ none: boolean; why: string }> {
+  // The upgrade's answer unseen (Bun, a cut): the address is asked plainly, never guessed.
+  const status = e.status ?? (e.timedOut ? undefined : await askAnswer(wsUrl));
+  if (NO_DISPATCHER.includes(status ?? 0)) return { none: true, why: `answered ${status}` };
+  const seen = [e.timedOut ? "timeout" : `refused (${e.code})`, status].filter(Boolean);
+  return { none: false, why: `not reached (${seen.join(", ")})` };
+}
+
 /** The dispatcher address beside the channel: <apiBase>/channel/mux, ws scheme. */
 export const muxUrlOf = (socketUrl: string): string =>
   `${apiBase(socketUrl).replace(/^http/, "ws")}/channel/mux`;
