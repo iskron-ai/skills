@@ -85,6 +85,12 @@ function byTick(url: string, text: string, standingId: string | null): StatusOut
   return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
 }
 
+/**
+ * The seat's last busy line — cleared — into the tact while its subscription lives, so it
+ * leaves before the unsubscribe (graph @nks/nks-dev, node #8620): true — taken, no POST later.
+ */
+export const clearBusyInTact = (url: string): boolean => tickFor(url, null, { status: "" });
+
 /** The same POST to a named address — for the exit, when the standing is already released. */
 export async function publishStatusTo(
   url: string,
