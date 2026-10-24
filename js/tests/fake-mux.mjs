@@ -33,6 +33,7 @@ export function attachMux(fake, opts = {}) {
     oldClosed: [], // каналы, чей старый сокет закрыт 4000 подпиской
     superseded: [], // { channel_id, from } — подписка вытеснена другим соединением
     ticks: [], // { at, conn, entries }
+    usage: new Map(), // standing_id → расход места из последнего tick
   };
   // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
   const live = () => mux.conns.filter((c) => !c.closed && !c.socket.destroyed);
@@ -126,6 +127,7 @@ export function attachMux(fake, opts = {}) {
         st.status = e.status;
       }
       if (e.pulse) st.pulses.push({ at: Date.now(), place: e.standing_id, frame: e.pulse });
+      if (e.usage) mux.usage.set(e.standing_id, e.usage);
     }
   };
 

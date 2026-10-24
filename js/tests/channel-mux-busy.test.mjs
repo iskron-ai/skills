@@ -62,6 +62,35 @@ test("the session ends: its last busy line goes in a tick before its unsubscribe
   });
 });
 
+test("usage goes in the tact, no register replay for it; the last numbers before the unsubscribe", async () => {
+  await withMux(
+    async ({ fake, mux, session }) => {
+      const a = await session();
+      ok(await a.stand({ realm: REALM, karta: 931, name: "use-a" }), "A stands");
+      const chan = channelOf(fake, "use-a");
+      const conn = await muxCarrying(fake, mux, [chan]);
+      const id = seatIdOf(fake, "use-a");
+      const registers = fake.state.counts.register_standing;
+      const first = await a.rpc("iskron/usage", { tokens: 1000, model: "m1" });
+      assert.equal(first.result?.pushed, true, JSON.stringify(first));
+      await waitFor("the numbers by tick", () => mux.usage.get(id)?.tokens === 1000);
+      await a.rpc("iskron/usage", { tokens: 90_000, model: "m2" });
+      await waitFor("the shift by tick", () => mux.usage.get(id)?.tokens === 90_000);
+      await a.rpc("iskron/usage", { tokens: 95_000, model: "m2" });
+      a.bye();
+      await waitFor("A's unsubscribe", () => mux.sent("unsubscribe").length);
+      // Последние числа — тактом или кадром ухода, но до отписки.
+      const frames = conn.frames.map((f) => f.frame);
+      const lastAt = frames.findIndex(
+        (f) => f?.type === "tick" && f.entries.some((e) => e.usage?.tokens === 95_000),
+      );
+      assert.ok(lastAt >= 0 && lastAt < leaveFrames(conn, chan, id).unsubAt, "last numbers first");
+      assert.equal(fake.state.counts.register_standing, registers, "no register for the numbers");
+    },
+    { daemonEnv: { ISKRON_USAGE_GAP_MS: "1" } },
+  );
+});
+
 test("leave by word clears the line by tick before the unsubscribe; the return brings it back by tick, no POST", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const a = await session();
