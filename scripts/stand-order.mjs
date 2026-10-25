@@ -59,12 +59,26 @@ export function orderTrace(check, ackLog, label, id, authDir, logText) {
   // The stop waits for the accepted's answer up to the cap, no longer: an answer within it comes
   // before the stop; a later one or none — the stop not before the cap and before that answer.
   const inCap = !acc || !j ? "late" : !got ? "late" : acc.done <= j.at + ACCEPT_CAP_MS - STAMP_MS ? "within" : acc.done > acc.t + ACCEPT_CAP_MS + STAMP_MS ? "late" : "unsure";
-  const answerAt = got ? acc.done : (acc?.aborted ?? Infinity);
+  // No answer and no give-up seen: nothing witnesses the wait's end — not a pass.
+  const answerAt = got ? acc.done : typeof acc?.aborted === "number" ? acc.aborted : NaN;
+  const late = got ? "the late answer" : "the give-up";
   const first = inCap === "within" && acc.done - STAMP_MS <= stopAt;
   const cap = kept(stopAt, ACCEPT_CAP_MS);
   const capped = inCap === "late" && cap === "kept" && stopAt < answerAt - STAMP_MS;
   // Order only, not the cap's upper end: after an in-cap answer a stop is not bounded from above.
-  const verdict = first ? "after the in-cap answer" : capped ? (got ? "not before the cap, before the late answer" : "not before the cap, before the give-up") : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
+  const verdict = first
+    ? "after the in-cap answer"
+    : capped
+      ? `not before the cap, before ${late}`
+      : inCap === "within"
+        ? "before the in-cap answer"
+        : inCap === "unsure"
+          ? "answer at the cap's edge — unsure"
+          : Number.isNaN(answerAt)
+            ? "neither an answer nor a give-up seen"
+            : stopAt >= answerAt - STAMP_MS
+              ? `waited for ${late}`
+              : `cap ${cap}`;
   // On disk before the stop: the proxy read the journal while the accepted was still in its hands
   // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
   // The read ended before the stop: timed (`walk`), or — after an in-cap answer — before forwarding it.

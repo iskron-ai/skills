@@ -36,7 +36,11 @@ function trace({ stop, outcome, answer, walk = 1, t = 1, disk = "accepted" }) {
   appendFileSync(
     acks,
     JSON.stringify(
-      answer === null ? { ...accepted, aborted: AT + 5000 } : { ...accepted, done: AT + answer },
+      answer === "unseen"
+        ? accepted
+        : answer === null
+          ? { ...accepted, aborted: AT + 5000 }
+          : { ...accepted, done: AT + answer },
     ) + "\n",
   );
   appendFileSync(
@@ -167,6 +171,25 @@ test("no answer: the outcome green only 5000 ms even from t; between — unsure,
   const cut = trace({ ...GAP, answer: null, stop: 2010, outcome: 4997 });
   assert.deepEqual(failed(cut), OUTCOME);
   assert.match(detail(cut, OUTCOME[0]), /timeout cut/);
+});
+
+test("in-cap answer: a very late stop passes — the order only, the upper end is printed, not judged", () => {
+  const seen = trace({ answer: 200, stop: 9000, outcome: 9002 });
+  assert.deepEqual(failed(seen), []);
+  assert.match(detail(seen, STOP), /8999–9000 ms after the send \(after the in-cap answer\)/);
+});
+
+test("neither an answer nor a give-up in the ack log: no witness of the wait's end — red", () => {
+  const seen = trace({ ...GAP, answer: "unseen", stop: 2100, outcome: 5008 });
+  assert.ok(failed(seen).includes(STOP));
+  assert.match(detail(seen, STOP), /neither an answer nor a give-up seen/);
+});
+
+test("no answer: a stop at or after the give-up is red, waited for it", () => {
+  assert.match(
+    detail(trace({ ...GAP, answer: null, stop: 5000, outcome: 5008 }), STOP),
+    /waited for the give-up/,
+  );
 });
 
 test("no answer: a stop before the cap is red", () => {
