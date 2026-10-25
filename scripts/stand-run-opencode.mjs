@@ -24,6 +24,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statS
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { orderTrace } from "./stand-order.mjs";
 import { personApi, seatAddress } from "./stand-person.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -120,6 +121,8 @@ const env = {
   ISKRON_BRIDGE_NO_BROWSER: "1",
   ISKRON_ROOT_SEAT: "0", // This driver tests explicit stands, not a human root's auto-seating.
   ISKRON_BRIDGE_DEATH_MS: String(deathMs),
+  // The daemon journals every RPC of its sessions, the harness's pulse calls among them (case №1622).
+  ...(process.env.ISKRON_BRIDGE_DAEMON_TRACE ? { ISKRON_BRIDGE_DAEMON_TRACE: "1" } : {}),
 };
 
 // Model keys: export from the real home, keep key entries, import into the isolated one.
@@ -140,37 +143,6 @@ const check = (ok, what, seen) => {
   if (!ok) failed++;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// The order's trace (#7510): accepted on disk and answered before the stop, the outcome after
-// the accepted's answer. The bridge's journal <auth>/orders/<id>.json keeps the accepted's time
-// (`at`) under the outcome; the stand's /api proxy logs every ack it carries (--ack-log, JSONL
-// {t, done, order, state, status}); standings.log stamps the stop and the outcome.
-const stampOf = (line) => Date.parse(line.slice(0, 24));
-function orderTrace(label, id, authDir, logText) {
-  const lines = logText.split("\n").filter((l) => l.includes(`stop order ${id}`));
-  const outcome = lines.find((l) => l.includes(`stop order ${id} for `));
-  const action = lines.find((l) => !l.includes(`stop order ${id} for `));
-  const jf = join(authDir, "orders", `${id}.json`);
-  const j = existsSync(jf) ? JSON.parse(readFileSync(jf, "utf8")) : null;
-  check(!!j && j.state === "stopped" && typeof j.at === "number", `order (${label}): the journal holds it, stopped, with the accepted's time`, j ? `${j.state} at ${new Date(j.at).toISOString()} acked ${j.acked}` : "no journal entry");
-  const acks = ackLog ? (existsSync(ackLog) ? readFileSync(ackLog, "utf8") : "").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a.order === id) : [];
-  const acc = acks.find((a) => a.state === "accepted");
-  const out = acks.find((a) => a.state !== "accepted");
-  check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
-  check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
-  // The stop action: the main seat's line names the order; a seat beside's does not — it is its
-  // "released <key>" line (places.ts) between the accepted on disk and the outcome. Not seen — the
-  // run fails, no stand-in.
-  const stopLine =
-    action ??
-    logText.split("\n").find((l) => / (?:stopped|released) /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
-  check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
-  const stopAt = stopLine ? stampOf(stopLine) : NaN;
-  // On disk before the stop: the proxy read the journal while the accepted was still in its hands
-  // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
-  check(acc?.disk === "accepted" && !!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(!!acc && acc.done - 5 <= stopAt, `order (${label}): accepted answered by the api before the stop`, acc ? `answered ${new Date(acc.done).toISOString()} · stop ${Number.isNaN(stopAt) ? "unseen" : new Date(stopAt).toISOString()}` : "");
-  check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
-}
 
 // The nks api directly: as the person (test identity) or as the plugin's own credential.
 async function nks(method, path, { body, asSeat } = {}) {
@@ -370,11 +342,21 @@ try {
   const karta = (k.text.match(/\(#(\d+)\)/) || [])[1];
   if (!karta) throw new Error(`karta: ${k.text.slice(0, 200)}`);
   await startServe();
-  // The plugin's bridge lists the graph tools a moment after serve answers: prompting before
-  // that hands the model a catalog without iskron_stand (a probe failure, not the bridge's).
+  // The plugin's bridge lists the graph tools a moment after it loads, and OpenCode 2.1 loads the
+  // plugin only with the first prompt: a scene prompted before that hands the model a Code Mode
+  // catalog without iskron_stand (a probe failure, not the bridge's; case №1622). A warm-up
+  // session raises the plugin; a tool list that never comes fails the run loudly.
   const toolsUp = () => (existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : "");
-  for (let t = 0; t < 120 && !/тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp()); t++) await sleep(500);
-  await sleep(10_000); // the reload of the tool list lands after the plugin says so
+  // serve.log only grows: a listing counts when it is past `mark`, the log's length before the
+  // serve's (re)start.
+  const listed = (mark) => /тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp().slice(mark));
+  const warmUp = async (mark) => {
+    if (!listed(mark)) prompt(newSession("warm-up").id, "Answer OK and end your turn. Call no tools.");
+    for (let t = 0; t < 240 && !listed(mark); t++) await sleep(500);
+    if (!listed(mark)) throw new Error("the plugin's bridge listed no graph tools in 120 s — the scenes would get no iskron_stand");
+    await sleep(10_000); // the reload of the tool list lands after the plugin says so
+  };
+  await warmUp(0);
   report.push(`realm ${realm} · karta #${karta} · serve ${server} · model ${providerID}/${modelID}`);
   // a refused read is not an empty board: "both seats gone" must not pass on it
   const board = async () => {
@@ -402,7 +384,7 @@ try {
     check(lines.length === 1 && lines[0].includes(`for ${seat}: stopped`), `order (${label}): one "stop order … stopped" line`, lines.join(" | ").slice(0, 200) || "none");
     const it = ((await nks("GET", "/me/orders?limit=200", { asSeat: true })).body?.items ?? []).find((x) => x.id === o.body?.id);
     check(it?.state === "stopped" && !!it.acked_at, `order (${label}): the api holds it stopped`, it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed");
-    if (o.body?.id) orderTrace(label, o.body.id, auth, log());
+    if (o.body?.id) orderTrace(check, ackLog, label, o.body.id, auth, log());
     return { id: o.body?.id, t };
   };
   const standText = (name) =>
@@ -570,11 +552,13 @@ try {
   for (let t = 0; t < 60 && !active().includes(L.id); t++) await sleep(1000);
   await sleep(10_000);
   const esc = api("POST", `/api/session/${L.id}/interrupt`);
+  report.push(`INFO Esc: interrupt sent ${new Date().toISOString()} to ${L.id}`);
   await idle(L.id, 15);
   check(!active().includes(L.id), "Esc: the turn is interrupted", esc.raw.slice(0, 160));
   await sleep(deathMs + 10_000);
   check(!!seatId(await board(), nameL) && !hasStop(nameL, log().slice(lE)), "Esc: the seat stands past the death window, no stop", log().slice(lE).split("\n").filter((l) => l.includes(nameL)).join(" | ").slice(0, 200));
   const pE = await pulseOf(nameL);
+  report.push(`INFO pulse after Esc read ${new Date().toISOString()}`);
   check(pE?.state === "interrupted", "pulse: interrupted after Esc", JSON.stringify(pE));
 
   // The agent's end — out of the batch unless --with-agent-end: #473 is excluded from the release.
@@ -696,6 +680,20 @@ try {
     const seen = JSON.stringify(messages(O.id));
     check(!/"type":\s*"stop"/.test(seen) && !(o.id && seen.includes(o.id)), "order (running): the stop frame is not in the session");
     check(assistantAfter(messages(O.id), o.t + 20_000) === 0, "order (running): no new model turn after it");
+    check(inbox(O.id).length === 0, "order (running): nothing waits in the session's inbox", JSON.stringify(inbox(O.id)).slice(0, 160));
+    // A plugin reload: the session the order stopped stays stopped (case №1622).
+    await stopServe();
+    const tReloadO = Date.now();
+    const markO = toolsUp().length;
+    await startServe();
+    await sleep(45_000);
+    check(!active().includes(O.id), "order (running), after a plugin reload: the session does not run");
+    check(assistantAfter(messages(O.id), tReloadO) === 0, "order (running), after a plugin reload: no model turn");
+    const heldO = log()
+      .split("\n")
+      .filter((l) => l.includes(nameO) && / held /.test(l) && Date.parse(l.slice(0, 24)) > tReloadO);
+    check(heldO.length === 0 && !seatId(await board(), nameO), "order (running), after a plugin reload: the seat is not held again", heldO.join(" | "));
+    await warmUp(markO); // the next scene prompts a fresh session: the reloaded plugin lists its tools first
 
     const handle = await whoHandle();
     const nameS = `oc-${stamp}.s`;

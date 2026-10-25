@@ -28,6 +28,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { orderTrace } from "./stand-order.mjs";
 import { personApi } from "./stand-person.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -168,37 +169,6 @@ async function api(method, path, { body, realm, asSeat } = {}) {
 }
 const CYR = /[а-яё]/i;
 
-// The order's trace (#7510): accepted on disk and answered before the stop, the outcome after
-// the accepted's answer. The bridge's journal <auth>/orders/<id>.json keeps the accepted's time
-// (`at`) under the outcome; the stand's /api proxy logs every ack it carries (--ack-log, JSONL
-// {t, done, order, state, status}); standings.log stamps the stop and the outcome.
-const stampOf = (line) => Date.parse(line.slice(0, 24));
-function orderTrace(label, id, authDir, logText) {
-  const lines = logText.split("\n").filter((l) => l.includes(`stop order ${id}`));
-  const outcome = lines.find((l) => l.includes(`stop order ${id} for `));
-  const action = lines.find((l) => !l.includes(`stop order ${id} for `));
-  const jf = join(authDir, "orders", `${id}.json`);
-  const j = existsSync(jf) ? JSON.parse(readFileSync(jf, "utf8")) : null;
-  check(!!j && j.state === "stopped" && typeof j.at === "number", `order (${label}): the journal holds it, stopped, with the accepted's time`, j ? `${j.state} at ${new Date(j.at).toISOString()} acked ${j.acked}` : "no journal entry");
-  const acks = ackLog ? (existsSync(ackLog) ? readFileSync(ackLog, "utf8") : "").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a.order === id) : [];
-  const acc = acks.find((a) => a.state === "accepted");
-  const out = acks.find((a) => a.state !== "accepted");
-  check(!!acc && acc.status < 300, `order (${label}): accepted reached the api`, acc ? `${acc.status} at ${new Date(acc.t).toISOString()}` : `acks: ${JSON.stringify(acks).slice(0, 160)}`);
-  check(!!acc && !!out && out.state === "stopped" && out.status < 300 && acc.done <= out.t, `order (${label}): the outcome went after the accepted's answer`, acc && out ? `accepted answered ${new Date(acc.done).toISOString()}, ${out.state} sent ${new Date(out.t).toISOString()}` : "");
-  // The stop action: the main seat's line names the order; a seat beside's does not — it is its
-  // "released <key>" line (places.ts) between the accepted on disk and the outcome. Not seen — the
-  // run fails, no stand-in.
-  const stopLine =
-    action ??
-    logText.split("\n").find((l) => / (?:stopped|released) /.test(l) && !l.includes(`stop order ${id} for `) && !!j && stampOf(l) >= j.at && (!outcome || stampOf(l) <= stampOf(outcome)));
-  check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
-  const stopAt = stopLine ? stampOf(stopLine) : NaN;
-  // On disk before the stop: the proxy read the journal while the accepted was still in its hands
-  // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
-  check(acc?.disk === "accepted" && !!j && stopAt >= j.at, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(!!acc && acc.done - 5 <= stopAt, `order (${label}): accepted answered by the api before the stop`, acc ? `answered ${new Date(acc.done).toISOString()} · stop ${Number.isNaN(stopAt) ? "unseen" : new Date(stopAt).toISOString()}` : "");
-  check(!!acc && !!outcome && stampOf(outcome) >= acc.done - 5, `order (${label}): the outcome line after the accepted's answer`, outcome?.slice(0, 60));
-}
 const standingsLog = () => {
   const p = join(env.ISKRON_BRIDGE_AUTH_DIR, "standings.log");
   return existsSync(p) ? readFileSync(p, "utf8") : "";
@@ -463,7 +433,7 @@ try {
       const mine = await api("GET", "/me/orders?limit=200", { asSeat: true });
       const it = (mine.body?.items ?? []).find((x) => x.id === o.body?.id);
       check(it?.state === "stopped" && !!it.acked_at, `order (${label}): the api holds it stopped`, `${mine.status} ${it ? `${it.state} by ${it.by} acked ${it.acked_at}` : "not listed"}`);
-      if (o.body?.id) orderTrace(label, o.body.id, env.ISKRON_BRIDGE_AUTH_DIR, standingsLog());
+      if (o.body?.id) orderTrace(check, ackLog, label, o.body.id, env.ISKRON_BRIDGE_AUTH_DIR, standingsLog());
       return { notes, log };
     };
     // The main seat alone: its agent is stopped, as by the owner's revoke.
