@@ -64,12 +64,12 @@ export function orderTrace(check, ackLog, label, id, authDir, logText) {
   const cap = kept(stopAt, ACCEPT_CAP_MS);
   const capped = inCap === "late" && cap === "kept" && stopAt < answerAt - STAMP_MS;
   // Order only, not the cap's upper end: after an in-cap answer a stop is not bounded from above.
-  const verdict = first ? "after the in-cap answer" : capped ? "not before the cap, before the late answer" : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
+  const verdict = first ? "after the in-cap answer" : capped ? (got ? "not before the cap, before the late answer" : "not before the cap, before the give-up") : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
   // On disk before the stop: the proxy read the journal while the accepted was still in its hands
   // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
   // The read ended before the stop: timed (`walk`), or — after an in-cap answer — before forwarding it.
   const snapped = !!acc && (first || (typeof acc.walk === "number" && acc.t + acc.walk <= stopAt));
   check(acc?.disk === "accepted" && !!j && stopAt >= j.at && snapped, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"}, read ${typeof acc?.walk === "number" ? `by ${new Date(acc.t + acc.walk).toISOString()}` : "untimed"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(first || capped, `order (${label}): the stop after an in-cap answer, or not before the cap and before a late one`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`} (${verdict})` : "");
+  check(first || capped, `order (${label}): the stop after an in-cap answer, or not before the cap and before a late one or the give-up`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`} (${verdict})` : "");
   check(!!acc && !!outcome && afterAnswer(stampOf(outcome)), `order (${label}): the outcome line after the accepted's answer or its timeout`, `${outcome?.slice(0, 60)}${outcome ? outcomeWord(stampOf(outcome)) : ""}`);
 }

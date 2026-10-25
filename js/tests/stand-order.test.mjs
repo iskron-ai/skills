@@ -72,14 +72,14 @@ test("in-cap answer: the stop after the answer, the outcome after it", () => {
 
 test("in-cap answer: a stop before the answer and before the cap is red", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 150, outcome: 203 })), [
-    "the stop after an in-cap answer, or not before the cap and before a late one",
+    "the stop after an in-cap answer, or not before the cap and before a late one or the give-up",
   ]);
 });
 
 test("in-cap answer: the stop and the outcome 2 ms before done are green, 3 ms red", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 198, outcome: 198 })), []);
   assert.deepEqual(failed(trace({ answer: 200, stop: 197, outcome: 201 })), [
-    "the stop after an in-cap answer, or not before the cap and before a late one",
+    "the stop after an in-cap answer, or not before the cap and before a late one or the give-up",
   ]);
   assert.deepEqual(failed(trace({ answer: 200, stop: 201, outcome: 197 })), [
     "the outcome went after the accepted's answer or its timeout",
@@ -90,14 +90,15 @@ test("in-cap answer: the stop and the outcome 2 ms before done are green, 3 ms r
 test("in-cap answer: a stop 4 ms and an outcome 3 ms before the answer are red (case №1622 [207])", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 196, outcome: 197 })), [
     "the outcome went after the accepted's answer or its timeout",
-    "the stop after an in-cap answer, or not before the cap and before a late one",
+    "the stop after an in-cap answer, or not before the cap and before a late one or the give-up",
     "the outcome line after the accepted's answer or its timeout",
   ]);
 });
 
 // The send lies somewhere in the 10 ms between the journal (0) and the proxy (t: 10).
 const GAP = { t: 10 };
-const STOP = "the stop after an in-cap answer, or not before the cap and before a late one";
+const STOP =
+  "the stop after an in-cap answer, or not before the cap and before a late one or the give-up";
 const OUTCOME = [
   "the outcome went after the accepted's answer or its timeout",
   "the outcome line after the accepted's answer or its timeout",
