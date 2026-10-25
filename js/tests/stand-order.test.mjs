@@ -137,6 +137,11 @@ test("by the cap: a stop that waited for the late answer is red, even after it",
   );
 });
 
+test("answer first within the lag: a stop at at+2500 is green, at+2501 red", () => {
+  assert.deepEqual(failed(trace({ ...GAP, answer: 2400, stop: 2500, outcome: 2502 })), []);
+  assert.deepEqual(failed(trace({ ...GAP, answer: 2501, stop: 2501, outcome: 2503 })), [STOP]);
+});
+
 test("by the cap: an outcome before the late answer is red", () => {
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2010, outcome: 2900 })), OUTCOME);
 });
