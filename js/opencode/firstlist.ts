@@ -20,6 +20,8 @@ export interface FirstListOptions {
   state: { listed: any[]; source: string; serverSeen: boolean };
   reload: () => Promise<void>;
   say: Say;
+  /** The first list failed — the bridge died or the server refused; the retries go on. */
+  missed: () => void;
 }
 
 /** Lists the server's tools on the plugin's first bridge; resolves on the first list or the stop. */
@@ -43,6 +45,7 @@ export async function listInBackground(o: FirstListOptions): Promise<void> {
       return;
     } catch (e) {
       if (o.stopped()) return;
+      o.missed();
       if (first.bridge.failure) {
         // The list's bridge died, or was handed to a session and released by it (then silently).
         if (first.session === null) o.say(W.died((e as Error).message), "warning");
@@ -61,7 +64,8 @@ export async function listInBackground(o: FirstListOptions): Promise<void> {
 /**
  * Waits for `listed`, capped: OpenCode builds the first prompt's catalog right after setup and
  * the server's list comes about half a second later. `enough` ends the wait at once — a sign-in
- * the human must do (the status tool names it, the tools come after it), or the stop.
+ * the human must do or a failed first list (the status tool names why; the tools come after it).
+ * No server and no failure from the bridge — the cap is the price: the first prompt waits for it.
  */
 export async function waitListed(
   listed: Promise<void>,

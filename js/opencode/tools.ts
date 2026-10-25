@@ -395,6 +395,7 @@ export async function setupTools(
   const cold = !state.listed.length;
   if (!cold) say(W.cached(state.listed.length), "info");
 
+  let missed = false;
   const firstListed = listInBackground({
     spawn,
     shake,
@@ -403,6 +404,7 @@ export async function setupTools(
     state,
     reload: () => ctx.tool.reload(),
     say,
+    missed: () => (missed = true),
   });
 
   if (lost) void keeper.resumeLost(lost.entries, lost.wordFor); // each one — about its own seats
@@ -427,7 +429,7 @@ export async function setupTools(
   }
 
   // No cached list: the first prompt would get no graph tools without the server's (firstlist.ts).
-  if (cold) await waitListed(firstListed, () => login.pending || stopped);
+  if (cold) await waitListed(firstListed, () => login.pending || missed);
 
   return {
     launch: launcher.launch,
