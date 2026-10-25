@@ -66,20 +66,20 @@ function trace({ stop, outcome, answer, walk = 1, t = 1, disk = "accepted" }) {
 const failed = (seen) => seen.filter(([ok]) => !ok).map(([, n]) => n);
 const detail = (seen, name) => String(seen.find(([, n]) => n === name)?.[2] ?? "");
 
-test("answer first: the stop after the answer, the outcome after it", () => {
+test("in-cap answer: the stop after the answer, the outcome after it", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 201, outcome: 203 })), []);
 });
 
-test("answer first: a stop before the answer and before the cap is red", () => {
+test("in-cap answer: a stop before the answer and before the cap is red", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 150, outcome: 203 })), [
-    "the stop after the accepted's answer or at the cap",
+    "the stop after an in-cap answer, or not before the cap and before a late one",
   ]);
 });
 
-test("answer first: the stop and the outcome 2 ms before done are green, 3 ms red", () => {
+test("in-cap answer: the stop and the outcome 2 ms before done are green, 3 ms red", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 198, outcome: 198 })), []);
   assert.deepEqual(failed(trace({ answer: 200, stop: 197, outcome: 201 })), [
-    "the stop after the accepted's answer or at the cap",
+    "the stop after an in-cap answer, or not before the cap and before a late one",
   ]);
   assert.deepEqual(failed(trace({ answer: 200, stop: 201, outcome: 197 })), [
     "the outcome went after the accepted's answer or its timeout",
@@ -87,28 +87,28 @@ test("answer first: the stop and the outcome 2 ms before done are green, 3 ms re
   ]);
 });
 
-test("answer first: a stop 4 ms and an outcome 3 ms before the answer are red (case №1622 [207])", () => {
+test("in-cap answer: a stop 4 ms and an outcome 3 ms before the answer are red (case №1622 [207])", () => {
   assert.deepEqual(failed(trace({ answer: 200, stop: 196, outcome: 197 })), [
     "the outcome went after the accepted's answer or its timeout",
-    "the stop after the accepted's answer or at the cap",
+    "the stop after an in-cap answer, or not before the cap and before a late one",
     "the outcome line after the accepted's answer or its timeout",
   ]);
 });
 
 // The send lies somewhere in the 10 ms between the journal (0) and the proxy (t: 10).
 const GAP = { t: 10 };
-const STOP = "the stop after the accepted's answer or at the cap";
+const STOP = "the stop after an in-cap answer, or not before the cap and before a late one";
 const OUTCOME = [
   "the outcome went after the accepted's answer or its timeout",
   "the outcome line after the accepted's answer or its timeout",
 ];
 
-test("by the cap: green only when 2000 ms passed even from the latest send (t)", () => {
+test("late answer: green only when 2000 ms passed even from the latest send (t)", () => {
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2010, outcome: 3002 })), []);
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2008, outcome: 3002 })), []);
 });
 
-test("by the cap: a stop between at+2000 and t+2000 is unsure — red, named so", () => {
+test("late answer: a stop between at+2000 and t+2000 is unsure — red, named so", () => {
   const seen = trace({ ...GAP, answer: 3000, stop: 2007, outcome: 3002 });
   assert.deepEqual(failed(seen), [STOP]);
   assert.match(detail(seen, STOP), /cap unsure/);
@@ -118,7 +118,7 @@ test("by the cap: a stop between at+2000 and t+2000 is unsure — red, named so"
   );
 });
 
-test("by the cap: a stop before at+2000 is cut — red", () => {
+test("late answer: a stop before at+2000 is cut — red", () => {
   const seen = trace({ ...GAP, answer: 3000, stop: 1997, outcome: 3002 });
   assert.deepEqual(failed(seen), [STOP]);
   assert.match(detail(seen, STOP), /cap cut/);
@@ -126,7 +126,7 @@ test("by the cap: a stop before at+2000 is cut — red", () => {
 
 // The late answer is the measure's only witness of the wait's upper end: a stop before it passes
 // (how far past the cap is printed, not judged), a stop at or after it fails.
-test("by the cap: a stop before the late answer is green; 2 ms before it or later — red, waited", () => {
+test("late answer: a stop before the late answer is green; 2 ms before it or later — red, waited", () => {
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2997, outcome: 3002 })), []);
   for (const stop of [2998, 3000, 3005]) {
     const seen = trace({ ...GAP, answer: 3000, stop, outcome: 3006 });
@@ -135,7 +135,7 @@ test("by the cap: a stop before the late answer is green; 2 ms before it or late
   }
 });
 
-test("a late answer is not «answer first»: 2400 / stop 2500 is red, waited (case №1645 [49])", () => {
+test("a late answer is not an in-cap one: 2400 / stop 2500 is red, waited (case №1645 [49])", () => {
   const seen = trace({ ...GAP, answer: 2400, stop: 2500, outcome: 2502 });
   assert.deepEqual(failed(seen), [STOP]);
   assert.match(detail(seen, STOP), /waited for the late answer/);
@@ -154,7 +154,7 @@ test("the answer within the cap only by at+1998; to t+2002 unsure — red; past 
   );
 });
 
-test("by the cap: an outcome before the late answer is red", () => {
+test("late answer: an outcome before the late answer is red", () => {
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2010, outcome: 2900 })), OUTCOME);
 });
 

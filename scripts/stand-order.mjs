@@ -1,6 +1,7 @@
 // The stop order's trace of the live bridge run (graph @nks/nks-dev, nodes #7510, #7614): the
-// accepted on disk before the stop; the stop after the accepted's answer or at the bridge's cap on
-// waiting for it; the outcome after the answer or the answer's timeout. The bridge's journal
+// accepted on disk before the stop; the stop after an answer within the bridge's cap on waiting
+// for it, or not before the cap and before a late answer — the order, not the cap's upper end;
+// the outcome after the answer or the answer's timeout. The bridge's journal
 // <auth>/orders/<id>.json keeps the accepted's time (`at`) under the outcome; the stand's /api
 // proxy logs every ack it carries (--ack-log, JSONL {t, done | aborted, order, state, status,
 // disk}); standings.log stamps the stop and the outcome. Shared by stand-run.mjs and
@@ -56,18 +57,19 @@ export function orderTrace(check, ackLog, label, id, authDir, logText) {
   check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
   const stopAt = stopLine ? stampOf(stopLine) : NaN;
   // The stop waits for the accepted's answer up to the cap, no longer: an answer within it comes
-  // before the stop; a later one or none — the stop at the cap, before that answer.
+  // before the stop; a later one or none — the stop not before the cap and before that answer.
   const inCap = !acc || !j ? "late" : !got ? "late" : acc.done <= j.at + ACCEPT_CAP_MS - STAMP_MS ? "within" : acc.done > acc.t + ACCEPT_CAP_MS + STAMP_MS ? "late" : "unsure";
   const answerAt = got ? acc.done : (acc?.aborted ?? Infinity);
   const first = inCap === "within" && acc.done - STAMP_MS <= stopAt;
   const cap = kept(stopAt, ACCEPT_CAP_MS);
   const capped = inCap === "late" && cap === "kept" && stopAt < answerAt - STAMP_MS;
-  const verdict = first ? "answer first" : capped ? "by the cap" : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
+  // Order only, not the cap's upper end: after an in-cap answer a stop is not bounded from above.
+  const verdict = first ? "after the in-cap answer" : capped ? "not before the cap, before the late answer" : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
   // On disk before the stop: the proxy read the journal while the accepted was still in its hands
   // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
-  // The read ended before the stop: timed (`walk`), or — the answer first — before forwarding it.
+  // The read ended before the stop: timed (`walk`), or — after an in-cap answer — before forwarding it.
   const snapped = !!acc && (first || (typeof acc.walk === "number" && acc.t + acc.walk <= stopAt));
   check(acc?.disk === "accepted" && !!j && stopAt >= j.at && snapped, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"}, read ${typeof acc?.walk === "number" ? `by ${new Date(acc.t + acc.walk).toISOString()}` : "untimed"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(first || capped, `order (${label}): the stop after the accepted's answer or at the cap`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`} (${verdict})` : "");
+  check(first || capped, `order (${label}): the stop after an in-cap answer, or not before the cap and before a late one`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`} (${verdict})` : "");
   check(!!acc && !!outcome && afterAnswer(stampOf(outcome)), `order (${label}): the outcome line after the accepted's answer or its timeout`, `${outcome?.slice(0, 60)}${outcome ? outcomeWord(stampOf(outcome)) : ""}`);
 }
