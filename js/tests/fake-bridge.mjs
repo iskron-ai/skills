@@ -33,6 +33,7 @@
 //   FB_TOOLS      JSON array for tools/list; default is two tools, one of them
 //                 iskron_channel, since that is the name the extension watches.
 //   FB_PAGINATE   "1" splits tools/list across two pages with a cursor.
+//   FB_LIST_DELAY_MS tools/list is answered this much later.
 //   FB_TOOLS_FILE file with a JSON tools array, re-read on every tools/list —
 //                 the server's list changing under a live bridge.
 //   FB_CHANGED    file whose appearance makes this bridge say
@@ -301,13 +302,20 @@ process.stdin.on("data", (chunk) => {
         serverInfo: { name: "fake-nks", version: "0" },
       });
     } else if (msg.method === "tools/list") {
-      if (process.env.FB_PAGINATE === "1") {
-        // The second page is only reachable through the cursor loop; a client
-        // that reads one page and stops registers half the surface.
-        if (!msg.params?.cursor)
-          ok(msg.id, { tools: currentTools().slice(0, 1), nextCursor: "p2" });
-        else ok(msg.id, { tools: currentTools().slice(1) });
-      } else ok(msg.id, { tools: currentTools() });
+      // FB_LIST_DELAY_MS: the list comes this much later — a server answering after the
+      // harness has built its first catalog (graph @nks/nks-dev, node #8742).
+      const answer = () => {
+        if (process.env.FB_PAGINATE === "1") {
+          // The second page is only reachable through the cursor loop; a client
+          // that reads one page and stops registers half the surface.
+          if (!msg.params?.cursor)
+            ok(msg.id, { tools: currentTools().slice(0, 1), nextCursor: "p2" });
+          else ok(msg.id, { tools: currentTools().slice(1) });
+        } else ok(msg.id, { tools: currentTools() });
+      };
+      const wait = Number(process.env.FB_LIST_DELAY_MS) || 0;
+      if (wait) setTimeout(answer, wait);
+      else answer();
     } else if (msg.method === "tools/call") {
       // FB_CALLS: file to append each tools/call's params to, one JSON per line —
       // the probe reads what the plugin actually sent, not only what it got back.

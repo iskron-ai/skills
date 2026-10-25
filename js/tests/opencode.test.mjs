@@ -437,6 +437,28 @@ test("a bridge stuck in someone's browser: tools come from the last list at once
   }
 });
 
+// A first run with a server but no last list (#8742): the server's list comes after the harness
+// would build the first catalog; setup holds it, so the first prompt sees the graph tools.
+test("first run with a server and no last list: setup waits for the server's list before the first catalog", async () => {
+  const authDir = mkdtempSync(join(SANDBOX, "auth-cold-"));
+  const prevAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  process.env.ISKRON_BRIDGE_AUTH_DIR = authDir; // no opencode-tools.json there
+  const b = bridgeEnv("cold-list", { FB_LIST_DELAY_MS: 600 });
+  const t0 = Date.now();
+  const rec = await plugin(b.env);
+  try {
+    assert.deepEqual(names(rec), BRIDGE_TOOLS, "the first catalog must carry the server's tools");
+    assert.ok(
+      Date.now() - t0 < 5000,
+      `setup waits for the list, not for the cap: ${Date.now() - t0} ms`,
+    );
+  } finally {
+    await rec.stop();
+    process.env.ISKRON_BRIDGE_AUTH_DIR = prevAuth;
+    delete process.env.FB_LIST_DELAY_MS; // the plugin's env stays in the process: later bridges answer at once
+  }
+});
+
 // Поля ответа по запросу (#6637, #6731): плагин объявляет iskron/structured мосту —
 // иначе мост их срезает, как харнесу без ключа; iskron/halts — он подтверждает стоп приказа (#7519).
 test("the plugin asks the bridge for response fields in its handshake and declares its halts", async () => {
