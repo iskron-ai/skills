@@ -56,14 +56,16 @@ export function orderTrace(check, ackLog, label, id, authDir, logText) {
   const stopAt = stopLine ? stampOf(stopLine) : NaN;
   // The stop waits for the accepted's answer up to the cap, no longer: an answer within it comes
   // before the stop; a later one or none — the stop at the cap.
-  const first = got && acc.done - STAMP_MS <= stopAt;
+  // The stop no later than the cap in either branch: a bridge that waited for a late answer is red.
+  const intime = waited(stopAt) <= ACCEPT_CAP_MS + CAP_LAG_MS;
+  const first = got && acc.done - STAMP_MS <= stopAt && intime;
   const cap = kept(stopAt, ACCEPT_CAP_MS);
-  const capped = !!acc && !first && cap === "kept" && waited(stopAt) <= ACCEPT_CAP_MS + CAP_LAG_MS;
+  const capped = !!acc && !first && cap === "kept" && intime;
   // On disk before the stop: the proxy read the journal while the accepted was still in its hands
   // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
   // The read ended before the stop: timed (`walk`), or — the answer first — before forwarding it.
   const snapped = !!acc && (first || (typeof acc.walk === "number" && acc.t + acc.walk <= stopAt));
   check(acc?.disk === "accepted" && !!j && stopAt >= j.at && snapped, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"}, read ${typeof acc?.walk === "number" ? `by ${new Date(acc.t + acc.walk).toISOString()}` : "untimed"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(first || capped, `order (${label}): the stop after the accepted's answer or at the cap`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`}${first ? " (answer first)" : capped ? " (by the cap)" : ` (cap ${cap})`}` : "");
+  check(first || capped, `order (${label}): the stop after the accepted's answer or at the cap`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`}${first ? " (answer first)" : capped ? " (by the cap)" : !intime ? " (past the cap)" : ` (cap ${cap})`}` : "");
   check(!!acc && !!outcome && afterAnswer(stampOf(outcome)), `order (${label}): the outcome line after the accepted's answer or its timeout`, `${outcome?.slice(0, 60)}${outcome ? outcomeWord(stampOf(outcome)) : ""}`);
 }

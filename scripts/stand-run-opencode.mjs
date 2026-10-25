@@ -347,11 +347,16 @@ try {
   // catalog without iskron_stand (a probe failure, not the bridge's; case №1622). A warm-up
   // session raises the plugin; a tool list that never comes fails the run loudly.
   const toolsUp = () => (existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : "");
-  const toolsListed = () => /тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp());
-  if (!toolsListed()) prompt(newSession("warm-up").id, "Answer OK and end your turn. Call no tools.");
-  for (let t = 0; t < 240 && !toolsListed(); t++) await sleep(500);
-  if (!toolsListed()) throw new Error("the plugin's bridge listed no graph tools in 120 s — the scenes would get no iskron_stand");
-  await sleep(10_000); // the reload of the tool list lands after the plugin says so
+  // serve.log only grows: a listing counts when it is past `mark`, the log's length before the
+  // serve's (re)start.
+  const listed = (mark) => /тулов в сессии: \d+|tools in the session: \d+/.test(toolsUp().slice(mark));
+  const warmUp = async (mark) => {
+    if (!listed(mark)) prompt(newSession("warm-up").id, "Answer OK and end your turn. Call no tools.");
+    for (let t = 0; t < 240 && !listed(mark); t++) await sleep(500);
+    if (!listed(mark)) throw new Error("the plugin's bridge listed no graph tools in 120 s — the scenes would get no iskron_stand");
+    await sleep(10_000); // the reload of the tool list lands after the plugin says so
+  };
+  await warmUp(0);
   report.push(`realm ${realm} · karta #${karta} · serve ${server} · model ${providerID}/${modelID}`);
   // a refused read is not an empty board: "both seats gone" must not pass on it
   const board = async () => {
@@ -679,6 +684,7 @@ try {
     // A plugin reload: the session the order stopped stays stopped (case №1622).
     await stopServe();
     const tReloadO = Date.now();
+    const markO = toolsUp().length;
     await startServe();
     await sleep(45_000);
     check(!active().includes(O.id), "order (running), after a plugin reload: the session does not run");
@@ -687,6 +693,7 @@ try {
       .split("\n")
       .filter((l) => l.includes(nameO) && / held /.test(l) && Date.parse(l.slice(0, 24)) > tReloadO);
     check(heldO.length === 0 && !seatId(await board(), nameO), "order (running), after a plugin reload: the seat is not held again", heldO.join(" | "));
+    await warmUp(markO); // the next scene prompts a fresh session: the reloaded plugin lists its tools first
 
     const handle = await whoHandle();
     const nameS = `oc-${stamp}.s`;

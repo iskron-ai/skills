@@ -129,6 +129,14 @@ test("by the cap: a stop 2501 ms after the journal â€” it waited past the cap â€
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2501, outcome: 3002 })), [STOP]);
 });
 
+test("by the cap: a stop that waited for the late answer is red, even after it", () => {
+  assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 3005, outcome: 3006 })), [STOP]);
+  assert.match(
+    detail(trace({ ...GAP, answer: 3000, stop: 3005, outcome: 3006 }), STOP),
+    /past the cap/,
+  );
+});
+
 test("by the cap: an outcome before the late answer is red", () => {
   assert.deepEqual(failed(trace({ ...GAP, answer: 3000, stop: 2010, outcome: 2900 })), OUTCOME);
 });

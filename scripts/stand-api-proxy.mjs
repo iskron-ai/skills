@@ -104,6 +104,16 @@ const server = http.createServer((req, res) => {
         state = JSON.parse(body.toString()).state ?? null;
       } catch {}
     const hold = state === "accepted" ? acceptedDelay : 0;
+    // A bridge that gave up waiting (its timeout) closed the request first: aborted, no done —
+    // before the api answered too (status and api then absent).
+    let logged = false;
+    let answered = {};
+    const note = (rec) => {
+      if (!ack || logged || !ackLog) return;
+      logged = true;
+      appendFileSync(ackLog, JSON.stringify({ t, order: ack[1], state, ...answered, disk, walk, hold, ...rec }) + "\n");
+    };
+    res.on("close", () => note({ aborted: Date.now() }));
     const up = http.request(
       { host: "127.0.0.1", port: TARGET, method: req.method, path, headers: { ...req.headers, host: `127.0.0.1:${TARGET}` } },
       (r) => {
@@ -116,16 +126,8 @@ const server = http.createServer((req, res) => {
         r.on("data", (c) => parts.push(c));
         // done — when the bridge got the whole answer, not when its headers came: the bridge
         // reads the whole body before it sends the outcome, so the order check compares against this.
-        // A bridge that gave up waiting (its timeout) closed the request first: aborted, no done.
         r.on("end", () => {
-          const api = Date.now();
-          let logged = false;
-          const note = (rec) => {
-            if (logged || !ackLog) return;
-            logged = true;
-            appendFileSync(ackLog, JSON.stringify({ t, order: ack[1], state, status: r.statusCode, disk, walk, api, hold, ...rec }) + "\n");
-          };
-          res.on("close", () => note({ aborted: Date.now() }));
+          answered = { status: r.statusCode, api: Date.now() };
           setTimeout(() => {
             if (res.destroyed) return;
             res.writeHead(r.statusCode, r.headers);
