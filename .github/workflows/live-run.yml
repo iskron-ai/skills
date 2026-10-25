@@ -25,5 +25,5 @@ jobs:
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'live-run') }}
         run: |
           if [ "$LABELLED" = "true" ]; then exit 0; fi
-          echo "::error title=No live run::Нет метки live-run. Прогони выход выпуска этой ветки живым соединением против mcp.iskron.ru (с человеком или на тестовом стенде) и переход с прошлого выпуска — AGENTS.md, «Git-воркфлоу», пункт «Живой прогон моста до релиза»: https://github.com/${{ github.repository }}/blob/main/AGENTS.md#git-воркфлоу. После прогона и вердикта холодного верификатора стюард ставит метку live-run — джоб перезапустится сам."
+          echo "::error title=No live run::Нет метки live-run. Прогони выход выпуска этой ветки живым соединением против стенда или изолированного LOCAL, не боя и переход с прошлого выпуска — AGENTS.md, «Git-воркфлоу», пункт «Живой прогон моста до релиза»: https://github.com/${{ github.repository }}/blob/main/AGENTS.md#git-воркфлоу. После прогона и вердикта холодного верификатора стюард ставит метку live-run — джоб перезапустится сам."
           exit 1
