@@ -14,13 +14,14 @@ import { join } from "node:path";
 // coming to the proxy (`t`): a wait is certainly kept when its end is MS after `t`, certainly cut
 // when before MS after `at`; between them the measure cannot tell, and that is not a pass. The
 // 2 ms are the precision of the millisecond stamps of two processes, not a stop allowed early; the
-// same 2 ms bound the stop and the outcome against the answer's `done`.
-// Above, the stop may lag the cap by the event loop, but under 500 ms: the 3000 ms delay run then
-// tells a stop at the cap from one that waited for the answer.
+// same 2 ms bound the stop and the outcome against the answer's `done`. The answer itself is
+// within the cap, late, or unsure by the same bounds. A late answer (or none) is the only witness
+// that the stop did not wait past the cap: the stop before it passes, at or after it fails. How
+// far past the cap a stop before a late answer came is printed, not judged — the measure bounds
+// the bridge's wait only by the answer's delay (case №1645).
 const ACCEPT_CAP_MS = 2000;
 const ACCEPT_TIMEOUT_MS = 5000;
 const STAMP_MS = 2;
-const CAP_LAG_MS = 500;
 
 const stampOf = (line) => Date.parse(line.slice(0, 24));
 
@@ -55,17 +56,18 @@ export function orderTrace(check, ackLog, label, id, authDir, logText) {
   check(!!stopLine, `order (${label}): the stop action is in standings.log`, stopLine?.slice(0, 140) ?? "none");
   const stopAt = stopLine ? stampOf(stopLine) : NaN;
   // The stop waits for the accepted's answer up to the cap, no longer: an answer within it comes
-  // before the stop; a later one or none — the stop at the cap.
-  // The stop no later than the cap in either branch: a bridge that waited for a late answer is red.
-  const intime = waited(stopAt) <= ACCEPT_CAP_MS + CAP_LAG_MS;
-  const first = got && acc.done - STAMP_MS <= stopAt && intime;
+  // before the stop; a later one or none — the stop at the cap, before that answer.
+  const inCap = !acc || !j ? "late" : !got ? "late" : acc.done <= j.at + ACCEPT_CAP_MS - STAMP_MS ? "within" : acc.done > acc.t + ACCEPT_CAP_MS + STAMP_MS ? "late" : "unsure";
+  const answerAt = got ? acc.done : (acc?.aborted ?? Infinity);
+  const first = inCap === "within" && acc.done - STAMP_MS <= stopAt;
   const cap = kept(stopAt, ACCEPT_CAP_MS);
-  const capped = !!acc && !first && cap === "kept" && intime;
+  const capped = inCap === "late" && cap === "kept" && stopAt < answerAt - STAMP_MS;
+  const verdict = first ? "answer first" : capped ? "by the cap" : inCap === "unsure" ? "answer at the cap's edge — unsure" : inCap === "late" && stopAt >= answerAt - STAMP_MS ? "waited for the late answer" : `cap ${cap}`;
   // On disk before the stop: the proxy read the journal while the accepted was still in its hands
   // (--journal-root) — the final file's `at` alone is stamped before the write and proves nothing.
   // The read ended before the stop: timed (`walk`), or — the answer first — before forwarding it.
   const snapped = !!acc && (first || (typeof acc.walk === "number" && acc.t + acc.walk <= stopAt));
   check(acc?.disk === "accepted" && !!j && stopAt >= j.at && snapped, `order (${label}): accepted on disk before the stop`, `journal at the accepted: ${acc?.disk ?? "not read (proxy without --journal-root)"}, read ${typeof acc?.walk === "number" ? `by ${new Date(acc.t + acc.walk).toISOString()}` : "untimed"} · ${stopLine?.slice(0, 100) ?? "no stop line"}`);
-  check(first || capped, `order (${label}): the stop after the accepted's answer or at the cap`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`}${first ? " (answer first)" : capped ? " (by the cap)" : !intime ? " (past the cap)" : ` (cap ${cap})`}` : "");
+  check(first || capped, `order (${label}): the stop after the accepted's answer or at the cap`, acc ? `${answer} · stop ${Number.isNaN(stopAt) ? "unseen" : `${new Date(stopAt).toISOString()}, ${span(stopAt)}`} (${verdict})` : "");
   check(!!acc && !!outcome && afterAnswer(stampOf(outcome)), `order (${label}): the outcome line after the accepted's answer or its timeout`, `${outcome?.slice(0, 60)}${outcome ? outcomeWord(stampOf(outcome)) : ""}`);
 }
