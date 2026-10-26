@@ -47,7 +47,7 @@ function muxOf(url: string): Mux {
  * A pulse frame the holding sends goes into the tact. The pulse is the channel's (pulse.ts), the
  * head's, kept by channel: its record names no seat, whatever the channel carries (#8620 v19).
  */
-function pulseFrom(m: Mux, s: Sub, text: string): boolean {
+function pulseFrom(m: Mux, s: Sub, text: string, sent?: (at: number) => void): boolean {
   if (!s.live || !s.channel) return false;
   let f: Record<string, unknown>;
   try {
@@ -57,7 +57,7 @@ function pulseFrom(m: Mux, s: Sub, text: string): boolean {
   }
   if (f?.type !== "pulse") return false;
   const { type: _t, ...pulse } = f;
-  m.ticker.put({ channel_id: s.channel, pulse });
+  m.ticker.put({ channel_id: s.channel, pulse }, undefined, sent);
   return true;
 }
 
@@ -76,7 +76,7 @@ export function holdChannel(o: HoldOptions): Holder {
       m.release(s);
       onGone(0);
     },
-    send: (text) => (s.fallback ? s.fallback.send(text) : pulseFrom(m, s, text)),
+    send: (text, sent) => (s.fallback ? s.fallback.send(text, sent) : pulseFrom(m, s, text, sent)),
     get alive() {
       return s.fallback ? s.fallback.alive : !s.closed;
     },
