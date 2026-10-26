@@ -1,5 +1,24 @@
 # Changelog
 
+## [7.22.0](https://github.com/iskron-ai/skills/compare/v7.21.1...v7.22.0) (2026-10-26)
+
+
+### Features
+
+* **bridge:** одно соединение каналов на демон — диспетчер, разводка по каналу, ack, пачечный такт, откат только по 404/405 ([#8620](https://github.com/iskron-ai/skills/issues/8620)) ([95fb976](https://github.com/iskron-ai/skills/commit/95fb9768b6355f11e930195459ab04eefcf6aef4))
+* **skills:** брошенное дело — восстановление остатка на начштабе; перенос не приёмка ([#579](https://github.com/iskron-ai/skills/issues/579)) ([a4ce1be](https://github.com/iskron-ai/skills/commit/a4ce1be4693dbe0c69bd8364309e81738a06390a))
+
+
+### Bug Fixes
+
+* **agents:** живой прогон моста до релиза — стенд или изолированный LOCAL, не бой ([#7544](https://github.com/iskron-ai/skills/issues/7544)) ([#574](https://github.com/iskron-ai/skills/issues/574)) ([931d952](https://github.com/iskron-ai/skills/commit/931d9520da98dfbcb2d341f3c7eb054e24a42400))
+* **agents:** итоговое ревью кандидата тега — пара семейств из Sol, opus, glm ([#7142](https://github.com/iskron-ai/skills/issues/7142)) ([#575](https://github.com/iskron-ai/skills/issues/575)) ([2625ec3](https://github.com/iskron-ai/skills/commit/2625ec3ecbdd93b4c4ae0ff1ba09c32effd69917))
+* **bridge:** latest pulse to the next tact, sent only on confirmed send ([#583](https://github.com/iskron-ai/skills/issues/583)) ([05d83a9](https://github.com/iskron-ai/skills/commit/05d83a9c29840a88f20ca87b3f72b9bac63e4ab1))
+* **bridge:** находки полного ревью 7.22.0 — перенос записей при спутнике, такт до hello после обрыва, расход при откате ([befc88e](https://github.com/iskron-ai/skills/commit/befc88edf7b3227923d89bd182c339424a773685))
+* **ci:** подсказка live-run — стенд или изолированный LOCAL, не бой ([#7544](https://github.com/iskron-ai/skills/issues/7544)) ([#577](https://github.com/iskron-ai/skills/issues/577)) ([d3a219f](https://github.com/iskron-ai/skills/commit/d3a219f636a99cc140281724ef0461bdecbbf85e))
+* **opencode:** первый запрос без кэша списка ждёт список тулов с сервера ([#582](https://github.com/iskron-ai/skills/issues/582)) ([a9a9a40](https://github.com/iskron-ai/skills/commit/a9a9a40e5a7bea6a46ffd6f703bc27aa5752e535))
+* **skills:** разбор брошенного — роли, бывшие в деле; перенос строки — в дело; начштаба находит и зовёт ([#580](https://github.com/iskron-ai/skills/issues/580)) ([f1c6cd1](https://github.com/iskron-ai/skills/commit/f1c6cd12632acde53106e0e441122f8ea02f429a))
+
 ## [7.21.1](https://github.com/iskron-ai/skills/compare/v7.21.0...v7.21.1) (2026-10-24)
 
 
