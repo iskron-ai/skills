@@ -219,8 +219,8 @@ export interface Holder {
    * no reopen. No socket — onGone at once.
    */
   handOff(onFrame: (raw: string) => void, onGone: (code: number) => void): void;
-  /** A frame to the service on the open socket; false — not open now, nothing sent. */
-  send(text: string): boolean;
+  /** Accepted for sending; false — not accepted. `sent` runs only after socket send succeeds. */
+  send(text: string, sent?: (at: number) => void): boolean;
   /** Whether the socket is alive (open or opening). */
   readonly alive: boolean;
   /** Last sign of the service (ping or frame), epoch ms; 0 — none. An open attempt is not a sign. */
@@ -421,14 +421,16 @@ export function holdSocket(o: HoldOptions): Holder {
       stopWatch();
       handing = { onFrame, onGone };
     },
-    send(text) {
+    send(text, sent) {
       if (stopped || handing || !ws || ws.readyState !== 1) return false;
       try {
         ws.send(text);
-        return true;
       } catch {
         return false;
       }
+      // The receipt runs after the wire: a throwing callback must not undo the send.
+      sent?.(Date.now());
+      return true;
     },
     get alive() {
       return !stopped && !!ws && (ws.readyState === 0 || ws.readyState === 1);
