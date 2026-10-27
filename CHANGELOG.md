@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.23.0](https://github.com/iskron-ai/skills/compare/v7.22.0...v7.23.0) (2026-10-27)
+
+
+### Features
+
+* **skills:** разбор брошенного по поверхности — статус abandoned, исход moved, снятие вопроса и зова ([#581](https://github.com/iskron-ai/skills/issues/581)) ([3557efa](https://github.com/iskron-ai/skills/commit/3557efa54dca44d9c6c97d0a748736923d3d5cf6))
+* **skills:** ревью и CI на пачку, вычитка скиллов разными моделями, решения связями — контракт iskronify 32 ([#585](https://github.com/iskron-ai/skills/issues/585)) ([5f1ea2c](https://github.com/iskron-ai/skills/commit/5f1ea2cd3f71c5010b7250d1afa2c66337631b83))
+
 ## [7.22.0](https://github.com/iskron-ai/skills/compare/v7.21.1...v7.22.0) (2026-10-26)
 
 
