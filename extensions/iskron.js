@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.21.1";
+var VERSION = "7.22.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -386,6 +386,30 @@ var TWO_ENTRIES_RU = "Если место — твоё и держит его м
 var TWO_ENTRIES_EN = "If the seat is yours and a bridge of this same session holds it (the session has two iskron entries, the plugin's and the user's), call status with the same tool set you called iskron_stand with: no move is needed.";
 var TURNED_RU = `${TWO_ENTRIES_RU} Иначе ${TAKE_PATH_RU}.`;
 var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
+
+// js/delivery/words/statuspost.ts
+var STATUS_POST = {
+  ru: {
+    trimmedBy: (message) => `строка обрезана сервером: ${message}`,
+    trimmed: () => "сервер обрезал строку; переназови короче",
+    noAnswer: (error) => `Отказано (мост): статусный адрес не ответил — ${error}`,
+    gone: (body) => `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
+    refused: (status, body) => `Отказано (${status}) поверхностью: ${body || "без тела"}`,
+    notSubscribed: () => "Отказано (мост): канал идёт через диспетчер, а подписки на него сейчас нет — строка не ушла; старый адрес статуса мост зовёт только при откате на сокет",
+    seatUnnamed: () => "Отказано (мост): подписка на канал жива, но место строки не названо — на канале несколько мест, а id своего мост не знает; строка не ушла",
+    late: () => "предел вышел, пока строка ждала очереди"
+  },
+  en: {
+    trimmedBy: (message) => `the server trimmed the line: ${message}`,
+    trimmed: () => "the server trimmed the line; rename it shorter",
+    noAnswer: (error) => `Refused (bridge): the status address did not answer — ${error}`,
+    gone: (body) => `Refused (404) by the surface: ${body || "no body"} — this seat address no longer addresses: another holder's connect may have turned it, or another instance of the same session's bridge may have held it. Whose it is now, the bridge cannot know from here.`,
+    refused: (status, body) => `Refused (${status}) by the surface: ${body || "no body"}`,
+    notSubscribed: () => "Refused (bridge): the channel goes through the dispatcher and no subscription carries it now — the line did not go; the old status address is called only after falling back to a socket",
+    seatUnnamed: () => "Refused (bridge): the channel's subscription lives, but the line names no seat — the channel carries several and the bridge does not know its own id; the line did not go",
+    late: () => "its limit passed in the turn"
+  }
+};
 
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
@@ -1041,7 +1065,33 @@ function versionIn(text) {
 var BUILD = buildOf(import.meta.url);
 
 // js/bridge/streams.ts
+var deadStreams = /* @__PURE__ */ new WeakSet();
 var out = scoped(() => ({ stream: null }));
+var processLog = null;
+function canWrite(s) {
+  return !!s && !deadStreams.has(s) && !s.destroyed && s.writable !== false;
+}
+var backlogged = /* @__PURE__ */ new WeakSet();
+function writeTo(s, text) {
+  if (!canWrite(s)) return false;
+  try {
+    const fit = s.write(text);
+    if (!fit && !backlogged.has(s)) s.once("drain", () => backlogged.delete(s));
+    if (fit) backlogged.delete(s);
+    else backlogged.add(s);
+    return true;
+  } catch {
+    deadStreams.add(s);
+    return false;
+  }
+}
+function log(msg) {
+  const line = `[${BRIDGE_NAME} ${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
+`;
+  const sink = currentScope().log ?? processLog;
+  if (sink) sink(line);
+  else writeTo(process.stderr, line);
+}
 
 // js/bridge/config.ts
 var PRODUCTION_URLS = new Set(LANGS.map((l) => strip(SERVER_URLS[l])));
@@ -1053,6 +1103,13 @@ var CFG = new Proxy({}, {
   get: (_, k) => cfgSlot.cfg ? Reflect.get(cfgSlot.cfg, k) : void 0,
   has: (_, k) => !!cfgSlot.cfg && Reflect.has(cfgSlot.cfg, k)
 });
+
+// js/bridge/errors.ts
+var CLOSED = /* @__PURE__ */ new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE"]);
+var closedUnder = (e) => {
+  const err = e;
+  return CLOSED.has(err?.code ?? "") || CLOSED.has(err?.cause?.code ?? "");
+};
 
 // js/bridge/oauth/discovery.ts
 var REGISTRATION_REUSE_MS = 45 * 6e4;
@@ -1379,6 +1436,13 @@ var H2 = scoped(() => ({
   taken: null
 }));
 
+// js/bridge/muxtick.ts
+var GAP_MS = Number(process.env[envName("PULSE_GAP_MS")]) || 3e4;
+
+// js/bridge/muxhold.ts
+var replay = null;
+var onFellBack = (fn) => void (replay = fn);
+
 // js/bridge/realms.ts
 var aliases = scoped(() => /* @__PURE__ */ new Map());
 var R = scoped(() => ({ listing: null }));
@@ -1389,6 +1453,79 @@ var extras = scoped(() => /* @__PURE__ */ new Map());
 // js/bridge/spool.ts
 var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e3;
 var DRAIN_MS = HANDOFF_MS + 5e3;
+
+// js/bridge/statusturn.ts
+var tails = /* @__PURE__ */ new Map();
+function inTurn(url, fn, open = false) {
+  const prev = tails.get(url) ?? (open ? Promise.resolve() : null);
+  if (!prev) return fn();
+  const next = prev.then(fn, fn);
+  const tail2 = next.catch(() => {
+  });
+  tails.set(url, tail2);
+  void tail2.then(() => {
+    if (tails.get(url) === tail2) tails.delete(url);
+  });
+  return next;
+}
+
+// js/bridge/statuspost.ts
+var TRIMMED = "trimmed_to_limit";
+var LIMIT = 64;
+var obj2 = (v) => v && typeof v === "object" ? v : {};
+function trimToWord(text, max) {
+  const chars = [...text];
+  const head = chars.slice(0, max - 1).join("");
+  const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
+  return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
+}
+function acceptedIn(body, sent) {
+  let parsed = {};
+  try {
+    parsed = obj2(JSON.parse(body));
+  } catch {
+  }
+  const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+  const w = obj2(warnings.find((x) => obj2(x).code === TRIMMED));
+  const told = typeof parsed.doing === "string" ? parsed.doing : null;
+  if (!w.code) return told === null ? {} : { doing: told };
+  const doing = told ?? trimToWord(sent, LIMIT);
+  const message = typeof w.message === "string" ? w.message.trim() : "";
+  return { doing, trimmed: { doing, message } };
+}
+var late = () => words(STATUS_POST).noAnswer(words(STATUS_POST).late());
+async function postStatus(url, text, until, standingId) {
+  const left = until - Date.now();
+  if (left <= 0) return { ok: false, body: late() };
+  const signal = AbortSignal.timeout(left);
+  const post2 = () => fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(
+      typeof standingId === "string" ? { text, standing_id: standingId } : { text }
+    ),
+    signal
+  });
+  let res;
+  try {
+    res = await post2().catch((e) => {
+      if (!closedUnder(e) || signal.aborted) throw e;
+      return post2();
+    });
+  } catch (e) {
+    return { ok: false, body: words(STATUS_POST).noAnswer(e.message) };
+  }
+  const body = (await res.text().catch(() => "")).trim();
+  if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
+  if (!res.ok)
+    return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
+  return { ok: true, body, ...acceptedIn(body, text) };
+}
+onFellBack(
+  (url, text, standingId) => inTurn(url, () => postStatus(url, text, Date.now() + 5e3, standingId), true).then((st) => {
+    if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
+  })
+);
 
 // js/bridge/seatorigin.ts
 import { AsyncLocalStorage as AsyncLocalStorage2 } from "node:async_hooks";
