@@ -4282,7 +4282,6 @@ const CHANNEL_FIELD = {
   karta: prop("Чьё это стояние; у send — роль АДРЕСАТА."),
   channel: prop("Только revoke: собственный id МЕСТА."),
   text: prop("Только send: слова, которые получит адресат."),
-  view: prop("Только history: какое чтение."),
   ttl_seconds: prop(
     "Для mint и connect: сколько канал может простоять без жизни сокета.",
     "number",
@@ -4344,7 +4343,7 @@ test("every bridge: the harness sees iskron_channel without the place moves and 
   const channel = byName.iskron_channel;
   for (const f of PLACE_FIELDS)
     assert.ok(!(f in channel.inputSchema.properties), `the harness must not see ${f}`);
-  for (const f of ["realm", "action", "karta", "text", "view", ...AGENT_FIELDS])
+  for (const f of ["realm", "action", "karta", "text", ...AGENT_FIELDS])
     assert.ok(f in channel.inputSchema.properties, `${f} stays`);
   // register and revoke stay the agent's: the corpus has it name itself and revoke.
   assert.match(
