@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.24.0](https://github.com/iskron-ai/skills/compare/v7.23.0...v7.24.0) (2026-10-28)
+
+
+### Features
+
+* **skills:** брошенные дела по стейтмашине, канон опровержения и забывания, контракт iskronify 33 ([#586](https://github.com/iskron-ai/skills/issues/586)) ([1f11856](https://github.com/iskron-ai/skills/commit/1f11856666d41ad1f66b42db98b1117584ce4c6d))
+
+
+### Bug Fixes
+
+* **skills:** onboarding — готовность по complete и items, подсказки отдельно; say в своём деле не звать ([#589](https://github.com/iskron-ai/skills/issues/589)) ([22ca7cf](https://github.com/iskron-ai/skills/commit/22ca7cf6a2127ccdf2c6e8533d6a4e17ed5db8fe))
+* **skills:** находки вычитки кандидата 7.24.0 ([#590](https://github.com/iskron-ai/skills/issues/590)) ([0054b65](https://github.com/iskron-ai/skills/commit/0054b65e5411e3e36dd9ccf6d73c7d6f15f5bb9a))
+* **skills:** роль человека в графе — всегда svatantra, и приглашённому ([#588](https://github.com/iskron-ai/skills/issues/588)) ([4342a74](https://github.com/iskron-ai/skills/commit/4342a74920f03ff14aac69e090eff687ff5dbaaa))
+
 ## [7.23.0](https://github.com/iskron-ai/skills/compare/v7.22.0...v7.23.0) (2026-10-27)
 
 
