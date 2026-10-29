@@ -8961,6 +8961,64 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
   }
 });
 
+// #9128 (дело №2121): прямое слово человека из окна несёт id слова и место человека в
+// provenance (поле — №2114 [23]) — под текстом строка ответа, иначе send с in_reply_to
+// строить нечем. Слово делателя, слово без места человека и слово без id строки не получают.
+test("a person's direct word carries the reply line under its text; a doer's, one without the person's seat and one without an id carry none", async () => {
+  const b = bridgeEnv("human-direct");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-human");
+    const [pid] = pidsOf(b.log);
+    const windowWord = (id, provenance) => ({
+      type: "message",
+      ...(id ? { id } : {}),
+      body: `СЛОВО-ИЗ-ОКНА-${id ?? "БЕЗ-ID"}`,
+      provenance: { auth: "oidc", user: "dmitry", from_person: true, ...provenance },
+    });
+    appendFileSync(
+      `${b.events}.${pid}`,
+      lines([
+        windowWord("win-9", { from_standing: "@dmitry:bridge" }),
+        windowWord("win-10", { from_standing_id: "3c7a9e1b-seat" }),
+        directWord("peer-9"),
+        windowWord("win-11"),
+        windowWord(null, { from_standing: "@dmitry:bridge" }),
+      ]),
+    );
+    await until(() => rec.prompts.length >= 5, "five words");
+    await delay(BATCH_MS * 2);
+    assert.equal(rec.prompts.length, 5, JSON.stringify(rec.prompts.map((p) => p.text)));
+    const byWord = (marker) => {
+      const got = rec.prompts.find((p) => p.text.includes(marker));
+      assert.ok(got, `${marker} lost:\n${JSON.stringify(rec.prompts.map((p) => p.text))}`);
+      return got.text;
+    };
+    assert.equal(
+      rec.prompts.every((p) => p.delivery === "steer"),
+      true,
+    );
+    assert.match(
+      byWord("СЛОВО-ИЗ-ОКНА-win-9"),
+      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-win-9\nответ: iskron_channel\(action="send", standing=@dmitry:bridge, in_reply_to=win-9, text=…\)$/,
+    );
+    // Место человека может прийти id: строка ответа берёт его, первая строка места не пишет.
+    assert.match(
+      byWord("СЛОВО-ИЗ-ОКНА-win-10"),
+      /^человек @dmitry\nСЛОВО-ИЗ-ОКНА-win-10\nответ: iskron_channel\(action="send", standing=3c7a9e1b-seat, in_reply_to=win-10, text=…\)$/,
+    );
+    assert.match(byWord("прямое слово соседа"), /^роль #48 \(@alari:sosed\)\nпрямое слово соседа$/);
+    assert.match(byWord("СЛОВО-ИЗ-ОКНА-win-11"), /^человек @dmitry\nСЛОВО-ИЗ-ОКНА-win-11$/);
+    assert.match(
+      byWord("СЛОВО-ИЗ-ОКНА-БЕЗ-ID"),
+      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-БЕЗ-ID$/,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a lone interrupting case frame still steers at once and whole", async () => {
   const b = bridgeEnv("case-lone");
   const rec = await plugin(b.env);
