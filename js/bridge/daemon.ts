@@ -400,11 +400,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
           return freshest?.url ? apiBase(freshest.url) : "";
         },
         token: bearer,
-        // The discovered half of the boundary (#8202, word [27] of №1260): realms of the
-        // places the machine's live sessions stand on, plus whatever hold records on disk
-        // are still live by age or departure. The record's spelling is kept as written —
-        // a short rN resolves downstream by the realm list the same api serves, and a dead
-        // record leaves by liveness, never by the form of its name.
+        // The discovered half of the boundary (#8202): realms of live sessions' places plus hold records
+        // live by age or departure, spelled as written (rN resolves downstream); a dead record leaves by liveness.
         realms: (): string[] => {
           const found = new Set<string>();
           const ofSession = (): string[] => {
@@ -416,9 +413,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
           for (const e of engines.values()) {
             for (const r of e.scope ? runIn(e.scope, ofSession) : ofSession()) if (r) found.add(r);
           }
-          // Liveness follows the record's own heartbeat — r.at, as readHoldRecord reads it
-          // (stoodAt names the standing act, which outlives its record's freshness); a
-          // record with no heartbeat at all is not live.
+          // Liveness is the record's heartbeat r.at, as readHoldRecord reads it (not stoodAt); none — not live.
           for (const r of holdRecordsWhere(() => true))
             if (
               r.realm &&
