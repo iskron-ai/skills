@@ -131,11 +131,13 @@ test("tools/list carries iskron_stand — the bridge's own tool, in the server's
   // karta — только для занятия места; занятость на держимом месте без неё (#6509).
   assert.deepEqual(stand.inputSchema.required, ["realm"]);
   assert.match(stand.inputSchema.properties.status.description, /обновить занятость/);
-  // take: своё имя — сам по молчанию пробы, чужое — словом человека (#6976).
+  // take: только словом человека, и своё имя тоже; место на доске — не свидетельство жизни,
+  // окно смерти — только у моста машины с демоном (#6976, #7493, №677).
   assert.match(
     stand.inputSchema.properties.take.description,
-    /своего имени \(та же роль, та же учётка\) сам, когда он молчит 5 минут на пробу словом.*чужого \(другая роль или учётка\) — только по слову человека/,
+    /вытеснить живого держателя ДРУГОЙ сессии — только по слову человека, и своего имени тоже: место на доске — не свидетельство жизни держателя; место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы/,
   );
+  assert.doesNotMatch(stand.inputSchema.properties.take.description, /5 минут|пробу словом/);
   assert.ok(
     stand.description.startsWith("[мост]"),
     "the tool must name the bridge as its executor",
@@ -690,13 +692,14 @@ test("iskron_stand: an explicit name another holder listens on is left alone —
     /место proba держит другая сессия той же роли — .*встаю рядом на proba\.2 со слухом/,
     text,
   );
-  // Одна доска учётки не доказывает (#6976): роль та же, учётку сверяет делатель — та же —
-  // проба словом, другая — вытеснение только словом человека.
+  // Держатель — живой агент, место мёртвого закрывается само (#7493): ни пробы, ни подхвата
+  // по молчанию — работа рядом, вытеснение только словом человека.
   assert.match(
     text,
-    /учётку держателя сверь по доске с адресом своего места: та же — спроси её словом — iskron_channel\(action="send", standing=proba,.*; другая — вытеснить ту сессию \(take=true\) только словом человека/,
+    /работай здесь, её дела не бери и её не жди; вытеснить ту сессию \(take=true\): только словом человека/,
     text,
   );
+  assert.doesNotMatch(text, /жив\? что держишь|5 минут/, text);
   assert.doesNotMatch(text, /твоего имени/, text);
   assert.doesNotMatch(text, /только register|по памяти|атрибуция/, text);
   assert.match(text, /Слушать: .*node "/, "the seat beside is heard here");
@@ -950,15 +953,15 @@ test("iskron_stand refusal «already leads another seat»: no take=true advice w
 
 // Where the bridge does not know who hears the asked seat — the board did not
 // read, or a bare connect/register/mint that reads no board — the refusal stays
-// neutral: this bridge's own seat, the move beside, take=true by the take rule — own
-// name after a silent probe, another's only on the human's word (#6976, #7194).
+// neutral: this bridge's own seat, the move beside, take=true by the take rule — only on
+// the human's word; the board is no evidence of life (#6976, #7194, #7493, №677).
 const neutralRefusal = (text, led) => {
   assert.match(text, /уже ведёт место/, text);
   assert.match(text, new RegExp(`своё место этого моста — ${led}`), text);
   assert.match(text, /встать рядом — iskron_stand без name/, text);
   assert.match(
     text,
-    /отнять место \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека/,
+    /отнять место \(take=true\): только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы/,
     text,
   );
   assert.doesNotMatch(text, /iskron_stand с take=true/, text);
@@ -1279,7 +1282,7 @@ test("English surface: a place the English board reads listening under another h
   });
   assert.match(
     textOf(other),
-    /another session of the same role holds the seat chuzhoe .*check the holder's account on the board/,
+    /another session of the same role holds the seat chuzhoe .*do not wait for it; evicting that session \(take=true\): only on the human's word/,
     textOf(other),
   );
   assert.match(textOf(other), /standing beside as chuzhoe\.2 with hearing/, textOf(other));
@@ -1662,9 +1665,9 @@ test("iskron_stand: a derived name another live session holds yields a separate 
   );
   assert.ok(standText(r).includes(`встаю рядом на ${base}.2 со слухом`), standText(r));
   // «Своё или чужое» решает мост по сессии, не память агента (#6706); take своего имени —
-  // только после молчания пробы (#6976).
-  assert.doesNotMatch(standText(r), /по памяти/, standText(r));
-  assert.ok(standText(r).includes(`молчит — iskron_stand(name=${base}, take=true)`), standText(r));
+  // только словом человека: держатель жив, место мёртвого закрывается само (#7493).
+  assert.doesNotMatch(standText(r), /по памяти|молчит — iskron_stand/, standText(r));
+  assert.ok(standText(r).includes("её не жди; вытеснить ту сессию (take=true)"), standText(r));
   assert.equal(fake.state.counts.connect, connects + 1, "one connect — for the new place");
   assert.equal(fake.state.ws.size, 2, "the first session keeps its socket");
   assert.equal(fake.state.counts.webhooks_added, hooks, "no role-inbox hook for a separate place");
@@ -1886,12 +1889,10 @@ test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is n
     text,
     /место proba держит другая живая сессия твоего имени \(та же роль, та же учётка\) — .*встаю рядом на proba\.2 со слухом/,
   );
-  // Своё имя той же учётки (#6976): проба словом со сроком, по молчанию take сам, без человека.
-  assert.match(text, /iskron_channel\(action="send", standing=proba, text="жив\? что держишь\?"\)/);
-  assert.match(text, /до 5 минут: ответила — договоритесь, её дела не бери/, text);
-  assert.match(text, /молчит — iskron_stand\(name=proba, take=true\)/, text);
-  assert.match(text, /iskron_case\(action="mine", standing=proba\)\); человека не спрашивай/);
-  assert.doesNotMatch(text, /только словом человека|только register|по памяти/, text);
+  // Своё имя той же учётки держит живой агент (#7493): пробы и подхвата по молчанию нет.
+  assert.match(text, /работай здесь, её дела не бери и её не жди/, text);
+  assert.match(text, /вытеснить ту сессию \(take=true\): только словом человека/, text);
+  assert.doesNotMatch(text, /жив\? что держишь|5 минут|только register|по памяти/, text);
   assert.match(text, /Слушать: .*watchdog proba\.2--931--_nks_nks-dev/, text);
   assert.deepEqual(connects(), ["proba", "proba.2"], "the other session's seat is not rotated");
   assert.equal(fake.state.ws.size, 2, "the other session keeps its socket");
@@ -1997,10 +1998,10 @@ const backByRecord = (r, seat = "proba") => {
 test("iskron_stand: the board reads a stopped holder of ANOTHER session listening — the bridge stands beside with hearing, never «register only»", async (t) => {
   const { r } = await stoppedHolder(t, "ses-1", "ses-2");
   besideHeard(r);
-  // Запись другой сессии этого дома — своё имя, но жизнь не доказана: проба скажет (#6976).
+  // Запись другой сессии этого дома — своё имя; жива ли она, доска не скажет (#7493, №677).
   assert.match(
     standText(r),
-    /другая сессия твоего имени \(та же роль, та же учётка; её мост здесь не отвечает — жива ли, скажет проба\) — .*молчит — iskron_stand\(name=proba, take=true\)/,
+    /другая сессия твоего имени \(та же роль, та же учётка; её мост здесь не отвечает — жива ли, доска не скажет; место умершего закроет мост машины с демоном, иначе срок платформы\) — .*её не жди/,
     standText(r),
   );
 });
@@ -3180,7 +3181,7 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   const ok = (await sat.call("iskron/end", {})).result;
   assert.deepEqual(
     ok,
-    { ended: true, failed: [], revoked: [SAT_SEAT] },
+    { ended: true, failed: [], revoked: [SAT_SEAT], probably: [] },
     `${JSON.stringify(ok)}\n${sat.stderr}`,
   );
   assert.deepEqual(revokes(fake), [`${CALLER}.sub-1`], "the revoke ran past the failed snapshot");
@@ -3190,7 +3191,11 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   assert.ok(!(await standAs(sat2, SAT_ARGS)).result?.isError, sat2.stderr);
   await fake2.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
   const bad = (await sat2.call("iskron/end", {})).result;
-  assert.deepEqual(bad, { ended: true, failed: [`${CALLER}.sub-1`], revoked: [] }, sat2.stderr);
+  assert.deepEqual(
+    bad,
+    { ended: true, failed: [`${CALLER}.sub-1`], revoked: [], probably: [] },
+    sat2.stderr,
+  );
   await sat2.stop();
   assert.match(sat2.stderr, /NOT revoked/);
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
@@ -3198,7 +3203,8 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
 
 // №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
 // Prose that only looks like «already gone» is no confirmation: the place is neither revoked
-// nor failed for the plugin, and the launcher's revoke goes as before.
+// nor failed for the plugin — it is named apart, as probably (№677) — and the launcher's
+// revoke goes as before.
 for (const [how, refuse, confirmed] of [
   ["success", null, true],
   ["a 410 refusal", { text: "Место уже снято.", status: 410, rule: "standing_gone" }, true],
@@ -3230,7 +3236,12 @@ for (const [how, refuse, confirmed] of [
     const place = `${CALLER}.sub-1`;
     assert.deepEqual(
       end,
-      { ended: true, failed: [], revoked: confirmed ? [SAT_SEAT] : [] },
+      {
+        ended: true,
+        failed: [],
+        revoked: confirmed ? [SAT_SEAT] : [],
+        probably: confirmed ? [] : [place],
+      },
       `${JSON.stringify(end)}\n${sat.stderr}`,
     );
     assert.deepEqual(revokes(fake), [place]);
@@ -3257,6 +3268,7 @@ test("satellite: iskron/end keys a confirmed revoke by graph, role and name — 
       ended: true,
       failed: [place],
       revoked: [{ realm: "@nks/drugoy", karta: "931", name: place }],
+      probably: [],
     },
     `${JSON.stringify(end)}\n${sat.stderr}`,
   );

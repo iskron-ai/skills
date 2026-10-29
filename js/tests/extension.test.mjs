@@ -1639,7 +1639,7 @@ test("an eviction is loud: the bridge stands beside by itself, take=true by the 
     assert.match(rec.messages[0].msg.content, /Мост сам встаёт рядом на имя\.N со слухом/);
     assert.match(
       rec.messages[0].msg.content,
-      /Вытеснить ту сессию \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\./,
+      /Вытеснить ту сессию \(take=true\): только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы\./,
     );
     assert.ok(!/токен мёртв/.test(rec.messages[0].msg.content), "an eviction is not a dead token");
   } finally {
