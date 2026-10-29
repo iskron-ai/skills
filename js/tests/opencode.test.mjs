@@ -4706,7 +4706,7 @@ test("a lead child whose own turn is interrupted by the user (Esc) lives on: the
 // lead, and each woken turn failed at once — the model's provider refused its sign-in. Nobody
 // told the parent for an hour. A failed turn is a word to the parent without a wake, once per
 // run of failures; the errand lives, a frame still wakes the child.
-test("a lead child's failed turn is told to its parent once per run of failures, without a wake; the errand lives", async () => {
+test("a lead child's failed turn is told to its parent once per run of failures, with a wake; the errand lives", async () => {
   const { b, rec, childPid } = await leadChild("lead-failed");
   const failed = () => rec.synthetics.filter((s) => /ход субагента .* упал/.test(s.text));
   const fail = () => {
@@ -4728,7 +4728,7 @@ test("a lead child's failed turn is told to its parent once per run of failures,
     assert.equal(word.sessionID, "root");
     assert.match(word.text, /OAuth session expired/);
     assert.match(word.text, /standing="host\.repo\.opus-5\.sub-1"/);
-    assert.equal(word.resume, false, "the failure does not wake the parent");
+    assert.equal(word.resume, true, "the failure wakes the parent: it takes over now, not on its next turn");
     fail();
     await delay(300);
     assert.equal(failed().length, 1, "a failure in a row is not repeated");

@@ -101,7 +101,8 @@ export function createLeads(d: LeadDoors): Leads {
         .trim()
         .slice(0, 400) || W().noError();
     const p = await l.parent;
-    if (p && leads.get(child) === l) await d.tell(p, W().failed(who(l, child), why), false);
+    // It wakes: an idle parent must take over the errand now, not on its next turn (#9046).
+    if (p && leads.get(child) === l) await d.tell(p, W().failed(who(l, child), why), true);
   }
 
   function leave(child: string, l: Lead, why: string): void {
