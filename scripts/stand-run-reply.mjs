@@ -307,19 +307,14 @@ try {
   // Through the api: the answer lies under the person's word, addressed to their seat.
   if (replyAnswer && !replyAnswer.error) {
     report.push(`INFO ответ send (мост): ${replyAnswer.text.split("\n").slice(0, 3).join(" | ").slice(0, 400)}`);
-    const standings2 = await api("GET", "/me/standings");
-    report.push(`INFO GET /me/standings после ответа → ${standings2.status} ${JSON.stringify(standings2.body).slice(0, 700)}`);
-    const chans = await api("GET", "/me/channels");
-    const ids = (chans.body?.items ?? []).map((c) => c.id).filter(Boolean);
-    report.push(`INFO GET /me/channels → ${chans.status} ${JSON.stringify(chans.body).slice(0, 400)}`);
-    const answers = [];
-    for (const id of ids) for (const p of [`/channels/${id}/messages`, `/channels/${id}/words`, `/channels/${id}/feed`]) answers.push([p, await api("GET", p)]);
-    for (const [p, a] of answers) report.push(`INFO GET ${p} → ${a.status} ${JSON.stringify(a.body).slice(0, 700)}`);
-    const rows = JSON.stringify(answers.map(([, a]) => a.body));
-    const underWord = rows.includes(`"in_reply_to": "${parts.in_reply_to}"`) || rows.includes(`"in_reply_to":"${parts.in_reply_to}"`);
-    const toSeat = frame ? rows.includes(JSON.stringify(frame.provenance?.from_standing ?? "")) : false;
-    check(underWord, "api: the answer carries in_reply_to of the person's word", parts.in_reply_to);
-    check(toSeat, "api: the answer is addressed to the person's seat", JSON.stringify(frame?.provenance?.from_standing));
+    // The person's seat log (nks-api): what came in to that seat, with in_reply_to per row.
+    const q = `realm=${encodeURIComponent(realm)}&standing=${humanSeatId}&kinds=message_in`;
+    const log = await api("GET", `/me/channel-log?${q}`);
+    const rows = Array.isArray(log.body?.items) ? log.body.items : Array.isArray(log.body) ? log.body : [];
+    const row = rows.find((x) => x?.in_reply_to === parts.in_reply_to);
+    report.push(`INFO GET /me/channel-log (место человека) → ${log.status}, строк ${rows.length}`);
+    check(!!row, "api: the answer carries in_reply_to of the person's word", row ? `${row.id} in_reply_to ${row.in_reply_to}` : `${log.status} ${parts.in_reply_to}`);
+    check(row?.standing_id === humanSeatId, "api: the answer is addressed to the person's seat", row ? `${row.standing_id} ← ${row.peer_standing}` : "no row");
   }
 
   // Seats and roles off — the scene was this run's own fixture.
