@@ -1771,13 +1771,14 @@ export async function startFakeNks(opts = {}) {
           }
           // revokeRefuseNext: [{ text, status?, rule?, data?, realm? }] — the next revokes refused this
           // way, the place stays; with status — as an api refusal with data, without — bare prose; with
-          // realm — only a revoke in that graph (№664).
+          // realm — only a revoke in that graph (№664); with delayMs — the refusal answers this much later.
           const at = (st.revokeRefuseNext ?? []).findIndex(
             (r) => !r.realm || slug(r.realm) === slug(a.realm),
           );
           const refuse = at < 0 ? null : st.revokeRefuseNext.splice(at, 1)[0];
           if (refuse) {
-            const { text, status, rule, data } = refuse;
+            const { text, status, rule, data, delayMs } = refuse;
+            if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
             const result = {
               isError: true,
               content: [{ type: "text", text }],

@@ -82,8 +82,8 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // The agent's end closes its seat (graph @nks/nks-dev, node #7493): at once on the harness's
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
     const mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
-    // A satellite's end is its death: a seat answered late goes at once (lateSeat).
-    R.late = mortal ? "window" : CFG.satellite && !paused ? "now" : "hold";
+    // A satellite's end is its death, as the harness's word is: a seat answered late goes at once (lateSeat).
+    R.late = mortal && !now ? "window" : (CFG.satellite || mortal) && !paused ? "now" : "hold";
     const dying = mortal && !!H.currentKey;
     const own = dying ? ownPlaces() : [];
     // Platform ids before the release forgets the doors: the stop's ended[] names seats by them.
@@ -111,8 +111,10 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     if (ended) end = await revokeOwnPlaces(own);
     // Seats not confirmed revoked wait for the death window, which repeats the revoke.
     const left = ended ? dropConfirmed(own, end.revoked) : own;
-    if (dying && left.length)
-      R.dead = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
+    if (dying && left.length) {
+      const mine = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
+      R.dead = R.dead ? withLate(mine, R.dead) : mine;
+    }
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && line === "post") await publishStatusTo(addr.url, "", 3000).catch(() => {});
@@ -148,6 +150,20 @@ export function lateSeat(
     `${key}: connect answered after the run's end — no socket opened, it ends ${R.late === "now" ? "at once" : "with the window"}`,
   );
   return true;
+}
+
+/**
+ * The end's own snapshot over a seat a connect answered while the end awaited its revokes
+ * (lateSeat): the late seat, its id and its newer token stay first (case №2264).
+ */
+function withLate(mine: Dead, late: Dead): Dead {
+  const keys = new Set(late.places.map(seatKeyOf));
+  return {
+    ...late,
+    places: [...late.places, ...mine.places.filter((s) => !keys.has(seatKeyOf(s)))],
+    ids: new Map([...mine.ids, ...late.ids]),
+    eras: new Map([...mine.eras, ...late.eras]),
+  };
 }
 
 /**
