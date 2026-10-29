@@ -8961,35 +8961,41 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
   }
 });
 
-// #9128 (дело №2121): прямое слово человека из окна несёт id слова и место человека в
-// provenance (поле — №2114 [23]) — под текстом строка ответа, иначе send с in_reply_to
-// строить нечем. Слово делателя, слово без места человека и слово без id строки не получают.
-test("a person's direct word carries the reply line under its text; a doer's, one without the person's seat and one without an id carry none", async () => {
+// #9128 (дело №2145, находки ревью №2141): прямое слово человека из окна несёт id слова,
+// граф кадра и provenance человека — под текстом полный send: у iskron_channel обязательны
+// realm и karta (роль адресата-человека — from_karta_seq, иначе user_karta_seq), standing —
+// имя места, не id. Части нет — строка «адреса для ответа нет: …» вместо молчания, чтобы
+// агент не искал адрес. Слово делателя строк не получает.
+test("a person's direct word carries a full send under its text; a missing address part is said aloud, a doer's word carries no line", async () => {
   const b = bridgeEnv("human-direct");
   const rec = await plugin(b.env);
   try {
     await serverTools(rec);
     await rec.call("iskron_channel", { action: "connect" }, "s-human");
     const [pid] = pidsOf(b.log);
-    const windowWord = (id, provenance) => ({
+    const windowWord = (id, provenance, realm = "@nks/nks-dev") => ({
       type: "message",
       ...(id ? { id } : {}),
+      ...(realm ? { realm } : {}),
       body: `СЛОВО-ИЗ-ОКНА-${id ?? "БЕЗ-ID"}`,
       provenance: { auth: "oidc", user: "dmitry", from_person: true, ...provenance },
     });
     appendFileSync(
       `${b.events}.${pid}`,
       lines([
-        windowWord("win-9", { from_standing: "@dmitry:bridge" }),
-        windowWord("win-10", { from_standing_id: "3c7a9e1b-seat" }),
+        windowWord("win-9", { from_standing: "@dmitry:bridge", from_karta_seq: 1226 }),
+        // Слово без места роли (as_person): роль адресата — из user_karta_seq.
+        windowWord("win-12", { from_standing: "@dmitry:window", user_karta_seq: 1226 }),
+        // id места не называет его: standing у send — адрес или половина имени.
+        windowWord("win-10", { from_standing_id: "3c7a9e1b-seat", user_karta_seq: 1226 }),
+        windowWord("win-13", { from_standing: "@dmitry:window" }, ""),
         directWord("peer-9"),
-        windowWord("win-11"),
-        windowWord(null, { from_standing: "@dmitry:bridge" }),
+        windowWord(null, { from_standing: "@dmitry:bridge", from_karta_seq: 1226 }),
       ]),
     );
-    await until(() => rec.prompts.length >= 5, "five words");
+    await until(() => rec.prompts.length >= 6, "six words");
     await delay(BATCH_MS * 2);
-    assert.equal(rec.prompts.length, 5, JSON.stringify(rec.prompts.map((p) => p.text)));
+    assert.equal(rec.prompts.length, 6, JSON.stringify(rec.prompts.map((p) => p.text)));
     const byWord = (marker) => {
       const got = rec.prompts.find((p) => p.text.includes(marker));
       assert.ok(got, `${marker} lost:\n${JSON.stringify(rec.prompts.map((p) => p.text))}`);
@@ -8999,20 +9005,27 @@ test("a person's direct word carries the reply line under its text; a doer's, on
       rec.prompts.every((p) => p.delivery === "steer"),
       true,
     );
+    // Полный вызов: ответ исполняется по напечатанной строке без восстановления данных.
     assert.match(
       byWord("СЛОВО-ИЗ-ОКНА-win-9"),
-      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-win-9\nответ: iskron_channel\(action="send", standing=@dmitry:bridge, in_reply_to=win-9, text=…\)$/,
+      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-win-9\nответ: iskron_channel\(action="send", realm=@nks\/nks-dev, karta=1226, standing=@dmitry:bridge, in_reply_to=win-9, text=…\)$/,
     );
-    // Место человека может прийти id: строка ответа берёт его, первая строка места не пишет.
+    assert.match(
+      byWord("СЛОВО-ИЗ-ОКНА-win-12"),
+      /^человек @dmitry \(@dmitry:window\)\nСЛОВО-ИЗ-ОКНА-win-12\nответ: iskron_channel\(action="send", realm=@nks\/nks-dev, karta=1226, standing=@dmitry:window, in_reply_to=win-12, text=…\)$/,
+    );
     assert.match(
       byWord("СЛОВО-ИЗ-ОКНА-win-10"),
-      /^человек @dmitry\nСЛОВО-ИЗ-ОКНА-win-10\nответ: iskron_channel\(action="send", standing=3c7a9e1b-seat, in_reply_to=win-10, text=…\)$/,
+      /^человек @dmitry\nСЛОВО-ИЗ-ОКНА-win-10\nадреса для ответа нет: места человека$/,
+    );
+    assert.match(
+      byWord("СЛОВО-ИЗ-ОКНА-win-13"),
+      /^человек @dmitry \(@dmitry:window\)\nСЛОВО-ИЗ-ОКНА-win-13\nадреса для ответа нет: графа, роли человека$/,
     );
     assert.match(byWord("прямое слово соседа"), /^роль #48 \(@alari:sosed\)\nпрямое слово соседа$/);
-    assert.match(byWord("СЛОВО-ИЗ-ОКНА-win-11"), /^человек @dmitry\nСЛОВО-ИЗ-ОКНА-win-11$/);
     assert.match(
       byWord("СЛОВО-ИЗ-ОКНА-БЕЗ-ID"),
-      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-БЕЗ-ID$/,
+      /^человек @dmitry \(@dmitry:bridge\)\nСЛОВО-ИЗ-ОКНА-БЕЗ-ID\nадреса для ответа нет: id слова$/,
     );
   } finally {
     await rec.stop();

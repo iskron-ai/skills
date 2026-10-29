@@ -8,5 +8,17 @@ node_modules/
 # рабочие деревья веток — внутри репо, никогда не в индекс
 .worktrees/
 # ролевые файлы субагентов с моделью человека — проекция на машине (iskronify, Шаг 6)
-.claude/agents/
-.opencode/agents/
+.claude/agents/reader.md
+.claude/agents/searcher.md
+.claude/agents/worker.md
+.claude/agents/designer.md
+.claude/agents/weaver.md
+.claude/agents/reviewer.md
+.claude/agents/verifier.md
+.opencode/agents/reader.md
+.opencode/agents/searcher.md
+.opencode/agents/worker.md
+.opencode/agents/designer.md
+.opencode/agents/weaver.md
+.opencode/agents/reviewer.md
+.opencode/agents/verifier.md

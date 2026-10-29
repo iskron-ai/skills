@@ -7,7 +7,10 @@
 // моста до релиза»). No human: a PAT file, an isolated HOME.
 //
 //   node scripts/stand-run-upgrade.mjs --old OLD.mjs --new NEW.mjs --token-file F --url U \
-//     --realm @owner/a --realm2 @owner/b --api A [--person U] [--keep]
+//     --realm @owner/a [--realm2 @owner/b] --api A [--person U] [--keep]
+//
+// --realm2 — a second graph in the token's territory for the seat beside; without it (a writer
+// PAT scoped to one graph) the run checks the main seats only and says the seat beside was not run.
 //
 // --api — the api beside the MCP: the person's word to a seat and the seats' removal go through
 // it (scripts/stand-person.mjs), as --person (a LOCAL carrier's test identity), else as the token.
@@ -29,7 +32,7 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 const [oldFile, newFile, tokenFile, URL_, realm, realm2] = ["--old", "--new", "--token-file", "--url", "--realm", "--realm2"].map((n) => arg(n));
 const keep = process.argv.includes("--keep");
 const fail = (code, t) => (process.stderr.write(`stand-run-upgrade: ${t}\n`), process.exit(code));
-if (![oldFile, newFile, tokenFile, URL_, realm, realm2].every(Boolean)) fail(2, "--old, --new, --token-file, --url, --realm, --realm2 are required");
+if (![oldFile, newFile, tokenFile, URL_, realm].every(Boolean)) fail(2, "--old, --new, --token-file, --url, --realm are required");
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others — chmod 600`);
 const token = readFileSync(tokenFile, "utf8").trim();
 if (!arg("--api")) fail(2, "--api is required: the person's word and the seats' removal go through the api (#7636)");
@@ -53,7 +56,7 @@ function envBase() {
 const vOld = versionOf(oldFile);
 const vNew = versionOf(newFile);
 
-const report = [`old ${vOld} · new ${vNew} · realms ${realm}, ${realm2}`];
+const report = [`old ${vOld} · new ${vNew} · realms ${realm}, ${realm2 ?? "— (seat beside not run)"}`];
 let failed = 0;
 const check = (ok, what, seen) => {
   report.push(`${ok ? "PASS" : "FAIL"} ${what}${seen ? ` — ${String(seen).slice(0, 220)}` : ""}`);
@@ -149,7 +152,7 @@ try {
     return id;
   };
   const k1 = await mk(realm);
-  const k2 = await mk(realm2);
+  const k2 = realm2 ? await mk(realm2) : null;
   // a refused read is not an empty board
   const list = async (r, k) => {
     const x = await P.call("iskron_channel", { realm: r, action: "list", karta: `#${k}` });
@@ -157,13 +160,14 @@ try {
     return x.text;
   };
   const board = () => list(realm, k1);
-  const board2 = () => list(realm2, k2);
+  const board2 = async () => (realm2 ? list(realm2, k2) : "");
 
   // The previous release holds the seats.
   const a = await S1.call("iskron_stand", { realm, karta: `#${k1}`, name: n1, model: "stand-run" });
-  const b = await S1.call("iskron_stand", { realm: realm2, karta: `#${k2}`, name: n1b, model: "stand-run" });
+  const b = realm2 ? await S1.call("iskron_stand", { realm: realm2, karta: `#${k2}`, name: n1b, model: "stand-run" }) : null;
   const c = await S2.call("iskron_stand", { realm, karta: `#${k1}`, name: n2, model: "stand-run" });
-  check(!a.error && !b.error && !c.error, "old release: three seats held", [a, b, c].map((x) => x.text.split("\n")[0].slice(0, 70)).join(" | "));
+  const held = [a, b, c].filter(Boolean);
+  check(held.every((x) => !x.error), `old release: ${held.length} seats held`, held.map((x) => x.text.split("\n")[0].slice(0, 70)).join(" | "));
   check(/v7\.9\.0|through the machine's bridge daemon/.test(S1.stderr()), "old release: the sessions go through the machine daemon", (S1.stderr().match(/through the machine's bridge daemon[^\n]*/) || [""])[0]);
   const heldBefore = standingsLog().split("\n").filter((l) => / held /.test(l)).length;
 
@@ -191,15 +195,16 @@ try {
   // a failure; the lost path below only says what the session saw instead.
   const ownB = log.filter((l) => l.includes(`${n1b}--`));
   const resumedB = ownB.some((l) => /resumed-from-disk/.test(l) && Date.parse(l.slice(0, 24)) > tUp);
-  check(resumedB, `${n1b} (beside, second graph): resumed by the successor (standings.log)`, ownB.filter((l) => Date.parse(l.slice(0, 24)) >= tUp).map((l) => l.slice(25, 200)).join(" | "));
-  if (resumedB) {
+  if (!realm2) report.push("SKIP the seat beside in a second graph: no --realm2");
+  else check(resumedB, `${n1b} (beside, second graph): resumed by the successor (standings.log)`, ownB.filter((l) => Date.parse(l.slice(0, 24)) >= tUp).map((l) => l.slice(25, 200)).join(" | "));
+  if (realm2 && resumedB) {
     // Returned is also heard by the session: a call into the second graph is not refused as lost
     // (the refusal spares iskron_stand, so the probe is another tool).
     const w = await S1.call("iskron_channel", { realm: realm2, action: "list", karta: `#${k2}` });
     check(!w.error && !/потерян|lost/i.test(w.text.split("\n")[0]), `${n1b}: s1 calls into the second graph after the update, not refused`, w.text.split("\n")[0].slice(0, 160));
   }
   const lostNote = S1.notes.find((m) => /lost|потерян/.test(JSON.stringify(m)) && JSON.stringify(m).includes(n1b));
-  if (!resumedB) {
+  if (realm2 && !resumedB) {
     check(!!lostNote, `${n1b}: the session is told the seat beside was lost`, lostNote ? JSON.stringify(lostNote.params?.data ?? lostNote.params).slice(0, 200) : `notes: ${S1.notes.length}`);
     const w = await S1.call("iskron_stand", { realm: realm2, karta: `#${k2}`, status: "write into the lost graph" });
     report.push(`INFO s1: a busy line in the lost graph before standing there — ${w.error ? "refused" : "accepted"}: ${w.text.split("\n")[0].slice(0, 160)}`);
@@ -207,9 +212,9 @@ try {
     check(!back.error && back.text.includes(n1b) && !new RegExp(`${n1b.replace(/\./g, "\\.")}\\.\\d`).test(back.text), `${n1b}: an explicit stand returns the same name`, back.text.split("\n")[0]);
   }
   const names1 = seatNames(await board());
-  const names2 = seatNames(await board2());
-  check(names1.includes(n1) && names1.includes(n2) && names2.includes(n1b), "board: every seat still stands", `${names1.join(",")} / ${names2.join(",")}`);
-  check(!names1.concat(names2).some((n) => /\.\d+$/.test(n.replace(/^up-\d+\./, ""))) && names1.length === 2 && names2.length === 1, "board: no seat beside, no doubles", `${names1.join(",")} / ${names2.join(",")}`);
+  const names2 = realm2 ? seatNames(await board2()) : [];
+  check(names1.includes(n1) && names1.includes(n2) && (!realm2 || names2.includes(n1b)), "board: every seat still stands", `${names1.join(",")} / ${names2.join(",")}`);
+  check(!names1.concat(names2).some((n) => /\.\d+$/.test(n.replace(/^up-\d+\./, ""))) && names1.length === 2 && names2.length === (realm2 ? 1 : 0), "board: no seat beside, no doubles", `${names1.join(",")} / ${names2.join(",")}`);
   check(!/take=true|take: true/.test(daemonLog()), "no take in the transition");
   const heldAfter = standingsLog().split("\n").filter((l) => / held /.test(l)).length;
   report.push(`INFO held lines: ${heldBefore} before the update, ${heldAfter} after`);
@@ -232,7 +237,7 @@ try {
   check(ver[1]?.includes(vNew.split("+")[0].replace(/^v/, "")) ?? false, "the daemon now runs the new build", ver[1]);
 
   // The seat beside first: a founding seat with a neighbour is refused 409 (node #5085).
-  for (const [r, k, n] of [[realm2, k2, n1b], [realm, k1, n1], [realm, k1, n2]]) {
+  for (const [r, k, n] of [...(realm2 ? [[realm2, k2, n1b]] : []), [realm, k1, n1], [realm, k1, n2]]) {
     const brd = await list(r, k);
     const line = brd.split("\n");
     const i = line.findIndex((l) => l.includes(`:${n} —`));
