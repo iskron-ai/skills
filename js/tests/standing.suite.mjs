@@ -5353,6 +5353,7 @@ const HUMAN = {
 const humanWord = (id = "human-1", body = HUMAN_TEXT) => ({
   type: "message",
   id,
+  realm: "nks-dev",
   body,
   provenance: HUMAN,
 });

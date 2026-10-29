@@ -31,9 +31,22 @@ export interface FrameTextWords {
   lifeCheckSeat: (name: string) => string;
   /**
    * Строка ответа под прямым словом человека из окна (#9128): чем ответить на слово,
-   * чтобы ответ встал в окне под ним. standing — место человека (provenance), id — слова.
+   * чтобы ответ встал в окне под ним. realm — граф кадра, karta — роль человека
+   * (from_karta_seq, иначе user_karta_seq), standing — место человека (provenance),
+   * id — слова; у send они обязательны, ответ исполняется по строке.
    */
-  humanWordReply: (standing: string, id: string) => string;
+  humanWordReply: (realm: string, karta: string, standing: string, id: string) => string;
+  /**
+   * Адреса для ответа нет (#9128): true — какой части не хватает (realm — граф кадра,
+   * karta — роль человека, standing — его место, id — слово). Сказать явно, чтобы агент
+   * не искал адрес.
+   */
+  noReplyAddress: (missing: {
+    realm: boolean;
+    karta: boolean;
+    standing: boolean;
+    id: boolean;
+  }) => string;
 }
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
@@ -51,8 +64,17 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     lifeCheckReply: () =>
       `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
     lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
-    humanWordReply: (standing, id) =>
-      `ответ: ${tool("channel")}(action="send", standing=${standing}, in_reply_to=${id}, text=…)`,
+    humanWordReply: (realm, karta, standing, id) =>
+      `ответ: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) =>
+      `адреса для ответа нет: ${[
+        m.realm && "графа",
+        m.karta && "роли человека",
+        m.standing && "места человека",
+        m.id && "id слова",
+      ]
+        .filter(Boolean)
+        .join(", ")}`,
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -68,8 +90,17 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     lifeCheckReply: () =>
       `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
     lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
-    humanWordReply: (standing, id) =>
-      `reply: ${tool("channel")}(action="send", standing=${standing}, in_reply_to=${id}, text=…)`,
+    humanWordReply: (realm, karta, standing, id) =>
+      `reply: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) =>
+      `no address to reply: missing ${[
+        m.realm && "the graph",
+        m.karta && "the person's role",
+        m.standing && "the person's seat",
+        m.id && "the word's id",
+      ]
+        .filter(Boolean)
+        .join(", ")}`,
   },
 };
 
