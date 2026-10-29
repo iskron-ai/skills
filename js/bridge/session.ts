@@ -24,7 +24,7 @@ import { tokenRequestsInFlight } from "./oauth/tokenrequest.ts";
 import { repeatLater } from "./orderack.ts";
 import { ordersSettled } from "./orderflight.ts";
 import { holdFromEnv } from "./resume.ts";
-import { closeRun } from "./runend.ts";
+import { closeRun, deathPending } from "./runend.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { closesSettled } from "./sessionclose.ts";
 import { sleep } from "./store.ts";
@@ -194,7 +194,8 @@ function openIn(io: SessionIO, origin: SessionOrigin | null, scope: Scope | null
     if (paused) await pauseSettled(); // a late re-arm of the pause turned the address — wait for its write
     // The upstream session ends with the bridge's (graph @nks/nks-dev, node #9174), bounded; a
     // session handed over still answers pauses and ends unreturned runs — the daemon closes it then.
-    if (!handover) await letGo(why);
+    // A death window still to run (daemon.ts, endDeadRun) closes it after the window instead.
+    if (!handover && !(origin && deathPending())) await letGo(why);
     await closesSettled();
     await flushStdout(io.output); // an answer half-written is an answer not given
     if (origin) {

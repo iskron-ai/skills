@@ -29,7 +29,7 @@ import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
-import { type Standing, state } from "./transport.ts";
+import { letGo, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { flushUsage, usagePlace } from "./usage.ts";
 
@@ -185,6 +185,20 @@ export async function endUnreturnedPause(bridgePid: number, waitMs: number): Pro
  * and keeps none.
  */
 export async function endDeadRun(waitMs: number): Promise<void> {
+  if (!deathPending()) return;
+  try {
+    await closeDeadRun(waitMs);
+  } finally {
+    // The window reads the board and revokes through this session, so the leave deferred
+    // its upstream close (session.ts): it ends only now (#9174).
+    await letGo("the run's death window ended");
+  }
+}
+
+/** A death window is pending: the session's upstream session must outlive the leave (session.ts). */
+export const deathPending = (): boolean => !!R.dead?.places.length;
+
+async function closeDeadRun(waitMs: number): Promise<void> {
   const dead = R.dead;
   R.dead = null;
   if (!dead?.places.length) return;
