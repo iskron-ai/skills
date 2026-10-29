@@ -2466,6 +2466,34 @@ test("a plugin reload while the root's first connect is in flight: its bridge is
   );
 });
 
+// Case №2264: a session deleted before the first `held` is the agent's end all the same — the
+// bridge is told `end`, and a seat its late connect answers goes at once, not after the window.
+test("a session deleted while the root's first connect is in flight: its bridge is told to end all the same", async () => {
+  const calls = join(SANDBOX, "del-inflight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("del-inflight", { FB_CALLS: calls, FB_CALL_DELAY_MS: 5_000 });
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    void rec.call("iskron_channel", { action: "connect" }, "s-dinf").catch(() => {});
+    await until(
+      () => callsIn(calls).some((c) => c.arguments?.action === "connect"),
+      "the connect sent",
+    );
+    const pid = pidOf(b.log);
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-dinf" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    const sent = callsIn(calls);
+    assert.ok(
+      sent.some((c) => c.name === "iskron/end" && c.pid === pid),
+      `the bridge was told to end:\n${JSON.stringify(sent)}`,
+    );
+    assert.ok(!/\[iskron\/warning\]/.test(rec.said()), `no warning:\n${rec.said()}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("an interrupted turn (Esc) leaves the seat alone: the bridge hears neither end nor away and lives", async () => {
   const { rec, calls, pid } = await heldRoot("esc-seat", "s-esc");
   try {

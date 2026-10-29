@@ -28,16 +28,18 @@ const unconfirmed = (got: Ended): string | null =>
   got?.ended && got.probably?.length ? got.probably.join(", ") : null;
 
 /**
- * The word to a root's bridge, then its stop; a child's bridge just stops. `end` goes to a
- * bridge with a seat; `away` to any — a first connect in flight has no seat here yet, and the
- * bridge itself knows whether a seat waits (case №677).
+ * The word to a root's bridge, then its stop; a child's bridge just stops. Both go to any
+ * root's bridge — a first connect in flight has no seat here yet, and the bridge itself knows
+ * whether a seat waits or answers late (case №677, №2264).
  */
 export async function putDown(slot: Slot, word: PutDown | null): Promise<void> {
-  if (word && !slot.child && (word === "away" || slot.holding || slot.key)) {
+  if (word && !slot.child) {
+    // Without a seat known here an unanswered `end` says nothing: there may be none to revoke.
+    const seated = slot.holding || !!slot.key;
     const got = await slot.bridge
       .request(method(word), {}, { timeoutMs: SAY_MS[word], service: true })
-      .catch((e: Error) => ({ ended: false, word: e.message }));
-    const left = word === "end" ? unrevoked(got) : null;
+      .catch((e: Error) => (seated ? { ended: false, word: e.message } : null));
+    const left = word === "end" && got ? unrevoked(got) : null;
     const maybe = word === "end" ? unconfirmed(got) : null;
     if (left) process.stderr.write(`[${PRODUCT}/warning] ${words(OPENCODE).endUnrevoked(left)}\n`);
     if (maybe)
