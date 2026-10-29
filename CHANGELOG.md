@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.25.0](https://github.com/iskron-ai/skills/compare/v7.24.0...v7.25.0) (2026-10-29)
+
+
+### Features
+
+* **skills:** writing перед любым iskron_update; рабочие деревья внутри репо, брошенные и кэши — уборкой; контракт iskronify 34 ([#593](https://github.com/iskron-ai/skills/issues/593)) ([080fbcc](https://github.com/iskron-ai/skills/commit/080fbcc4db4427f3d15fbaabfa99748d133c71a8))
+* **skills:** ролевые файлы — проекция на машине, модель из предпочтений человека; провенанс не в узле; эмодзи в имени; контракт iskronify 35 ([#594](https://github.com/iskron-ai/skills/issues/594)) ([9653a0a](https://github.com/iskron-ai/skills/commit/9653a0a5d73bf52268d298a799427882edb14a3a))
+
+
+### Bug Fixes
+
+* **bridge:** act_at in the seat's pulse from OpenCode and pi turn movement ([#591](https://github.com/iskron-ai/skills/issues/591)) ([53ab256](https://github.com/iskron-ai/skills/commit/53ab256fc67b9edd551ab91b60e08435b409ebaa))
+* **bridge:** строка ответа под прямым словом человека из окна ([#595](https://github.com/iskron-ai/skills/issues/595)) ([6f36bba](https://github.com/iskron-ai/skills/commit/6f36bba0ff7ea3ab43e6e4c4c1dcba97a12b200f))
+* **skills,bridge:** находки вычитки и ревью кандидата 7.25.0 — свои ролевые файлы по именам, полный send в строке ответа ([#596](https://github.com/iskron-ai/skills/issues/596)) ([1aad253](https://github.com/iskron-ai/skills/commit/1aad253515f24abe8790b1448a053b4b470c3bcc))
+
 ## [7.24.0](https://github.com/iskron-ai/skills/compare/v7.23.0...v7.24.0) (2026-10-28)
 
 
