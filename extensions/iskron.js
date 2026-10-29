@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.24.0";
+var VERSION = "7.25.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -100,7 +100,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
-    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`
+    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
+    humanWordReply: (realm, karta, standing, id) => `ответ: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `адреса для ответа нет: ${[
+      m.realm && "графа",
+      m.karta && "роли человека",
+      m.standing && "места человека",
+      m.id && "id слова"
+    ].filter(Boolean).join(", ")}`
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -114,7 +121,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
-    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`
+    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
+    humanWordReply: (realm, karta, standing, id) => `reply: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `no address to reply: missing ${[
+      m.realm && "the graph",
+      m.karta && "the person's role",
+      m.standing && "the person's seat",
+      m.id && "the word's id"
+    ].filter(Boolean).join(", ")}`
   }
 };
 var CASE_LINE = {
@@ -1277,6 +1291,19 @@ function tail(frame, withReply) {
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 var markFrame = (text) => `${FRAME_MARK} ${text}`;
+function humanWordReply(frame, origin2) {
+  if (origin2 !== "human") return "";
+  const f = frame;
+  const p = rec2(frame.provenance);
+  const karta = idOf2(p.from_karta_seq) || idOf2(p.user_karta_seq);
+  const missing = {
+    realm: !idOf2(f.realm),
+    karta: !karta,
+    standing: !idOf2(p.from_standing),
+    id: !idOf2(frame.id)
+  };
+  return Object.values(missing).every((x) => !x) ? T2().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame.id)) : T2().noReplyAddress(missing);
+}
 function frameToText(frame, raw) {
   if (!frame) return raw;
   const f = frame;
@@ -1300,6 +1327,8 @@ function frameToText(frame, raw) {
   }
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
   if (text) lines.push(text);
+  const reply = humanWordReply(frame, origin2);
+  if (reply) lines.push(reply);
   if (isLifeCheck(frame)) lines.push(T2().lifeCheckSeat(warnedSeat(frame)), T2().lifeCheckReply());
   return lines.join("\n");
 }
@@ -2098,6 +2127,62 @@ function findBridge() {
   return { path: null, tried };
 }
 
+// js/shared/pulseword.ts
+var RETRY_MS = 2e3;
+function wordLine(bridge) {
+  let word2 = {};
+  let owed = false;
+  let flying = false;
+  let dropped = false;
+  let retry;
+  const flush = () => {
+    if (dropped || flying || !owed) return;
+    const b = bridge();
+    if (!b) return;
+    clearTimeout(retry);
+    retry = void 0;
+    owed = false;
+    flying = true;
+    const done = (taken) => {
+      if (dropped) return;
+      flying = false;
+      if (taken || owed) return flush();
+      owed = true;
+      retry = setTimeout(() => {
+        retry = void 0;
+        flush();
+      }, RETRY_MS);
+      retry.unref?.();
+    };
+    b.request(method("pulse"), word2, { timeoutMs: 5e3 }).then(
+      () => done(true),
+      () => done(false)
+    );
+  };
+  return {
+    word: () => word2,
+    tell(change) {
+      if (dropped) return;
+      const next = { ...word2, ...change };
+      if (JSON.stringify(next) !== JSON.stringify(word2)) {
+        word2 = next;
+        owed = true;
+      }
+      flush();
+    },
+    again() {
+      if (dropped || !Object.keys(word2).length) return;
+      owed = true;
+      flush();
+    },
+    drop() {
+      dropped = true;
+      clearTimeout(retry);
+      retry = void 0;
+    }
+  };
+}
+
 // js/extension/pulse.ts
 function endOf(messages) {
   const last = [...messages ?? []].reverse().find((m) => m?.role === "assistant");
@@ -2105,43 +2190,33 @@ function endOf(messages) {
   if (last?.stopReason === "error") return "failed";
   return "idle";
 }
-var RETRY_MS = 2e3;
 var seatedBy = (ev) => ev?.kind === "held" || ev?.kind === "attached" || ev?.kind === "resumed" || ev?.frame?.type === "hello";
 function setupPulse(pi, live) {
-  let word2 = {};
-  let retry;
-  const unretry = () => {
-    clearTimeout(retry);
-    retry = void 0;
-  };
-  const tell = (change) => {
-    const now2 = { ...word2, ...change };
-    word2 = now2;
-    void live()?.request(method("pulse"), now2, { timeoutMs: 5e3 }).catch(() => {
-      if (word2 !== now2 || retry) return;
-      retry = setTimeout(() => {
-        retry = void 0;
-        if (word2 === now2) tell({});
-      }, RETRY_MS);
-      retry.unref?.();
-    });
-  };
+  let line = wordLine(live);
+  const tell = (change) => line.tell(change);
   const at = () => (/* @__PURE__ */ new Date()).toISOString();
+  const acted = async () => tell({ act_at: at() });
+  const output = async (event) => {
+    if (event?.message?.role === "assistant") tell({ act_at: at() });
+  };
   pi.on("agent_start", async () => tell({ state: "busy" }));
   pi.on("agent_end", async (event) => tell({ state: endOf(event.messages), turn_at: at() }));
   pi.on("message_start", async (event) => {
     const m = event.message;
     if (m?.role === "custom" && m.customType === LOGGERS.channel) tell({ read_at: at() });
   });
+  pi.on("tool_execution_start", acted);
+  pi.on("tool_execution_update", acted);
+  pi.on("tool_execution_end", acted);
+  pi.on("message_update", output);
+  pi.on("message_end", output);
   return {
     reset: () => {
-      unretry();
-      word2 = {};
+      line.drop();
+      line = wordLine(live);
     },
-    seated: () => {
-      if (Object.keys(word2).length) tell({});
-    },
-    stop: unretry
+    seated: () => line.again(),
+    stop: () => line.drop()
   };
 }
 

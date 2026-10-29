@@ -113,7 +113,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.24.0";
+var VERSION = "7.25.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -160,7 +160,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
-    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`
+    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
+    humanWordReply: (realm, karta, standing, id) => `ответ: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `адреса для ответа нет: ${[
+      m.realm && "графа",
+      m.karta && "роли человека",
+      m.standing && "места человека",
+      m.id && "id слова"
+    ].filter(Boolean).join(", ")}`
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -174,7 +181,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
-    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`
+    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
+    humanWordReply: (realm, karta, standing, id) => `reply: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `no address to reply: missing ${[
+      m.realm && "the graph",
+      m.karta && "the person's role",
+      m.standing && "the person's seat",
+      m.id && "the word's id"
+    ].filter(Boolean).join(", ")}`
   }
 };
 var CASE_LINE = {
@@ -1550,6 +1564,19 @@ function tail(frame, withReply) {
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
 var markFrame = (text2) => `${FRAME_MARK} ${text2}`;
+function humanWordReply(frame, origin2) {
+  if (origin2 !== "human") return "";
+  const f = frame;
+  const p = rec2(frame.provenance);
+  const karta = idOf2(p.from_karta_seq) || idOf2(p.user_karta_seq);
+  const missing = {
+    realm: !idOf2(f.realm),
+    karta: !karta,
+    standing: !idOf2(p.from_standing),
+    id: !idOf2(frame.id)
+  };
+  return Object.values(missing).every((x) => !x) ? T().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame.id)) : T().noReplyAddress(missing);
+}
 function frameToText(frame, raw) {
   if (!frame) return raw;
   const f = frame;
@@ -1573,6 +1600,8 @@ function frameToText(frame, raw) {
   }
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
   if (text2) lines.push(text2);
+  const reply = humanWordReply(frame, origin2);
+  if (reply) lines.push(reply);
   if (isLifeCheck(frame)) lines.push(T().lifeCheckSeat(warnedSeat(frame)), T().lifeCheckReply());
   return lines.join("\n");
 }
@@ -5903,6 +5932,62 @@ function createOnboardStart(ctx, child = () => false, halted = () => false) {
   };
 }
 
+// js/shared/pulseword.ts
+var RETRY_MS = 2e3;
+function wordLine(bridge) {
+  let word2 = {};
+  let owed = false;
+  let flying = false;
+  let dropped = false;
+  let retry;
+  const flush = () => {
+    if (dropped || flying || !owed) return;
+    const b = bridge();
+    if (!b) return;
+    clearTimeout(retry);
+    retry = void 0;
+    owed = false;
+    flying = true;
+    const done = (taken) => {
+      if (dropped) return;
+      flying = false;
+      if (taken || owed) return flush();
+      owed = true;
+      retry = setTimeout(() => {
+        retry = void 0;
+        flush();
+      }, RETRY_MS);
+      retry.unref?.();
+    };
+    b.request(method("pulse"), word2, { timeoutMs: 5e3 }).then(
+      () => done(true),
+      () => done(false)
+    );
+  };
+  return {
+    word: () => word2,
+    tell(change) {
+      if (dropped) return;
+      const next = { ...word2, ...change };
+      if (JSON.stringify(next) !== JSON.stringify(word2)) {
+        word2 = next;
+        owed = true;
+      }
+      flush();
+    },
+    again() {
+      if (dropped || !Object.keys(word2).length) return;
+      owed = true;
+      flush();
+    },
+    drop() {
+      dropped = true;
+      clearTimeout(retry);
+      retry = void 0;
+    }
+  };
+}
+
 // js/opencode/inbox.ts
 var TAKEN_MAX = 100;
 var CANCELLED_MAX = 100;
@@ -5950,55 +6035,52 @@ function createInboxBook(overflow) {
 }
 
 // js/opencode/pulse.ts
+var ACTS = /* @__PURE__ */ new Set([
+  "session.tool.input.started",
+  "session.tool.input.delta",
+  "session.tool.input.ended",
+  "session.tool.called",
+  "session.tool.progress",
+  "session.tool.success",
+  "session.tool.failed",
+  "session.text.started",
+  "session.text.delta",
+  "session.text.ended",
+  "session.reasoning.started",
+  "session.reasoning.delta",
+  "session.reasoning.ended",
+  "session.shell.started",
+  "session.shell.ended",
+  "session.step.ended",
+  "session.step.failed"
+]);
 var ENDS = /* @__PURE__ */ new Map([
   ["session.execution.succeeded", "idle"],
   ["session.execution.failed", "failed"],
   ["session.execution.interrupted", "interrupted"]
 ]);
-var RETRY_MS = 2e3;
 function createPulseFeed(opts) {
-  const words3 = /* @__PURE__ */ new Map();
+  const lines = /* @__PURE__ */ new Map();
   const inboxes = createInboxBook(opts.overflow);
-  const unsent = /* @__PURE__ */ new Set();
-  const retries = /* @__PURE__ */ new Map();
   let stopped = false;
   const tell = (session, change) => {
     if (stopped) return;
-    const was = words3.get(session) ?? {};
-    const now2 = { ...was, ...change };
-    if (JSON.stringify(now2) === JSON.stringify(was) && !unsent.has(session)) return;
-    words3.set(session, now2);
-    const bridge = opts.bridgeOf(session);
-    if (!bridge) return void unsent.add(session);
-    unsent.delete(session);
-    void bridge.request(method("pulse"), now2, { timeoutMs: 5e3 }).catch(() => {
-      if (stopped || words3.get(session) !== now2) return;
-      unsent.add(session);
-      if (retries.has(session)) return;
-      const t = setTimeout(() => {
-        retries.delete(session);
-        if (unsent.has(session)) tell(session, {});
-      }, RETRY_MS);
-      t.unref?.();
-      retries.set(session, t);
-    });
+    let line = lines.get(session);
+    if (!line) lines.set(session, line = wordLine(() => opts.bridgeOf(session)));
+    line.tell(change);
   };
   const at = () => (/* @__PURE__ */ new Date()).toISOString();
   const ended2 = (session, to) => {
-    const was = words3.get(session)?.state;
+    const was = lines.get(session)?.word().state;
     if (to !== "idle" || was === "busy") return tell(session, { state: to, turn_at: at() });
-    if (was === void 0) tell(session, { state: "idle" });
-    else if (unsent.has(session)) tell(session, {});
-  };
-  const unretry = (session) => {
-    clearTimeout(retries.get(session));
-    retries.delete(session);
+    tell(session, was === void 0 ? { state: "idle" } : {});
   };
   return {
     onEvent(ev) {
       const session = ev?.data?.sessionID;
       if (typeof session !== "string") return;
       const type = ev?.type;
+      if (ACTS.has(type)) return tell(session, { act_at: at() });
       const end = ENDS.get(type);
       if (end) return ended2(session, end);
       switch (type) {
@@ -6030,20 +6112,17 @@ function createPulseFeed(opts) {
       if (inbox && inboxes.prompted(session, inbox)) tell(session, { read_at: at() });
     },
     seated(session) {
-      if (!words3.has(session)) return;
-      unsent.add(session);
-      tell(session, {});
+      lines.get(session)?.again();
     },
     forget(session) {
-      words3.delete(session);
-      unsent.delete(session);
-      unretry(session);
+      lines.get(session)?.drop();
+      lines.delete(session);
       inboxes.forget(session);
     },
     stop() {
       stopped = true;
-      for (const session of [...retries.keys()]) unretry(session);
-      words3.clear();
+      for (const line of lines.values()) line.drop();
+      lines.clear();
       inboxes.clear();
     }
   };
