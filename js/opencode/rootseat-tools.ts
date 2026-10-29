@@ -45,6 +45,7 @@ export function createSeatLife(d: Doors) {
     }
   >();
   const epochs = new Map<string, number>();
+  let awaying: Promise<void> = Promise.resolve();
   const cancelled = (s: string) =>
     d.stopped() ||
     deleted.has(s) ||
@@ -187,7 +188,7 @@ export function createSeatLife(d: Doors) {
       void putDown(slot, word); // the bridge's shutdown releases the standing: key, socket, busy line
       drop(s, slot);
     },
-    async stopSlots(home: Home | null, spare: Slot | null) {
+    stopSlots(home: Home | null, spare: Slot | null) {
       const slots = [...d.slots.values()];
       const left = writeLostMarker(d.authDir(), slots, home);
       if (spare) {
@@ -198,9 +199,11 @@ export function createSeatLife(d: Doors) {
       for (const slot of going) slot.ownStop = true;
       d.slots.clear();
       // A reload is an announced absence: the seats wait for the next instance (#7493).
-      await Promise.all(going.map((slot) => putDown(slot, "away")));
+      awaying = Promise.all(going.map((slot) => putDown(slot, "away"))).then(() => {});
       return left;
     },
+    /** The `away` words of the last stopSlots, answered or timed out. */
+    awayed: () => awaying,
     half: {
       async seatRoot(s: string, realm: string, karta: string, isCancelled: () => boolean) {
         if (cancelled(s) || isCancelled()) return { cancelled: true } as const;

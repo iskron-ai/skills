@@ -469,9 +469,9 @@ export async function setupTools(
       clearInterval(reaper);
       keeper.stop();
       await children.pause(); // a reload is not a child's end (#6625): its seat and cases wait
-      const stopping = seats.stopSlots(home, spare);
+      const left = seats.stopSlots(home, spare);
       spare = null;
-      const left = await stopping;
+      await seats.awayed();
       return left; // to the directory's twin — wake this spelling's instance (twins.ts)
     },
   };
