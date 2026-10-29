@@ -202,6 +202,11 @@ try {
   const humanKarta = await mk("🧪 Человек прогона строки ответа", "Безымянное место человека: его слово идёт агенту, ответ встаёт под ним.", "svatantra", userId);
   const agentKarta = await mk("🧪 Агент прогона строки ответа", "Держит место, которому человек говорит как человек; отвечает по строке под словом.", "adhikarin");
   report.push(`INFO realm ${realm} · человек #${humanKarta} (svatantra, user ${userId}) · агент #${agentKarta} (adhikarin) · bridge ${bridgePath}`);
+  // The person's own unnamed seat on their role: the api signs an as_person word with its
+  // address only when it stands (#48: no such seat — the word goes without one, by design).
+  const hs = await api("POST", "/channels", { body: { karta: humanKarta } });
+  const humanSeatId = hs.body?.standing_id ?? hs.body?.id ?? null;
+  check(hs.status === 201 && !!humanSeatId, "the person's unnamed seat on their role", `${hs.status} ${JSON.stringify(hs.body).slice(0, 200)}`);
 
   // The agent stands; the real watchdog attaches — the frame's text comes out of it.
   const st = await A.call("iskron_stand", { realm, karta: `#${agentKarta}`, name: seatName, model: "stand-run-reply" });
@@ -329,6 +334,10 @@ try {
     const rv = await person.revoke(realm, sid);
     check(!rv.error, `cleanup: the seat ${seatName} taken off`, rv.text.slice(0, 200));
   } else report.push("SKIP cleanup seat: no id on the board (already gone?)");
+  if (humanSeatId) {
+    const rh = await person.revoke(realm, humanSeatId);
+    check(!rh.error, "cleanup: the person's unnamed seat taken off", rh.text.slice(0, 200));
+  }
   for (const k of [agentKarta, humanKarta]) {
     const look = await P.call("iskron_look", { realm, node_id: `#${k}` });
     const v = (look.text.match(/, v(\d+)\)/) || [])[1];
