@@ -9630,7 +9630,8 @@ for (const probe of [
       await rec.stop();
       await fake.stop();
       rmSync(repo, { recursive: true, force: true });
-      rmSync(auth, { recursive: true, force: true });
+      // The stopped bridge still logs its upstream session's close into the auth dir (#9174).
+      rmSync(auth, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       if (priorAuth === undefined) delete process.env.ISKRON_BRIDGE_AUTH_DIR;
       else process.env.ISKRON_BRIDGE_AUTH_DIR = priorAuth;
       if (priorDaemon === undefined) delete process.env.ISKRON_BRIDGE_DAEMON;
