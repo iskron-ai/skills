@@ -1285,10 +1285,10 @@ test("an eviction is loud in OpenCode: a prompt into the holder's session — th
     assert.equal(rec.prompts[0].sessionID, "s-evicted");
     assert.match(rec.prompts[0].text, /место отняли/);
     assert.match(rec.prompts[0].text, /Мост сам встаёт рядом на имя\.N со слухом/);
-    // Своё имя — сам по молчанию пробы, чужое — словом человека (#6976, #7194).
+    // Вытеснение — только словом человека: место мёртвого мост закрывает сам (#6976, #7194, #7493).
     assert.match(
       rec.prompts[0].text,
-      /Вытеснить ту сессию \(take=true\): своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\./,
+      /Вытеснить ту сессию \(take=true\): только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы\./,
     );
   } finally {
     await rec.stop();
@@ -2369,6 +2369,142 @@ test("a bridge stopped by the plugin itself is not a lost hearing, and the watch
       1,
       "the watch must not raise a bridge for a deleted session",
     );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #7493: the agent and its seat live one life. A deleted session is the agent's end — its
+// bridge is told `end` (it revokes its own seats) before it goes, without a word into the
+// session; a reload is an announced absence — `away`, the seat waits for the next instance;
+// an interrupted turn (Esc) is neither — the bridge hears nothing and lives on.
+async function heldRoot(name, session, ctxOpts = {}, env = {}) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const b = bridgeEnv(name, { FB_CALLS: calls, ...env });
+  const rec = await plugin(b.env, ctxOpts);
+  await serverTools(rec);
+  await rec.call("iskron_channel", { action: "connect" }, session);
+  const pid = pidOf(b.log);
+  appendFileSync(`${b.events}.${pid}`, event("held", { key: `${name}--931--nks-dev` }));
+  await until(() => rec.said().includes(`мост держит стояние ${name}--931--nks-dev`), "held");
+  return { rec, calls, pid };
+}
+
+test("a deleted session ends its agent: the bridge is told to end before it goes, and nothing is said into the session", async () => {
+  const { rec, calls, pid } = await heldRoot("del-end", "s-del");
+  try {
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-del" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    const sent = callsIn(calls);
+    assert.ok(
+      sent.some((c) => c.name === "iskron/end" && c.pid === pid),
+      `the bridge was told to end:\n${JSON.stringify(sent)}`,
+    );
+    assert.ok(!sent.some((c) => c.name === "iskron/away"), "a deletion is no absence");
+    assert.equal(rec.prompts.length, 0, "no word into the deleted session");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №677: a revoke the reply's prose reads as gone, without refusal data, is not confirmed —
+// the bridge says it apart from failed and the plugin warns: the hold record stays.
+test("a deleted session whose seat went only by the reply's prose: the plugin warns the revoke is not confirmed", async () => {
+  const { rec, pid } = await heldRoot("del-maybe", "s-maybe", {}, { FB_END_PROBABLY: "del-maybe" });
+  try {
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-maybe" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    await until(
+      () =>
+        /\[iskron\/warning\] Искрон: сессия удалена, снятие места не подтверждено \(del-maybe\)/.test(
+          rec.said(),
+        ),
+      `the warning:\n${rec.said()}`,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a plugin reload is an announced absence: the holding root's bridge is told away before it stops, not to end", async () => {
+  const { rec, calls, pid } = await heldRoot("reload-away", "s-rel", {
+    sessions: [{ id: "s-rel", location: { directory: "/work/rel" } }],
+  });
+  await rec.stop();
+  await until(() => !alive(pid), "the bridge to stop with the plugin");
+  const sent = callsIn(calls);
+  assert.ok(
+    sent.some((c) => c.name === "iskron/away" && c.pid === pid),
+    `the bridge was told away:\n${JSON.stringify(sent)}`,
+  );
+  assert.ok(!sent.some((c) => c.name === "iskron/end"), "a reload is not the agent's end");
+});
+
+// №677: before the first `held` the plugin knows no seat of the session — a reload then is
+// still an announced absence; the bridge itself keeps a seat its late connect answers.
+test("a plugin reload while the root's first connect is in flight: its bridge is told away all the same", async () => {
+  const calls = join(SANDBOX, "reload-inflight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("reload-inflight", { FB_CALLS: calls, FB_CALL_DELAY_MS: 5_000 });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-inf", location: { directory: "/work/inf" } }],
+  });
+  await serverTools(rec);
+  void rec.call("iskron_channel", { action: "connect" }, "s-inf").catch(() => {});
+  await until(
+    () => callsIn(calls).some((c) => c.arguments?.action === "connect"),
+    "the connect sent",
+  );
+  const pid = pidOf(b.log);
+  await rec.stop();
+  await until(() => !alive(pid), "the bridge to stop with the plugin");
+  const sent = callsIn(calls);
+  assert.ok(
+    sent.some((c) => c.name === "iskron/away" && c.pid === pid),
+    `the bridge was told away:\n${JSON.stringify(sent)}`,
+  );
+});
+
+// Case №2264: a session deleted before the first `held` is the agent's end all the same — the
+// bridge is told `end`, and a seat its late connect answers goes at once, not after the window.
+test("a session deleted while the root's first connect is in flight: its bridge is told to end all the same", async () => {
+  const calls = join(SANDBOX, "del-inflight.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("del-inflight", { FB_CALLS: calls, FB_CALL_DELAY_MS: 5_000 });
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    void rec.call("iskron_channel", { action: "connect" }, "s-dinf").catch(() => {});
+    await until(
+      () => callsIn(calls).some((c) => c.arguments?.action === "connect"),
+      "the connect sent",
+    );
+    const pid = pidOf(b.log);
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-dinf" } });
+    await until(() => !alive(pid), "the session's bridge to die");
+    const sent = callsIn(calls);
+    assert.ok(
+      sent.some((c) => c.name === "iskron/end" && c.pid === pid),
+      `the bridge was told to end:\n${JSON.stringify(sent)}`,
+    );
+    assert.ok(!/\[iskron\/warning\]/.test(rec.said()), `no warning:\n${rec.said()}`);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("an interrupted turn (Esc) leaves the seat alone: the bridge hears neither end nor away and lives", async () => {
+  const { rec, calls, pid } = await heldRoot("esc-seat", "s-esc");
+  try {
+    rec.emit({ type: "session.status", data: { sessionID: "s-esc", status: { type: "busy" } } });
+    rec.emit({ type: "session.execution.failed", data: { sessionID: "s-esc", error: "aborted" } });
+    rec.emit({ type: "session.status", data: { sessionID: "s-esc", status: { type: "idle" } } });
+    rec.emit({ type: "session.idle", data: { sessionID: "s-esc" } });
+    await delay(500);
+    assert.ok(alive(pid), "the session's bridge lives");
+    const sent = callsIn(calls).map((c) => c.name);
+    assert.ok(!sent.includes("iskron/end") && !sent.includes("iskron/away"), sent.join(", "));
   } finally {
     await rec.stop();
   }

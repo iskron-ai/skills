@@ -7,6 +7,8 @@
 //   sessions        Map id → engine session in its own scope (session.ts, shared/scope.ts)
 //   idle            the last session gone — the daemon leaves after the idle window;
 //                   a login awaiting a click holds it only up to a limit (daemon-idle.ts)
+//   death           a session ended without an announced absence (away.ts): its seats
+//                   no bridge took back close after the window (runend.ts endDeadRun)
 //   update          a newer home copy or thin bridge — places are handed to a successor
 //                   (resume.ts, suspend.ts, handoff.ts), then the daemon leaves; only the
 //                   daemon checks releases. Handover: no new requests (unacked ones are
@@ -49,7 +51,7 @@ import { orchestraServe } from "./orchestra.ts";
 import { listenOrchestraDoor } from "./orchestra-door.ts";
 import { pauseForHandover } from "./pauserecord.ts";
 import { extraPlaces } from "./places.ts";
-import { endUnreturnedPause } from "./runend.ts";
+import { endDeadRun, endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sessionSnapshot } from "./snapshot.ts";
 import { rotateJournal } from "./store.ts";
@@ -84,6 +86,8 @@ const SUCCESSOR_WAIT_MS = ms(envName("BRIDGE_DAEMON_SUCCESSOR_WAIT_MS"), 20_000)
 const GRACE_MS = ms(envName("BRIDGE_DAEMON_GRACE_MS"), 5_000);
 /** How long a leaving daemon waits for a live satellite bridge to return to the successor. */
 const RETURN_WAIT_MS = ms(envName("BRIDGE_DAEMON_RETURN_WAIT_MS"), 30_000);
+/** How long the seat of a session ended without an announced absence waits before it closes (#7493). */
+const DEATH_MS = ms(envName("BRIDGE_DEATH_MS"), 60_000);
 const JOURNAL_MAX = 256_000;
 
 /** Exit code: this grant's daemon is already alive — the spawner waits for it instead of going full. */
@@ -149,6 +153,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
   /** Scopes of sessions handed to the successor: a pause asked during handover is answered there. */
   const handed = new Map<string, Scope>();
   const answering = new Set<Promise<unknown>>();
+  /** Death windows of ended sessions (runend.ts endDeadRun): the daemon stays for them. */
+  const dying = new Set<Promise<void>>();
   let draining = false;
   let counter = 0;
   let lastNotice: string | null = null;
@@ -156,7 +162,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
 
   const idle = idleWatch(
     IDLE_MS,
-    () => draining || sessions.size > 0,
+    () => draining || sessions.size > 0 || dying.size > 0,
     () => {
       server?.close();
       process.exit(0);
@@ -316,6 +322,17 @@ export async function daemonMain(argv: string[]): Promise<void> {
             sessions.delete(id);
             engines.delete(id);
             log(`session ${id} ended: ${why}`);
+            if (opened?.scope) {
+              const death: Promise<void> = runIn(opened.scope, () => endDeadRun(DEATH_MS))
+                .catch((e: unknown) =>
+                  log(`session ${id}: the death window failed: ${errorMessage(e)}`),
+                )
+                .finally(() => {
+                  dying.delete(death);
+                  armIdle();
+                });
+              dying.add(death);
+            }
             armIdle();
           });
         },
@@ -383,11 +400,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
           return freshest?.url ? apiBase(freshest.url) : "";
         },
         token: bearer,
-        // The discovered half of the boundary (#8202, word [27] of №1260): realms of the
-        // places the machine's live sessions stand on, plus whatever hold records on disk
-        // are still live by age or departure. The record's spelling is kept as written —
-        // a short rN resolves downstream by the realm list the same api serves, and a dead
-        // record leaves by liveness, never by the form of its name.
+        // The discovered half of the boundary (#8202): realms of live sessions' places plus hold records
+        // live by age or departure, spelled as written (rN resolves downstream); a dead record leaves by liveness.
         realms: (): string[] => {
           const found = new Set<string>();
           const ofSession = (): string[] => {
@@ -399,9 +413,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
           for (const e of engines.values()) {
             for (const r of e.scope ? runIn(e.scope, ofSession) : ofSession()) if (r) found.add(r);
           }
-          // Liveness follows the record's own heartbeat — r.at, as readHoldRecord reads it
-          // (stoodAt names the standing act, which outlives its record's freshness); a
-          // record with no heartbeat at all is not live.
+          // Liveness is the record's heartbeat r.at, as readHoldRecord reads it (not stoodAt); none — not live.
           for (const r of holdRecordsWhere(() => true))
             if (
               r.realm &&

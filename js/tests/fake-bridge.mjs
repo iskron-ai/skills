@@ -53,6 +53,7 @@
 //   FB_PULSE_REFUSE file whose presence refuses the next iskron/pulse once (removed on it).
 //   FB_PULSE_HOLD file whose presence holds the answer to every iskron/pulse (logged on
 //                 arrival) until the file is removed: a request in flight.
+//   FB_CALL_DELAY_MS every tools/call is answered this much later (a call in flight).
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -352,7 +353,10 @@ process.stdin.on("data", (chunk) => {
       }
       const result = callResult(msg.params?.name, msg.params?.arguments ?? {});
       noteCase(msg.params?.name, msg.params?.arguments ?? {}, result);
-      ok(msg.id, result);
+      // FB_CALL_DELAY_MS: every tools/call is answered this much later — a call still in flight.
+      const callDelayMs = Number(process.env.FB_CALL_DELAY_MS || 0);
+      if (callDelayMs) setTimeout(() => ok(msg.id, result), callDelayMs);
+      else ok(msg.id, result);
     } else if (msg.method === "iskron/resume" || msg.method === "iskron/check") {
       // The bridge's own requests from the OpenCode plugin (js/bridge/resume.ts):
       // logged in the same shape as a tool call; FB_RESUME names a file whose
@@ -376,14 +380,15 @@ process.stdin.on("data", (chunk) => {
         /* no answer prepared — nothing to resume */
       }
       ok(msg.id, result);
-    } else if (msg.method === "iskron/suspend") {
-      // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625).
+    } else if (msg.method === "iskron/suspend" || msg.method === "iskron/away") {
+      // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625),
+      // and marks a root's absence before a reload or a move (js/bridge/away.ts, #7493).
       if (process.env.FB_CALLS)
         appendFileSync(
           process.env.FB_CALLS,
           JSON.stringify({ name: msg.method, arguments: msg.params, pid: process.pid }) + "\n",
         );
-      ok(msg.id, { suspended: true });
+      ok(msg.id, msg.method === "iskron/away" ? { away: true } : { suspended: true });
     } else if (msg.method === "iskron/halted") {
       // The plugin's stop of a stop order executed or refused (js/bridge/orderhalt.ts, #7519).
       if (process.env.FB_CALLS)
@@ -430,8 +435,9 @@ process.stdin.on("data", (chunk) => {
         );
       // FB_END_DELAY_MS — the answer comes this much later: a revoke with its retry, live ~2 s.
       // FB_END_REVOKED — seats the bridge revoked itself (comma-separated realm|karta|name; a bare
-      // name — as an older bridge answered).
+      // name — as an older bridge answered). FB_END_PROBABLY — seats gone only by the reply's prose.
       const failed = (process.env.FB_END_FAILED ?? "").split(",").filter(Boolean);
+      const probably = (process.env.FB_END_PROBABLY ?? "").split(",").filter(Boolean);
       const revoked = (process.env.FB_END_REVOKED ?? "")
         .split(",")
         .filter(Boolean)
@@ -440,7 +446,7 @@ process.stdin.on("data", (chunk) => {
           return name ? { realm, karta, name } : s;
         });
       setTimeout(
-        () => ok(msg.id, { ended: true, failed, revoked }),
+        () => ok(msg.id, { ended: true, failed, revoked, probably }),
         Number(process.env.FB_END_DELAY_MS || 0),
       );
     } else if (msg.method === "iskron/usage") {
