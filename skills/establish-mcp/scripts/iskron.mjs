@@ -104,7 +104,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.24.0";
+var VERSION = "7.25.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -178,7 +178,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
-    lifeCheckSeat: (name2) => `Предупреждено место: ${name2 || "место не названо платформой"}.`
+    lifeCheckSeat: (name2) => `Предупреждено место: ${name2 || "место не названо платформой"}.`,
+    humanWordReply: (realm, karta, standing, id) => `ответ: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `адреса для ответа нет: ${[
+      m.realm && "графа",
+      m.karta && "роли человека",
+      m.standing && "места человека",
+      m.id && "id слова"
+    ].filter(Boolean).join(", ")}`
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -192,7 +199,14 @@ var FRAME_TEXT = {
     inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
     caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
     lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
-    lifeCheckSeat: (name2) => `Seat warned: ${name2 || "the platform did not name the seat"}.`
+    lifeCheckSeat: (name2) => `Seat warned: ${name2 || "the platform did not name the seat"}.`,
+    humanWordReply: (realm, karta, standing, id) => `reply: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `no address to reply: missing ${[
+      m.realm && "the graph",
+      m.karta && "the person's role",
+      m.standing && "the person's seat",
+      m.id && "the word's id"
+    ].filter(Boolean).join(", ")}`
   }
 };
 var CASE_LINE = {
@@ -2391,7 +2405,7 @@ function safePulse(v) {
   if (typeof raw.state !== "string") return void 0;
   const out7 = { state: raw.state };
   if (typeof raw.pending === "number" && Number.isFinite(raw.pending)) out7.pending = raw.pending;
-  for (const k of ["turn_at", "read_at", "cycle_at", "sent_at"])
+  for (const k of ["turn_at", "read_at", "act_at", "cycle_at", "sent_at"])
     if (typeof raw[k] === "string") out7[k] = raw[k];
   return out7;
 }
@@ -6062,6 +6076,19 @@ function tail(frame2, withReply) {
     parts.push(W().bodyRead(need(frame2.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
+function humanWordReply(frame2, origin2) {
+  if (origin2 !== "human") return "";
+  const f = frame2;
+  const p = rec2(frame2.provenance);
+  const karta = idOf2(p.from_karta_seq) || idOf2(p.user_karta_seq);
+  const missing = {
+    realm: !idOf2(f.realm),
+    karta: !karta,
+    standing: !idOf2(p.from_standing),
+    id: !idOf2(frame2.id)
+  };
+  return Object.values(missing).every((x) => !x) ? T2().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame2.id)) : T2().noReplyAddress(missing);
+}
 function frameToText(frame2, raw) {
   if (!frame2) return raw;
   const f = frame2;
@@ -6085,6 +6112,8 @@ function frameToText(frame2, raw) {
   }
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
   if (text2) lines.push(text2);
+  const reply2 = humanWordReply(frame2, origin2);
+  if (reply2) lines.push(reply2);
   if (isLifeCheck(frame2)) lines.push(T2().lifeCheckSeat(warnedSeat(frame2)), T2().lifeCheckReply());
   return lines.join("\n");
 }
@@ -13664,6 +13693,7 @@ var lastAgentWork = () => W3.at;
 // js/bridge/pulse.ts
 var GAP_MS2 = Number(process.env[envName("PULSE_GAP_MS")]) || 3e4;
 var STATES = /* @__PURE__ */ new Set(["idle", "busy", "interrupted", "failed", "unknown"]);
+var MOMENTS = ["turn_at", "read_at", "act_at"];
 var P4 = scoped(() => ({
   /** The harness's word: state and the moments it knows. */
   said: {},
@@ -13675,7 +13705,7 @@ var P4 = scoped(() => ({
 }));
 var iso = (v) => typeof v === "string" && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : void 0;
 function current() {
-  const { state: state2, turn_at, read_at } = P4.said;
+  const { state: state2, turn_at, read_at, act_at } = P4.said;
   const work = lastAgentWork();
   return {
     type: "pulse",
@@ -13683,6 +13713,7 @@ function current() {
     pending: pendingFrames(),
     ...turn_at ? { turn_at } : {},
     ...read_at ? { read_at } : {},
+    ...act_at ? { act_at } : {},
     ...work ? { cycle_at: new Date(work).toISOString() } : {}
   };
 }
@@ -13752,7 +13783,7 @@ function runPulse(msg) {
   const p = msg.params ?? {};
   const said2 = { ...P4.said };
   if (typeof p.state === "string" && STATES.has(p.state)) said2.state = p.state;
-  for (const k of ["turn_at", "read_at"]) {
+  for (const k of MOMENTS) {
     const v = iso(p[k]);
     if (v && (!said2[k] || v > said2[k])) said2[k] = v;
   }
