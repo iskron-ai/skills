@@ -5377,16 +5377,18 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
   await waitFor(() => wd.out.includes("стопкой interrupt"), "the frame after the human word", 5000);
   const lines = wd.lines;
   const first = lines.findIndex((l) => l.s.startsWith("человек @dmitry"));
-  // The word ends with its text (no answer line, #6574): the pause comes after that.
   const last = lines.findIndex((l, i) => i > first && l.s.includes("ХВОСТ-ЦЕЛ."));
+  // The word ends with its reply line right under the text (#9128): the pause comes after it.
+  const reply = lines.findIndex((l, i) => i > last && l.s.startsWith("ответ: iskron_channel"));
   assert.ok(first > 0 && last >= first, `the human word printed:\n${wd.out}`);
+  assert.ok(reply === last + 1, `the reply line right under the word (#9128):\n${wd.out}`);
   assert.ok(wd.out.includes(HUMAN_TEXT), `the human word's text whole:\n${wd.out}`);
   assert.ok(
     lines.slice(0, first).some((l) => l.s.includes("записей 6, тебе 0")),
     `the batch went first:\n${wd.out}`,
   );
   const before = lines[first].at - lines[first - 1].at;
-  const after = lines[last + 1].at - lines[last].at;
+  const after = lines[reply + 1].at - lines[reply].at;
   assert.ok(before >= 250, `a pause before the human word: ${before} ms\n${wd.out}`);
   assert.ok(after >= 250, `a pause after the human word: ${after} ms\n${wd.out}`);
   // A human's word in a case with stack defer does not wait for the batch window.

@@ -29,6 +29,11 @@ export interface FrameTextWords {
   lifeCheckReply: () => string;
   /** Какое место побудка предупредила; пусто — платформа места не назвала. */
   lifeCheckSeat: (name: string) => string;
+  /**
+   * Строка ответа под прямым словом человека из окна (#9128): чем ответить на слово,
+   * чтобы ответ встал в окне под ним. standing — место человека (provenance), id — слова.
+   */
+  humanWordReply: (standing: string, id: string) => string;
 }
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
@@ -46,6 +51,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     lifeCheckReply: () =>
       `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
     lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
+    humanWordReply: (standing, id) =>
+      `ответ: ${tool("channel")}(action="send", standing=${standing}, in_reply_to=${id}, text=…)`,
   },
   en: {
     myCases: () => `${tool("case")}(action="mine"), then read each`,
@@ -61,6 +68,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
     lifeCheckReply: () =>
       `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
     lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
+    humanWordReply: (standing, id) =>
+      `reply: ${tool("channel")}(action="send", standing=${standing}, in_reply_to=${id}, text=…)`,
   },
 };
 
