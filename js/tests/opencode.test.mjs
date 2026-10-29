@@ -4728,7 +4728,11 @@ test("a lead child's failed turn is told to its parent once per run of failures,
     assert.equal(word.sessionID, "root");
     assert.match(word.text, /OAuth session expired/);
     assert.match(word.text, /standing="host\.repo\.opus-5\.sub-1"/);
-    assert.equal(word.resume, true, "the failure wakes the parent: it takes over now, not on its next turn");
+    assert.equal(
+      word.resume,
+      true,
+      "the failure wakes the parent: it takes over now, not on its next turn",
+    );
     fail();
     await delay(300);
     assert.equal(failed().length, 1, "a failure in a row is not repeated");
