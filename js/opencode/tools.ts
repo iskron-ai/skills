@@ -39,6 +39,7 @@ import { takeLostMarker } from "./marker.ts";
 import { createModels } from "./models.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
+import { type PutDown } from "./putdown.ts";
 import { revokeAsLauncher } from "./release.ts";
 import type { HeldSeat } from "./rootseat-by.ts";
 import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
@@ -422,11 +423,11 @@ export async function setupTools(
       inSlot(slot, async () => (await callThrough(slot, name, args, sessionID, true)).content),
   });
 
-  function forget(session: string): void {
+  function forget(session: string, word: PutDown | null = null): void {
     runEnds.clear(session); // a deleted session takes its run-end mark along
     launcher.forget(session);
     keeper.forget(session);
-    seats.forget(session);
+    seats.forget(session, word);
   }
 
   // No cached list: the first prompt would get no graph tools without the server's (firstlist.ts).
@@ -438,7 +439,7 @@ export async function setupTools(
     bridgeOf: (s) => [slots.get(s)].find((x) => x?.holding)?.bridge ?? null,
     forget(s) {
       seats.cancel(s);
-      forget(s);
+      forget(s, "end"); // a deleted session is the agent's end: its seat closes (#7493)
       runEnds.clear(s, true); // no session — no final mark either
     },
     onEvent: (ev) => [models, leads].forEach((x) => x.onEvent(ev)),
@@ -468,8 +469,9 @@ export async function setupTools(
       clearInterval(reaper);
       keeper.stop();
       await children.pause(); // a reload is not a child's end (#6625): its seat and cases wait
-      const left = seats.stopSlots(home, spare);
+      const stopping = seats.stopSlots(home, spare);
       spare = null;
+      const left = await stopping;
       return left; // to the directory's twin — wake this spelling's instance (twins.ts)
     },
   };

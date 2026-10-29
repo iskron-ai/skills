@@ -26,8 +26,8 @@ export interface MoveDoors {
   say: Say;
   slots: Map<string, Slot>;
   rootOf(session: string): Promise<string>;
-  /** The session's bridge goes down with its socket's standing; the root's holding record stays. */
-  forget(session: string): void;
+  /** The session's bridge goes down with its socket's standing; `away` keeps the root's holding record (#7493). */
+  forget(session: string, word: "away"): void;
   /** The root's slot: a new one returns the seat itself (keep.ts). */
   slotFor(session: string, touch: boolean): Promise<Slot>;
   /** This location's marker — take it and return its seats (adopt.ts). */
@@ -64,7 +64,8 @@ export function createMoves(ctx: Context) {
       // Children do not move with the parent (OpenCode, observed): a satellite child keeps its own
       // bridge, seat and errand here, in its own folder's instance (#8991); only the root's goes.
       left.add(s);
-      return d.forget(s);
+      // The root's seat waits for its session in the new folder: an announced absence, not a death (#7493).
+      return d.forget(s, "away");
     }
     left.delete(s);
     void d.rootOf(s).then((root) => (root === s ? d.slotFor(s, false) : null));

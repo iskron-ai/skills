@@ -102,9 +102,9 @@ const INIT = {
   clientInfo: { name: "standing-probe", version: "0" },
 };
 const CONNECT = { realm: "nks-dev", action: "connect", karta: 931, name: "proba" };
-// The take rule of a taken seat (#6976, #7194): own name after a silent probe, another's on the human's word.
+// The take rule of a taken seat (#6976, #7194, #7493, №677): only on the human's word; the board is no evidence of life.
 const TAKE_RULE_RU =
-  /iskron_stand с take=true \(своё имя \(та же роль, та же учётка\) — сам, когда держатель молчит 5 минут на пробу словом \(iskron_channel send\); чужое \(другая роль или учётка\) — только словом человека\)/;
+  /iskron_stand с take=true \(только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы\)/;
 
 // --- a harness that also keeps the bridge's notifications ------------------
 function startBridge(serverUrl, authDir, extraEnv = {}) {
