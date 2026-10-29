@@ -55,7 +55,7 @@ import { sessionSnapshot } from "./snapshot.ts";
 import { rotateJournal } from "./store.ts";
 import { log, setProcessLog } from "./streams.ts";
 import { localSuspend, pauseSettled } from "./suspend.ts";
-import { bearer, state } from "./transport.ts";
+import { bearer, letGo, state } from "./transport.ts";
 import {
   pendNotice,
   startFreshnessWatch,
@@ -69,6 +69,9 @@ export const ms = (name: string, dflt: number): number => {
   const v = Number(process.env[name]);
   return process.env[name]?.trim() && Number.isFinite(v) && v >= 0 ? v : dflt;
 };
+/** Sessions kept through a handover close upstream once nothing is left for them (graph @nks/nks-dev, node #9174). */
+const closeKept = (scopes: Iterable<Scope>, why: string): Promise<unknown> =>
+  Promise.allSettled([...scopes].map((scope) => runIn(scope, () => letGo(why))));
 /** The stamp of a log line (streams.ts): `[<bridge> <time>] `. */
 const LOG_MARK = new RegExp(`\\[${escapeRe(BRIDGE_NAME)} [^\\]]*\\] `);
 /** How long the daemon lives after the last session leaves. */
@@ -194,6 +197,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
     await Promise.allSettled(
       paused.map(([scope, pid]) => runIn(scope, () => endUnreturnedPause(pid, RETURN_WAIT_MS))),
     );
+    await closeKept(handed.values(), `daemon handover: ${why}`);
     log("handed over — leaving");
     setTimeout(() => process.exit(0), 300);
   };
@@ -442,16 +446,20 @@ export async function daemonMain(argv: string[]): Promise<void> {
     // A session whose bridge is alive is a holder change, not a leave; a dead
     // bridge's seat is released (graph @nks/nks-dev, node #6485). A live bridge (attached or
     // in the reattach window) raises a new daemon and returns the seat by its hold record.
+    const kept: Scope[] = [];
     for (const id of sessions.keys()) {
       if (!attached.has(id) && !ownPidAlive(bridgePids.get(id))) continue;
       const scope = engines.get(id)?.scope;
-      if (scope) runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
+      if (!scope) continue;
+      runIn(scope, () => beginSessionHandover(`daemon ${sig}`));
+      kept.push(scope);
     }
     void Promise.allSettled([...sessions.values()].map((s) => s.end(sig)))
       .then(() => {
         for (const so of sockets) so.destroy();
         return handoffsSettled();
       })
+      .then(() => closeKept(kept, `daemon ${sig}`))
       .then(() => process.exit(0));
   };
   process.on("SIGTERM", () => stop("SIGTERM"));

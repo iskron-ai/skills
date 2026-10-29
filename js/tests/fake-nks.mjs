@@ -151,6 +151,10 @@ export async function startFakeNks(opts = {}) {
     listChangedOn: null,
     listChangedSent: [], // метод каждого запроса, в чьём ответе ушло уведомление
     initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
+    // Закрытие сессии клиентом (спека MCP, DELETE с её id; #9174): каждый DELETE как пришёл.
+    deletes: [],
+    deleteStatus: null, // ответ на DELETE этим кодом, сессия не закрывается
+    deleteHangMs: 0, // DELETE держится открытым столько — ответ позже срока клиента
     // faults the test switches on through /control
     refreshStatus: null, // e.g. 503 (transient) or 400 (definitive)
     refreshError: null,
@@ -659,6 +663,8 @@ export async function startFakeNks(opts = {}) {
         "refreshMessage",
         "mcpStatus",
         "mcpHangMs",
+        "deleteStatus",
+        "deleteHangMs",
         "revokeReplyDelayMs",
         "revokeRefuseNext",
         "revokeGone", // 404 | 410: revoke of a seat not there — the rule of api 0.124.0 (#7599)
@@ -918,6 +924,25 @@ export async function startFakeNks(opts = {}) {
         );
       }
       return json(res, 400, { error: "unsupported_grant_type" });
+    }
+
+    if (p === "/mcp" && req.method === "DELETE") {
+      const sid = req.headers["mcp-session-id"] ?? null;
+      const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+      st.deletes.push({ sid, bearer, protocol: req.headers["mcp-protocol-version"] ?? null });
+      if (st.deleteHangMs) await new Promise((r) => setTimeout(r, st.deleteHangMs));
+      if (st.deleteStatus) {
+        res.writeHead(st.deleteStatus);
+        return res.end("forced fault");
+      }
+      if (!sid || !st.sessions.has(sid)) {
+        res.writeHead(404);
+        return res.end("unknown session");
+      }
+      st.sessions.delete(sid);
+      st.dead.add(sid);
+      res.writeHead(204);
+      return res.end();
     }
 
     if (p === "/mcp" && req.method === "POST") {

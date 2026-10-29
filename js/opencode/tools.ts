@@ -206,7 +206,6 @@ export async function setupTools(
   async function slotFor(sessionID: string, touch = true): Promise<Slot> {
     seats.guard(sessionID);
     const root = await rootOf(sessionID);
-    mv.guard(root, sessionID); // the root moved away — a child does not raise its bridge here
     // A child that stood as its own satellite goes by its own bridge (#5154); the root's is read-only to it (#6550 item 2).
     if (root !== sessionID && !slots.has(sessionID)) {
       adopt.now(); // a previous instance's marker laid after our load (adopt.ts)
@@ -220,6 +219,8 @@ export async function setupTools(
       if (touch) live.lastCall = Date.now();
       return live;
     }
+    // The root moved away — a child without its own bridge does not raise the root's here (#8991).
+    mv.guard(root, sessionID);
     // A child moved to another directory (#6695): decided on every call, not by slot.
     const far = root !== sessionID && !slots.get(root)?.place ? await mv.farRoot(root) : null;
     seats.guard(sessionID);
@@ -451,7 +452,7 @@ export async function setupTools(
     // A satellite child moved alone goes as its own satellite to the new folder (handoff.ts, #6695).
     moved: (s, to) =>
       handoff(s, to, home) ||
-      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow, away: leads.away }, s, to),
+      mv.moved({ say, slots, rootOf, forget, slotFor, adopt: adoptNow }, s, to),
     children: () =>
       [...slots.values()].flatMap((x) => (x.child && x.holding && x.session ? [x.session] : [])),
     halt(child) {
