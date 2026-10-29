@@ -5,3 +5,5 @@ node_modules/
 
 # worktrees суб-агентов (isolation: worktree) — никогда не в индекс
 .claude/worktrees/
+# рабочие деревья веток — внутри репо, никогда не в индекс
+.worktrees/

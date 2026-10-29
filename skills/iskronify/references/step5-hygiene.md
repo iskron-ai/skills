@@ -2,7 +2,7 @@
 
 Шаг процедуры скилла **iskronify**: исполняется в своём месте, после Шага 4.
 
-- Закоммить `.claude/settings.json`, внеси в `.gitignore` `.claude/settings.local.json`; широкий игнор `.claude/` — добавь `!.claude/settings.json`. Проверь `git check-ignore -v .claude/settings.json .claude/settings.local.json`.
+- Закоммить `.claude/settings.json`, внеси в `.gitignore` `.claude/settings.local.json` и `.worktrees/` (рабочие деревья веток); широкий игнор `.claude/` — добавь `!.claude/settings.json`. Проверь `git check-ignore -v .claude/settings.json .claude/settings.local.json .worktrees/x`.
 - **Трекаемые secret/env**: `git ls-files '.env*' '*secret*' '*local*'`; трекается реальный (не `.example`) — в «Конвенции кода»: локальные правки не стейджить (`git update-index --skip-worktree <file>`), никогда `git add -A` / `commit -a`.
 - Директория проектной памяти (`~/.claude/projects/<encoded-path>/memory/`): **эвакуируй, затем заморозь**. Решения и ограничения → граф; ритуалы → AGENTS.md; ловушки → дом по «Раскладке»; состояние ветки → git и PR; серверы и датированные долги → граф проекта; собственное пользователя → его личный граф (**minding**); предпочтения — по Шагу 1. Затем `MEMORY.md` — однострочный стаб-запрет («состояние живёт в репо или графе — см. AGENTS.md, раздел <заголовок раздела о персистентности, как он стоит в файле>»), memory-guard блокирует дальше. Стаб поверх непрочитанного уничтожает то, что должен был переселить.
 - **Форжа и CLI — выведи, не предполагай GitHub**: `git remote -v` → `gh` (GitHub), `fj` (Forgejo/Codeberg), `glab` (GitLab), `tea` (Gitea); проверь установку и вход, назови в «Git-воркфлоу» с командой наблюдения. Неопознанный хост — спроси.
