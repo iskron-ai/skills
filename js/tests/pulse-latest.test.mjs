@@ -127,6 +127,44 @@ test("latest accepted RPC reaches the next mux tact, with only one frame per 30 
   for (let i = 1; i < ticks().length; i++) assert.equal(ticks()[i].at - ticks()[i - 1].at, 30_000);
 });
 
+test("act_at is the session's own and monotonic: one tact carries each seat's clock, no new pacing", (t) => {
+  const advance = setup(t);
+  const a = seat(t, "ws://act-at.test/api/channel/ws/a");
+  const b = seat(t, "ws://act-at.test/api/channel/ws/b");
+  const sock = Socket.all[0];
+  sock.open();
+  hello(sock, "a");
+  hello(sock, "b");
+  advance(0);
+  const ticks = () => sock.frames.filter((f) => f.type === "tick");
+  const entry = (id) =>
+    ticks()
+      .at(-1)
+      .entries.find((e) => e.channel_id === id)?.pulse;
+  const before = ticks().length;
+  advance(1_000);
+  const act = new Date().toISOString();
+  assert.equal(a({ state: "busy", act_at: act }).act_at, act);
+  assert.equal(
+    b({ state: "busy" }).act_at,
+    undefined,
+    "another session's act_at is not this one's",
+  );
+  for (let i = 1; i <= 5; i++) {
+    advance(1_000);
+    a({ act_at: new Date().toISOString() });
+  }
+  const latest = new Date().toISOString();
+  assert.equal(a({ act_at: act }).act_at, latest, "an older act_at does not take it back");
+  advance(29_999 - 6_000);
+  assert.equal(ticks().length, before, "act_at moves add no frame before the tact");
+  advance(1);
+  assert.equal(ticks().length, before + 1);
+  assert.equal(entry("a").act_at, latest);
+  assert.equal(entry("b").act_at, undefined);
+  assert.equal(a.sent().act_at, latest, "status keeps the act_at it sent");
+});
+
 test("404 fallback keeps the per-socket 30-second pulse pacing", async (t) => {
   const advance = setup(t);
   t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 404 }));

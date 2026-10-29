@@ -2068,6 +2068,140 @@ test("an idle the bridge refused reaches it after all: the seat is not left busy
   }
 });
 
+// act_at (#7529): the last moment the session's own turn showed movement. Event forms follow the
+// installed @opencode/schema dist/event-manifest.d.ts (@opencode/plugin 2.0.4, surface node #5048):
+// each carries data.sessionID; *.delta and tool.progress are ephemeral, the rest durable.
+const ACT_EVENTS = [
+  ["session.tool.input.started", { assistantMessageID: "a-1", id: "t-1", name: "bash" }],
+  ["session.tool.input.delta", { assistantMessageID: "a-1", id: "t-1", delta: "{" }],
+  ["session.tool.input.ended", { assistantMessageID: "a-1", id: "t-1", text: "{}" }],
+  ["session.tool.called", { assistantMessageID: "a-1", id: "t-1", input: {}, executed: false }],
+  ["session.tool.progress", { assistantMessageID: "a-1", id: "t-1", metadata: {} }],
+  ["session.tool.success", { assistantMessageID: "a-1", id: "t-1", content: [], executed: true }],
+  ["session.tool.failed", { assistantMessageID: "a-1", id: "t-2", error: { type: "x" } }],
+  ["session.text.started", { assistantMessageID: "a-1", ordinal: 0 }],
+  ["session.text.delta", { assistantMessageID: "a-1", ordinal: 0, delta: "сл" }],
+  ["session.text.ended", { assistantMessageID: "a-1", ordinal: 0, text: "слово" }],
+  ["session.reasoning.started", { assistantMessageID: "a-1", ordinal: 1 }],
+  ["session.reasoning.delta", { assistantMessageID: "a-1", ordinal: 1, delta: "м" }],
+  ["session.reasoning.ended", { assistantMessageID: "a-1", ordinal: 1, text: "мысль" }],
+  ["session.shell.started", { shell: { id: "sh-1", command: "ls", status: "running" } }],
+  ["session.shell.ended", { shell: { id: "sh-1", command: "ls", status: "exited" } }],
+  ["session.step.ended", { assistantMessageID: "a-1", finish: "stop" }],
+  ["session.step.failed", { assistantMessageID: "a-1", error: { type: "x" } }],
+];
+
+async function heldPulse(name, extra = {}) {
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const b = bridgeEnv(name, { FB_CALLS: calls, ...extra });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "s-act", location: { directory: "/work/p" } },
+      { id: "s-other", location: { directory: "/work/p" } },
+    ],
+  });
+  await serverTools(rec);
+  await rec.call("iskron_channel", { action: "connect" }, "s-act");
+  appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: `${name}--931--nks-dev` }));
+  await until(() => new RegExp(`мост держит стояние ${name}--931`).test(rec.said()), "held");
+  const emit = (type, data = {}, sessionID = "s-act") =>
+    rec.emit({ type, data: { sessionID, ...data } });
+  return { rec, calls, emit, pulses: () => pulsesIn(calls) };
+}
+
+test("act_at moves with the session's own tool, text, reasoning, shell and step events — deltas too", async () => {
+  const { rec, emit, pulses } = await heldPulse("act-moves");
+  try {
+    emit("session.status", { status: { type: "busy" } });
+    await until(() => pulses().some((p) => p.state === "busy"), "the busy word");
+    let last = "";
+    for (const [type, data] of ACT_EVENTS) {
+      await delay(3);
+      const before = new Date().toISOString();
+      emit(type, data);
+      await until(() => (pulses().at(-1)?.act_at ?? "") > last, `${type} moves act_at`);
+      last = pulses().at(-1).act_at;
+      assert.ok(last >= before, `${type}: act_at ${last} at the event, not before ${before}`);
+    }
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("act_at stays absent on state, inbox, step aggregate and another session's events", async () => {
+  const { rec, emit, pulses } = await heldPulse("act-still");
+  try {
+    emit("session.inbox.enqueued", { inboxID: "msg-1", item: { type: "user" } });
+    emit("session.execution.started");
+    emit("session.status", { status: { type: "busy" } });
+    emit("session.inbox.delivered", { inboxID: "msg-1" });
+    emit("session.inbox.cancelled", { inboxID: "msg-2" });
+    emit("session.step.started", { assistantMessageID: "a-1", agent: "build" });
+    emit("session.step.streamed", { assistantMessageID: "a-1" });
+    // Another session — a sibling, a child without a seat or the keepalive helper — is not this turn.
+    for (const [type, data] of ACT_EVENTS) emit(type, data, "s-other");
+    emit("session.execution.succeeded");
+    await until(() => pulses().at(-1)?.state === "idle", "the idle word");
+    await delay(200);
+    assert.ok(
+      pulses().every((p) => !("act_at" in p)),
+      `no act_at without own movement: ${JSON.stringify(pulses())}`,
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("one pulse request in flight: a stream behind it folds into one last word with the turn's end", async () => {
+  const hold = join(SANDBOX, "act-fold.hold");
+  const { rec, emit, pulses } = await heldPulse("act-fold", { FB_PULSE_HOLD: hold });
+  try {
+    writeFileSync(hold, "");
+    emit("session.execution.started");
+    await until(() => pulses().length === 1, "the busy word in flight");
+    for (let i = 0; i < 30; i++) emit("session.text.delta", { ordinal: 0, delta: `${i}` });
+    const end = Date.now();
+    emit("session.execution.succeeded");
+    await delay(300);
+    assert.equal(pulses().length, 1, "nothing more goes while one is in flight");
+    rmSync(hold, { force: true });
+    await until(() => pulses().length === 2, "the folded word after the answer");
+    await delay(300);
+    assert.equal(pulses().length, 2, `one last word, not the stream: ${JSON.stringify(pulses())}`);
+    const last = pulses().at(-1);
+    assert.equal(last.state, "idle", "the turn's end is not lost behind the stream");
+    assert.ok(Date.parse(last.turn_at) >= end - 5, "turn_at of the end");
+    assert.ok(last.act_at, "act_at of the stream");
+  } finally {
+    rmSync(hold, { force: true });
+    await rec.stop();
+  }
+});
+
+test("a deleted session's late pulse answer sends nothing more", async () => {
+  const hold = join(SANDBOX, "act-forget.hold");
+  const { rec, emit, pulses } = await heldPulse("act-forget", { FB_PULSE_HOLD: hold });
+  try {
+    writeFileSync(hold, "");
+    emit("session.execution.started");
+    await until(() => pulses().length === 1, "the busy word in flight");
+    emit("session.text.delta", { ordinal: 0, delta: "x" });
+    rec.emit({ type: "session.deleted", data: { sessionID: "s-act", info: { id: "s-act" } } });
+    await delay(100);
+    rmSync(hold, { force: true });
+    await delay(400);
+    assert.equal(
+      pulses().length,
+      1,
+      `the forgotten word stays unsent: ${JSON.stringify(pulses())}`,
+    );
+  } finally {
+    rmSync(hold, { force: true });
+    await rec.stop();
+  }
+});
+
 // An inbox item OpenCode cancelled is waited for no more: cancelled ones do not pile up into an
 // overflow, and their later taking is not read.
 test("inbox items cancelled by OpenCode are not awaited: no overflow, no read", async () => {

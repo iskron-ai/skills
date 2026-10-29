@@ -39,11 +39,12 @@ test("status prints the seat's last sent pulse", async () => {
     await rpc(link, "initialize", init, 1);
     const stand = { realm: "nks-dev", karta: 931, name: "pulse-place" };
     await rpc(link, "tools/call", { name: "iskron_stand", arguments: stand }, 2);
-    await rpc(link, "iskron/pulse", { state: "busy" }, 3);
-    for (let i = 0; i < 100 && fake.state.pulses.at(-1)?.frame.state !== "busy"; i++)
-      await sleep(25);
+    const act = new Date().toISOString();
+    await rpc(link, "iskron/pulse", { state: "busy", act_at: act }, 3);
+    for (let i = 0; i < 100 && fake.state.pulses.at(-1)?.frame.act_at !== act; i++) await sleep(25);
     const sent = fake.state.pulses.at(-1)?.frame;
     assert.equal(sent?.state, "busy", JSON.stringify(fake.state.pulses));
+    assert.equal(sent?.act_at, act, "act_at rides the frame");
     const place = JSON.parse(status(dir, ["--json"]).stdout).sessions[0].places[0];
     const { sent_at, ...pulse } = place.pulse ?? {};
     assert.deepEqual(pulse, (({ type: _t, ...rest }) => rest)(sent));
