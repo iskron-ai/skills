@@ -25,8 +25,9 @@ export interface LeadWords {
   release: (who: string) => string;
   /** why — ответ платформы на revoke запустившего. */
   unreleased: (who: string, why: string) => string;
-  /** last — последний текст, пусто — текста нет. */
-  away: (who: string, last: string) => string;
+  /** Ход ведущего упал (#9046); why — ошибка хода. */
+  failed: (who: string, why: string) => string;
+  noError: () => string;
   lost: (who: string, why: string) => string;
   tellDone: (sessionID: string) => string;
   tellFailed: (sessionID: string, message: string) => string;
@@ -108,9 +109,11 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     unreleased: (who, why) =>
       `Искрон: субагент ${who} кончен и его мост погашен, но место НЕ снято — платформа ответила: ${why}. ` +
       `Оно висит на доске: повтори iskron_channel(action="revoke", standing="${who}", karta) или скажи человеку.`,
-    away: (who, last) =>
-      `Искрон: субагент ${who} снят переносом родителя в другую папку — поручение здесь кончено не по исходу, итога «КОНЧЕН» не будет: ` +
-      `его мост гасится: из дел он выходит, место снимается; его сессия осталась в прежней папке. Последнее его слово:\n${last || "(текста он не оставил — смотри его дело)"}`,
+    failed: (who, why) =>
+      `Искрон: ход субагента ${who} упал — ${why}. Он не кончен: место и дела держит, кадры его дела будят его, ` +
+      "но пока ход падает, исполнить поручение он не может. Ошибка поставщика модели (вход, лимит) — скажи человеку; " +
+      `отпустить и сделать иначе — iskron_channel(action="revoke", standing="${who}"). Следующие падения подряд не повторяю.`,
+    noError: () => "ошибку OpenCode не назвал",
     lost: (who, why) =>
       `Искрон: субагент ${who} снят — ${why}. Место без моста уйдёт сроком канала, его дела — сроком места; итога нет, его ход — в его сессии.`,
     tellDone: (sessionID) => `Искрон: слово о субагенте вложено в сессию ${sessionID}`,
@@ -202,9 +205,11 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     unreleased: (who, why) =>
       `Iskron: subagent ${who} has ended and its bridge is down, but its seat is NOT revoked — the platform answered: ${why}. ` +
       `It hangs on the board: repeat iskron_channel(action="revoke", standing="${who}", karta) or tell the human.`,
-    away: (who, last) =>
-      `Iskron: subagent ${who} was taken down by the parent's move to another folder — the errand here ended not by its outcome, there will be no «ENDED»: ` +
-      `its bridge goes down: it leaves its cases, its seat is revoked; its session stayed in the previous folder. Its last word:\n${last || "(it left no text — see its case)"}`,
+    failed: (who, why) =>
+      `Iskron: the turn of subagent ${who} failed — ${why}. It has not ended: it holds its seat and cases, frames of its case wake it, ` +
+      "but while its turns fail it cannot carry out the errand. A model provider's error (sign-in, limit) — tell the human; " +
+      `to release it and do otherwise — iskron_channel(action="revoke", standing="${who}"). Further failures in a row are not repeated.`,
+    noError: () => "OpenCode named no error",
     lost: (who, why) =>
       `Iskron: subagent ${who} is taken down — ${why}. The seat without a bridge goes with the channel's term, its cases with the seat's term; there is no outcome, its turn is in its session.`,
     tellDone: (sessionID) =>

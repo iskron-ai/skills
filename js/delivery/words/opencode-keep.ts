@@ -111,7 +111,7 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     takenFromNew: (session) =>
       `Искрон: место сессии ${session} занято из её новой папки — она перенесена`,
     parentMoved: () =>
-      `Отказано (плагин): родитель этой сессии перенесён в другую папку — её поручение кончено переносом, ` +
+      `Отказано (плагин): родитель этой сессии перенесён в другую папку — ` +
       "мост родителя здесь не поднимается, а своего места у неё нет; работа этой сессии — дальше без графа, либо слово запустившему.",
     farRefusal: () =>
       "Отказано (плагин): эта дочерняя сессия перенесена в другой каталог, чем её родитель, а место родителя " +
@@ -196,7 +196,7 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     takenFromNew: (session) =>
       `Iskron: the seat of session ${session} was taken from its new folder — it was moved`,
     parentMoved: () =>
-      "Refused (plugin): this session's parent was moved to another folder — its errand ended with the move, " +
+      "Refused (plugin): this session's parent was moved to another folder — " +
       "the parent's bridge is not raised here, and it has no seat of its own; this session's work goes on without the graph, or by a word to the launcher.",
     farRefusal: () =>
       "Refused (plugin): this child session was moved to a different directory than its parent, and the parent's seat " +
