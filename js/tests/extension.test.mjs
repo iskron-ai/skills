@@ -40,6 +40,7 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -201,6 +202,7 @@ const ENV_KEYS = [
   "FB_CALLS",
   "FB_EVENTS",
   "FB_PULSE_REFUSE",
+  "FB_PULSE_HOLD",
   "FB_STAND_HELD",
   "FB_ENV",
   "ISKRON_HARNESS_VERSION",
@@ -670,12 +672,16 @@ test("a seat held again mid-turn — a new daemon — gets the turn's last word:
     await rec.fire("message_start", {
       message: { role: "custom", customType: "iskron-channel", content: "кадр" },
     });
-    await settle(4);
+    // Words told while one is in flight fold into one (shared/pulseword.ts): wait for the last.
+    const full = (a) => a?.state === "busy" && a.turn_at && a.read_at;
+    for (let i = 0; i < 50 && !full(pulses().at(-1)?.arguments); i++) await delay(40);
     const last = pulses().at(-1).arguments;
-    assert.ok(last.state === "busy" && last.turn_at && last.read_at, JSON.stringify(last));
+    assert.ok(full(last), JSON.stringify(last));
+    const n = pulses().length;
     push(events, { kind: "held", key: "k", place: { realm: "r5", karta: "931", name: "p" } });
-    await settle(5);
-    assert.equal(pulses().length, 5, "the held seat got the word again");
+    await settle(n + 1);
+    await delay(200);
+    assert.equal(pulses().length, n + 1, "the held seat got the word again");
     assert.deepEqual(pulses().at(-1).arguments, last);
   } finally {
     await rec.stop();
@@ -704,6 +710,99 @@ test("an idle the bridge refused reaches it on the retry: the seat is not left b
     assert.equal(last.state, "idle", "the idle taken on the retry");
     assert.ok(last.turn_at, "the turn's end comes with it");
   } finally {
+    await rec.stop();
+  }
+});
+
+// act_at (#7529): the last moment the turn showed movement. Event forms follow the installed
+// @earendil-works/pi-coding-agent dist/core/extensions/types.d.ts (0.85.1): tool_execution_*
+// carry toolCallId and toolName, message_update and message_end the message.
+const ASSISTANT = { role: "assistant", content: [{ type: "text", text: "сл" }] };
+const PI_ACTS = [
+  ["tool_execution_start", { toolCallId: "t-1", toolName: "bash", args: {} }],
+  ["tool_execution_update", { toolCallId: "t-1", toolName: "bash", args: {}, partialResult: {} }],
+  ["tool_execution_end", { toolCallId: "t-1", toolName: "bash", result: {}, isError: false }],
+  ["message_update", { message: ASSISTANT, assistantMessageEvent: { type: "text_delta" } }],
+  ["message_end", { message: ASSISTANT }],
+];
+
+test("pi: act_at moves with tool execution and the assistant's output, not with the turn's state or a channel message", async () => {
+  const calls = join(SANDBOX, "pulse-act.calls");
+  const { env } = bridgeEnv("pulse-act", { FB_CALLS: calls });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const lastWord = () => pulses().at(-1)?.arguments ?? {};
+  try {
+    await rec.fire("agent_start");
+    const channel = { role: "custom", customType: "iskron-channel", content: "кадр" };
+    await rec.fire("message_start", { message: channel });
+    await rec.fire("message_update", { message: channel });
+    await rec.fire("message_end", { message: channel });
+    for (let i = 0; i < 50 && !lastWord().read_at; i++) await delay(40);
+    assert.ok(lastWord().read_at, JSON.stringify(lastWord()));
+    assert.ok(
+      pulses().every((p) => !("act_at" in p.arguments)),
+      `no act_at from state and channel: ${JSON.stringify(pulses())}`,
+    );
+    let last = "";
+    for (const [type, ev] of PI_ACTS) {
+      await delay(3);
+      await rec.fire(type, { type, ...ev });
+      for (let i = 0; i < 50 && (lastWord().act_at ?? "") <= last; i++) await delay(40);
+      assert.ok(
+        (lastWord().act_at ?? "") > last,
+        `${type} moves act_at: ${JSON.stringify(lastWord())}`,
+      );
+      last = lastWord().act_at;
+    }
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("pi: one pulse request in flight — the output behind it folds into one last word with the turn's end; a new session gets none of it", async () => {
+  const calls = join(SANDBOX, "pulse-fold.calls");
+  const hold = join(SANDBOX, "pulse-fold.hold");
+  const { env } = bridgeEnv("pulse-fold", { FB_CALLS: calls, FB_PULSE_HOLD: hold });
+  const rec = await session(env);
+  const pulses = () => toolCalls(calls).filter((c) => c.name === "iskron/pulse");
+  const settle = async (n) => {
+    for (let i = 0; i < 50 && pulses().length < n; i++) await delay(40);
+  };
+  try {
+    writeFileSync(hold, "");
+    await rec.fire("agent_start");
+    await settle(1);
+    assert.equal(pulses().length, 1, "the busy word in flight");
+    for (let i = 0; i < 20; i++)
+      await rec.fire("message_update", { message: ASSISTANT, assistantMessageEvent: {} });
+    await rec.fire("agent_end", { messages: [{ role: "assistant", stopReason: "aborted" }] });
+    await delay(300);
+    assert.equal(pulses().length, 1, "nothing more goes while one is in flight");
+    rmSync(hold, { force: true });
+    await settle(2);
+    await delay(300);
+    assert.equal(pulses().length, 2, `one last word: ${JSON.stringify(pulses())}`);
+    const last = pulses().at(-1).arguments;
+    assert.equal(last.state, "interrupted", "the turn's end is not lost behind the output");
+    assert.ok(last.turn_at && last.act_at, JSON.stringify(last));
+
+    writeFileSync(hold, "");
+    await rec.fire("agent_start");
+    await rec.fire("message_update", { message: ASSISTANT, assistantMessageEvent: {} });
+    await settle(3); // in flight with nothing behind it: refused by the shutdown, it would retry
+    const mark = pulses().length;
+    await rec.fire("session_shutdown");
+    await rec.fire("session_start");
+    rmSync(hold, { force: true });
+    await delay(2_600); // past the refused word's retry (shared/pulseword.ts RETRY_MS)
+    const after = pulses().length;
+    assert.equal(after, mark, `the old session's word goes nowhere: ${JSON.stringify(pulses())}`);
+    await rec.fire("agent_start");
+    await settle(after + 1);
+    assert.deepEqual(pulses().at(-1)?.arguments, { state: "busy" }, "the new session's own word");
+  } finally {
+    rmSync(hold, { force: true });
     await rec.stop();
   }
 });

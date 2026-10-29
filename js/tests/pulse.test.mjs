@@ -128,6 +128,42 @@ test("pi: a change gives one pulse, changes inside the gap give one more after i
   assert.equal(pulses().at(-1).turn_at, turn);
 });
 
+// act_at is the harness's word only: the bridge's own moves and the agent's graph calls (cycle_at)
+// do not make it, an older one does not take it back, a harness without a plugin cannot say it.
+test("pi: act_at rides the pulse as said, never earlier, untouched by service moves and graph calls", async (t) => {
+  const GAP = 300;
+  const { call, pulses, until } = await bridgeOf(t, "pi-iskron", GAP);
+  await until(() => pulses().length > 0, "a pulse on hello");
+  assert.ok(!("act_at" in pulses()[0]), "no act_at before the harness says one");
+  const act = new Date().toISOString();
+  const said = await call("iskron/pulse", { state: "busy", act_at: act });
+  assert.equal(said.result?.pulse?.act_at, act);
+  await until(() => pulses().at(-1).act_at === act, "act_at in the frame");
+  const older = new Date(Date.parse(act) - 60_000).toISOString();
+  assert.equal((await call("iskron/pulse", { act_at: older })).result?.pulse?.act_at, act);
+  assert.equal((await call("iskron/pulse", { act_at: "not a time" })).result?.pulse?.act_at, act);
+  await call("iskron/usage", { tokens: 1 });
+  await call("tools/call", { name: "iskron_orient", arguments: { realm: "nks-dev" } });
+  const cycle = pulses().at(-1).cycle_at;
+  await until(() => pulses().at(-1).cycle_at !== cycle, "the graph call moves cycle_at");
+  await sleep(GAP + 200);
+  for (const p of pulses().slice(1)) assert.equal(p.act_at, act, JSON.stringify(p));
+});
+
+test("Claude Code: no act_at — neither from graph calls nor said", async (t) => {
+  const { call, pulses, until } = await bridgeOf(t, "claude-code", 300);
+  await until(() => pulses().length > 0, "a pulse on hello");
+  const said = await call("iskron/pulse", { act_at: new Date().toISOString() });
+  assert.equal(said.result?.taken, false);
+  await call("tools/call", { name: "iskron_orient", arguments: { realm: "nks-dev" } });
+  await sleep(600);
+  assert.ok(pulses().length > 1, "the graph call moved cycle_at");
+  assert.ok(
+    pulses().every((p) => !("act_at" in p)),
+    JSON.stringify(pulses()),
+  );
+});
+
 test("pending grows with a frame no watchdog took and falls once one gives it; a left seat is silent", async (t) => {
   const { fake, call, pulses, until, watchdog } = await bridgeOf(t, "claude-code", 600);
   await until(() => pulses().length > 0, "a pulse on hello");
