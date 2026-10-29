@@ -15,7 +15,7 @@ import {
   satellitePlaces,
 } from "./caseexit.ts";
 import { CFG } from "./config.ts";
-import { dropConfirmed, seatKeyOf } from "./deadseat.ts";
+import { dropConfirmed, heldSince, recordAt, seatKeyOf } from "./deadseat.ts";
 import { closeDeadSeats } from "./deadstop.ts";
 import { localSocketPathOf, releaseStanding, standingIdIn } from "./hold.ts";
 import { keepHoldRecord } from "./holdkeep.ts";
@@ -57,6 +57,8 @@ const R = scoped(() => ({
 interface Dead {
   places: Standing[];
   ids: Map<string, string | null>;
+  /** when each seat's hold record was written at the run's end: a newer one is a later life (heldSince) */
+  eras: Map<string, number | null>;
   status: string | null;
   socket: string | null;
   now?: boolean;
@@ -92,6 +94,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // A satellite keeps no hold record; others keep it with the term counted from now (graph
     // @nks/nks-dev, node #6649) — the agent's end too, until its revoke is confirmed.
     if (!CFG.satellite) keepHoldRecord();
+    const eras = new Map(own.map((s) => [seatKeyOf(s), recordAt(seatKeyOf(s))]));
     // On the dispatcher the cleared busy line goes in the tact before the unsubscribe (#8620 v11).
     const line = addr && closing ? leavingLine(addr.url) : "none";
     // A paused seat keeps its busyness even if nobody takes the handover socket.
@@ -109,7 +112,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // Seats not confirmed revoked wait for the death window, which repeats the revoke.
     const left = ended ? dropConfirmed(own, end.revoked) : own;
     if (dying && left.length)
-      R.dead = { places: left, ids, status, socket: left[0] === own[0] ? socket : null };
+      R.dead = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && line === "post") await publishStatusTo(addr.url, "", 3000).catch(() => {});
@@ -139,7 +142,8 @@ export function lateSeat(
   const key = seatKeyOf(seat);
   const others = R.dead?.places.filter((s) => seatKeyOf(s) !== key) ?? [];
   const ids = new Map(R.dead?.ids ?? []).set(key, id);
-  R.dead = { places: [seat, ...others], ids, status, socket, now: R.late === "now" };
+  const eras = new Map(R.dead?.eras ?? []).set(key, recordAt(key));
+  R.dead = { places: [seat, ...others], ids, eras, status, socket, now: R.late === "now" };
   log(
     `${key}: connect answered after the run's end — no socket opened, it ends ${R.late === "now" ? "at once" : "with the window"}`,
   );
@@ -189,6 +193,9 @@ export async function endDeadRun(waitMs: number): Promise<void> {
   for (const s of dead.places) {
     const key = seatKeyOf(s);
     if (await localSocketAlive(localSocketPathOf(key))) log(`${key} is held again — not closed`);
+    // Taken back and left again in the window (an announced absence, a death with its own window).
+    else if (heldSince(key, dead.eras.get(key)))
+      log(`${key}: held again after this run's end — its window is not this run's, not closed`);
     else kept.push(s);
   }
   const [first] = dead.places;

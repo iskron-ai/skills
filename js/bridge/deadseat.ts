@@ -8,13 +8,29 @@ import { tool } from "../delivery/index.ts";
 import { normKarta, type SeatKey } from "../shared/seat.ts";
 import { listens, nameOf, readBoard } from "./board.ts";
 import { callTool } from "./call.ts";
-import { dropHoldRecord, keyOf } from "./holdrecord.ts";
+import { dropHoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 import { canonRealm } from "./realms.ts";
 import { publishStatusTo } from "./statuspost.ts";
 import { log } from "./streams.ts";
 import { type Standing } from "./transport.ts";
 
 export const seatKeyOf = (s: Standing): string => keyOf(s.realm, s.karta, s.name ?? "");
+
+/** When the seat's hold record was last written (any age); null — no record. */
+export const recordAt = (key: string): number | null => readHoldRecord(key, true)?.at ?? null;
+
+/**
+ * Whether a bridge held the seat after the dead run's end (case №677, round 6): any hold of it
+ * — a return, a connect, an announced absence, a refresh — rewrites its hold record, so a record
+ * newer than the one the run left means a later life of the seat, and this run's death window
+ * is not its own any more: that life ends by its own window or waits by its own mark. `at` —
+ * the record's time at the run's end; undefined — not known, the window goes as before.
+ */
+export function heldSince(key: string, at: number | null | undefined): boolean {
+  if (at === undefined) return false;
+  const now = recordAt(key);
+  return now !== null && now > (at ?? 0);
+}
 
 /**
  * Drops the hold records of the seats this bridge's own revoke confirmed (caseexit.ts,
