@@ -3576,12 +3576,11 @@ test("an eviction of a session that moved to another folder is not said into it 
 });
 
 // A parent moved to another folder: OpenCode leaves its children where they were
-// (seen live). The old instance ends each satellite child there — its bridge out,
-// the parent told «moved», no «КОНЧЕН» — instead of a second life until the ceiling;
-// the child's calls there are refused, never by a root bridge raised for the moved
-// parent (#6626). In the new folder its write is refused too, and the parent's revoke
-// of it is answered by the plugin, not sent.
-test("a parent moved with a satellite child: the old instance ends the child with «moved», refuses its calls, and the new one answers its revoke without sending it", async () => {
+// (seen live). A satellite child's errand outlives the move (#8991; #6550 rules 3-4):
+// its bridge, seat and lead stay with the old folder's instance, its writes go by its
+// own bridge, the parent gets no «moved» word; no root bridge is raised there for the
+// moved parent (#6626). The parent's revoke from the new folder goes to the platform.
+test("a parent moved with a satellite child: the child keeps its bridge, seat and errand in the old folder, and the parent's revoke from the new one is sent", async () => {
   const calls = join(SANDBOX, "move-kids.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("move-kids", { FB_CALLS: calls, FB_TOOLS: LEAD_TOOLS });
@@ -3615,41 +3614,44 @@ test("a parent moved with a satellite child: the old instance ends the child wit
     A.ctx.session.get = get;
     A.emit({ type: "session.moved", data: { sessionID: "root", location: LOC_B } });
     await until(() => lostMarkers().length === 1, "the marker for the new folder");
-    await until(() => !alive(childPid), "the child's bridge to go with the move");
-    await until(() => A.synthetics.some((s) => s.sessionID === "root"), "the word in the parent");
-    const toParent = A.synthetics.filter((s) => s.sessionID === "root");
-    assert.match(toParent[0].text, /снят переносом родителя[\s\S]*«КОНЧЕН» не будет/);
-    assert.equal(toParent[0].marked, true, "the word to the parent carries the delivery's mark");
-    assert.equal(toParent[0].resume, false, "it does not wake the parent");
-    // queue в занятого родителя после его хода запускал ещё один ход (e2e: 14.217→14.229).
-    assert.equal(toParent[0].delivery, "steer", "into the going turn, not one more after it");
-    assert.ok(!A.synthetics.some((s) => /КОНЧЕН —/.test(s.text)), "no «КОНЧЕН»");
-    const pids = pidsOf(b.log).length;
-    await assert.rejects(
-      A.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
-      /кончена/,
+    const marked = readFileSync(lostMarkers()[0], "utf8");
+    assert.match(marked, /"session":\s*"root"/);
+    assert.doesNotMatch(marked, /"session":\s*"child"/, "the child does not travel by the marker");
+    await delay(300);
+    assert.ok(alive(childPid), "the child's bridge lives on in its folder");
+    assert.deepEqual(
+      A.synthetics.filter((s) => s.sessionID === "root").map((s) => s.text),
+      [],
+      "no word of an end to the parent",
     );
-    await assert.rejects(A.call("iskron_look", {}, "child"), /родитель этой сессии перенесён/);
+    const pids = pidsOf(b.log).length;
+    const before = callsIn(calls).length;
+    await A.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    await A.call("iskron_look", {}, "child");
+    const went = callsIn(calls).slice(before);
+    assert.deepEqual(
+      went.map((c) => [c.name, c.pid]),
+      [
+        ["iskron_case", childPid],
+        ["iskron_look", childPid],
+      ],
+      "the child's calls go by its own bridge",
+    );
     assert.equal(pidsOf(b.log).length, pids, "no bridge raised here for the moved parent");
     B = await plugin(b.env, { ...kids(LOC_B), keepMarker: true });
     B.ctx.session.get = get;
     await until(() => B.tools().has("iskron_case"), "B's tools", 8000);
-    const before = callsIn(calls).length;
-    await assert.rejects(
-      B.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child"),
-      /кончено переносом родителя/,
-    );
-    const word = await B.call(
+    const sent = callsIn(calls).length;
+    await B.call(
       "iskron_channel",
       { realm: "nks-dev", action: "revoke", standing: `@me:${SUB}` },
       "root",
     );
-    assert.match(word.content, /кончённый переносом родителя[\s\S]*не нужен и не послан/);
     assert.ok(
-      !callsIn(calls)
-        .slice(before)
-        .some((c) => c.name === "iskron_channel"),
-      "the revoke reached no bridge",
+      callsIn(calls)
+        .slice(sent)
+        .some((c) => c.name === "iskron_channel" && c.arguments.action === "revoke"),
+      "the revoke went to the platform",
     );
   } finally {
     await A.stop();
@@ -4694,6 +4696,58 @@ test("a lead child whose own turn is interrupted by the user (Esc) lives on: the
     await until(
       () => rec.prompts.some((p) => p.sessionID === "child" && /сосед ответил/.test(p.text)),
       "the frame waking the child after its Esc",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #9046 (OpenCode 2.2.0, seen in the session's journal): each frame of its case woke the idle
+// lead, and each woken turn failed at once — the model's provider refused its sign-in. Nobody
+// told the parent for an hour. A failed turn is a word to the parent without a wake, once per
+// run of failures; the errand lives, a frame still wakes the child.
+test("a lead child's failed turn is told to its parent once per run of failures, with a wake; the errand lives", async () => {
+  const { b, rec, childPid } = await leadChild("lead-failed");
+  const failed = () => rec.synthetics.filter((s) => /ход субагента .* упал/.test(s.text));
+  const fail = () => {
+    rec.emit({ type: "session.execution.started", data: { sessionID: "child" } });
+    rec.emit({
+      type: "session.execution.failed",
+      data: {
+        sessionID: "child",
+        error: { type: "provider.internal", message: "OAuth session expired" },
+      },
+    });
+  };
+  try {
+    turn(rec, "PRE сдан");
+    await until(() => rec.synthetics.length === 1, "the turn word");
+    fail();
+    await until(() => failed().length === 1, "the failure word in the parent");
+    const word = failed()[0];
+    assert.equal(word.sessionID, "root");
+    assert.match(word.text, /OAuth session expired/);
+    assert.match(word.text, /standing="host\.repo\.opus-5\.sub-1"/);
+    assert.equal(
+      word.resume,
+      true,
+      "the failure wakes the parent: it takes over now, not on its next turn",
+    );
+    fail();
+    await delay(300);
+    assert.equal(failed().length, 1, "a failure in a row is not repeated");
+    assert.equal(ends(rec).length, 0, "a failed turn is no end");
+    assert.ok(alive(childPid), "the child's bridge lives");
+    turn(rec, "снова работаю");
+    fail();
+    await until(() => failed().length === 2, "a failure after a good turn is told again");
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("frame", { frame: frame("POST команда"), raw: "" }),
+    );
+    await until(
+      () => rec.prompts.some((p) => p.sessionID === "child" && /POST команда/.test(p.text)),
+      "the frame still wakes the child",
     );
   } finally {
     await rec.stop();
@@ -9576,7 +9630,8 @@ for (const probe of [
       await rec.stop();
       await fake.stop();
       rmSync(repo, { recursive: true, force: true });
-      rmSync(auth, { recursive: true, force: true });
+      // The stopped bridge still logs its upstream session's close into the auth dir (#9174).
+      rmSync(auth, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       if (priorAuth === undefined) delete process.env.ISKRON_BRIDGE_AUTH_DIR;
       else process.env.ISKRON_BRIDGE_AUTH_DIR = priorAuth;
       if (priorDaemon === undefined) delete process.env.ISKRON_BRIDGE_DAEMON;
