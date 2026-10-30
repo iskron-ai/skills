@@ -270,11 +270,14 @@ test("claude code hook: unreadable files and a missing directory do not fail the
   assert.equal(gone.stdout, "", "a path inside an aligned repository: its root's signs");
 });
 
-test("claude code hook: declared on startup only", () => {
+test("claude code hook: declared on startup and after a compaction, one command", () => {
   const hooks = JSON.parse(readFileSync(join(REPO, "hooks", "hooks.json"), "utf8"));
   assert.deepEqual(
     hooks.hooks.SessionStart.map((e) => e.matcher),
-    ["startup"],
+    ["startup", "compact"],
   );
-  assert.equal(hooks.hooks.SessionStart[0].hooks.length, 1);
+  for (const entry of hooks.hooks.SessionStart) {
+    assert.equal(entry.hooks.length, 1);
+    assert.equal(entry.hooks[0].command, COMMAND);
+  }
 });
