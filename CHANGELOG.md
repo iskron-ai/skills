@@ -1,5 +1,26 @@
 # Changelog
 
+## [7.26.0](https://github.com/iskron-ai/skills/compare/v7.25.0...v7.26.0) (2026-10-30)
+
+
+### Features
+
+* **bridge:** конец агента закрывает место — удаление сессии сразу, смерть по окну, отлучка только объявленная ([#604](https://github.com/iskron-ai/skills/issues/604)) ([6d95830](https://github.com/iskron-ai/skills/commit/6d95830834d5428ac78ed5fd1a522cff164331a1))
+* **opencode:** слово после сжатия — сводка указатель, не запись: опору перечитай в графе (recall) ([#606](https://github.com/iskron-ai/skills/issues/606)) ([91d7e0d](https://github.com/iskron-ai/skills/commit/91d7e0dfe5d61be5bcce4ce7b149fd120c105d58))
+* **recall:** канон памяти — припоминание по лестнице, отказ и забвение, впуск рассказа ([#601](https://github.com/iskron-ai/skills/issues/601)) ([1c42def](https://github.com/iskron-ai/skills/commit/1c42def340cea82bc9831e2a6ade4d4ffae99118))
+* **skills:** остановка ненужных агентов по слову человека ([#603](https://github.com/iskron-ai/skills/issues/603)) ([e04510b](https://github.com/iskron-ai/skills/commit/e04510b785e0f20f6c10dfc9b65a1b740ea2e3aa))
+* **skills:** пост сам заводит свою роль в графе человека ([#599](https://github.com/iskron-ai/skills/issues/599)) ([f58384c](https://github.com/iskron-ai/skills/commit/f58384ce7e9f765b8cfad1cabd72336cfa3077ae))
+* **skills:** роль searcher снята; модели ролей — рекомендация класса, выбор человека из mind; контракт iskronify 36 ([#602](https://github.com/iskron-ai/skills/issues/602)) ([fd5445f](https://github.com/iskron-ai/skills/commit/fd5445f882967a115fb1bc2a6ff2b1bd24ff1716))
+
+
+### Bug Fixes
+
+* **bridge,opencode:** мост закрывает свою сессию MCP; спутник переживает перенос родителя; упавший ход ведущего — слово родителю ([#600](https://github.com/iskron-ai/skills/issues/600)) ([1dd431e](https://github.com/iskron-ai/skills/commit/1dd431e9eebe2e04c2406949bc6b0acfb7a1aa06))
+* **skills,scripts:** роли после подтяжки — граница снятия из индекса; stand-run-reply — живая проба строки ответа ([#597](https://github.com/iskron-ai/skills/issues/597)) ([9f07150](https://github.com/iskron-ai/skills/commit/9f0715024b931c47a21f9e3145e356f07bed9b9c))
+* **skills:** recall снова ловит «по моим заметкам», «что у нас с этим»; standing — «адресата нет» почти никогда не правда; скрипты прогона — конец агента в составе выпуска ([#607](https://github.com/iskron-ai/skills/issues/607)) ([fbf285a](https://github.com/iskron-ai/skills/commit/fbf285af145eac188598e4469f2bd2d0b787d254))
+* **skills:** вычитка 7.26.0, круг 2 — вопрос о записанном ведёт в recall, роль поста по имени только без чужого post, модель weaver по таблице, фильтры recall по приборам; REALITY — закрытие сессии MCP ([#609](https://github.com/iskron-ai/skills/issues/609)) ([c3fb79c](https://github.com/iskron-ai/skills/commit/c3fb79cd926ead2593f8a8b9949dbd73137ab18e))
+* находки вычитки тел и ревью кода 7.26.0 ([#608](https://github.com/iskron-ai/skills/issues/608)) ([132bb9e](https://github.com/iskron-ai/skills/commit/132bb9edfe9a47625e66ec6b55685491611a6966))
+
 ## [7.25.0](https://github.com/iskron-ai/skills/compare/v7.24.0...v7.25.0) (2026-10-29)
 
 
