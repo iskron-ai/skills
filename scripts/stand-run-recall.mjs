@@ -13,7 +13,10 @@
 //
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
-//     [--report F] [--keep] [--only a,b,c,d,e]
+//     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g]
+//     [--turn-minutes 15] [--require-empty]
+// (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester.
+// Their semantic acceptance remains PROVISIONAL pending human inspection of raw journals.
 // (e) — a task needing the fact without naming it («допиши в import.yaml блок очереди»): the
 //     agent's own look of the fact before any question, 45 written with a reference to the node.
 //
@@ -33,13 +36,19 @@
 //   mkdir -p .control && git archive v7.25.0 skills | tar -x -C .control
 //   --bridge .control/skills/establish-mcp/scripts/iskron.mjs
 //   --plugin .control/skills/establish-mcp/scripts/opencode-plugin.js --skills .control/skills
-// Exit 0 — all passed, 1 — a probe failed, 2 — setup failed.
+// Default probes a-e. Exit 0 — all passed, 1 — failed/blocked/provisional, 2 — setup failed.
+// Raw root/child messages are scrubbed into the text report and optional --raw-json.
+// For upstream session lifecycle evidence run stand-mcp-ledger.mjs separately and pass its
+// loopback URL as --url. Local grant/standing logs alone cannot prove initialize/DELETE parity.
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { personApi } from "./stand-person.mjs";
+import { SUB_TOOL, roleOf, has45, actualModels, sessionTree, turnMinutes as parseMinutes, locationPath, secretScrubber } from "./stand-recall-evidence.mjs";
+import { runCleanup } from "./stand-recall-cleanup.mjs";
+import { intakePrompts, intakeEvidence } from "./stand-recall-intake.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
@@ -61,16 +70,20 @@ const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
 const PROBES = ["a", "b", "c", "d", "e"];
+const AVAILABLE = [...PROBES, "f", "g"];
 const only = arg("--only", PROBES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 const reportFile = resolve(arg("--report", `stand-run-recall-${stamp}.txt`));
+const rawFile = arg("--raw-json") ? resolve(arg("--raw-json")) : null;
+let turnMinutes;
+try { turnMinutes = parseMinutes(arg("--turn-minutes", "15")); } catch (e) { fail(2, e.message); }
 // Haiku runs nothing (owner's word): only the two models of the brief.
 const MODELS = ["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"];
 if (!tokenFile || !URL_ || !apiArg || !realm || !bridgeArg || !pluginArg || !skillsArg)
   fail(2, "--token-file, --url, --api, --realm, --bridge, --plugin and --skills are required");
 if (!MODELS.includes(model)) fail(2, `--model must be one of ${MODELS.join(", ")}`);
 if (!/^[\w.-]+\/[\w.-]+$/.test(subModel) || /haiku/i.test(subModel)) fail(2, "--sub-model: provider/id, never haiku");
-if (!only.length || only.some((p) => !PROBES.includes(p))) fail(2, `--only takes a subset of ${PROBES.join(",")}`);
+if (!only.length || only.some((p) => !AVAILABLE.includes(p))) fail(2, `--only takes a subset of ${AVAILABLE.join(",")}`);
 const bridge = resolve(bridgeArg);
 const plugin = resolve(pluginArg);
 const skills = resolve(skillsArg);
@@ -93,6 +106,8 @@ if (!noRoles)
     }
   }
 const token = readFileSync(tokenFile, "utf8").trim();
+if (!token) fail(2, "empty token file");
+const { secrets, remember: rememberSecrets, scrub } = secretScrubber(token);
 const [providerID, modelID] = model.split("/");
 const subProvider = subModel.split("/")[0];
 const opencode = spawnSync("sh", ["-c", "command -v opencode"]).stdout.toString().trim();
@@ -110,7 +125,12 @@ const person = personApi({ api: apiArg, token });
 }
 
 const run = mkdtempSync(join(tmpdir(), "stand-recall-"));
-process.on("exit", () => (keep ? process.stderr.write(`run dir kept: ${run}\n`) : rmSync(run, { recursive: true, force: true })));
+// Even --keep retains evidence, never copied credentials or provider databases.
+process.on("exit", () => {
+  for (const p of [home, auth, join(run, "auth-person")]) rmSync(p, { recursive: true, force: true });
+  if (keep) process.stderr.write(`run dir kept (credentials removed): ${run}\n`);
+  else rmSync(run, { recursive: true, force: true });
+});
 const home = join(run, "home");
 const cwd = join(run, "project");
 const auth = join(run, "auth");
@@ -134,6 +154,7 @@ const machine = JSON.parse(
     .replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, s) => s ?? "")
     .replace(/,(\s*[}\]])/g, "$1"),
 );
+rememberSecrets(machine.providers);
 writeFileSync(
   join(oc, "opencode.jsonc"),
   JSON.stringify({
@@ -173,6 +194,7 @@ const env = {
 {
   const exp = spawnSync(opencode, ["auth", "export"], { encoding: "utf8" });
   const keys = JSON.parse(exp.stdout || "[]").filter((e) => [providerID, subProvider].includes(e.integrationID) && e.value?.type === "key");
+  rememberSecrets(keys);
   for (const p of [providerID, ...(roles.length ? [subProvider] : [])])
     if (!keys.some((e) => e.integrationID === p)) fail(2, `no static key of ${p} in this machine's opencode auth export`);
   const kf = join(home, "tmp/keys.json");
@@ -187,14 +209,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const port = 40000 + Math.floor(Math.random() * 20000);
 const server = `http://127.0.0.1:${port}`;
 let serve = null;
+let serveError;
+let interrupted;
+const checkInterrupted = () => { if (interrupted) throw interrupted; };
 function api(method, path, body) {
+  path = locationPath(path, cwd);
   const a = ["api", "--server", server, method, path];
   if (body) a.push("-d", JSON.stringify(body));
   // `opencode api` cuts a piped stdout at a 64 KiB boundary with status 0 (case №2306): the
   // answer goes to a file instead.
   const outFile = join(run, "api.out");
   const fd = openSync(outFile, "w");
-  const r = spawnSync(opencode, a, { env, cwd, encoding: "utf8", stdio: ["ignore", fd, "pipe"] });
+  const r = spawnSync(opencode, a, { env, cwd, encoding: "utf8", timeout: 30_000, stdio: ["ignore", fd, "pipe"] });
   closeSync(fd);
   const stdout = readFileSync(outFile, "utf8");
   let data = null;
@@ -210,14 +236,17 @@ function read(path) {
 }
 const startServe = async () => {
   serve = spawn(opencode, ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "warn"], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
+  serve.on("error", (e) => { serveError = e; });
   let out = "";
   serve.stdout.on("data", (d) => {
     out += d;
     const pw = out.match(/server password (\S+)/);
-    if (pw) env.OPENCODE_PASSWORD = pw[1];
+    if (pw) { env.OPENCODE_PASSWORD = pw[1]; secrets.add(pw[1]); }
   });
   serve.stderr.on("data", (d) => writeFileSync(join(run, "serve.log"), d, { flag: "a" }));
   for (let i = 0; i < 120; i++) {
+    checkInterrupted();
+    if (serveError || serve.exitCode !== null || serve.signalCode !== null) throw new Error(`serve stopped: ${serveError?.code ?? serve.exitCode ?? serve.signalCode}`);
     if (api("GET", "/api/session/active").ok) return;
     await sleep(500);
   }
@@ -225,30 +254,39 @@ const startServe = async () => {
 };
 const stopServe = async () => {
   delete env.OPENCODE_PASSWORD;
-  if (!serve || serve.exitCode !== null) return;
+  if (!serve || serveError || serve.exitCode !== null || serve.signalCode !== null) return;
   const done = new Promise((r) => serve.once("exit", r));
   serve.kill("SIGTERM");
   await Promise.race([done, sleep(15_000)]);
+  if (serve.exitCode === null && serve.signalCode === null) {
+    serve.kill("SIGKILL");
+    await Promise.race([done, sleep(5000)]);
+    problem("OpenCode serve required SIGKILL");
+  }
 };
 const active = () => Object.keys(read("/api/session/active") ?? {});
 const messages = (id) => {
   const l = read(`/api/session/${id}/message?limit=200`);
   if (!Array.isArray(l)) throw new Error(`messages of ${id}: not a list`);
+  if (l.length >= 200) problem(`messages of ${id}: reached observed API limit 200; completeness not established`);
   return [...l].sort((x, y) => Number(x?.time?.created ?? 0) - Number(y?.time?.created ?? 0));
 };
 const newSession = (title) => {
   const r = api("POST", "/api/session", { title, location: { directory: cwd }, model: { providerID, id: modelID } });
   const s = r.data?.data ?? r.data;
   if (!s?.id) throw new Error(`session create: ${r.raw.slice(0, 300)}`);
+  runSessions.add(s.id);
   return s.id;
 };
-// One turn: the prompt, the session running, then idle again (15 min at most).
+// One turn: the prompt, the session running, then idle within the declared bound.
 const turn = async (id, text) => {
+  checkInterrupted();
   const r = api("POST", `/api/session/${id}/prompt`, { text, resume: true });
   if (!r.ok) throw new Error(`prompt ${id}: ${r.raw.slice(0, 300)}`);
-  for (let t = 0; t < 30 && !active().includes(id); t++) await sleep(1000);
-  for (let t = 0; t < 900 && active().includes(id); t++) await sleep(1000);
-  if (active().includes(id)) throw new Error(`session ${id}: the turn did not end in 15 min`);
+  for (let t = 0; t < 30 && !active().includes(id); t++) { checkInterrupted(); await sleep(1000); }
+  for (let t = 0; t < turnMinutes * 60 && active().includes(id); t++) { checkInterrupted(); await sleep(1000); }
+  checkInterrupted();
+  if (active().includes(id)) throw new Error(`session ${id}: the turn did not end in ${turnMinutes} min`);
 };
 
 // The seatless bridge of the same account: lays and takes off the scene, holds the brother seat.
@@ -257,6 +295,9 @@ function stdioBridge() {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, "token"), token + "\n", { mode: 0o600 });
   const child = spawn(process.execPath, [bridge], { env: { ...env, ISKRON_BRIDGE_AUTH_DIR: dir }, stdio: ["pipe", "pipe", "ignore"] });
+  let childError;
+  child.on("error", (e) => { childError = e; });
+  child.stdin.on("error", (e) => { childError = e; });
   const rep = new Map();
   let buf = "";
   child.stdout.on("data", (d) => {
@@ -276,7 +317,8 @@ function stdioBridge() {
     const my = id++;
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: my, method, params }) + "\n");
     for (let t = 0; t < 900; t++) {
-      if (rep.has(my)) return rep.get(my);
+      if (childError || child.exitCode !== null || child.signalCode !== null) throw new Error(`scene bridge stopped: ${childError?.code ?? child.exitCode ?? child.signalCode}`);
+      if (rep.has(my)) { const value = rep.get(my); rep.delete(my); return value; }
       await sleep(100);
     }
     throw new Error(`scene bridge: no reply to ${method}`);
@@ -290,7 +332,17 @@ function stdioBridge() {
       const r = await req("tools/call", { name, arguments: args });
       return { text: (r.result?.content ?? []).map((c) => c.text ?? "").join("\n") || (r.error?.message ?? ""), error: !!(r.error || r.result?.isError) };
     },
-    close: () => (child.stdin.end(), child.kill()),
+    async close() {
+      if (childError || child.exitCode !== null || child.signalCode !== null) return;
+      const done = new Promise((r) => child.once("exit", r));
+      child.stdin.end();
+      await Promise.race([done, sleep(5000)]);
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await Promise.race([done, sleep(5000)]);
+      }
+      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); problem("scene bridge required SIGKILL"); await Promise.race([done, sleep(5000)]); }
+    },
   };
 }
 
@@ -320,8 +372,6 @@ function teeCalls(mark) {
 }
 
 // A subagent call of the harness and the role it named.
-const SUB_TOOL = /^(task|subagent)$/;
-const roleOf = (p) => p.state?.input?.agent ?? p.state?.input?.subagent_type ?? p.state?.input?.subagent ?? "?";
 // Whose a graph call is: the tool part of the session it ran in — a subagent call's window makes
 // it that role's, any other part's (execute, a direct iskron_* tool) the agent's own.
 function attribute(calls, msgs) {
@@ -365,9 +415,13 @@ const lastAnswer = (msgs) => {
 const idOf = (text) => (text.match(/\(#(\d+)[,)]/) || [])[1];
 const node = (v) => String(v ?? "").replace(/^#/, "").trim();
 const report = [];
+const rawJournals = [];
+const runSessions = new Set();
 const verdicts = [];
 let failed = 0;
 let setup = true; // until the first probe: a refusal here is the run's, exit 2
+const problem = (text) => { verdicts.push(`BLOCKER ${text}`); report.push(`BLOCKER ${text}`); failed++; };
+const cleanup = runCleanup({ run, auth, bridge, env, cwd, report, scrub, problem });
 const verdict = (ok, what, seen) => {
   verdicts.push(`${ok ? "PASS" : "FAIL"} ${what}${seen ? ` — ${String(seen).slice(0, 300)}` : ""}`);
   if (!ok) failed++;
@@ -376,6 +430,7 @@ const verdict = (ok, what, seen) => {
 const P = stdioBridge();
 const laid = []; // node ids in the order laid, taken off in reverse
 const add = async (tool, args) => {
+  checkInterrupted();
   const r = await P.call(tool, { realm, ...args });
   const id = idOf(r.text);
   if (r.error || !id) throw new Error(`${tool} ${args.name}: ${r.text.slice(0, 300)}`);
@@ -385,8 +440,8 @@ const add = async (tool, args) => {
 const take = async (id) => {
   const v = ((await P.call("iskron_look", { realm, node_id: `#${id}` })).text.match(/\(#\d+, [^,)]+, v(\d+)\)/) || [])[1];
   const r = v ? await P.call("iskron_delete_node", { realm, node_id: `#${id}`, basis_version: v, reasoning: "stand-run-recall: the scene is taken off" }) : { error: true, text: "no version" };
-  if (r.error) report.push(`WARN scene: #${id} not taken off — ${r.text.slice(0, 160)}`);
-  laid.splice(laid.indexOf(id), 1);
+  if (r.error) problem(`scene: #${id} not taken off — ${r.text.slice(0, 160)}`);
+  else laid.splice(laid.indexOf(id), 1);
 };
 const M = { epistemic_mode: "pratyakshita", ontic_mode: "vartamana", volitive_mode: "upeksha" };
 const FACT = {
@@ -417,8 +472,18 @@ const factOn = async (variant) => {
   return scene.fact;
 };
 
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
+  interrupted = new Error(`${signal}: run interrupted; cleanup requested`);
+  process.stderr.write(`stand-run-recall: ${interrupted.message}\n`);
+});
 try {
   await P.init();
+  checkInterrupted();
+  if (process.argv.includes("--require-empty")) {
+    const empty = await P.call("iskron_search", { realm, q: "", limit: 1 });
+    report.push(`pre-fixture empty graph check: ${empty.text}`);
+    if (empty.error || /#\d+/.test(empty.text)) throw new Error("--require-empty: graph is not demonstrably empty before fixture creation");
+  }
   scene.agent = await add("iskron_add_karta", {
     name: "🧪 Разработчик импорта каталогов",
     motivation: "Ведёт импорт каталогов поставщиков: правит загрузку и её настройки, отвечает за то, чтобы каталоги доходили целиком.",
@@ -487,23 +552,26 @@ try {
   const warm = newSession("warm-up");
   await turn(warm, "Answer OK and end your turn. Call no tools.");
   // The list fills per project directory and a few seconds late (case №2306): ask with it, wait for it.
-  const skillsOf = () => (read(`/api/skill?directory=${encodeURIComponent(cwd)}`) ?? []).map((s) => s.id);
-  let listed = skillsOf();
-  for (let t = 0; t < 60 && skillDirs.some((s) => !listed.includes(s)); t++) {
+  let skillResponse = read("/api/skill") ?? [];
+  for (let t = 0; t < 60 && skillDirs.some((id) => !skillResponse.some((s) => s.id === id)); t++) {
+    checkInterrupted();
     await sleep(500);
-    listed = skillsOf();
+    skillResponse = read("/api/skill") ?? [];
   }
-  const foreign = listed.filter((s) => !skillDirs.includes(s) && !["opencode", "report", "browser"].includes(s));
+  report.push(`skill discovery: ${JSON.stringify(skillResponse.map((s) => ({ id: s.id, path: s.path })))}`);
+  const listed = skillResponse.map((s) => s.id);
+  const foreign = skillResponse.filter((s) => !skillDirs.includes(s.id) && !s.path?.startsWith("/builtin/")).map((s) => s.id);
   if (skillDirs.some((s) => !listed.includes(s)) || foreign.length)
     throw new Error(`skills: missing ${skillDirs.filter((s) => !listed.includes(s)).join(",") || "—"}, foreign ${foreign.join(",") || "—"}`);
   // Every projected role is a subagent of the project on the pinned model.
   const agents = read("/api/agent") ?? [];
   const lost = roles.filter((x) => !agents.some((a) => a.id === x.name && a.mode === "subagent" && `${a.model?.providerID}/${a.model?.id}` === subModel));
   if (lost.length) throw new Error(`roles not seen as subagents on ${subModel}: ${lost.map((x) => x.name).join(", ")}`);
-  for (let t = 0; t < 240 && !/тулов в сессии: \d+|tools in the session: \d+/.test(existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : ""); t++) await sleep(500);
+  for (let t = 0; t < 240 && !/тулов в сессии: \d+|tools in the session: \d+/.test(existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : ""); t++) { checkInterrupted(); await sleep(500); }
   await sleep(10_000);
 
   const PROMPTS = {
+    ...intakePrompts(scene),
     a: ["Правлю импорт, какой таймаут очереди ставить?"],
     b: ["Какой таймаут у очереди импорта?"],
     c: [
@@ -527,7 +595,6 @@ try {
   };
   const hasNode = (text) => /#\d+/.test(text);
   // 45 as a number — «45s», «45 с», «45 секунд» (case №2306 [35]: \b45\b missed «45s»).
-  const has45 = (text) => /(?<![\d#])45(?!\d)/.test(text);
   const NOT_SEEN = /не вижу|не наш(?:ёл|ел|ла|лось)|не нахожу/i;
   const NO_CLAIM = /в графе (?:этого |такого |его )?нет|нигде нет|(?:решения|записи|значения) (?:об этом )?нет|не (?:задан|записан|зафиксирован)/i;
 
@@ -537,16 +604,31 @@ try {
     const mark = teeLines().length;
     if (key === "e") writeFileSync(CONFIG, "# Импорт каталогов поставщиков\nsource:\n  dir: ./incoming\n  format: csv\nworkers: 4\n");
     const S = newSession(`recall-${key}`);
-    for (const text of PROMPTS[key]) await turn(S, text);
+    let turnError;
+    try { for (const text of PROMPTS[key]) await turn(S, text); }
+    catch (e) { turnError = e; }
     const msgs = messages(S);
+    const tree = sessionTree(S, msgs, messages);
+    for (const s of tree.sessions) runSessions.add(s.sessionID);
     const calls = attribute(teeCalls(mark), msgs);
     const subs = msgs.flatMap((x) => (x.content ?? []).filter((p) => p.type === "tool" && SUB_TOOL.test(p.name)).map(roleOf));
     const answer = lastAnswer(msgs);
+    rawJournals.push({ key, rootSessionID: S, ...tree, calls });
+    for (const s of tree.sessions) report.push(`--- raw session ${s.sessionID} parent ${s.parentID ?? "—"} role ${s.role} · actual models: ${actualModels(s.messages).join(", ") || "UNKNOWN"} ---\n${JSON.stringify(s.messages, null, 2)}`);
+    if (tree.blockers.length) problem(`child traversal: ${tree.blockers.join("; ")}`);
     report.push(
       `\n===== (${key}) session ${S} · fact #${fact} (${scene.variant}) · subagents: ${subs.join(", ") || "none"} =====\n--- messages ---\n${journal(msgs)}\n--- bridge tools/call ---\n${calls
         .map((c) => `[${c.t}] ${c.by} ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`)
         .join("\n")}`,
     );
+    if (turnError) throw turnError;
+    if (["f", "g"].includes(key)) {
+      const evidence = intakeEvidence(key, tree, PROMPTS.f[0], { calls, scene, fact });
+      report.push(`OBSERVATIONS (${key})\n${JSON.stringify(evidence, null, 2)}`);
+      if (evidence.errors.length) verdict(false, `(${key}) intake evidence`, evidence.errors.join("; "));
+      else { verdicts.push(`PROVISIONAL (${key}) intake: human semantic acceptance required`); failed++; }
+      continue;
+    }
     // (a) counts the agent's own look: a recaller's finding is «told», the caller opens the node.
     const iLook = calls.findIndex((c) => c.by.startsWith("agent") && looks(c, fact));
     const iBro = calls.findIndex(toBrother);
@@ -590,22 +672,36 @@ try {
   verdicts.push(`ERROR${setup ? " (setup)" : ""} ${e.message}`);
   failed++;
 } finally {
-  await stopServe();
-  if (!keep) {
-    // Seats of the scene's role (the root seats of the sessions, the brother), then its nodes.
+  cleanup.capture("before session shutdown");
+  for (const id of runSessions) if (!rawJournals.some((j) => j.sessions.some((s) => s.sessionID === id))) {
     try {
-      const brd = await P.call("iskron_channel", { realm, action: "list", karta: `#${scene.agent}` });
-      for (const id of brd.text.match(/\bid ([0-9a-f-]{36})/g) ?? []) await person.revoke(realm, id.slice(3));
-    } catch {}
-    for (const id of [...laid].reverse()) await take(id).catch(() => {});
+      const tree = sessionTree(id, messages(id), messages);
+      rawJournals.push({ recovery: true, ...tree });
+      report.push(`--- recovery raw journals ---\n${JSON.stringify(tree, null, 2)}`);
+    }
+    catch (e) { problem(`journal recovery ${id}: ${e.message}`); }
+  }
+  let places = [];
+  try { places = cleanup.places(); } catch (e) { problem(e.message); }
+  await stopServe();
+  try { places.push(...cleanup.places()); } catch (e) { problem(e.message); }
+  if (scene.brother) places.push({ realm, karta: scene.agent, name: scene.brother });
+  await cleanup.revoke(places, P, person);
+  if (!keep) {
+    for (const c of teeCalls(0)) if (!c.error && /^iskron_add_/.test(c.name)) {
+      const id = idOf(c.text);
+      if (id && !laid.includes(id)) laid.push(id);
+    }
+    if (teeCalls(0).some((c) => c.name === "iskron_batch" && !c.error)) problem("cleanup: successful batch requires inspection of created nodes; raw calls retained");
+    for (const id of [...laid].reverse()) await take(id).catch((e) => problem(`cleanup node #${id}: ${e.message}`));
   } else report.push(`scene kept: ${laid.map((n) => `#${n}`).join(" ")}`);
-  P.close();
+  await P.close();
+  await cleanup.stopDaemons();
+  cleanup.capture("after bridge/daemon shutdown");
 }
-const text = [...verdicts, ...report].join("\n").split(token).join("<token>") + "\n";
-writeFileSync(reportFile, text);
-process.stdout.write(verdicts.join("\n") + `\n\nreport: ${reportFile}\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
-// The daemons of this run's auth dirs outlive their sessions by an idle window: put them down.
-for (const d of [auth, join(run, "auth-person")]) spawnSync("pkill", ["-f", `daemon --auth-dir ${d}( |$)`]);
-await sleep(1500);
+const text = scrub([...verdicts, ...report].join("\n")) + "\n";
+writeFileSync(reportFile, text, { mode: 0o600 });
+if (rawFile) writeFileSync(rawFile, scrub(JSON.stringify({ journals: rawJournals, lifecycleSnapshots: cleanup.snapshots }, null, 2)) + "\n", { mode: 0o600 });
+process.stdout.write(scrub(verdicts.join("\n")) + `\n\nreport: ${reportFile}\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(setup ? 2 : failed ? 1 : 0);
