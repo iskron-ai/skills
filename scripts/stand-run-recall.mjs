@@ -14,7 +14,7 @@
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
 //     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g,h]
-//     [--turn-minutes 15] [--require-empty]
+//     [--turn-minutes 15] [--require-empty] [--fixed-brief F]
 // (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester;
 // (h) opt-in search delegated to a recaller — the prompt of scene (д) of case №2302 word for word.
 // Their semantic acceptance remains PROVISIONAL pending human inspection of raw journals.
@@ -70,6 +70,9 @@ const model = arg("--model", "anthropic/claude-opus-5-5");
 const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
+// --fixed-brief F (with f): the ingester's brief, the same for every model compared (case №2394
+// [18]); the root lays it word for word, filling only {REALM} {SEAT} {CASE} {SOURCE}.
+const fixedBrief = arg("--fixed-brief", null) ? readFileSync(arg("--fixed-brief", null), "utf8").trim() : null;
 const PROBES = ["a", "b", "c", "d", "e"];
 const AVAILABLE = [...PROBES, "f", "g", "h"];
 const only = arg("--only", PROBES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
@@ -579,8 +582,13 @@ try {
   for (let t = 0; t < 240 && !/тулов в сессии: \d+|tools in the session: \d+/.test(existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : ""); t++) { checkInterrupted(); await sleep(500); }
   await sleep(10_000);
 
+  const intake = intakePrompts(scene);
+  if (fixedBrief)
+    intake.f = [
+      `${intake.f[0]}\n\nНабросок и постановка ingester уже готовы — свой набросок не пиши и граф до запуска не правь, кроме шагов ниже. (1) Запиши исток ding-феноменом «🗣️ Рассказ о повторяемом импорте каталогов» (source_kind=shabda, context #${scene.own}) с полным текстом рассказа. (2) Открой дочернее дело на впуск. (3) Запусти ingester с постановкой ДОСЛОВНО из текста ниже, подставив только {REALM} — адрес графа, {SEAT} — твоё место, {CASE} — номер дочернего дела, {SOURCE} — номер истока. (4) По отчёту сам прочти полученные узлы и сравни их с рассказом.\n\nПОСТАНОВКА:\n${fixedBrief}`,
+    ];
   const PROMPTS = {
-    ...intakePrompts(scene),
+    ...intake,
     a: ["Правлю импорт, какой таймаут очереди ставить?"],
     b: ["Какой таймаут у очереди импорта?"],
     c: [
@@ -635,6 +643,13 @@ try {
     if (turnError) throw turnError;
     if (["f", "g"].includes(key)) {
       const evidence = intakeEvidence(key, tree, PROMPTS.f[0], { calls, scene, fact });
+      if (key === "f" && fixedBrief) {
+        // Verbatim: every piece of the brief between its placeholders reached the ingester.
+        const given = evidence.launches.filter((l) => l.role === "ingester").map((l) => JSON.stringify(l.input)).join("\n");
+        const pieces = fixedBrief.split("\n").flatMap((line) => line.split(/\{[A-Z]+\}/)).map((s) => s.trim()).filter((s) => s.length > 3);
+        evidence.briefMissing = pieces.filter((s) => !given.includes(JSON.stringify(s).slice(1, -1)));
+        if (evidence.briefMissing.length) evidence.errors.push(`fixed brief not verbatim: ${evidence.briefMissing.length} pieces missing`);
+      }
       report.push(`OBSERVATIONS (${key})\n${JSON.stringify(evidence, null, 2)}`);
       if (evidence.errors.length) verdict(false, `(${key}) intake evidence`, evidence.errors.join("; "));
       else { verdicts.push(`PROVISIONAL (${key}) intake: human semantic acceptance required`); failed++; }
