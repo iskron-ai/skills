@@ -1,7 +1,8 @@
 // The plugin's SessionStart hook in Claude Code: one line on stdout — which the harness adds to
 // the session's context. After a compaction (source "compact") — the role's way back: the door,
 // the role's skills, the summary as a pointer (graph @nks/nks-dev, node #7320), with the role and
-// seat only when the hold records name exactly one for the session's directory. Otherwise the
+// seat only when the hold records name exactly one for the session's directory, the bare word in
+// an aligned repository without such a seat, nothing elsewhere. Otherwise the
 // invitation when the session's repository carries none of the alignment signs
 // (shared/reposigns.ts), else nothing. Local reads only; always exit 0.
 import { readFileSync } from "node:fs";
@@ -33,7 +34,11 @@ function line(): string | null {
   if (input.source === "compact") {
     const W = words(COMPACTION);
     const seat = seatByDir(authDirFromEnv(), dir, "claude-code");
-    return seat ? W.back(seat.karta, seat.name, seat.realm) : W.bare();
+    if (seat) return W.back(seat.karta, seat.name, seat.realm);
+    // No seat of this directory: the bare word only where the repository is aligned — elsewhere
+    // the session has nothing of iskron to return to, and the word would be noise.
+    const { verdict } = repoSigns(dir, "claude-code");
+    return verdict === "aligned" || verdict === "partial" ? W.bare() : null;
   }
   return repoSigns(dir, "claude-code").verdict === "invite" ? words(ONBOARD_START).start() : null;
 }

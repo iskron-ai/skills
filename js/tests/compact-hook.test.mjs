@@ -21,8 +21,9 @@ function temp(t, prefix) {
   return dir;
 }
 
-/** A plugin root with the built hook, a grant directory and a fresh repository as the session's. */
-function lay(t) {
+/** A plugin root with the built hook, a grant directory and a repository as the session's —
+ * aligned (an AGENTS.md with the bootstrap's stamp) unless `aligned` is false. */
+function lay(t, aligned = true) {
   const root = temp(t, "compact-plugin-");
   mkdirSync(join(root, "hooks"));
   copyFileSync(BUILT_ONBOARD_HOOK, join(root, "hooks", "onboard.mjs"));
@@ -30,6 +31,11 @@ function lay(t) {
   mkdirSync(join(auth, "standings"));
   const cwd = temp(t, "compact-repo-");
   mkdirSync(join(cwd, ".git"));
+  if (aligned)
+    writeFileSync(
+      join(cwd, "AGENTS.md"),
+      "# repo\n\n*(iskronify: контракт `37`, штамп `2026-10-30` — …)*\n",
+    );
   return { root, auth, cwd };
 }
 
@@ -104,8 +110,15 @@ for (const [name, recs] of Object.entries(AMBIGUOUS))
     assert.ok(out.includes("iskron") && out.includes("recall"), out);
   });
 
+test("compact hook: no seat in a repository without iskron — silent", (t) => {
+  const s = lay(t, false);
+  const r = hook(s, "compact");
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "");
+});
+
 test("compact hook: startup keeps the invitation, not the compaction word", (t) => {
-  const s = lay(t);
+  const s = lay(t, false);
   hold(s.auth, { name: "m3.skills", cwd: s.cwd, client: "claude-code" });
   assert.equal(ok(hook(s, "startup")), `${ONBOARD_START.ru.start()}\n`);
 });
