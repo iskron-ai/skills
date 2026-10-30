@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.25.0";
+var VERSION = "7.26.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -169,10 +169,10 @@ var BRIDGE_CLIENT = {
 // js/delivery/words/take.ts
 var TAKE = {
   ru: {
-    rule: () => "своё имя (та же роль, та же учётка) — сам, когда держатель молчит 5 минут на пробу словом (iskron_channel send); чужое (другая роль или учётка) — только словом человека"
+    rule: () => "только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы"
   },
   en: {
-    rule: () => "your own name (the same role, the same account) — by yourself when the holder stays silent 5 minutes to a probe by word (iskron_channel send); another's (another role or account) — only on the human's word"
+    rule: () => "only on the human's word; a seat on the board is no evidence its holder is alive: a dead agent's seat closes in about a minute when it held the seat through a machine bridge with a daemon, otherwise by the platform's term"
   }
 };
 
@@ -1153,6 +1153,10 @@ var SAFE_ACTIONS = {
   [tool("realm")]: /* @__PURE__ */ new Set(["list"])
 };
 
+// js/bridge/sessionclose.ts
+var CLOSE_MS = Number(process.env[envName("BRIDGE_SESSION_CLOSE_MS")]) || 3e3;
+var flying = scoped(() => /* @__PURE__ */ new Set());
+
 // js/bridge/toolsync.ts
 var T = scoped(() => ({
   served: null,
@@ -1203,7 +1207,9 @@ var state = scoped(() => ({
   // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
   // server that opens a fresh session on it silently runs the call unattributed
   // before we learn the new id. So a changed token means: re-open first.
-  sessionToken: null
+  sessionToken: null,
+  // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
+  goneSession: null
 }));
 var reinit = scoped(() => ({ inFlight: null }));
 
@@ -2132,20 +2138,20 @@ var RETRY_MS = 2e3;
 function wordLine(bridge) {
   let word2 = {};
   let owed = false;
-  let flying = false;
+  let flying2 = false;
   let dropped = false;
   let retry;
   const flush = () => {
-    if (dropped || flying || !owed) return;
+    if (dropped || flying2 || !owed) return;
     const b = bridge();
     if (!b) return;
     clearTimeout(retry);
     retry = void 0;
     owed = false;
-    flying = true;
+    flying2 = true;
     const done = (taken) => {
       if (dropped) return;
-      flying = false;
+      flying2 = false;
       if (taken || owed) return flush();
       owed = true;
       retry = setTimeout(() => {
