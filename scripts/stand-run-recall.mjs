@@ -33,7 +33,7 @@
 //   --plugin .control/skills/establish-mcp/scripts/opencode-plugin.js --skills .control/skills
 // Exit 0 — all passed, 1 — a probe failed, 2 — setup failed.
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -188,12 +188,18 @@ let serve = null;
 function api(method, path, body) {
   const a = ["api", "--server", server, method, path];
   if (body) a.push("-d", JSON.stringify(body));
-  const r = spawnSync(opencode, a, { env, cwd, encoding: "utf8" });
+  // `opencode api` cuts a piped stdout at a 64 KiB boundary with status 0 (case №2306): the
+  // answer goes to a file instead.
+  const outFile = join(run, "api.out");
+  const fd = openSync(outFile, "w");
+  const r = spawnSync(opencode, a, { env, cwd, encoding: "utf8", stdio: ["ignore", fd, "pipe"] });
+  closeSync(fd);
+  const stdout = readFileSync(outFile, "utf8");
   let data = null;
   try {
-    data = JSON.parse(r.stdout);
+    data = JSON.parse(stdout);
   } catch {}
-  return { ok: r.status === 0 && data !== null && !data?._tag, data, raw: r.stdout + r.stderr };
+  return { ok: r.status === 0 && data !== null && !data?._tag, data, raw: stdout + (r.stderr ?? "") };
 }
 function read(path) {
   const r = api("GET", path);
@@ -485,7 +491,7 @@ try {
     await sleep(500);
     listed = skillsOf();
   }
-  const foreign = listed.filter((s) => !skillDirs.includes(s) && !["opencode", "report"].includes(s));
+  const foreign = listed.filter((s) => !skillDirs.includes(s) && !["opencode", "report", "browser"].includes(s));
   if (skillDirs.some((s) => !listed.includes(s)) || foreign.length)
     throw new Error(`skills: missing ${skillDirs.filter((s) => !listed.includes(s)).join(",") || "—"}, foreign ${foreign.join(",") || "—"}`);
   // Every projected role is a subagent of the project on the pinned model.
