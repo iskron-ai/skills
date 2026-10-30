@@ -147,6 +147,9 @@ writeFileSync(join(auth, "token"), token + "\n", { mode: 0o600 });
 cpSync(plugin, join(oc, "plugins/iskron.js"));
 // OpenCode 2.2.1 reads <config>/skill (singular), not <config>/skills (case №2306).
 for (const d of skillDirs) cpSync(join(skills, d), join(oc, "skill", d), { recursive: true });
+// The install lock beside the root, as `npx skills add` lays it: without it the plugin opens
+// only the bridge skill to a child's reads, and a subagent cannot read references (case №2394).
+writeFileSync(join(oc, ".skill-lock.json"), JSON.stringify({ version: 3, skills: Object.fromEntries(skillDirs.map((d) => [d, { source: "iskron-ai/skills" }])) }));
 // The roles in their OpenCode form (delegation-2.md, «OpenCode»): the same body, the frontmatter
 // description, mode subagent and the pinned model.
 mkdirSync(join(cwd, ".opencode/agents"), { recursive: true });
