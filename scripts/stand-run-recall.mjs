@@ -543,9 +543,6 @@ try {
       { arrow_type: "actor", target: `#${scene.agent}`, volitive_mode: "upeksha", sense: "кто загружает" },
     ],
   });
-  await P.call("iskron_arrow", { realm, action: "link", source: `#${scene.own}`, target: `#${scene.kriya}`, arrow_type: "contains", volitive_mode: "upeksha", sense: "действие границы" }).then(
-    (r) => r.error && report.push(`WARN scene: contains own→kriya — ${r.text.slice(0, 160)}`),
-  );
   // The brother: another seat of the agent's role, held by the scene bridge.
   scene.brother = `recall-${stamp}.brother`;
   const b = await P.call("iskron_stand", { realm, karta: `#${scene.agent}`, name: scene.brother, model: "stand-run" });
