@@ -19,7 +19,7 @@
 // The release batch: the seat's pulse on the board (#7529; with --api read from GET /me/channels,
 // else from the board's text), take onto another name refused while a seat beside stands
 // (#6499, needs --realm2), the `stop` subcommand and its refusal of another owner's address
-// (#7518). Out of the batch: the agent's end (#473 excluded from the release) — a bridge killed
+// (#7518). Opt-in: the agent's end — a bridge killed
 // without a mark, its seat standing until the death window, then gone (#7493); --with-agent-end
 // runs it, --death-ms is then the run's death window (ISKRON_BRIDGE_DEATH_MS of its daemon), 20000.
 // Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
@@ -53,7 +53,7 @@ const ackLog = arg("--ack-log", null);
 // --bridge — another build of the bridge (a release output), dist/dev by default.
 const bridgePath = arg("--bridge", join(root, "dist/dev/skills/establish-mcp/scripts/iskron.mjs"));
 const withAgentEnd = process.argv.includes("--with-agent-end");
-const OUT_AGENT_END = "SKIP вне состава: конец агента (#473 исключён из выпуска) — --with-agent-end включает";
+const OUT_AGENT_END = "SKIP не прогнан: конец агента — --with-agent-end включает";
 const deathMs = Number(arg("--death-ms", "20000"));
 if (process.argv.includes("--death-ms") && !withAgentEnd) fail(2, "--death-ms is for --with-agent-end only");
 
@@ -518,7 +518,7 @@ try {
 
   // 9. The agent's end (#7493): a bridge killed without an announced absence keeps its seat until
   // the death window, then the machine daemon closes it — no stop word. Out of the batch unless
-  // --with-agent-end: #473 is excluded from the release.
+  // --with-agent-end only: its death window lengthens the run.
   if (withAgentEnd) {
     const nameK = `night-${stamp}.k`;
     const K = open("killed");

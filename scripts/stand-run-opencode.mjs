@@ -13,7 +13,7 @@
 // required: the person's words and seat removals go through it (scripts/stand-person.mjs).
 // The release batch: the seat's pulse — idle after a turn, busy in it, turn_at at its end, read_at
 // when a word went into it (#7529; with --api read from GET /me/channels, else the board's text);
-// Esc keeps the seat. Out of the batch: the agent's end (#7493; #473 excluded from the release) —
+// Esc keeps the seat. Opt-in: the agent's end (#7493) —
 // a plugin reload returns the seat to the same session without waiting, a deleted session's seat
 // goes at once without a stop word, a killed harness's seat stands until the death window and
 // then goes; --with-agent-end runs it, --death-ms is then the death window, 20000. With --satellite the
@@ -40,7 +40,7 @@ const realm = arg("--realm");
 const [providerID, modelID] = arg("--model", "anthropic/claude-sonnet-5-5").split("/");
 const [childProviderID, childModelID] = arg("--child-model", "anthropic/claude-opus-5-5").split("/");
 const withAgentEnd = process.argv.includes("--with-agent-end");
-const OUT_AGENT_END = "SKIP вне состава: конец агента (#473 исключён из выпуска) — --with-agent-end включает";
+const OUT_AGENT_END = "SKIP не прогнан: конец агента — --with-agent-end включает";
 const deathMs = Number(arg("--death-ms", "20000"));
 const keep = process.argv.includes("--keep");
 const apiArg = arg("--api");
@@ -561,7 +561,7 @@ try {
   report.push(`INFO pulse after Esc read ${new Date().toISOString()}`);
   check(pE?.state === "interrupted", "pulse: interrupted after Esc", JSON.stringify(pE));
 
-  // The agent's end — out of the batch unless --with-agent-end: #473 is excluded from the release.
+  // The agent's end — only with --with-agent-end (its death window lengthens the run).
   if (withAgentEnd) {
     // A plugin reload is an announced absence: the same session holds its seat again without
     // waiting, the seat stands past the death window.
