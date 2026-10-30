@@ -13,9 +13,10 @@
 //
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
-//     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g]
+//     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g,h]
 //     [--turn-minutes 15] [--require-empty]
-// (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester.
+// (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester;
+// (h) opt-in search delegated to a recaller — the prompt of scene (д) of case №2302 word for word.
 // Their semantic acceptance remains PROVISIONAL pending human inspection of raw journals.
 // (e) — a task needing the fact without naming it («допиши в import.yaml блок очереди»): the
 //     agent's own look of the fact before any question, 45 written with a reference to the node.
@@ -70,7 +71,7 @@ const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
 const PROBES = ["a", "b", "c", "d", "e"];
-const AVAILABLE = [...PROBES, "f", "g"];
+const AVAILABLE = [...PROBES, "f", "g", "h"];
 const only = arg("--only", PROBES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 const reportFile = resolve(arg("--report", `stand-run-recall-${stamp}.txt`));
@@ -589,6 +590,8 @@ try {
     d: ["Берём ли мы фичу «экспорт каталога в XLSX» в этот выпуск?"],
     // (e) — the owner's complaint (case №2302 [35]): a task that needs the fact without naming it.
     e: ["Допиши в import.yaml блок очереди импорта (queue:) — нужен, чтобы выкатить импорт каталогов."],
+    // (h) — scene (д) of case №2302 as run on 7.26.0 (case №2394 [14]): the recaller is asked for by name.
+    h: ["Нужно узнать записанный таймаут очереди импорта. Делегируй поиск настоящему recaller через инструмент запуска субагента. В постановке укажи, что ищем, по чему признаем ответ найденным и где ты уже искал (если ещё нигде — так и напиши). Пусть ищет в графе, не спрашивая брата или человека через дело или канал. Перед тем как опереться на ответ recaller, сам открой найденный узел. Какой таймаут ставить и почему?"],
   };
   const CONFIG = join(cwd, "import.yaml");
   const isSearch = (c) => ["iskron_search", "iskron_semantic_search"].includes(c.name);
@@ -673,6 +676,15 @@ try {
         iLook !== -1 && (iBro === -1 || iBro > iLook) && in45 && (answer.includes(`#${fact}`) || config.includes(`#${fact}`)),
         `(e) a task that needs the fact unnamed: own look #${fact} before any question, 45 written with a reference to #${fact}`,
         `look ${iLook} · brother ${iBro} · 45 in config ${in45} · question ${/\?/.test(answer)} · ${seq}`,
+      );
+    }
+    if (key === "h") {
+      // The recaller's own searching and the caller's own look; no word to anyone by either.
+      const childSearched = calls.some((c) => c.by === "sub:recaller" && (isSearch(c) || looks(c, fact)));
+      verdict(
+        subs.includes("recaller") && childSearched && iLook !== -1 && iBro === -1 && answer.includes(`#${fact}`) && has45(answer),
+        `(h) a recaller launched and searching, the caller's own look #${fact}, no word to a brother or the person, answer with #${fact} and 45`,
+        `recaller ${subs.includes("recaller")} · child searched ${childSearched} · look ${iLook} · brother ${iBro} · ${seq}`,
       );
     }
   }
