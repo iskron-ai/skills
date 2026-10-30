@@ -13,9 +13,10 @@
 //
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
-//     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g]
-//     [--turn-minutes 15] [--require-empty]
-// (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester.
+//     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g,h]
+//     [--turn-minutes 15] [--require-empty] [--fixed-brief F]
+// (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester;
+// (h) opt-in search delegated to a recaller — the prompt of scene (д) of case №2302 word for word.
 // Their semantic acceptance remains PROVISIONAL pending human inspection of raw journals.
 // (e) — a task needing the fact without naming it («допиши в import.yaml блок очереди»): the
 //     agent's own look of the fact before any question, 45 written with a reference to the node.
@@ -69,8 +70,11 @@ const model = arg("--model", "anthropic/claude-opus-5-5");
 const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
+// --fixed-brief F (with f): the ingester's brief, the same for every model compared (case №2394
+// [18]); the root lays it word for word, filling only {REALM} {SEAT} {CASE} {SOURCE}.
+const fixedBrief = arg("--fixed-brief", null) ? readFileSync(arg("--fixed-brief", null), "utf8").trim() : null;
 const PROBES = ["a", "b", "c", "d", "e"];
-const AVAILABLE = [...PROBES, "f", "g"];
+const AVAILABLE = [...PROBES, "f", "g", "h"];
 const only = arg("--only", PROBES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 const reportFile = resolve(arg("--report", `stand-run-recall-${stamp}.txt`));
@@ -191,13 +195,20 @@ const env = {
   ISKRON_ROOT_SEAT: "1",
 };
 
-// Model keys: export from the real home, keep key entries, import into the isolated one.
+// Model keys: export from the real home, keep key entries, import into the isolated one. An OAuth
+// entry goes without its refresh token (case №2394): the isolated home must never rotate the
+// person's login, so it runs on the access token alone and fails when that has expired.
 {
   const exp = spawnSync(opencode, ["auth", "export"], { encoding: "utf8" });
-  const keys = JSON.parse(exp.stdout || "[]").filter((e) => [providerID, subProvider].includes(e.integrationID) && e.value?.type === "key");
+  const keys = JSON.parse(exp.stdout || "[]")
+    .filter((e) => [providerID, subProvider].includes(e.integrationID) && ["key", "oauth"].includes(e.value?.type))
+    .map((e) => (e.value.type === "oauth" ? { ...e, value: { ...e.value, refresh: "" } } : e));
   rememberSecrets(keys);
   for (const p of [providerID, ...(roles.length ? [subProvider] : [])])
-    if (!keys.some((e) => e.integrationID === p)) fail(2, `no static key of ${p} in this machine's opencode auth export`);
+    if (!keys.some((e) => e.integrationID === p)) fail(2, `no key or OAuth login of ${p} in this machine's opencode auth export`);
+  for (const e of keys)
+    if (e.value.type === "oauth" && !(Number(e.value.expires) > Date.now() + 3600_000))
+      fail(2, `${e.integrationID}: the OAuth access token expires within the hour — refresh the login in the real home first`);
   const kf = join(home, "tmp/keys.json");
   writeFileSync(kf, JSON.stringify(keys), { mode: 0o600 });
   const imp = spawnSync(opencode, ["auth", "import", "--standalone", kf], { env, cwd, encoding: "utf8" });
@@ -571,8 +582,13 @@ try {
   for (let t = 0; t < 240 && !/тулов в сессии: \d+|tools in the session: \d+/.test(existsSync(join(run, "serve.log")) ? readFileSync(join(run, "serve.log"), "utf8") : ""); t++) { checkInterrupted(); await sleep(500); }
   await sleep(10_000);
 
+  const intake = intakePrompts(scene);
+  if (fixedBrief)
+    intake.f = [
+      `${intake.f[0]}\n\nНабросок и постановка ingester уже готовы — свой набросок не пиши и граф до запуска не правь, кроме шагов ниже. (1) Запиши исток ding-феноменом «🗣️ Рассказ о повторяемом импорте каталогов» (source_kind=shabda, context #${scene.own}) с полным текстом рассказа. (2) Открой дочернее дело на впуск. (3) Запусти ingester с постановкой ДОСЛОВНО из текста ниже, подставив только {REALM} — адрес графа, {SEAT} — твоё место, {CASE} — номер дочернего дела, {SOURCE} — номер истока. (4) По отчёту сам прочти полученные узлы и сравни их с рассказом.\n\nПОСТАНОВКА:\n${fixedBrief}`,
+    ];
   const PROMPTS = {
-    ...intakePrompts(scene),
+    ...intake,
     a: ["Правлю импорт, какой таймаут очереди ставить?"],
     b: ["Какой таймаут у очереди импорта?"],
     c: [
@@ -582,6 +598,8 @@ try {
     d: ["Берём ли мы фичу «экспорт каталога в XLSX» в этот выпуск?"],
     // (e) — the owner's complaint (case №2302 [35]): a task that needs the fact without naming it.
     e: ["Допиши в import.yaml блок очереди импорта (queue:) — нужен, чтобы выкатить импорт каталогов."],
+    // (h) — scene (д) of case №2302 as run on 7.26.0 (case №2394 [14]): the recaller is asked for by name.
+    h: ["Нужно узнать записанный таймаут очереди импорта. Делегируй поиск настоящему recaller через инструмент запуска субагента. В постановке укажи, что ищем, по чему признаем ответ найденным и где ты уже искал (если ещё нигде — так и напиши). Пусть ищет в графе, не спрашивая брата или человека через дело или канал. Перед тем как опереться на ответ recaller, сам открой найденный узел. Какой таймаут ставить и почему?"],
   };
   const CONFIG = join(cwd, "import.yaml");
   const isSearch = (c) => ["iskron_search", "iskron_semantic_search"].includes(c.name);
@@ -625,6 +643,13 @@ try {
     if (turnError) throw turnError;
     if (["f", "g"].includes(key)) {
       const evidence = intakeEvidence(key, tree, PROMPTS.f[0], { calls, scene, fact });
+      if (key === "f" && fixedBrief) {
+        // Verbatim: every piece of the brief between its placeholders reached the ingester.
+        const given = evidence.launches.filter((l) => l.role === "ingester").map((l) => JSON.stringify(l.input)).join("\n");
+        const pieces = fixedBrief.split("\n").flatMap((line) => line.split(/\{[A-Z]+\}/)).map((s) => s.trim()).filter((s) => s.length > 3);
+        evidence.briefMissing = pieces.filter((s) => !given.includes(JSON.stringify(s).slice(1, -1)));
+        if (evidence.briefMissing.length) evidence.errors.push(`fixed brief not verbatim: ${evidence.briefMissing.length} pieces missing`);
+      }
       report.push(`OBSERVATIONS (${key})\n${JSON.stringify(evidence, null, 2)}`);
       if (evidence.errors.length) verdict(false, `(${key}) intake evidence`, evidence.errors.join("; "));
       else { verdicts.push(`PROVISIONAL (${key}) intake: human semantic acceptance required`); failed++; }
@@ -666,6 +691,15 @@ try {
         iLook !== -1 && (iBro === -1 || iBro > iLook) && in45 && (answer.includes(`#${fact}`) || config.includes(`#${fact}`)),
         `(e) a task that needs the fact unnamed: own look #${fact} before any question, 45 written with a reference to #${fact}`,
         `look ${iLook} · brother ${iBro} · 45 in config ${in45} · question ${/\?/.test(answer)} · ${seq}`,
+      );
+    }
+    if (key === "h") {
+      // The recaller's own searching and the caller's own look; no word to anyone by either.
+      const childSearched = calls.some((c) => c.by === "sub:recaller" && (isSearch(c) || looks(c, fact)));
+      verdict(
+        subs.includes("recaller") && childSearched && iLook !== -1 && iBro === -1 && answer.includes(`#${fact}`) && has45(answer),
+        `(h) a recaller launched and searching, the caller's own look #${fact}, no word to a brother or the person, answer with #${fact} and 45`,
+        `recaller ${subs.includes("recaller")} · child searched ${childSearched} · look ${iLook} · brother ${iBro} · ${seq}`,
       );
     }
   }
