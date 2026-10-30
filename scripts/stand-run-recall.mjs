@@ -191,13 +191,20 @@ const env = {
   ISKRON_ROOT_SEAT: "1",
 };
 
-// Model keys: export from the real home, keep key entries, import into the isolated one.
+// Model keys: export from the real home, keep key entries, import into the isolated one. An OAuth
+// entry goes without its refresh token (case №2394): the isolated home must never rotate the
+// person's login, so it runs on the access token alone and fails when that has expired.
 {
   const exp = spawnSync(opencode, ["auth", "export"], { encoding: "utf8" });
-  const keys = JSON.parse(exp.stdout || "[]").filter((e) => [providerID, subProvider].includes(e.integrationID) && e.value?.type === "key");
+  const keys = JSON.parse(exp.stdout || "[]")
+    .filter((e) => [providerID, subProvider].includes(e.integrationID) && ["key", "oauth"].includes(e.value?.type))
+    .map((e) => (e.value.type === "oauth" ? { ...e, value: { ...e.value, refresh: "" } } : e));
   rememberSecrets(keys);
   for (const p of [providerID, ...(roles.length ? [subProvider] : [])])
-    if (!keys.some((e) => e.integrationID === p)) fail(2, `no static key of ${p} in this machine's opencode auth export`);
+    if (!keys.some((e) => e.integrationID === p)) fail(2, `no key or OAuth login of ${p} in this machine's opencode auth export`);
+  for (const e of keys)
+    if (e.value.type === "oauth" && !(Number(e.value.expires) > Date.now() + 3600_000))
+      fail(2, `${e.integrationID}: the OAuth access token expires within the hour — refresh the login in the real home first`);
   const kf = join(home, "tmp/keys.json");
   writeFileSync(kf, JSON.stringify(keys), { mode: 0o600 });
   const imp = spawnSync(opencode, ["auth", "import", "--standalone", kf], { env, cwd, encoding: "utf8" });

@@ -43,7 +43,7 @@ export function seatID(board, name) {
 export function secretScrubber(token) {
   const secrets = new Set([token]);
   const remember = (value, key = "") => {
-    if (typeof value === "string" && /key|token|password|secret|authorization/i.test(key)) secrets.add(value);
+    if (typeof value === "string" && /key|token|password|secret|authorization|^access$|^refresh$/i.test(key)) secrets.add(value);
     else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) remember(v, k);
   };
   const scrub = (text) => [...secrets].filter(Boolean).sort((a, b) => b.length - a.length)
