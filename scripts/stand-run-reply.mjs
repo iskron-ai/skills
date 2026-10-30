@@ -167,6 +167,55 @@ const A = open("agent");
 const P = open("maker"); // graph writes of the scene: roles, board reads, deletions
 let wd = null;
 let setup = 0;
+// The scene's fixture as far as it got made: the cleanup takes off what is here.
+let humanKarta = null;
+let agentKarta = null;
+let humanSeatId = null;
+const board = async () => {
+  const x = await P.call("iskron_channel", { realm, action: "list", karta: `#${agentKarta}` });
+  if (x.error) throw new Error(`board: ${x.text.slice(0, 300)}`);
+  return x.text;
+};
+
+// Seats and roles off — the scene was this run's own fixture. Every way out runs it once; a
+// step that fails is said in the report, the run's outcome stays its checks'.
+async function cleanup() {
+  const said = (ok, what, seen) => report.push(`${ok ? "CLEANUP" : "CLEANUP FAILED"} ${what}${seen ? ` — ${String(seen).slice(0, 200)}` : ""}`);
+  const step = async (what, fn) => {
+    try {
+      await fn();
+    } catch (e) {
+      said(false, what, e.message);
+    }
+  };
+  if (agentKarta)
+    await step(`the seat ${seatName}`, async () => {
+      const b2 = await board();
+      const seatId = b2
+        .split("\n")
+        .slice(0, 100)
+        .map((_, i, ls) => ls.slice(i, i + 8).join("\n"))
+        .find((blk) => blk.includes(`:${seatName} —`));
+      const sid = (seatId?.match(/^\s+id ([0-9a-f-]{36})/m) || [])[1];
+      if (!sid) return report.push("SKIP cleanup seat: no id on the board (already gone?)");
+      const rv = await person.revoke(realm, sid);
+      said(!rv.error, `the seat ${seatName} taken off`, rv.text);
+    });
+  if (humanSeatId)
+    await step("the person's unnamed seat", async () => {
+      const rh = await person.revoke(realm, humanSeatId);
+      said(!rh.error, "the person's unnamed seat taken off", rh.text);
+    });
+  for (const k of [agentKarta, humanKarta].filter(Boolean))
+    await step(`роль #${k}`, async () => {
+      const look = await P.call("iskron_look", { realm, node_id: `#${k}` });
+      const v = (look.text.match(/, v(\d+)\)/) || [])[1];
+      if (!v) return report.push(`SKIP cleanup роли #${k}: версия не прочитана — ${look.text.split("\n")[0].slice(0, 160)}`);
+      const del = await P.call("iskron_delete_node", { realm, node_id: `#${k}`, basis_version: v, reasoning: "прогон строки ответа: фикстура снята" });
+      said(!del.error, `роль #${k} снята`, del.text.split("\n")[0]);
+    });
+}
+
 try {
   try {
     await A.init();
@@ -199,13 +248,13 @@ try {
     if (!id) throw new Error(`karta ${name}: ${k.text.slice(0, 300)}`);
     return id;
   };
-  const humanKarta = await mk("🧪 Человек прогона строки ответа", "Безымянное место человека: его слово идёт агенту, ответ встаёт под ним.", "svatantra", userId);
-  const agentKarta = await mk("🧪 Агент прогона строки ответа", "Держит место, которому человек говорит как человек; отвечает по строке под словом.", "adhikarin");
+  humanKarta = await mk("🧪 Человек прогона строки ответа", "Безымянное место человека: его слово идёт агенту, ответ встаёт под ним.", "svatantra", userId);
+  agentKarta = await mk("🧪 Агент прогона строки ответа", "Держит место, которому человек говорит как человек; отвечает по строке под словом.", "adhikarin");
   report.push(`INFO realm ${realm} · человек #${humanKarta} (svatantra, user ${userId}) · агент #${agentKarta} (adhikarin) · bridge ${bridgePath}`);
   // The person's own unnamed seat on their role: the api signs an as_person word with its
   // address only when it stands (#48: no such seat — the word goes without one, by design).
   const hs = await api("POST", "/channels", { body: { karta: humanKarta } });
-  const humanSeatId = hs.body?.standing_id ?? hs.body?.id ?? null;
+  humanSeatId = hs.body?.standing_id ?? hs.body?.id ?? null;
   check(hs.status === 201 && !!humanSeatId, "the person's unnamed seat on their role", `${hs.status} ${JSON.stringify(hs.body).slice(0, 200)}`);
 
   // The agent stands; the real watchdog attaches — the frame's text comes out of it.
@@ -213,11 +262,6 @@ try {
   check(!st.error, "stand: the agent's seat is held", st.text.split("\n")[0].slice(0, 200));
   const wdKey = (st.text.match(/watchdog (\S+)/) || [])[1];
   check(!!wdKey, "stand: the answer names the watchdog command", (st.text.match(/watchdog[^\n]*/) || ["none"])[0].slice(0, 200));
-  const board = async () => {
-    const x = await P.call("iskron_channel", { realm, action: "list", karta: `#${agentKarta}` });
-    if (x.error) throw new Error(`board: ${x.text.slice(0, 300)}`);
-    return x.text;
-  };
   const b = await board();
   report.push(`INFO board (адрес агента ${seatAddress(b, seatName)}):\n${b.split("\n").slice(0, 14).join("\n")}`);
   if (wdKey) {
@@ -316,37 +360,11 @@ try {
     check(!!row, "api: the answer carries in_reply_to of the person's word", row ? `${row.id} in_reply_to ${row.in_reply_to}` : `${log.status} ${parts.in_reply_to}`);
     check(row?.standing_id === humanSeatId, "api: the answer is addressed to the person's seat", row ? `${row.standing_id} ← ${row.peer_standing}` : "no row");
   }
-
-  // Seats and roles off — the scene was this run's own fixture.
-  const b2 = await board().catch(() => "");
-  const seatId = b2
-    .split("\n")
-    .slice(0, 100)
-    .map((_, i, ls) => ls.slice(i, i + 8).join("\n"))
-    .find((blk) => blk.includes(`:${seatName} —`));
-  const sid = (seatId?.match(/^\s+id ([0-9a-f-]{36})/m) || [])[1];
-  if (sid) {
-    const rv = await person.revoke(realm, sid);
-    check(!rv.error, `cleanup: the seat ${seatName} taken off`, rv.text.slice(0, 200));
-  } else report.push("SKIP cleanup seat: no id on the board (already gone?)");
-  if (humanSeatId) {
-    const rh = await person.revoke(realm, humanSeatId);
-    check(!rh.error, "cleanup: the person's unnamed seat taken off", rh.text.slice(0, 200));
-  }
-  for (const k of [agentKarta, humanKarta]) {
-    const look = await P.call("iskron_look", { realm, node_id: `#${k}` });
-    const v = (look.text.match(/, v(\d+)\)/) || [])[1];
-    if (!v) {
-      report.push(`SKIP cleanup роли #${k}: версия не прочитана — ${look.text.split("\n")[0].slice(0, 160)}`);
-      continue;
-    }
-    const del = await P.call("iskron_delete_node", { realm, node_id: `#${k}`, basis_version: v, reasoning: "прогон строки ответа: фикстура снята" });
-    check(!del.error, `cleanup: роль #${k} снята`, del.text.split("\n")[0].slice(0, 200));
-  }
 } catch (e) {
   report.push(`ERROR ${e.message}`);
   failed++;
 } finally {
+  await cleanup();
   if (wd && wd.child.exitCode === null) wd.child.kill("SIGKILL");
   await Promise.all([A.close(), P.close()]);
 }
