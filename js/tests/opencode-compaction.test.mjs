@@ -82,6 +82,11 @@ test("a seated session: the first request after the compaction carries one word 
     assert.equal(words(first), 1, first);
     assert.match(first, /роль #931 в графе @nks\/nks-dev, место host\.repo\.opus-5/);
     assert.match(first, /До первого содержательного хода загрузи дверь/);
+    assert.match(
+      first,
+      /Сводка — указатель, не запись.*recall/,
+      "the summary is not a source: recall",
+    );
     assert.equal(
       words(await system(rec, "context", "s-c")),
       0,

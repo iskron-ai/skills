@@ -24,7 +24,8 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
     back: (karta, name, realm) =>
       `Искрон: контекст сжат. Ты — роль ${role(karta, "<роль>")} в графе ${realm}, место ${name} ` +
       `держит мост. До первого содержательного хода загрузи дверь (скилл iskron) и скиллы роли — ` +
-      `их называет дверь; только их, не все прежние.`,
+      `их называет дверь; только их, не все прежние. Сводка — указатель, не запись: решение, основание ` +
+      `или факт из неё, на который опираешься, прочти в графе заново (скилл recall).`,
     returned: (sessionID) =>
       `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`,
   },
@@ -36,7 +37,8 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
     back: (karta, name, realm) =>
       `Iskron: the context was compacted. You are role ${role(karta, "<role>")} in graph ${realm}, ` +
       `the bridge holds seat ${name}. Before the first substantive move load the door (the iskron skill) ` +
-      `and the role's skills — the door names them; only those, not all the earlier ones.`,
+      `and the role's skills — the door names them; only those, not all the earlier ones. The summary is a ` +
+      `pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
     returned: (sessionID) =>
       `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`,
   },
