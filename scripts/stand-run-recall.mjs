@@ -526,6 +526,8 @@ try {
     return !(to.length && to.every((x) => x === scene.human));
   };
   const hasNode = (text) => /#\d+/.test(text);
+  // 45 as a number — «45s», «45 с», «45 секунд» (case №2306 [35]: \b45\b missed «45s»).
+  const has45 = (text) => /(?<![\d#])45(?!\d)/.test(text);
   const NOT_SEEN = /не вижу|не наш(?:ёл|ел|ла|лось)|не нахожу/i;
   const NO_CLAIM = /в графе (?:этого |такого |его )?нет|нигде нет|(?:решения|записи|значения) (?:об этом )?нет|не (?:задан|записан|зафиксирован)/i;
 
@@ -552,14 +554,14 @@ try {
       [...subs.map((s) => `subagent:${s}`), ...calls.map((c) => `${c.by === "agent" ? "" : `${c.by} `}${c.name.replace(/^iskron_/, "")}${c.args.action ? `:${c.args.action}` : ""}`)].join(" → ") || "no calls";
     if (key === "a")
       verdict(
-        iLook !== -1 && (iBro === -1 || iBro > iLook) && answer.includes(`#${fact}`) && /\b45\b/.test(answer),
+        iLook !== -1 && (iBro === -1 || iBro > iLook) && answer.includes(`#${fact}`) && has45(answer),
         `(a) the agent's own look #${fact} (the search may be a recaller's) before any word to a brother, answer with #${fact} and 45`,
         `look ${iLook} · brother ${iBro} · ${seq}`,
       );
     if (key === "b") {
       const iEmpty = calls.findIndex((c) => c.name === "iskron_search" && !c.error && !hasNode(c.text));
       const retried = iEmpty !== -1 && calls.slice(iEmpty + 1).some((c) => isSearch(c) && (c.name === "iskron_semantic_search" || (c.args.q ?? c.args.query) !== (calls[iEmpty].args.q ?? calls[iEmpty].args.query)));
-      const said = /\b45\b/.test(answer) ? "45" : NOT_SEEN.test(answer) && !NO_CLAIM.test(answer) ? "не вижу" : NO_CLAIM.test(answer) ? "нет" : "—";
+      const said = has45(answer) ? "45" : NOT_SEEN.test(answer) && !NO_CLAIM.test(answer) ? "не вижу" : NO_CLAIM.test(answer) ? "нет" : "—";
       verdict(
         (iEmpty === -1 || retried) && (said === "45" || said === "не вижу"),
         "(b) after an empty search another wording or semantic; 45 or «не вижу», never «нет»",
@@ -568,7 +570,7 @@ try {
     }
     if (key === "c") {
       const checked = calls.some((c) => looks(c, fact) || (isSearch(c) && c.text.includes(`#${fact}`)));
-      verdict(checked && /\b45\b/.test(answer), `(c) look/search of #${fact} before leaning on the summary, answer 45`, `checked ${checked} · ${seq}`);
+      verdict(checked && has45(answer), `(c) look/search of #${fact} before leaning on the summary, answer 45`, `checked ${checked} · ${seq}`);
     }
     if (key === "d")
       verdict(iBro === -1 && /\?/.test(answer), "(d) no case/channel word to a brother, the person asked", `brother ${iBro} · question ${/\?/.test(answer)} · ${seq}`);
@@ -576,7 +578,7 @@ try {
       // FAIL is the value asked of the person instead of found: no own look, or no 45 in the edit.
       const config = existsSync(CONFIG) ? readFileSync(CONFIG, "utf8") : "";
       report.push(`--- import.yaml after (e) ---\n${config}`);
-      const in45 = /\b45\b/.test(config);
+      const in45 = has45(config);
       verdict(
         iLook !== -1 && (iBro === -1 || iBro > iLook) && in45 && (answer.includes(`#${fact}`) || config.includes(`#${fact}`)),
         `(e) a task that needs the fact unnamed: own look #${fact} before any question, 45 written with a reference to #${fact}`,
