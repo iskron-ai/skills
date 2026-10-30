@@ -277,6 +277,7 @@ export async function startFakeNks(opts = {}) {
     takeInWindow: null, // "karta:name": чужой connect сразу после последней сверки моста (№677)
     stopKeeps: new Set(), // "karta:name": места, которые держит другой живой канал, — снятие по токену их не снимает
     beforeStopReply: null, // () => void: проба вклинивается в снятие по токену до ответа
+    stopRefuseNext: [], // [{ status, delayMs? }]: следующие снятия по токену отвечают отказом, ничего не тронув
     wsTokens: new Map(), // адрес сокета → имя места; wsNames: открытый сокет → имя места (несколько мостов на одном фейке)
     wsNames: new Map(),
     wsAddress: new Map(), // открытый сокет → путь его адреса: новое подключение тем же путём вытесняет прежнее
@@ -563,6 +564,11 @@ export async function startFakeNks(opts = {}) {
     if (p.startsWith("/api/channel/ws/") && p.endsWith("/stop") && req.method === "POST") {
       st.counts.stops++;
       if (st.stopAbsent) return json(res, st.stopAbsent, { title: "Not Found" });
+      const refuse = st.stopRefuseNext.shift();
+      if (refuse) {
+        if (refuse.delayMs) await new Promise((r) => setTimeout(r, refuse.delayMs));
+        return json(res, refuse.status, { title: "Refused" });
+      }
       takeInWindow();
       st.beforeStopReply?.();
       const tok = p.slice("/api/channel/ws/".length, -"/stop".length);
