@@ -327,7 +327,7 @@ export function setupChannel(
       tacts.gone(id);
     },
     refused: (id, why, last) => say(W.notDelivered(W.frame(), id, why), last ? "error" : "warning"),
-    archive: archiver(ctx, (id, why) => say(W.sessionLeftOpen(id, why), "warning")),
+    archive: archiver(ctx, (text) => say(text, "warning")),
   });
   const cut = cuts.cut;
 

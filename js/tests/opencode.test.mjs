@@ -1173,19 +1173,74 @@ for (const [host, faults] of [
       if (host === "2.2.1" && !faults.updateFails) {
         await until(() => rec.archives.length === 1, "the archive of the stopped session");
         assert.deepEqual(rec.archives[0], { sessionID: "s-arch", archived: true });
-        assert.doesNotMatch(rec.said(), /осталась открытой/);
+        // Archived is not closed (owner, case №2400 [12]): no client found — the window is named open.
+        await until(
+          () => /s-arch остановлена, но её окно осталось открытым — клиента/.test(rec.said()),
+          "the word of the open window",
+        );
         appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
         await until(() => rec.archives.length === 2, "out of the archive on the explicit stand");
         assert.deepEqual(rec.archives[1], { sessionID: "s-arch", archived: false });
       } else {
         await until(
-          () => /сессия s-arch остановлена, но осталась открытой/.test(rec.said()),
+          () => /сессия s-arch остановлена, но её окно осталось открытым/.test(rec.said()),
           "the word of the open session",
         );
-        if (faults.updateFails) assert.match(rec.said(), /осталась открытой — update refused/);
+        if (faults.updateFails) assert.match(rec.said(), /осталось открытым — update refused/);
         else assert.equal(rec.archives.length, 0, "an older host is not asked to archive");
       }
     } finally {
+      await rec.stop();
+    }
+  });
+
+// #9256, case №2400 [12]: the stopped root session's client process goes — a TUI opened on exactly
+// this session (its command line), or the run whose "serve --stdio" this instance is (the seam
+// stands in for process.ppid); a stand-in process takes the SIGTERM, nothing else does.
+for (const how of ["tui", "run"])
+  test(`the owner's stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : "the standalone run"}`, async () => {
+    const sid = `s-client-${how}`;
+    const client = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 60000)", "--", ...(how === "tui" ? ["--session", sid] : [])],
+      { stdio: "ignore" },
+    );
+    const other = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 60000)", "--", "--session", `${sid}-other`],
+      { stdio: "ignore" },
+    );
+    const exited = (p) => new Promise((r) => p.once("exit", (_c, sig) => r(sig)));
+    const gone = exited(client);
+    const b = bridgeEnv(
+      `stopped-client-${how}`,
+      how === "run" ? { ISKRON_OPENCODE_CLIENT_PID: client.pid } : {},
+    );
+    const rec = await plugin(b.env, {
+      app: { name: "opencode", version: "2.2.1", channel: "latest" },
+    });
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, sid);
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pidOf(b.log)}`,
+        event("stopped", { code: 4001, key: "k", text }),
+      );
+      assert.equal(
+        await Promise.race([gone, delay(8000).then(() => "alive")]),
+        "SIGTERM",
+        "the client takes SIGTERM",
+      );
+      assert.match(
+        rec.said(),
+        new RegExp(`сессия ${sid} остановлена, её клиент закрыт \\(pid ${client.pid}\\)`),
+      );
+      assert.equal(other.exitCode, null, "another session's TUI is not touched");
+      assert.equal(other.signalCode, null, "another session's TUI is not touched");
+    } finally {
+      client.kill();
+      other.kill();
       await rec.stop();
     }
   });

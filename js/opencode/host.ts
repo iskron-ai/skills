@@ -1,6 +1,9 @@
 // What the plugin's host — OpenCode itself — says about itself and the session, for the
 // "tools" half (tools.ts). Only a type comes from plugin.ts — no runtime import cycle.
+import { OPENCODE } from "../delivery/index.ts";
 import { HARNESS_VERSION_ENV, SKILLS_ROOT_ENV } from "../shared/clients.ts";
+import { words } from "../shared/lang.ts";
+import { clientOf, closeClient } from "./client.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
 import { bridgeRoot } from "./skillread.ts";
@@ -36,24 +39,35 @@ export function archives(ctx: Context): boolean {
   return !!m && (Number(m[1]) > 2 || (Number(m[1]) === 2 && Number(m[2]) >= 2));
 }
 
+/** A pause before a run's client goes: the stop's outcome reaches the bridge first (cuts.ts). */
+const CLOSE_AFTER_MS = 1_000;
+
 /**
  * The stopped session archived (`on`) or taken out of the archive (#9256) — archived, not
- * removed: the human reads what the agent got to. An archive not made is said by `leftOpen`:
- * why — the host's refusal, null — the host cannot archive.
+ * removed: the human reads what the agent got to. A root session's client is closed as well
+ * (client.ts); either way the human is told whether its window is closed.
  */
 export function archiver(
   ctx: Context,
-  leftOpen: (id: string, why: string | null) => void,
+  tell: (text: string) => void,
 ): (id: string, on: boolean) => Promise<void> {
-  const session = ctx.session as unknown as { update?: (o: object) => Promise<unknown> };
+  const W = words(OPENCODE);
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- update takes `archived` from 2.2 on */
+  const session = ctx.session as any;
   return async (id, on) => {
-    if (!archives(ctx) || typeof session.update !== "function")
-      return void (on && leftOpen(id, null));
-    try {
-      await session.update({ sessionID: id, archived: on });
-    } catch (e) {
-      if (on) leftOpen(id, (e as Error).message);
-    }
+    let why: string | null = null;
+    if (archives(ctx) && typeof session.update === "function")
+      await session.update({ sessionID: id, archived: on }).catch((e: Error) => (why = e.message));
+    if (!on) return;
+    const root = await Promise.resolve()
+      .then(() => session.get({ sessionID: id }))
+      .then((s: { parentID?: unknown } | null) => !s?.parentID)
+      .catch(() => false);
+    const pid = root ? clientOf(id) : null;
+    if (pid === null) return void ((root || why) && tell(W.sessionLeftOpen(id, why)));
+    tell(W.clientClosed(id, pid));
+    const t = setTimeout(() => closeClient(pid), CLOSE_AFTER_MS);
+    (t as { unref?: () => void }).unref?.();
   };
 }
 
