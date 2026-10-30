@@ -13,7 +13,9 @@
 //
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
-//     [--report F] [--keep] [--only a,b,c,d]
+//     [--report F] [--keep] [--only a,b,c,d,e]
+// (e) — a task needing the fact without naming it («допиши в import.yaml блок очереди»): the
+//     agent's own look of the fact before any question, 45 written with a reference to the node.
 //
 // --model: anthropic/claude-opus-5-5 (default) or openai/gpt-6.1-sol, nothing else. Roles: every
 // role block of <skills>/iskronify/references/delegation-*.md is projected into the project as
@@ -58,7 +60,7 @@ const model = arg("--model", "anthropic/claude-opus-5-5");
 const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
-const PROBES = ["a", "b", "c", "d"];
+const PROBES = ["a", "b", "c", "d", "e"];
 const only = arg("--only", PROBES.join(",")).split(",").map((s) => s.trim()).filter(Boolean);
 const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 const reportFile = resolve(arg("--report", `stand-run-recall-${stamp}.txt`));
@@ -509,7 +511,10 @@ try {
       "Ок, выставляю в конфиге импорта таймаут очереди 30 секунд, как решили. Какую строку конфига написать?",
     ],
     d: ["Берём ли мы фичу «экспорт каталога в XLSX» в этот выпуск?"],
+    // (e) — the owner's complaint (case №2302 [35]): a task that needs the fact without naming it.
+    e: ["Допиши в import.yaml блок очереди импорта (queue:) — нужен, чтобы выкатить импорт каталогов."],
   };
+  const CONFIG = join(cwd, "import.yaml");
   const isSearch = (c) => ["iskron_search", "iskron_semantic_search"].includes(c.name);
   const looks = (c, id) => !c.error && ((c.name === "iskron_look" && node(c.args.node_id) === id) || (c.name === "iskron_orient" && node(c.args.focus) === id));
   // A word to someone: a case talk/say/ask/invite or a channel send. To the person only when every
@@ -521,6 +526,8 @@ try {
     return !(to.length && to.every((x) => x === scene.human));
   };
   const hasNode = (text) => /#\d+/.test(text);
+  // 45 as a number — «45s», «45 с», «45 секунд» (case №2306 [35]: \b45\b missed «45s»).
+  const has45 = (text) => /(?<![\d#])45(?!\d)/.test(text);
   const NOT_SEEN = /не вижу|не наш(?:ёл|ел|ла|лось)|не нахожу/i;
   const NO_CLAIM = /в графе (?:этого |такого |его )?нет|нигде нет|(?:решения|записи|значения) (?:об этом )?нет|не (?:задан|записан|зафиксирован)/i;
 
@@ -528,6 +535,7 @@ try {
   for (const key of only) {
     const fact = await factOn(key === "b" ? "plain" : "word");
     const mark = teeLines().length;
+    if (key === "e") writeFileSync(CONFIG, "# Импорт каталогов поставщиков\nsource:\n  dir: ./incoming\n  format: csv\nworkers: 4\n");
     const S = newSession(`recall-${key}`);
     for (const text of PROMPTS[key]) await turn(S, text);
     const msgs = messages(S);
@@ -546,14 +554,14 @@ try {
       [...subs.map((s) => `subagent:${s}`), ...calls.map((c) => `${c.by === "agent" ? "" : `${c.by} `}${c.name.replace(/^iskron_/, "")}${c.args.action ? `:${c.args.action}` : ""}`)].join(" → ") || "no calls";
     if (key === "a")
       verdict(
-        iLook !== -1 && (iBro === -1 || iBro > iLook) && answer.includes(`#${fact}`) && /\b45\b/.test(answer),
+        iLook !== -1 && (iBro === -1 || iBro > iLook) && answer.includes(`#${fact}`) && has45(answer),
         `(a) the agent's own look #${fact} (the search may be a recaller's) before any word to a brother, answer with #${fact} and 45`,
         `look ${iLook} · brother ${iBro} · ${seq}`,
       );
     if (key === "b") {
       const iEmpty = calls.findIndex((c) => c.name === "iskron_search" && !c.error && !hasNode(c.text));
       const retried = iEmpty !== -1 && calls.slice(iEmpty + 1).some((c) => isSearch(c) && (c.name === "iskron_semantic_search" || (c.args.q ?? c.args.query) !== (calls[iEmpty].args.q ?? calls[iEmpty].args.query)));
-      const said = /\b45\b/.test(answer) ? "45" : NOT_SEEN.test(answer) && !NO_CLAIM.test(answer) ? "не вижу" : NO_CLAIM.test(answer) ? "нет" : "—";
+      const said = has45(answer) ? "45" : NOT_SEEN.test(answer) && !NO_CLAIM.test(answer) ? "не вижу" : NO_CLAIM.test(answer) ? "нет" : "—";
       verdict(
         (iEmpty === -1 || retried) && (said === "45" || said === "не вижу"),
         "(b) after an empty search another wording or semantic; 45 or «не вижу», never «нет»",
@@ -562,10 +570,21 @@ try {
     }
     if (key === "c") {
       const checked = calls.some((c) => looks(c, fact) || (isSearch(c) && c.text.includes(`#${fact}`)));
-      verdict(checked && /\b45\b/.test(answer), `(c) look/search of #${fact} before leaning on the summary, answer 45`, `checked ${checked} · ${seq}`);
+      verdict(checked && has45(answer), `(c) look/search of #${fact} before leaning on the summary, answer 45`, `checked ${checked} · ${seq}`);
     }
     if (key === "d")
       verdict(iBro === -1 && /\?/.test(answer), "(d) no case/channel word to a brother, the person asked", `brother ${iBro} · question ${/\?/.test(answer)} · ${seq}`);
+    if (key === "e") {
+      // FAIL is the value asked of the person instead of found: no own look, or no 45 in the edit.
+      const config = existsSync(CONFIG) ? readFileSync(CONFIG, "utf8") : "";
+      report.push(`--- import.yaml after (e) ---\n${config}`);
+      const in45 = has45(config);
+      verdict(
+        iLook !== -1 && (iBro === -1 || iBro > iLook) && in45 && (answer.includes(`#${fact}`) || config.includes(`#${fact}`)),
+        `(e) a task that needs the fact unnamed: own look #${fact} before any question, 45 written with a reference to #${fact}`,
+        `look ${iLook} · brother ${iBro} · 45 in config ${in45} · question ${/\?/.test(answer)} · ${seq}`,
+      );
+    }
   }
 } catch (e) {
   verdicts.push(`ERROR${setup ? " (setup)" : ""} ${e.message}`);
