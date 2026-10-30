@@ -1149,6 +1149,47 @@ for (const busy of [true, false])
     }
   });
 
+// #9256: a stopped agent's session closes in the harness, not only its turn — archived on
+// OpenCode 2.2 on (not removed: its journal stays readable), out of the archive on an explicit
+// stand; an older host or a refused archive is said to the human: the session is left open.
+for (const [host, faults] of [
+  ["2.2.1", {}],
+  ["2.2.1", { updateFails: true }],
+  ["2.0.18-probe", {}],
+])
+  test(`the owner's stop on OpenCode ${host}${faults.updateFails ? " refusing the archive" : ""} ${host === "2.2.1" && !faults.updateFails ? "archives the session, the stand takes it out" : "says the session is left open"}`, async () => {
+    const b = bridgeEnv(`stopped-archive-${host}-${!!faults.updateFails}`);
+    const rec = await plugin(b.env, {
+      app: { name: "opencode", version: host, channel: "latest" },
+      faults,
+    });
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-arch");
+      const pid = pidOf(b.log);
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+      await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+      if (host === "2.2.1" && !faults.updateFails) {
+        await until(() => rec.archives.length === 1, "the archive of the stopped session");
+        assert.deepEqual(rec.archives[0], { sessionID: "s-arch", archived: true });
+        assert.doesNotMatch(rec.said(), /осталась открытой/);
+        appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+        await until(() => rec.archives.length === 2, "out of the archive on the explicit stand");
+        assert.deepEqual(rec.archives[1], { sessionID: "s-arch", archived: false });
+      } else {
+        await until(
+          () => /сессия s-arch остановлена, но осталась открытой/.test(rec.said()),
+          "the word of the open session",
+        );
+        if (faults.updateFails) assert.match(rec.said(), /осталась открытой — update refused/);
+        else assert.equal(rec.archives.length, 0, "an older host is not asked to archive");
+      }
+    } finally {
+      await rec.stop();
+    }
+  });
+
 // #7519: a stop order executed by the bridge says the same "stopped" as the owner's 4001 — no
 // close code, the order's reason — and the plugin halts the session the same way.
 test("the stop by an order halts the session as the stop by taking the seat off", async () => {

@@ -90,6 +90,7 @@ function fakeCtx({
   const interrupts = [];
   const updates = [];
   const moves = [];
+  const archives = [];
   const hooks = {};
   const tools = registry();
   const commands = registry();
@@ -150,6 +151,11 @@ function fakeCtx({
               if (faults.removeFails > 0 && faults.removeFails--) throw new Error("remove refused");
             },
           }),
+      // An update — the stopped session's archive (#9256, OpenCode 2.2); updateFails — it throws.
+      update: async (o) => {
+        archives.push(o);
+        if (faults.updateFails) throw new Error("update refused");
+      },
       // A move — the twin's wake of an unloaded spelling (twins.ts); moveFails — it throws.
       move: async (o) => {
         moves.push(o);
@@ -202,6 +208,7 @@ function fakeCtx({
     interrupts,
     updates,
     moves,
+    archives,
     tools: () => tools.get(),
     commands: () => commands.get(),
     hooks,
