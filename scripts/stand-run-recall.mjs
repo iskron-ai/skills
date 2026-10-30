@@ -14,7 +14,7 @@
 //   node scripts/stand-run-recall.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--sub-model provider/id] [--no-roles]
 //     [--report F] [--raw-json F] [--keep] [--only a,b,c,d,e,f,g,h]
-//     [--turn-minutes 15] [--require-empty] [--fixed-brief F]
+//     [--turn-minutes 15] [--require-empty] [--fixed-brief F] [--installed]
 // (f) opt-in multi-actor intake by ingester; (g) opt-in short intake without ingester;
 // (h) opt-in search delegated to a recaller — the prompt of scene (д) of case №2302 word for word.
 // Their semantic acceptance remains PROVISIONAL pending human inspection of raw journals.
@@ -42,7 +42,7 @@
 // For upstream session lifecycle evidence run stand-mcp-ledger.mjs separately and pass its
 // loopback URL as --url. Local grant/standing logs alone cannot prove initialize/DELETE parity.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,9 @@ const model = arg("--model", "anthropic/claude-opus-5-5");
 const subModel = arg("--sub-model", "zai/glm-5.3");
 const noRoles = process.argv.includes("--no-roles");
 const keep = process.argv.includes("--keep");
+// --installed: --skills is the machine's installed root (<x>/.agents/skills, its lock beside it),
+// seen through the isolated home as it lies, foreign skills of that root included.
+const installed = process.argv.includes("--installed");
 // --fixed-brief F (with f): the ingester's brief, the same for every model compared (case №2394
 // [18]); the root lays it word for word, filling only {REALM} {SEAT} {CASE} {SOURCE}.
 const fixedBrief = arg("--fixed-brief", null) ? readFileSync(arg("--fixed-brief", null), "utf8").trim() : null;
@@ -145,11 +148,16 @@ for (const d of [cwd, join(oc, "plugins"), join(oc, "skill"), join(home, ".local
 mkdirSync(auth, { recursive: true, mode: 0o700 });
 writeFileSync(join(auth, "token"), token + "\n", { mode: 0o600 });
 cpSync(plugin, join(oc, "plugins/iskron.js"));
-// OpenCode 2.2.1 reads <config>/skill (singular), not <config>/skills (case №2306).
-for (const d of skillDirs) cpSync(join(skills, d), join(oc, "skill", d), { recursive: true });
-// The install lock beside the root, as `npx skills add` lays it: without it the plugin opens
-// only the bridge skill to a child's reads, and a subagent cannot read references (case №2394).
-writeFileSync(join(oc, ".skill-lock.json"), JSON.stringify({ version: 3, skills: Object.fromEntries(skillDirs.map((d) => [d, { source: "iskron-ai/skills" }])) }));
+if (installed) {
+  // The machine's own set as it lies (case №2394 [34]): <home>/.agents is the installed .agents with its lock.
+  symlinkSync(dirname(skills), join(home, ".agents"));
+} else {
+  // OpenCode 2.2.1 reads <config>/skill (singular), not <config>/skills (case №2306).
+  for (const d of skillDirs) cpSync(join(skills, d), join(oc, "skill", d), { recursive: true });
+  // The install lock beside the root, as `npx skills add` lays it: without it the plugin opens
+  // only the bridge skill to a child's reads, and a subagent cannot read references (case №2394).
+  writeFileSync(join(oc, ".skill-lock.json"), JSON.stringify({ version: 3, skills: Object.fromEntries(skillDirs.map((d) => [d, { source: "iskron-ai/skills" }])) }));
+}
 // The roles in their OpenCode form (delegation-2.md, «OpenCode»): the same body, the frontmatter
 // description, mode subagent and the pinned model.
 mkdirSync(join(cwd, ".opencode/agents"), { recursive: true });
