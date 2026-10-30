@@ -47,7 +47,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { personApi } from "./stand-person.mjs";
 import { SUB_TOOL, roleOf, has45, actualModels, sessionTree, turnMinutes as parseMinutes, locationPath, secretScrubber } from "./stand-recall-evidence.mjs";
-import { runCleanup } from "./stand-recall-cleanup.mjs";
+import { runCleanup, removeRawLogs } from "./stand-recall-cleanup.mjs";
 import { intakePrompts, intakeEvidence } from "./stand-recall-intake.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -125,9 +125,10 @@ const person = personApi({ api: apiArg, token });
 }
 
 const run = mkdtempSync(join(tmpdir(), "stand-recall-"));
-// Even --keep retains evidence, never copied credentials or provider databases.
+// Evidence is in scrubbed reports; --keep never retains raw transport logs or credentials.
 process.on("exit", () => {
   for (const p of [home, auth, join(run, "auth-person")]) rmSync(p, { recursive: true, force: true });
+  removeRawLogs(run);
   if (keep) process.stderr.write(`run dir kept (credentials removed): ${run}\n`);
   else rmSync(run, { recursive: true, force: true });
 });

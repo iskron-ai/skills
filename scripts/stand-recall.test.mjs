@@ -2,10 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { once } from "node:events";
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { has45, turnMinutes, locationPath, actualModels, sessionTree, secretScrubber, seatID } from "./stand-recall-evidence.mjs";
 import { intakeEvidence, intakePrompts } from "./stand-recall-intake.mjs";
 import { createLedger } from "./stand-mcp-ledger.mjs";
-import { runCleanup } from "./stand-recall-cleanup.mjs";
+import { runCleanup, removeRawLogs } from "./stand-recall-cleanup.mjs";
+
+test("keep removes raw secret-bearing logs without deleting retained evidence", () => {
+  const dir = mkdtempSync(join(tmpdir(), "recall-cleanup-test-"));
+  try {
+    for (const name of ["bridge.jsonl", "api.out", "serve.log", "report.txt"])
+      writeFileSync(join(dir, name), "synthetic secret");
+    removeRawLogs(dir);
+    for (const name of ["bridge.jsonl", "api.out", "serve.log"]) assert.ok(!existsSync(join(dir, name)));
+    assert.ok(existsSync(join(dir, "report.txt")));
+    removeRawLogs(dir); // partial setup and repeat cleanup are safe
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("45 judge preserves main's unit and node-id distinction", () => {
   for (const s of ["45s", "45 с", "45 секунд", "timeout: 45"]) assert.ok(has45(s));

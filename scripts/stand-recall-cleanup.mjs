@@ -1,7 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { seatID } from "./stand-recall-evidence.mjs";
+
+// These transport journals can contain credentials even when auth directories are gone.
+// Retained evidence is the scrubbed report, not these intermediate files.
+export function removeRawLogs(run) {
+  for (const name of ["bridge.jsonl", "api.out", "serve.log"])
+    rmSync(join(run, name), { force: true });
+}
 
 export function runCleanup({ run, auth, bridge, env, cwd, report, scrub, problem }) {
   const dirs = [auth, join(run, "auth-person")];
