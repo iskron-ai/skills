@@ -9,14 +9,18 @@ node_modules/
 .worktrees/
 # ролевые файлы субагентов с моделью человека — проекция на машине (iskronify, Шаг 6)
 .claude/agents/reader.md
+.claude/agents/recaller.md
 .claude/agents/worker.md
 .claude/agents/designer.md
 .claude/agents/weaver.md
+.claude/agents/ingester.md
 .claude/agents/reviewer.md
 .claude/agents/verifier.md
 .opencode/agents/reader.md
+.opencode/agents/recaller.md
 .opencode/agents/worker.md
 .opencode/agents/designer.md
 .opencode/agents/weaver.md
+.opencode/agents/ingester.md
 .opencode/agents/reviewer.md
 .opencode/agents/verifier.md
