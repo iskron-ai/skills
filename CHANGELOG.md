@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.27.0](https://github.com/iskron-ai/skills/compare/v7.26.0...v7.27.0) (2026-10-30)
+
+
+### Features
+
+* **skills:** роли recaller (поиск лестницы recall) и ingester (впуск сложного рассказа); weaver без исключения впуска; контракт iskronify 37 ([#610](https://github.com/iskron-ai/skills/issues/610)) ([78c0b8b](https://github.com/iskron-ai/skills/commit/78c0b8b11b552d4f679466e1037fa65b69e76a6b))
+
+
+### Bug Fixes
+
+* **skills:** intake — спутник встаёт, если харнес не исполнил вход; «моста нет» — нет тулов или отказ stand ([#616](https://github.com/iskron-ai/skills/issues/616)) ([b442992](https://github.com/iskron-ai/skills/commit/b442992fb37726db6a0b6fb755564f69dd8db390))
+* **skills:** вычитка 7.27.0 — поиск recaller и впуск ingester в шаблоне AGENTS.md ([#614](https://github.com/iskron-ai/skills/issues/614)) ([aafb6be](https://github.com/iskron-ai/skills/commit/aafb6be80d6205d83b0249945ea1df4696239927))
+* **skills:** спутник сперва встаёт satellite_of — «своего моста нет» только по отказу этого вызова, бриф наличия моста не объявляет (intake, ingester, weaver) ([#615](https://github.com/iskron-ai/skills/issues/615)) ([67f88ab](https://github.com/iskron-ai/skills/commit/67f88ab041a1f90823b8081c3e38446d6eebf92d))
+
 ## [7.26.0](https://github.com/iskron-ai/skills/compare/v7.25.0...v7.26.0) (2026-10-30)
 
 
