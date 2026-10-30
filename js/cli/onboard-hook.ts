@@ -36,7 +36,7 @@ function line(): string | null {
     const seat = seatByDir(authDirFromEnv(), dir, "claude-code");
     if (seat) return W.back(seat.karta, seat.name, seat.realm);
     // No seat of this directory: the bare word only where the repository is aligned — elsewhere
-    // the session has nothing of iskron to return to, and the word would be noise.
+    // the session has no graph work to return to, and the word would be noise.
     const { verdict } = repoSigns(dir, "claude-code");
     return verdict === "aligned" || verdict === "partial" ? W.bare() : null;
   }
