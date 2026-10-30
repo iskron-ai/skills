@@ -7656,6 +7656,77 @@ test("marker-child: while the previous bridge still holds the child's socket, th
   }
 });
 
+// #9241: the observed plugin exhausted four quick `none` replies. The fixture models
+// that reply, not a proven daemon death-window cause (resume.ts distinguishes elsewhere).
+test("marker-child: #9241 a none reply lasting over five seconds does not end the child before its return deadline", async () => {
+  const answers = join(SANDBOX, "reload-none.answers");
+  writeFileSync(answers, JSON.stringify({ bySession: { child: { resumed: false } } }));
+  const { second, all, newPid } = await reloadedChild("reload-none", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_MS: 9000,
+    ISKRON_CHILD_BACK_PAUSE_MS: 100,
+  });
+  try {
+    await delay(5500);
+    assert.deepEqual(second.synthetics, [], "a temporary none has not ended the child");
+    rewrite(
+      answers,
+      JSON.stringify({
+        bySession: {
+          child: {
+            resumed: true,
+            holding: true,
+            key: "k-sub",
+            word: "место возвращено",
+          },
+        },
+      }),
+    );
+    await until(
+      () => /сессия child — место возвращено/.test(second.said()),
+      "the delayed return",
+      4000,
+    );
+    assert.ok(
+      !second.prompts.some((p) => p.sessionID === "child"),
+      "the return is silent to the child",
+    );
+    assert.deepEqual(second.synthetics, [], "the parent hears no false end");
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    assert.equal(saidBy(all()), newPid, "the returned satellite authors its own write");
+  } finally {
+    await second.stop();
+  }
+});
+
+test("marker-child: #9241 a seat still absent at the return deadline ends with a word to its parent", async () => {
+  const answers = join(SANDBOX, "reload-none-expired.answers");
+  writeFileSync(answers, JSON.stringify({ bySession: { child: { resumed: false } } }));
+  const { second, all } = await reloadedChild("reload-none-expired", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_MS: 1500,
+    ISKRON_CHILD_BACK_PAUSE_MS: 100,
+  });
+  try {
+    await until(
+      () => second.synthetics.some((p) => /по ключу не вернулось/.test(p.text)),
+      "the bounded failure word",
+      4000,
+    );
+    const words = second.synthetics.filter((p) => /по ключу не вернулось/.test(p.text));
+    assert.equal(words.length, 1);
+    assert.equal(words[0].sessionID, "root");
+    assert.ok(!second.prompts.some((p) => p.sessionID === "child"), "no steer to the child");
+    // The deadline retries the return until the term; the old build gave up after four asks.
+    const asked = all().filter(
+      (c) => c.name === "iskron/resume" && c.arguments.session === "child",
+    ).length;
+    assert.ok(asked > 4, `the deadline asked more than the old four tries (asked ${asked})`);
+  } finally {
+    await second.stop();
+  }
+});
+
 // The children's places come back quietly by their own bridges: the root's loss
 // word names the root's places only — a child's key there would call the root to
 // take back a place that is not its own.
