@@ -21,7 +21,7 @@
 // zai/glm-5.3 — the person's choice); a set without recaller (7.25.0) gets its own roles only;
 // --no-roles projects none. Subagent calls (task/subagent) are journaled with their role, and
 // each graph call is told the agent's or a subagent's by the tool part it ran in. --skills: a
-// directory of skill directories (each with SKILL.md), copied to <home>/.config/opencode/skills —
+// directory of skill directories (each with SKILL.md), copied to <home>/.config/opencode/skill —
 // where OpenCode 2 reads them in an isolated home; the project dir lies in the system temp dir,
 // as OpenCode also walks up from it to .agents/skills and .claude/skills (observed on 2.2.1).
 // The carrier: the raw journal of each session — its messages (tool parts in full) and every
@@ -113,12 +113,13 @@ const home = join(run, "home");
 const cwd = join(run, "project");
 const auth = join(run, "auth");
 const oc = join(home, ".config/opencode");
-for (const d of [cwd, join(oc, "plugins"), join(oc, "skills"), join(home, ".local/share"), join(home, ".local/state"), join(home, ".cache"), join(home, "tmp")])
+for (const d of [cwd, join(oc, "plugins"), join(oc, "skill"), join(home, ".local/share"), join(home, ".local/state"), join(home, ".cache"), join(home, "tmp")])
   mkdirSync(d, { recursive: true });
 mkdirSync(auth, { recursive: true, mode: 0o700 });
 writeFileSync(join(auth, "token"), token + "\n", { mode: 0o600 });
 cpSync(plugin, join(oc, "plugins/iskron.js"));
-for (const d of skillDirs) cpSync(join(skills, d), join(oc, "skills", d), { recursive: true });
+// OpenCode 2.2.1 reads <config>/skill (singular), not <config>/skills (case №2306).
+for (const d of skillDirs) cpSync(join(skills, d), join(oc, "skill", d), { recursive: true });
 // The roles in their OpenCode form (delegation-2.md, «OpenCode»): the same body, the frontmatter
 // description, mode subagent and the pinned model.
 mkdirSync(join(cwd, ".opencode/agents"), { recursive: true });
@@ -477,7 +478,13 @@ try {
   // The plugin rises with the first prompt; a warm-up lists its tools and the loaded skills.
   const warm = newSession("warm-up");
   await turn(warm, "Answer OK and end your turn. Call no tools.");
-  const listed = (read("/api/skill") ?? []).map((s) => s.id);
+  // The list fills per project directory and a few seconds late (case №2306): ask with it, wait for it.
+  const skillsOf = () => (read(`/api/skill?directory=${encodeURIComponent(cwd)}`) ?? []).map((s) => s.id);
+  let listed = skillsOf();
+  for (let t = 0; t < 60 && skillDirs.some((s) => !listed.includes(s)); t++) {
+    await sleep(500);
+    listed = skillsOf();
+  }
   const foreign = listed.filter((s) => !skillDirs.includes(s) && !["opencode", "report"].includes(s));
   if (skillDirs.some((s) => !listed.includes(s)) || foreign.length)
     throw new Error(`skills: missing ${skillDirs.filter((s) => !listed.includes(s)).join(",") || "—"}, foreign ${foreign.join(",") || "—"}`);
