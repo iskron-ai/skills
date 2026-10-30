@@ -108,9 +108,12 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
       ? { failed: [], revoked: [], probably: [] }
       : await revokeSatellitePlaces(places);
     const status = addr?.url ?? null;
-    if (ended) end = await revokeOwnPlaces(own);
+    // The end awaited its exits: a seat another bridge of this home took meanwhile is not revoked
+    // by name and its record not touched — the death window's guard (notHeldAgain).
+    const free = ended ? await notHeldAgain(own, eras) : own;
+    if (ended) end = await revokeOwnPlaces(free);
     // Seats not confirmed revoked wait for the death window, which repeats the revoke.
-    const left = ended ? dropConfirmed(own, end.revoked) : own;
+    const left = ended ? dropConfirmed(free, end.revoked) : own;
     if (dying && left.length) {
       const mine = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
       R.dead = R.dead ? withLate(mine, R.dead) : mine;
@@ -219,18 +222,27 @@ async function closeDeadRun(waitMs: number): Promise<void> {
   R.dead = null;
   if (!dead?.places.length) return;
   if (!dead.now) await sleep(waitMs);
-  const kept: Standing[] = [];
-  for (const s of dead.places) {
-    const key = seatKeyOf(s);
-    if (await localSocketAlive(localSocketPathOf(key))) log(`${key} is held again — not closed`);
-    // Taken back and left again in the window (an announced absence, a death with its own window).
-    else if (heldSince(key, dead.eras.get(key)))
-      log(`${key}: held again after this run's end — its window is not this run's, not closed`);
-    else kept.push(s);
-  }
+  const kept = await notHeldAgain(dead.places, dead.eras);
   const [first] = dead.places;
   const main = dead.socket && kept[0] === first ? { seat: first, socket: dead.socket } : null;
   if (kept.length) await closeDeadSeats(kept, main, dead.status, dead.ids);
+}
+
+/** The seats no live bridge holds again since this run's end (`eras`): only those are this run's to close. */
+async function notHeldAgain(
+  places: Standing[],
+  eras: Map<string, number | null>,
+): Promise<Standing[]> {
+  const kept: Standing[] = [];
+  for (const s of places) {
+    const key = seatKeyOf(s);
+    if (await localSocketAlive(localSocketPathOf(key))) log(`${key} is held again — not closed`);
+    // Taken back and left again in the window (an announced absence, a death with its own window).
+    else if (heldSince(key, eras.get(key)))
+      log(`${key}: held again after this run's end — its window is not this run's, not closed`);
+    else kept.push(s);
+  }
+  return kept;
 }
 
 /**
