@@ -104,7 +104,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.27.0";
+var VERSION = "7.28.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -2080,6 +2080,7 @@ function privateDirProblem(dir2, create = true) {
   return null;
 }
 var keyFilePathOf = (authDir, key2) => join(standingsDirOf(authDir), `${hashOf(key2)}.key`);
+var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var holdFilePathOf = (authDir, key2) => join(standingsDirOf(authDir), `${hashOf(key2)}.hold`);
 var baseFilePathOf = (authDir, key2) => join(standingsDirOf(authDir), `${hashOf(key2)}.base`);
 var takingFilePathOf = (authDir, key2) => join(standingsDirOf(authDir), `${hashOf(key2)}.taking`);
@@ -5572,6 +5573,11 @@ function ownPlaceEnd(msg, name2, action) {
 // js/bridge/sessionclose.ts
 var CLOSE_MS = Number(process.env[envName("BRIDGE_SESSION_CLOSE_MS")]) || 3e3;
 var flying = scoped(() => /* @__PURE__ */ new Set());
+function noteOpened(id) {
+  const line = `opened upstream session ${id}`;
+  log(line);
+  grantLog(line);
+}
 function closeSession(s2, why) {
   const p = send(s2, why);
   flying.add(p);
@@ -5715,7 +5721,8 @@ var git = (args, cwd = sessionCwd()) => {
     return execFileSync("git", args, {
       cwd,
       timeout: 2e3,
-      stdio: ["ignore", "pipe", "ignore"]
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true
     }).toString().trim();
   } catch {
     return "";
@@ -5931,6 +5938,7 @@ async function post2(msg, heard2) {
         `upstream replaced the session mid-call (${state.sessionId} -> ${sid}) — this call may have gone unattributed`
       );
     }
+    if (sid !== state.sessionId) noteOpened(sid);
     state.sessionId = sid;
     state.sessionToken = token;
   }
@@ -6433,7 +6441,6 @@ function formerKeysIn(rec5, key2 = "") {
   const all2 = Array.isArray(f) ? f : f ? [f] : [];
   return [...new Set(all2.filter((k) => typeof k === "string" && k && k !== key2))];
 }
-var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var eraOf = (r) => r.stoodAt ?? r.at ?? 0;
 var S2 = scoped(() => /* @__PURE__ */ new Map());
 function noteStoodAt(key2, at3) {
@@ -7290,7 +7297,7 @@ function createTicker(send3) {
   const receipts = /* @__PURE__ */ new Map();
   let lastAt2 = 0;
   let timer = null;
-  const keyOf2 = (e) => `${e.channel_id}
+  const keyOf3 = (e) => `${e.channel_id}
 ${e.standing_id ?? ""}`;
   function schedule() {
     if (timer || !waiting2.size) return;
@@ -7310,7 +7317,7 @@ ${e.standing_id ?? ""}`;
   function confirm(entries2) {
     const at3 = Date.now();
     for (const e of entries2) {
-      const k = keyOf2(e);
+      const k = keyOf3(e);
       const receipt = receipts.get(k);
       forget(k);
       try {
@@ -7326,7 +7333,7 @@ ${e.standing_id ?? ""}`;
   });
   return {
     put(e, lost, pulseSent) {
-      const k = keyOf2(e);
+      const k = keyOf3(e);
       waiting2.set(k, { ...waiting2.get(k), ...e });
       if (lost) losts.set(k, lost);
       if (e.pulse) {
@@ -9142,39 +9149,45 @@ async function closeByBoard(places, status, say2) {
   say2();
   dropConfirmed(own, (await revokeOwnPlaces(own)).revoked);
 }
+function settleStopped(places, socket, ids, ended, why) {
+  const idOf4 = (s2) => ids.get(seatKeyOf(s2)) ?? null;
+  const unclaimed = ended.filter((id) => !places.some((s2) => idOf4(s2) === id));
+  const unnamed = places.filter((s2) => !idOf4(s2));
+  const done = [];
+  for (const s2 of places) {
+    const key2 = seatKeyOf(s2);
+    const id = idOf4(s2);
+    if (id ? ended.includes(id) : unnamed.length === 1 && unclaimed.length > 0) {
+      log(`${key2} ended by its dead socket's token (${why})`);
+      dropOwnHoldRecord(key2, socket);
+      done.push(s2);
+    } else if (id || unclaimed.length === 0)
+      log(
+        `${key2}: not among the stop's ended seats — another live channel holds it; its hold record untouched`
+      );
+    else
+      log(
+        `${key2}: its seat id is not known — whether the stop ended it is not known; its hold record kept`
+      );
+  }
+  return done;
+}
+function settleMoved(places, main, socket) {
+  log(
+    `${seatKeyOf(main)}: its dead socket's token is not current — another holder took it or it ended, not closed; only the channel's own hold records dropped`
+  );
+  for (const s2 of places) dropOwnHoldRecord(seatKeyOf(s2), socket);
+}
 async function closeDeadSeats(places, main, status, ids) {
   const say2 = () => log(`the agent's session ended without an announced absence — closing its seats (#7493)`);
   if (!main) return closeByBoard(places, status, say2);
   const { how: how2, why, ended } = await stopBySocket(main.socket);
   if (how2 === "stopped") {
     say2();
-    const idOf4 = (s2) => ids.get(seatKeyOf(s2)) ?? null;
-    const unclaimed = ended.filter((id) => !places.some((s2) => idOf4(s2) === id));
-    const unnamed = places.filter((s2) => !idOf4(s2));
-    for (const s2 of places) {
-      const key2 = seatKeyOf(s2);
-      const id = idOf4(s2);
-      if (id ? ended.includes(id) : unnamed.length === 1 && unclaimed.length > 0) {
-        log(`${key2} ended by its dead socket's token (${why})`);
-        dropOwnHoldRecord(key2, main.socket);
-      } else if (id || unclaimed.length === 0)
-        log(
-          `${key2}: not among the stop's ended seats — another live channel holds it; its hold record untouched`
-        );
-      else
-        log(
-          `${key2}: its seat id is not known — whether the stop ended it is not known; its hold record kept`
-        );
-    }
+    settleStopped(places, main.socket, ids, ended, why);
     return;
   }
-  if (how2 === "moved") {
-    log(
-      `${seatKeyOf(main.seat)}: its dead socket's token is not current — another holder took it or it ended, not closed; only the channel's own hold records dropped`
-    );
-    for (const s2 of places) dropOwnHoldRecord(seatKeyOf(s2), main.socket);
-    return;
-  }
+  if (how2 === "moved") return settleMoved(places, main.seat, main.socket);
   if (how2 === "unknown")
     return log(
       `${seatKeyOf(main.seat)}: the stop by its token did not answer: ${why} — not closed, the seats go by the platform's term`
@@ -9183,6 +9196,39 @@ async function closeDeadSeats(places, main, status, ids) {
     `${seatKeyOf(main.seat)}: no stop by token on this api (${why}) — the board's check and a revoke by name`
   );
   await closeByBoard(places, status, say2);
+}
+
+// js/bridge/endword.ts
+var keyOf2 = (s2) => ({
+  realm: canonRealm(s2.realm),
+  karta: normKarta(s2.karta),
+  name: s2.name ?? ""
+});
+async function endOnWord(places, socket, ids) {
+  const none = { failed: [], revoked: [], probably: [] };
+  if (!places.length) return { end: none, left: [] };
+  const [main] = places;
+  if (socket) {
+    const { how: how2, why, ended } = await stopBySocket(socket);
+    if (how2 === "stopped") {
+      log(`the agent's session ended on the harness's word — its seats end by its socket's token`);
+      const done = settleStopped(places, socket, ids, ended, why);
+      return { end: { ...none, revoked: done.map(keyOf2) }, left: [] };
+    }
+    if (how2 === "moved") {
+      settleMoved(places, main, socket);
+      return { end: none, left: [] };
+    }
+    if (how2 === "unknown") {
+      log(
+        `${seatKeyOf(main)}: the stop by its token did not answer: ${why} — the window repeats it`
+      );
+      return { end: { ...none, failed: places.map((s2) => s2.name ?? "") }, left: places };
+    }
+    log(`${seatKeyOf(main)}: no stop by token on this api (${why}) — a revoke by name`);
+  }
+  const end = await revokeOwnPlaces(places);
+  return { end, left: dropConfirmed(places, end.revoked) };
 }
 
 // js/bridge/holdkeep.ts
@@ -11482,8 +11528,8 @@ function closeRun(why, handover, now2 = false) {
     let end = paused ? { failed: [], revoked: [], probably: [] } : await revokeSatellitePlaces(places);
     const status = addr?.url ?? null;
     const free = ended ? await notHeldAgain(own, eras) : own;
-    if (ended) end = await revokeOwnPlaces(free);
-    const left2 = ended ? dropConfirmed(free, end.revoked) : own;
+    let left2 = own;
+    if (ended) ({ end, left: left2 } = await endOnWord(free, free[0] === own[0] ? socket : null, ids));
     if (dying && left2.length) {
       const mine = { places: left2, ids, eras, status, socket: left2[0] === own[0] ? socket : null };
       R4.dead = R4.dead ? withLate(mine, R4.dead) : mine;
@@ -12163,6 +12209,7 @@ function reexec(path, argv2) {
   const root = skillsRoot();
   const child = spawn2(process.execPath, [path, ...argv2], {
     stdio: "inherit",
+    windowsHide: true,
     env: {
       ...process.env,
       [envName("BRIDGE_REEXEC")]: "1",
@@ -16535,7 +16582,12 @@ async function probeSatellite(label, e, cwd) {
   };
   delete env2[envName("CHANNEL_SOCKET")];
   delete env2[envName("CHANNEL_STATUS")];
-  const child = spawn5(e.command, e.args, { cwd, env: env2, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn5(e.command, e.args, {
+    cwd,
+    env: env2,
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
+  });
   child.stdin.on("error", () => {
   });
   let stderr = "";
