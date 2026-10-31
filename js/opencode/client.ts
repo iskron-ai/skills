@@ -19,6 +19,7 @@ function processes(): Proc[] {
       encoding: "utf8",
       timeout: 5_000,
       stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
     });
     return out
       .split("\n")
