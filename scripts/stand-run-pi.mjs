@@ -44,6 +44,7 @@ import {
   idOf,
   layScene,
   makeReporters,
+  sceneTaker,
   stdioBridge,
   teeBridges,
   teeCalls as sceneTeeCalls,
@@ -210,7 +211,7 @@ const P = stdioBridge({ run, bridge, env, token, name: "stand-run-pi", problem }
 const laid = []; // node ids in the order laid, taken off in reverse
 const scene = {};
 let setupPhase = true; // until the first probe: a refusal here is the run's, exit 2
-let take = async () => {};
+let take = sceneTaker(P, { realm, problem, laid }); // a half-laid scene is taken off too
 let factOn = async () => {
   throw new Error("the scene was never laid");
 };

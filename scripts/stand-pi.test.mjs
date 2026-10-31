@@ -4,7 +4,7 @@
 // the isolated home's auth gate. No pi, no model, no graph on import.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isolatedPiAuth, parseLaunchLine, piLaunchCommands, piToolCalls, toBrotherCall, looksCall } from "./stand-pi-evidence.mjs";
+import { isolatedPiAuth, parseLaunchLine, piEvidence, piLaunchCommands, piToolCalls, toBrotherCall, looksCall } from "./stand-pi-evidence.mjs";
 
 const session = (messages) => ({
   header: { id: "ses_test", cwd: "/t" },
@@ -43,6 +43,16 @@ test("a bash command launching a child pi process is told apart from ordinary ba
   assert.equal(piLaunchCommands(s2).length, 1);
   assert.ok(piLaunchCommands(s2)[0].inline);
   assert.equal(piLaunchCommands(s2)[0].launch, null, "verbatim form needs the line at a quote's edge");
+});
+
+// Review of PR #618: a created kriya kept no args, and the owner-as-actor check threw on it.
+test("intake evidence reads a created kriya's arrows: the owner as actor is caught, not a TypeError", () => {
+  const add = (id, actor) => ({ type: "toolCall", id, name: "iskron_add_kriya", arguments: { name: "k", arrows: [{ arrow_type: "actor", target: actor }] } });
+  const done = (id, n) => ({ role: "toolResult", toolCallId: id, toolName: "iskron_add_kriya", content: [{ type: "text", text: `(#${n}, kriya)` }], isError: false, timestamp: 3 });
+  const child = session([user("start @r/x #1 дело №2 от @a:root\n\nБриф."), assistant([add("k1", "#4")]), done("k1", 10)]);
+  const root = session([user("Внеси.")]);
+  const ev = piEvidence({ key: "f", root: { session: root }, children: [{ session: child, launch: null }], scene: { foreign: "5", steward: "3", human: "4" }, fact: "8" });
+  assert.ok(ev.errors.includes("owner encoded as actor"), JSON.stringify(ev.errors));
 });
 
 test("pi tool calls pair with results and their call families are judged by name and args", () => {

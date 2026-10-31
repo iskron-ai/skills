@@ -189,7 +189,7 @@ export function piEvidence({ key, root, children, calls = [], scene, fact, fixed
   const by = (c) => c;
   const created = [...rootCalls, ...childCalls]
     .filter((c) => /^iskron_add_/.test(c.name))
-    .map((c) => ({ by: c, tool: c.name, id: (c.result ?? "").match(/\(#(\d+)[,)]/)?.[1] ?? null, isError: c.isError }))
+    .map((c) => ({ by: c, tool: c.name, args: c.args ?? {}, id: (c.result ?? "").match(/\(#(\d+)[,)]/)?.[1] ?? null, isError: c.isError }))
     .filter((c) => !c.isError);
   const batches = [...rootCalls, ...childCalls].filter((c) => c.name === "iskron_batch" && !c.isError);
   const ownReads = created.filter((c) => c.id && rootCalls.some((r) => !r.isError && r.name === "iskron_look" && node(r.args.node_id) === c.id));

@@ -178,6 +178,16 @@ export function makeReporters() {
  * the own and the foreign holon, the file phenomenon, the loading kriya, the brother seat of the
  * agent's role, and the project AGENTS.md in `cwd` naming the graph and the roles.
  */
+/** Takes a laid node off — ready before the scene is laid, so a half-laid scene is taken off too. */
+export function sceneTaker(P, { realm, problem, laid }) {
+  return async (id) => {
+    const v = ((await P.call("iskron_look", { realm, node_id: `#${id}` })).text.match(/\(#\d+, [^,)]+, v(\d+)\)/) || [])[1];
+    const r = v ? await P.call("iskron_delete_node", { realm, node_id: `#${id}`, basis_version: v, reasoning: "stand-run-recall: the scene is taken off" }) : { error: true, text: "no version" };
+    if (r.error) problem(`scene: #${id} not taken off — ${r.text.slice(0, 160)}`);
+    else laid.splice(laid.indexOf(id), 1);
+  };
+}
+
 export async function layScene(P, { realm, stamp, cwd, report, problem, requireEmpty = false, sleep, scene = {}, laid = [] }) {
   const add = async (tool, args) => {
     const r = await P.call(tool, { realm, ...args });
@@ -186,12 +196,7 @@ export async function layScene(P, { realm, stamp, cwd, report, problem, requireE
     laid.push(id);
     return id;
   };
-  const take = async (id) => {
-    const v = ((await P.call("iskron_look", { realm, node_id: `#${id}` })).text.match(/\(#\d+, [^,)]+, v(\d+)\)/) || [])[1];
-    const r = v ? await P.call("iskron_delete_node", { realm, node_id: `#${id}`, basis_version: v, reasoning: "stand-run-recall: the scene is taken off" }) : { error: true, text: "no version" };
-    if (r.error) problem(`scene: #${id} not taken off — ${r.text.slice(0, 160)}`);
-    else laid.splice(laid.indexOf(id), 1);
-  };
+  const take = sceneTaker(P, { realm, problem, laid });
   if (requireEmpty) {
     const empty = await P.call("iskron_search", { realm, q: "", limit: 1 });
     report.push(`pre-fixture empty graph check: ${empty.text}`);

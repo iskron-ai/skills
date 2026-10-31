@@ -46,7 +46,10 @@ export function clientOf(sessionID: string): number | null {
   const uid = process.getuid?.();
   if (uid === undefined) return null;
   const id = sessionID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const opened = new RegExp(`(?:^|\\s)(?:--session|-s)(?:=|\\s+)${id}(?:\\s|$)`);
+  // An OpenCode client by its program (directly or through an interpreter) before the session flag.
+  const opened = new RegExp(
+    `(?:^|[\\s/\\\\])opencode(?:\\.exe)?\\s(?:.*\\s)?(?:--session|-s)(?:=|\\s+)${id}(?:\\s|$)`,
+  );
   const hit = processes().find(
     (p) => p.uid === uid && p.pid !== process.pid && opened.test(p.command),
   );

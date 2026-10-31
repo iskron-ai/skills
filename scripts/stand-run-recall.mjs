@@ -56,6 +56,7 @@ import {
   layScene,
   makeReporters,
   nodeOf,
+  sceneTaker,
   stdioBridge,
   teeCalls as sceneTeeCalls,
   teeLines as sceneTeeLines,
@@ -378,8 +379,8 @@ const cleanup = runCleanup({ run, auth, bridge, env, cwd, report, scrub, problem
 const P = stdioBridge({ run, bridge, env, token, name: "stand-run-recall", problem });
 const laid = []; // node ids in the order laid, taken off in reverse
 const scene = {};
-// Until the scene is laid there is nothing to take off; layScene returns the real one.
-let take = async () => {};
+// Ready before the scene is laid: a half-laid scene is taken off too (review of PR #618).
+let take = sceneTaker(P, { realm, problem, laid });
 let factOn = async () => {
   throw new Error("the scene was never laid");
 };

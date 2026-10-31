@@ -1196,18 +1196,30 @@ for (const [host, faults] of [
 
 // #9256, case №2400 [12]: the stopped root session's client process goes — a TUI opened on exactly
 // this session (its command line), or the run whose "serve --stdio" this instance is (the seam
-// stands in for process.ppid); a stand-in process takes the SIGTERM, nothing else does.
-for (const how of ["tui", "run"])
-  test(`the owner's stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : "the standalone run"}`, async () => {
-    const sid = `s-client-${how}`;
+// stands in for process.ppid); a stand-in process takes the SIGTERM, nothing else does: not
+// another session's TUI, not a process of another program naming the same session (review of
+// PR #618), and none when the session stands again within the close's pause.
+const standIn = () => {
+  const dir = mkdtempSync(join(SANDBOX, "oc-client-"));
+  const script = join(dir, "opencode"); // the program's name, as ps shows it
+  writeFileSync(script, "setTimeout(() => {}, 60000);\n");
+  return script;
+};
+for (const how of ["tui", "run", "stand again"])
+  test(`the owner's stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : how === "run" ? "the standalone run" : "not when the session stands again within the pause"}`, async () => {
+    const sid = `s-client-${how.replace(/ /g, "-")}`;
+    const opencode = standIn();
     const client = spawn(
       process.execPath,
-      ["-e", "setTimeout(() => {}, 60000)", "--", ...(how === "tui" ? ["--session", sid] : [])],
+      [opencode, ...(how === "run" ? [] : ["--session", sid])],
       { stdio: "ignore" },
     );
-    const other = spawn(
+    const other = spawn(process.execPath, [opencode, "--session", `${sid}-other`], {
+      stdio: "ignore",
+    });
+    const foreign = spawn(
       process.execPath,
-      ["-e", "setTimeout(() => {}, 60000)", "--", "--session", `${sid}-other`],
+      ["-e", "setTimeout(() => {}, 60000)", "--", "--session", sid],
       { stdio: "ignore" },
     );
     const exited = (p) => new Promise((r) => p.once("exit", (_c, sig) => r(sig)));
@@ -1227,20 +1239,32 @@ for (const how of ["tui", "run"])
         `${b.events}.${pidOf(b.log)}`,
         event("stopped", { code: 4001, key: "k", text }),
       );
-      assert.equal(
-        await Promise.race([gone, delay(8000).then(() => "alive")]),
-        "SIGTERM",
-        "the client takes SIGTERM",
-      );
-      assert.match(
-        rec.said(),
-        new RegExp(`сессия ${sid} остановлена, её клиент закрыт \\(pid ${client.pid}\\)`),
-      );
-      assert.equal(other.exitCode, null, "another session's TUI is not touched");
-      assert.equal(other.signalCode, null, "another session's TUI is not touched");
+      if (how === "stand again") {
+        await until(() => rec.archives.length === 1, "the archive of the stopped session");
+        appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k" }));
+        assert.equal(
+          await Promise.race([gone, delay(2500).then(() => "alive")]),
+          "alive",
+          "an explicit stand within the pause keeps the client",
+        );
+        assert.doesNotMatch(rec.said(), /клиент закрыт/);
+      } else {
+        assert.equal(
+          await Promise.race([gone, delay(8000).then(() => "alive")]),
+          "SIGTERM",
+          "the client takes SIGTERM",
+        );
+        assert.match(
+          rec.said(),
+          new RegExp(`сессия ${sid} остановлена, её клиент закрыт \\(pid ${client.pid}\\)`),
+        );
+      }
+      for (const p of [other, foreign]) {
+        assert.equal(p.exitCode, null, "no process but the session's client is touched");
+        assert.equal(p.signalCode, null, "no process but the session's client is touched");
+      }
     } finally {
-      client.kill();
-      other.kill();
+      for (const p of [client, other, foreign]) p.kill();
       await rec.stop();
     }
   });

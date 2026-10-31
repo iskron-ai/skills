@@ -54,7 +54,14 @@ export function archiver(
   const W = words(OPENCODE);
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any -- update takes `archived` from 2.2 on */
   const session = ctx.session as any;
+  // A close waiting its pause — an explicit stand before it fires cancels it.
+  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  const turns = new Map<string, number>(); // the latest call per session: a later one supersedes
   return async (id, on) => {
+    const turn = (turns.get(id) ?? 0) + 1;
+    turns.set(id, turn);
+    clearTimeout(pending.get(id));
+    pending.delete(id);
     let why: string | null = null;
     if (archives(ctx) && typeof session.update === "function")
       await session.update({ sessionID: id, archived: on }).catch((e: Error) => (why = e.message));
@@ -63,11 +70,15 @@ export function archiver(
       .then(() => session.get({ sessionID: id }))
       .then((s: { parentID?: unknown } | null) => !s?.parentID)
       .catch(() => false);
+    if (turns.get(id) !== turn) return; // the session stood again while this stop was judged
     const pid = root ? clientOf(id) : null;
     if (pid === null) return void ((root || why) && tell(W.sessionLeftOpen(id, why)));
-    tell(W.clientClosed(id, pid));
-    const t = setTimeout(() => closeClient(pid), CLOSE_AFTER_MS);
+    const t = setTimeout(() => {
+      pending.delete(id);
+      tell(closeClient(pid) ? W.clientClosed(id, pid) : W.sessionLeftOpen(id, null));
+    }, CLOSE_AFTER_MS);
     (t as { unref?: () => void }).unref?.();
+    pending.set(id, t);
   };
 }
 
