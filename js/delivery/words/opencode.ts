@@ -67,6 +67,10 @@ export interface OpencodeWords {
   haltUnlifted: (id: string, message: string, kept: boolean) => string;
   delivered: (frame: string, id: string) => string;
   notDelivered: (frame: string, id: string, message: string) => string;
+  /** A stopped session whose client is not closed (#9256): why — the archive's refusal; null — no client found. */
+  sessionLeftOpen: (id: string, why: string | null) => string;
+  /** A stopped session's client closed (#9256). */
+  clientClosed: (id: string, pid: number) => string;
   held: (key: string) => string;
   released: (key: string, text: string) => string;
   /** seats — not revoked by the deleted session's bridge, or its word when it did not answer. */
@@ -153,6 +157,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
         : "она переписана как снятая"),
     delivered: (frame, id) => `Искрон: ${frame} вложен в сессию ${id}`,
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
+    sessionLeftOpen: (id, why) =>
+      `Искрон: сессия ${id} остановлена, но её окно осталось открытым — ${why ?? "клиента этой сессии плагину не найти"}; закройте его в OpenCode`,
+    clientClosed: (id, pid) => `Искрон: сессия ${id} остановлена, её клиент закрыт (pid ${pid})`,
     held: (key) => `Искрон: мост держит стояние ${key}`,
     released: (key, text) => `Искрон: мост отпустил стояние ${key} — ${text}`,
     endUnrevoked: (seats) =>
@@ -241,6 +248,9 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     delivered: (frame, id) => `Iskron: ${frame} delivered into session ${id}`,
     notDelivered: (frame, id, message) =>
       `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
+    sessionLeftOpen: (id, why) =>
+      `Iskron: session ${id} is stopped but its window is left open — ${why ?? "the plugin finds no client of this session"}; close it in OpenCode`,
+    clientClosed: (id, pid) => `Iskron: session ${id} is stopped, its client closed (pid ${pid})`,
     held: (key) => `Iskron: the bridge holds the standing ${key}`,
     released: (key, text) => `Iskron: the bridge released the standing ${key} — ${text}`,
     endUnrevoked: (seats) =>

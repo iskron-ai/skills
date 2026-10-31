@@ -55,16 +55,15 @@ test("an announced absence while the first connect is in flight: no socket, the 
   });
 });
 
-// The run's end awaits its revoke while a connect answers (case №2264): the seat that connect
+// The run's end awaits its stop while a connect answers (case №2264): the seat that connect
 // stood on keeps its place and token among the seats to end — the end's own snapshot, taken
 // before, must not overwrite it; on the prior build the late seat was dropped and lived on.
-test("a connect answered while the end awaits its revoke: the late seat still ends by its token", async () => {
+test("a connect answered while the end awaits its stop: the late seat still ends by its token", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const a = await bridge();
     await stood(a, "late-x");
-    fake.state.revokeRefuseNext = [
-      { text: "Отказано (503): сбой", status: 503, rule: "x", delayMs: 2_000 },
-    ];
+    // The end's own stop by its token (#9232) fails slowly.
+    fake.state.stopRefuseNext = [{ status: 503, delayMs: 2_000 }];
     fake.state.connectReplyDelayMs = 1_000;
     void a
       .request("tools/call", {
@@ -74,7 +73,7 @@ test("a connect answered while the end awaits its revoke: the late seat still en
       .catch(() => {});
     await waitFor("the second connect sent", () => connectsOf(fake) > 1);
     const r = await a.request("iskron/end");
-    assert.ok(r.result?.failed?.includes("late-x"), `the revoke refused: ${JSON.stringify(r)}`);
+    assert.ok(r.result?.failed?.includes("late-x"), `the end refused: ${JSON.stringify(r)}`);
     assert.match(journalOf(dir), /late-y--931--_nks_nks-dev: connect answered after the run's end/);
     fake.state.connectReplyDelayMs = 0;
     a.proc.stdin.end();

@@ -306,17 +306,21 @@ for (const absent of [404, 405])
   });
 
 // A revoke whose reply only reads as gone (prose without refusal data) is not confirmed: the
-// bridge says it apart from failed, and the hold record stays for the window.
+// bridge says it apart from failed, and the hold record stays for the window. The end revokes
+// by name only on an api without the stop by token (lifeend-word.test.mjs).
 test("an end whose revoke is gone only by the reply's prose answers it as probably, the record kept", async () => {
-  await withFake(async ({ fake, dir, bridge }) => {
-    const a = await bridge();
-    await stood(a, "die-p");
-    fake.state.revokeRefuseNext = [{ text: "Место уже снято." }];
-    const r = await a.request("iskron/end");
-    assert.deepEqual(r.result?.probably, ["die-p"], JSON.stringify(r));
-    assert.deepEqual(r.result?.failed, [], JSON.stringify(r));
-    assert.ok(existsSync(recordOf(dir, "die-p")), "the hold record stays");
-  });
+  await withFake(
+    async ({ fake, dir, bridge }) => {
+      const a = await bridge();
+      await stood(a, "die-p");
+      fake.state.revokeRefuseNext = [{ text: "Место уже снято." }];
+      const r = await a.request("iskron/end");
+      assert.deepEqual(r.result?.probably, ["die-p"], JSON.stringify(r));
+      assert.deepEqual(r.result?.failed, [], JSON.stringify(r));
+      assert.ok(existsSync(recordOf(dir, "die-p")), "the hold record stays");
+    },
+    { stopAbsent: 404 },
+  );
 });
 
 // №677: the death window checks the server, not only this machine's socket — a bridge of
@@ -366,24 +370,29 @@ for (const [how, opts, mute, said] of [
   });
 
 test("an end whose revoke is refused keeps the hold record, and the death window repeats the revoke", async () => {
-  await withFake(async ({ fake, dir, bridge }) => {
-    const a = await bridge();
-    await stood(a, "die-f");
-    fake.state.revokeRefuseNext = [{ text: "Отказано (503): сбой", status: 503, rule: "x" }];
-    const r = await a.request("iskron/end");
-    assert.ok(
-      r.result?.failed?.includes("die-f"),
-      `the refusal is in the answer: ${JSON.stringify(r)}`,
-    );
-    assert.ok(!closed(fake, "die-f"), "the seat stands");
-    assert.ok(existsSync(recordOf(dir, "die-f")), "the hold record stays for the repeat");
-    a.proc.stdin.end();
-    await a.gone();
-    await waitFor("the repeat closed the seat", () => closed(fake, "die-f"), 15_000).catch((e) => {
-      throw new Error(`${e.message}\n${journalOf(dir)}`);
-    });
-    await waitFor("the hold record dropped", () => !existsSync(recordOf(dir, "die-f")), 5_000);
-  });
+  await withFake(
+    async ({ fake, dir, bridge }) => {
+      const a = await bridge();
+      await stood(a, "die-f");
+      fake.state.revokeRefuseNext = [{ text: "Отказано (503): сбой", status: 503, rule: "x" }];
+      const r = await a.request("iskron/end");
+      assert.ok(
+        r.result?.failed?.includes("die-f"),
+        `the refusal is in the answer: ${JSON.stringify(r)}`,
+      );
+      assert.ok(!closed(fake, "die-f"), "the seat stands");
+      assert.ok(existsSync(recordOf(dir, "die-f")), "the hold record stays for the repeat");
+      a.proc.stdin.end();
+      await a.gone();
+      await waitFor("the repeat closed the seat", () => closed(fake, "die-f"), 15_000).catch(
+        (e) => {
+          throw new Error(`${e.message}\n${journalOf(dir)}`);
+        },
+      );
+      await waitFor("the hold record dropped", () => !existsSync(recordOf(dir, "die-f")), 5_000);
+    },
+    { stopAbsent: 404 },
+  );
 });
 
 // №677: the agent dies while its first connect is in flight — the run's end finds no seat, and

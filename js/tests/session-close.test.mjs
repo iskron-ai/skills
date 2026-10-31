@@ -145,6 +145,27 @@ test("уходя, мост закрывает свою сессию: DELETE с �
   });
 });
 
+// Пара «открыл → закрыл» сверяется по журналу: id сессии пишется при открытии, как при закрытии.
+test("id открытой сессии — в журнал и grant.log, на первом рукопожатии и на замене", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    const first = await opened(fake, bridge, 1);
+    const second = await opened(fake, bridge, 2);
+    await bridge.leave();
+    for (const sid of [first, second]) {
+      const line = new RegExp(`opened upstream session ${sid}`);
+      assert.match(grantLog(dir), line, `открытие ${sid} — в grant.log`);
+      assert.match(bridge.stderr, line, `открытие ${sid} — в журнал моста`);
+    }
+    const log = grantLog(dir);
+    assert.ok(
+      log.indexOf(`opened upstream session ${first}`) <
+        log.indexOf(`opened upstream session ${second}`),
+      "открытия — в порядке рукопожатий",
+    );
+  });
+});
+
 test("сессия демона машины закрывается, когда уходит её тонкий мост; демон пишет это в журнал", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const bridge = spawnBridge({

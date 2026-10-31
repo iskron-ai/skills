@@ -1149,6 +1149,126 @@ for (const busy of [true, false])
     }
   });
 
+// #9256: a stopped agent's session closes in the harness, not only its turn — archived on
+// OpenCode 2.2 on (not removed: its journal stays readable), out of the archive on an explicit
+// stand; an older host or a refused archive is said to the human: the session is left open.
+for (const [host, faults] of [
+  ["2.2.1", {}],
+  ["2.2.1", { updateFails: true }],
+  ["2.0.18-probe", {}],
+])
+  test(`the owner's stop on OpenCode ${host}${faults.updateFails ? " refusing the archive" : ""} ${host === "2.2.1" && !faults.updateFails ? "archives the session, the stand takes it out" : "says the session is left open"}`, async () => {
+    const b = bridgeEnv(`stopped-archive-${host}-${!!faults.updateFails}`);
+    const rec = await plugin(b.env, {
+      app: { name: "opencode", version: host, channel: "latest" },
+      faults,
+    });
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, "s-arch");
+      const pid = pidOf(b.log);
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+      await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
+      if (host === "2.2.1" && !faults.updateFails) {
+        await until(() => rec.archives.length === 1, "the archive of the stopped session");
+        assert.deepEqual(rec.archives[0], { sessionID: "s-arch", archived: true });
+        // Archived is not closed (owner, case №2400 [12]): no client found — the window is named open.
+        await until(
+          () => /s-arch остановлена, но её окно осталось открытым — клиента/.test(rec.said()),
+          "the word of the open window",
+        );
+        appendFileSync(`${b.events}.${pid}`, event("held", { key: "k" }));
+        await until(() => rec.archives.length === 2, "out of the archive on the explicit stand");
+        assert.deepEqual(rec.archives[1], { sessionID: "s-arch", archived: false });
+      } else {
+        await until(
+          () => /сессия s-arch остановлена, но её окно осталось открытым/.test(rec.said()),
+          "the word of the open session",
+        );
+        if (faults.updateFails) assert.match(rec.said(), /осталось открытым — update refused/);
+        else assert.equal(rec.archives.length, 0, "an older host is not asked to archive");
+      }
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// #9256, case №2400 [12]: the stopped root session's client process goes — a TUI opened on exactly
+// this session (its command line), or the run whose "serve --stdio" this instance is (the seam
+// stands in for process.ppid); a stand-in process takes the SIGTERM, nothing else does: not
+// another session's TUI, not a process of another program naming the same session (review of
+// PR #618), and none when the session stands again within the close's pause.
+const standIn = () => {
+  const dir = mkdtempSync(join(SANDBOX, "oc-client-"));
+  const script = join(dir, "opencode"); // the program's name, as ps shows it
+  writeFileSync(script, "setTimeout(() => {}, 60000);\n");
+  return script;
+};
+for (const how of ["tui", "run", "stand again"])
+  test(`the owner's stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : how === "run" ? "the standalone run" : "not when the session stands again within the pause"}`, async () => {
+    const sid = `s-client-${how.replace(/ /g, "-")}`;
+    const opencode = standIn();
+    const client = spawn(
+      process.execPath,
+      [opencode, ...(how === "run" ? [] : ["--session", sid])],
+      { stdio: "ignore" },
+    );
+    const other = spawn(process.execPath, [opencode, "--session", `${sid}-other`], {
+      stdio: "ignore",
+    });
+    const foreign = spawn(
+      process.execPath,
+      ["-e", "setTimeout(() => {}, 60000)", "--", "--session", sid],
+      { stdio: "ignore" },
+    );
+    const exited = (p) => new Promise((r) => p.once("exit", (_c, sig) => r(sig)));
+    const gone = exited(client);
+    const b = bridgeEnv(
+      `stopped-client-${how}`,
+      how === "run" ? { ISKRON_OPENCODE_CLIENT_PID: client.pid } : {},
+    );
+    const rec = await plugin(b.env, {
+      app: { name: "opencode", version: "2.2.1", channel: "latest" },
+    });
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, sid);
+      const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
+      appendFileSync(
+        `${b.events}.${pidOf(b.log)}`,
+        event("stopped", { code: 4001, key: "k", text }),
+      );
+      if (how === "stand again") {
+        await until(() => rec.archives.length === 1, "the archive of the stopped session");
+        appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "k" }));
+        assert.equal(
+          await Promise.race([gone, delay(2500).then(() => "alive")]),
+          "alive",
+          "an explicit stand within the pause keeps the client",
+        );
+        assert.doesNotMatch(rec.said(), /клиент закрыт/);
+      } else {
+        assert.equal(
+          await Promise.race([gone, delay(8000).then(() => "alive")]),
+          "SIGTERM",
+          "the client takes SIGTERM",
+        );
+        assert.match(
+          rec.said(),
+          new RegExp(`сессия ${sid} остановлена, её клиент закрыт \\(pid ${client.pid}\\)`),
+        );
+      }
+      for (const p of [other, foreign]) {
+        assert.equal(p.exitCode, null, "no process but the session's client is touched");
+        assert.equal(p.signalCode, null, "no process but the session's client is touched");
+      }
+    } finally {
+      for (const p of [client, other, foreign]) p.kill();
+      await rec.stop();
+    }
+  });
+
 // #7519: a stop order executed by the bridge says the same "stopped" as the owner's 4001 — no
 // close code, the order's reason — and the plugin halts the session the same way.
 test("the stop by an order halts the session as the stop by taking the seat off", async () => {
@@ -7560,6 +7680,77 @@ test("marker-child: while the previous bridge still holds the child's socket, th
   }
 });
 
+// #9241: the observed plugin exhausted four quick `none` replies. The fixture models
+// that reply, not a proven daemon death-window cause (resume.ts distinguishes elsewhere).
+test("marker-child: #9241 a none reply lasting over five seconds does not end the child before its return deadline", async () => {
+  const answers = join(SANDBOX, "reload-none.answers");
+  writeFileSync(answers, JSON.stringify({ bySession: { child: { resumed: false } } }));
+  const { second, all, newPid } = await reloadedChild("reload-none", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_MS: 9000,
+    ISKRON_CHILD_BACK_PAUSE_MS: 100,
+  });
+  try {
+    await delay(5500);
+    assert.deepEqual(second.synthetics, [], "a temporary none has not ended the child");
+    rewrite(
+      answers,
+      JSON.stringify({
+        bySession: {
+          child: {
+            resumed: true,
+            holding: true,
+            key: "k-sub",
+            word: "место возвращено",
+          },
+        },
+      }),
+    );
+    await until(
+      () => /сессия child — место возвращено/.test(second.said()),
+      "the delayed return",
+      4000,
+    );
+    assert.ok(
+      !second.prompts.some((p) => p.sessionID === "child"),
+      "the return is silent to the child",
+    );
+    assert.deepEqual(second.synthetics, [], "the parent hears no false end");
+    await second.call("iskron_case", { realm: "nks-dev", action: "say", room: "#77" }, "child");
+    assert.equal(saidBy(all()), newPid, "the returned satellite authors its own write");
+  } finally {
+    await second.stop();
+  }
+});
+
+test("marker-child: #9241 a seat still absent at the return deadline ends with a word to its parent", async () => {
+  const answers = join(SANDBOX, "reload-none-expired.answers");
+  writeFileSync(answers, JSON.stringify({ bySession: { child: { resumed: false } } }));
+  const { second, all } = await reloadedChild("reload-none-expired", {
+    FB_RESUME: answers,
+    ISKRON_CHILD_BACK_MS: 1500,
+    ISKRON_CHILD_BACK_PAUSE_MS: 100,
+  });
+  try {
+    await until(
+      () => second.synthetics.some((p) => /по ключу не вернулось/.test(p.text)),
+      "the bounded failure word",
+      4000,
+    );
+    const words = second.synthetics.filter((p) => /по ключу не вернулось/.test(p.text));
+    assert.equal(words.length, 1);
+    assert.equal(words[0].sessionID, "root");
+    assert.ok(!second.prompts.some((p) => p.sessionID === "child"), "no steer to the child");
+    // The deadline retries the return until the term; the old build gave up after four asks.
+    const asked = all().filter(
+      (c) => c.name === "iskron/resume" && c.arguments.session === "child",
+    ).length;
+    assert.ok(asked > 4, `the deadline asked more than the old four tries (asked ${asked})`);
+  } finally {
+    await second.stop();
+  }
+});
+
 // The children's places come back quietly by their own bridges: the root's loss
 // word names the root's places only — a child's key there would call the root to
 // take back a place that is not its own.
@@ -9686,6 +9877,13 @@ for (const probe of [
   { name: "partial: OpenCode rituals only", git: "dir", hook: "rituals" },
   { name: "partial: stamp only", git: "dir", stamp: true },
   { name: "foreign SessionStart hook is no sign", git: "dir", hook: "foreign", word: true },
+  // #8089: a repository aligned by another delivery — its stamp under the shared English keys.
+  {
+    name: "another delivery's stamp is silent",
+    git: "dir",
+    agents:
+      "---\n'Graph': '@tester/work (r1)'\n---\n# x\n*(neighbour align: contract 4, stamped 2026-10-16)*\n",
+  },
   { name: "child is silent", git: "dir", child: true },
   { name: "unreadable session is silent", git: "dir", gone: true },
 ]) {
