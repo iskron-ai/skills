@@ -49,6 +49,17 @@ import { fileURLToPath } from "node:url";
 import { personApi } from "./stand-person.mjs";
 import { SUB_TOOL, roleOf, has45, actualModels, sessionTree, turnMinutes as parseMinutes, locationPath, secretScrubber } from "./stand-recall-evidence.mjs";
 import { runCleanup, removeRawLogs } from "./stand-recall-cleanup.mjs";
+import {
+  H_PROMPT,
+  fixedBriefPrompt,
+  idOf,
+  layScene,
+  makeReporters,
+  nodeOf,
+  stdioBridge,
+  teeCalls as sceneTeeCalls,
+  teeLines as sceneTeeLines,
+} from "./stand-recall-scene.mjs";
 import { intakePrompts, intakeEvidence } from "./stand-recall-intake.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -312,87 +323,9 @@ const turn = async (id, text) => {
   if (active().includes(id)) throw new Error(`session ${id}: the turn did not end in ${turnMinutes} min`);
 };
 
-// The seatless bridge of the same account: lays and takes off the scene, holds the brother seat.
-function stdioBridge() {
-  const dir = join(run, "auth-person");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(join(dir, "token"), token + "\n", { mode: 0o600 });
-  const child = spawn(process.execPath, [bridge], { env: { ...env, ISKRON_BRIDGE_AUTH_DIR: dir }, stdio: ["pipe", "pipe", "ignore"] });
-  let childError;
-  child.on("error", (e) => { childError = e; });
-  child.stdin.on("error", (e) => { childError = e; });
-  const rep = new Map();
-  let buf = "";
-  child.stdout.on("data", (d) => {
-    buf += d;
-    let i;
-    while ((i = buf.indexOf("\n")) !== -1) {
-      const l = buf.slice(0, i);
-      buf = buf.slice(i + 1);
-      try {
-        const msg = JSON.parse(l);
-        if (msg.id !== undefined && !msg.method) rep.set(msg.id, msg);
-      } catch {}
-    }
-  });
-  let id = 1;
-  const req = async (method, params) => {
-    const my = id++;
-    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: my, method, params }) + "\n");
-    for (let t = 0; t < 900; t++) {
-      if (childError || child.exitCode !== null || child.signalCode !== null) throw new Error(`scene bridge stopped: ${childError?.code ?? child.exitCode ?? child.signalCode}`);
-      if (rep.has(my)) { const value = rep.get(my); rep.delete(my); return value; }
-      await sleep(100);
-    }
-    throw new Error(`scene bridge: no reply to ${method}`);
-  };
-  return {
-    async init() {
-      await req("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "stand-run-recall", version: "0" } });
-      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-    },
-    async call(name, args) {
-      const r = await req("tools/call", { name, arguments: args });
-      return { text: (r.result?.content ?? []).map((c) => c.text ?? "").join("\n") || (r.error?.message ?? ""), error: !!(r.error || r.result?.isError) };
-    },
-    async close() {
-      if (childError || child.exitCode !== null || child.signalCode !== null) return;
-      const done = new Promise((r) => child.once("exit", r));
-      child.stdin.end();
-      await Promise.race([done, sleep(5000)]);
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGTERM");
-        await Promise.race([done, sleep(5000)]);
-      }
-      if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); problem("scene bridge required SIGKILL"); await Promise.race([done, sleep(5000)]); }
-    },
-  };
-}
-
-// The tee's journal: tools/call requests of the plugin's bridge (not the plugin's own service
-// calls), each with its answer — from line `mark` on.
-const teeLines = () => (existsSync(teeLog) ? readFileSync(teeLog, "utf8").split("\n").filter(Boolean) : []);
-function teeCalls(mark) {
-  const reqs = [];
-  const answers = new Map();
-  for (const l of teeLines().slice(mark)) {
-    let e, m;
-    try {
-      e = JSON.parse(l);
-      m = JSON.parse(e.line);
-    } catch {
-      continue;
-    }
-    const key = `${e.pid}:${m.id}`;
-    if (e.dir === "plugin→bridge" && m.method === "tools/call" && !String(m.id).startsWith("iskron-service-"))
-      reqs.push({ t: e.t, key, name: m.params?.name, args: m.params?.arguments ?? {} });
-    else if (e.dir === "bridge→plugin" && m.id !== undefined && !m.method) answers.set(key, m);
-  }
-  return reqs.map((r) => {
-    const a = answers.get(r.key);
-    return { ...r, text: (a?.result?.content ?? []).map((c) => c.text ?? "").join("\n"), error: !a || !!(a.error || a.result?.isError) };
-  });
-}
+// The seatless bridge of the same account (scene module) and the tee journal of THIS run.
+const teeLines = () => sceneTeeLines(teeLog);
+const teeCalls = (mark) => sceneTeeCalls(teeLog, mark);
 
 // A subagent call of the harness and the role it named.
 // Whose a graph call is: the tool part of the session it ran in — a subagent call's window makes
@@ -435,64 +368,20 @@ const lastAnswer = (msgs) => {
     .join("\n");
 };
 
-const idOf = (text) => (text.match(/\(#(\d+)[,)]/) || [])[1];
-const node = (v) => String(v ?? "").replace(/^#/, "").trim();
-const report = [];
+const node = nodeOf;
 const rawJournals = [];
 const runSessions = new Set();
-const verdicts = [];
-let failed = 0;
 let setup = true; // until the first probe: a refusal here is the run's, exit 2
-const problem = (text) => { verdicts.push(`BLOCKER ${text}`); report.push(`BLOCKER ${text}`); failed++; };
+const { verdicts, report, problem, verdict, provisional, error: errorVerdict, count } = makeReporters();
 const cleanup = runCleanup({ run, auth, bridge, env, cwd, report, scrub, problem });
-const verdict = (ok, what, seen) => {
-  verdicts.push(`${ok ? "PASS" : "FAIL"} ${what}${seen ? ` — ${String(seen).slice(0, 300)}` : ""}`);
-  if (!ok) failed++;
-};
 
-const P = stdioBridge();
+const P = stdioBridge({ run, bridge, env, token, name: "stand-run-recall", problem });
 const laid = []; // node ids in the order laid, taken off in reverse
-const add = async (tool, args) => {
-  checkInterrupted();
-  const r = await P.call(tool, { realm, ...args });
-  const id = idOf(r.text);
-  if (r.error || !id) throw new Error(`${tool} ${args.name}: ${r.text.slice(0, 300)}`);
-  laid.push(id);
-  return id;
-};
-const take = async (id) => {
-  const v = ((await P.call("iskron_look", { realm, node_id: `#${id}` })).text.match(/\(#\d+, [^,)]+, v(\d+)\)/) || [])[1];
-  const r = v ? await P.call("iskron_delete_node", { realm, node_id: `#${id}`, basis_version: v, reasoning: "stand-run-recall: the scene is taken off" }) : { error: true, text: "no version" };
-  if (r.error) problem(`scene: #${id} not taken off — ${r.text.slice(0, 160)}`);
-  else laid.splice(laid.indexOf(id), 1);
-};
-const M = { epistemic_mode: "pratyakshita", ontic_mode: "vartamana", volitive_mode: "upeksha" };
-const FACT = {
-  // With the question's word — (a) and (c) find it by it.
-  word: {
-    name: "⏱️ Таймаут очереди импорта — 45 секунд",
-    description: "Таймаут очереди импорта — 45 секунд: дольше задача ждёт воркера и уходит в повтор. Решено 45 с; вариант 30 с отвергнут — крупные каталоги поставщиков не успевали.",
-  },
-  // Without it — (b): a search by «таймаут» comes back empty.
-  plain: {
-    name: "⏱️ Сколько очередь импорта ждёт воркера: 45 секунд",
-    description: "Очередь импорта ждёт ответа воркера не дольше 45 секунд, затем задача уходит в повтор. Решено 45 с; вариант 30 с отвергнут — крупные каталоги поставщиков не успевали.",
-  },
-};
 const scene = {};
-const factOn = async (variant) => {
-  if (scene.variant === variant) return scene.fact;
-  if (scene.fact) await take(scene.fact);
-  scene.fact = await add("iskron_add_phenomenon", {
-    ...FACT[variant],
-    given_as: "grundsatz",
-    ...M,
-    volitive_mode: "adhimoksha",
-    arrows: [{ arrow_type: "context", target: `#${scene.foreign}`, volitive_mode: "upeksha", sense: "решение границы очередей" }],
-  });
-  scene.variant = variant;
-  await sleep(20_000); // the search index takes the fresh node in
-  return scene.fact;
+// Until the scene is laid there is nothing to take off; layScene returns the real one.
+let take = async () => {};
+let factOn = async () => {
+  throw new Error("the scene was never laid");
 };
 
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
@@ -502,70 +391,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
 try {
   await P.init();
   checkInterrupted();
-  if (process.argv.includes("--require-empty")) {
-    const empty = await P.call("iskron_search", { realm, q: "", limit: 1 });
-    report.push(`pre-fixture empty graph check: ${empty.text}`);
-    if (empty.error || /#\d+/.test(empty.text)) throw new Error("--require-empty: graph is not demonstrably empty before fixture creation");
-  }
-  scene.agent = await add("iskron_add_karta", {
-    name: "🧪 Разработчик импорта каталогов",
-    motivation: "Ведёт импорт каталогов поставщиков: правит загрузку и её настройки, отвечает за то, чтобы каталоги доходили целиком.",
-    manifested_as: "adhikarin",
-    ...M,
-  });
-  scene.human = await add("iskron_add_karta", {
-    name: "🧪 Владелец продукта каталогов",
-    motivation: "Решает, что входит в выпуск и какие фичи берутся, отвечает за продукт каталогов перед клиентами.",
-    manifested_as: "svatantra",
-    ...M,
-  });
-  scene.steward = await add("iskron_add_karta", {
-    name: "🧪 Разработчик фоновых очередей",
-    motivation: "Держит фоновые очереди задач: их ожидание, повторы и пропускную способность для всех, кто ставит туда задачи.",
-    manifested_as: "adhikarin",
-    ...M,
-  });
-  const steward = (k) => [{ arrow_type: "steward", target: `#${k}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }];
-  scene.own = await add("iskron_add_holon", {
-    name: "📦 Импорт каталогов поставщиков",
-    description: "Что внутри: загрузка каталогов поставщиков и её настройки; снаружи — очереди, в которые она ставит задачи, и витрина, читающая итог.",
-    ...M,
-    arrows: steward(scene.agent),
-  });
-  scene.foreign = await add("iskron_add_holon", {
-    name: "🧵 Фоновые очереди задач",
-    description: "Что внутри: очереди фоновых задач, их ожидание, повторы и пропускная способность; снаружи — те, кто ставит задачи и читает итог.",
-    ...M,
-    arrows: steward(scene.steward),
-  });
-  scene.file = await add("iskron_add_phenomenon", {
-    name: "📄 Файл каталога поставщика",
-    description: "Файл каталога, который поставщик выкладывает на загрузку: позиции, цены, остатки.",
-    given_as: "ding",
-    ...M,
-    arrows: [{ arrow_type: "context", target: `#${scene.own}`, volitive_mode: "upeksha", sense: "вход импорта" }],
-  });
-  scene.kriya = await add("iskron_add_kriya", {
-    name: "📥 Загрузка каталога поставщика в очередь импорта",
-    description: "Файл каталога лежит у поставщика → позиции каталога стоят задачами в очереди импорта с выставленным временем ожидания ответа воркера.",
-    ...M,
-    arrows: [
-      { arrow_type: "ahara", target: `#${scene.file}`, volitive_mode: "upeksha", sense: "что загрузка съедает" },
-      { arrow_type: "actor", target: `#${scene.agent}`, volitive_mode: "upeksha", sense: "кто загружает" },
-    ],
-  });
-  // The brother: another seat of the agent's role, held by the scene bridge.
-  scene.brother = `recall-${stamp}.brother`;
-  const b = await P.call("iskron_stand", { realm, karta: `#${scene.agent}`, name: scene.brother, model: "stand-run" });
-  if (b.error) throw new Error(`brother seat: ${b.text.slice(0, 300)}`);
-
-  writeFileSync(
-    join(cwd, "AGENTS.md"),
-    `---\n'Граф': '${realm}'\n'Граф — источник': 'согласовано: владелец'\n'Фокус-контур': '\`#${scene.own} «📦 Импорт каталогов поставщиков»\`'\n'Роль агента': '\`#${scene.agent} «🧪 Разработчик импорта каталогов»\` — adhikarin, стюард #${scene.own}'\n'Роль агента — источник': 'согласовано: владелец'\n'Роль владельца': '\`#${scene.human} «🧪 Владелец продукта каталогов»\` (svatantra)'\n---\n# Импорт каталогов поставщиков\n\nСервис загрузки каталогов поставщиков.\n\n*(iskronify: контракт 36, штамп 2026-10-29)*\n`,
-  );
+  ({ factOn, take } = await layScene(P, { realm, stamp, cwd, report, problem, requireEmpty: process.argv.includes("--require-empty"), sleep, scene, laid }));
   report.push(`realm ${realm} · model ${model} · bridge ${bridge} · plugin ${plugin} · skills ${skills} (${skillDirs.length})`);
   report.push(`roles (.opencode/agents, ${subModel}): ${roles.map((r) => r.name).join(", ") || "none"}`);
-  report.push(`scene: agent #${scene.agent} · human #${scene.human} · foreign steward #${scene.steward} · own #${scene.own} · foreign #${scene.foreign} · kriya #${scene.kriya} · brother ${scene.brother}`);
 
   await startServe();
   // The plugin rises with the first prompt; a warm-up lists its tools and the loaded skills.
@@ -592,9 +420,7 @@ try {
 
   const intake = intakePrompts(scene);
   if (fixedBrief)
-    intake.f = [
-      `${intake.f[0]}\n\nНабросок и постановка ingester уже готовы — свой набросок не пиши и граф до запуска не правь, кроме шагов ниже. (1) Запиши исток ding-феноменом «🗣️ Рассказ о повторяемом импорте каталогов» (source_kind=shabda, context #${scene.own}) с полным текстом рассказа. (2) Открой дочернее дело на впуск. (3) Запусти ingester с постановкой ДОСЛОВНО из текста ниже, подставив только {REALM} — адрес графа, {SEAT} — твоё место, {CASE} — номер дочернего дела, {SOURCE} — номер истока. (4) По отчёту сам прочти полученные узлы и сравни их с рассказом.\n\nПОСТАНОВКА:\n${fixedBrief}`,
-    ];
+    intake.f = [fixedBriefPrompt(intake.f[0], scene, fixedBrief)];
   const PROMPTS = {
     ...intake,
     a: ["Правлю импорт, какой таймаут очереди ставить?"],
@@ -607,7 +433,7 @@ try {
     // (e) — the owner's complaint (case №2302 [35]): a task that needs the fact without naming it.
     e: ["Допиши в import.yaml блок очереди импорта (queue:) — нужен, чтобы выкатить импорт каталогов."],
     // (h) — scene (д) of case №2302 as run on 7.26.0 (case №2394 [14]): the recaller is asked for by name.
-    h: ["Нужно узнать записанный таймаут очереди импорта. Делегируй поиск настоящему recaller через инструмент запуска субагента. В постановке укажи, что ищем, по чему признаем ответ найденным и где ты уже искал (если ещё нигде — так и напиши). Пусть ищет в графе, не спрашивая брата или человека через дело или канал. Перед тем как опереться на ответ recaller, сам открой найденный узел. Какой таймаут ставить и почему?"],
+    h: [H_PROMPT],
   };
   const CONFIG = join(cwd, "import.yaml");
   const isSearch = (c) => ["iskron_search", "iskron_semantic_search"].includes(c.name);
@@ -660,7 +486,7 @@ try {
       }
       report.push(`OBSERVATIONS (${key})\n${JSON.stringify(evidence, null, 2)}`);
       if (evidence.errors.length) verdict(false, `(${key}) intake evidence`, evidence.errors.join("; "));
-      else { verdicts.push(`PROVISIONAL (${key}) intake: human semantic acceptance required`); failed++; }
+      else provisional(`PROVISIONAL (${key}) intake: human semantic acceptance required`);
       continue;
     }
     // (a) counts the agent's own look: a recaller's finding is «told», the caller opens the node.
@@ -712,8 +538,7 @@ try {
     }
   }
 } catch (e) {
-  verdicts.push(`ERROR${setup ? " (setup)" : ""} ${e.message}`);
-  failed++;
+  errorVerdict(e.message, setup);
 } finally {
   cleanup.capture("before session shutdown");
   for (const id of runSessions) if (!rawJournals.some((j) => j.sessions.some((s) => s.sessionID === id))) {
@@ -747,4 +572,4 @@ writeFileSync(reportFile, text, { mode: 0o600 });
 if (rawFile) writeFileSync(rawFile, scrub(JSON.stringify({ journals: rawJournals, lifecycleSnapshots: cleanup.snapshots }, null, 2)) + "\n", { mode: 0o600 });
 process.stdout.write(scrub(verdicts.join("\n")) + `\n\nreport: ${reportFile}\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-process.exit(setup ? 2 : failed ? 1 : 0);
+process.exit(setup ? 2 : count() ? 1 : 0);
