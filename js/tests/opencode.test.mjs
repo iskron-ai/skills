@@ -9853,6 +9853,13 @@ for (const probe of [
   { name: "partial: OpenCode rituals only", git: "dir", hook: "rituals" },
   { name: "partial: stamp only", git: "dir", stamp: true },
   { name: "foreign SessionStart hook is no sign", git: "dir", hook: "foreign", word: true },
+  // #8089: a repository aligned by another delivery — its stamp under the shared English keys.
+  {
+    name: "another delivery's stamp is silent",
+    git: "dir",
+    agents:
+      "---\n'Graph': '@tester/work (r1)'\n---\n# x\n*(neighbour align: contract 4, stamped 2026-10-16)*\n",
+  },
   { name: "child is silent", git: "dir", child: true },
   { name: "unreadable session is silent", git: "dir", gone: true },
 ]) {
