@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.28.0](https://github.com/iskron-ai/skills/compare/v7.27.0...v7.28.0) (2026-10-31)
+
+
+### Features
+
+* пачка после 7.27.0 — хук сжатия CC, конец агента по токену, архив и закрытие клиента остановленной сессии, возврат спутника, windowsHide ([#618](https://github.com/iskron-ai/skills/issues/618)) ([08390a1](https://github.com/iskron-ai/skills/commit/08390a14c4d83f67082ff247e6262eebe0eb317d))
+
 ## [7.27.0](https://github.com/iskron-ai/skills/compare/v7.26.0...v7.27.0) (2026-10-30)
 
 
