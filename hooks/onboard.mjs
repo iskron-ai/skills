@@ -1,5 +1,5 @@
 // js/cli/onboard-hook.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 
 // js/delivery/lang.ts
 var LANGS = ["ru", "en"];
@@ -115,6 +115,26 @@ var TAKE = {
   }
 };
 
+// js/delivery/words/compaction.ts
+var role = (karta, none) => {
+  const seq = karta.replace(/^#/, "");
+  return seq && seq !== "undefined" ? `#${seq}` : none;
+};
+var COMPACTION = {
+  ru: {
+    keep: (karta, name, realm) => `Искрон: сводка этого сжатия обязана сохранить роль агента ${role(karta, "<роль>")} в графе ${realm}, его место ${name} (стояние держит мост), живые дела — номером и тем, чего в них ждут, — и указание первым ходом после сжатия перечитать дверь (скилл iskron) и скиллы роли.`,
+    back: (karta, name, realm) => `Искрон: контекст сжат. Ты — роль ${role(karta, "<роль>")} в графе ${realm}, место ${name} держит мост. До первого содержательного хода загрузи дверь (скилл iskron) и скиллы роли — их называет дверь; только их, не все прежние. Сводка — указатель, не запись: решение, основание или факт из неё, на который опираешься, прочти в графе заново (скилл recall).`,
+    bare: () => `Искрон: контекст сжат. До первого содержательного хода загрузи дверь (скилл iskron) и скиллы роли — их называет дверь; только их, не все прежние. Сводка — указатель, не запись: решение, основание или факт из неё, на который опираешься, прочти в графе заново (скилл recall).`,
+    returned: (sessionID) => `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`
+  },
+  en: {
+    keep: (karta, name, realm) => `Iskron: the summary of this compaction must keep the agent's role ${role(karta, "<role>")} in graph ${realm}, its seat ${name} (the bridge holds the standing), the live cases — by number and what they wait for — and the instruction to reread the door (the iskron skill) and the role's skills as the first move after the compaction.`,
+    back: (karta, name, realm) => `Iskron: the context was compacted. You are role ${role(karta, "<role>")} in graph ${realm}, the bridge holds seat ${name}. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
+    bare: () => `Iskron: the context was compacted. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
+    returned: (sessionID) => `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`
+  }
+};
+
 // js/delivery/words/onboardstart.ts
 var ONBOARD_START = {
   ru: {
@@ -187,6 +207,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), HOME_DIR);
 var authDirFromEnv = () => envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
+var standingsDirOf = (authDir) => join(authDir, "standings");
+var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 
 // js/shared/lang.ts
 var isLang = (v) => LANGS.includes(v ?? "");
@@ -243,12 +265,12 @@ function frontMatter(text2) {
   if (end < 0) return null;
   const raw = /* @__PURE__ */ new Map();
   let last = null;
-  for (const line of lines.slice(1, end)) {
-    const kv = /^\s*('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)\s*:(?:\s+(.*))?$/.exec(line);
+  for (const line2 of lines.slice(1, end)) {
+    const kv = /^\s*('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)\s*:(?:\s+(.*))?$/.exec(line2);
     if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
-    else if (last !== null && /^\s+[^\s#]/.test(line))
+    else if (last !== null && /^\s+[^\s#]/.test(line2))
       raw.set(last, `${raw.get(last)}
-${line.trim()}`);
+${line2.trim()}`);
   }
   return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
 }
@@ -275,8 +297,8 @@ var text = (path) => {
     return null;
   }
 };
-function repoRoot(dir) {
-  let at = resolve3(dir);
+function repoRoot(dir2) {
+  let at = resolve3(dir2);
   for (; ; ) {
     if (exists(join3(at, ".git"))) return at;
     const up = dirname(at);
@@ -299,8 +321,8 @@ function startHook(settings, mark) {
     return false;
   }
 }
-function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
-  const root = repoRoot(dir);
+function repoSigns(dir2, harness, keys = REPO_SIGNS, cover = COVER) {
+  const root = repoRoot(dir2);
   const hooks = { "claude-code": false, opencode: false };
   if (root === null) return { root, cover: false, stamp: false, hooks, verdict: "outside" };
   const agents = text(join3(root, cover.file));
@@ -321,20 +343,71 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   return { root, ...signs, verdict };
 }
 
-// js/cli/onboard-hook.ts
-function sessionDir() {
+// js/shared/seatbydir.ts
+import { readdirSync, readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+
+// js/shared/canon.ts
+import { realpathSync } from "node:fs";
+import { sep } from "node:path";
+function canonDir(p) {
+  let real = p;
   try {
-    if (!process.stdin.isTTY) {
-      const cwd = JSON.parse(readFileSync3(0, "utf8"))?.cwd;
-      if (typeof cwd === "string" && cwd) return cwd;
-    }
+    real = realpathSync.native(p);
   } catch {
   }
-  return process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  while (real.length > 1 && (real.endsWith("/") || real.endsWith(sep))) real = real.slice(0, -1);
+  return real;
+}
+var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
+
+// js/shared/seatbydir.ts
+function seatByDir(authDir, cwd, client, now = Date.now()) {
+  const seats = /* @__PURE__ */ new Map();
+  let files;
+  try {
+    files = readdirSync(standingsDirOf(authDir)).filter((f) => f.endsWith(".hold"));
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    try {
+      const r = JSON.parse(readFileSync3(join4(standingsDirOf(authDir), f), "utf8"));
+      if (r?.client !== client || r.left === true || !sameDir(r.cwd, cwd)) continue;
+      if (typeof r.at !== "number" || now - r.at > HOLD_RECORD_MAX_AGE_MS) continue;
+      if (typeof r.realm !== "string" || !r.realm || r.karta == null) continue;
+      if (typeof r.name !== "string" || !r.name) continue;
+      const seat = { realm: r.realm, karta: String(r.karta), name: r.name };
+      seats.set(`${seat.realm}\0${seat.karta}\0${seat.name}`, seat);
+    } catch {
+    }
+  }
+  return seats.size === 1 ? [...seats.values()][0] : null;
+}
+
+// js/cli/onboard-hook.ts
+function hookInput() {
+  try {
+    if (!process.stdin.isTTY) return JSON.parse(readFileSync4(0, "utf8")) ?? {};
+  } catch {
+  }
+  return {};
+}
+var input = hookInput();
+var dir = typeof input.cwd === "string" && input.cwd ? input.cwd : process.env.CLAUDE_PROJECT_DIR || process.cwd();
+function line() {
+  if (input.source === "compact") {
+    const W = words(COMPACTION);
+    const seat = seatByDir(authDirFromEnv(), dir, "claude-code");
+    if (seat) return W.back(seat.karta, seat.name, seat.realm);
+    const { verdict } = repoSigns(dir, "claude-code");
+    return verdict === "aligned" || verdict === "partial" ? W.bare() : null;
+  }
+  return repoSigns(dir, "claude-code").verdict === "invite" ? words(ONBOARD_START).start() : null;
 }
 try {
-  if (repoSigns(sessionDir(), "claude-code").verdict === "invite")
-    process.stdout.write(`${words(ONBOARD_START).start()}
+  const text2 = line();
+  if (text2) process.stdout.write(`${text2}
 `);
 } catch {
 }
