@@ -23,7 +23,7 @@ const FRESHEN_MS = Number(process.env[envName("HOLD_FRESHEN_MS")]) || HOLD_RECOR
  * Returns the stop.
  */
 export function keepHeldRecordFresh(): () => void {
-  const t = setInterval(bindScope(refreshHeldRecord), FRESHEN_MS);
+  const t = setInterval(bindScope(freshenHeldRecords), FRESHEN_MS);
   t.unref();
   return () => clearInterval(t);
 }
@@ -79,6 +79,19 @@ export function signHeldRecord(): void {
   for (const k of [key, ...extraPlaces().map((p) => p.door.key)]) {
     const rec = readHoldRecord(k); // seats beside in other graphs share the channel and its url
     if (rec && !rec.session && rec.url === H.currentUrl) writeHoldRecord(k, rec);
+  }
+}
+
+/** The held seat's record and those of its seats beside in other graphs, on the same channel. */
+function freshenHeldRecords(): void {
+  refreshHeldRecord();
+  if (!H.holder?.alive || !H.currentUrl) return;
+  const ch = { url: H.currentUrl, statusUrl: H.currentStatusUrl };
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (!r || r.left || r.url !== H.currentUrl) continue;
+    if (typeof r.at === "number" && Date.now() - r.at < HOLD_RECORD_MAX_AGE_MS / 2) continue;
+    rememberExtraStatus(p.door.key, { ...ch, cwd: r.cwd }, r.status ?? "");
   }
 }
 

@@ -3440,6 +3440,32 @@ test("root: a seat held past half the record's term with no plugin check — the
   await b.stop();
 });
 
+// #9272, a seat beside in another graph: its record ages the same way. Left stale, a reader by
+// age would see the main seat as the session's only one.
+test("two graphs: a seat beside held past half the record's term with no plugin check — the bridge freshens its record too", async (t) => {
+  const { dir } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "fresh-a" },
+    { realm: DRUGOY, karta: 48, name: "fresh-b" },
+    INIT,
+    async () => {},
+    { ISKRON_HOLD_FRESHEN_MS: "200" },
+  );
+  const files = holdFiles(dir).map((f) => join(dir, "standings", f));
+  assert.equal(files.length, 2, `two records: ${files}`);
+  for (const f of files) {
+    const r = JSON.parse(readFileSync(f, "utf8"));
+    writeFileSync(f, JSON.stringify({ ...r, at: Date.now() - 4 * 3600_000 }));
+  }
+  const fresh = () =>
+    files.every((f) => Date.now() - JSON.parse(readFileSync(f, "utf8")).at < 60_000);
+  for (let i = 0; i < 30 && !fresh(); i++) await pause(100);
+  assert.ok(
+    fresh(),
+    `both records freshened: ${files.map((f) => readFileSync(f, "utf8")).join("\n")}`,
+  );
+});
+
 // Case №954, path (a): a satellite's return by key does not take a seat of an earlier era than
 // another record of the same session in the same role and graph. The later one cannot come back
 // (its address is dead) — the former is still not taken. A child's return is silent (#6628,
