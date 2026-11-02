@@ -113,7 +113,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.28.0";
+var VERSION = "7.28.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -396,10 +396,10 @@ ${said || "(it left no text — see its case)"}`,
 // js/delivery/words/onboardstart.ts
 var ONBOARD_START = {
   ru: {
-    start: () => "Этот репозиторий ещё не выровнен под агента — начни со скилла onboarding (ветвь iskronify «Первый граф»)."
+    start: () => "Этот репозиторий ещё не выровнен под агента — предложи человеку скилл onboarding (ветвь iskronify «Первый граф»); его запрос это не задерживает."
   },
   en: {
-    start: () => "This repository is not yet aligned for the agent — start with the onboarding skill."
+    start: () => "This repository is not yet aligned for the agent — offer the person the onboarding skill; it does not hold up their request."
   }
 };
 
