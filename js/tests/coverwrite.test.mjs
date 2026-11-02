@@ -47,6 +47,19 @@ test("записанное читается тем же разбором; адр
   });
 });
 
+test("комментарий на строке корня — блок узнаётся и заменяется на месте, строка корня цела", () => {
+  const before = "---\niskron: # repo addresses\n  graph: r1\n---\n# x\n";
+  assert.deepEqual(Object.fromEntries(coverBlock(before, "iskron")), { graph: "r1" });
+  const after = writeCover(before, "iskron", DATA);
+  assert.equal(after, `---\n${BLOCK.replace("iskron:", "iskron: # repo addresses")}---\n# x\n`);
+  assert.equal(writeCover(after, "iskron", DATA), after, "повтор ничего не меняет");
+  assert.equal(
+    coverBlock("---\niskron:#x\n  graph: r1\n---\n", "iskron"),
+    null,
+    "без пробела — не комментарий",
+  );
+});
+
 test("пустые поля не пишутся; CRLF и BOM сохраняются", () => {
   const text = writeCover("\uFEFF---\r\nx: 1\r\n---\r\n# y\r\n", "iskron", {
     graph: "r5",

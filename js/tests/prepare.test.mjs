@@ -151,6 +151,45 @@ test("записанный моделью хук старта и пуша узн
   for (const f of ["hook.start", "hook.push", "hook.merge"]) assert.ok(out.kept.includes(f), f);
 });
 
+test("адреса сменились — свои хуки переписаны на месте, чужая запись цела", () => {
+  const dir = repo();
+  mkdirSync(join(dir, ".claude"));
+  const other = { matcher: "Bash", hooks: [{ type: "command", command: "echo other" }] };
+  writeFileSync(
+    join(dir, ".claude/settings.json"),
+    JSON.stringify({ hooks: { PreToolUse: [other] } }),
+  );
+  prepare(dir, ADDR);
+  const { out } = prepare(dir, ["--graph", "r8", "--holon", "13", "--agent-role", "35"]);
+  for (const f of ["hook.start", "hook.guard"]) assert.ok(out.done.includes(f), f);
+  const s = settings(dir);
+  const start = commands(s, "SessionStart");
+  assert.equal(start.length, 1);
+  for (const a of ["r8", "#13", "#35"]) assert.ok(start[0].includes(a), a);
+  assert.doesNotMatch(start[0], /r7|#12|#34/);
+  assert.deepEqual(s.hooks.PreToolUse[0], other);
+  assert.equal(s.hooks.PreToolUse.length, 2);
+  assert.match(commands(s, "PreToolUse")[1], /граф r8/);
+  assert.deepEqual(
+    prepare(dir, ["--graph", "r8", "--holon", "13", "--agent-role", "35"]).out.done,
+    [],
+  );
+});
+
+test("корень обложки с комментарием — тот же блок, второго корня нет", () => {
+  const dir = repo();
+  const before =
+    "---\niskron: # repo addresses\n  graph: r7\n  holon: 12\n  agent_role: 34\n---\n# body\n";
+  writeFileSync(join(dir, "AGENTS.md"), before);
+  const { out } = prepare(dir, ADDR);
+  assert.equal(read(dir, "AGENTS.md"), before);
+  assert.ok(out.kept.includes("AGENTS.md"));
+  prepare(dir, [...ADDR, "--contract", "38"]);
+  const text = read(dir, "AGENTS.md");
+  assert.equal(text.match(/^iskron:/gm).length, 1, text);
+  assert.equal(coverBlock(text, "iskron").get("contract"), "38");
+});
+
 test("есть AGENTS.md: тело и чужие ключи целы; --contract ставит штамп сегодняшним днём", () => {
   const dir = repo();
   writeFileSync(join(dir, "AGENTS.md"), "---\npaths: x\n---\n# body\ntext\n");

@@ -27,7 +27,8 @@ export const unquote = (v: string): string => {
 
 const KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
 const PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
-const TOP = new RegExp(String.raw`^${KEY}\s*:\s*$`);
+/** A block's root line: the key alone, or with a comment after a space. */
+const TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
 const CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
 /** A bare value ends where a comment starts. */
 const bare = (v: string): string => unquote(/^['"]/.test(v.trim()) ? v : v.replace(/\s+#.*$/, ""));
@@ -101,7 +102,8 @@ export const renderCover = (root: string, data: CoverData): string[] => [
 ];
 
 /**
- * The text with the delivery's cover block set to data: the block replaced in place, else put
+ * The text with the delivery's cover block set to data: the block's fields replaced in place under
+ * its root line as written, else the block put
  * first in the front matter, else a front matter made for it. Every other line stays as it was;
  * writing the same data twice changes nothing.
  */
@@ -116,7 +118,7 @@ export function writeCover(text: string | null, root: string, data: CoverData): 
   const next =
     at < 0
       ? [...block, ...inner]
-      : [...inner.slice(0, at), ...block, ...inner.slice(blockEnd(inner, at))];
+      : [...inner.slice(0, at + 1), ...block.slice(1), ...inner.slice(blockEnd(inner, at))];
   return bom + ["---", ...next, ...f.lines.slice(f.end)].join(eol);
 }
 
