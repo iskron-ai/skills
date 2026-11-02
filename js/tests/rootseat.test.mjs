@@ -515,6 +515,25 @@ test(
   },
 );
 
+test("#9316: обложка блоком iskron садит на роль числом в графе rN", T, async (t) => {
+  const s = await stage(t, null);
+  writeFileSync(
+    join(s.project, "AGENTS.md"),
+    "---\niskron:\n  graph: r5\n  holon: 1506\n  agent_role: 931\n  contract: 38\n  stamp: 2026-11-02\n---\n# проба\n",
+  );
+  await s.fake.control({ structured: true });
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("root");
+    const r = await oc.turn("root", "привет");
+    assert.equal(r.atRequest.seats.length, 1, board(r, oc));
+    assert.ok(r.told.includes(SEATED), board(r, oc));
+    assert.equal(heardSeats(s.fake).length, 1, `слушает место роли #931\n${board(r, oc)}`);
+  } finally {
+    await oc.stop();
+  }
+});
+
 test("R4a: session.created без промпта не занимает место; первый промпт занимает", T, async (t) => {
   const s = await stage(t);
   const oc = await rootPlugin(s, s.project);

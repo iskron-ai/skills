@@ -21,6 +21,8 @@ export interface RootSeatWords {
   noRoleRef: (file: string, key: string, ref: string) => string;
   /** В значении слота роли — несколько ссылок на роли. */
   manyRoles: (file: string, key: string, list: string) => string;
+  /** Поле блока обложки должно быть числом (agent_role). */
+  notNumber: (file: string, key: string) => string;
   /** Встал: place — имя места, realm и karta — из обложки. */
   seated: (place: string, karta: string, realm: string, file: string) => string;
   ownSeated: (place: string, karta: string, realm: string, file: string) => string;
@@ -55,6 +57,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     manyGraphs: (file, key, list) => `'${key}' в ${file} называет несколько графов: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
+    notNumber: (file, key) => `'${key}' в ${file} — не число`,
     seated: (place, karta, realm, file) =>
       `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
     ownSeated: (place, karta, realm, file) =>
@@ -88,6 +91,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     manyGraphs: (file, key, list) => `'${key}' in ${file} names several graphs: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
     manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
+    notNumber: (file, key) => `'${key}' in ${file} is not a number`,
     seated: (place, karta, realm, file) =>
       `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by this seat. For a watch (room/model) or your own name, call iskron_stand — it replaces a provisional seat without take.`,
     ownSeated: (place, karta, realm, file) =>

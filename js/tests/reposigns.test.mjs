@@ -26,6 +26,9 @@ const COVER_EN = "---\n'Graph': '@tester/work (r1)'\n'Agent role': '#7 \"agent\"
 const STAMP_EN = "*(iskronify: contract `29`, stamp `2026-10-22` — …)*\n";
 const STAMP_FOREIGN = "*(neighbour align: contract 4, stamped 2026-10-16)*\n";
 const STAMP_OLD = "*(iskronify: контракт `5` — перезапусти, когда …)*\n";
+// The cover as a block under the delivery's root key (#9316): the stamp is its contract and date.
+const BLOCK = (root, stamp = "  contract: 38\n  stamp: 2026-11-02\n") =>
+  `---\n${root}:\n  graph: r1\n  holon: 2\n  agent_role: 7\n${stamp}---\n# x\n`;
 const session = (command) =>
   JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command }] }] } });
 // Start hooks as iskronify projects them: the template's English form and Russian projections.
@@ -88,6 +91,21 @@ const CASES = [
     verdicts: all("aligned"),
   },
   { name: "English cover only", spec: { git: "dir", agents: COVER_EN }, verdicts: all("partial") },
+  {
+    name: "cover block with contract and stamp, both start hooks",
+    spec: { git: "dir", agents: BLOCK("iskron"), settings: START, rituals: true },
+    verdicts: all("aligned"),
+  },
+  {
+    name: "cover block without a contract",
+    spec: { git: "dir", agents: BLOCK("iskron", ""), settings: START, rituals: true },
+    verdicts: all("partial"),
+  },
+  {
+    name: "another delivery's cover block",
+    spec: { git: "dir", agents: BLOCK("neighbour") },
+    verdicts: all("foreign"),
+  },
   {
     name: "another delivery's stamp under the shared English keys",
     spec: { git: "dir", agents: COVER_EN + STAMP_FOREIGN },
