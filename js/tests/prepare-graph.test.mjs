@@ -23,14 +23,23 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 // What the stand-in graph answers to a search, by its arguments; the calls it saw.
 let answer = () => "Найдено 0 узлов.";
 let stream = false;
+let failing = false;
 const seen = [];
+// The session closed at the end: the last request is a DELETE under its id (#9174).
+const closed = () => {
+  const last = seen.at(-1);
+  return last?.verb === "DELETE" && last.session === "sess-1";
+};
 const server = createServer((req, res) => {
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     const msg = JSON.parse(body || "{}");
-    seen.push({ auth: req.headers.authorization, session: req.headers["mcp-session-id"], msg });
+    const session = req.headers["mcp-session-id"];
+    seen.push({ verb: req.method, auth: req.headers.authorization, session, msg });
+    if (req.method === "DELETE") return void res.writeHead(200).end();
     if (msg.id === undefined) return void res.writeHead(202).end();
+    if (failing && msg.method === "tools/call") return void res.writeHead(500).end();
     const result =
       msg.method === "initialize"
         ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "stand" } }
@@ -105,6 +114,20 @@ test("контур по атрибуту repository и его стюард — �
     seen.slice(1).every((s) => s.session === "sess-1"),
     "один сеанс MCP",
   );
+  assert.ok(closed(), "сеанс закрыт DELETE");
+});
+
+test("сеанс закрывается и на отказе сервера посреди чтения", async () => {
+  answer = graphOf;
+  failing = true;
+  seen.length = 0;
+  try {
+    const { out } = await prepare(await repo(), ["--graph", "r7"]);
+    assert.deepEqual(out.derived, {});
+    assert.ok(closed(), "сеанс закрыт DELETE");
+  } finally {
+    failing = false;
+  }
 });
 
 test("--lang держится после чтения графа: настройка сервера языка не меняет", async () => {
@@ -143,8 +166,10 @@ test("контур назван — спрошен только стюард; д
   assert.equal(seen.filter((s) => s.msg.method === "tools/call").length, 1);
   answer = () => "Найдено 2 узлов:\n  a (#12, holon, …)\n  b (#13, holon, …)";
   const two = await repo();
+  seen.length = 0;
   const { code, out } = await prepare(two, ["--graph", "r7"]);
   assert.deepEqual(out.derived, {});
+  assert.ok(closed(), "сеанс закрыт DELETE и без ответа");
   assert.equal(code, 3);
   assert.ok(out.left.some((x) => x.item === "cover.holon"));
 });

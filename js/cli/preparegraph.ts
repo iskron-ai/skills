@@ -69,6 +69,14 @@ function session(url: string, token: string) {
       if (!a?.result || a.error) throw new Error("refused");
       return (a.result.content ?? []).map((c) => c.text ?? "").join("\n");
     },
+    /** The session ended on the server too (graph @nks/nks-dev, node #9174); a refusal — no matter. */
+    close: async (): Promise<void> => {
+      if (!sid) return;
+      const headers = { authorization: `Bearer ${token}`, "mcp-session-id": sid };
+      await fetch(url, { method: "DELETE", headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+        .then((r) => r.body?.cancel())
+        .catch(() => {});
+    },
   };
 }
 
@@ -96,18 +104,22 @@ export async function fromGraph(
     const key = await keyFor(CFG.serverUrl);
     if (!("token" in key)) return {};
     const s = session(CFG.serverUrl, key.token);
-    await s.open();
-    const search = (args: Record<string, string>) =>
-      s.call(tool("search"), { realm: graph, q: "", ...args });
-    const found =
-      holon ??
-      single(
-        await search({ node_type: "holon", attrs_filter: `repository:${repository}` }),
-        "holon",
-      );
-    if (!found) return {};
-    const role = single(await search({ node_type: "karta", steward_of: found }), "karta");
-    return { ...(holon ? {} : { holon: found }), ...(role ? { agent_role: role } : {}) };
+    try {
+      await s.open();
+      const search = (args: Record<string, string>) =>
+        s.call(tool("search"), { realm: graph, q: "", ...args });
+      const found =
+        holon ??
+        single(
+          await search({ node_type: "holon", attrs_filter: `repository:${repository}` }),
+          "holon",
+        );
+      if (!found) return {};
+      const role = single(await search({ node_type: "karta", steward_of: found }), "karta");
+      return { ...(holon ? {} : { holon: found }), ...(role ? { agent_role: role } : {}) };
+    } finally {
+      await s.close();
+    }
   } catch {
     return {};
   }
