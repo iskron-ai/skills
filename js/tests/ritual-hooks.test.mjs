@@ -424,7 +424,8 @@ test("memory-guard (hooks.md): the refusal routes through the slots", () => {
 test("memory-guard (settings): the refusal names this repo's graph and section", () => {
   const said = refusal(settings.hooks.PreToolUse ?? []);
   const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
-  const graph = /^'Граф': '(@[^ ']+)/m.exec(agents)?.[1];
+  // the cover's graph is rN (#9316); the refusal names the full address with it in parentheses
+  const graph = /^ {2}graph: (r\d+)$/m.exec(agents)?.[1];
   const headings = new Set([...agents.matchAll(/^## (.+)$/gm)].map((m) => m[1].trim()));
   assert.ok(graph && said.includes(graph), `the refusal names the graph ${graph}: ${said}`);
   assert.ok(
