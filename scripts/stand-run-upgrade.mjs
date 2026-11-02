@@ -253,9 +253,13 @@ try {
   await Promise.all([S1.close(), S2.close(), P.close()]);
 }
 process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
-spawnSync("pkill", ["-f", `${homeCopy} daemon`]);
-spawnSync("pkill", ["-f", `daemon --auth-dir ${bridgeHome}( |$)`]);
-await sleep(1500);
+// A daemon ending on SIGTERM still closes its upstream sessions (#9306): wait for it to exit, not a
+// fixed pause, so an outside ledger stopped after the run sees every DELETE.
+const daemons = [`${homeCopy} daemon`, `daemon --auth-dir ${bridgeHome}( |$)`];
+for (const p of daemons) spawnSync("pkill", ["-f", p]);
+const daemonsLeft = () => daemons.some((p) => spawnSync("pgrep", ["-f", p]).status === 0);
+for (let t = 0; t < 100 && daemonsLeft(); t++) await sleep(100);
+if (daemonsLeft()) process.stdout.write("\nthe daemon did not exit within 10 s after SIGTERM\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
 process.exit(failed ? 1 : 0);

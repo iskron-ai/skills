@@ -553,6 +553,35 @@ test("writes sent while the daemon hands over land signed — the place comes ba
   });
 });
 
+// Ушедшая с местом сессия держит свою сессию MCP до конца окна смерти (runend.ts): демон,
+// передающий дела преемнику внутри окна, закрывает и её, а не уходит молча (#9306).
+test("a daemon handing over within a death window closes that session's upstream session", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const d = await updatableDaemon(dir, { ISKRON_BRIDGE_DEATH_MS: "60000" });
+    try {
+      const a = bridge({});
+      const before = new Set(fake.state.sessions);
+      await handshake(a);
+      const [sid] = [...fake.state.sessions].filter((s) => !before.has(s));
+      assert.ok(sid, "the handshake opened a session");
+      const r = await stand(a, { realm: "nks-dev", karta: 931, name: "window-h" });
+      assert.ok(!r.result?.isError, textOf(r));
+      a.proc.stdin.end();
+      await waitFor("the session's end", () => / session \S+ ended: /.test(journalOf(dir)));
+      assert.ok(!fake.state.deletes.some((x) => x.sid === sid), "the window keeps it open");
+      d.bump();
+      await waitFor("the handover", () => /handed over — leaving/.test(journalOf(dir)), 15_000);
+      await waitFor("its DELETE", () => fake.state.deletes.some((x) => x.sid === sid), 5_000).catch(
+        (e) => {
+          throw new Error(`${e.message}\n${journalOf(dir)}`);
+        },
+      );
+    } finally {
+      d.cleanup();
+    }
+  });
+});
+
 // Дело №151: место субагента кончается только явным актом, смена демона — пауза.
 // Передача преемнику при живом мосте спутника ставит паузу сама (bridge/suspend.ts):
 // место, дела и занятость ждут, мост возвращает место у преемника по записи паузы.

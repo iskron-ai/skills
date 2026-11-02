@@ -275,7 +275,11 @@ test("a satellite dead in the middle of its first connect: no socket, the seat e
       journalOf(dir),
       /connect answered after the run's end — no socket opened, it ends at once/,
     );
-    assert.match(journalOf(dir), /ended by its dead socket's token \(200/);
+    await waitFor("the stop's answer settled", () =>
+      /ended by its dead socket's token \(200/.test(journalOf(dir)),
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
     assert.ok(!listens(), `no socket listens on it:\n${journalOf(dir)}`);
     assert.equal(connects(), 1, "one connect");
   });
@@ -401,6 +405,7 @@ test("death in the middle of the first connect: the late reply opens no socket, 
   await withFake(async ({ fake, dir, bridge }) => {
     const a = await bridge();
     fake.state.connectReplyDelayMs = 1_500;
+    fake.state.stopReplyDelayMs = 500;
     void stand(a, "die-m").catch(() => {});
     const connects = () =>
       fake.state.calls.filter(
@@ -423,7 +428,13 @@ test("death in the middle of the first connect: the late reply opens no socket, 
     assert.ok(!fake.state.places.has("931:die-m"), "the seat is off the board");
     assert.ok(!listens(), `no socket listens on it:\n${journalOf(dir)}`);
     assert.equal(connects(), 1, "one connect");
-    assert.match(journalOf(dir), /die-m--931--_nks_nks-dev ended by its dead socket's token \(200/);
+    // The server ends the seat before its 200 reaches the daemon: the board turns first, the
+    // journal's line follows the answer (#9302).
+    await waitFor("the stop's answer settled", () =>
+      /die-m--931--_nks_nks-dev ended by its dead socket's token \(200/.test(journalOf(dir)),
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
     assert.ok(!existsSync(recordOf(dir, "die-m")), "no hold record left");
   });
 });

@@ -15,6 +15,7 @@ import { formOf, frontMatter, readCover, seatOfPairs, stampOf } from "../shared/
 /** Одна английская форма, как у соседней поставки: ключи, кавычки ссылки роли и штамп свои. */
 const EN = {
   file: "AGENTS.md",
+  root: "neighbour",
   forms: {
     en: {
       graph: "Graph",
@@ -123,6 +124,54 @@ test("обложка с чужим штампом — чужая поставк�
   const ruBody = `---\n'Граф': ${VERSTAK_GRAPH}\n'Роль агента': '#931 «dev»'\n---\n`;
   writeFileSync(join(dir, "AGENTS.md"), `${ruBody}*(iskronify: контракт \`5\` — перезапусти)*\n`);
   assert.deepEqual(readCover(dir), NKS_931, "прежний свой штамп — посадка, как на main");
+});
+
+// Форма #9316: корневой ключ поставки, под ним graph, holon, agent_role, contract, stamp.
+const block = (root, fields) =>
+  `---\n${root}:\n${Object.entries(fields)
+    .map(([k, v]) => `  ${k}: ${v}`)
+    .join("\n")}\n---\n# x\n`;
+const NEW = { graph: "r5", holon: 1506, agent_role: 931, contract: 38, stamp: "2026-11-02" };
+const coverOf = (t, text, keys) => {
+  const dir = mkdtempSync(join(tmpdir(), "cover-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "AGENTS.md"), text);
+  return readCover(dir, keys);
+};
+
+test("#9316: блок iskron — граф rN и роль числом, контракт и дата — свой штамп", (t) => {
+  assert.deepEqual(coverOf(t, block("iskron", NEW)), { realm: "r5", karta: "931" });
+  assert.equal(stampOf(block("iskron", NEW)), "own");
+  const quoted = block("iskron", { ...NEW, graph: "'@nks/nks-dev'", agent_role: "'931'" });
+  assert.deepEqual(coverOf(t, quoted), NKS_931, "кавычки YAML и полный адрес читаются");
+  const { contract: _, ...unstamped } = NEW;
+  assert.equal(stampOf(block("iskron", unstamped)), null, "без контракта — штампа нет");
+});
+
+test("#9316: дефекты блока — причина с полем, не угаданная роль", (t) => {
+  const why = (fields) => coverOf(t, block("iskron", { ...NEW, ...fields })).why ?? "";
+  assert.match(why({ agent_role: "dev" }), /iskron\.agent_role/);
+  assert.match(why({ graph: "nks-dev" }), /iskron\.graph/);
+  const { agent_role: _, ...roleless } = NEW;
+  assert.match(coverOf(t, block("iskron", roleless)).why ?? "", /iskron\.agent_role/);
+});
+
+test("#9316: блок другой поставки с контрактом — чужая обложка; своя садится по нему", (t) => {
+  assert.deepEqual(coverOf(t, block("neighbour", NEW)), { foreign: true });
+  assert.equal(stampOf(block("neighbour", NEW)), "foreign");
+  assert.deepEqual(coverOf(t, block("neighbour", NEW), EN), { realm: "r5", karta: "931" });
+  const both = block("iskron", NEW).replace("---\n# x", "neighbour:\n  contract: 4\n---\n# x");
+  assert.deepEqual(coverOf(t, both), { realm: "r5", karta: "931" }, "свой блок — своя обложка");
+});
+
+test("#9316: блок и прежние плоские ключи — читается блок; плоская форма — переходом", (t) => {
+  const mixed = block("iskron", NEW).replace(
+    "---\n# x",
+    "'Граф': '@nks/drugoy (r7)'\n'Роль агента': '#844 «x»'\n---\n# x",
+  );
+  assert.deepEqual(coverOf(t, mixed), { realm: "r5", karta: "931" });
+  const flat = `---\n'Граф': '@nks/nks-dev (r5)'\n'Роль агента': '#931 «dev»'\n---\n`;
+  assert.deepEqual(coverOf(t, flat), NKS_931);
 });
 
 test("F5: короткий граф против слага не считается соответствием по одной роли", () => {
