@@ -9948,8 +9948,8 @@ for (const probe of [
       assert.equal(text.includes("onboarding"), !!probe.word, text);
       const line =
         probe.lang === "en"
-          ? "This repository is not yet aligned for the agent — start with the onboarding skill."
-          : "Этот репозиторий ещё не выровнен под агента — начни со скилла onboarding (ветвь iskronify «Первый граф»).";
+          ? "This repository is not yet aligned for the agent — offer the person the onboarding skill; it does not hold up their request."
+          : "Этот репозиторий ещё не выровнен под агента — предложи человеку скилл onboarding (ветвь iskronify «Первый граф»); его запрос это не задерживает.";
       // A broken cover file also gets the seating's reason line before the invitation.
       if (probe.word && probe.agents === undefined) assert.equal(text, `hello\n${line}`);
       if (probe.word) assert.ok(text.endsWith(`\n${line}`) && text.split(line).length === 2, text);
