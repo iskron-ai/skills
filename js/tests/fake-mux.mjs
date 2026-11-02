@@ -18,6 +18,8 @@ const PLAIN = { old: 404, down: 503, mux: 426, cutGet404: 404, cutGet405: 405, o
 const CUT = new Set(["cut", "cutGet404", "cutGet405"]);
 /** Предел объекта usage в записи такта, байт (#8620 v19). */
 const USAGE_MAX = 2048;
+/** Предел строки занятости, знаков: длиннее — кадр status_trimmed держателю (#2287). */
+const STATUS_MAX = 64;
 
 export function attachMux(fake, opts = {}) {
   const st = fake.state;
@@ -41,6 +43,7 @@ export function attachMux(fake, opts = {}) {
     usage: new Map(), // standing_id → расход места из последнего tick
     refusedRows: [], // записи такта, отказанные строкой ({…запись, code})
     pulses: new Map(), // channel_id → последний пульс канала
+    trimmed: [], // { channel_id, doing } — строки занятости длиннее предела, ответ status_trimmed
     closeNext: new Map(), // секрет → сколько подписок ответить channel_closed 1000 вместо hello
     noIds: opts.noIds ?? false, // hello называет места без standing_id
     helloLagMs: 0, // подписка разбирается с задержкой: hello приходит позже на столько мс
@@ -171,6 +174,19 @@ export function attachMux(fake, opts = {}) {
       if (typeof e.status === "string") {
         st.placeStatus.set(id, e.status);
         st.status = e.status;
+        // Длинная строка ложится обрезанной, держатель получает кадр без автора и тела (#2287).
+        if ([...e.status].length > STATUS_MAX) {
+          const doing = [...e.status].slice(0, STATUS_MAX - 1).join("") + "…";
+          mux.trimmed.push({ channel_id: e.channel_id, doing });
+          send(conn, {
+            type: "status_trimmed",
+            channel_id: e.channel_id,
+            code: "trimmed_to_limit",
+            doing,
+            max: STATUS_MAX,
+            message: `обрезано до ${STATUS_MAX}`,
+          });
+        }
       }
       if (e.usage) mux.usage.set(id, e.usage);
     }
