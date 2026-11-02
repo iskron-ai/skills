@@ -91,6 +91,8 @@ export interface Outcome {
   done: string[];
   kept: string[];
   left: PrepareLeft[];
+  /** The cover's keys named twice, for cover.repeat. */
+  repeated?: string[];
 }
 
 /** The settings file parsed, an empty one when absent; null — it does not parse. */

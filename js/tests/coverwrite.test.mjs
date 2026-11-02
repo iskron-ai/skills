@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { COVER } from "../delivery/index.ts";
-import { coverBlock, coverBlocks, writeCover } from "../shared/coverblock.ts";
+import { coverBlock, coverBlocks, repeatedKeys, writeCover } from "../shared/coverblock.ts";
 
 const DATA = { graph: "r5", holon: 1506, agent_role: 931, contract: 38, stamp: "2026-11-02" };
 const BLOCK =
@@ -58,6 +58,14 @@ test("комментарий на строке корня — блок узна�
     null,
     "без пробела — не комментарий",
   );
+});
+
+test("повтор ключа верхнего уровня и поля в блоке распознаётся; вложенное и списки — не повтор", () => {
+  assert.deepEqual(repeatedKeys("---\n'Граф': a\nx: 1\nГраф: b\n---\n"), ["Граф"]);
+  assert.deepEqual(repeatedKeys("---\niskron:\n  graph: r1\n  graph: r2\n---\n"), ["iskron.graph"]);
+  assert.deepEqual(repeatedKeys(`---\n${BLOCK}x: |\n  a: 1\n  a: 2\n---\n# a: 1\n# a: 1\n`), []);
+  const nested = "---\nm:\n  a:\n    k: 1\n  b:\n    k: 2\nl:\n  - k: 1\n  - k: 2\n---\n";
+  assert.deepEqual(repeatedKeys(nested), []);
 });
 
 test("пустые поля не пишутся; CRLF и BOM сохраняются", () => {

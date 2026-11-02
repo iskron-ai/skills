@@ -17,6 +17,7 @@ export type PrepareLeft =
   | "cover.agent_role"
   | "cover.contract"
   | "cover.flat"
+  | "cover.repeat"
   | "CLAUDE.md"
   | "hook.start"
   | "hook.guard"
@@ -36,7 +37,8 @@ export interface PrepareWords {
   start: (a: PrepareAddr) => string;
   /** Сообщение memory-guard; graph — rN обложки (полного адреса без сети нет). */
   guard: (graph: string) => string;
-  left: (item: PrepareLeft) => string;
+  /** keys — названные дважды ключи обложки, для cover.repeat. */
+  left: (item: PrepareLeft, keys?: string) => string;
   /** Метка строки текстового ответа: сделано, уже стояло, осталось модели. */
   head: (kind: "done" | "kept" | "left") => string;
 }
@@ -56,8 +58,9 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
       `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
     guard: (graph) =>
       `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, «Правила персистентности»). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
-    left: (item) =>
+    left: (item, keys) =>
       ({
+        "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
         "cover.graph": "граф не назван — --graph rN (iskron_realm action=list), такт 1 iskronify",
         "cover.holon":
           "контур не назван — --holon N: поиск контура по атрибуту repository или его заведение",
@@ -91,8 +94,9 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
       `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role ? `, agent role #${role}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
     guard: (graph) =>
       `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md, «Persistence rules»). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
-    left: (item) =>
+    left: (item, keys) =>
       ({
+        "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
         "cover.graph": "no graph named — --graph rN (iskron_realm action=list), iskronify tact 1",
         "cover.holon":
           "no holon named — --holon N: find the holon by its repository attribute or create it",

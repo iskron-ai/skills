@@ -190,6 +190,26 @@ test("корень обложки с комментарием — тот же б
   assert.equal(coverBlock(text, "iskron").get("contract"), "38");
 });
 
+test("повтор ключа в обложке — файл не тронут, модели код 3 с названным ключом (#9314)", () => {
+  for (const [before, key] of [
+    ["---\n'Граф': '@a/b (r5)'\nNature: x\n'Граф': '@a/c (r6)'\n---\n# body\n", "Граф"],
+    ["---\niskron:\n  graph: r7\n  holon: 12\n  graph: r8\n---\n# body\n", "iskron.graph"],
+    ["---\niskron: here\n---\n# body\n", "iskron"],
+  ]) {
+    const dir = repo();
+    writeFileSync(join(dir, "AGENTS.md"), before);
+    const { status, out, stderr } = prepare(dir, ["--holon", "12", "--agent-role", "34"]);
+    assert.ok(out, `не JSON: ${stderr}`);
+    assert.equal(read(dir, "AGENTS.md"), before, key);
+    assert.equal(status, 3, key);
+    assert.ok(!out.done.includes("AGENTS.md") && !out.kept.includes("AGENTS.md"), key);
+    const left = out.left.find((x) => x.item === "cover.repeat");
+    assert.ok(left?.why.includes(key), `${key}: ${JSON.stringify(out.left)}`);
+    const hooks = existsSync(join(dir, ".claude/settings.json"));
+    assert.ok(!hooks || !commands(settings(dir), "SessionStart").some((c) => /r[78]/.test(c)), key);
+  }
+});
+
 test("есть AGENTS.md: тело и чужие ключи целы; --contract ставит штамп сегодняшним днём", () => {
   const dir = repo();
   writeFileSync(join(dir, "AGENTS.md"), "---\npaths: x\n---\n# body\ntext\n");

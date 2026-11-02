@@ -76,6 +76,25 @@ export function coverBlocks(text: string): Map<string, Map<string, string>> {
   return blocks;
 }
 
+/** Keys named twice — top-level, or root.field in one block (#9314): strict YAML refuses them. */
+export function repeatedKeys(text: string): string[] {
+  const f = fences(text);
+  const [seen, twice] = [new Set<string>(), new Set<string>()];
+  let block: { root: string; at: number } | null = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    const kv = PAIR.exec(line);
+    const at = line.search(/\S/);
+    if (!kv || line[at] === "-") continue;
+    const name = unquote(kv[1] as string);
+    if (at === 0) block = TOP.test(line) ? { root: name, at: -1 } : null;
+    else if (!block || (block.at >= 0 && block.at !== at)) continue;
+    else block.at = at;
+    const key = at === 0 ? name : `${block?.root}.${name}`;
+    (seen.has(key) ? twice : seen).add(key);
+  }
+  return [...twice];
+}
+
 /** The delivery's cover block, or null — none. */
 export const coverBlock = (text: string, root: string): Map<string, string> | null =>
   coverBlocks(text).get(root) ?? null;

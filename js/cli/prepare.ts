@@ -105,7 +105,8 @@ export function runPrepare(argv: string[]): void {
   writeClaude(root, out);
   checkOpencode(root, out);
 
-  const left = out.left.map((item: PrepareLeft) => ({ item, why: W.left(item) }));
+  const keys = out.repeated?.map((k) => `'${k}'`).join(", ");
+  const left = out.left.map((item: PrepareLeft) => ({ item, why: W.left(item, keys) }));
   say(json, left.length ? 3 : 0, {
     repo: root,
     repository: repositoryOf(root),
