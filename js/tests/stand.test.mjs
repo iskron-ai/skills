@@ -3415,6 +3415,31 @@ for (const kind of ["satellite", "root"])
     await b.stop();
   });
 
+// #9272: a harness without the plugin's checks (Claude Code) never names its session to the bridge.
+// The held seat's record is still kept fresh by the bridge itself, or the compaction hook, reading
+// the record by its age, would find no seat under a live one.
+test("root: a seat held past half the record's term with no plugin check — the bridge freshens its record itself", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-held-fresh-"));
+  const b = startBridge(fake.mcpUrl, dir, process.cwd(), { ISKRON_HOLD_FRESHEN_MS: "200" });
+  t.after(() => b.stop());
+  assert.ok((await b.call("initialize", INIT)).result);
+  const r = await standAs(b, { realm: "nks-dev", karta: 931, name: "held-fresh" });
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${b.stderr}`);
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const taken = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...taken, at: Date.now() - 4 * 3600_000 }));
+  let rec = null;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 100));
+    rec = JSON.parse(readFileSync(file, "utf8"));
+    if (Date.now() - rec.at < 60_000) break;
+  }
+  assert.ok(Date.now() - rec.at < 60_000, `freshened without a check: ${rec.at}\n${b.stderr}`);
+  assert.equal(rec.stoodAt, taken.stoodAt, "the freshening keeps the era");
+  await b.stop();
+});
+
 // Case №954, path (a): a satellite's return by key does not take a seat of an earlier era than
 // another record of the same session in the same role and graph. The later one cannot come back
 // (its address is dead) — the former is still not taken. A child's return is silent (#6628,

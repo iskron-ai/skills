@@ -1,4 +1,6 @@
 // Hold record when a session leaves an unreleased seat (graph @nks/nks-dev, nodes #5067, #6649).
+import { envName } from "../delivery/index.ts";
+import { bindScope } from "../shared/scope.ts";
 import { joinedCases } from "./caseexit.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
@@ -11,6 +13,20 @@ import {
 import { H } from "./holdstate.ts";
 import { extraPlaces, rememberExtraStatus } from "./places.ts";
 import { state } from "./transport.ts";
+
+const FRESHEN_MS = Number(process.env[envName("HOLD_FRESHEN_MS")]) || HOLD_RECORD_MAX_AGE_MS / 12;
+
+/**
+ * While a seat is held, its record is freshened by the bridge itself, not only by the plugin's
+ * checks: a harness that never names its session (Claude Code) would age the record past its
+ * term under a live seat, and a reader by age would find no seat (graph @nks/nks-dev, node #9272).
+ * Returns the stop.
+ */
+export function keepHeldRecordFresh(): () => void {
+  const t = setInterval(bindScope(refreshHeldRecord), FRESHEN_MS);
+  t.unref();
+  return () => clearInterval(t);
+}
 
 /**
  * Refreshes `at` of an existing hold record when the session leaves: the record's term
