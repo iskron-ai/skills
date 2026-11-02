@@ -204,6 +204,36 @@ test("демон, остановленный при живом тонком мо
   });
 });
 
+// Сессия, ушедшая с местом, держит свою сессию MCP до конца окна смерти (runend.ts): демон,
+// остановленный внутри окна, закрывает и её, а не уходит молча (#9306).
+test("демон, остановленный в окне смерти ушедшей сессии, закрывает её сессию", async (t) => {
+  await withFake(t, { evictSameAddress: true }, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge({
+      ISKRON_BRIDGE_DAEMON: "1",
+      ISKRON_BRIDGE_DAEMON_WAIT_MS: "10000",
+      ISKRON_BRIDGE_DEATH_MS: "60000",
+    });
+    const sid = await opened(fake, bridge);
+    const r = await bridge.call("tools/call", 2, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "close-w" },
+    });
+    assert.ok(!r.result?.isError, `место: ${JSON.stringify(r)}`);
+    await bridge.leave();
+    await waitFor(() => / session \S+ ended: /.test(journal(dir)), "конец сессии в журнале");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(fake.state.deletes.length, 0, "окно смерти держит сессию открытой");
+    const pid = Number(/ pid=(\d+) \S+ listening /.exec(journal(dir))?.[1]);
+    assert.ok(pid, "pid демона в журнале");
+    process.kill(pid, "SIGTERM");
+    await waitFor(() => fake.state.deletes.some((d) => d.sid === sid), "DELETE сессии").catch(
+      (e) => {
+        throw new Error(`${e.message}\n${journal(dir)}`);
+      },
+    );
+  });
+});
+
 test("повторное рукопожатие харнеса под живой сессией закрывает прежнюю", async (t) => {
   await withFake(t, {}, async ({ fake, spawnBridge }) => {
     const bridge = spawnBridge();
