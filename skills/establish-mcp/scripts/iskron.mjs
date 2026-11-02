@@ -104,7 +104,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.28.0";
+var VERSION = "7.28.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -9232,6 +9232,12 @@ async function endOnWord(places, socket, ids) {
 }
 
 // js/bridge/holdkeep.ts
+var FRESHEN_MS = Number(process.env[envName("HOLD_FRESHEN_MS")]) || HOLD_RECORD_MAX_AGE_MS / 12;
+function keepHeldRecordFresh() {
+  const t = setInterval(bindScope(freshenHeldRecords), FRESHEN_MS);
+  t.unref();
+  return () => clearInterval(t);
+}
 function keepHoldRecord() {
   const s2 = state.standing;
   const key2 = H2.currentKey;
@@ -9270,6 +9276,17 @@ function signHeldRecord() {
   for (const k of [key2, ...extraPlaces().map((p) => p.door.key)]) {
     const rec5 = readHoldRecord(k);
     if (rec5 && !rec5.session && rec5.url === H2.currentUrl) writeHoldRecord(k, rec5);
+  }
+}
+function freshenHeldRecords() {
+  refreshHeldRecord();
+  if (!H2.holder?.alive || !H2.currentUrl) return;
+  const ch = { url: H2.currentUrl, statusUrl: H2.currentStatusUrl };
+  for (const p of extraPlaces()) {
+    const r = readHoldRecord(p.door.key, true);
+    if (!r || r.left || r.url !== H2.currentUrl) continue;
+    if (typeof r.at === "number" && Date.now() - r.at < HOLD_RECORD_MAX_AGE_MS / 2) continue;
+    rememberExtraStatus(p.door.key, { ...ch, cwd: r.cwd }, r.status ?? "");
   }
 }
 function refreshHeldRecord() {
@@ -14588,6 +14605,7 @@ function openIn(io, origin2, scope) {
   let leaving = null;
   let markEnded;
   const ended = new Promise((resolve11) => markEnded = resolve11);
+  void ended.then(keepHeldRecordFresh());
   const leave = bindScope(
     (why) => leaving ??= windDown(why).finally(markEnded)
   );

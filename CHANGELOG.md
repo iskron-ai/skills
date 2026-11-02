@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.28.1](https://github.com/iskron-ai/skills/compare/v7.28.0...v7.28.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* onboarding is offered, not required; a held seat's record stays fresh ([#622](https://github.com/iskron-ai/skills/issues/622)) ([75a17d7](https://github.com/iskron-ai/skills/commit/75a17d7e4b1ade79e2967640a2366615a6cb484a))
+* **skills:** onboarding review fixes before 7.28.1 ([#624](https://github.com/iskron-ai/skills/issues/624)) ([1bcd34b](https://github.com/iskron-ai/skills/commit/1bcd34b289af398e829197c519a87915d11e41d3))
+
 ## [7.28.0](https://github.com/iskron-ai/skills/compare/v7.27.0...v7.28.0) (2026-10-31)
 
 
