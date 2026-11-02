@@ -6,6 +6,11 @@
 //
 //   node scripts/stand-run-onboarding.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--report F] [--turn-minutes 15]
+//     [--allow-question]
+//
+// The harness's choice picker (tool question) is denied by default; --allow-question leaves it
+// allowed and adds the verdict that the agent asked in words (#9311): a picked question hangs a
+// headless turn until --turn-minutes.
 //
 // The scene is laid through a seatless bridge of the same account and taken off at the end; the
 // project is a git repository with no alignment signs. Verdicts are judged on the bridge journal
@@ -29,6 +34,7 @@ const URL_ = arg("--url");
 const apiArg = arg("--api");
 const realm = arg("--realm");
 const model = arg("--model", "anthropic/claude-opus-5-5");
+const allowQuestion = process.argv.includes("--allow-question");
 if (!tokenFile || !URL_ || !apiArg || !realm || !arg("--bridge") || !arg("--plugin") || !arg("--skills"))
   fail(2, "--token-file, --url, --api, --realm, --bridge, --plugin and --skills are required");
 if (!["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"].includes(model)) fail(2, "--model: opus-5-5 or gpt-6.1-sol");
@@ -86,7 +92,7 @@ writeFileSync(
       { action: "*", resource: "*", effect: "allow" },
       { action: "external_directory", resource: "*", effect: "deny" },
       // No human answers the harness's choice picker in a headless run: a question goes in words.
-      { action: "question", resource: "*", effect: "deny" },
+      ...(allowQuestion ? [] : [{ action: "question", resource: "*", effect: "deny" }]),
     ],
     providers: machine.providers?.[providerID] ? { [providerID]: machine.providers[providerID] } : {},
   }),
@@ -210,6 +216,7 @@ try {
   scene.role = await add("iskron_add_karta", { name: "🧪 Владелец продукта каталогов", motivation: "Решает, что входит в выпуск и какие фичи берутся; отвечает за продукт каталогов поставщиков перед клиентами. Заведена владельцем графа для человека, которого он пригласит вести продукт.", manifested_as: "svatantra", ...M });
   scene.own = await add("iskron_add_holon", { name: "📦 Импорт каталогов поставщиков", description: "Что внутри: загрузка каталогов поставщиков и её настройки.", ...M, arrows: [{ arrow_type: "steward", target: `#${scene.agent}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }] });
   if (await bound(scene.role)) throw new Error(`#${scene.role} came out bound — the scene is not «made in advance»`);
+  report.push(`picker question: ${allowQuestion ? "allowed" : "denied"}`);
   report.push(`scene: agent #${scene.agent} · role made in advance #${scene.role} (svatantra, no user) · holon #${scene.own}`);
   await sleep(20_000); // the search index takes the fresh nodes in
 
@@ -262,6 +269,10 @@ try {
     `Пользователь: ${after ?? "—"} · updates ${updates.length}`,
   );
   verdict(added.length === 0, "(4) no second role created", `add_karta ${added.length}`);
+  if (allowQuestion) {
+    const picked = msgs.flatMap((x) => x.content ?? []).filter((p) => p.type === "tool" && p.name === "question");
+    verdict(picked.length === 0, "(5) the picker allowed, the question goes in words (#9311)", `question ${picked.length}`);
+  }
   report.push(`--- last answer ---\n${lastAnswer(msgs)}`);
 } catch (e) {
   errorVerdict(e.message, setup);
