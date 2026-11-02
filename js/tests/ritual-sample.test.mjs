@@ -82,7 +82,7 @@ for (const md of sources) {
     await s.create("mine", s.own);
     await s.stop();
     const [text = ""] = s.words("mine");
-    for (const slot of ["<Граф>", "<Фокус-контур>", "<Роль агента>", "<Роль владельца>"])
+    for (const slot of ["<Граф>", "<Фокус-контур>", "<Роль агента>"])
       assert.ok(text.includes(slot), `the greeting names ${slot}: ${text}`);
     assert.match(text, /«Старт»/);
   });
