@@ -69,7 +69,7 @@ function say(json: boolean, code: number, body: Record<string, unknown>): void {
 export async function runPrepare(argv: string[]): Promise<void> {
   const lang = argv.indexOf("--lang");
   setLang(lang >= 0 ? argv[lang + 1] : undefined);
-  const W = words(PREPARE);
+  let W = words(PREPARE);
   const json = argv.includes("--json");
   const a = parse(argv);
   if ("bad" in a) {
@@ -98,6 +98,8 @@ export async function runPrepare(argv: string[]): Promise<void> {
     graph && repository && (!holon || !agent_role) && !cover.repeated.length
       ? await fromGraph(String(graph), repository, holon ? String(holon) : undefined)
       : {};
+  setLang(lang >= 0 ? argv[lang + 1] : undefined); // the server's config set its own language
+  W = words(PREPARE);
   if (derived.holon || derived.agent_role) {
     cover = coverText(root, { ...given, ...derived, ...(agent_role ? { agent_role } : {}) });
     if ("why" in cover) return say(json, 1, { refused: cover.why });

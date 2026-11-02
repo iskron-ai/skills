@@ -107,6 +107,19 @@ test("контур по атрибуту repository и его стюард — �
   );
 });
 
+test("--lang держится после чтения графа: настройка сервера языка не меняет", async () => {
+  answer = graphOf;
+  const dir = await repo();
+  const extra = {
+    ISKRON_BRIDGE_LANG: "",
+    ISKRON_BRIDGE_URL: url.replace("127.0.0.1", "localhost"),
+  };
+  const { out } = await prepare(dir, ["--graph", "r7", "--lang", "en"], extra);
+  assert.match(out.left.find((x) => x.item === "cover.contract")?.why ?? "", /^no contract named/);
+  const s = JSON.parse(readFileSync(join(dir, ".claude", "settings.json"), "utf8"));
+  assert.match(s.hooks.PreToolUse[0].hooks[0].command, /BLOCKED: local agent memory/);
+});
+
 test("ответ потоком событий читается так же", async () => {
   answer = graphOf;
   stream = true;
