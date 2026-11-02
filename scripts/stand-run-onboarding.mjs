@@ -85,6 +85,8 @@ writeFileSync(
     permissions: [
       { action: "*", resource: "*", effect: "allow" },
       { action: "external_directory", resource: "*", effect: "deny" },
+      // No human answers the harness's choice picker in a headless run: a question goes in words.
+      { action: "question", resource: "*", effect: "deny" },
     ],
     providers: machine.providers?.[providerID] ? { [providerID]: machine.providers[providerID] } : {},
   }),
