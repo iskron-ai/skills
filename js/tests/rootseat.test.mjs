@@ -727,10 +727,29 @@ test(
 );
 
 test(
-  "F5: r7 в обложке против своего места в @nks/nks-dev — граф не сличён, ложного успеха нет",
+  "F5: r7 в обложке против своего места в @nks/nks-dev — мост называет r7 другим графом, ложного успеха нет",
   T,
   async (t) => {
     const s = await stage(t, { ...COVER, [GRAPH_KEY]: "r7" });
+    await priorBridge(s, "root", "probe-other-graph", { kill: true });
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root");
+      const r = await oc.turn("root", "привет");
+      assert.ok(!r.told.includes(SEATED), board(r, oc));
+      assert.ok(r.told.includes("не совпадают с обложкой"), board(r, oc));
+      assert.ok(!r.told.includes("граф не сличён"), board(r, oc));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test(
+  "F5: r99, которого нет в списке графов, против своего места в @nks/nks-dev — граф не сличён",
+  T,
+  async (t) => {
+    const s = await stage(t, { ...COVER, [GRAPH_KEY]: "r99" });
     await priorBridge(s, "root", "probe-uncompared", { kill: true });
     const oc = await rootPlugin(s, s.project);
     try {
@@ -738,6 +757,65 @@ test(
       const r = await oc.turn("root", "привет");
       assert.ok(!r.told.includes(SEATED), board(r, oc));
       assert.ok(r.told.includes("граф не сличён"), board(r, oc));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+/** Своё место вернулось с диска — слово «своим местом», без «не сличён» (#8191). */
+const ownBack = (r, oc, name) => {
+  assert.deepEqual(r.atRequest.seats, [name], board(r, oc));
+  assert.ok(r.told.includes("своим местом"), board(r, oc));
+  assert.ok(!r.told.includes("граф не сличён"), board(r, oc));
+};
+
+test(
+  "#8191: обложка r5, своё место держится в @nks/nks-dev — мост сличает r5 со слагом, своё",
+  T,
+  async (t) => {
+    const s = await stage(t, { ...COVER, [GRAPH_KEY]: "r5" });
+    await priorBridge(s, "root", "probe-rn-cover", { kill: true });
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("root");
+      ownBack(await oc.turn("root", "привет"), oc, "probe-rn-cover");
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test(
+  "#8191 обратно: обложка @nks/nks-dev, место прежней сборки названо r5 — своё",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await priorBridge(s, "root", "probe-rn-held", { kill: true });
+    // A bridge of an earlier build names the held seat's graph rN in its held word.
+    const proxy = join(s.project, "rn-held-bridge.mjs");
+    writeFileSync(
+      proxy,
+      `
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+const p = spawn(process.execPath, [${JSON.stringify(BRIDGE_UNDER_TEST)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
+process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+createInterface({ input: p.stdout }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.params?.data?.place?.realm === '@nks/nks-dev') m.params.data.place.realm = 'r5';
+  process.stdout.write(JSON.stringify(m) + '\\n');
+});
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
+p.on('exit', c => process.exit(c ?? 0));
+`,
+    );
+    const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_PATH: proxy });
+    try {
+      oc.create("root");
+      const r = await oc.turn("root", "привет");
+      ownBack(r, oc, "probe-rn-held");
+      assert.ok(r.told.includes("r5"), `слово называет место как его назвал мост\n${board(r, oc)}`);
     } finally {
       await oc.stop();
     }
