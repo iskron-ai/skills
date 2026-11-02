@@ -1,5 +1,13 @@
 # Changelog
 
+## [7.29.1](https://github.com/iskron-ai/skills/compare/v7.29.0...v7.29.1) (2026-11-02)
+
+
+### Bug Fixes
+
+* one graph by rN or slug, prepare beside script-form hooks, the owner role by the group arrow ([#630](https://github.com/iskron-ai/skills/issues/630)) ([b0c9255](https://github.com/iskron-ai/skills/commit/b0c92556e4612a70c043af0f901b918196c23627))
+* **skills:** the owner role rule lives in the door, iskronify draws the group arrow ([#632](https://github.com/iskron-ai/skills/issues/632)) ([2f5f1b6](https://github.com/iskron-ai/skills/commit/2f5f1b64a1a0aa2b2321ed590775bdf9102d7421))
+
 ## [7.29.0](https://github.com/iskron-ai/skills/compare/v7.28.1...v7.29.0) (2026-11-02)
 
 
