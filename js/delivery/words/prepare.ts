@@ -39,6 +39,8 @@ export interface PrepareWords {
   guard: (graph: string) => string;
   /** keys — названные дважды ключи обложки, для cover.repeat. */
   left: (item: PrepareLeft, keys?: string) => string;
+  /** Стоящий хук-скрипт, который prepare не узнал как хук этого рода: своего рядом не пишет. */
+  unread: (item: PrepareLeft, hook: string) => string;
   /** Метка строки текстового ответа: сделано, уже стояло, осталось модели. */
   head: (kind: "done" | "kept" | "left") => string;
 }
@@ -78,6 +80,8 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
         "hook.merge": "хук мержа — Шаг 4 iskronify по references/hooks.md",
         "opencode.rituals": "у репо есть OpenCode — плагин ритуалов по Шагу 4 iskronify",
       })[item],
+    unread: (item, hook) =>
+      `стоит «${hook}», и prepare не узнал, ${item === "hook.guard" ? "memory-guard" : "хук старта"} ли это, — своего рядом не поставил: прочти скрипт; это он — ничего не делай, нет — допиши по Шагу 4 iskronify (references/hooks.md)`,
     head: (kind) => ({ done: "сделано", kept: "уже стоит", left: "модели" })[kind],
   },
   en: {
@@ -115,6 +119,8 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
         "hook.merge": "the merge hook — iskronify Step 4 by references/hooks.md",
         "opencode.rituals": "the repo has OpenCode — the rituals plugin by iskronify Step 4",
       })[item],
+    unread: (item, hook) =>
+      `"${hook}" stands, and prepare could not tell whether it is ${item === "hook.guard" ? "the memory-guard" : "the start hook"} — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)`,
     head: (kind) => ({ done: "done", kept: "already there", left: "for the model" })[kind],
   },
 };
