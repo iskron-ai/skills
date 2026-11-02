@@ -9,10 +9,10 @@ export interface OnboardStartWords {
 export const ONBOARD_START: Readonly<Record<Lang, OnboardStartWords>> = {
   ru: {
     start: () =>
-      "Этот репозиторий ещё не выровнен под агента — начни со скилла onboarding (ветвь iskronify «Первый граф»).",
+      "Этот репозиторий ещё не выровнен под агента — предложи человеку скилл onboarding (ветвь iskronify «Первый граф»); его запрос это не задерживает.",
   },
   en: {
     start: () =>
-      "This repository is not yet aligned for the agent — start with the onboarding skill.",
+      "This repository is not yet aligned for the agent — offer the person the onboarding skill; it does not hold up their request.",
   },
 };

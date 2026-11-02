@@ -3415,6 +3415,57 @@ for (const kind of ["satellite", "root"])
     await b.stop();
   });
 
+// #9272: a harness without the plugin's checks (Claude Code) never names its session to the bridge.
+// The held seat's record is still kept fresh by the bridge itself, or the compaction hook, reading
+// the record by its age, would find no seat under a live one.
+test("root: a seat held past half the record's term with no plugin check — the bridge freshens its record itself", async (t) => {
+  const fake = await withCaller(t);
+  const dir = mkdtempSync(join(tmpdir(), "iskron-held-fresh-"));
+  const b = startBridge(fake.mcpUrl, dir, process.cwd(), { ISKRON_HOLD_FRESHEN_MS: "200" });
+  t.after(() => b.stop());
+  assert.ok((await b.call("initialize", INIT)).result);
+  const r = await standAs(b, { realm: "nks-dev", karta: 931, name: "held-fresh" });
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${b.stderr}`);
+  const file = join(dir, "standings", holdFiles(dir)[0]);
+  const taken = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...taken, at: Date.now() - 4 * 3600_000 }));
+  let rec = null;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 100));
+    rec = JSON.parse(readFileSync(file, "utf8"));
+    if (Date.now() - rec.at < 60_000) break;
+  }
+  assert.ok(Date.now() - rec.at < 60_000, `freshened without a check: ${rec.at}\n${b.stderr}`);
+  assert.equal(rec.stoodAt, taken.stoodAt, "the freshening keeps the era");
+  await b.stop();
+});
+
+// #9272, a seat beside in another graph: its record ages the same way. Left stale, a reader by
+// age would see the main seat as the session's only one.
+test("two graphs: a seat beside held past half the record's term with no plugin check — the bridge freshens its record too", async (t) => {
+  const { dir } = await twoGraphs(
+    t,
+    { realm: NKS, karta: 931, name: "fresh-a" },
+    { realm: DRUGOY, karta: 48, name: "fresh-b" },
+    INIT,
+    async () => {},
+    { ISKRON_HOLD_FRESHEN_MS: "200" },
+  );
+  const files = holdFiles(dir).map((f) => join(dir, "standings", f));
+  assert.equal(files.length, 2, `two records: ${files}`);
+  for (const f of files) {
+    const r = JSON.parse(readFileSync(f, "utf8"));
+    writeFileSync(f, JSON.stringify({ ...r, at: Date.now() - 4 * 3600_000 }));
+  }
+  const fresh = () =>
+    files.every((f) => Date.now() - JSON.parse(readFileSync(f, "utf8")).at < 60_000);
+  for (let i = 0; i < 30 && !fresh(); i++) await pause(100);
+  assert.ok(
+    fresh(),
+    `both records freshened: ${files.map((f) => readFileSync(f, "utf8")).join("\n")}`,
+  );
+});
+
 // Case №954, path (a): a satellite's return by key does not take a seat of an earlier era than
 // another record of the same session in the same role and graph. The later one cannot come back
 // (its address is dead) — the former is still not taken. A child's return is silent (#6628,
