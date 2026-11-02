@@ -28,7 +28,14 @@ import { BRIDGE, NODE } from "./status-kit.mjs";
 const scratch = mkdtempSync(join(tmpdir(), "prepare-"));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
-const env = { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ISKRON_BRIDGE_LANG: "ru" };
+// No key of the bridge under the probe: the graph is never asked (prepare-graph.test.mjs asks it).
+const env = {
+  ...process.env,
+  ISKRON_BRIDGE_NO_UPDATE: "1",
+  ISKRON_BRIDGE_LANG: "ru",
+  ISKRON_BRIDGE_AUTH_DIR: join(scratch, "auth"),
+  ISKRON_BRIDGE_TOKEN: "",
+};
 let n = 0;
 
 function repo(origin = "https://github.com/acme/widget.git") {
@@ -62,7 +69,7 @@ const commands = (s, event) =>
 const items = (list) => list.map((x) => (typeof x === "string" ? x : x.item));
 const ADDR = ["--graph", "r7", "--holon", "12", "--agent-role", "34"];
 
-test("чистый репо: обложка разбирается, файлы и хуки легли, модели — контракт, пуш и мерж", () => {
+test("чистый репо: обложка разбирается, файлы и guard легли, ритуалы несёт поставка — модели контракт", () => {
   const dir = repo();
   const { status, out, stderr } = prepare(dir, ADDR);
   assert.ok(out, `не JSON: ${stderr}`);
@@ -72,14 +79,11 @@ test("чистый репо: обложка разбирается, файлы �
   assert.deepEqual(Object.fromEntries(block), { graph: "r7", holon: "12", agent_role: "34" });
   assert.ok(read(dir, "REALITY.md").startsWith("# Reality"));
   if (process.platform !== "win32") assert.equal(readlinkSync(join(dir, "CLAUDE.md")), "AGENTS.md");
-  for (const f of ["AGENTS.md", "REALITY.md", "CLAUDE.md", "hook.start", "hook.guard"])
+  for (const f of ["AGENTS.md", "REALITY.md", "CLAUDE.md", "hook.guard"])
     assert.ok(out.done.includes(f), f);
-  assert.deepEqual(items(out.left).sort(), ["cover.contract", "hook.merge", "hook.push"]);
-  const start = commands(settings(dir), "SessionStart");
-  assert.equal(start.length, 1);
-  const said = spawnSync("/bin/sh", ["-c", start[0]], { encoding: "utf8", input: "{}" });
-  const ctx = JSON.parse(said.stdout).hookSpecificOutput.additionalContext;
-  for (const s of ["r7", "#12", "#34", "iskron_stand"]) assert.ok(ctx.includes(s), s);
+  assert.deepEqual(items(out.left), ["cover.contract"]);
+  const s = settings(dir);
+  assert.deepEqual(Object.keys(s.hooks), ["PreToolUse"], "старт, пуш и мерж в репо не пишутся");
 });
 
 test("повтор ничего не меняет: всё на месте — kept", () => {
@@ -92,7 +96,7 @@ test("повтор ничего не меняет: всё на месте — ke
     ["AGENTS.md", "REALITY.md", ".claude/settings.json"].map((f) => read(dir, f)),
     files,
   );
-  for (const f of ["AGENTS.md", "REALITY.md", "CLAUDE.md", "hook.start", "hook.guard"])
+  for (const f of ["AGENTS.md", "REALITY.md", "CLAUDE.md", "hook.guard"])
     assert.ok(out.kept.includes(f), f);
 });
 
@@ -124,13 +128,12 @@ test("чужие записи хуков и прочие ключи settings.jso
   prepare(dir, ADDR);
   const s = settings(dir);
   assert.deepEqual(s.permissions, { allow: ["Bash(make:*)"] });
-  assert.deepEqual(commands(s, "SessionStart")[0], "echo other");
-  assert.equal(commands(s, "SessionStart").length, 2);
+  assert.deepEqual(commands(s, "SessionStart"), ["echo other"]);
   assert.deepEqual(commands(s, "PreToolUse")[0], "echo other");
   assert.equal(commands(s, "PreToolUse").length, 2);
 });
 
-test("записанный моделью хук старта и пуша узнаётся и не перезаписывается", () => {
+test("свои хуки старта, пуша и мержа узнаются, не трогаются и названы модели на снятие", () => {
   const dir = repo();
   mkdirSync(join(dir, ".claude"));
   const start = `echo '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"read Start of the iskron door"}}'`;
@@ -145,13 +148,27 @@ test("записанный моделью хук старта и пуша узн
       },
     }),
   );
-  const { status, out } = prepare(dir, [...ADDR, "--contract", "38"]);
-  assert.equal(status, 0, JSON.stringify(out.left));
+  const { status, out } = prepare(dir, [...ADDR, "--contract", "39"]);
+  assert.equal(status, 3);
   assert.deepEqual(commands(settings(dir), "SessionStart"), [start]);
-  for (const f of ["hook.start", "hook.push", "hook.merge"]) assert.ok(out.kept.includes(f), f);
+  assert.deepEqual(commands(settings(dir), "PostToolUse"), [push, merge]);
+  for (const f of ["hook.start", "hook.push", "hook.merge"]) {
+    const left = out.left.find((x) => x.item === f);
+    assert.match(left?.why ?? "", /несёт поставка.*сними/, f);
+  }
 });
 
-test("адреса сменились — свои хуки переписаны на месте, чужая запись цела", () => {
+test("свой плагин ритуалов OpenCode назван на снятие; OpenCode без него — ничего", () => {
+  const own = repo();
+  mkdirSync(join(own, ".opencode/plugins"), { recursive: true });
+  writeFileSync(join(own, ".opencode/plugins/iskron-rituals.js"), "export default {};\n");
+  assert.ok(items(prepare(own, ADDR).out.left).includes("opencode.rituals"));
+  const bare = repo();
+  mkdirSync(join(bare, ".opencode"));
+  assert.ok(!items(prepare(bare, ADDR).out.left).includes("opencode.rituals"));
+});
+
+test("адреса сменились — свой guard переписан на месте, чужая запись цела", () => {
   const dir = repo();
   mkdirSync(join(dir, ".claude"));
   const other = { matcher: "Bash", hooks: [{ type: "command", command: "echo other" }] };
@@ -161,12 +178,9 @@ test("адреса сменились — свои хуки переписаны
   );
   prepare(dir, ADDR);
   const { out } = prepare(dir, ["--graph", "r8", "--holon", "13", "--agent-role", "35"]);
-  for (const f of ["hook.start", "hook.guard"]) assert.ok(out.done.includes(f), f);
+  assert.ok(out.done.includes("hook.guard"));
   const s = settings(dir);
-  const start = commands(s, "SessionStart");
-  assert.equal(start.length, 1);
-  for (const a of ["r8", "#13", "#35"]) assert.ok(start[0].includes(a), a);
-  assert.doesNotMatch(start[0], /r7|#12|#34/);
+  assert.equal(commands(s, "SessionStart").length, 0);
   assert.deepEqual(s.hooks.PreToolUse[0], other);
   assert.equal(s.hooks.PreToolUse.length, 2);
   assert.match(commands(s, "PreToolUse")[1], /граф r8/);
@@ -226,16 +240,14 @@ test("адреса не названы и в обложке их нет — ос
   const { status, out } = prepare(dir);
   assert.equal(status, 3);
   assert.equal(out.repository, "github.com/acme/gadget");
-  for (const f of ["cover.graph", "cover.holon", "cover.agent_role", "hook.guard", "hook.start"])
+  for (const f of ["cover.graph", "cover.holon", "cover.agent_role", "hook.guard"])
     assert.ok(items(out.left).includes(f), f);
+  assert.ok(!items(out.left).includes("hook.start"), "старт несёт поставка");
   const graphOnly = prepare(dir, ["--graph", "r7"]);
   assert.ok(graphOnly.out.done.includes("hook.guard"));
-  assert.ok(
-    items(graphOnly.out.left).includes("hook.start"),
-    "старт без контура и роли не пишется",
-  );
+  assert.deepEqual(graphOnly.out.derived, {}, "ключа нет — граф не спрошен");
   const again = prepare(dir, [...ADDR, "--case", "77"]);
-  assert.ok(again.out.done.includes("hook.start"));
+  assert.ok(!again.out.done.includes("hook.start"));
   assert.match(read(dir, "REALITY.md"), /№77/, "голая заготовка узнаёт дело");
   writeFileSync(join(dir, "REALITY.md"), "# mine\n");
   prepare(dir, [...ADDR, "--case", "78"]);

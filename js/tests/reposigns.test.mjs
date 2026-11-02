@@ -97,6 +97,17 @@ const CASES = [
     verdicts: all("aligned"),
   },
   {
+    // The delivery's own hooks carry the start word by such a block (#9319): none in the repo.
+    name: "cover block with graph, holon, role, contract and stamp, no start hooks",
+    spec: { git: "dir", agents: BLOCK("iskron") },
+    verdicts: all("aligned"),
+  },
+  {
+    name: "cover block without a holon, no start hooks",
+    spec: { git: "dir", agents: BLOCK("iskron").replace("  holon: 2\n", "") },
+    verdicts: { "claude-code": "partial", opencode: "partial", other: "aligned" },
+  },
+  {
     name: "cover block without a contract",
     spec: { git: "dir", agents: BLOCK("iskron", ""), settings: START, rituals: true },
     verdicts: all("partial"),
@@ -290,11 +301,14 @@ test("claude code hook: unreadable files and a missing directory do not fail the
 
 test("claude code hook: declared on startup and after a compaction, one command", () => {
   const hooks = JSON.parse(readFileSync(join(REPO, "hooks", "hooks.json"), "utf8"));
+  const onboard = hooks.hooks.SessionStart.filter((e) =>
+    e.hooks.some((h) => h.command.includes("'onboard.mjs'")),
+  );
   assert.deepEqual(
-    hooks.hooks.SessionStart.map((e) => e.matcher),
+    onboard.map((e) => e.matcher),
     ["startup", "compact"],
   );
-  for (const entry of hooks.hooks.SessionStart) {
+  for (const entry of onboard) {
     assert.equal(entry.hooks.length, 1);
     assert.equal(entry.hooks[0].command, COMMAND);
   }

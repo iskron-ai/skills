@@ -45,6 +45,12 @@ export interface PrepareWords {
   head: (kind: "done" | "kept" | "left") => string;
 }
 
+// Ритуал, который репо держит своим, а несёт поставка: снять — переход контракта 39 (#9319).
+const RITE_RU = (what: string, where: string): string =>
+  `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его (переход Шага 4 iskronify)`;
+const RITE_EN = (what: string, where: string): string =>
+  `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off (the transition of iskronify Step 4)`;
+
 export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
   ru: {
     usage: () =>
@@ -73,15 +79,16 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
           "прежняя плоская обложка стоит рядом с блоком — слоты-суждения перенеси в «Проект», плоские ключи сними",
         "CLAUDE.md":
           "CLAUDE.md — свой файл, не указатель: содержимое влей в AGENTS.md и замени указателем (Шаг 7)",
-        "hook.start":
-          "хук старта ждёт графа, контура и роли в обложке — повтори prepare с --graph, --holon, --agent-role",
+        "hook.start": RITE_RU("хук старта", ".claude/settings.json"),
         "hook.guard": "memory-guard ждёт графа в обложке — повтори prepare с --graph",
-        "hook.push": "хук пуша — Шаг 4 iskronify по references/hooks.md",
-        "hook.merge": "хук мержа — Шаг 4 iskronify по references/hooks.md",
-        "opencode.rituals": "у репо есть OpenCode — плагин ритуалов по Шагу 4 iskronify",
+        "hook.push": RITE_RU("хук пуша", ".claude/settings.json"),
+        "hook.merge": RITE_RU("хук мержа", ".claude/settings.json"),
+        "opencode.rituals": RITE_RU("плагин ритуалов", ".opencode/plugins"),
       })[item],
     unread: (item, hook) =>
-      `стоит «${hook}», и prepare не узнал, ${item === "hook.guard" ? "memory-guard" : "хук старта"} ли это, — своего рядом не поставил: прочти скрипт; это он — ничего не делай, нет — допиши по Шагу 4 iskronify (references/hooks.md)`,
+      item === "hook.guard"
+        ? `стоит «${hook}», и prepare не узнал, memory-guard ли это, — своего рядом не поставил: прочти скрипт; это он — ничего не делай, нет — допиши по Шагу 4 iskronify (references/hooks.md)`
+        : `стоит «${hook}», и prepare не узнал, хук старта ли это: прочти скрипт; это он — сними (старт несёт поставка, а при своём она молчит), нет — ничего не делай`,
     head: (kind) => ({ done: "сделано", kept: "уже стоит", left: "модели" })[kind],
   },
   en: {
@@ -111,16 +118,17 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
           "the former flat cover stands beside the block — move judgment slots into «Project», drop the flat keys",
         "CLAUDE.md":
           "CLAUDE.md is a file of its own, not a pointer: merge its content into AGENTS.md and replace it with the pointer (Step 7)",
-        "hook.start":
-          "the start hook waits for the graph, holon and role in the cover — run prepare again with --graph, --holon, --agent-role",
+        "hook.start": RITE_EN("start hook", ".claude/settings.json"),
         "hook.guard":
           "memory-guard waits for a graph in the cover — run prepare again with --graph",
-        "hook.push": "the push hook — iskronify Step 4 by references/hooks.md",
-        "hook.merge": "the merge hook — iskronify Step 4 by references/hooks.md",
-        "opencode.rituals": "the repo has OpenCode — the rituals plugin by iskronify Step 4",
+        "hook.push": RITE_EN("push hook", ".claude/settings.json"),
+        "hook.merge": RITE_EN("merge hook", ".claude/settings.json"),
+        "opencode.rituals": RITE_EN("rituals plugin", ".opencode/plugins"),
       })[item],
     unread: (item, hook) =>
-      `"${hook}" stands, and prepare could not tell whether it is ${item === "hook.guard" ? "the memory-guard" : "the start hook"} — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)`,
+      item === "hook.guard"
+        ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)`
+        : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
     head: (kind) => ({ done: "done", kept: "already there", left: "for the model" })[kind],
   },
 };

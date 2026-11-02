@@ -7,6 +7,8 @@ export interface OpencodeWords {
   channelDown: (message: string) => string;
   launchDown: (message: string) => string;
   noticeDown: (message: string) => string;
+  /** Хуки тулов ритуалов поставки не встали: guard, пуш и мерж в OpenCode молчат. */
+  ritesDown: (message: string) => string;
   /** Хук тулов не встал: корень с дефектной обложкой пересядет только на промпте. */
   realignDown: (message: string) => string;
   commandsDown: (message: string) => string;
@@ -84,6 +86,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     channelDown: (message) => `Искрон: канал не встал — ${message}`,
     launchDown: (message) => `Искрон: строка запуска не встала — ${message}`,
     noticeDown: (message) => `Искрон: пометка хода субагента не встала — ${message}`,
+    ritesDown: (message) =>
+      `Искрон: ритуалы поставки (memory-guard, пуш, мерж) не встали, держит проза AGENTS.md — ${message}`,
     realignDown: (message) =>
       `Искрон: слежение за обложкой после тулов не встало, посадка после выравнивания — только на промпте — ${message}`,
     commandsDown: (message) => `Искрон: команды скиллов не встали — ${message}`,
@@ -171,6 +175,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     channelDown: (message) => `Iskron: the channel did not come up — ${message}`,
     launchDown: (message) => `Iskron: the launch line did not come up — ${message}`,
     noticeDown: (message) => `Iskron: the subagent turn note did not come up — ${message}`,
+    ritesDown: (message) =>
+      `Iskron: the delivery's rituals (memory-guard, push, merge) did not come up, AGENTS.md prose holds them — ${message}`,
     realignDown: (message) =>
       `Iskron: watching the cover after tool calls did not come up, seating after alignment waits for a prompt — ${message}`,
     commandsDown: (message) => `Iskron: the skill commands did not come up — ${message}`,

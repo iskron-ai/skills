@@ -1,6 +1,8 @@
-// `prepare`: the repository made ready for the agent in one call, without a model and without the
-// network (graph @nks/nks-dev, node #9319; the cover's form — #9316). The cover, the stubs and the
-// hooks are written where they are missing, never over what stands; a repeat changes nothing.
+// `prepare`: the repository made ready for the agent in one call, without a model (graph
+// @nks/nks-dev, node #9319; the cover's form — #9316). The cover, the stubs and the guard are
+// written where they are missing, never over what stands; a repeat changes nothing. The holon
+// and the role the cover lacks are read from the graph by origin when the bridge has a key
+// (preparegraph.ts, #9325); without one — no network, as before.
 // The answer names what was done, what already stood and what is left to the model; the exit code
 // says the same: 0 — nothing left, 3 — something left, 1 — refused and nothing written, 2 — usage.
 import { PREPARE, type PrepareLeft } from "../delivery/index.ts";
@@ -15,6 +17,7 @@ import {
   writeClaude,
   writeReality,
 } from "./preparefiles.ts";
+import { fromGraph } from "./preparegraph.ts";
 import { type Outcome, prepareHooks } from "./preparehooks.ts";
 
 const FORMS: Record<string, RegExp> = {
@@ -63,7 +66,7 @@ function say(json: boolean, code: number, body: Record<string, unknown>): void {
   process.exitCode = code;
 }
 
-export function runPrepare(argv: string[]): void {
+export async function runPrepare(argv: string[]): Promise<void> {
   const lang = argv.indexOf("--lang");
   setLang(lang >= 0 ? argv[lang + 1] : undefined);
   const W = words(PREPARE);
@@ -86,8 +89,19 @@ export function runPrepare(argv: string[]): void {
     contract: f["--contract"],
     stamp: f["--contract"] ? (f["--stamp"] ?? new Date().toISOString().slice(0, 10)) : f["--stamp"],
   };
-  const cover = coverText(root, given);
+  let cover = coverText(root, given);
   if ("why" in cover) return say(json, 1, { refused: cover.why });
+  // Addresses the cover lacks, from the graph by origin (#9325): none found — the model's way.
+  const repository = repositoryOf(root);
+  const { graph, holon, agent_role } = cover.data;
+  const derived =
+    graph && repository && (!holon || !agent_role) && !cover.repeated.length
+      ? await fromGraph(String(graph), repository, holon ? String(holon) : undefined)
+      : {};
+  if (derived.holon || derived.agent_role) {
+    cover = coverText(root, { ...given, ...derived, ...(agent_role ? { agent_role } : {}) });
+    if ("why" in cover) return say(json, 1, { refused: cover.why });
+  }
 
   const out: Outcome = { done: [], kept: [], left: [] };
   const d = cover.data;
@@ -112,7 +126,8 @@ export function runPrepare(argv: string[]): void {
   });
   say(json, left.length ? 3 : 0, {
     repo: root,
-    repository: repositoryOf(root),
+    repository,
+    derived,
     cover: d,
     done: out.done,
     kept: out.kept,

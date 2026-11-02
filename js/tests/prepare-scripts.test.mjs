@@ -1,6 +1,7 @@
 // prepare и хуки, вынесенные в скрипт (граф @nks/nks-dev, #9331; подготовка — #9319): стоящий
-// хук старта или memory-guard того же рода в любой форме — inline, скрипт, общий скрипт ритуалов —
-// prepare не дублирует; узнать не может — своего не пишет и отдаёт модели, назвав стоящий хук.
+// memory-guard в любой форме — inline, скрипт, общий скрипт ритуалов — prepare не дублирует;
+// свой хук старта репо узнаёт так же и называет модели на снятие (старт несёт поставка); узнать
+// не может — своего не пишет и отдаёт модели, назвав стоящий хук.
 //
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
 import assert from "node:assert/strict";
@@ -58,7 +59,8 @@ test("старт в скрипте (случай nks/bot): второго Sessio
   );
   const first = prepare(dir);
   assert.ok(first.out, first.stderr);
-  assert.ok(first.out.kept.includes("hook.start"), JSON.stringify(first.out));
+  const left = first.out.left.find((x) => x.item === "hook.start");
+  assert.match(left?.why ?? "", /несёт поставка/, JSON.stringify(first.out));
   assert.deepEqual(commands(dir, "SessionStart"), [start]);
   prepare(dir, [...ADDR, "--contract", "38"]);
   assert.deepEqual(commands(dir, "SessionStart"), [start]);
@@ -76,7 +78,8 @@ test("старт и guard в общем скрипте ритуалов (слу�
   );
   const { out, stderr } = prepare(dir);
   assert.ok(out, stderr);
-  for (const f of ["hook.start", "hook.guard"]) assert.ok(out.kept.includes(f), f);
+  assert.ok(out.kept.includes("hook.guard"));
+  assert.ok(out.left.some((x) => x.item === "hook.start"));
   assert.deepEqual(commands(dir, "SessionStart"), [start]);
   assert.deepEqual(commands(dir, "PreToolUse"), [guard]);
   prepare(dir, [...ADDR, "--contract", "38"]);
@@ -104,7 +107,7 @@ test("скрипт не узнан — своего не пишет, модел�
   }
 });
 
-test("скрипт на чужом матчере PreToolUse и чужой inline-старт guard и старт не держат", () => {
+test("скрипт на чужом матчере PreToolUse guard не держит, чужой inline-старт не назван", () => {
   const dir = repo(
     {
       SessionStart: [entry("echo hello")],
@@ -113,8 +116,9 @@ test("скрипт на чужом матчере PreToolUse и чужой inlin
     { ".claude/hooks/lint.sh": "#!/bin/sh\nexit 0\n" },
   );
   const { out } = prepare(dir);
-  for (const f of ["hook.start", "hook.guard"]) assert.ok(out.done.includes(f), f);
-  assert.equal(commands(dir, "SessionStart").length, 2);
+  assert.ok(out.done.includes("hook.guard"));
+  assert.ok(!out.done.includes("hook.start") && !out.left.some((x) => x.item === "hook.start"));
+  assert.equal(commands(dir, "SessionStart").length, 1);
   assert.equal(commands(dir, "PreToolUse").length, 2);
 });
 
@@ -131,11 +135,12 @@ test("guard на матчере, не покрывающем Write и Edit, guar
   }
 });
 
-test("скрипт без расширения: узнанный держит старт, неузнанный и отсутствующий — непрозрачны", () => {
+test("скрипт без расширения: узнанный — свой старт, неузнанный и отсутствующий — непрозрачны", () => {
   const known = "sh .claude/hooks/session-start";
   const dir = repo({ SessionStart: [entry(known)] }, { ".claude/hooks/session-start": START_SH });
   const first = prepare(dir, [...ADDR, "--contract", "38"]);
-  assert.ok(first.out?.kept.includes("hook.start"), JSON.stringify(first.out));
+  const own = first.out?.left.find((x) => x.item === "hook.start");
+  assert.match(own?.why ?? "", /несёт поставка/, JSON.stringify(first.out));
   assert.deepEqual(commands(dir, "SessionStart"), [known]);
   for (const [start, files] of [
     [".claude/hooks/boot", { ".claude/hooks/boot": "#!/bin/sh\n. ./.env.sh\n" }],
