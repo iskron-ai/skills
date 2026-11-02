@@ -45,11 +45,16 @@ export interface PrepareWords {
   head: (kind: "done" | "kept" | "left") => string;
 }
 
-// Ритуал, который репо держит своим, а несёт поставка: снять — переход контракта 39 (#9319).
+// Ритуал, который репо держит своим, а несёт поставка: снять — переход контракта 39 (#9319);
+// ветки иных родов (гейт мержа nks-mcp, #6688, риск #7601) переход оставляет.
 const RITE_RU = (what: string, where: string): string =>
-  `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его (переход Шага 4 iskronify)`;
+  `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его, а в скрипте с ветками иных родов — лишь ветку этого (переход Шага 4 iskronify)`;
 const RITE_EN = (what: string, where: string): string =>
-  `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off (the transition of iskronify Step 4)`;
+  `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off, and in a script with branches of other kinds only this one's branch (the transition of iskronify Step 4)`;
+const PLUGIN_RU =
+  "свой плагин ритуалов в .opencode/plugins — ритуалы несёт поставка, а при нём она молчит: сними его, а если он несёт ветки иных родов (гейт мержа и подобное) — сними в нём лишь старт, пуш, мерж и memory-guard, остальное оставь файлом с именем без «ritual» (переход Шага 4 iskronify)";
+const PLUGIN_EN =
+  "the repo's own rituals plugin in .opencode/plugins — the delivery carries the rituals and keeps silent beside it: take it off, and if it carries branches of other kinds (a merge gate and the like) take off only start, push, merge and the memory guard and keep the rest in a file named without «ritual» (the transition of iskronify Step 4)";
 
 export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
   ru: {
@@ -83,7 +88,7 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
         "hook.guard": "memory-guard ждёт графа в обложке — повтори prepare с --graph",
         "hook.push": RITE_RU("хук пуша", ".claude/settings.json"),
         "hook.merge": RITE_RU("хук мержа", ".claude/settings.json"),
-        "opencode.rituals": RITE_RU("плагин ритуалов", ".opencode/plugins"),
+        "opencode.rituals": PLUGIN_RU,
       })[item],
     unread: (item, hook) =>
       item === "hook.guard"
@@ -123,7 +128,7 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
           "memory-guard waits for a graph in the cover — run prepare again with --graph",
         "hook.push": RITE_EN("push hook", ".claude/settings.json"),
         "hook.merge": RITE_EN("merge hook", ".claude/settings.json"),
-        "opencode.rituals": RITE_EN("rituals plugin", ".opencode/plugins"),
+        "opencode.rituals": PLUGIN_EN,
       })[item],
     unread: (item, hook) =>
       item === "hook.guard"

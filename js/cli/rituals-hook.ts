@@ -2,8 +2,8 @@
 // section RITUALS): one entry for every event it is wired to. SessionStart — the start word with
 // the cover's addresses; PostToolUse of Bash — the push and merge words by outcome
 // (shared/ritualjudge.ts). Switched on by the cover of the session's repository
-// (shared/ritualcover.ts); a kind the repository's own settings hold (hookkinds.ts) keeps it
-// silent — no word twice. The memory guard stays the repository's hook: a plugin hook's blocking
+// (shared/ritualcover.ts); a kind the repository's own settings hold on this event's source or
+// tool (hookkinds.ts, by matcher) keeps it silent there — no word twice, none lost. The memory guard stays the repository's hook: a plugin hook's blocking
 // exit was not observed on the carrier. After a compaction the onboarding hook speaks, not this.
 // Local reads only; always exit 0.
 import { readFileSync } from "node:fs";
@@ -44,13 +44,15 @@ function printed(r: unknown): { output: string; exit: number | null } {
 function riteWords(input: HookInput, dir: string): string[] {
   const cover = ritualCover(dir);
   if (!cover) return [];
-  const own = standingRites(cover.root);
   const event = input.hook_event_name;
   if (event === "SessionStart") {
-    if (input.source === "compact" || !startCarried(cover) || own.has("hook.start")) return [];
+    const source = typeof input.source === "string" ? input.source : "startup";
+    if (source === "compact" || !startCarried(cover)) return [];
+    if (standingRites(cover.root, source).has("hook.start")) return [];
     return [words(PREPARE).start({ graph: cover.graph, holon: cover.holon, role: cover.role })];
   }
   if (event !== "PostToolUse" || input.tool_name !== "Bash") return [];
+  const own = standingRites(cover.root, "Bash");
   const call = {
     command: String(input.tool_input?.command ?? ""),
     ...printed(input.tool_response),

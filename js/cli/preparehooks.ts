@@ -102,7 +102,7 @@ export function prepareHooks(root: string, addr: PrepareAddr | null, out: Outcom
   for (const kind of CARRIED) if (knownOf(root, s, kind).length) out.left.push(kind);
   // A start script prepare cannot read may be the repository's start hook: named for reading.
   const start = KNOWN["hook.start"];
-  const unread = hooksOf(s, start.event).find((h) => opaque(root, cmd(h)));
+  const unread = hooksOf(s, start.event, start.on).find((h) => opaque(root, cmd(h)));
   if (!out.left.includes("hook.start") && unread) {
     out.left.push("hook.start");
     (out.named ??= {})["hook.start"] = cmd(unread);

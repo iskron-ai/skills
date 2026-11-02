@@ -158,14 +158,33 @@ test("свои хуки старта, пуша и мержа узнаются, �
   }
 });
 
+test("свой хук на matcher, которого поставка не несёт, на снятие не назван", () => {
+  const dir = repo();
+  mkdirSync(join(dir, ".claude"));
+  const hook = (matcher, command) => ({ matcher, hooks: [{ type: "command", command }] });
+  writeFileSync(
+    join(dir, ".claude/settings.json"),
+    JSON.stringify({
+      hooks: {
+        SessionStart: [hook("compact", "echo 'iskron: re-read the cover'")],
+        PostToolUse: [hook("Write", "jq -e 'git(?: -C [^ ]+)* push' || true")],
+      },
+    }),
+  );
+  const left = items(prepare(dir, [...ADDR, "--contract", "39"]).out.left);
+  for (const f of ["hook.start", "hook.push"]) assert.ok(!left.includes(f), f);
+});
+
 test("свой плагин ритуалов OpenCode назван на снятие; OpenCode без него — ничего", () => {
   const own = repo();
   mkdirSync(join(own, ".opencode/plugins"), { recursive: true });
   writeFileSync(join(own, ".opencode/plugins/iskron-rituals.js"), "export default {};\n");
-  assert.ok(items(prepare(own, ADDR).out.left).includes("opencode.rituals"));
+  const left = prepare(own, ADDR).out.left.find((x) => x.item === "opencode.rituals");
+  assert.match(left?.why ?? "", /иных родов.*сними в нём лишь.*остальное оставь.*без «ritual»/);
   const bare = repo();
-  mkdirSync(join(bare, ".opencode"));
-  assert.ok(!items(prepare(bare, ADDR).out.left).includes("opencode.rituals"));
+  mkdirSync(join(bare, ".opencode/plugins"), { recursive: true });
+  writeFileSync(join(bare, ".opencode/plugins/merge-gate.js"), "export default {};\n");
+  assert.ok(!items(prepare(bare, ADDR).out.left).includes("opencode.rituals"), "гейт остаётся");
 });
 
 test("адреса сменились — свой guard переписан на месте, чужая запись цела", () => {

@@ -43,7 +43,8 @@ function repo({ agents = COVER, settings, rituals } = {}) {
   }
   if (rituals) {
     mkdirSync(join(dir, ".opencode", "plugins"), { recursive: true });
-    writeFileSync(join(dir, ".opencode", "plugins", "iskron-rituals.js"), "export default {};\n");
+    const file = typeof rituals === "string" ? rituals : "iskron-rituals.js";
+    writeFileSync(join(dir, ".opencode", "plugins", file), "export default {};\n");
   }
   return dir;
 }
@@ -126,6 +127,21 @@ test("claude code: a kind the repository holds itself keeps the delivery silent"
   assert.equal(bash(pushing, "git push origin HEAD", PUSHED), null);
   assert.ok(start(pushing), "the start word stays: only the held kind is silent");
   assert.match(bash(pushing, "gh pr merge 3").additionalContext, /мерж/);
+  const resumed = repo({ settings: own("SessionStart", "echo iskron", "resume") });
+  assert.equal(start(resumed, "resume"), null, "held on the source its matcher names");
+  assert.ok(start(resumed), "and only there");
+});
+
+test("claude code: an own hook on another matcher does not silence the delivery", () => {
+  const own = (event, command, matcher) => ({
+    hooks: { [event]: [{ matcher, hooks: [{ type: "command", command }] }] },
+  });
+  assert.ok(start(repo({ settings: own("SessionStart", "echo iskron compact", "compact") })));
+  const pushHook = "jq -e 'git(?: -C [^ ]+)* push' >/dev/null && echo x || true";
+  const writing = repo({ settings: own("PostToolUse", pushHook, "Write") });
+  assert.match(bash(writing, "git push origin HEAD", PUSHED)?.additionalContext ?? "", /пуш/);
+  const merging = repo({ settings: own("PostToolUse", "echo 'gh pr merge'", "Edit|Write") });
+  assert.match(bash(merging, "gh pr merge 3")?.additionalContext ?? "", /мерж/);
 });
 
 // ── OpenCode: the delivery plugin on a stand-in context ──────────────────────────────────────
@@ -206,6 +222,15 @@ test("opencode: a rituals plugin of the repository's own keeps the delivery sile
     };
     await run("execute.after", p);
     assert.equal(p.result.content, PUSHED);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("opencode: a plugin of other kinds left by the transition does not silence it", async () => {
+  const { rec } = await opencode(repo({ rituals: "merge-gate.js" }));
+  try {
+    assert.ok((await rec.prompt("root", "hello")).includes("#34"));
   } finally {
     await rec.stop();
   }
