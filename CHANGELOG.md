@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.29.0](https://github.com/iskron-ai/skills/compare/v7.28.1...v7.29.0) (2026-11-02)
+
+
+### Bug Fixes
+
+* **bridge:** a daemon leaving within a death window closes that session's upstream session ([#626](https://github.com/iskron-ai/skills/issues/626)) ([2511389](https://github.com/iskron-ai/skills/commit/25113890f905eb53d7a20125234827569a5ff8a9))
+* **skills:** review of 7.29.0 — owner role from the graph, hook samples match prepare, no gate without code ([#629](https://github.com/iskron-ai/skills/issues/629)) ([00902db](https://github.com/iskron-ai/skills/commit/00902db7c795cb53c547cd5703e0a254b439add0))
+
+
+### Miscellaneous Chores
+
+* release 7.29.0 ([#628](https://github.com/iskron-ai/skills/issues/628)) ([7994b69](https://github.com/iskron-ai/skills/commit/7994b69d2c5e9571ace1321eadee314c1f62dac2))
+
 ## [7.28.1](https://github.com/iskron-ai/skills/compare/v7.28.0...v7.28.1) (2026-11-02)
 
 

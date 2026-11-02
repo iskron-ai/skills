@@ -13,7 +13,9 @@ function langOfServer(url) {
 var COVER = {
   /** Файл обложки в каталоге сессии. */
   file: "AGENTS.md",
-  /** Формы обложки по языку репозитория: действует та, чьи ключи стоят во фронтматтере. */
+  /** Корневой ключ обложки поставки во фронтматтере. */
+  root: "iskron",
+  /** Прежние формы по языку репозитория (переход): действует та, чьи ключи стоят во фронтматтере. */
   forms: {
     ru: {
       /** Слот графа: значение начинается с полного адреса графа (хэндл владельца/slug) или rN. */
@@ -113,7 +115,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.28.1";
+var VERSION = "7.29.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -782,6 +784,7 @@ var ROOT_SEAT = {
     manyGraphs: (file, key, list) => `'${key}' в ${file} называет несколько графов: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
+    notNumber: (file, key) => `'${key}' в ${file} — не число`,
     seated: (place, karta, realm, file) => `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
     ownSeated: (place, karta, realm, file) => `Искрон: сессия стоит своим местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
     cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
@@ -807,6 +810,7 @@ var ROOT_SEAT = {
     manyGraphs: (file, key, list) => `'${key}' in ${file} names several graphs: ${list}`,
     noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
     manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
+    notNumber: (file, key) => `'${key}' in ${file} is not a number`,
     seated: (place, karta, realm, file) => `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by this seat. For a watch (room/model) or your own name, call iskron_stand — it replaces a provisional seat without take.`,
     ownSeated: (place, karta, realm, file) => `Iskron: the session holds its own seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by it. A different name requires iskron_stand with take.`,
     cancelled: () => "The instance or session is stopped; no new seating is allowed.",
@@ -5869,6 +5873,63 @@ import { dirname as dirname4, join as join12, resolve as resolve6 } from "node:p
 import { readFileSync as readFileSync11 } from "node:fs";
 import { join as join11 } from "node:path";
 
+// js/shared/coverblock.ts
+var unquote = (v) => {
+  const t = v.trim();
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
+    return t.slice(1, -1).replace(/''/g, "'");
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    try {
+      return String(JSON.parse(t));
+    } catch {
+      return t.slice(1, -1);
+    }
+  }
+  return t;
+};
+var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
+var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
+var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
+var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
+var bare = (v) => unquote(/^['"]/.test(v.trim()) ? v : v.replace(/\s+#.*$/, ""));
+function fences(text2) {
+  const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  return end < 0 ? null : { lines, end };
+}
+function frontMatter(text2) {
+  const f = fences(text2);
+  if (!f) return null;
+  const raw = /* @__PURE__ */ new Map();
+  let last = null;
+  for (const line of f.lines.slice(1, f.end)) {
+    const kv = PAIR.exec(line);
+    if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
+    else if (last !== null && /^\s+[^\s#]/.test(line))
+      raw.set(last, `${raw.get(last)}
+${line.trim()}`);
+  }
+  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
+}
+function coverBlocks(text2) {
+  const blocks = /* @__PURE__ */ new Map();
+  const f = fences(text2);
+  let open = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const top = TOP.exec(line);
+    const child = open && CHILD.exec(line);
+    if (top) blocks.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
+    else if (open && child) open.set(unquote(child[1]), bare(child[2] ?? ""));
+    else open = null;
+  }
+  return blocks;
+}
+var coverBlock = (text2, root) => coverBlocks(text2).get(root) ?? null;
+var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
+var foreignBlock = (text2, root) => [...coverBlocks(text2)].some(([k, b]) => k !== root && b.has("contract"));
+
 // js/shared/graphslot.ts
 var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
 var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
@@ -5902,48 +5963,28 @@ function graphOfSlot(value, joins) {
 }
 
 // js/shared/cover.ts
-var unquote = (v) => {
-  const t = v.trim();
-  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
-    return t.slice(1, -1).replace(/''/g, "'");
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
-    try {
-      return String(JSON.parse(t));
-    } catch {
-      return t.slice(1, -1);
-    }
-  }
-  return t;
-};
-function frontMatter(text2) {
-  const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  if (end < 0) return null;
-  const raw = /* @__PURE__ */ new Map();
-  let last = null;
-  for (const line of lines.slice(1, end)) {
-    const kv = /^\s*('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)\s*:(?:\s+(.*))?$/.exec(line);
-    if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
-    else if (last !== null && /^\s+[^\s#]/.test(line))
-      raw.set(last, `${raw.get(last)}
-${line.trim()}`);
-  }
-  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
-}
 var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
 function stampOf2(text2, cover = COVER) {
-  if (Object.values(cover.forms).some((f) => f.stamp.test(text2))) return "own";
-  return cover.stampShape.test(text2) ? "foreign" : null;
+  const block = coverBlock(text2, cover.root);
+  if (block && stamped(block) || Object.values(cover.forms).some((f) => f.stamp.test(text2)))
+    return "own";
+  if (block) return null;
+  return foreignBlock(text2, cover.root) || cover.stampShape.test(text2) ? "foreign" : null;
 }
-var hasForm = (pairs, cover = COVER) => formsIn(pairs, cover).length > 0;
+function hasCover(text2, cover = COVER) {
+  if (coverBlock(text2, cover.root)) return true;
+  const pairs = frontMatter(text2);
+  return !!pairs && formsIn(pairs, cover).length > 0;
+}
 function formOf2(pairs, cover = COVER) {
   const W5 = words(ROOT_SEAT);
-  const listed = (forms) => forms.map((f) => `'${f.graph}'`).join(", ");
+  const listed = (keys) => keys.map((k) => `'${k}'`).join(", ");
   const found = formsIn(pairs, cover);
-  if (found.length > 1) return { why: W5.manyForms(cover.file, listed(found.map(([, f]) => f))) };
+  if (found.length > 1)
+    return { why: W5.manyForms(cover.file, listed(found.map(([, f]) => f.graph))) };
   const [lang2, form] = found[0] ?? [];
-  if (!lang2 || !form) return { why: W5.noForm(cover.file, listed(Object.values(cover.forms))) };
+  const all = [cover.root, ...Object.values(cover.forms).map((f) => f.graph)];
+  if (!lang2 || !form) return { why: W5.noForm(cover.file, listed(all)) };
   return { lang: lang2, form };
 }
 var LEAD2 = /^[\s`'"<]*/;
@@ -5955,6 +5996,18 @@ var roleRef = (q, flags = "") => new RegExp(
 var distinct = (re, v) => [
   ...new Set([...v.matchAll(re)].map((m) => m[1]))
 ];
+function seatOfBlock(block, cover = COVER) {
+  const W5 = words(ROOT_SEAT);
+  const key = (f) => `${cover.root}.${f}`;
+  const graph = block.get("graph")?.trim();
+  if (!graph) return { why: W5.noKey(cover.file, key("graph")) };
+  if (!/^(?:r\d+|@[\w.-]+\/[\w.-]*\w)$/.test(graph))
+    return { why: W5.noGraph(cover.file, key("graph")) };
+  const role2 = block.get("agent_role")?.trim();
+  if (!role2) return { why: W5.noKey(cover.file, key("agent_role")) };
+  if (!/^\d+$/.test(role2)) return { why: W5.notNumber(cover.file, key("agent_role")) };
+  return { realm: graph, karta: role2 };
+}
 function seatOfPairs(pairs, cover = COVER) {
   const W5 = words(ROOT_SEAT);
   const of = formOf2(pairs, cover);
@@ -5986,6 +6039,8 @@ function readCover(dir, cover = COVER) {
     return null;
   }
   if (stampOf2(text2, cover) === "foreign") return { foreign: true };
+  const block = coverBlock(text2, cover.root);
+  if (block) return seatOfBlock(block, cover);
   const pairs = frontMatter(text2);
   if (!pairs) return { why: words(ROOT_SEAT).noFrontmatter(cover.file) };
   return seatOfPairs(pairs, cover);
@@ -6036,11 +6091,10 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   const hooks = { "claude-code": false, opencode: false };
   if (root === null) return { root, cover: false, stamp: false, hooks, verdict: "outside" };
   const agents = text(join12(root, cover.file));
-  const pairs = agents === null ? null : frontMatter(agents);
-  const stamped = agents === null ? null : stampOf2(agents, cover);
+  const stamped2 = agents === null ? null : stampOf2(agents, cover);
   const signs = {
-    cover: !!pairs && stamped !== "foreign" && hasForm(pairs, cover),
-    stamp: stamped === "own",
+    cover: agents !== null && stamped2 !== "foreign" && hasCover(agents, cover),
+    stamp: stamped2 === "own",
     hooks: {
       "claude-code": startHook(text(join12(root, keys.settings)), keys.startMark),
       opencode: exists(join12(root, keys.rituals))
@@ -6049,7 +6103,7 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   const hooked = signs.hooks["claude-code"] || signs.hooks.opencode;
   const any = signs.cover || signs.stamp || hooked;
   const complete = signs.cover && signs.stamp && (harness === null || signs.hooks[harness]);
-  const verdict = stamped === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
+  const verdict = stamped2 === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
 
