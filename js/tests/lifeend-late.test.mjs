@@ -81,10 +81,12 @@ test("a connect answered while the end awaits its stop: the late seat still ends
     await waitFor("the late seat closed", () => closed(fake, "late-y"), 15_000).catch((e) => {
       throw new Error(`${e.message}\n${journalOf(dir)}`);
     });
-    assert.match(
-      journalOf(dir),
-      /late-y--931--_nks_nks-dev ended by its dead socket's token \(200/,
-    );
+    // The board turns before the stop's 200 reaches the daemon (#9302): wait for its line.
+    await waitFor("the stop's answer settled", () =>
+      /late-y--931--_nks_nks-dev ended by its dead socket's token \(200/.test(journalOf(dir)),
+    ).catch((e) => {
+      throw new Error(`${e.message}\n${journalOf(dir)}`);
+    });
   });
 });
 
