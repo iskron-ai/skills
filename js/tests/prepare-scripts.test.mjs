@@ -117,3 +117,34 @@ test("скрипт на чужом матчере PreToolUse и чужой inlin
   assert.equal(commands(dir, "SessionStart").length, 2);
   assert.equal(commands(dir, "PreToolUse").length, 2);
 });
+
+test("guard на матчере, не покрывающем Write и Edit, guard не держит — prepare ставит свой", () => {
+  for (const matcher of ["Bash", "Write"]) {
+    const guard = "node .claude/rituals.cjs guard";
+    const dir = repo({ PreToolUse: [entry(guard, matcher)] }, { ".claude/rituals.cjs": RITUALS });
+    const { out, stderr } = prepare(dir);
+    assert.ok(out, stderr);
+    assert.ok(out.done.includes("hook.guard"), `${matcher}: ${JSON.stringify(out)}`);
+    const pre = settings(dir).hooks.PreToolUse;
+    assert.equal(pre.length, 2, matcher);
+    assert.equal(pre[1].matcher, "Write|Edit|MultiEdit|NotebookEdit");
+  }
+});
+
+test("скрипт без расширения: узнанный держит старт, неузнанный и отсутствующий — непрозрачны", () => {
+  const known = "sh .claude/hooks/session-start";
+  const dir = repo({ SessionStart: [entry(known)] }, { ".claude/hooks/session-start": START_SH });
+  const first = prepare(dir, [...ADDR, "--contract", "38"]);
+  assert.ok(first.out?.kept.includes("hook.start"), JSON.stringify(first.out));
+  assert.deepEqual(commands(dir, "SessionStart"), [known]);
+  for (const [start, files] of [
+    [".claude/hooks/boot", { ".claude/hooks/boot": "#!/bin/sh\n. ./.env.sh\n" }],
+    ["bash .claude/hooks/gone", {}],
+  ]) {
+    const d = repo({ SessionStart: [entry(start)] }, files);
+    const { status, out } = prepare(d, [...ADDR, "--contract", "38"]);
+    assert.equal(status, 3, start);
+    assert.deepEqual(commands(d, "SessionStart"), [start]);
+    assert.ok(out.left.find((x) => x.item === "hook.start")?.why.includes(start), start);
+  }
+});

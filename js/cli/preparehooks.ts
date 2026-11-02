@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import { PREPARE, type PrepareAddr, type PrepareLeft, PRODUCT } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import { knownHook, opaque } from "./preparescripts.ts";
+import { knownHook, opaque, runsOn } from "./preparescripts.ts";
 
 // The guard of references/hooks.md byte for byte around its message: a probe holds them equal.
 const GUARD_HEAD =
@@ -86,7 +86,7 @@ const KINDS: {
       matcher: GUARD_MATCHER,
       hooks: [{ type: "command", command: guardCommand(a.graph) }],
     }),
-    on: (m) => !m || m === "*" || /Write|Edit/.test(m),
+    on: (m) => !m || m === "*" || ["Write", "Edit"].every((t) => runsOn(m, t)),
   },
   { item: "hook.push", event: "PostToolUse", known: (c) => c.includes("git(?: -C [^ ]+)* push") },
   { item: "hook.merge", event: "PostToolUse", known: (c) => c.includes("gh pr merge") },
@@ -123,7 +123,7 @@ export function prepareHooks(root: string, addr: PrepareAddr | null, out: Outcom
   for (const k of KINDS) {
     const entry = addr && k.make?.(addr);
     const command = entry ? entry.hooks?.[0]?.command : undefined;
-    const known = hooksOf(s, k.event).filter((h) => knownHook(root, cmd(h), k.known));
+    const known = hooksOf(s, k.event, k.on).filter((h) => knownHook(root, cmd(h), k.known));
     const stale = known.filter((h) => h.command !== command && k.ours?.(cmd(h)));
     const unread = k.make && hooksOf(s, k.event, k.on).find((h) => opaque(root, cmd(h)));
     if (command && stale.length && !known.some((h) => h.command === command)) {
