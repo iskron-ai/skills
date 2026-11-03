@@ -115,7 +115,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.29.1";
+var VERSION = "7.30.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -261,13 +261,13 @@ var COMPACTION = {
 // js/delivery/words/launch.ts
 var LAUNCH = {
   ru: {
-    notSeated: (why, no, join14) => `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${no}: ${join14}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+    notSeated: (why, no, join16) => `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${no}: ${join16}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
     ownSeat: () => "своим местом",
     notEntered: (place, no, why) => `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
     entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`
   },
   en: {
-    notSeated: (why, no, join14) => `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${no}: ${join14}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`,
+    notSeated: (why, no, join16) => `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${no}: ${join16}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`,
     ownSeat: () => "in a seat of its own",
     notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
     entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
@@ -287,8 +287,8 @@ var LEAD = {
     placeClosedRefusal: () => "её место-спутник отозвано или закрыто платформой (4001)",
     cut: (shown2, total) => `
 [итог усечён: показано ${shown2} из ${total} знаков — целиком в его деле]`,
-    end: (who, why, done, said) => `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:
-${said || "(текста он не оставил — смотри его дело)"}`,
+    end: (who, why, done, said2) => `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:
+${said2 || "(текста он не оставил — смотри его дело)"}`,
     endKept: (who, kept2) => `${keptRu(who, kept2)}; снять его — iskron_channel(action="revoke", standing="${kept2}"), только словом человека. `,
     endPlain: () => "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ",
     keptLine: keptRu,
@@ -344,8 +344,8 @@ ${said || "(текста он не оставил — смотри его дел
     placeClosedRefusal: () => "its satellite seat was revoked or closed by the platform (4001)",
     cut: (shown2, total) => `
 [outcome truncated: ${shown2} of ${total} characters shown — whole in its case]`,
-    end: (who, why, done, said) => `Iskron: subagent ${who} ENDED — ${why}. This is the end of the errand, not a turn: ${done}The outcome is its last word — testimony, not acceptance; its case and the carrier hold the grounds:
-${said || "(it left no text — see its case)"}`,
+    end: (who, why, done, said2) => `Iskron: subagent ${who} ENDED — ${why}. This is the end of the errand, not a turn: ${done}The outcome is its last word — testimony, not acceptance; its case and the carrier hold the grounds:
+${said2 || "(it left no text — see its case)"}`,
     endKept: (who, kept2) => `${keptEn(who, kept2)}; to revoke it — iskron_channel(action="revoke", standing="${kept2}"), only on the human's word. `,
     endPlain: () => "the subagent's bridge goes down: it leaves its cases, its seat is revoked (if it is not, I will say so separately). ",
     keptLine: keptEn,
@@ -411,6 +411,7 @@ var OPENCODE = {
     channelDown: (message) => `Искрон: канал не встал — ${message}`,
     launchDown: (message) => `Искрон: строка запуска не встала — ${message}`,
     noticeDown: (message) => `Искрон: пометка хода субагента не встала — ${message}`,
+    ritesDown: (message) => `Искрон: ритуалы поставки (memory-guard, пуш, мерж) не встали, держит проза AGENTS.md — ${message}`,
     realignDown: (message) => `Искрон: слежение за обложкой после тулов не встало, посадка после выравнивания — только на промпте — ${message}`,
     commandsDown: (message) => `Искрон: команды скиллов не встали — ${message}`,
     noPermissionHooks: () => "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
@@ -471,6 +472,7 @@ var OPENCODE = {
     channelDown: (message) => `Iskron: the channel did not come up — ${message}`,
     launchDown: (message) => `Iskron: the launch line did not come up — ${message}`,
     noticeDown: (message) => `Iskron: the subagent turn note did not come up — ${message}`,
+    ritesDown: (message) => `Iskron: the delivery's rituals (memory-guard, push, merge) did not come up, AGENTS.md prose holds them — ${message}`,
     realignDown: (message) => `Iskron: watching the cover after tool calls did not come up, seating after alignment waits for a prompt — ${message}`,
     commandsDown: (message) => `Iskron: the skill commands did not come up — ${message}`,
     noPermissionHooks: () => "Iskron: this OpenCode has no permission hooks — files of the delivery's skills outside the working copy are read with an ask.",
@@ -648,6 +650,90 @@ var PLUGIN = {
     evicted: (code2) => `Iskron: the channel was closed with code ${code2} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true): ${TAKE.en.rule()}.`,
     alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
     note: (text2) => `Iskron: ${text2}`
+  }
+};
+
+// js/delivery/words/prepare.ts
+var RITE_RU = (what, where) => `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его, а в скрипте с ветками иных родов — лишь ветку этого (переход Шага 4 iskronify)`;
+var RITE_EN = (what, where) => `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off, and in a script with branches of other kinds only this one's branch (the transition of iskronify Step 4)`;
+var PLUGIN_RU = "свой плагин ритуалов в .opencode/plugins — ритуалы несёт поставка, а при нём она молчит: сними его, а если он несёт ветки иных родов (гейт мержа и подобное) — сними в нём лишь старт, пуш, мерж и memory-guard, остальное оставь файлом с именем без «ritual» (переход Шага 4 iskronify)";
+var PLUGIN_EN = "the repo's own rituals plugin in .opencode/plugins — the delivery carries the rituals and keeps silent beside it: take it off, and if it carries branches of other kinds (a merge gate and the like) take off only start, push, merge and the memory guard and keep the rest in a file named without «ritual» (the transition of iskronify Step 4)";
+var PREPARE = {
+  ru: {
+    usage: () => "использование: prepare [--dir <репо>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp ГГГГ-ММ-ДД] [--case N] [--json] [--lang en|ru]\n",
+    badArg: (flag, value) => `${flag}: «${value}» — не та форма; справка — prepare --help`,
+    notRepo: (dir) => `${dir} — не git-репозиторий: готовить нечего, ничего не записано`,
+    foreign: (file) => `${file} несёт обложку другой поставки — смену поставки решает человек, ничего не записано`,
+    unparsed: (file) => `${file} не разбирается — ничего не записано`,
+    reality: (caseNo) => `# Reality — против чего проверяется заявка
+
+Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
+`,
+    start: ({ graph, holon, role: role2 }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role2 ? `, роль агента #${role2}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
+    guard: (graph) => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, «Правила персистентности»). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
+    left: (item, keys) => ({
+      "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
+      "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
+      "cover.graph": "граф не назван — --graph rN (iskron_realm action=list), такт 1 iskronify",
+      "cover.holon": "контур не назван — --holon N: поиск контура по атрибуту repository или его заведение",
+      "cover.agent_role": "роль не названа — --agent-role N: стюард контура (iskron_search steward_of) или её заведение",
+      "cover.contract": "контракт не назван — --contract N последним вызовом прогона (Шаг 7)",
+      "cover.flat": "прежняя плоская обложка стоит рядом с блоком — слоты-суждения перенеси в «Проект», плоские ключи сними",
+      "CLAUDE.md": "CLAUDE.md — свой файл, не указатель: содержимое влей в AGENTS.md и замени указателем (Шаг 7)",
+      "hook.start": RITE_RU("хук старта", ".claude/settings.json"),
+      "hook.guard": "memory-guard ждёт графа в обложке — повтори prepare с --graph",
+      "hook.push": RITE_RU("хук пуша", ".claude/settings.json"),
+      "hook.merge": RITE_RU("хук мержа", ".claude/settings.json"),
+      "opencode.rituals": PLUGIN_RU
+    })[item],
+    unread: (item, hook) => item === "hook.guard" ? `стоит «${hook}», и prepare не узнал, memory-guard ли это, — своего рядом не поставил: прочти скрипт; это он — ничего не делай, нет — допиши по Шагу 4 iskronify (references/hooks.md)` : `стоит «${hook}», и prepare не узнал, хук старта ли это: прочти скрипт; это он — сними (старт несёт поставка, а при своём она молчит), нет — ничего не делай`,
+    head: (kind) => ({ done: "сделано", kept: "уже стоит", left: "модели" })[kind]
+  },
+  en: {
+    usage: () => "usage: prepare [--dir <repo>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp YYYY-MM-DD] [--case N] [--json] [--lang en|ru]\n",
+    badArg: (flag, value) => `${flag}: "${value}" is not the right form; see prepare --help`,
+    notRepo: (dir) => `${dir} is not a git repository: nothing to prepare, nothing written`,
+    foreign: (file) => `${file} carries another delivery's cover — switching deliveries is the person's call, nothing written`,
+    unparsed: (file) => `${file} does not parse — nothing written`,
+    reality: (caseNo) => `# Reality — what a claim is checked against
+
+Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}. Until they are, behavioral claims are not accepted.
+`,
+    start: ({ graph, holon, role: role2 }) => `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role2 ? `, agent role #${role2}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
+    guard: (graph) => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md, «Persistence rules»). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
+    left: (item, keys) => ({
+      "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
+      "cover.rituals": `the delivery knows no ritual ${keys} in the cover's rituals: field — it switches nothing on; its rituals: start push merge guard turn. Fix the name or drop it`,
+      "cover.graph": "no graph named — --graph rN (iskron_realm action=list), iskronify tact 1",
+      "cover.holon": "no holon named — --holon N: find the holon by its repository attribute or create it",
+      "cover.agent_role": "no role named — --agent-role N: the holon's steward (iskron_search steward_of) or create it",
+      "cover.contract": "no contract named — --contract N in the run's last call (Step 7)",
+      "cover.flat": "the former flat cover stands beside the block — move judgment slots into «Project», drop the flat keys",
+      "CLAUDE.md": "CLAUDE.md is a file of its own, not a pointer: merge its content into AGENTS.md and replace it with the pointer (Step 7)",
+      "hook.start": RITE_EN("start hook", ".claude/settings.json"),
+      "hook.guard": "memory-guard waits for a graph in the cover — run prepare again with --graph",
+      "hook.push": RITE_EN("push hook", ".claude/settings.json"),
+      "hook.merge": RITE_EN("merge hook", ".claude/settings.json"),
+      "opencode.rituals": PLUGIN_EN
+    })[item],
+    unread: (item, hook) => item === "hook.guard" ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)` : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
+    head: (kind) => ({ done: "done", kept: "already there", left: "for the model" })[kind]
+  }
+};
+
+// js/delivery/words/rites.ts
+var RITES = {
+  ru: {
+    lifecycle: () => "Жизненный цикл сессии",
+    push: () => "[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md, «Самопроверка этапа» и раздел о ревью). Отгрузка — мерж.",
+    merge: (holon) => `[iskron] мерж — акты после мержа AGENTS.md («Жизненный цикл сессии», «Мерж → граф»): протки ${holon ? `контур #${holon}` : "контур"}, продвинь карту, модусы по свидетельству, закрой по оси, reconcile, словарный проход; фидбэк-рефлексия — если её велит AGENTS.md; работа по ссылке от агента — только семя превращения и модусы поставки.`,
+    early: (graph) => `[iskron] обложка AGENTS.md называет граф ${graph}, контура и роли агента в ней ещё нет — продолжи онбординг: ветвь «Первый граф» скилла iskronify, с недостающего шага; номеров контура и роли не выдумывай.`
+  },
+  en: {
+    lifecycle: () => "Session lifecycle",
+    push: () => "[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md, «Stage self-check» and the review section). Shipping is the merge.",
+    merge: (holon) => `[iskron] merge — the after-merge acts of AGENTS.md («Session lifecycle», «Merge → graph»): weave ${holon ? `holon #${holon}` : "the holon"}, advance the map, modes by evidence, close along the axis, reconcile, vocabulary pass; feedback reflection — if AGENTS.md calls for it; work by reference from an agent — only the transformation seed and the delivery modes.`,
+    early: (graph) => `[iskron] the AGENTS.md cover names graph ${graph}, with no holon and agent role in it yet — continue the onboarding: the «First graph» branch of the iskronify skill, from the missing step; do not invent holon or role numbers.`
   }
 };
 
@@ -860,6 +946,18 @@ var STATUS_POST = {
   }
 };
 
+// js/delivery/words/turn.ts
+var TURN = {
+  ru: {
+    wake: () => `${FRAME_MARK} человека в консоли нет — вопрос карточкой ask в деле, отчёт — словом в дело или каналом на его место (${tool("case")} ask/say, ${tool("channel")} send). Сказать некому и нечего — ход кончен, текста не нужно.`,
+    notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`
+  },
+  en: {
+    wake: () => `${FRAME_MARK} no human at the console — a question as an ask card in the case, a report as a word in the case or by the channel to their seat (${tool("case")} ask/say, ${tool("channel")} send). Nothing to say to anyone — the turn is over, no text needed.`,
+    notLaid: (session, why) => `the turn's end word did not enter session ${session}: ${why}`
+  }
+};
+
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -941,6 +1039,7 @@ function resolve2() {
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
 var words = (dict) => dict[lang()];
+var wordsIn = (dict, l) => dict[l ?? lang()];
 
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
@@ -1478,12 +1577,12 @@ function superseded(frames) {
     if (line.kind !== "progress" || !key || line.verdict === "bad" || addressedToMine(f)) return;
     const k = `${idOf(rec(r.room).id) || idOf(rec(r.room).seq)}|${key}`;
     const e = Number(r.entry_id ?? line.entry_id);
-    const at = Number.isFinite(e) ? e : i;
+    const at2 = Number.isFinite(e) ? e : i;
     const was = last.get(k);
-    if (!was) return void last.set(k, { frame: f, at });
-    if (at >= was.at) {
+    if (!was) return void last.set(k, { frame: f, at: at2 });
+    if (at2 >= was.at) {
       out2.add(was.frame);
-      last.set(k, { frame: f, at });
+      last.set(k, { frame: f, at: at2 });
     } else out2.add(f);
   });
   return out2;
@@ -1570,13 +1669,13 @@ function textOf(frame) {
 }
 function tail(frame, withReply) {
   const f = frame;
-  const parts = [];
+  const parts2 = [];
   const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
-  if (withReply && to) parts.push(W().replyTo(need(to)));
-  if (frame.stale === true) parts.push(W().stale());
+  if (withReply && to) parts2.push(W().replyTo(need(to)));
+  if (frame.stale === true) parts2.push(W().stale());
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
-    parts.push(W().bodyRead(need(frame.body_read)));
-  return parts.length ? `, ${parts.join(", ")}` : "";
+    parts2.push(W().bodyRead(need(frame.body_read)));
+  return parts2.length ? `, ${parts2.join(", ")}` : "";
 }
 var markFrame = (text2) => `${FRAME_MARK} ${text2}`;
 function humanWordReply(frame, origin2) {
@@ -1713,8 +1812,8 @@ async function enterCase(l, call, satelliteOf, placeName) {
     await call(tool("stand"), stand);
   } catch (e) {
     const why = e.message;
-    const join14 = `${tool("case")}(action="join", room="${room}")`;
-    return W5.notSeated(why, l.no, join14);
+    const join16 = `${tool("case")}(action="join", room="${room}")`;
+    return W5.notSeated(why, l.no, join16);
   }
   const place = placeName() || W5.ownSeat();
   try {
@@ -2492,7 +2591,7 @@ function recorded(file, since) {
   }
 }
 function createHalts(parentOf2, dir, unwritten, unlifted) {
-  const marked = (s) => stops().has(s) ? { id: ids().get(s) ?? "?", word: words2().get(s), alone: alones().has(s) } : recorded(fileOf(dir(), s), lifted().get(s));
+  const marked2 = (s) => stops().has(s) ? { id: ids().get(s) ?? "?", word: words2().get(s), alone: alones().has(s) } : recorded(fileOf(dir(), s), lifted().get(s));
   const drop2 = (s) => {
     stops().delete(s);
     ids().delete(s);
@@ -2518,7 +2617,7 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
     const found = [];
     const seen = /* @__PURE__ */ new Set();
     for (let s = session; s && !seen.has(s); s = parentOf2(s)) {
-      const m = marked(s);
+      const m = marked2(s);
       if (m && (s === session || !m.alone)) found.push(m.id);
       seen.add(s);
     }
@@ -2535,8 +2634,8 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
       lifted().delete(session);
       try {
         mkdirSync2(dir(), { recursive: true, mode: 448 });
-        const at = (/* @__PURE__ */ new Date()).toISOString();
-        const record = JSON.stringify({ session, at, id, word: word2, ...alone ? { alone } : {} });
+        const at2 = (/* @__PURE__ */ new Date()).toISOString();
+        const record = JSON.stringify({ session, at: at2, id, word: word2, ...alone ? { alone } : {} });
         writeFileSync2(fileOf(dir(), session), record, { mode: 384 });
       } catch (e) {
         unwritten(session, e.message);
@@ -2547,7 +2646,7 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
     halted: (session) => stopOf(session) !== null,
     stopOf,
     wordOf(session, general) {
-      const m = marked(session);
+      const m = marked2(session);
       return m ? m.word === void 0 ? general : m.word : null;
     }
   };
@@ -2851,16 +2950,16 @@ var absent = (p) => {
 };
 function canonReach(p) {
   const tail2 = [];
-  let at = p;
+  let at2 = p;
   for (; ; ) {
-    const c = canon2(at);
+    const c = canon2(at2);
     if (c) return tail2.length ? join8(c, ...tail2.reverse()) : c;
-    if (!absent(at)) return null;
-    const name = basename3(at);
-    const up = dirname2(at);
-    if (up === at || name === "." || name === "..") return null;
+    if (!absent(at2)) return null;
+    const name = basename3(at2);
+    const up = dirname2(at2);
+    if (up === at2 || name === "." || name === "..") return null;
     tail2.push(name);
-    at = up;
+    at2 = up;
   }
 }
 function resourceDir(resource) {
@@ -3188,8 +3287,8 @@ function psStart(pid) {
     windowsHide: true,
     timeout: 2e3
   }).trim();
-  const at = Date.parse(out2);
-  return Number.isNaN(at) ? null : at;
+  const at2 = Date.parse(out2);
+  return Number.isNaN(at2) ? null : at2;
 }
 function processStart(pid) {
   try {
@@ -3236,8 +3335,8 @@ var otherLive = (f, path) => {
 };
 function stoodAtOf(authDir2, key) {
   try {
-    const at = JSON.parse(readFileSync7(holdFilePathOf(authDir2, key), "utf8"))?.stoodAt;
-    return typeof at === "number" ? at : void 0;
+    const at2 = JSON.parse(readFileSync7(holdFilePathOf(authDir2, key), "utf8"))?.stoodAt;
+    return typeof at2 === "number" ? at2 : void 0;
   } catch {
     return void 0;
   }
@@ -3294,7 +3393,7 @@ function readOwn(path, tag, home) {
 }
 function takeLostMarker(authDir2, home) {
   const entries = [];
-  let at = "";
+  let at2 = "";
   let files;
   try {
     files = readdirSync4(authDir2).filter((f) => f.startsWith(PREFIX2) && f.endsWith(".json"));
@@ -3323,12 +3422,12 @@ function takeLostMarker(authDir2, home) {
     }
   }
   for (const { e, lost } of best.values()) {
-    if (lost.at > at) at = lost.at;
+    if (lost.at > at2) at2 = lost.at;
     entries.push(entryOf2(e));
   }
   if (!entries.length) return null;
-  const when = new Date(at);
-  const hhmm = Number.isNaN(when.getTime()) ? at : when.toTimeString().slice(0, 5);
+  const when = new Date(at2);
+  const hhmm = Number.isNaN(when.getTime()) ? at2 : when.toTimeString().slice(0, 5);
   const word2 = (of) => {
     const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
     return where ? words(OPENCODE_KEEP).lostWord(hhmm, where) : null;
@@ -3389,13 +3488,13 @@ var unrevokedWord = (who, failed) => failed === null ? W3().unrevokedUnknown(who
 import { realpathSync as realpathSync3 } from "node:fs";
 import { sep } from "node:path";
 function canonDir(p) {
-  let real = p;
+  let real2 = p;
   try {
-    real = realpathSync3.native(p);
+    real2 = realpathSync3.native(p);
   } catch {
   }
-  while (real.length > 1 && (real.endsWith("/") || real.endsWith(sep))) real = real.slice(0, -1);
-  return real;
+  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
+  return real2;
 }
 
 // js/opencode/twins.ts
@@ -3568,7 +3667,7 @@ function createKeeper(doors) {
   const W5 = words(OPENCODE_KEEP);
   const roots = /* @__PURE__ */ new Set();
   const hints = /* @__PURE__ */ new Map();
-  const marked = /* @__PURE__ */ new Map();
+  const marked2 = /* @__PURE__ */ new Map();
   const retrying = /* @__PURE__ */ new Map();
   let stopped = false;
   function notBack(root, mark, why) {
@@ -3593,19 +3692,19 @@ function createKeeper(doors) {
     const until = Date.now() + patience;
     for (; ; ) {
       const final = Date.now() + STEP_MS > until;
-      const r = await once(slot, root, quiet, final);
+      const r = await once2(slot, root, quiet, final);
       if (r !== "elsewhere" || final || stopped) return r;
       await sleep(STEP_MS);
     }
   }
-  async function once(slot, root, quiet, final) {
-    const mark = slot.child ? void 0 : marked.get(root);
+  async function once2(slot, root, quiet, final) {
+    const mark = slot.child ? void 0 : marked2.get(root);
     try {
       await doors.ready(slot);
       slot.dir ??= mark?.dir ?? await doors.directoryOf(root);
       if (stopped) return "none";
       if (!slot.dir && !slot.key || slot.child && !slot.key) {
-        marked.delete(root);
+        marked2.delete(root);
         if (mark) notBack(root, mark, W5.noKeyNoDir());
         return "none";
       }
@@ -3615,7 +3714,7 @@ function createKeeper(doors) {
       const elsewhere2 = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
       if (slot.child && Array.isArray(r?.refused) && r.refused.length) slot.refused = r.refused;
       if (!r?.resumed && elsewhere2 && !final) return "elsewhere";
-      marked.delete(root);
+      marked2.delete(root);
       if (r?.stopped) return stoppedRoot(root, r.word);
       if (!r?.resumed) {
         if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : W5.noAnswer());
@@ -3635,7 +3734,7 @@ function createKeeper(doors) {
         doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
       return "held";
     } catch (e) {
-      marked.delete(root);
+      marked2.delete(root);
       doors.say(W5.resumeFailed(root, e.message), "warning");
       if (mark && !stopped) notBack(root, mark, e.message);
       return "none";
@@ -3682,7 +3781,7 @@ function createKeeper(doors) {
       for (const e of entries) {
         if (!e.session || e.child) continue;
         if (e.key) hints.set(e.session, e.key);
-        marked.set(e.session, e);
+        marked2.set(e.session, e);
       }
     },
     async resumeLost(entries, wordFor) {
@@ -4062,15 +4161,15 @@ function createCascade() {
       if (ev?.type !== "session.execution.interrupted" || ev.data?.reason !== "user") return;
       if (typeof s !== "string") return;
       const now2 = Date.now();
-      for (const [k, at] of cut) if (now2 - at > 2 * WINDOW_MS) cut.delete(k);
+      for (const [k, at2] of cut) if (now2 - at2 > 2 * WINDOW_MS) cut.delete(k);
       cut.set(s, now2);
     },
     async byParent(parent, t) {
       const p = await parent.catch(() => null);
       if (!p) return false;
       const near = () => {
-        const at = cut.get(p);
-        return at !== void 0 && Math.abs(at - t) <= WINDOW_MS;
+        const at2 = cut.get(p);
+        return at2 !== void 0 && Math.abs(at2 - t) <= WINDOW_MS;
       };
       while (!near() && Date.now() - t < WINDOW_MS) await sleep(50);
       return near();
@@ -4128,9 +4227,9 @@ function createLeads(d) {
     if (!l.running) void finish(child, why);
   }
   async function lastLeave(child, l, room, realm) {
-    const at = l.moves;
+    const at2 = l.moves;
     const left = await d.sits(child, realm).catch((e) => e);
-    if (leads.get(child) !== l || l.moves !== at || l.leaving) return;
+    if (leads.get(child) !== l || l.moves !== at2 || l.leaving) return;
     if (left === 0) return leave(child, l, W3().leftCase(room));
     if (typeof left === "number") return;
     const text2 = W3().lastUnknown(who(l, child), room, left.message);
@@ -5376,9 +5475,9 @@ function setupTacts(send, takenEarly, freshestRoot, say) {
       const id = session ?? freshestRoot();
       if (!id || !ev.frames?.some(isTact)) return false;
       const prev = held.get(id);
-      const at = tactAt(ev.frames);
+      const at2 = tactAt(ev.frames);
       const was = prev ? tactAt(prev.ev.frames) : "";
-      const older = !!at && !!was && at < was;
+      const older = !!at2 && !!was && at2 < was;
       if (!onlyTacts(ev.frames) || !occupied(id)) {
         if (prev && !older) {
           clearTimeout(prev.timer);
@@ -5513,15 +5612,15 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
       p.riders.splice(0, Math.max(0, p.riders.length - RIDERS_MAX));
       return;
     }
-    const at = Date.now();
-    p.pending = { session: "", inbox: null, at };
+    const at2 = Date.now();
+    p.pending = { session: "", inbox: null, at: at2 };
     const text2 = [
       batchHead([...fresh(p, p.riders.splice(0)), ...frames]),
       ...batchLines(frames)
     ].join("\n");
     void deliver2(p.session, text2, W5.caseBatch(frames.length), "queue", p.child).then((got) => {
       const inbox = got?.inbox && !takenEarly.delete(got.inbox) ? got.inbox : null;
-      p.pending = got && inbox ? { session: got.session, inbox, at } : null;
+      p.pending = got && inbox ? { session: got.session, inbox, at: at2 } : null;
       if (p.held.length) schedule(p);
     });
   }
@@ -5903,7 +6002,9 @@ var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
 var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
 var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
 var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
-var bare = (v) => unquote(/^['"]/.test(v.trim()) ? v : v.replace(/\s+#.*$/, ""));
+var bare = (v) => unquote(
+  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
+);
 function fences(text2) {
   const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return null;
@@ -5941,6 +6042,14 @@ function coverBlocks(text2) {
 var coverBlock = (text2, root) => coverBlocks(text2).get(root) ?? null;
 var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
 var foreignBlock = (text2, root) => [...coverBlocks(text2)].some(([k, b]) => k !== root && b.has("contract"));
+var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
+function ritualsOf(block) {
+  const field = block?.get("rituals");
+  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
+  const names2 = field.split(/\s+/).filter(Boolean);
+  const known = (n2) => RITUALS2.includes(n2);
+  return { on: new Set(names2.filter(known)), unknown: names2.filter((n2) => !known(n2)) };
+}
 
 // js/shared/graphslot.ts
 var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
@@ -6075,12 +6184,12 @@ var text = (path) => {
   }
 };
 function repoRoot(dir) {
-  let at = resolve6(dir);
+  let at2 = resolve6(dir);
   for (; ; ) {
-    if (exists(join12(at, ".git"))) return at;
-    const up = dirname4(at);
-    if (up === at) return null;
-    at = up;
+    if (exists(join12(at2, ".git"))) return at2;
+    const up = dirname4(at2);
+    if (up === at2) return null;
+    at2 = up;
   }
 }
 function startHook(settings, mark) {
@@ -6114,7 +6223,9 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   };
   const hooked = signs.hooks["claude-code"] || signs.hooks.opencode;
   const any = signs.cover || signs.stamp || hooked;
-  const complete = signs.cover && signs.stamp && (harness === null || signs.hooks[harness]);
+  const block = agents === null ? null : coverBlock(agents, cover.root);
+  const carried = !!block?.get("graph") && !!block.get("holon") && !!block.get("agent_role");
+  const complete = signs.cover && signs.stamp && (harness === null || carried || signs.hooks[harness]);
   const verdict = stamped2 === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
@@ -6278,10 +6389,10 @@ function createPulseFeed(opts) {
     if (!line) lines.set(session, line = wordLine(() => opts.bridgeOf(session)));
     line.tell(change);
   };
-  const at = () => (/* @__PURE__ */ new Date()).toISOString();
+  const at2 = () => (/* @__PURE__ */ new Date()).toISOString();
   const ended2 = (session, to) => {
     const was = lines.get(session)?.word().state;
-    if (to !== "idle" || was === "busy") return tell(session, { state: to, turn_at: at() });
+    if (to !== "idle" || was === "busy") return tell(session, { state: to, turn_at: at2() });
     tell(session, was === void 0 ? { state: "idle" } : {});
   };
   return {
@@ -6289,7 +6400,7 @@ function createPulseFeed(opts) {
       const session = ev?.data?.sessionID;
       if (typeof session !== "string") return;
       const type = ev?.type;
-      if (ACTS.has(type)) return tell(session, { act_at: at() });
+      if (ACTS.has(type)) return tell(session, { act_at: at2() });
       const end = ENDS.get(type);
       if (end) return ended2(session, end);
       switch (type) {
@@ -6307,7 +6418,7 @@ function createPulseFeed(opts) {
         case "session.inbox.delivered": {
           const inbox = ev.data?.inboxID;
           if (typeof inbox === "string" && inboxes.delivered(session, inbox))
-            tell(session, { read_at: at() });
+            tell(session, { read_at: at2() });
           return;
         }
         case "session.inbox.cancelled": {
@@ -6318,7 +6429,7 @@ function createPulseFeed(opts) {
       }
     },
     prompted(session, inbox) {
-      if (inbox && inboxes.prompted(session, inbox)) tell(session, { read_at: at() });
+      if (inbox && inboxes.prompted(session, inbox)) tell(session, { read_at: at2() });
     },
     seated(session) {
       lines.get(session)?.again();
@@ -6337,9 +6448,275 @@ function createPulseFeed(opts) {
   };
 }
 
+// js/shared/memorypath.ts
+import { lstatSync as lstatSync2, readlinkSync } from "node:fs";
+import { homedir as homedir6 } from "node:os";
+import { dirname as dirname5, isAbsolute as isAbsolute2, join as join13, parse } from "node:path";
+var slash = (p) => p.replaceAll("\\", "/");
+var parts = (p) => p.slice(parse(p).root.length).split(/[\\/]+/);
+function real(p, inMemory = () => false) {
+  let r = parse(p).root;
+  let rest = parts(p);
+  let hops = 0;
+  while (rest.length) {
+    const c = rest.shift();
+    if (!c || c === ".") continue;
+    if (c === "..") {
+      r = dirname5(r);
+      continue;
+    }
+    const q = join13(r, c);
+    let link = false;
+    try {
+      link = lstatSync2(q).isSymbolicLink();
+    } catch {
+    }
+    if (!link) {
+      r = q;
+      continue;
+    }
+    let l = "";
+    try {
+      l = readlinkSync(q);
+    } catch {
+    }
+    if (++hops > 40 || !l || inMemory(q)) return null;
+    if (isAbsolute2(l)) r = parse(l).root;
+    rest = [...parts(l), ...rest];
+  }
+  return r;
+}
+function inLocalMemory(path, base) {
+  const home = join13(homedir6(), ".claude", "projects");
+  const projects = slash(real(home) ?? home).toLowerCase();
+  const inMemory = (p) => {
+    const x = `${slash(p)}/`.toLowerCase();
+    return /\/\.claude\/projects\/.*\/memory\//.test(x) || x.startsWith(`${projects}/`) && /\/memory\//.test(x.slice(projects.length));
+  };
+  const abs = isAbsolute2(path) ? path : `${base || process.cwd()}/${path}`;
+  const r = real(abs, inMemory);
+  return r === null || inMemory(abs) || inMemory(r);
+}
+
+// js/shared/ritualcover.ts
+import { readdirSync as readdirSync5, readFileSync as readFileSync13 } from "node:fs";
+import { join as join14 } from "node:path";
+function bodyLang(text2) {
+  const heads = text2.split("\n").filter((l) => /^#{1,6}\s/.test(l)).map((l) => l.replace(/^#+\s*/, "").toLowerCase());
+  return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle().toLowerCase())));
+}
+function ritualCover(dir, cover = COVER) {
+  const root = repoRoot(dir);
+  if (!root) return null;
+  let text2;
+  try {
+    text2 = readFileSync13(join14(root, cover.file), "utf8");
+  } catch {
+    return null;
+  }
+  if (stampOf2(text2, cover) === "foreign") return null;
+  const block = coverBlock(text2, cover.root);
+  const graph = block?.get("graph");
+  if (!block || !graph) return null;
+  const holon = block.get("holon") || void 0;
+  const role2 = block.get("agent_role") || void 0;
+  const lang2 = bodyLang(text2);
+  const { on } = ritualsOf(block);
+  return { root, graph, ...holon ? { holon } : {}, ...role2 ? { role: role2 } : {}, lang: lang2, on };
+}
+function startWord(c) {
+  const { graph, holon, role: role2, lang: lang2 } = c;
+  return holon && role2 ? wordsIn(PREPARE, lang2).start({ graph, holon, role: role2 }) : wordsIn(RITES, lang2).early(graph);
+}
+function ownRitualsPlugin(root) {
+  try {
+    return readdirSync5(join14(root, ".opencode", "plugins")).some((f) => /ritual/i.test(f));
+  } catch {
+    return false;
+  }
+}
+
+// js/shared/ritualjudge.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+var ARG = String.raw`(?:>&|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"\\])*`;
+var ENV = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*`;
+var PUSH = String.raw`${ENV}git(?: -C \S+)* push`;
+var at = (head, noop) => String.raw`(?:^|[;&|(\n] *)${head}(?=[ ;&|)\n]|$)(?!${ARG} (?:${noop})(?:[ ;&|)\n]|$))`;
+var PULL = new RegExp(
+  at(String.raw`${ENV}git(?: -C \S+)* (?:checkout|switch)`, "-h|--help") + String.raw` (?:main|master)(?=[ ;&|)\n]|$)` + String.raw`(?:${ARG}(?:&&|;|\n))+ *${ENV}git(?: -C \S+)* pull(?=[ ;&|)\n]|$)`
+);
+var REFUSED = /^(?:fatal:|error:| ! \[(?:remote )?rejected\])/m;
+var HELD = /^(?:[Ee]rror:|fatal:|GraphQL:|X )|not mergeable|merge failed/m;
+var TAGS_OUT = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new tag\])))/;
+var QUIET = new RegExp(
+  String.raw`^(?:${ARG}[;&|(\n] *)*` + PUSH + String.raw`(?=[ ;&|)\n]|$)(?!${ARG} (?:-h|--help)(?:[ ;&|)\n]|$))` + ARG + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`
+);
+function ran(c, head, noop, said2) {
+  if (!new RegExp(at(head, noop)).test(c.command)) return false;
+  const last = new RegExp(at(head, noop) + ARG + String.raw`\s*(?:&&|$)`).test(c.command);
+  return (c.exit ?? 0) === 0 && last || said2.test(c.output);
+}
+function tagOnly(args) {
+  let skip = false;
+  let tags = false;
+  let broad = false;
+  const pos = [];
+  for (const t of args.match(/(?:\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^ '"\\])+/g) ?? []) {
+    if (skip) skip = false;
+    else if (/^[0-9]*(?:>>?|<|>&)$/.test(t)) skip = true;
+    else if (/^[0-9]*(?:>>?|<|>&)/.test(t)) continue;
+    else if (/['"\\$`]/.test(t)) broad = true;
+    else if (t === "--tags") tags = true;
+    else if (/^(?:--(?:all|mirror|follow-tags|delete)(?:=|$)|-d$)/.test(t)) broad = true;
+    else if (/^(?:-o|--push-option|--receive-pack|--exec)$/.test(t)) skip = true;
+    else if (!t.startsWith("-")) pos.push(t);
+  }
+  const refs = pos.slice(1);
+  let name = false;
+  let ok = true;
+  for (const r of refs) {
+    if (name) name = false;
+    else if (r === "tag") name = true;
+    else if (!/^\+?refs\/tags\/[^:]+(?::refs\/tags\/[^:]+)?$/.test(r)) ok = false;
+  }
+  if (broad) return "no";
+  if (ok && !name && (refs.length > 0 || tags)) return "tag";
+  return refs.length === 1 && !tags && /^(?!refs\/|tag$)[^:+]+$/.test(refs[0] ?? "") ? "bare" : "no";
+}
+function tagsOnly(c) {
+  const all = new RegExp(String.raw`(?:^|[;&|(\n] *)${PUSH}(?=[ ;&|)\n]|$)(${ARG})`, "g");
+  const kinds2 = [...c.command.matchAll(all)].map((m) => tagOnly(m[1] ?? ""));
+  return kinds2.length > 0 && !kinds2.includes("no") && (!kinds2.includes("bare") || TAGS_OUT.test(`
+${c.output}`));
+}
+function quietLanded(cwd) {
+  if (!cwd) return false;
+  const git = (...a) => {
+    try {
+      const stdio = ["ignore", "pipe", "ignore"];
+      return execFileSync3("git", a, { cwd, encoding: "utf8", stdio, windowsHide: true }).trim();
+    } catch {
+      return "";
+    }
+  };
+  const head = git("rev-parse", "HEAD");
+  const branch = git("rev-parse", "--abbrev-ref", "HEAD");
+  return head !== "" && head === git("rev-parse", "@{push}") && !["main", "master"].includes(branch);
+}
+function pushed(c, cwd) {
+  if (REFUSED.test(c.output) || tagsOnly(c)) return false;
+  if (ran(c, PUSH, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)) return true;
+  return QUIET.test(c.command) && !c.command.includes("<<") && quietLanded(cwd);
+}
+function merged(c) {
+  if (HELD.test(c.output)) return false;
+  const noop = "-h|--help|--auto|--disable-auto";
+  return ran(c, "gh pr merge", noop, /(Merged|Squashed and merged|Rebased and merged) pull request/) || ran(c, "fj pr merge", noop, /Merged PR #/) || (c.exit ?? 0) === 0 && PULL.test(c.command);
+}
+
+// js/shared/turnend.ts
+var TURN_RITE = "turn";
+var SPEAKING = /* @__PURE__ */ new Map([
+  [tool("case"), /* @__PURE__ */ new Set(["ask", "say", "answer", "talk"])],
+  [tool("channel"), /* @__PURE__ */ new Set(["send"])]
+]);
+function speaks(name, input) {
+  if (typeof name !== "string") return false;
+  const is2 = (t) => name === t || name.endsWith(`__${t}`);
+  const i = input;
+  if (is2(tool("stand"))) return i?.status != null;
+  for (const [t, acts] of SPEAKING)
+    if (is2(t)) return typeof i?.action === "string" && acts.has(i.action);
+  return false;
+}
+var marked = (text2) => text2.trimStart().startsWith(FRAME_MARK);
+var lostWord = (t) => t.framed && !t.human && !t.spoke && t.text;
+
+// js/opencode/rites.ts
+var SAID_KEY = "__deliveryRitesSaid";
+var said = globalThis[SAID_KEY] ??= /* @__PURE__ */ new Set();
+var once = (key) => typeof key !== "string" || !said.has(key) && !!said.add(key);
+function pathsOf(tool2, input) {
+  const i = input ?? {};
+  if (tool2 === "patch" || tool2 === "apply_patch")
+    return [
+      ...String(i.patchText ?? "").matchAll(
+        /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm
+      )
+    ].map((m) => (m[1] ?? "").trim());
+  return tool2 === "write" || tool2 === "edit" ? [String(i.path ?? i.filePath ?? "")] : [];
+}
+function createRites(ctx) {
+  const loc = ctx.location;
+  const own = typeof loc?.directory === "string" && loc.directory ? loc.directory : null;
+  const coverOf = async (session) => {
+    const dir = await sessionDirectory(ctx, session) ?? own;
+    const cover = dir ? ritualCover(dir) : null;
+    return dir && cover && !ownRitualsPlugin(cover.root) ? { dir, cover } : null;
+  };
+  const started = /* @__PURE__ */ new Set();
+  return {
+    forget: (session) => void started.delete(session),
+    /** The turn's end (turnend.ts): no cover — on, a frame proves the seat; else by its rituals field. */
+    async turnOn(session) {
+      const dir = await sessionDirectory(ctx, session) ?? own;
+      const cover = dir ? ritualCover(dir) : null;
+      return !cover || cover.on.has(TURN_RITE);
+    },
+    /** The start word for a root's first prompt, once per session. */
+    async word(session) {
+      if (started.has(session)) return null;
+      started.add(session);
+      const c = await coverOf(session);
+      return c?.cover.on.has("start") ? startWord(c.cover) : null;
+    },
+    /** The guard before a writing call and the push and merge lines after a shell call. */
+    async wire() {
+      const tool2 = ctx.tool;
+      if (typeof tool2?.hook !== "function") return false;
+      await tool2.hook("execute.before", async (t) => {
+        const paths = pathsOf(t.tool, t.input);
+        if (!paths.some(Boolean)) return;
+        const c = await coverOf(String(t.sessionID));
+        if (c?.cover.on.has("guard") && paths.some((p) => p && inLocalMemory(p, c.dir)))
+          throw new Error(wordsIn(PREPARE, c.cover.lang).guard(c.cover.graph));
+      });
+      await tool2.hook("execute.after", async (t) => {
+        if (!["shell", "bash"].includes(t.tool) || t.status !== "completed") return;
+        const result = t.result;
+        const content = result.content;
+        const output = typeof content === "string" ? content : (content ?? []).map((p) => p.text ?? "").join("\n");
+        const exit = typeof result.metadata?.exit === "number" ? result.metadata.exit : null;
+        const call = {
+          command: String(t.input?.command ?? ""),
+          output,
+          exit
+        };
+        const c = await coverOf(String(t.sessionID));
+        if (!c) return;
+        const W5 = wordsIn(RITES, c.cover.lang);
+        const { on, holon } = c.cover;
+        const note = [
+          on.has("push") && pushed(call, c.dir) && W5.push(),
+          on.has("merge") && merged(call) && W5.merge(holon)
+        ].filter(Boolean).join("\n\n");
+        if (!note || !once(t.id)) return;
+        const next = {
+          ...result,
+          content: typeof content === "string" ? `${content}
+
+${note}` : [...content ?? [], { type: "text", text: note }]
+        };
+        t.result = next;
+      });
+      return true;
+    }
+  };
+}
+
 // js/opencode/rootseat-again.ts
 import { realpathSync as realpathSync5, statSync as statSync5 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join15 } from "node:path";
 function atRepoRoot(where) {
   const root = repoRoot(where);
   if (root === null) return false;
@@ -6358,7 +6735,7 @@ function coverIn(where) {
 }
 function stamp(where) {
   try {
-    const st = statSync5(join13(where, COVER.file));
+    const st = statSync5(join15(where, COVER.file));
     return `${st.mtimeMs}:${st.size}:${st.ino}`;
   } catch {
     return "";
@@ -6613,6 +6990,77 @@ function startWords(seats, invitation, closed) {
   };
 }
 
+// js/opencode/turnend.ts
+var ENDS2 = /* @__PURE__ */ new Set(["session.execution.succeeded", "session.idle"]);
+var CUTS = /* @__PURE__ */ new Set(["session.execution.failed", "session.execution.interrupted"]);
+function createTurnEnds(ctx, opts) {
+  const turns = /* @__PURE__ */ new Map();
+  const frames = createInboxBook();
+  const wakes = createInboxBook();
+  const turn = (s) => {
+    let t = turns.get(s);
+    if (!t)
+      turns.set(s, t = { framed: false, human: false, spoke: false, text: false, woken: false });
+    return t;
+  };
+  async function end(s) {
+    const t = turns.get(s);
+    turns.delete(s);
+    if (!t || t.woken || !lostWord(t) || opts.skip(s) || !await opts.on(s)) return;
+    try {
+      const r = await ctx.session.prompt({
+        sessionID: s,
+        text: words(TURN).wake(),
+        delivery: "queue"
+      });
+      const inbox = r?.id ?? r?.data?.id;
+      if (typeof inbox === "string" && wakes.prompted(s, inbox)) turn(s).woken = true;
+    } catch (e) {
+      opts.say(words(TURN).notLaid(s, e.message));
+    }
+  }
+  return {
+    laid(session, inbox) {
+      if (!inbox || frames.prompted(session, inbox)) turn(session).framed = true;
+    },
+    prompt(session, text2) {
+      if (!marked(text2)) turn(session).human = true;
+    },
+    async wire() {
+      const tool2 = ctx.tool;
+      if (typeof tool2?.hook !== "function") return;
+      await tool2.hook("execute.after", (c) => {
+        const t = turn(String(c.sessionID));
+        t.text = false;
+        if (c.status === "completed" && speaks(c.tool, c.input)) t.spoke = true;
+      });
+    },
+    onEvent(ev) {
+      const s = ev?.data?.sessionID;
+      if (typeof s !== "string") return;
+      const type = ev?.type;
+      const inbox = ev.data?.inboxID;
+      if (type === "session.inbox.delivered") {
+        if (typeof inbox !== "string") return;
+        if (frames.delivered(s, inbox)) turn(s).framed = true;
+        else if (wakes.delivered(s, inbox)) turn(s).woken = true;
+      } else if (type === "session.inbox.cancelled") {
+        if (typeof inbox !== "string") return;
+        frames.cancelled(s, inbox);
+        wakes.cancelled(s, inbox);
+      } else if (type === "session.text.ended") {
+        if (typeof ev.data?.text === "string" && ev.data.text.trim()) turn(s).text = true;
+      } else if (ENDS2.has(type)) void end(s);
+      else if (CUTS.has(type)) turns.delete(s);
+    },
+    forget(session) {
+      turns.delete(session);
+      frames.forget(session);
+      wakes.forget(session);
+    }
+  };
+}
+
 // js/opencode/usage.ts
 var DEBOUNCE_MS = Number(process.env[envName("USAGE_DEBOUNCE_MS")] || 1e4);
 var n = (v) => typeof v === "number" && Number.isFinite(v) ? v : 0;
@@ -6733,7 +7181,7 @@ function createWaits(ctx, d) {
   const home = homeOf(ctx);
   const answered = /* @__PURE__ */ new Set();
   const told = toldInProcess();
-  const once = (key) => {
+  const once2 = (key) => {
     if (told.has(key)) return false;
     told.add(key);
     if (told.size > 1e3) told.delete(told.values().next().value);
@@ -6756,7 +7204,7 @@ function createWaits(ctx, d) {
     await sleep(WAIT_MS);
     if (stopped || answered.has(id)) return;
     const kid = await childOf(sessionID, ev);
-    if (!kid || answered.has(id) || !once(id)) return;
+    if (!kid || answered.has(id) || !once2(id)) return;
     const list = Array.isArray(resources) ? resources.map(String) : [];
     await d.tell(kid.parent, askWord(kid.who, String(action ?? W3().action()), list), true);
   }
@@ -6766,7 +7214,7 @@ function createWaits(ctx, d) {
     if (d.isLead(sessionID)) return;
     const kid = await childOf(sessionID, ev);
     const key = typeof ev?.id === "string" ? ev.id : `${sessionID}@${ev?.created ?? reason2}`;
-    if (!kid || stopped || d.isLead(sessionID) || !once(key)) return;
+    if (!kid || stopped || d.isLead(sessionID) || !once2(key)) return;
     await d.tell(kid.parent, interruptWord(kid.who, reason2), false);
   }
   return {
@@ -6832,11 +7280,11 @@ async function setup(ctx) {
   }
   function freshestRoot() {
     let best = null;
-    let at = -1;
+    let at2 = -1;
     for (const [id, t] of seen) {
-      if (t <= at) continue;
+      if (t <= at2) continue;
       best = id;
-      at = t;
+      at2 = t;
     }
     return best;
   }
@@ -6847,6 +7295,12 @@ async function setup(ctx) {
     bridgeOf: (s) => half.bridgeOf(s),
     overflow: (s, n2) => say(W5.pulseOverflow(s, n2), "warning")
   });
+  const rites = createRites(ctx);
+  const turns = createTurnEnds(ctx, {
+    skip: (s) => parents.has(s) || roots.has(s) && roots.get(s) !== s || closed(s),
+    on: (s) => rites.turnOn(s),
+    say: (text2) => say(text2, "warning")
+  });
   try {
     const c0 = setupChannel(
       ctx,
@@ -6855,7 +7309,10 @@ async function setup(ctx) {
       parents,
       () => sweepAll(),
       { ended: (s) => half.ended(s), launcherOf: (s) => half.launcherOf(s) },
-      pulse.prompted
+      (s, inbox) => {
+        pulse.prompted(s, inbox);
+        turns.laid(s, inbox);
+      }
     );
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
@@ -6904,11 +7361,20 @@ async function setup(ctx) {
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
   try {
+    await rites.wire();
+    await turns.wire();
+  } catch (e) {
+    say(W5.ritesDown(e.message), "error");
+  }
+  try {
     await ctx.session.hook("prompt", async (p) => {
       const sid = String(p.sessionID);
+      turns.prompt(sid, p.prompt.text);
       const root = await rootOf(sid) === sid;
       const word2 = await half.launch(sid, p.prompt.text);
       if (word2) p.prompt.text = withWord(p.prompt.text, word2);
+      const rite = root && !closed(sid) ? await rites.word(sid) : null;
+      if (rite) p.prompt.text = withWord(p.prompt.text, rite);
       for (const w of root ? await started(sid) : []) p.prompt.text = withWord(p.prompt.text, w);
       const counts = root ? ch?.ride(sid) : null;
       if (counts) p.prompt.text = `${p.prompt.text}
@@ -6972,13 +7438,16 @@ ${markFrame(counts)}`;
         waits.onEvent(ev);
         pulse.onEvent(ev);
         compaction.onEvent(ev);
+        turns.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
             pulse.forget(id);
+            turns.forget(id);
             compaction.forget(id);
             rootSeats.forget(id);
             onboard.forget(id);
+            rites.forget(id);
             roots.delete(id);
             seen.delete(id);
             parents.delete(id);
