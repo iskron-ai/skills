@@ -5,16 +5,21 @@
 // each prompt names its step, the provider answers it with one tool call, then text.
 //
 //   node scripts/stand-run-rites.mjs --token-file F --url U --api A --realm @owner/slug
-//     [--ledger-log F] [--bridge B] [--plugin P] [--report F] [--rituals "start push"]
+//     [--ledger-log F] [--bridge B] [--plugin P] [--report F] [--rituals "start push"] [--headed]
 //
 // --rituals — the covers of A and B carry this `rituals:` field (#9341): a ritual left out of it
 // keeps silent — no start word, no push or merge line, the guard lets the write pass.
+// --headed — the body of A's AGENTS.md heads its own sections «Жизненный цикл сессии»,
+// «Самопроверка этапа», «Мерж → граф», «Правила персистентности» (#9351): the push, merge and
+// guard words cite them as they stand; without it the body heads none, and the words name
+// AGENTS.md with no section — no template heading made up.
 //
 // Scene: an agent role, stewarding a holon whose attribute repository names the prepare
 // project's origin; taken off at the end. Projects: (A) a git repository with an `iskron:` cover
 // and a bare remote, no rituals of its own — the start word in the first request, a push line
 // after `git push` (none on a refused push), a merge line after `gh pr merge` (a stand-in gh on
-// PATH printing the forge's outcome) and after `git checkout main && git pull`, the memory guard
+// PATH printing the forge's outcome) and after `git checkout main && git pull`, a quiet push of a
+// commit on main (`git push -q`, nothing printed) — the merge line, no push line (#8362), the memory guard
 // refuses a write into ~/.claude/projects/…/memory/, an ordinary file passes; (B) the same with
 // its own `.opencode/plugins/iskron-rituals.js` — the delivery keeps silent, the own plugin's
 // word comes once; (C) a clean repository with origin = the scene's repository — `prepare --json`
@@ -43,6 +48,8 @@ const realm = arg("--realm");
 const ledgerLog = arg("--ledger-log");
 const ritesField = arg("--rituals");
 const on = (r) => ritesField === undefined || ritesField.split(/\s+/).includes(r);
+const headed = process.argv.includes("--headed");
+const HEADS = { lifecycle: "Жизненный цикл сессии", check: "Самопроверка этапа", merge: "Мерж → граф", persist: "Правила персистентности" };
 if (!tokenFile || !URL_ || !apiArg || !realm) fail(2, "--token-file, --url, --api and --realm are required");
 const bridge = resolve(arg("--bridge", BUILT_BRIDGE));
 const plugin = resolve(arg("--plugin", BUILT_PLUGIN));
@@ -98,7 +105,7 @@ const git = (cwd, ...a) => {
   if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr.slice(0, 300)}`);
   return r.stdout.trim();
 };
-const cover = (graph, holon, role) => `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 38\n  stamp: 2026-11-03\n${ritesField === undefined ? "" : `  rituals: ${ritesField}\n`}---\n# Пробный проект ритуалов\n`;
+const cover = (graph, holon, role) => `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 38\n  stamp: 2026-11-03\n${ritesField === undefined ? "" : `  rituals: ${ritesField}\n`}---\n# Пробный проект ритуалов\n${headed ? `\n## ${HEADS.persist}\nПамять харнесса запрещена.\n\n## ${HEADS.lifecycle}\n\n### ${HEADS.check}\nПеречитай дифф.\n\n### ${HEADS.merge}\nПротки контур.\n` : ""}`;
 /** A repository with the cover, main pushed to a bare remote and feat/x one commit ahead. */
 function rituals(dir, text, own) {
   const remote = `${dir}.remote.git`;
@@ -278,6 +285,7 @@ try {
     a_refused: { dir: proj.A, shell: "git push nowhere feat/x" },
     a_gh: { dir: proj.A, shell: "gh pr merge 1 --squash" },
     a_pull: { dir: proj.A, shell: "git checkout main && git pull" },
+    a_trunk: { dir: proj.A, shell: "git push -q" },
     a_guard: { write: memoryFile },
     a_file: { write: join(proj.A, "notes.md") },
     b_start: {},
@@ -302,17 +310,30 @@ try {
   const field = ritesField === undefined ? "" : ` (cover rituals: ${ritesField})`;
   const one = (r) => (on(r) ? 1 : 0);
   verdict(firstA && starts(firstA) === one("start"), `(1a) the start word with ${graph}, #${holon}, #${role} ${on("start") ? "once" : "none"} in the root's first request${field}`, `start words ${firstA ? starts(firstA) : "no request"}`);
-  for (const s of ["a_push", "a_refused", "a_gh", "a_pull", "a_guard", "a_file"]) await turn(A, `RITES_STEP=${s}: run the step.`);
+  for (const s of ["a_push", "a_refused", "a_gh", "a_pull"]) await turn(A, `RITES_STEP=${s}: run the step.`);
+  // A commit on main for the quiet push to the trunk: git prints nothing, the state of git speaks.
+  writeFileSync(join(proj.A, "trunk.txt"), "trunk\n");
+  git(proj.A, "add", "trunk.txt");
+  git(proj.A, "commit", "-q", "-m", "chore: trunk");
+  for (const s of ["a_trunk", "a_guard", "a_file"]) await turn(A, `RITES_STEP=${s}: run the step.`);
   const lastA = primaries().filter((b) => users(b).includes("RITES_STEP=a_file")).at(-1);
   verdict(lastA && starts(lastA) === one("start"), "(1a) no second start word on the root's later prompts", `start words in the last request ${lastA ? starts(lastA) : "—"}`);
-  const push = (l) => RITES[l].push();
-  const merge = (l) => RITES[l].merge(holon);
+  const H = headed ? HEADS : {};
+  const push = (l) => RITES[l].push(H.check);
+  const merge = (l) => RITES[l].merge(holon, H.lifecycle, H.merge);
   const r = Object.fromEntries(Object.keys(steps).map((s) => [s, resultOf(s)]));
   verdict(r.a_push !== null && either(r.a_push, push) === one("push"), `(1b) after git push — ${on("push") ? "one push line" : "no push line"} in the result${field}`, `push lines ${either(r.a_push, push)}`);
   verdict(r.a_refused !== null && either(r.a_refused, push) === 0, "(1b) a refused push — no push line", `push lines ${either(r.a_refused, push)}`);
   verdict(r.a_gh !== null && either(r.a_gh, merge) === one("merge"), `(1c) after gh pr merge — ${on("merge") ? "one merge line naming the holon" : "no merge line"}${field}`, `merge lines ${either(r.a_gh, merge)}`);
   verdict(r.a_pull !== null && either(r.a_pull, merge) === one("merge"), `(1c) after git checkout main && git pull — ${on("merge") ? "one merge line" : "no merge line"}${field}`, `merge lines ${either(r.a_pull, merge)}`);
-  const guarded = either(r.a_guard, (l) => PREPARE[l].guard(graph));
+  const landed = git(proj.A, "rev-parse", "HEAD") === git(proj.A, "rev-parse", "origin/main");
+  verdict(r.a_trunk !== null && landed && either(r.a_trunk, merge) === one("push") && either(r.a_trunk, push) === 0, `(1f) a quiet push to the trunk (git push -q on main) — ${on("push") ? "one merge line" : "no merge line"}, no push line (#8362)${field}`, `landed ${landed} · merge lines ${either(r.a_trunk, merge)} · push lines ${either(r.a_trunk, push)}`);
+  // #9351: the push and merge words cite the file's own headings as they stand, and none the file
+  // lacks (the guard's own text quotes «Раскладке»: its section is judged by the exact word, 1d).
+  const cited = ["a_push", "a_gh", "a_trunk"].flatMap((s) => (r[s] ?? "").match(/«[^»\n]+»/g) ?? []);
+  const foreign = cited.filter((c) => !Object.values(H).includes(c.slice(1, -1)));
+  verdict(foreign.length === 0 && (!headed || [H.check, H.merge, H.lifecycle].every((h) => cited.includes(`«${h}»`))), `(1g) the ritual words cite ${headed ? "the cover's own headings as they stand" : "no section: the body heads none"} (#9351)`, `cited ${[...new Set(cited)].join(" ") || "none"}`);
+  const guarded = either(r.a_guard, (l) => PREPARE[l].guard(graph, H.persist ?? null));
   verdict(on("guard") ? guarded === 1 && !existsSync(memoryFile) : r.a_guard !== null && guarded === 0 && existsSync(memoryFile), `(1d) a write into ~/.claude/projects/…/memory — ${on("guard") ? "refused by the guard, nothing written" : "the guard keeps silent, the write passes"}${field}`, `guard ${guarded} · file ${existsSync(memoryFile)}`);
   verdict(existsSync(join(proj.A, "notes.md")) && !/BLOCKED/.test(r.a_file ?? ""), "(1d) an ordinary file of the repository passes");
   rmSync(memoryFile, { force: true }); // B judges its own write
