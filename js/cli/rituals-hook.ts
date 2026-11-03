@@ -1,6 +1,6 @@
 // The plugin's ritual hooks in Claude Code (hooks/hooks.json; graph @nks/nks-dev, node #9319,
 // section RITUALS): one entry for every event it is wired to. SessionStart — the start word with
-// the cover's addresses; PostToolUse of Bash — the push and merge words by outcome
+// the cover's addresses, or the early word while it names only the graph (#8018); PostToolUse of Bash — the push and merge words by outcome
 // (shared/ritualjudge.ts). Switched on by the cover of the session's repository
 // (shared/ritualcover.ts); a kind the repository's own settings hold on this event's source or
 // tool (hookkinds.ts, by matcher) keeps it silent there — no word twice, none lost. The memory guard stays the repository's hook: a plugin hook's blocking
@@ -8,9 +8,9 @@
 // Local reads only; always exit 0.
 import { readFileSync } from "node:fs";
 
-import { PREPARE, RITES } from "../delivery/index.ts";
-import { words } from "../shared/lang.ts";
-import { ritualCover, startCarried } from "../shared/ritualcover.ts";
+import { RITES } from "../delivery/index.ts";
+import { wordsIn } from "../shared/lang.ts";
+import { ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushed } from "../shared/ritualjudge.ts";
 import { standingRites } from "./hookkinds.ts";
 
@@ -47,9 +47,9 @@ function riteWords(input: HookInput, dir: string): string[] {
   const event = input.hook_event_name;
   if (event === "SessionStart") {
     const source = typeof input.source === "string" ? input.source : "startup";
-    if (source === "compact" || !startCarried(cover)) return [];
+    if (source === "compact") return [];
     if (standingRites(cover.root, source).has("hook.start")) return [];
-    return [words(PREPARE).start({ graph: cover.graph, holon: cover.holon, role: cover.role })];
+    return [startWord(cover)];
   }
   if (event !== "PostToolUse" || input.tool_name !== "Bash") return [];
   const own = standingRites(cover.root, "Bash");
@@ -58,8 +58,9 @@ function riteWords(input: HookInput, dir: string): string[] {
     ...printed(input.tool_response),
   };
   const said: string[] = [];
-  if (!own.has("hook.push") && pushed(call, dir)) said.push(words(RITES).push());
-  if (!own.has("hook.merge") && merged(call)) said.push(words(RITES).merge(cover.holon));
+  const W = wordsIn(RITES, cover.lang);
+  if (!own.has("hook.push") && pushed(call, dir)) said.push(W.push());
+  if (!own.has("hook.merge") && merged(call)) said.push(W.merge(cover.holon));
   return said;
 }
 

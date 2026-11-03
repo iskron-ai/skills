@@ -1,13 +1,13 @@
 // The delivery's session rituals in OpenCode (graph @nks/nks-dev, node #9319, section RITUALS):
 // what a repository's rituals plugin did, carried by the plugin and switched on by the cover of
-// the session's repository (shared/ritualcover.ts). A root's first prompt gets the start word;
-// a write into local project memory is refused (shared/memorypath.ts); a shell call that pushed
+// the session's repository (shared/ritualcover.ts). A root's first prompt gets the start word,
+// the early one while the cover names only the graph (#8018); a write into local project memory is refused (shared/memorypath.ts); a shell call that pushed
 // or merged gets one more line (shared/ritualjudge.ts). A repository keeping a rituals plugin
 // of its own hears only that one — the delivery keeps silent there until the transition.
 import { PREPARE, RITES } from "../delivery/index.ts";
-import { words } from "../shared/lang.ts";
+import { wordsIn } from "../shared/lang.ts";
 import { inLocalMemory } from "../shared/memorypath.ts";
-import { ownRitualsPlugin, ritualCover, startCarried } from "../shared/ritualcover.ts";
+import { ownRitualsPlugin, ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushed } from "../shared/ritualjudge.ts";
 import { sessionDirectory } from "./host.ts";
 import type { Context } from "./plugin.ts";
@@ -52,9 +52,7 @@ export function createRites(ctx: Context) {
       if (started.has(session)) return null;
       started.add(session);
       const c = await coverOf(session);
-      if (!c || !startCarried(c.cover)) return null;
-      const { graph, holon, role } = c.cover;
-      return words(PREPARE).start({ graph, holon, role });
+      return c ? startWord(c.cover) : null;
     },
     /** The guard before a writing call and the push and merge lines after a shell call. */
     async wire(): Promise<boolean> {
@@ -65,7 +63,7 @@ export function createRites(ctx: Context) {
         if (!paths.some(Boolean)) return;
         const c = await coverOf(String(t.sessionID));
         if (c && paths.some((p) => p && inLocalMemory(p, c.dir)))
-          throw new Error(words(PREPARE).guard(c.cover.graph));
+          throw new Error(wordsIn(PREPARE, c.cover.lang).guard(c.cover.graph));
       });
       await tool.hook("execute.after", async (t) => {
         if (!["shell", "bash"].includes(t.tool) || t.status !== "completed") return;
@@ -83,10 +81,8 @@ export function createRites(ctx: Context) {
         };
         const c = await coverOf(String(t.sessionID));
         if (!c) return;
-        const note = [
-          pushed(call, c.dir) && words(RITES).push(),
-          merged(call) && words(RITES).merge(c.cover.holon),
-        ]
+        const W = wordsIn(RITES, c.cover.lang);
+        const note = [pushed(call, c.dir) && W.push(), merged(call) && W.merge(c.cover.holon)]
           .filter(Boolean)
           .join("\n\n");
         if (!note || !once(t.id)) return;
