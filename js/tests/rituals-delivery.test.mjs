@@ -113,6 +113,14 @@ test("claude code: a quiet push that exited non-zero says nothing (#6919)", () =
   );
 });
 
+// Case №2774 [19]: the push landed and printed its report, then `gh pr create` failed — the exit is
+// the last command's, not the push's; the printed report wins.
+test("claude code: a push before a failing && command still says the push word (#6919)", () => {
+  const said = bash(repo(), "git push -u origin feat/x && gh pr create --fill", PUSHED, 1);
+  assert.match(said?.additionalContext ?? "", /пуш — не отгрузка/);
+  assert.equal(bash(onTrunk(), "git push -q origin feat/x && gh pr create --fill", "", 1), null);
+});
+
 // The session's folder sits on main, the push may have run from another work tree: a quiet push
 // names no target and prints none — neither word is known to be true, none is said.
 test("claude code: a quiet push naming no trunk from a folder on main says nothing (#8362)", () => {
