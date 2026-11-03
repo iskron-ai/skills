@@ -5,7 +5,10 @@
 // each prompt names its step, the provider answers it with one tool call, then text.
 //
 //   node scripts/stand-run-rites.mjs --token-file F --url U --api A --realm @owner/slug
-//     [--ledger-log F] [--bridge B] [--plugin P] [--report F]
+//     [--ledger-log F] [--bridge B] [--plugin P] [--report F] [--rituals "start push"]
+//
+// --rituals — the covers of A and B carry this `rituals:` field (#9341): a ritual left out of it
+// keeps silent — no start word, no push or merge line, the guard lets the write pass.
 //
 // Scene: an agent role, stewarding a holon whose attribute repository names the prepare
 // project's origin; taken off at the end. Projects: (A) a git repository with an `iskron:` cover
@@ -38,6 +41,8 @@ const URL_ = arg("--url");
 const apiArg = arg("--api");
 const realm = arg("--realm");
 const ledgerLog = arg("--ledger-log");
+const ritesField = arg("--rituals");
+const on = (r) => ritesField === undefined || ritesField.split(/\s+/).includes(r);
 if (!tokenFile || !URL_ || !apiArg || !realm) fail(2, "--token-file, --url, --api and --realm are required");
 const bridge = resolve(arg("--bridge", BUILT_BRIDGE));
 const plugin = resolve(arg("--plugin", BUILT_PLUGIN));
@@ -93,7 +98,7 @@ const git = (cwd, ...a) => {
   if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr.slice(0, 300)}`);
   return r.stdout.trim();
 };
-const cover = (graph, holon, role) => `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 38\n  stamp: 2026-11-03\n---\n# Пробный проект ритуалов\n`;
+const cover = (graph, holon, role) => `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 38\n  stamp: 2026-11-03\n${ritesField === undefined ? "" : `  rituals: ${ritesField}\n`}---\n# Пробный проект ритуалов\n`;
 /** A repository with the cover, main pushed to a bare remote and feat/x one commit ahead. */
 function rituals(dir, text, own) {
   const remote = `${dir}.remote.git`;
@@ -294,19 +299,23 @@ try {
   await turn(A, "RITES_STEP=a_start: reply OK.");
   const firstA = primaries().find((b) => users(b).includes("RITES_STEP=a_start"));
   const starts = (b) => either(users(b), (l) => PREPARE[l].start({ graph, holon, role }));
-  verdict(firstA && starts(firstA) === 1, `(1a) the start word with ${graph}, #${holon}, #${role} once in the root's first request`, `start words ${firstA ? starts(firstA) : "no request"}`);
+  const field = ritesField === undefined ? "" : ` (cover rituals: ${ritesField})`;
+  const one = (r) => (on(r) ? 1 : 0);
+  verdict(firstA && starts(firstA) === one("start"), `(1a) the start word with ${graph}, #${holon}, #${role} ${on("start") ? "once" : "none"} in the root's first request${field}`, `start words ${firstA ? starts(firstA) : "no request"}`);
   for (const s of ["a_push", "a_refused", "a_gh", "a_pull", "a_guard", "a_file"]) await turn(A, `RITES_STEP=${s}: run the step.`);
   const lastA = primaries().filter((b) => users(b).includes("RITES_STEP=a_file")).at(-1);
-  verdict(lastA && starts(lastA) === 1, "(1a) no second start word on the root's later prompts", `start words in the last request ${lastA ? starts(lastA) : "—"}`);
+  verdict(lastA && starts(lastA) === one("start"), "(1a) no second start word on the root's later prompts", `start words in the last request ${lastA ? starts(lastA) : "—"}`);
   const push = (l) => RITES[l].push();
   const merge = (l) => RITES[l].merge(holon);
   const r = Object.fromEntries(Object.keys(steps).map((s) => [s, resultOf(s)]));
-  verdict(either(r.a_push, push) === 1, "(1b) after git push — one push line in the result", `push lines ${either(r.a_push, push)}`);
+  verdict(r.a_push !== null && either(r.a_push, push) === one("push"), `(1b) after git push — ${on("push") ? "one push line" : "no push line"} in the result${field}`, `push lines ${either(r.a_push, push)}`);
   verdict(r.a_refused !== null && either(r.a_refused, push) === 0, "(1b) a refused push — no push line", `push lines ${either(r.a_refused, push)}`);
-  verdict(either(r.a_gh, merge) === 1, "(1c) after gh pr merge — one merge line naming the holon", `merge lines ${either(r.a_gh, merge)}`);
-  verdict(either(r.a_pull, merge) === 1, "(1c) after git checkout main && git pull — one merge line", `merge lines ${either(r.a_pull, merge)}`);
-  verdict(either(r.a_guard, (l) => PREPARE[l].guard(graph)) === 1 && !existsSync(memoryFile), "(1d) a write into ~/.claude/projects/…/memory — refused by the guard, nothing written", `guard ${either(r.a_guard, (l) => PREPARE[l].guard(graph))} · file ${existsSync(memoryFile)}`);
+  verdict(r.a_gh !== null && either(r.a_gh, merge) === one("merge"), `(1c) after gh pr merge — ${on("merge") ? "one merge line naming the holon" : "no merge line"}${field}`, `merge lines ${either(r.a_gh, merge)}`);
+  verdict(r.a_pull !== null && either(r.a_pull, merge) === one("merge"), `(1c) after git checkout main && git pull — ${on("merge") ? "one merge line" : "no merge line"}${field}`, `merge lines ${either(r.a_pull, merge)}`);
+  const guarded = either(r.a_guard, (l) => PREPARE[l].guard(graph));
+  verdict(on("guard") ? guarded === 1 && !existsSync(memoryFile) : r.a_guard !== null && guarded === 0 && existsSync(memoryFile), `(1d) a write into ~/.claude/projects/…/memory — ${on("guard") ? "refused by the guard, nothing written" : "the guard keeps silent, the write passes"}${field}`, `guard ${guarded} · file ${existsSync(memoryFile)}`);
   verdict(existsSync(join(proj.A, "notes.md")) && !/BLOCKED/.test(r.a_file ?? ""), "(1d) an ordinary file of the repository passes");
+  rmSync(memoryFile, { force: true }); // B judges its own write
 
   const B = session(proj.B, "rites B");
   await turn(B, "RITES_STEP=b_start: reply OK.");
