@@ -10,6 +10,7 @@ import { wordsIn } from "../shared/lang.ts";
 import { inLocalMemory } from "../shared/memorypath.ts";
 import { ownRitualsPlugin, ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushed } from "../shared/ritualjudge.ts";
+import { TURN_RITE } from "../shared/turnend.ts";
 import { sessionDirectory } from "./host.ts";
 import type { Context } from "./plugin.ts";
 
@@ -48,6 +49,12 @@ export function createRites(ctx: Context) {
   const started = new Set<string>();
   return {
     forget: (session: string): void => void started.delete(session),
+    /** The turn's end (turnend.ts): no cover — on, a frame proves the seat; else by its rituals field. */
+    async turnOn(session: string): Promise<boolean> {
+      const dir = (await sessionDirectory(ctx, session)) ?? own;
+      const cover = dir ? ritualCover(dir) : null;
+      return !cover || cover.on.has(TURN_RITE);
+    },
     /** The start word for a root's first prompt, once per session. */
     async word(session: string): Promise<string | null> {
       if (started.has(session)) return null;

@@ -1,18 +1,20 @@
 // The plugin's ritual hooks in Claude Code (hooks/hooks.json; graph @nks/nks-dev, node #9319,
 // section RITUALS): one entry for every event it is wired to. SessionStart — the start word with
 // the cover's addresses, or the early word while it names only the graph (#8018); PostToolUse of Bash — the push and merge words by outcome
-// (shared/ritualjudge.ts). Switched on by the cover of the session's repository
+// (shared/ritualjudge.ts); Stop — the turn's end on a watch (shared/turnend.ts, #9342). Switched on by the cover of the session's repository
 // (shared/ritualcover.ts), each kind its rituals field leaves out silent; a kind the repository's own settings hold on this event's source or
 // tool (hookkinds.ts, by matcher) keeps it silent there — no word twice, none lost. The memory guard stays the repository's hook: a plugin hook's blocking
 // exit was not observed on the carrier. After a compaction the onboarding hook speaks, not this.
 // Local reads only; always exit 0.
 import { readFileSync } from "node:fs";
 
-import { RITES } from "../delivery/index.ts";
+import { RITES, TURN } from "../delivery/index.ts";
 import { wordsIn } from "../shared/lang.ts";
 import { ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushed } from "../shared/ritualjudge.ts";
+import { lostWord, TURN_RITE } from "../shared/turnend.ts";
 import { standingRites } from "./hookkinds.ts";
+import { lastTurn } from "./turnread.ts";
 
 interface HookInput {
   hook_event_name?: unknown;
@@ -21,6 +23,8 @@ interface HookInput {
   tool_name?: unknown;
   tool_input?: { command?: unknown };
   tool_response?: unknown;
+  transcript_path?: unknown;
+  stop_hook_active?: unknown;
 }
 
 function hookInput(): HookInput {
@@ -65,12 +69,27 @@ function riteWords(input: HookInput, dir: string): string[] {
   return said;
 }
 
+/**
+ * Stop: the wake word when a frame's turn ended with text nobody reads (turnread.ts) — with or
+ * without a cover, a frame proves the seat; a cover whose rituals leave it out keeps it silent;
+ * never in the turn the word itself woke.
+ */
+function turnWord(input: HookInput, dir: string): string | null {
+  if (input.stop_hook_active === true || typeof input.transcript_path !== "string") return null;
+  const cover = ritualCover(dir);
+  if (cover && !cover.on.has(TURN_RITE)) return null;
+  const turn = lastTurn(input.transcript_path);
+  return turn && lostWord(turn) ? wordsIn(TURN, cover?.lang).wake() : null;
+}
+
 try {
   const input = hookInput();
   const dir =
     typeof input.cwd === "string" && input.cwd
       ? input.cwd
       : process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const reason = input.hook_event_name === "Stop" ? turnWord(input, dir) : null;
+  if (reason) process.stdout.write(`${JSON.stringify({ decision: "block", reason })}\n`);
   const said = riteWords(input, dir);
   if (said.length) {
     const hookEventName = String(input.hook_event_name);
