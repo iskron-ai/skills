@@ -52,6 +52,8 @@ export interface Outcome {
   left: PrepareLeft[];
   /** The cover's keys named twice, for cover.repeat. */
   repeated?: string[];
+  /** The rituals the cover names that the delivery has not, for cover.rituals. */
+  rituals?: string[];
   /** The standing hook prepare could not read as its kind, by the item held back for it. */
   named?: Partial<Record<PrepareLeft, string>>;
 }
@@ -92,18 +94,27 @@ function guard(root: string, s: Settings, addr: PrepareAddr | null, out: Outcome
   return true;
 }
 
-/** Merge the guard, name the repository's own carried hooks. Unparsable — its path. */
-export function prepareHooks(root: string, addr: PrepareAddr | null, out: Outcome): string | null {
+/**
+ * Merge the guard, name the repository's own carried hooks. Unparsable — its path. A ritual the
+ * cover switches off is neither written nor named: the delivery keeps silent on it anyway.
+ */
+export function prepareHooks(
+  root: string,
+  addr: PrepareAddr | null,
+  out: Outcome,
+  on: ReadonlySet<string>,
+): string | null {
   const dir = join(root, ".claude");
   const path = join(dir, "settings.json");
   const s = load(path);
   if (!s) return path;
-  const changed = guard(root, s, addr, out);
-  for (const kind of CARRIED) if (knownOf(root, s, kind).length) out.left.push(kind);
+  const changed = on.has("guard") && guard(root, s, addr, out);
+  const carried = CARRIED.filter((kind) => on.has(kind.slice("hook.".length)));
+  for (const kind of carried) if (knownOf(root, s, kind).length) out.left.push(kind);
   // A start script prepare cannot read may be the repository's start hook: named for reading.
   const start = KNOWN["hook.start"];
   const unread = hooksOf(s, start.event, start.on).find((h) => opaque(root, cmd(h)));
-  if (!out.left.includes("hook.start") && unread) {
+  if (on.has("start") && !out.left.includes("hook.start") && unread) {
     out.left.push("hook.start");
     (out.named ??= {})["hook.start"] = cmd(unread);
   }
