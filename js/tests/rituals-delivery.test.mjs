@@ -8,7 +8,17 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 
-import { bash, memory, opencode, PUSHED, repo, ritesOf, shellCall, start } from "./rites-kit.mjs";
+import {
+  bash,
+  COVER,
+  memory,
+  opencode,
+  PUSHED,
+  repo,
+  ritesOf,
+  shellCall,
+  start,
+} from "./rites-kit.mjs";
 
 test("hooks.json: the rituals entry on start (not compact) and after Bash", () => {
   assert.deepEqual(
@@ -66,6 +76,77 @@ test("claude code: a push to the trunk says the merge word (#8362), a branch's p
   }
   const branch = bash(dir, "git push", PUSHED)?.additionalContext ?? "";
   assert.match(branch, /пуш — не отгрузка/, "git's report names the branch it went to");
+});
+
+// #9351: in nks-mcp the words named template sections its AGENTS.md does not have.
+const HEADED = `${COVER}\n## Правила персистентности\n\n## Самопроверка этапа\n\n## Мерж → граф\n`;
+const FENCED = `${COVER}\n\`\`\`md\n## Самопроверка этапа\n## Мерж → граф\n\`\`\`\n`;
+
+test("claude code: the words cite the repository's own sections, none it lacks (#9351)", () => {
+  const headed = repo({ agents: HEADED });
+  const push = bash(headed, "git push origin HEAD", PUSHED).additionalContext;
+  assert.match(push, /\(AGENTS\.md, «Самопроверка этапа» и раздел о ревью\)/);
+  const merge = bash(headed, "gh pr merge 12 --squash").additionalContext;
+  assert.match(merge, /акты после мержа AGENTS\.md \(«Мерж → граф»\):/);
+  for (const bare of [repo(), repo({ agents: FENCED })]) {
+    assert.match(
+      bash(bare, "git push origin HEAD", PUSHED).additionalContext,
+      /PR; ревью — раз на готовую пачку \(AGENTS\.md\)\./,
+    );
+    const m = bash(bare, "gh pr merge 12 --squash").additionalContext;
+    assert.match(m, /акты после мержа AGENTS\.md: протки/);
+    assert.doesNotMatch(m, /«/);
+  }
+});
+
+// Case №2720 [9]: homelab's AGENTS.md heads its after-push acts «Пуш в main → граф», no merge section.
+const TRUNKED = `${COVER}\n## Жизненный цикл сессии\n\n## Пуш в main → граф\n`;
+
+test("a push to the trunk cites the trunk push section, the merge sections otherwise (#9351)", async () => {
+  const dir = repo({ agents: TRUNKED });
+  const trunk = bash(dir, "git push origin main", "")?.additionalContext ?? "";
+  assert.match(trunk, /акты после мержа AGENTS\.md \(«Пуш в main → граф»\):/);
+  const merge = bash(dir, "gh pr merge 3")?.additionalContext ?? "";
+  assert.match(merge, /AGENTS\.md \(«Жизненный цикл сессии»\):/, "a merge keeps the merge's");
+  const headed = bash(repo({ agents: HEADED }), "git push origin main", "")?.additionalContext;
+  assert.match(headed ?? "", /AGENTS\.md \(«Мерж → граф»\):/, "no trunk section: the merge's");
+  const { rec, run } = await opencode(repo({ agents: TRUNKED }));
+  try {
+    const p = shellCall("t1-trunked", "git push origin main", "");
+    await run("execute.after", p);
+    assert.match(String(p.result.content), /AGENTS\.md \(«Пуш в main → граф»\):/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("opencode: the words and the guard cite the repository's own sections, none it lacks (#9351)", async () => {
+  for (const [agents, push, merge, guard] of [
+    [
+      HEADED,
+      /«Самопроверка этапа»/,
+      /AGENTS\.md \(«Мерж → граф»\):/,
+      /\(AGENTS\.md, «Правила персистентности»\)/,
+    ],
+    [COVER, /пачку \(AGENTS\.md\)\./, /AGENTS\.md: протки/, /по директории \(AGENTS\.md\)\./],
+  ]) {
+    const { rec, run } = await opencode(repo({ agents }));
+    const id = (n) => `s${n}-${agents.length}`; // a call id is told once per process
+    try {
+      const p = shellCall(id(1), "git push origin HEAD", PUSHED);
+      await run("execute.after", p);
+      assert.match(String(p.result.content), push);
+      const m = shellCall(id(2), "gh pr merge 5 --squash", "");
+      await run("execute.after", m);
+      assert.match(String(m.result.content), merge);
+      await assert.rejects(
+        run("execute.before", { tool: "write", id: id(3), input: { path: memory } }),
+        guard,
+      );
+    } finally {
+      await rec.stop();
+    }
+  }
 });
 
 test("claude code: a kind the repository holds itself keeps the delivery silent", () => {

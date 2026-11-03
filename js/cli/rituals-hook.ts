@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 
 import { RITES, TURN } from "../delivery/index.ts";
 import { wordsIn } from "../shared/lang.ts";
-import { ritualCover, startWord } from "../shared/ritualcover.ts";
+import { mergeHeads, ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushedTo } from "../shared/ritualjudge.ts";
 import { lostWord, TURN_RITE } from "../shared/turnend.ts";
 import { standingRites } from "./hookkinds.ts";
@@ -64,9 +64,9 @@ function riteWords(input: HookInput, dir: string): string[] {
   const said: string[] = [];
   const W = wordsIn(RITES, cover.lang);
   const push = cover.on.has("push") && !own.has("hook.push") ? pushedTo(call, dir) : null;
-  if (push === "branch") said.push(W.push());
+  if (push === "branch") said.push(W.push(cover.sections.check));
   if (push === "trunk" || (cover.on.has("merge") && !own.has("hook.merge") && merged(call)))
-    said.push(W.merge(cover.holon));
+    said.push(W.merge(cover.holon, ...mergeHeads(cover.sections, push === "trunk")));
   return said;
 }
 

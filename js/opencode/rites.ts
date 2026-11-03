@@ -8,7 +8,7 @@
 import { PREPARE, RITES } from "../delivery/index.ts";
 import { wordsIn } from "../shared/lang.ts";
 import { inLocalMemory } from "../shared/memorypath.ts";
-import { ownRitualsPlugin, ritualCover, startWord } from "../shared/ritualcover.ts";
+import { mergeHeads, ownRitualsPlugin, ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushedTo } from "../shared/ritualjudge.ts";
 import { TURN_RITE } from "../shared/turnend.ts";
 import { sessionDirectory } from "./host.ts";
@@ -71,7 +71,9 @@ export function createRites(ctx: Context) {
         if (!paths.some(Boolean)) return;
         const c = await coverOf(String(t.sessionID));
         if (c?.cover.on.has("guard") && paths.some((p) => p && inLocalMemory(p, c.dir)))
-          throw new Error(wordsIn(PREPARE, c.cover.lang).guard(c.cover.graph));
+          throw new Error(
+            wordsIn(PREPARE, c.cover.lang).guard(c.cover.graph, c.cover.sections.persist ?? null),
+          );
       });
       await tool.hook("execute.after", async (t) => {
         if (!["shell", "bash"].includes(t.tool) || t.status !== "completed") return;
@@ -90,11 +92,12 @@ export function createRites(ctx: Context) {
         const c = await coverOf(String(t.sessionID));
         if (!c) return;
         const W = wordsIn(RITES, c.cover.lang);
-        const { on, holon } = c.cover;
+        const { on, holon, sections } = c.cover;
         const push = on.has("push") ? pushedTo(call, c.dir) : null;
         const note = [
-          push === "branch" && W.push(),
-          (push === "trunk" || (on.has("merge") && merged(call))) && W.merge(holon),
+          push === "branch" && W.push(sections.check),
+          (push === "trunk" || (on.has("merge") && merged(call))) &&
+            W.merge(holon, ...mergeHeads(sections, push === "trunk")),
         ]
           .filter(Boolean)
           .join("\n\n");
