@@ -3,6 +3,21 @@
 // watchdog's frame started, with no human word, that ended with text and laid no ask, say or
 // send, is told to go on with the wake word — once: stop_hook_active keeps it from repeating.
 // Stand-in transcripts in temporary repositories; ISKRON_RITUALS_HOOK aims it at a past release.
+//
+// The entries' form is taken from watch sessions' transcripts of Claude Code 2.1.273–2.1.277
+// (~/.claude/projects/*/*.jsonl, September 2026) — fields and types, no content:
+// - Monitor call (2026-09-16T11:19Z): assistant, content [tool_use {id, name "Monitor", input
+//   {command, description, timeout_ms}}], stop_reason "tool_use"; its result — user, content
+//   [tool_result {tool_use_id, content: string}], toolUseResult {taskId, timeoutMs, persistent}.
+// - Monitor event (11:21Z): user, origin {kind "task-notification", producer? "session-task"},
+//   content a string <task-notification> with <task-id>, <summary>, <event>; no <status>.
+// - Background shell (17:23Z): Bash input {command, description, run_in_background: true}; result
+//   toolUseResult {stdout, stderr, interrupted, isImage, noOutputExpected, backgroundTaskId}.
+// - Its exit (21:44Z): the same notice with <task-id>, <tool-use-id>, <output-file>, <status>
+//   completed|failed, <summary> «… completed (exit code 0)» — and no <event>: the frame the
+//   exit-on-frame watchdog printed is in the output file, its exit 0 is the frame's sign.
+// - One content block per assistant entry: a thinking entry carries the message's stop_reason
+//   (end_turn) before its text entry; a human prompt — origin {kind "human"}, content a string.
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +31,10 @@ const CASE = "mcp__plugin_iskron_iskron__iskron_case";
 const said = (text, stop = "end_turn") => ({
   type: "assistant",
   message: { content: [{ type: "text", text }], stop_reason: stop },
+});
+const thought = (stop = "end_turn") => ({
+  type: "assistant",
+  message: { content: [{ type: "thinking", thinking: "…", signature: "sig" }], stop_reason: stop },
 });
 const called = (id, name, input) => ({
   type: "assistant",
@@ -34,11 +53,27 @@ const notice = (task, event) => ({
     content: `<task-notification>\n<task-id>${task}</task-id>\n<summary>Monitor event</summary>\n<event>${event}</event>\n</task-notification>`,
   },
 });
+/** A background shell's exit: no <event>, the status and the exit code in the summary. */
+const exited = (task, use, status, code) => ({
+  type: "user",
+  origin: { kind: "task-notification" },
+  message: {
+    content: `<task-notification>\n<task-id>${task}</task-id>\n<tool-use-id>${use}</tool-use-id>\n<output-file>/t/tasks/${task}.output</output-file>\n<status>${status}</status>\n<summary>Background command "…" ${status === "completed" ? `completed (exit code ${code})` : `failed with exit code ${code}`}</summary>\n</task-notification>`,
+  },
+});
 /** A session that armed its watchdog under Monitor (task bx1) and ended that turn. */
 const armed = [
   human("заступай на вахту"),
-  called("tu1", "Monitor", { command: 'node "/h/iskron.mjs" watchdog k--931--r5' }),
-  result("tu1", "Monitor started (task bx1, expires in 30m)", { taskId: "bx1" }),
+  called("tu1", "Monitor", {
+    command: 'node "/h/iskron.mjs" watchdog k--931--r5',
+    description: "сторож",
+    timeout_ms: 3600000,
+  }),
+  result("tu1", "Monitor started (task bx1, expires in 30m)", {
+    taskId: "bx1",
+    timeoutMs: 1800000,
+    persistent: false,
+  }),
   said("встал на вахту"),
 ];
 
@@ -54,7 +89,8 @@ test("hooks.json: the rituals entry on Stop", () => {
 });
 
 test("a frame's turn ending with text and no word laid: go on with the wake word, once", () => {
-  const turn = [...armed, notice("bx1", "Дело №5: слово [3]"), said("Владелец, вопрос: брать?")];
+  const frame = notice("bx1", "Дело №5: слово [3]");
+  const turn = [...armed, frame, thought(), said("Владелец, вопрос: брать?")];
   const out = stop(turn);
   assert.equal(out?.decision, "block", JSON.stringify(out));
   assert.match(out.reason, WAKE);
@@ -62,15 +98,27 @@ test("a frame's turn ending with text and no word laid: go on with the wake word
   assert.equal(stop(turn, { stop_hook_active: true }), null, "the turn it woke is not woken again");
 });
 
-test("the legacy watchdog under a background shell is a frame's source too", () => {
-  const out = stop([
-    called("tu2", "Bash", { command: "node watchdog-exit.mjs k", run_in_background: true }),
-    result("tu2", "Command running in background with ID: b77", { backgroundTaskId: "b77" }),
+test("the exit-on-frame watchdog under a background shell: its exit 0 is a frame, a failure is not", () => {
+  const shell = [
+    called("tu2", "Bash", {
+      command: "node watchdog-exit.mjs k",
+      description: "сторож",
+      run_in_background: true,
+    }),
+    result("tu2", "Command running in background with ID: b77. Output is being written to: …", {
+      stdout: "",
+      stderr: "",
+      interrupted: false,
+      isImage: false,
+      noOutputExpected: false,
+      backgroundTaskId: "b77",
+    }),
     said("слушаю"),
-    notice("b77", "кадр"),
-    said("ответ в консоль"),
-  ]);
-  assert.equal(out?.decision, "block");
+  ];
+  const out = stop([...shell, exited("b77", "tu2", "completed", 0), said("ответ в консоль")]);
+  assert.equal(out?.decision, "block", JSON.stringify(out));
+  const dead = [...shell, exited("b77", "tu2", "failed", 1), said("токен умер")];
+  assert.equal(stop(dead), null, "a loud exit is no frame");
 });
 
 test("no wake word: the turn spoke, a human spoke, another task woke it, no text", () => {
