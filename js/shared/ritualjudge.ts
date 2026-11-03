@@ -4,7 +4,7 @@
 // wake, the exit status speaks only for the last command of a chain or one before &&, a visible
 // refusal vetoes, a push of tags only is no branch for review; a quiet push is judged by the
 // state of git in the session's directory; a push to the trunk ships (trunkpush.ts, #8362).
-import { git, namesTrunk, toTrunk, words } from "./trunkpush.ts";
+import { git, isTrunk, namesTrunk, toTrunk, words } from "./trunkpush.ts";
 
 /** A shell argument run: whole quotes are one word — a flag inside them is text. */
 const ARG = String.raw`(?:>&|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"\\])*`;
@@ -94,7 +94,7 @@ function tagsOnly(c: ShellCall): boolean {
 function quietLanded(c: ShellCall, cwd: string | null): boolean {
   if (!cwd) return false;
   const head = git(cwd, "rev-parse", "HEAD");
-  const trunk = ["main", "master"].includes(git(cwd, "rev-parse", "--abbrev-ref", "HEAD"));
+  const trunk = isTrunk(git(cwd, "rev-parse", "--abbrev-ref", "HEAD"));
   return (
     head !== "" && head === git(cwd, "rev-parse", "@{push}") && (!trunk || namesTrunk(pushRuns(c)))
   );
