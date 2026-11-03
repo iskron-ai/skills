@@ -53,7 +53,12 @@ export const namesTrunk = (runs: string[]): boolean =>
  * Whether a push (its argument runs, what it printed) went to the trunk. A quiet push prints no
  * report, and the session's folder need not be where it ran: its HEAD is not read for it.
  */
-export function toTrunk(runs: string[], output: string, cwd: string | null, quiet = false): boolean {
+export function toTrunk(
+  runs: string[],
+  output: string,
+  cwd: string | null,
+  quiet = false,
+): boolean {
   const printed = [...output.matchAll(REF_LINE)].map((m) => m[1] ?? "");
   if (printed.length) return printed.some((r) => TRUNK.test(r));
   if (quiet) return namesTrunk(runs);

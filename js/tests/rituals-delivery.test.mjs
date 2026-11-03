@@ -107,7 +107,10 @@ test("claude code: a quiet push that exited non-zero says nothing (#6919)", () =
   const dir = onTrunk();
   for (const cmd of ["git push -q origin main", "git push -q origin feat/x"])
     assert.equal(bash(dir, cmd, "", 1), null, cmd);
-  assert.match(bash(dir, "git push -q origin main | tail", "", 1)?.additionalContext ?? "", /мерж —/);
+  assert.match(
+    bash(dir, "git push -q origin main | tail", "", 1)?.additionalContext ?? "",
+    /мерж —/,
+  );
 });
 
 // The session's folder sits on main while the push ran from another work tree: a quiet push names no

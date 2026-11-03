@@ -96,9 +96,7 @@ function quietLanded(c: ShellCall, cwd: string | null): boolean {
   const head = git(cwd, "rev-parse", "HEAD");
   const trunk = ["main", "master"].includes(git(cwd, "rev-parse", "--abbrev-ref", "HEAD"));
   return (
-    head !== "" &&
-    head === git(cwd, "rev-parse", "@{push}") &&
-    (!trunk || namesTrunk(pushRuns(c)))
+    head !== "" && head === git(cwd, "rev-parse", "@{push}") && (!trunk || namesTrunk(pushRuns(c)))
   );
 }
 
