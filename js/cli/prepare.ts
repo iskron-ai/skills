@@ -5,8 +5,8 @@
 // (preparegraph.ts, #9325); without one — no network, as before.
 // The answer names what was done, what already stood and what is left to the model; the exit code
 // says the same: 0 — nothing left, 3 — something left, 1 — refused and nothing written, 2 — usage.
-import { PREPARE, type PrepareLeft } from "../delivery/index.ts";
-import { type CoverData } from "../shared/coverblock.ts";
+import { COVER, PREPARE, type PrepareLeft } from "../delivery/index.ts";
+import { coverBlock, type CoverData, ritualsOf } from "../shared/coverblock.ts";
 import { setLang, words } from "../shared/lang.ts";
 import {
   checkOpencode,
@@ -114,16 +114,18 @@ export async function runPrepare(argv: string[]): Promise<void> {
         ...(d.agent_role ? { role: String(d.agent_role) } : {}),
       }
     : null;
-  const unparsed = prepareHooks(root, addr, out);
+  const { on } = ritualsOf(coverBlock(cover.text, COVER.root));
+  const unparsed = prepareHooks(root, addr, out, on);
   if (unparsed) return say(json, 1, { refused: W.unparsed(unparsed) });
   writeAgents(cover, out);
   writeReality(root, f["--case"], out);
   writeClaude(root, out);
   checkOpencode(root, out);
 
-  const keys = out.repeated?.map((k) => `'${k}'`).join(", ");
+  const listed = (ks?: string[]) => ks?.map((k) => `'${k}'`).join(", ");
   const left = out.left.map((item: PrepareLeft) => {
     const hook = out.named?.[item];
+    const keys = listed(item === "cover.rituals" ? out.rituals : out.repeated);
     return { item, why: hook ? W.unread(item, hook) : W.left(item, keys) };
   });
   say(json, left.length ? 3 : 0, {

@@ -4,8 +4,9 @@
 // session with one word (TURN); the turn that word wakes does not repeat it. The cover's list
 // of rituals names this one TURN_RITE.
 import { FRAME_MARK, tool } from "../delivery/index.ts";
+import type { Ritual } from "./coverblock.ts";
 
-export const TURN_RITE = "turn";
+export const TURN_RITE: Ritual = "turn";
 
 /** The calls that lay a word where the human sees it: by tool, the actions that do. */
 const SPEAKING: ReadonlyMap<string, ReadonlySet<string>> = new Map([

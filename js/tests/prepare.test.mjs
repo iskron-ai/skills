@@ -300,6 +300,24 @@ test("не репозиторий или чужая обложка — отка�
   assert.ok(!existsSync(join(dir, "REALITY.md")));
 });
 
+test("поле rituals: стоит как стояло; guard выключен — не пишется; чужое имя — модели", () => {
+  const dir = repo();
+  const cover = "---\niskron:\n  graph: r7\n  rituals: start mege\n---\n# x\n";
+  writeFileSync(join(dir, "AGENTS.md"), cover);
+  const { out } = prepare(dir, [...ADDR, "--contract", "39", "--stamp", "2026-11-03"]);
+  assert.match(read(dir, "AGENTS.md"), /^ {2}rituals: start mege$/m);
+  assert.equal(coverBlock(read(dir, "AGENTS.md"), "iskron").get("contract"), "39");
+  assert.ok(!existsSync(join(dir, ".claude/settings.json")), "guard выключен — не пишется");
+  const why = out.left.find((x) => x.item === "cover.rituals")?.why ?? "";
+  assert.match(why, /'mege'/);
+  assert.doesNotMatch(why, /'start'/);
+  const on = repo();
+  writeFileSync(join(on, "AGENTS.md"), "---\niskron:\n  rituals: guard\n---\n");
+  const r = prepare(on, ADDR);
+  assert.ok(r.out.done.includes("hook.guard"));
+  assert.ok(!items(r.out.left).includes("cover.rituals"));
+});
+
 test("кривой аргумент — код 2", () => {
   const dir = repo();
   for (const args of [

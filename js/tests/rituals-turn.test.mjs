@@ -8,7 +8,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { claudeRaw, repo, ritesOf } from "./rites-kit.mjs";
+import { claudeRaw, COVER, repo, ritesOf } from "./rites-kit.mjs";
 
 const WAKE = /человека в консоли нет/;
 const CASE = "mcp__plugin_iskron_iskron__iskron_case";
@@ -104,6 +104,14 @@ test("no wake word: the turn spoke, a human spoke, another task woke it, no text
   assert.equal(stop(tail), null, "the turn ended on a call, not text");
   const limit = { ...said("You've hit your limit", "stop_sequence"), isApiErrorMessage: true };
   assert.equal(stop([...armed, frame, limit]), null, "the harness's error is no word");
+});
+
+test("the cover's rituals field: without `turn` the word keeps silent, with it or without the field it speaks", () => {
+  const turn = [...armed, notice("bx1", "кадр"), said("в консоль")];
+  const field = (rituals) => COVER.replace("  stamp:", `  rituals:${rituals}\n  stamp:`);
+  assert.equal(stop(turn, {}, repo({ agents: field(" start push") })), null, "start push");
+  assert.equal(stop(turn, {}, repo({ agents: field(" start turn") }))?.decision, "block");
+  assert.equal(stop(turn, {}, repo())?.decision, "block", "no field — every ritual");
 });
 
 test("the turn is judged alone: a word laid in an earlier turn does not count", () => {

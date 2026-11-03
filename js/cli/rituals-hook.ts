@@ -2,7 +2,7 @@
 // section RITUALS): one entry for every event it is wired to. SessionStart — the start word with
 // the cover's addresses, or the early word while it names only the graph (#8018); PostToolUse of Bash — the push and merge words by outcome
 // (shared/ritualjudge.ts); Stop — the turn's end on a watch (shared/turnend.ts, #9342). Switched on by the cover of the session's repository
-// (shared/ritualcover.ts); a kind the repository's own settings hold on this event's source or
+// (shared/ritualcover.ts), each kind its rituals field leaves out silent; a kind the repository's own settings hold on this event's source or
 // tool (hookkinds.ts, by matcher) keeps it silent there — no word twice, none lost. The memory guard stays the repository's hook: a plugin hook's blocking
 // exit was not observed on the carrier. After a compaction the onboarding hook speaks, not this.
 // Local reads only; always exit 0.
@@ -12,7 +12,7 @@ import { RITES, TURN } from "../delivery/index.ts";
 import { wordsIn } from "../shared/lang.ts";
 import { ritualCover, startWord } from "../shared/ritualcover.ts";
 import { merged, pushed } from "../shared/ritualjudge.ts";
-import { lostWord } from "../shared/turnend.ts";
+import { lostWord, TURN_RITE } from "../shared/turnend.ts";
 import { standingRites } from "./hookkinds.ts";
 import { lastTurn } from "./turnread.ts";
 
@@ -51,7 +51,7 @@ function riteWords(input: HookInput, dir: string): string[] {
   const event = input.hook_event_name;
   if (event === "SessionStart") {
     const source = typeof input.source === "string" ? input.source : "startup";
-    if (source === "compact") return [];
+    if (source === "compact" || !cover.on.has("start")) return [];
     if (standingRites(cover.root, source).has("hook.start")) return [];
     return [startWord(cover)];
   }
@@ -63,19 +63,23 @@ function riteWords(input: HookInput, dir: string): string[] {
   };
   const said: string[] = [];
   const W = wordsIn(RITES, cover.lang);
-  if (!own.has("hook.push") && pushed(call, dir)) said.push(W.push());
-  if (!own.has("hook.merge") && merged(call)) said.push(W.merge(cover.holon));
+  if (cover.on.has("push") && !own.has("hook.push") && pushed(call, dir)) said.push(W.push());
+  if (cover.on.has("merge") && !own.has("hook.merge") && merged(call))
+    said.push(W.merge(cover.holon));
   return said;
 }
 
 /**
  * Stop: the wake word when a frame's turn ended with text nobody reads (turnread.ts) — with or
- * without a cover, a frame proves the seat; never in the turn the word itself woke.
+ * without a cover, a frame proves the seat; a cover whose rituals leave it out keeps it silent;
+ * never in the turn the word itself woke.
  */
 function turnWord(input: HookInput, dir: string): string | null {
   if (input.stop_hook_active === true || typeof input.transcript_path !== "string") return null;
+  const cover = ritualCover(dir);
+  if (cover && !cover.on.has(TURN_RITE)) return null;
   const turn = lastTurn(input.transcript_path);
-  return turn && lostWord(turn) ? wordsIn(TURN, ritualCover(dir)?.lang).wake() : null;
+  return turn && lostWord(turn) ? wordsIn(TURN, cover?.lang).wake() : null;
 }
 
 try {

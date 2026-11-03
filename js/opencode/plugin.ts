@@ -105,11 +105,13 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     bridgeOf: (s) => half.bridgeOf(s),
     overflow: (s, n) => say(W.pulseOverflow(s, n), "warning"),
   });
-  // A frame's turn that left its word in the console is woken once (turnend.ts, #9342); the
-  // cover's list of rituals is to switch it by TURN_RITE.
+  // The session rituals by the repository's cover: start word, memory guard, push and merge (rites.ts).
+  const rites = createRites(ctx);
+  // A frame's turn that left its word in the console is woken once (turnend.ts, #9342) — unless
+  // the cover's rituals field leaves `turn` out.
   const turns = createTurnEnds(ctx, {
     skip: (s) => parents.has(s) || (roots.has(s) && roots.get(s) !== s) || closed(s),
-    on: async () => true,
+    on: (s) => rites.turnOn(s),
     say: (text) => say(text, "warning"),
   });
   try {
@@ -189,8 +191,6 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     closed,
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
-  // The session rituals by the repository's cover: start word, memory guard, push and merge (rites.ts).
-  const rites = createRites(ctx);
   try {
     await rites.wire();
     await turns.wire();

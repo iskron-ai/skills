@@ -1,11 +1,13 @@
-// Запись обложки без модели (shared/coverblock.ts; #9316 — форма, #9319 — подготовка репо шагом
-// моста): блок корневого ключа поставки ставится на место, прочее во фронтматтере и теле не
-// трогается, повтор ничего не меняет, записанное читается тем же разбором.
+// Запись обложки без модели (shared/coverwrite.ts, разбор — shared/coverblock.ts; #9316 — форма,
+// #9319 — подготовка репо шагом моста): блок корневого ключа поставки ставится на место, прочее
+// во фронтматтере и теле и поле rituals: не трогается, повтор ничего не меняет, записанное
+// читается тем же разбором.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { COVER } from "../delivery/index.ts";
-import { coverBlock, coverBlocks, repeatedKeys, writeCover } from "../shared/coverblock.ts";
+import { coverBlock, coverBlocks, repeatedKeys, ritualsOf } from "../shared/coverblock.ts";
+import { writeCover } from "../shared/coverwrite.ts";
 
 const DATA = { graph: "r5", holon: 1506, agent_role: 931, contract: 38, stamp: "2026-11-02" };
 const BLOCK =
@@ -75,4 +77,29 @@ test("пустые поля не пишутся; CRLF и BOM сохраняют�
   });
   assert.equal(text, "\uFEFF---\r\niskron:\r\n  graph: r5\r\nx: 1\r\n---\r\n# y\r\n");
   assert.deepEqual([...coverBlocks(text).keys()], ["iskron"]);
+});
+
+test("поле rituals: запись его не трогает — ни список, ни пустое, ни кавычки", () => {
+  for (const line of ["  rituals: start merge", "  rituals:", "  rituals: 'push' # c"]) {
+    const before = `---\niskron:\n  graph: r1\n${line}\n  stamp: 2026-01-01\n---\n# x\n`;
+    const after = writeCover(before, "iskron", DATA);
+    assert.equal(after, `---\n${BLOCK}${line}\n---\n# x\n`, line);
+    assert.equal(writeCover(after, "iskron", DATA), after, "повтор ничего не меняет");
+  }
+});
+
+test("ritualsOf: нет поля — все; пустое — ни одного; список — эти; чужое имя — названо", () => {
+  const of = (text) => ritualsOf(coverBlock(text, "iskron"));
+  const all = ["start", "push", "merge", "guard", "turn"];
+  assert.deepEqual([...of(`---\n${BLOCK}---\n`).on], all);
+  assert.deepEqual([...ritualsOf(null).on], all);
+  assert.deepEqual([...of(`---\n${BLOCK}  rituals:\n---\n`).on], []);
+  assert.deepEqual([...of(`---\n${BLOCK}  rituals: ''\n---\n`).on], []);
+  const some = of(`---\n${BLOCK}  rituals: start  merge pushh # c\n---\n`);
+  assert.deepEqual([...some.on], ["start", "merge"]);
+  assert.deepEqual(some.unknown, ["pushh"]);
+  // A quoted value with a comment after it: the comment is not part of the list.
+  const quoted = of(`---\n${BLOCK}  rituals: 'push merge' # c\n---\n`);
+  assert.deepEqual([...quoted.on], ["push", "merge"]);
+  assert.deepEqual(quoted.unknown, []);
 });

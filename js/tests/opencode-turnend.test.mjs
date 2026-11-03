@@ -10,6 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
+import { COVER, repo } from "./rites-kit.mjs";
 
 const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
 const WAKE = /человека в консоли нет/;
@@ -24,14 +25,14 @@ const frame = (body) => ({
 });
 
 /** The plugin over the fake bridge, session `s` seated; `say(body)` lays a frame and waits for its prompt. */
-async function seated(name, s, ctxOpts = {}) {
+async function seated(name, s, ctxOpts = {}, dir = "/work/t") {
   const log = join(SANDBOX, `${name}.log`);
   const events = join(SANDBOX, `${name}.events`);
   const reply = join(SANDBOX, `${name}.reply`);
   for (const f of [log, events, reply]) writeFileSync(f, "");
   const rec = await plugin(
     { ISKRON_BRIDGE_PATH: FAKE_BRIDGE, FB_LOG: log, FB_REPLY: reply, FB_EVENTS: events },
-    { sessions: [{ id: s, location: { directory: "/work/t" } }], ...ctxOpts },
+    { sessions: [{ id: s, location: { directory: dir } }], ...ctxOpts },
   );
   await until(() => rec.tools().size === 3, "the server's tools", 8000);
   await rec.call("iskron_channel", { action: "connect" }, s);
@@ -101,6 +102,24 @@ test("a frame taken by its inbox item: judged by session.inbox.delivered", async
     assert.equal(wakes(rec, "s-i").length, 1);
   } finally {
     await rec.stop();
+  }
+});
+
+test("the cover's rituals field without `turn` keeps the word silent; with it, it speaks", async () => {
+  const field = (rituals) => COVER.replace("  stamp:", `  rituals:${rituals}\n  stamp:`);
+  for (const [rituals, n] of [
+    [" start push", 0],
+    [" start turn", 1],
+  ]) {
+    const dir = repo({ agents: field(rituals) });
+    const { rec, say } = await seated(`turn-field-${n}`, `s-f${n}`, {}, dir);
+    try {
+      await say("кадр");
+      await turn(rec, `s-f${n}`);
+      assert.equal(wakes(rec, `s-f${n}`).length, n, rituals);
+    } finally {
+      await rec.stop();
+    }
   }
 });
 
