@@ -36,8 +36,12 @@ export interface PrepareWords {
   reality: (caseNo?: string) => string;
   /** Текст хука старта; в echo '…' его кладёт ядро, экранируя апострофы. */
   start: (a: PrepareAddr) => string;
-  /** Сообщение memory-guard; graph — rN обложки (полного адреса без сети нет). */
-  guard: (graph: string) => string;
+  /**
+   * Сообщение memory-guard; graph — rN обложки (полного адреса без сети нет); section — заголовок
+   * раздела персистентности из AGENTS.md репо (#9351), null — не узнан (AGENTS.md без раздела),
+   * не передан — раздел шаблона (хук репо, который пишет prepare по шаблону).
+   */
+  guard: (graph: string, section?: string | null) => string;
   /** keys — названные дважды ключи обложки (cover.repeat) или незнакомые ритуалы (cover.rituals). */
   left: (item: PrepareLeft, keys?: string) => string;
   /** Стоящий хук-скрипт, который prepare не узнал как хук этого рода: своего рядом не пишет. */
@@ -70,8 +74,8 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
       `# Reality — против чего проверяется заявка\n\nНосители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.\n`,
     start: ({ graph, holon, role }) =>
       `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph) =>
-      `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, «Правила персистентности»). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
+    guard: (graph, section = "Правила персистентности") =>
+      `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
     left: (item, keys) =>
       ({
         "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
@@ -110,8 +114,8 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
       `# Reality — what a claim is checked against\n\nCarriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}. Until they are, behavioral claims are not accepted.\n`,
     start: ({ graph, holon, role }) =>
       `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role ? `, agent role #${role}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
-    guard: (graph) =>
-      `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md, «Persistence rules»). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
+    guard: (graph, section = "Persistence rules") =>
+      `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md${section ? `, «${section}»` : ""}). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
     left: (item, keys) =>
       ({
         "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,

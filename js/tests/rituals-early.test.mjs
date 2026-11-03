@@ -53,7 +53,8 @@ test("opencode: an English AGENTS.md on a Russian server hears English words", a
     );
     const m = shellCall("e2", "gh pr merge 5 --squash", "");
     await run("execute.after", m);
-    assert.match(String(m.result.content), /«Merge → graph»/);
+    // The file's own lifecycle heading, not the template's merge one it lacks (#9351).
+    assert.match(String(m.result.content), /AGENTS\.md \(«Session lifecycle»\):/);
   } finally {
     await rec.stop();
   }

@@ -5,9 +5,23 @@
 // holds itself. Temporary repositories only; no network, no model (rites-kit.mjs, which also
 // names the variables that point the probe at a past release).
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
-import { bash, memory, opencode, PUSHED, repo, ritesOf, shellCall, start } from "./rites-kit.mjs";
+import {
+  bash,
+  COVER,
+  memory,
+  opencode,
+  PUSHED,
+  repo,
+  ritesOf,
+  shellCall,
+  start,
+} from "./rites-kit.mjs";
 
 test("hooks.json: the rituals entry on start (not compact) and after Bash", () => {
   assert.deepEqual(
@@ -39,6 +53,120 @@ test("claude code: push and merge by outcome, the holon in the merge word", () =
   assert.match(merge.additionalContext, /мерж — .*контур #12/);
   assert.equal(bash(dir, "gh pr merge --help", "Usage: gh pr merge"), null);
   assert.equal(bash(repo({ agents: "# x\n" }), "git push origin HEAD", PUSHED), null);
+});
+
+// Case №2720 [6]: in homelab a push to main is the release, and the push word called it no shipping.
+test("claude code: a push to the trunk says the merge word (#8362), a branch's push the push word", () => {
+  const dir = repo();
+  execFileSync("git", ["init", "-q", "-b", "main", dir]);
+  const toMain = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  main -> main";
+  for (const [command, out] of [
+    ["git push origin main", toMain],
+    ["git push origin main", ""],
+    ["git push", ""],
+    ["git push -u origin HEAD", ""],
+    ["git push origin HEAD:refs/heads/master", ""],
+    ["git push origin feat/x:main", ""],
+  ]) {
+    const said = bash(dir, command, out)?.additionalContext ?? "";
+    assert.match(said, /мерж — .*контур #12/, `${command} | ${out}`);
+    assert.doesNotMatch(said, /пуш — не отгрузка/, `${command} | ${out}`);
+  }
+  for (const command of ["git push origin feat/x", "git push origin main:feat/x"]) {
+    const said = bash(dir, command, "")?.additionalContext ?? "";
+    assert.match(said, /пуш — не отгрузка/, command);
+    assert.doesNotMatch(said, /мерж —/, command);
+  }
+  const branch = bash(dir, "git push", PUSHED)?.additionalContext ?? "";
+  assert.match(branch, /пуш — не отгрузка/, "git's report names the branch it went to");
+});
+
+// Review of case №2730: a quiet push prints no report; git's state says it landed on the trunk.
+test("claude code: a quiet push to the trunk says the merge word (#8362)", () => {
+  const dir = repo();
+  const origin = mkdtempSync(join(tmpdir(), "rites-origin-"));
+  const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+  g("init", "-q", "-b", "main");
+  g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "a");
+  g("remote", "add", "origin", origin);
+  g("push", "-q", "-u", "origin", "main");
+  g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "b");
+  g("push", "-q", "origin", "main");
+  const said = bash(dir, "git push -q origin main 2>&1 | tail -1", "")?.additionalContext ?? "";
+  assert.match(said, /мерж — .*контур #12/);
+  assert.doesNotMatch(said, /пуш — не отгрузка/);
+});
+
+// #9351: in nks-mcp the words named template sections its AGENTS.md does not have.
+const HEADED = `${COVER}\n## Правила персистентности\n\n## Самопроверка этапа\n\n## Мерж → граф\n`;
+const FENCED = `${COVER}\n\`\`\`md\n## Самопроверка этапа\n## Мерж → граф\n\`\`\`\n`;
+
+test("claude code: the words cite the repository's own sections, none it lacks (#9351)", () => {
+  const headed = repo({ agents: HEADED });
+  const push = bash(headed, "git push origin HEAD", PUSHED).additionalContext;
+  assert.match(push, /\(AGENTS\.md, «Самопроверка этапа» и раздел о ревью\)/);
+  const merge = bash(headed, "gh pr merge 12 --squash").additionalContext;
+  assert.match(merge, /акты после мержа AGENTS\.md \(«Мерж → граф»\):/);
+  for (const bare of [repo(), repo({ agents: FENCED })]) {
+    assert.match(
+      bash(bare, "git push origin HEAD", PUSHED).additionalContext,
+      /PR; ревью — раз на готовую пачку \(AGENTS\.md\)\./,
+    );
+    const m = bash(bare, "gh pr merge 12 --squash").additionalContext;
+    assert.match(m, /акты после мержа AGENTS\.md: протки/);
+    assert.doesNotMatch(m, /«/);
+  }
+});
+
+// Case №2720 [9]: homelab's AGENTS.md heads its after-push acts «Пуш в main → граф», no merge section.
+const TRUNKED = `${COVER}\n## Жизненный цикл сессии\n\n## Пуш в main → граф\n`;
+
+test("a push to the trunk cites the trunk push section, the merge sections otherwise (#9351)", async () => {
+  const dir = repo({ agents: TRUNKED });
+  const trunk = bash(dir, "git push origin main", "")?.additionalContext ?? "";
+  assert.match(trunk, /акты после мержа AGENTS\.md \(«Пуш в main → граф»\):/);
+  const merge = bash(dir, "gh pr merge 3")?.additionalContext ?? "";
+  assert.match(merge, /AGENTS\.md \(«Жизненный цикл сессии»\):/, "a merge keeps the merge's");
+  const headed = bash(repo({ agents: HEADED }), "git push origin main", "")?.additionalContext;
+  assert.match(headed ?? "", /AGENTS\.md \(«Мерж → граф»\):/, "no trunk section: the merge's");
+  const { rec, run } = await opencode(repo({ agents: TRUNKED }));
+  try {
+    const p = shellCall("t1-trunked", "git push origin main", "");
+    await run("execute.after", p);
+    assert.match(String(p.result.content), /AGENTS\.md \(«Пуш в main → граф»\):/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("opencode: the words and the guard cite the repository's own sections, none it lacks (#9351)", async () => {
+  for (const [agents, push, merge, guard] of [
+    [
+      HEADED,
+      /«Самопроверка этапа»/,
+      /AGENTS\.md \(«Мерж → граф»\):/,
+      /\(AGENTS\.md, «Правила персистентности»\)/,
+    ],
+    [COVER, /пачку \(AGENTS\.md\)\./, /AGENTS\.md: протки/, /по директории \(AGENTS\.md\)\./],
+  ]) {
+    const { rec, run } = await opencode(repo({ agents }));
+    const id = (n) => `s${n}-${agents.length}`; // a call id is told once per process
+    try {
+      const p = shellCall(id(1), "git push origin HEAD", PUSHED);
+      await run("execute.after", p);
+      assert.match(String(p.result.content), push);
+      const m = shellCall(id(2), "gh pr merge 5 --squash", "");
+      await run("execute.after", m);
+      assert.match(String(m.result.content), merge);
+      await assert.rejects(
+        run("execute.before", { tool: "write", id: id(3), input: { path: memory } }),
+        guard,
+      );
+    } finally {
+      await rec.stop();
+    }
+  }
 });
 
 test("claude code: a kind the repository holds itself keeps the delivery silent", () => {
@@ -107,6 +235,10 @@ test("opencode: push and merge words after a shell call, once per call id", asyn
     const again = shellCall("c2", "gh pr merge 5 --squash", "");
     await run("execute.after", again);
     assert.equal(again.result.content, "", "the same call is told once");
+    const trunk = shellCall("c4", "git push origin main", "");
+    await run("execute.after", trunk);
+    assert.match(String(trunk.result.content), /мерж — .*#12/, "a push to the trunk (#8362)");
+    assert.doesNotMatch(String(trunk.result.content), /пуш — не отгрузка/);
   } finally {
     await rec.stop();
   }
