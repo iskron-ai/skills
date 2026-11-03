@@ -6,7 +6,6 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
-  readdirSync,
   readFileSync,
   readlinkSync,
   symlinkSync,
@@ -24,6 +23,7 @@ import {
   writeCover,
 } from "../shared/coverblock.ts";
 import { words } from "../shared/lang.ts";
+import { ownRitualsPlugin } from "../shared/ritualcover.ts";
 import { type Outcome } from "./preparehooks.ts";
 
 const git = (dir: string, ...args: string[]): string | null => {
@@ -129,10 +129,7 @@ export function writeClaude(root: string, out: Outcome): void {
   out.done.push("CLAUDE.md");
 }
 
-/** A repository with OpenCode and no rituals plugin: left to the model. */
+/** A rituals plugin of the repository's own: the delivery carries them, named for the transition. */
 export function checkOpencode(root: string, out: Outcome): void {
-  const dir = join(root, ".opencode");
-  if (!existsSync(dir)) return;
-  const plugins = existsSync(join(dir, "plugins")) ? readdirSync(join(dir, "plugins")) : [];
-  out[plugins.some((f) => /ritual/i.test(f)) ? "kept" : "left"].push("opencode.rituals");
+  if (ownRitualsPlugin(root)) out.left.push("opencode.rituals");
 }

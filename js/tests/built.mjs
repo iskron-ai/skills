@@ -14,6 +14,7 @@ export const BUILT_BRIDGE = join(BUILT, "skills", "establish-mcp", "scripts", "i
 export const BUILT_PLUGIN = join(BUILT, "skills", "establish-mcp", "scripts", "opencode-plugin.js");
 export const BUILT_EXTENSION = join(BUILT, "extensions", "iskron.js");
 export const BUILT_ONBOARD_HOOK = join(BUILT, "hooks", "onboard.mjs");
+export const BUILT_RITUALS_HOOK = join(BUILT, "hooks", "rituals.mjs");
 export const BUILT_TEMPLATE = join(
   BUILT,
   "skills",

@@ -6,7 +6,9 @@
 //     run as they are, by bash, with a hook payload on stdin;
 //   • the OpenCode rituals plugin template in
 //     skills/iskronify/references/harness-surfaces.md — its js block is loaded
-//     as a module and its execute.after hook is called with a stand-in ctx.
+//     as a module and its execute.after hook is called with a stand-in ctx;
+//   • the delivery's own judge (js/shared/ritualjudge.ts), which the plugin
+//     hooks of Claude Code and OpenCode run by the repository's cover (#9319).
 //
 // The rule both keep: a hook wakes on the OUTCOME, not on the command's form.
 // Help (`-h`, `--help`) and `--auto` never wake; the exit status speaks for the
@@ -26,6 +28,7 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { merged, pushed } from "../shared/ritualjudge.ts";
 import { ritualSample, standServer } from "./opencode-stand.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -460,6 +463,13 @@ for (const [command, output, push, merge] of cases) {
   });
 }
 
+for (const [command, output, push, merge] of cases) {
+  test(`delivery judge: ${command}`, () => {
+    const call = { command, output, exit: 0 };
+    assert.deepEqual({ push: pushed(call, process.cwd()), merge: merged(call) }, { push, merge });
+  });
+}
+
 // `|| true` hides a jq that failed to run: a regex that overruns the match
 // retry limit is silence forever, not a verdict — the exit status is judged.
 test("claude hooks: jq judges a long run of spaces without an error", () => {
@@ -708,6 +718,7 @@ for (const [name, command, wakes, lands] of quietCases) {
     const cmd = command();
     const output = sh(a, cmd);
     assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
+    assert.equal(pushed({ command: cmd, output, exit: 0 }, a), wakes, `delivery: ${cmd}`);
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
@@ -772,6 +783,7 @@ for (const [name, cmd, given, wakes] of quietVeto) {
     const { a } = quietRepos(); // HEAD equals @{push} before the call
     const output = given ?? sh(a, cmd);
     assert.equal(claudeWakes(cmd, output, a).push, wakes, `claude: ${cmd}`);
+    assert.equal(pushed({ command: cmd, output, exit: 0 }, a), wakes, `delivery: ${cmd}`);
     const after = await loadPlugin({ s1: a });
     const input = {
       tool: "bash",
@@ -901,6 +913,11 @@ test("iskronify template defs judge another forge's merge by outcome", () => {
     }
     assert.equal(ran, wakes, command);
   }
+});
+
+test("delivery judge: another forge's merge (fj) wakes by outcome", () => {
+  for (const [command, output, wakes] of fj)
+    assert.equal(merged({ command, output, exit: 0 }), wakes, command);
 });
 
 // The OpenCode sample knows the same forges as hooks.md: fj by its outcome too.

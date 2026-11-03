@@ -26,12 +26,16 @@ const OUTPUTS = [
   "skills/establish-mcp/scripts/opencode-plugin.js",
   "skills/product-roadmap/references/roadmap-template.html",
   "hooks/onboard.mjs",
+  "hooks/rituals.mjs",
 ];
 /**
  * Выход, ещё не бывший ни в одном выпуске: до выпуска этой версии (по VERSION закоммиченного
  * моста) его на закоммиченном месте нет — его впервые пишет джоб выпуска, не ветка.
  */
-const PENDING = new Map([["hooks/onboard.mjs", [7, 15, 0]]]);
+const PENDING = new Map([
+  ["hooks/onboard.mjs", [7, 15, 0]],
+  ["hooks/rituals.mjs", [7, 30, 0]],
+]);
 
 const common = {
   bundle: true,
@@ -107,6 +111,9 @@ async function produce() {
   // Хук SessionStart плагина Claude Code (hooks/hooks.json): приглашение в онбординг по
   // признакам репозитория — отдельный малый файл, не мост: старт сессии его ждёт.
   outputs.set("hooks/onboard.mjs", await bundleNode("js/cli/onboard-hook.ts"));
+  // Ритуалы плагина Claude Code (старт, пуш, мерж) по обложке репо — один вход на события
+  // hooks/hooks.json (граф nks-dev: #9319, раздел РИТУАЛЫ).
+  outputs.set("hooks/rituals.mjs", await bundleNode("js/cli/rituals-hook.ts"));
   return outputs;
 }
 

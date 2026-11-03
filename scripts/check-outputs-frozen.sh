@@ -28,6 +28,7 @@ outputs=(
   extensions/iskron.js
   skills/product-roadmap/references/roadmap-template.html
   hooks/onboard.mjs
+  hooks/rituals.mjs
 )
 release_branch() { [[ "$1" == release-please--* ]]; }
 release_commit() {
