@@ -49,13 +49,14 @@ async function seated(name, s, ctxOpts = {}, dir = "/work/t") {
 }
 
 const emit = (rec, type, sessionID, data = {}) => rec.emit({ type, data: { sessionID, ...data } });
-/** A turn: started, a call per `calls` (tool hook), its text, succeeded. */
+/** A turn: started, the inbox items it takes, a call per `calls` (tool hook), its text, succeeded. */
 async function turn(
   rec,
   s,
-  { calls = [], text = "отчёт", end = "session.execution.succeeded" } = {},
+  { take = [], calls = [], text = "отчёт", end = "session.execution.succeeded" } = {},
 ) {
   emit(rec, "session.execution.started", s);
+  for (const inboxID of take) emit(rec, "session.inbox.delivered", s, { inboxID });
   for (const [tool, input] of calls)
     for (const cb of rec.hooks["tool.execute.after"] ?? [])
       await cb({ tool, sessionID: s, id: `c-${tool}`, status: "completed", input, result: {} });
@@ -100,6 +101,56 @@ test("a frame taken by its inbox item: judged by session.inbox.delivered", async
     emit(rec, "session.inbox.delivered", "s-i", { inboxID: "inbox-1" });
     await turn(rec, "s-i");
     assert.equal(wakes(rec, "s-i").length, 1);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a frame taken before its prompt's answer named the item is still the turn's frame", async () => {
+  let answer = null;
+  const promptWait = (id) => (answer ? undefined : new Promise((r) => (answer = { id, r })));
+  const { rec, say } = await seated("turn-early", "s-e", {
+    inboxIds: true,
+    faults: { promptWait },
+  });
+  try {
+    emit(rec, "session.execution.started", "s-e");
+    await say("кадр");
+    emit(rec, "session.inbox.delivered", "s-e", { inboxID: answer.id });
+    await delay(50);
+    answer.r();
+    await delay(50);
+    emit(rec, "session.text.ended", "s-e", { text: "в консоль" });
+    emit(rec, "session.execution.succeeded", "s-e");
+    await delay(150);
+    assert.equal(wakes(rec, "s-e").length, 1, JSON.stringify(rec.prompts));
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("the turn the wake word's own item starts is exempt, not the next one: a waiting frame is woken", async () => {
+  const { rec, say } = await seated("turn-own", "s-o", { inboxIds: true });
+  const idOf = (p) => `inbox-${rec.prompts.indexOf(p) + 1}`;
+  try {
+    emit(rec, "session.execution.started", "s-o");
+    await say("кадр A");
+    emit(rec, "session.inbox.delivered", "s-o", { inboxID: "inbox-1" });
+    await say("кадр B"); // queued behind A's turn, before the wake word
+    emit(rec, "session.text.ended", "s-o", { text: "A в консоль" });
+    emit(rec, "session.execution.succeeded", "s-o");
+    await delay(150);
+    const [first] = wakes(rec, "s-o");
+    assert.ok(first, "A's turn is woken");
+    await turn(rec, "s-o", { take: ["inbox-2"], text: "B в консоль" });
+    const w = wakes(rec, "s-o");
+    assert.equal(w.length, 2, "B's turn, taken before the wake word, is judged and woken");
+    await say("кадр C");
+    const c = `inbox-${rec.prompts.length}`;
+    await turn(rec, "s-o", { take: [idOf(first), c], text: "всё ещё в консоль" });
+    assert.equal(wakes(rec, "s-o").length, 2, "the turn A's wake word started is exempt");
+    await turn(rec, "s-o", { take: [idOf(w[1])], text: "и снова" });
+    assert.equal(wakes(rec, "s-o").length, 2, "B's wake word's turn wakes none");
   } finally {
     await rec.stop();
   }
