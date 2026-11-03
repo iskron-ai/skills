@@ -23,7 +23,9 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { frameToText } from "../shared/frame-text.ts";
 import { claudeRaw, COVER, repo, ritesOf } from "./rites-kit.mjs";
+import { ask, said as roomSaid } from "./room-frames.mjs";
 
 const WAKE = /человека в консоли нет/;
 const CASE = "mcp__plugin_iskron_iskron__iskron_case";
@@ -115,9 +117,9 @@ test("the exit-on-frame watchdog under a background shell: its exit 0 is a frame
     }),
     said("слушаю"),
   ];
-  const out = stop([...shell, exited("b77", "tu2", "completed", 0), said("ответ в консоль")]);
+  const out = stop([...shell, exited("b77", "tu2", "completed", 0), said("ответ в консоль?")]);
   assert.equal(out?.decision, "block", JSON.stringify(out));
-  const dead = [...shell, exited("b77", "tu2", "failed", 1), said("токен умер")];
+  const dead = [...shell, exited("b77", "tu2", "failed", 1), said("токен умер?")];
   assert.equal(stop(dead), null, "a loud exit is no frame");
 });
 
@@ -125,29 +127,29 @@ test("no wake word: the turn spoke, a human spoke, another task woke it, no text
   const frame = notice("bx1", "кадр");
   for (const action of ["ask", "say", "answer"])
     assert.equal(
-      stop([...armed, frame, called("c", CASE, { action }), result("c", "ok"), said("готово")]),
+      stop([...armed, frame, called("c", CASE, { action }), result("c", "ok"), said("готово?")]),
       null,
       action,
     );
   const send = called("s", "mcp__iskron-bridge__iskron_channel", { action: "send" });
-  assert.equal(stop([...armed, frame, send, result("s", "ok"), said("отправил")]), null, "send");
-  assert.equal(stop([...armed, human("как дела?"), said("хорошо")]), null, "a human's turn");
+  assert.equal(stop([...armed, frame, send, result("s", "ok"), said("отправил?")]), null, "send");
+  assert.equal(stop([...armed, human("как дела?"), said("хорошо?")]), null, "a human's turn");
   assert.equal(
-    stop([...armed, human("проверь"), frame, said("проверил")]),
+    stop([...armed, human("проверь"), frame, said("проверил?")]),
     null,
     "a frame entered a human's turn",
   );
   assert.equal(
-    stop([...armed, notice("agent-1", "Agent finished"), said("субагент закончил")]),
+    stop([...armed, notice("agent-1", "Agent finished"), said("субагент закончил?")]),
     null,
     "another task's notice is no frame",
   );
   const hello = 'слушаю стояние k--931--r5\n{"type":"hello","pending":0}';
-  assert.equal(stop([...armed, notice("bx1", hello), said("слушаю")]), null, "hello");
+  assert.equal(stop([...armed, notice("bx1", hello), said("слушаю?")]), null, "hello");
   const expired = "[Monitor expired after 30m with 9 events delivered. Re-arm it]";
-  assert.equal(stop([...armed, notice("bx1", expired), said("перевзвёл")]), null, "expiry");
+  assert.equal(stop([...armed, notice("bx1", expired), said("перевзвёл?")]), null, "expiry");
   const backfill = `${hello}\nДело №5: слово [3]`;
-  assert.equal(stop([...armed, notice("bx1", backfill), said("вопрос")])?.decision, "block");
+  assert.equal(stop([...armed, notice("bx1", backfill), said("вопрос?")])?.decision, "block");
   const tail = [...armed, frame, called("r", "Read", { file_path: "x" })];
   assert.equal(stop(tail), null, "the turn ended on a call, not text");
   const limit = { ...said("You've hit your limit", "stop_sequence"), isApiErrorMessage: true };
@@ -155,7 +157,7 @@ test("no wake word: the turn spoke, a human spoke, another task woke it, no text
 });
 
 test("the cover's rituals field: without `turn` the word keeps silent, with it or without the field it speaks", () => {
-  const turn = [...armed, notice("bx1", "кадр"), said("в консоль")];
+  const turn = [...armed, notice("bx1", "кадр"), said("в консоль?")];
   const field = (rituals) => COVER.replace("  stamp:", `  rituals:${rituals}\n  stamp:`);
   assert.equal(stop(turn, {}, repo({ agents: field(" start push") })), null, "start push");
   assert.equal(stop(turn, {}, repo({ agents: field(" start turn") }))?.decision, "block");
@@ -164,6 +166,25 @@ test("the cover's rituals field: without `turn` the word keeps silent, with it o
 
 test("the turn is judged alone: a word laid in an earlier turn does not count", () => {
   const earlier = [called("c", CASE, { action: "say" }), result("c", "ok"), said("сказал")];
-  const out = stop([...armed, ...earlier, notice("bx1", "кадр"), said("в консоль")]);
+  const out = stop([...armed, ...earlier, notice("bx1", "кадр"), said("в консоль?")]);
   assert.equal(out?.decision, "block");
+});
+
+// Case №2730 [6]: a console the owner sits at, woken after every service frame answered by a line.
+test("no wake word (#9345): a human wrote lately, a short line with no question, counts only", () => {
+  const at = (e, ms) => ({ ...e, timestamp: new Date(Date.now() - ms).toISOString() });
+  const frame = notice("bx1", "Дело №5: слово [3]");
+  const long = `Отчёт: ${"сделано, проверено. ".repeat(20)}`;
+  const lately = [at(human("заступай на вахту"), 10 * 60_000), ...armed.slice(1)];
+  assert.equal(stop([...lately, frame, said("брать?")]), null, "a human wrote 10 min ago");
+  const before = [at(human("заступай на вахту"), 40 * 60_000), ...armed.slice(1)];
+  assert.equal(stop([...before, frame, said("брать?")])?.decision, "block", "40 min ago");
+  assert.equal(stop([...armed, frame, said("принял, жду CI")]), null, "a receipt");
+  assert.equal(stop([...armed, frame, said(long)])?.decision, "block", "past 280 characters");
+  // The texts the watchdog prints: an unaddressed record's count, wrapped; with a question to me.
+  const counts = frameToText(roomSaid("defer", 63), "");
+  const wrapped = counts.replace("; ", ";\n");
+  assert.equal(stop([...armed, notice("bx1", wrapped), said("брать?")]), null, "counts only");
+  const yours = `${counts}\n${frameToText(ask(80), "")}`;
+  assert.equal(stop([...armed, notice("bx1", yours), said("брать?")])?.decision, "block", "yours");
 });

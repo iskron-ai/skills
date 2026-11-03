@@ -9,8 +9,10 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { staleBatch } from "../shared/stalebatch.ts";
 import { delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
 import { COVER, repo } from "./rites-kit.mjs";
+import { ask, progress, said as roomSaid } from "./room-frames.mjs";
 
 const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
 const WAKE = /человека в консоли нет/;
@@ -45,7 +47,7 @@ async function seated(name, s, ctxOpts = {}, dir = "/work/t") {
     appendFileSync(mine, event("frame", { frame: frame(body), raw: "" }));
     await until(() => rec.prompts.length > n, `the frame ${body} prompted`);
   };
-  return { rec, say };
+  return { rec, say, lay: (line) => appendFileSync(mine, line) };
 }
 
 const emit = (rec, type, sessionID, data = {}) => rec.emit({ type, data: { sessionID, ...data } });
@@ -53,7 +55,7 @@ const emit = (rec, type, sessionID, data = {}) => rec.emit({ type, data: { sessi
 async function turn(
   rec,
   s,
-  { take = [], calls = [], text = "отчёт", end = "session.execution.succeeded" } = {},
+  { take = [], calls = [], text = "отчёт?", end = "session.execution.succeeded" } = {},
 ) {
   emit(rec, "session.execution.started", s);
   for (const inboxID of take) emit(rec, "session.inbox.delivered", s, { inboxID });
@@ -77,7 +79,7 @@ test("a frame's turn ending with text and no word laid: one wake word, none for 
     assert.equal(w[0].delivery, "queue");
     assert.match(w[0].text, /ask/);
     assert.match(w[0].text, /iskron_channel send/);
-    await turn(rec, "s-t", { text: "всё ещё в консоль" });
+    await turn(rec, "s-t", { text: "всё ещё в консоль?" });
     assert.equal(wakes(rec, "s-t").length, 1, "the woken turn is not woken again");
     emit(rec, "session.idle", "s-t");
     await delay(100);
@@ -120,7 +122,7 @@ test("a frame taken before its prompt's answer named the item is still the turn'
     await delay(50);
     answer.r();
     await delay(50);
-    emit(rec, "session.text.ended", "s-e", { text: "в консоль" });
+    emit(rec, "session.text.ended", "s-e", { text: "в консоль?" });
     emit(rec, "session.execution.succeeded", "s-e");
     await delay(150);
     assert.equal(wakes(rec, "s-e").length, 1, JSON.stringify(rec.prompts));
@@ -137,19 +139,19 @@ test("the turn the wake word's own item starts is exempt, not the next one: a wa
     await say("кадр A");
     emit(rec, "session.inbox.delivered", "s-o", { inboxID: "inbox-1" });
     await say("кадр B"); // queued behind A's turn, before the wake word
-    emit(rec, "session.text.ended", "s-o", { text: "A в консоль" });
+    emit(rec, "session.text.ended", "s-o", { text: "A в консоль?" });
     emit(rec, "session.execution.succeeded", "s-o");
     await delay(150);
     const [first] = wakes(rec, "s-o");
     assert.ok(first, "A's turn is woken");
-    await turn(rec, "s-o", { take: ["inbox-2"], text: "B в консоль" });
+    await turn(rec, "s-o", { take: ["inbox-2"], text: "B в консоль?" });
     const w = wakes(rec, "s-o");
     assert.equal(w.length, 2, "B's turn, taken before the wake word, is judged and woken");
     await say("кадр C");
     const c = `inbox-${rec.prompts.length}`;
-    await turn(rec, "s-o", { take: [idOf(first), c], text: "всё ещё в консоль" });
+    await turn(rec, "s-o", { take: [idOf(first), c], text: "всё ещё в консоль?" });
     assert.equal(wakes(rec, "s-o").length, 2, "the turn A's wake word started is exempt");
-    await turn(rec, "s-o", { take: [idOf(w[1])], text: "и снова" });
+    await turn(rec, "s-o", { take: [idOf(w[1])], text: "и снова?" });
     assert.equal(wakes(rec, "s-o").length, 2, "B's wake word's turn wakes none");
   } finally {
     await rec.stop();
@@ -189,9 +191,6 @@ test("no wake word: the turn spoke, a human spoke, it ended without text or fail
     await turn(rec, "s-q", { calls: [["iskron_channel", { action: "send", karta: "1226" }]] });
     await say("побудка о живости");
     await turn(rec, "s-q", { calls: [["iskron_stand", { realm: "r5", status: "жду ревью" }]] });
-    await say("кадр человеку");
-    await rec.promptRaw("s-q", "а что у тебя?");
-    await turn(rec, "s-q");
     await say("кадр без текста");
     await turn(rec, "s-q", { text: "" });
     await say("кадр, текст до вызова");
@@ -207,6 +206,42 @@ test("no wake word: the turn spoke, a human spoke, it ended without text or fail
     await say("кадр, read не говорит");
     await turn(rec, "s-q", { calls: [["iskron_case", { action: "read", room: "1" }]] });
     assert.equal(wakes(rec, "s-q").length, 1, "only the turn whose case call laid no word");
+    await say("кадр человеку");
+    await rec.promptRaw("s-q", "а что у тебя?");
+    await turn(rec, "s-q");
+    assert.equal(wakes(rec, "s-q").length, 1, "a human's word in the turn");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Case №2730 [6]: a console the owner sits at, woken after every service frame answered by a line.
+test("no wake word (#9345): a human wrote lately, a short line with no question, counts only", async () => {
+  const { rec, say, lay } = await seated("turn-calm", "s-c");
+  const stale = async (frames) => {
+    const n = rec.prompts.length;
+    const { text, keys } = staleBatch(frames, () => false);
+    lay(event("stale", { frames, marks: keys, text }));
+    await until(() => rec.prompts.length > n, "the stale batch prompted");
+  };
+  try {
+    await say("кадр, квитанция");
+    await turn(rec, "s-c", { text: "принял, жду CI" });
+    assert.equal(wakes(rec, "s-c").length, 0, "a short line with no question");
+    await say("кадр, длинный отчёт");
+    await turn(rec, "s-c", { text: `Отчёт: ${"сделано, проверено. ".repeat(20)}` });
+    assert.equal(wakes(rec, "s-c").length, 1, "past 280 characters it is a lost word");
+    await stale([roomSaid("defer", 61), progress(62)]);
+    await turn(rec, "s-c");
+    assert.equal(wakes(rec, "s-c").length, 1, "a stale batch of counts only");
+    await stale([roomSaid("defer", 63), ask(80)]);
+    await turn(rec, "s-c");
+    assert.equal(wakes(rec, "s-c").length, 2, "a stale batch with a question to the seat");
+    await rec.promptRaw("s-c", "я тут");
+    await turn(rec, "s-c", { text: "" });
+    await say("кадр после слова человека");
+    await turn(rec, "s-c");
+    assert.equal(wakes(rec, "s-c").length, 2, "a human wrote in the session minutes ago");
   } finally {
     await rec.stop();
   }
