@@ -57,7 +57,8 @@ const root = join(scratch, "plugin");
 mkdirSync(join(root, "hooks"), { recursive: true });
 if (existsSync(HOOK)) copyFileSync(HOOK, join(root, "hooks", "rituals.mjs"));
 
-export function claude(dir, input) {
+/** The hook's whole answer: the parsed JSON it printed, or null for none. */
+export function claudeRaw(dir, input) {
   const command = ritesOf(input.hook_event_name)[0]?.hooks[0].command ?? "true";
   const env = { ...process.env, CLAUDE_PLUGIN_ROOT: root, ISKRON_BRIDGE_LANG: "ru" };
   const r = spawnSync(command, {
@@ -68,8 +69,9 @@ export function claude(dir, input) {
     input: JSON.stringify({ cwd: dir, ...input }),
   });
   assert.equal(r.status, 0, r.stderr);
-  return r.stdout.trim() ? JSON.parse(r.stdout).hookSpecificOutput : null;
+  return r.stdout.trim() ? JSON.parse(r.stdout) : null;
 }
+export const claude = (dir, input) => claudeRaw(dir, input)?.hookSpecificOutput ?? null;
 export const start = (dir, source = "startup") =>
   claude(dir, { hook_event_name: "SessionStart", source });
 export const bash = (dir, command, stdout = "") =>
