@@ -5,6 +5,7 @@
 // holds itself. Temporary repositories only; no network, no model (rites-kit.mjs, which also
 // names the variables that point the probe at a past release).
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 
 import { bash, memory, opencode, PUSHED, repo, ritesOf, shellCall, start } from "./rites-kit.mjs";
@@ -39,6 +40,32 @@ test("claude code: push and merge by outcome, the holon in the merge word", () =
   assert.match(merge.additionalContext, /мерж — .*контур #12/);
   assert.equal(bash(dir, "gh pr merge --help", "Usage: gh pr merge"), null);
   assert.equal(bash(repo({ agents: "# x\n" }), "git push origin HEAD", PUSHED), null);
+});
+
+// Case №2720 [6]: in homelab a push to main is the release, and the push word called it no shipping.
+test("claude code: a push to the trunk says the merge word (#8362), a branch's push the push word", () => {
+  const dir = repo();
+  execFileSync("git", ["init", "-q", "-b", "main", dir]);
+  const toMain = "To github.com:o/r.git\n   a1b2c3d..e4f5a6b  main -> main";
+  for (const [command, out] of [
+    ["git push origin main", toMain],
+    ["git push origin main", ""],
+    ["git push", ""],
+    ["git push -u origin HEAD", ""],
+    ["git push origin HEAD:refs/heads/master", ""],
+    ["git push origin feat/x:main", ""],
+  ]) {
+    const said = bash(dir, command, out)?.additionalContext ?? "";
+    assert.match(said, /мерж — .*контур #12/, `${command} | ${out}`);
+    assert.doesNotMatch(said, /пуш — не отгрузка/, `${command} | ${out}`);
+  }
+  for (const command of ["git push origin feat/x", "git push origin main:feat/x"]) {
+    const said = bash(dir, command, "")?.additionalContext ?? "";
+    assert.match(said, /пуш — не отгрузка/, command);
+    assert.doesNotMatch(said, /мерж —/, command);
+  }
+  const branch = bash(dir, "git push", PUSHED)?.additionalContext ?? "";
+  assert.match(branch, /пуш — не отгрузка/, "git's report names the branch it went to");
 });
 
 test("claude code: a kind the repository holds itself keeps the delivery silent", () => {
@@ -107,6 +134,10 @@ test("opencode: push and merge words after a shell call, once per call id", asyn
     const again = shellCall("c2", "gh pr merge 5 --squash", "");
     await run("execute.after", again);
     assert.equal(again.result.content, "", "the same call is told once");
+    const trunk = shellCall("c4", "git push origin main", "");
+    await run("execute.after", trunk);
+    assert.match(String(trunk.result.content), /мерж — .*#12/, "a push to the trunk (#8362)");
+    assert.doesNotMatch(String(trunk.result.content), /пуш — не отгрузка/);
   } finally {
     await rec.stop();
   }
