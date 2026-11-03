@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.30.1](https://github.com/iskron-ai/skills/compare/v7.30.0...v7.30.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **iskronify:** the repo's guard does not read the rituals field — turning guard off removes the hook ([#644](https://github.com/iskron-ai/skills/issues/644)) ([94225ee](https://github.com/iskron-ai/skills/commit/94225ee16abcc3602cc98080dfb9e38802668bc4))
+* quiet turn's end, trunk push says the merge word, ritual words cite the repo's own sections. Дело №2730. ([#642](https://github.com/iskron-ai/skills/issues/642)) ([26ed671](https://github.com/iskron-ai/skills/commit/26ed671339615c04c834220d891357b05dd25d9d))
+* **skills:** a cross-contour «think it through» routes to architect by its subject, not by the phrase ([#647](https://github.com/iskron-ai/skills/issues/647)) ([6108d17](https://github.com/iskron-ai/skills/commit/6108d1768d83598f0c92244ab61979b9134b8062))
+* **skills:** reading of 7.30.1 — the stop step and one routing wording ([#648](https://github.com/iskron-ai/skills/issues/648)) ([afc082f](https://github.com/iskron-ai/skills/commit/afc082fc8c9d9ce09f4eb5d5dad3655688b6e1c4))
+* **skills:** the chief of staff addresses only the working graph's agents ([#641](https://github.com/iskron-ai/skills/issues/641)) ([a6aa0e2](https://github.com/iskron-ai/skills/commit/a6aa0e2ccf83b4cf0408f90e70b75dda5455b1a1))
+
 ## [7.30.0](https://github.com/iskron-ai/skills/compare/v7.29.1...v7.30.0) (2026-11-03)
 
 
