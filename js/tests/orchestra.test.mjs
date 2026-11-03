@@ -218,8 +218,7 @@ const cursorsAt = (dir) => join(dir, "run", "orchestra-cursors.json");
 /** A daemon that can read a server: the fake's address and a PAT beside the grant, and a
  * hold record per realm whose channel url names the api beside it — as lived sessions would
  * leave. The records' realms are ALSO the discovered half of the boundary (#8202). */
-async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {
-  writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
+async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {  writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
   mkdirSync(join(dir, "standings"), { recursive: true });
   let n = 0;
@@ -237,6 +236,146 @@ async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {
   }
   return raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
 }
+
+/** Тонкий мост в пробе взятия: stdio JSON-RPC, как харнес дочернего агента. */
+function thinBridge(authDir, env = {}) {
+  const proc = spawn(NODE, [BRIDGE, "--no-browser", "--auth-dir", authDir], {
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_BRIDGE_TOKEN: "probe-pat",
+      ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_DAEMON: "0",
+      ...env,
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const waiters = new Map();
+  let buf = "";
+  proc.stdout.on("data", (c) => {
+    buf += c;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      const msg = JSON.parse(line);
+      const w = waiters.get(msg.id);
+      if (w) {
+        waiters.delete(msg.id);
+        w(msg);
+      }
+    }
+  });
+  let id = 0;
+  return {
+    stop: () =>
+      proc.exitCode !== null
+        ? Promise.resolve()
+        : new Promise((r) => {
+            proc.once("exit", r);
+            proc.stdin.end();
+            setTimeout(() => proc.kill("SIGKILL"), 3000).unref();
+          }),
+    async call(method, params = {}) {
+      const myId = ++id;
+      const p = new Promise((res, rej) => {
+        waiters.set(myId, res);
+        setTimeout(() => rej(new Error(`no answer for ${method}`)), 20_000).unref();
+      });
+      proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: myId, method, params }) + "\n");
+      return p;
+    },
+  };
+}
+const textOfReply = (r) => (r.result?.content ?? []).map((c) => c.text ?? "").join("\n");
+
+// WIP (№1317, пауза владельца — №1302[61] → №1317[13]): договор взятия в фейке готов,
+// проводка spawned_for в мост не начата. Красная проба сработала (spawned_for не ехал
+// в register, assert упал на месте), но разборка харнеса тонких мостов роняет файловую
+// пробу «promise resolution is still pending» и тянет ранер ~75 с — продолжить после
+// паузы: починить разборку, снять skip, начать проводку в standing.ts. Не приёмка.
+test.skip("orchestra: the raised child claims its invite at register — repeat quiet, rival refused, unknown refused", async (t) => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dirOf = () => {
+    const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+    writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
+    writeFileSync(join(dir, "token"), "probe-pat");
+    return dir;
+  };
+  const room = "11111111-2222-4333-8444-555555555555";
+  await fake.control({
+    orchestra: {
+      realms: {
+        "@nks/nks-dev": {
+          invites: [
+            { entry_id: 463, room_id: room, zachin: "probe raise", karta_seq: 931, author: null, at: "2026-10-21T08:00:00Z", payload: {}, attrs: {} },
+          ],
+          signals: [],
+        },
+      },
+    },
+  });
+  const claim = (invite) => JSON.stringify({ invite, room, realm: "@nks/nks-dev" });
+  // The raised child: the spawning daemon handed it the invite; every register carries the claim.
+  const child = thinBridge(dirOf(), { ISKRON_BRIDGE_SPAWNED_FOR: claim(463) });
+  t.after(() => child.stop());
+  await child.call("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "raised-probe", version: "0" },
+  });
+  const stand = await child.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "raised-1" },
+  });
+  assert.ok(!stand.result?.isError, `stand: ${textOfReply(stand)}`);
+  const sent = fake.state.calls
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
+    .map((c) => c.arguments.spawned_for);
+  assert.ok(
+    sent.some((s) => s?.invite === 463 && s?.room === room),
+    `spawned_for never rode the register: ${JSON.stringify(sent)}`,
+  );
+  // Repeat by the same place — quiet, no error (the claim is the place's own).
+  const again = await child.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "raised-1" },
+  });
+  assert.ok(!again.result?.isError, `repeat: ${textOfReply(again)}`);
+  // A rival place under the same invite — 409 spawned_for_claimed, loud.
+  const rival = thinBridge(dirOf(), { ISKRON_BRIDGE_SPAWNED_FOR: claim(463) });
+  t.after(() => rival.stop());
+  await rival.call("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "rival-probe", version: "0" },
+  });
+  const rr = await rival.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "raised-2" },
+  });
+  assert.ok(rr.result?.isError, "the rival must be refused");
+  assert.match(textOfReply(rr), /spawned_for_claimed/);
+  // An invite the queue does not hold — 422 spawned_for_unknown, loud.
+  const bogus = thinBridge(dirOf(), { ISKRON_BRIDGE_SPAWNED_FOR: claim(999) });
+  t.after(() => bogus.stop());
+  await bogus.call("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "bogus-probe", version: "0" },
+  });
+  const br = await bogus.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "raised-3" },
+  });
+  assert.ok(br.result?.isError, "the unknown invite must be refused");
+  assert.match(textOfReply(br), /spawned_for_unknown/);
+  await child.stop();
+  await rival.stop();
+  await bogus.stop();
+  await fake.stop();
+});
 
 test("orchestra: step reads invites and raised from its cursor; a step sees only the new", async () => {
   const fake = await startFakeNks({ pat: "probe-pat" });
