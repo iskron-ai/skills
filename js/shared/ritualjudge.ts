@@ -87,14 +87,11 @@ function tagsOnly(c: ShellCall): boolean {
   );
 }
 
-/** A quiet push lands where HEAD equals its push ref on a branch other than the trunk. */
+/** A quiet push lands where HEAD equals its push ref; on the trunk too — pushedTo names it (#8362). */
 function quietLanded(cwd: string | null): boolean {
   if (!cwd) return false;
   const head = git(cwd, "rev-parse", "HEAD");
-  const branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
-  return (
-    head !== "" && head === git(cwd, "rev-parse", "@{push}") && !["main", "master"].includes(branch)
-  );
+  return head !== "" && head === git(cwd, "rev-parse", "@{push}");
 }
 
 /** Whether the call pushed a branch; cwd — the session's directory for a quiet push. */

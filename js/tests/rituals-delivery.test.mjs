@@ -6,6 +6,9 @@
 // names the variables that point the probe at a past release).
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -76,6 +79,23 @@ test("claude code: a push to the trunk says the merge word (#8362), a branch's p
   }
   const branch = bash(dir, "git push", PUSHED)?.additionalContext ?? "";
   assert.match(branch, /пуш — не отгрузка/, "git's report names the branch it went to");
+});
+
+// Review of case №2730: a quiet push prints no report; git's state says it landed on the trunk.
+test("claude code: a quiet push to the trunk says the merge word (#8362)", () => {
+  const dir = repo();
+  const origin = mkdtempSync(join(tmpdir(), "rites-origin-"));
+  const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+  g("init", "-q", "-b", "main");
+  g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "a");
+  g("remote", "add", "origin", origin);
+  g("push", "-q", "-u", "origin", "main");
+  g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "b");
+  g("push", "-q", "origin", "main");
+  const said = bash(dir, "git push -q origin main 2>&1 | tail -1", "")?.additionalContext ?? "";
+  assert.match(said, /мерж — .*контур #12/);
+  assert.doesNotMatch(said, /пуш — не отгрузка/);
 });
 
 // #9351: in nks-mcp the words named template sections its AGENTS.md does not have.
