@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.31.0](https://github.com/iskron-ai/skills/compare/v7.30.1...v7.31.0) (2026-11-03)
+
+
+### Features
+
+* **chief-of-staff:** where you run — harness or house; the house's hands for each move of the tier ([#652](https://github.com/iskron-ai/skills/issues/652)) ([14b3488](https://github.com/iskron-ai/skills/commit/14b348850badeffc920a1890d0eee543c879bd93))
+
+
+### Bug Fixes
+
+* **chief-of-staff:** house fork — card and seat, stop, wake ([#653](https://github.com/iskron-ai/skills/issues/653)) ([05d3b30](https://github.com/iskron-ai/skills/commit/05d3b30e5853c5cc744a809a0686a0aee7370a49))
+* **rituals:** a quiet push with no trunk refspec from a folder on the trunk says neither word ([#654](https://github.com/iskron-ai/skills/issues/654)) ([ac4668b](https://github.com/iskron-ai/skills/commit/ac4668bbd7123fa20a37449f6c202d1fb71617f0))
+* **rituals:** quiet push — known refusal vetoes, trunk only by refspec ([#650](https://github.com/iskron-ai/skills/issues/650)) ([87e148d](https://github.com/iskron-ai/skills/commit/87e148da644b999d6177581b5aa5774f49c75844))
+
 ## [7.30.1](https://github.com/iskron-ai/skills/compare/v7.30.0...v7.30.1) (2026-11-03)
 
 
