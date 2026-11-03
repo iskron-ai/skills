@@ -2,8 +2,10 @@
 // an agent after `git push` (the push shipped nothing: self-review, cold review)
 // and after a merge (the four acts of AGENTS.md). Two carriers are judged:
 //
-//   • this repo's own .claude/settings.json — the PostToolUse/Bash commands are
-//     run as they are, by bash, with a hook payload on stdin;
+//   • the hooks a repository carries when its delivery is older than contract 39
+//     (fixtures/claude-ritual-hooks.json, this repo's last projection of them) —
+//     the PostToolUse/Bash commands are run as they are, by bash, with a hook
+//     payload on stdin;
 //   • the OpenCode rituals plugin template in
 //     skills/iskronify/references/harness-surfaces.md — its js block is loaded
 //     as a module and its execute.after hook is called with a stand-in ctx;
@@ -15,7 +17,7 @@
 // command only when it is last in the chain or stands before `&&` (a pipe or
 // `;` after it hands the status to someone else) — otherwise only a printed
 // confirmation does. The iskronify template (references/hooks.md, the copy
-// that ships to other repos) must carry the very filters this repo runs, so
+// that ships to other repos) must carry the very filters the fixture runs, so
 // the projection cannot drift from its source.
 //
 // ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES / ISKRON_HOOKS_TEMPLATE point
@@ -32,7 +34,8 @@ import { merged, pushed } from "../shared/ritualjudge.ts";
 import { ritualSample, standServer } from "./opencode-stand.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const settingsPath = process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", "settings.json");
+const settingsPath =
+  process.env.ISKRON_HOOKS_SETTINGS ?? join(root, "fixtures", "claude-ritual-hooks.json");
 const surfacesPath =
   process.env.ISKRON_HOOKS_SURFACES ??
   join(root, "skills", "iskronify", "references", "harness-surfaces.md");
@@ -289,6 +292,10 @@ const cases = [
 ];
 
 const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+// the guard this repo runs: Claude Code's guard stays a repository hook
+const guardSettings = JSON.parse(
+  readFileSync(process.env.ISKRON_HOOKS_SETTINGS ?? join(root, ".claude", "settings.json"), "utf8"),
+);
 const bashHooks = settings.hooks.PostToolUse.filter((g) => g.matcher === "Bash").flatMap(
   (g) => g.hooks,
 );
@@ -370,7 +377,7 @@ const guardCases = [
   ["Write", { file_path: join(home, "notes", "Memory", "f") }, 0, home],
 ];
 for (const [where, groups] of [
-  ["settings", () => settings.hooks.PreToolUse ?? []],
+  ["settings", () => guardSettings.hooks.PreToolUse ?? []],
   ["hooks.md", templateGuard],
 ]) {
   for (const [tool, toolInput, code, HOME] of guardCases) {
@@ -402,7 +409,7 @@ test(
   () => {
     const logic = (groups) =>
       guardOf(groups, "Write").map((h) => h.command.replace(/echo '.*' >&2/, "echo … >&2"));
-    assert.deepEqual(logic(settings.hooks.PreToolUse ?? []), logic(templateGuard()));
+    assert.deepEqual(logic(guardSettings.hooks.PreToolUse ?? []), logic(templateGuard()));
   },
 );
 
@@ -425,7 +432,7 @@ test("memory-guard (hooks.md): the refusal routes through the slots", () => {
   assert.doesNotMatch(said, /@<?handle>?\/mind/, "no constructed personal address");
 });
 test("memory-guard (settings): the refusal names this repo's graph and section", () => {
-  const said = refusal(settings.hooks.PreToolUse ?? []);
+  const said = refusal(guardSettings.hooks.PreToolUse ?? []);
   const agents = readFileSync(join(root, "AGENTS.md"), "utf8");
   // the cover's graph is rN (#9316); the refusal names the full address with it in parentheses
   const graph = /^ {2}graph: (r\d+)$/m.exec(agents)?.[1];
@@ -936,7 +943,7 @@ test("opencode rituals template: another forge's merge (fj) wakes by outcome", a
 });
 
 test(
-  "iskronify template carries the filters this repo runs",
+  "iskronify template carries the filters the fixture runs",
   { skip: !!(process.env.ISKRON_HOOKS_SETTINGS || process.env.ISKRON_HOOKS_TEMPLATE) },
   () => {
     const skill = readFileSync(templatePath, "utf8");
