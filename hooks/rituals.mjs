@@ -61,6 +61,20 @@ var LAUNCH_LINE = new RegExp(
   "imu"
 );
 
+// js/delivery/patterns/sections.ts
+var SECTIONS = {
+  /** Самопроверка этапа — слово пуша. */
+  check: (h) => /самопровер|self-check|self-review/i.test(h),
+  /** Жизненный цикл сессии — слово мержа, рядом с разделом мержа. */
+  lifecycle: (h) => /жизненн\S* цикл|lifecycle/i.test(h),
+  /** Акты после мержа — слово мержа. */
+  merge: (h) => /мерж|merge/i.test(h) && /граф|graph/i.test(h) || /every merge/i.test(h),
+  /** Пуш в ствол — слово мержа на пуше в main/master, прежде заголовка мержа (№2720). */
+  trunk: (h) => /пуш|push/i.test(h) && /main|master|ствол/i.test(h),
+  /** Правила персистентности — отказ memory-guard. */
+  persist: (h) => /персистент|persistence/i.test(h)
+};
+
 // js/delivery/product.ts
 var PRODUCT = "iskron";
 var UPPER = PRODUCT.toUpperCase();
@@ -94,6 +108,52 @@ var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
+// js/delivery/words/frame-text.ts
+var FRAME_TEXT = {
+  ru: {
+    myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
+    frame: (id) => `кадр ${id}`,
+    yoursBelow: () => ` — адресованные строками ниже; `,
+    noneYours: () => ` — адресованных месту нет; `,
+    count: (head2, n, mine) => `${head2}: записей ${n}, тебе ${mine}`,
+    supersededLines: (gone) => `, сменённых строк ключа ${gone}`,
+    askAnswered: (n, by) => `; вопрос [${n}] к тебе закрыт: ответил ${by}`,
+    askMoved: (n, to) => `; вопрос [${n}] к тебе переадресован ${to}`,
+    inFull: (cases) => `целиком — ${cases || FRAME_TEXT.ru.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Ответь действием: обнови занятость — ${tool("stand")}(realm, status=<чем занят>) — или скажи в деле.`,
+    lifeCheckSeat: (name) => `Предупреждено место: ${name || "место не названо платформой"}.`,
+    humanWordReply: (realm, karta, standing, id) => `ответ: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `адреса для ответа нет: ${[
+      m.realm && "графа",
+      m.karta && "роли человека",
+      m.standing && "места человека",
+      m.id && "id слова"
+    ].filter(Boolean).join(", ")}`
+  },
+  en: {
+    myCases: () => `${tool("case")}(action="mine"), then read each`,
+    frame: (id) => `frame ${id}`,
+    yoursBelow: () => ` — yours in the lines below; `,
+    noneYours: () => ` — none of them yours; `,
+    count: (head2, n, mine) => `${head2}: ${n} records, yours ${mine}`,
+    supersededLines: (gone) => `, ${gone} superseded lines of a key`,
+    askAnswered: (n, by) => `; your question [${n}] is closed: answered by ${by}`,
+    askMoved: (n, to) => `; your question [${n}] is re-asked of ${to}`,
+    inFull: (cases) => `in full — ${cases || FRAME_TEXT.en.myCases()}`,
+    caseHistory: (args, since) => `${tool("case")}(${args}, since=${since})`,
+    lifeCheckReply: () => `Answer with an action: update your status — ${tool("stand")}(realm, status=<what you are doing>) — or say a word in the case.`,
+    lifeCheckSeat: (name) => `Seat warned: ${name || "the platform did not name the seat"}.`,
+    humanWordReply: (realm, karta, standing, id) => `reply: ${tool("channel")}(action="send", realm=${realm}, karta=${karta}, standing=${standing}, in_reply_to=${id}, text=…)`,
+    noReplyAddress: (m) => `no address to reply: missing ${[
+      m.realm && "the graph",
+      m.karta && "the person's role",
+      m.standing && "the person's seat",
+      m.id && "the word's id"
+    ].filter(Boolean).join(", ")}`
+  }
+};
+
 // js/delivery/words/take.ts
 var TAKE = {
   ru: {
@@ -121,7 +181,7 @@ var PREPARE = {
 Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
 `,
     start: ({ graph, holon, role }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph) => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md, «Правила персистентности»). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
     left: (item, keys) => ({
       "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
       "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
@@ -151,7 +211,7 @@ var PREPARE = {
 Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}. Until they are, behavioral claims are not accepted.
 `,
     start: ({ graph, holon, role }) => `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role ? `, agent role #${role}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
-    guard: (graph) => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md, «Persistence rules»). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
+    guard: (graph, section = "Persistence rules") => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md${section ? `, «${section}»` : ""}). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
     left: (item, keys) => ({
       "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
       "cover.rituals": `the delivery knows no ritual ${keys} in the cover's rituals: field — it switches nothing on; its rituals: start push merge guard turn. Fix the name or drop it`,
@@ -173,18 +233,29 @@ Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}
 };
 
 // js/delivery/words/rites.ts
+var cite = (heads) => heads.filter(Boolean).map((h) => `«${h}»`).join(", ");
 var RITES = {
   ru: {
     lifecycle: () => "Жизненный цикл сессии",
-    push: () => "[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md, «Самопроверка этапа» и раздел о ревью). Отгрузка — мерж.",
-    merge: (holon) => `[iskron] мерж — акты после мержа AGENTS.md («Жизненный цикл сессии», «Мерж → граф»): протки ${holon ? `контур #${holon}` : "контур"}, продвинь карту, модусы по свидетельству, закрой по оси, reconcile, словарный проход; фидбэк-рефлексия — если её велит AGENTS.md; работа по ссылке от агента — только семя превращения и модусы поставки.`,
+    push: (check) => `[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md${check ? `, «${check}» и раздел о ревью` : ""}). Отгрузка — мерж.`,
+    merge: (holon, ...heads) => `[iskron] мерж — акты после мержа AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: протки ${holon ? `контур #${holon}` : "контур"}, продвинь карту, модусы по свидетельству, закрой по оси, reconcile, словарный проход; фидбэк-рефлексия — если её велит AGENTS.md; работа по ссылке от агента — только семя превращения и модусы поставки.`,
     early: (graph) => `[iskron] обложка AGENTS.md называет граф ${graph}, контура и роли агента в ней ещё нет — продолжи онбординг: ветвь «Первый граф» скилла iskronify, с недостающего шага; номеров контура и роли не выдумывай.`
   },
   en: {
     lifecycle: () => "Session lifecycle",
-    push: () => "[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md, «Stage self-check» and the review section). Shipping is the merge.",
-    merge: (holon) => `[iskron] merge — the after-merge acts of AGENTS.md («Session lifecycle», «Merge → graph»): weave ${holon ? `holon #${holon}` : "the holon"}, advance the map, modes by evidence, close along the axis, reconcile, vocabulary pass; feedback reflection — if AGENTS.md calls for it; work by reference from an agent — only the transformation seed and the delivery modes.`,
+    push: (check) => `[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md${check ? `, «${check}» and the review section` : ""}). Shipping is the merge.`,
+    merge: (holon, ...heads) => `[iskron] merge — the after-merge acts of AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: weave ${holon ? `holon #${holon}` : "the holon"}, advance the map, modes by evidence, close along the axis, reconcile, vocabulary pass; feedback reflection — if AGENTS.md calls for it; work by reference from an agent — only the transformation seed and the delivery modes.`,
     early: (graph) => `[iskron] the AGENTS.md cover names graph ${graph}, with no holon and agent role in it yet — continue the onboarding: the «First graph» branch of the iskronify skill, from the missing step; do not invent holon or role numbers.`
+  }
+};
+
+// js/delivery/words/stalebatch.ts
+var STALE = {
+  ru: {
+    head: (count, shown) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.`
+  },
+  en: {
+    head: (count, shown) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.`
   }
 };
 
@@ -456,9 +527,30 @@ function repoRoot(dir) {
 }
 
 // js/shared/ritualcover.ts
+function headings(text2) {
+  const lines = text2.split("\n");
+  let i = lines[0]?.trim() === "---" ? lines.findIndex((l, n) => n > 0 && l.trim() === "---") + 1 : 0;
+  let fenced = false;
+  const out = [];
+  for (; i < lines.length; i++) {
+    const l = lines[i] ?? "";
+    if (/^\s*(?:```|~~~)/.test(l)) fenced = !fenced;
+    else if (!fenced && /^#{1,6}\s/.test(l)) out.push(l.replace(/^#+\s*|\s+#+\s*$/g, "").trim());
+  }
+  return out;
+}
 function bodyLang(text2) {
-  const heads = text2.split("\n").filter((l) => /^#{1,6}\s/.test(l)).map((l) => l.replace(/^#+\s*/, "").toLowerCase());
+  const heads = headings(text2).map((h) => h.toLowerCase());
   return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle().toLowerCase())));
+}
+function sectionsOf(text2) {
+  const heads = headings(text2);
+  const out = {};
+  for (const k of Object.keys(SECTIONS)) {
+    const h = heads.find(SECTIONS[k]);
+    if (h) out[k] = h;
+  }
+  return out;
 }
 function ritualCover(dir, cover = COVER) {
   const root = repoRoot(dir);
@@ -477,19 +569,73 @@ function ritualCover(dir, cover = COVER) {
   const role = block.get("agent_role") || void 0;
   const lang2 = bodyLang(text2);
   const { on } = ritualsOf(block);
-  return { root, graph, ...holon ? { holon } : {}, ...role ? { role } : {}, lang: lang2, on };
+  const sections = sectionsOf(text2);
+  return {
+    root,
+    graph,
+    ...holon ? { holon } : {},
+    ...role ? { role } : {},
+    lang: lang2,
+    on,
+    sections
+  };
+}
+function mergeHeads(s, trunk) {
+  return trunk && s.trunk ? [s.trunk] : [s.lifecycle, s.merge];
 }
 function startWord(c) {
   const { graph, holon, role, lang: lang2 } = c;
   return holon && role ? wordsIn(PREPARE, lang2).start({ graph, holon, role }) : wordsIn(RITES, lang2).early(graph);
 }
 
-// js/shared/ritualjudge.ts
+// js/shared/trunkpush.ts
 import { execFileSync } from "node:child_process";
+var TRUNK = /^(?:refs\/heads\/)?(?:main|master)$/;
+var REF_LINE = /^ [ *+-] \S+(?: \S+)*? +\S+ -> (\S+)/gm;
+var words2 = (args) => args.match(/(?:\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^ '"\\])+/g) ?? [];
+function git(cwd, ...a) {
+  try {
+    const stdio = ["ignore", "pipe", "ignore"];
+    return execFileSync("git", a, { cwd, encoding: "utf8", stdio, windowsHide: true }).trim();
+  } catch {
+    return "";
+  }
+}
+function targets(args) {
+  const pos = [];
+  let skip = false;
+  for (const t of words2(args)) {
+    if (skip) skip = false;
+    else if (/^[0-9]*(?:>>?|<|>&)$/.test(t)) skip = true;
+    else if (/^[0-9]*(?:>>?|<|>&)/.test(t)) continue;
+    else if (/['"\\$`]/.test(t)) return null;
+    else if (/^--(?:all|mirror)$/.test(t)) return null;
+    else if (/^(?:-o|--push-option|--receive-pack|--exec|--repo)$/.test(t)) skip = true;
+    else if (!t.startsWith("-")) pos.push(t);
+  }
+  const out = [];
+  let tag = false;
+  for (const r of pos.slice(1)) {
+    if (tag) tag = false;
+    else if (r === "tag") tag = true;
+    else out.push(r.replace(/^\+/, "").split(":").at(-1) || "HEAD");
+  }
+  return out.length ? out : ["HEAD"];
+}
+function toTrunk(runs, output, cwd) {
+  const printed2 = [...output.matchAll(REF_LINE)].map((m) => m[1] ?? "");
+  if (printed2.length) return printed2.some((r) => TRUNK.test(r));
+  const branch = () => cwd ? git(cwd, "symbolic-ref", "--short", "-q", "HEAD") : "";
+  return runs.some(
+    (args) => (targets(args) ?? []).some((r) => TRUNK.test(r === "HEAD" ? branch() : r))
+  );
+}
+
+// js/shared/ritualjudge.ts
 var ARG = String.raw`(?:>&|\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^;&|)\n'"\\])*`;
 var ENV = String.raw`(?:env +)?(?:[A-Za-z_]+=\S+ +)*`;
 var PUSH = String.raw`${ENV}git(?: -C \S+)* push`;
-var at = (head, noop) => String.raw`(?:^|[;&|(\n] *)${head}(?=[ ;&|)\n]|$)(?!${ARG} (?:${noop})(?:[ ;&|)\n]|$))`;
+var at = (head2, noop) => String.raw`(?:^|[;&|(\n] *)${head2}(?=[ ;&|)\n]|$)(?!${ARG} (?:${noop})(?:[ ;&|)\n]|$))`;
 var PULL = new RegExp(
   at(String.raw`${ENV}git(?: -C \S+)* (?:checkout|switch)`, "-h|--help") + String.raw` (?:main|master)(?=[ ;&|)\n]|$)` + String.raw`(?:${ARG}(?:&&|;|\n))+ *${ENV}git(?: -C \S+)* pull(?=[ ;&|)\n]|$)`
 );
@@ -499,9 +645,9 @@ var TAGS_OUT = /^(?=[\s\S]*\n [*] \[new tag\])(?![\s\S]*\n (?:[ +-] |\* (?!\[new
 var QUIET = new RegExp(
   String.raw`^(?:${ARG}[;&|(\n] *)*` + PUSH + String.raw`(?=[ ;&|)\n]|$)(?!${ARG} (?:-h|--help)(?:[ ;&|)\n]|$))` + ARG + String.raw` (?:-q|--quiet)(?=[ ;&|)\n]|$)`
 );
-function ran(c, head, noop, said) {
-  if (!new RegExp(at(head, noop)).test(c.command)) return false;
-  const last = new RegExp(at(head, noop) + ARG + String.raw`\s*(?:&&|$)`).test(c.command);
+function ran(c, head2, noop, said) {
+  if (!new RegExp(at(head2, noop)).test(c.command)) return false;
+  const last = new RegExp(at(head2, noop) + ARG + String.raw`\s*(?:&&|$)`).test(c.command);
   return (c.exit ?? 0) === 0 && last || said.test(c.output);
 }
 function tagOnly(args) {
@@ -509,7 +655,7 @@ function tagOnly(args) {
   let tags = false;
   let broad = false;
   const pos = [];
-  for (const t of args.match(/(?:\\.|'[^']*'|"(?:[^"\\]|\\.)*"|[^ '"\\])+/g) ?? []) {
+  for (const t of words2(args)) {
     if (skip) skip = false;
     else if (/^[0-9]*(?:>>?|<|>&)$/.test(t)) skip = true;
     else if (/^[0-9]*(?:>>?|<|>&)/.test(t)) continue;
@@ -531,30 +677,28 @@ function tagOnly(args) {
   if (ok && !name && (refs.length > 0 || tags)) return "tag";
   return refs.length === 1 && !tags && /^(?!refs\/|tag$)[^:+]+$/.test(refs[0] ?? "") ? "bare" : "no";
 }
-function tagsOnly(c) {
+var pushRuns = (c) => {
   const all = new RegExp(String.raw`(?:^|[;&|(\n] *)${PUSH}(?=[ ;&|)\n]|$)(${ARG})`, "g");
-  const kinds = [...c.command.matchAll(all)].map((m) => tagOnly(m[1] ?? ""));
+  return [...c.command.matchAll(all)].map((m) => m[1] ?? "");
+};
+function tagsOnly(c) {
+  const kinds = pushRuns(c).map(tagOnly);
   return kinds.length > 0 && !kinds.includes("no") && (!kinds.includes("bare") || TAGS_OUT.test(`
 ${c.output}`));
 }
 function quietLanded(cwd) {
   if (!cwd) return false;
-  const git = (...a) => {
-    try {
-      const stdio = ["ignore", "pipe", "ignore"];
-      return execFileSync("git", a, { cwd, encoding: "utf8", stdio, windowsHide: true }).trim();
-    } catch {
-      return "";
-    }
-  };
-  const head = git("rev-parse", "HEAD");
-  const branch = git("rev-parse", "--abbrev-ref", "HEAD");
-  return head !== "" && head === git("rev-parse", "@{push}") && !["main", "master"].includes(branch);
+  const head2 = git(cwd, "rev-parse", "HEAD");
+  return head2 !== "" && head2 === git(cwd, "rev-parse", "@{push}");
 }
 function pushed(c, cwd) {
   if (REFUSED.test(c.output) || tagsOnly(c)) return false;
   if (ran(c, PUSH, "-h|--help", /To [^\n]+(?:\n [!=] .*)*\n [ *+-]/)) return true;
   return QUIET.test(c.command) && !c.command.includes("<<") && quietLanded(cwd);
+}
+function pushedTo(c, cwd) {
+  if (!pushed(c, cwd)) return null;
+  return toTrunk(pushRuns(c), c.output, cwd) ? "trunk" : "branch";
 }
 function merged(c) {
   if (HELD.test(c.output)) return false;
@@ -578,7 +722,10 @@ function speaks(name, input) {
   return false;
 }
 var marked = (text2) => text2.trimStart().startsWith(FRAME_MARK);
-var lostWord = (t) => t.framed && !t.human && !t.spoke && t.text;
+var WATCHED_MS = 30 * 6e4;
+var RECEIPT_MAX = 280;
+var receipt = (text2) => [...text2.trim()].length <= RECEIPT_MAX && !text2.includes("?");
+var lostWord = (t, now = Date.now()) => t.framed && !t.human && !t.spoke && !!t.text.trim() && !receipt(t.text) && !(t.heard !== null && now - t.heard < WATCHED_MS);
 
 // js/cli/hookkinds.ts
 import { readFileSync as readFileSync5 } from "node:fs";
@@ -591,13 +738,13 @@ var SCRIPT = /\.(sh|bash|zsh|js|cjs|mjs|ts|py|rb|pl)$/;
 var PROJECT = /\$\{?CLAUDE_PROJECT_DIR\}?/g;
 var INTERPRETER = /(^|\/)(sh|bash|zsh|dash|node|bun|deno|tsx|python3?|ruby|perl)$/;
 function scriptsOf(root, command) {
-  const words2 = command.split(/\s+/).map((t) => t.replace(/["']/g, ""));
+  const words3 = command.split(/\s+/).map((t) => t.replace(/["']/g, ""));
   const at2 = (t) => {
     const p = t.replace(PROJECT, root);
     return isAbsolute(p) ? p : join5(root, p);
   };
-  return words2.filter(
-    (t, i) => SCRIPT.test(t) || t.includes("CLAUDE_PROJECT_DIR") || i > 0 && INTERPRETER.test(words2[i - 1] ?? "") && /^[\w.~]/.test(t) || t.includes("/") && isFile(at2(t))
+  return words3.filter(
+    (t, i) => SCRIPT.test(t) || t.includes("CLAUDE_PROJECT_DIR") || i > 0 && INTERPRETER.test(words3[i - 1] ?? "") && /^[\w.~]/.test(t) || t.includes("/") && isFile(at2(t))
   ).map(at2);
 }
 function isFile(path) {
@@ -627,7 +774,7 @@ function runsOn(matcher, tool2) {
 
 // js/cli/hookkinds.ts
 var covers = (m, target) => !m || m === "*" || runsOn(m, target);
-var onAny = (...targets) => (m) => targets.some((t) => covers(m, t));
+var onAny = (...targets2) => (m) => targets2.some((t) => covers(m, t));
 var KNOWN = {
   "hook.start": {
     event: "SessionStart",
@@ -673,6 +820,32 @@ function standingRites(root, target) {
 
 // js/cli/turnread.ts
 import { readFileSync as readFileSync6 } from "node:fs";
+
+// js/shared/quietframe.ts
+var flat = (s) => s.replace(/\s+/g, "");
+var esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var HEAD2 = "";
+var ARGS = "";
+var N = 1234567;
+var NUM = new RegExp(String(N), "g");
+function countLine(lang2) {
+  const T = FRAME_TEXT[lang2];
+  const call = esc(flat(T.caseHistory(ARGS, N))).replace(ARGS, `[^()]*`).replace(NUM, String.raw`-?\d+`);
+  const cases = `(?:${call}(?:;${call})*|${esc(flat(T.myCases()))})`;
+  const count = esc(flat(T.count(HEAD2, N, 0))).replace(HEAD2, ".+?").replace(NUM, String.raw`\d+`);
+  return `${count}[^()]*?${esc(flat(T.noneYours()))}${esc(flat(T.inFull(ARGS))).replace(ARGS, cases)}\\.`;
+}
+var head = (lang2) => [STALE[lang2].head(1, 1), STALE[lang2].head(2, 1)].map(
+  (h) => esc(flat(h)).replace(/\d+/g, String.raw`\d+`)
+);
+var LINE = `(?:${LANGS.map(countLine).join("|")})`;
+var QUIET2 = new RegExp(`^(?:${LANGS.flatMap(head).join("|")})?(?:${LINE})+$`);
+function quiet(text2) {
+  const t = flat(text2);
+  return QUIET2.test(t.startsWith(FRAME_MARK) ? t.slice(FRAME_MARK.length) : t);
+}
+
+// js/cli/turnread.ts
 var WATCH = /\bwatchdog(?:-exit)?\b/;
 var EXITS = /\bwatchdog-exit\b/;
 var NOTICE = /^\s*<task-notification>/;
@@ -703,7 +876,7 @@ function watchTasks(entries) {
 }
 function frameNotice(text2, exits) {
   const event = /<event>([\s\S]*?)<\/event>/.exec(text2)?.[1]?.trim();
-  if (event !== void 0) return !ownEvent(event);
+  if (event !== void 0) return !ownEvent(event) && !quiet(event);
   return exits && /<status>\s*completed\s*<\/status>/.test(text2);
 }
 function prompt(e, watch) {
@@ -717,7 +890,7 @@ function prompt(e, watch) {
     const id = /<task-id>([^<]+)<\/task-id>/.exec(text2)?.[1]?.trim();
     return id && watch.has(id) && frameNotice(text2, watch.get(id) === true) ? "frame" : "other";
   }
-  if (marked(text2)) return "frame";
+  if (marked(text2)) return quiet(text2) ? "other" : "frame";
   return origin === void 0 ? "human" : "other";
 }
 var ended = (e) => {
@@ -738,10 +911,13 @@ function lastTurn(path) {
     return null;
   }
   const watch = watchTasks(entries);
-  const seen = { framed: false, human: false, spoke: false, text: false };
+  const said = [...entries].reverse().find((e) => prompt(e, watch) === "human")?.timestamp;
+  const heard = typeof said === "string" ? Date.parse(said) : NaN;
+  const seen = { framed: false, human: false, spoke: false, text: "", heard: null };
+  if (Number.isFinite(heard)) seen.heard = heard;
   const last = [...entries].reverse().find((e) => e.type === "assistant");
   const tail = last && !last.isApiErrorMessage ? blocks(last).at(-1) : void 0;
-  seen.text = tail?.type === "text" && typeof tail.text === "string" && !!tail.text.trim();
+  if (tail?.type === "text" && typeof tail.text === "string") seen.text = tail.text;
   let prompts = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
@@ -789,9 +965,10 @@ function riteWords(input, dir) {
   };
   const said = [];
   const W = wordsIn(RITES, cover.lang);
-  if (cover.on.has("push") && !own.has("hook.push") && pushed(call, dir)) said.push(W.push());
-  if (cover.on.has("merge") && !own.has("hook.merge") && merged(call))
-    said.push(W.merge(cover.holon));
+  const push = cover.on.has("push") && !own.has("hook.push") ? pushedTo(call, dir) : null;
+  if (push === "branch") said.push(W.push(cover.sections.check));
+  if (push === "trunk" || cover.on.has("merge") && !own.has("hook.merge") && merged(call))
+    said.push(W.merge(cover.holon, ...mergeHeads(cover.sections, push === "trunk")));
   return said;
 }
 function turnWord(input, dir) {
