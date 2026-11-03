@@ -53,19 +53,20 @@ export const namesTrunk = (runs: string[]): boolean =>
   runs.some((args) => (targets(args) ?? []).some((r) => TRUNK.test(r)));
 
 /**
- * Whether a push (its argument runs, what it printed) went to the trunk. A quiet push prints no
- * report, and the session's folder need not be where it ran: its HEAD is not read for it.
+ * Whether a push (its argument runs, what it printed) went to the trunk; null — not knowable. A
+ * quiet push prints no report, and the session's folder need not be where it ran: with no refspec
+ * naming the trunk and that folder on the trunk, either word could be false — none is said.
  */
 export function toTrunk(
   runs: string[],
   output: string,
   cwd: string | null,
   quiet = false,
-): boolean {
+): boolean | null {
   const printed = [...output.matchAll(REF_LINE)].map((m) => m[1] ?? "");
   if (printed.length) return printed.some((r) => TRUNK.test(r));
-  if (quiet) return namesTrunk(runs);
   const branch = (): string => (cwd ? git(cwd, "symbolic-ref", "--short", "-q", "HEAD") : "");
+  if (quiet) return namesTrunk(runs) ? true : isTrunk(branch()) ? null : false;
   return runs.some((args) =>
     (targets(args) ?? []).some((r) => TRUNK.test(r === "HEAD" ? branch() : r)),
   );

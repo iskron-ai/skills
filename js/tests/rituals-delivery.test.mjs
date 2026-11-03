@@ -113,13 +113,11 @@ test("claude code: a quiet push that exited non-zero says nothing (#6919)", () =
   );
 });
 
-// The session's folder sits on main while the push ran from another work tree: a quiet push names no
-// target and prints none, so the folder's branch says nothing about where it went — a branch's word.
-test("claude code: a quiet push naming no trunk from a folder on main is no trunk push (#8362)", () => {
-  for (const cmd of ["git push -q", "git push -q 2>&1 | tail -1"]) {
-    const said = bash(onTrunk(), cmd, "")?.additionalContext ?? "";
-    assert.doesNotMatch(said, /мерж —/, cmd);
-  }
+// The session's folder sits on main, the push may have run from another work tree: a quiet push
+// names no target and prints none — neither word is known to be true, none is said.
+test("claude code: a quiet push naming no trunk from a folder on main says nothing (#8362)", () => {
+  for (const cmd of ["git push -q", "git push -q 2>&1 | tail -1"])
+    assert.equal(bash(onTrunk(), cmd, ""), null, cmd);
 });
 
 // #9351: in nks-mcp the words named template sections its AGENTS.md does not have.

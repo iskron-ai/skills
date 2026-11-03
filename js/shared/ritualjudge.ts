@@ -116,7 +116,8 @@ export function pushed(c: ShellCall, cwd: string | null): boolean {
 /** What the call pushed: the trunk — it shipped, the merge word speaks (#8362); a branch; nothing. */
 export function pushedTo(c: ShellCall, cwd: string | null): "trunk" | "branch" | null {
   if (!pushed(c, cwd)) return null;
-  return toTrunk(pushRuns(c), c.output, cwd, QUIET.test(c.command)) ? "trunk" : "branch";
+  const to = toTrunk(pushRuns(c), c.output, cwd, QUIET.test(c.command));
+  return to === null ? null : to ? "trunk" : "branch";
 }
 
 /** Whether the call merged: the forge's merge by outcome, or the trunk pulled. */
