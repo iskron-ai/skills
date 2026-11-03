@@ -1,28 +1,36 @@
 // A live run of the turn's end on a watch in OpenCode (graph @nks/nks-dev, kriya #9345, question
 // #9342) against a PAT carrier. Real `opencode serve` in an isolated HOME/XDG, plugin and bridge
 // of the branch (dist/dev) or of a release candidate, a scripted loopback provider instead of a
-// model: a prompt naming a step with calls gets them one by one, then text; anything else — text.
+// model: a prompt naming a step with calls gets them one by one, then the step's text (a long
+// report with no question by default).
 //
 //   node scripts/stand-run-turnend.mjs --token-file F --url U --api A --realm @owner/slug
 //     [--ledger-log F] [--bridge B] [--plugin P] [--report F]
 //
 // Scene: the agent role and the asked role, a holon with a case on it (the scene bridge stands
-// as the asked role and opens it); taken off at the end. Session A (a cover with no rituals
-// field) stands as the agent role by an explicit iskron_stand and joins the case in a human
-// turn; the person's word to its seat (api, scripts/stand-person.mjs) is a frame the provider
-// answers with text only — exactly one wake word «no human at the console…» follows; the turn
-// that word starts ends with text again — no second word (no loop); a frame whose turn puts an
-// ask card in the case — no word. Session B (a cover with `rituals: start push`) — a frame
-// answered with text gets no word. --ledger-log (the stand-mcp-ledger.mjs journal behind --url):
-// every initialize 200 of the run is closed by a DELETE 200. Exit 0 — passed, 1 — failed,
-// 2 — setup failed.
+// as the asked role and opens it); taken off at the end. Every session is a root seated on the
+// agent role by automatic seating (the cover names it), each by its first prompt — the seat is
+// read off the board. Case by case of #9345:
+// R — no human ever writes: its first prompt carries the delivery's mark (a turn no human word
+//   started, as a frame's) and joins the case. (0) that turn, no frame in it, ends with a report —
+//   no word; (q) a case record addressed to nobody (the scene seat's say without `to`) — no turn,
+//   no word; (r) a frame answered with a line under 280 signs without «?» — no word; (1) a frame
+//   answered with a report — exactly one wake word, and the turn it starts ends with a report
+//   again — no second word (the word's own turn); (?) a frame answered with a short line with «?»
+//   — exactly one word; (a) a frame whose turn puts an ask card in the case — no word.
+// A — a human writes its first prompt: (w) a frame answered with a report within 30 minutes of
+//   that — no word (the console is watched).
+// B — no human, a cover with `rituals: start push` (no turn): (o) a frame answered with a
+//   report — no word.
+// --ledger-log (the stand-mcp-ledger.mjs journal behind --url): every initialize 200 of the run is
+// closed by a DELETE 200. Exit 0 — passed, 1 — failed, 2 — setup failed.
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { TURN } from "../js/delivery/index.ts";
+import { FRAME_MARK, TURN } from "../js/delivery/index.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "../js/tests/built.mjs";
 import { runCleanup } from "./stand-recall-cleanup.mjs";
 import { secretScrubber } from "./stand-recall-evidence.mjs";
@@ -53,7 +61,7 @@ const run = mkdtempSync(join(tmpdir(), "stand-turnend-"));
 const home = join(run, "home");
 const auth = join(run, "auth");
 const oc = join(home, ".config/opencode");
-const proj = { A: join(run, "turn-a"), B: join(run, "turn-b") };
+const proj = { R: join(run, "turn-r"), A: join(run, "turn-a"), B: join(run, "turn-b") };
 process.on("exit", () => rmSync(run, { recursive: true, force: true }));
 for (const d of [join(oc, "plugins"), join(home, ".local/share"), join(home, ".local/state"), join(home, ".cache"), join(home, "tmp"), ...Object.values(proj)])
   mkdirSync(d, { recursive: true });
@@ -79,14 +87,14 @@ const env = {
   ISKRON_BRIDGE_URL: URL_,
   ISKRON_BRIDGE_NO_UPDATE: "1",
   ISKRON_BRIDGE_NO_BROWSER: "1",
-  ISKRON_ROOT_SEAT: "0", // the seat is an explicit stand: the run judges the turn's end, not auto-seating
+  // Automatic seating stays on: the sessions with no human word get their seat from it.
 };
 const git = (cwd, ...a) => {
   const r = spawnSync("git", a, { cwd, env, encoding: "utf8" });
   if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr.slice(0, 300)}`);
 };
 const cover = (graph, holon, role, rites) =>
-  `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 38\n  stamp: 2026-11-03\n${rites ? `  rituals: ${rites}\n` : ""}---\n# Пробный проект конца хода\n`;
+  `---\niskron:\n  graph: ${graph}\n  holon: ${holon}\n  agent_role: ${role}\n  contract: 39\n  stamp: 2026-11-03\n${rites ? `  rituals: ${rites}\n` : ""}---\n# Пробный проект конца хода\n`;
 function project(dir, text) {
   git(run, "init", "-q", "-b", "main", dir);
   writeFileSync(join(dir, "AGENTS.md"), text);
@@ -94,7 +102,10 @@ function project(dir, text) {
   git(dir, "commit", "-q", "-m", "init");
 }
 
-// ── The scripted provider: a step's calls one per request, then text; no step — text ───────
+// ── The scripted provider: a step's calls one per request, then its text ──────────────────
+const REPORT = `Отчёт пробы конца хода: шаг пройден, изменений нет, всё на месте. ${"Строка отчёта тянется дальше квитанции, чтобы правило коротких строк её не взяло. ".repeat(4)}Конец отчёта.`;
+const RECEIPT = "Принято.";
+const QUESTION = "Повторить шаг?";
 const wire = [];
 const steps = {};
 let callN = 0;
@@ -105,7 +116,7 @@ function reply(body) {
   const step = textOf(msgs[u]).match(/TURN_STEP=(\w+)/)?.[1];
   const s = steps[step];
   const done = msgs.slice(u + 1).filter((m) => m.role === "tool").length;
-  if (!body.tools?.length || !s?.calls || done >= s.calls.length) return null;
+  if (!body.tools?.length || !s?.calls || done >= s.calls.length) return { text: s?.text ?? REPORT };
   const [want, args] = s.calls[done];
   const names = body.tools.map((t) => t.function?.name ?? t.name);
   const direct = names.find((n) => n === want || n.endsWith(`_${want}`));
@@ -124,9 +135,9 @@ const llm = createServer(async (req, res) => {
     wire.push(body);
     const call = reply(body);
     const chunk = (delta, finish_reason = null) => ({ id: "chatcmpl-probe", object: "chat.completion.chunk", created: 1, model: "probe", choices: [{ index: 0, delta, finish_reason }] });
-    const parts = call
+    const parts = call.id
       ? [chunk({ role: "assistant", tool_calls: [{ index: 0, id: call.id, type: "function", function: { name: call.name, arguments: JSON.stringify(call.args) } }] }), chunk({}, "tool_calls")]
-      : [chunk({ role: "assistant", content: "OK — answered in the console only" }), chunk({}, "stop")];
+      : [chunk({ role: "assistant", content: call.text }), chunk({}, "stop")];
     res.writeHead(200, { "Content-Type": "text/event-stream" });
     res.end(parts.map((p) => `data: ${JSON.stringify(p)}\n\n`).join("") + "data: [DONE]\n\n");
   } catch (e) { res.writeHead(500); res.end(String(e)); }
@@ -180,15 +191,19 @@ async function settle(id, marker, quiet = 20_000) {
     if (t > 600) throw new Error(`${marker}: no request carried it in 5 min`);
     await sleep(500);
   }
+  await hush(id, quiet);
+}
+/** Waits until the session is idle and the wire quiet for `quiet` ms (4 min). */
+async function hush(id, quiet) {
   let seen = wire.length;
   let since = Date.now();
   for (const until = Date.now() + 240_000; Date.now() < until; await sleep(1000)) {
     if (wire.length !== seen || active().includes(id)) { seen = wire.length; since = Date.now(); continue; }
     if (Date.now() - since >= quiet) return;
   }
-  throw new Error(`${marker}: the session did not go quiet in 4 min`);
+  throw new Error(`session ${id} did not go quiet in 4 min`);
 }
-async function humanTurn(id, text) {
+async function prompt(id, text) {
   const r = api("POST", `/api/session/${id}/prompt`, { text, resume: true });
   if (!r.ok) throw new Error(`prompt ${id}: ${r.raw.slice(0, 300)}`);
   await settle(id, text.match(/TURN_STEP=\w+/)[0], 15_000);
@@ -201,6 +216,7 @@ const resultsOf = (step) => (steps[step]?.ids ?? []).map((id) => {
   }
   return null;
 });
+const seatsIn = (board) => new Set([...board.matchAll(/@[^\s:]+:(\S+) —/g)].map((m) => m[1]));
 
 const { verdicts, report, problem, verdict, error: errorVerdict, count: failures } = makeReporters();
 const P = stdioBridge({ run, bridge, env, token, name: "stand-run-turnend", problem });
@@ -233,16 +249,19 @@ try {
   const room = h.text.match(/№\s*(\d+)/)?.[1];
   if (!room) throw new Error(`no case opened on #${holon}: ${h.text.slice(0, 300)}`);
   report.push(`graph ${realm} = ${graph} · scene: role #${role}, asked role #${asked} (seat ${ownerSeat}), holon #${holon}, case №${room}`);
+  project(proj.R, cover(graph, holon, role, null));
   project(proj.A, cover(graph, holon, role, null));
   project(proj.B, cover(graph, holon, role, "start push"));
-  const seatA = `turnend-a-${stamp}`;
-  const seatB = `turnend-b-${stamp}`;
   Object.assign(steps, {
-    a_seat: { calls: [["iskron_stand", { realm, karta: `#${role}`, name: seatA, model: "stand-run" }], ["iskron_case", { realm, action: "join", room }]] },
-    a_text: {},
-    a_ask: { calls: [["iskron_case", { realm, action: "ask", room, key: "проба конца хода", karta: `#${asked}`, text: "Проба конца хода: вопрос карточкой, отвечать не нужно.", payload: { form: "free" } }]] },
-    b_seat: { calls: [["iskron_stand", { realm, karta: `#${role}`, name: seatB, model: "stand-run" }]] },
-    b_text: {},
+    r_kick: { calls: [["iskron_case", { realm, action: "join", room }]] },
+    r_receipt: { text: RECEIPT },
+    r_report: {},
+    r_question: { text: QUESTION },
+    r_ask: { calls: [["iskron_case", { realm, action: "ask", room, key: "проба конца хода", karta: `#${asked}`, text: "Проба конца хода: вопрос карточкой, отвечать не нужно.", payload: { form: "free" } }]] },
+    a_human: { text: RECEIPT },
+    a_report: {},
+    b_kick: { text: RECEIPT },
+    b_report: {},
   });
 
   serve = spawn(opencode, ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "warn"], { env, cwd: run, stdio: ["ignore", "pipe", "pipe"] });
@@ -264,53 +283,80 @@ try {
   setup = false;
 
   const board = async () => (await P.call("iskron_channel", { realm, action: "list", karta: `#${role}` })).text;
+  /** The session's first prompt seats it automatically: its seat is the one new on the role's board. */
+  async function seated(id, text, label) {
+    const before = seatsIn(await board());
+    await prompt(id, text);
+    let fresh = [];
+    for (let t = 0; t < 12 && fresh.length !== 1; t++) {
+      fresh = [...seatsIn(await board())].filter((n) => !before.has(n));
+      if (fresh.length !== 1) await sleep(5_000);
+    }
+    if (fresh.length !== 1) throw new Error(`${label}: ${fresh.length} new seats on the role's board after the first prompt (${fresh.join(", ")})`);
+    report.push(`${label}: seated automatically as ${fresh[0]}`);
+    return fresh[0];
+  }
   const frame = async (seat, step, text) => {
     const r = await person.send(realm, role, seatAddress(await board(), seat), `TURN_STEP=${step}: ${text}`);
     if (r.error) throw new Error(`the person's word ${step}: ${r.text.split("\n")[0]}`);
   };
-  const A = session(proj.A, "turnend A");
-  await humanTurn(A, "TURN_STEP=a_seat: stand and join the case.");
-  const [standA, joinA] = resultsOf("a_seat");
-  const tools0 = of("a_seat")[0]?.tools ?? [];
-  const exec = tools0.find((t) => (t.function?.name ?? t.name) === "execute");
-  report.push(`--- A tools: ${tools0.map((t) => t.function?.name ?? t.name).join(", ")} ---\n${exec ? `execute: ${String((exec.function ?? exec).description).slice(0, 3000)}\n` : ""}--- A seat (via ${steps.a_seat.via}) ---\n[stand] ${standA}\n[join] ${joinA}`);
-  if (!(await board()).includes(`:${seatA}`)) throw new Error(`A: seat ${seatA} not on the board — ${String(standA).slice(0, 200)}`);
-  verdict(of("a_seat").every((b) => wakes(users(b).join("\n")) === 0), "(0) a human turn (stand, join) — no wake word");
+  /** The session's last request's wake words: the history counts every word ever laid. */
+  const total = (first) => wakes(users(of(first).at(-1) ?? { messages: [] }).join("\n"));
+  /** A frame to the seat, the session settled: the wake words it added and the requests the word started. */
+  async function framed(id, first, seat, step, text) {
+    const w0 = total(first);
+    const at = primaries().length;
+    await frame(seat, step, text);
+    await settle(id, `TURN_STEP=${step}`);
+    const after = of(first, at);
+    report.push(`--- ${step}: last user words ---\n${after.map((b) => lastUser(b).slice(0, 160)).join("\n")}`);
+    return { added: total(first) - w0, started: after.filter((b) => wakes(lastUser(b)) === 1).length, requests: after.length };
+  }
+  const seen = (x) => `wake words added ${x.added} · requests the word started ${x.started} · requests ${x.requests}`;
+
+  // ── R: no human ever writes ───────────────────────────────────────────────────────────────
+  const R = session(proj.R, "turnend R");
+  const seatR = await seated(R, `${FRAME_MARK} TURN_STEP=r_kick: a turn the delivery's mark starts; join the case.`, "R");
+  const [joinR] = resultsOf("r_kick");
+  report.push(`--- R join (via ${steps.r_kick.via}) ---\n${joinR}`);
+  verdict(of("r_kick").length > 0 && total("r_kick") === 0, "(0) R: a turn the delivery's mark started, no frame in it, ended with a report — no wake word", `requests ${of("r_kick").length} · wake words ${total("r_kick")}`);
 
   let at = primaries().length;
-  await frame(seatA, "a_text", "a frame to the seat; the probe answers in the console only.");
-  await settle(A, "TURN_STEP=a_text");
-  const afterText = of("a_seat", at);
-  const woken = afterText.filter((b) => wakes(lastUser(b)) === 1);
-  const first = afterText.findIndex((b) => lastUser(b).includes("TURN_STEP=a_text"));
-  const next = afterText.slice(first + 1).find((b) => !lastUser(b).includes("TURN_STEP=a_text"));
-  verdict(first >= 0 && next && wakes(lastUser(next)) === 1 && wakes(users(next).join("\n")) === 1,
-    "(1) a frame's turn ended with text: exactly one wake word in the next request", `requests after the frame ${afterText.length - first - 1} · wake words in the next ${next ? wakes(users(next).join("\n")) : "—"}`);
-  const lastText = afterText.at(-1);
-  verdict(woken.length === 1 && lastText && wakes(users(lastText).join("\n")) === 1,
-    "(2) the turn the wake word started ended with text — no second word (no loop)", `requests whose last user word is the wake word ${woken.length} · wake words in the session's last request ${lastText ? wakes(users(lastText).join("\n")) : "—"}`);
-  report.push(`--- A after the text frame: last user words ---\n${afterText.map((b) => lastUser(b).slice(0, 160)).join("\n")}`);
+  const said = await P.call("iskron_case", { realm, action: "say", room, text: "Проба конца хода: служебная запись в деле, никому не адресована." });
+  if (said.error) throw new Error(`the scene's say: ${said.text.slice(0, 300)}`);
+  await sleep(45_000);
+  await hush(R, 10_000);
+  const quiet = of("r_kick", at);
+  verdict(quiet.length === 0 && !active().includes(R), "(q) R: a case record addressed to nobody — no turn, no wake word", `requests since the record ${quiet.length} · wake words ${quiet.reduce((n, b) => n + wakes(lastUser(b)), 0)}`);
 
-  at = primaries().length;
-  await frame(seatA, "a_ask", "a frame to the seat; the probe puts an ask card in the case.");
-  await settle(A, "TURN_STEP=a_ask");
-  const [askA] = resultsOf("a_ask");
-  const afterAsk = of("a_seat", at);
-  report.push(`--- A ask ---\n${askA}\n--- A after the ask frame: last user words ---\n${afterAsk.map((b) => lastUser(b).slice(0, 160)).join("\n")}`);
-  verdict(askA !== null && afterAsk.every((b) => wakes(lastUser(b)) === 0) && wakes(users(afterAsk.at(-1)).join("\n")) === 1,
-    "(3) a frame's turn that put an ask in the case — no wake word", `ask answered ${askA === null ? "—" : JSON.stringify(askA.slice(0, 120))} · wake words since the frame ${afterAsk.filter((b) => wakes(lastUser(b))).length}`);
+  const rec = await framed(R, "r_kick", seatR, "r_receipt", "a frame; the probe answers with a short line without a question.");
+  verdict(rec.added === 0, `(r) R: a frame answered «${RECEIPT}» (under 280 signs, no «?») — no wake word`, seen(rec));
+  const rode = of("r_kick").find((b) => lastUser(b).includes("TURN_STEP=r_receipt"));
+  report.push(`INFO (q) the record's count rode the next prompt: ${rode ? /Проба конца хода: служебная|none (?:of them )?(?:is )?yours|ни одна не ваша|не ваш/i.test(lastUser(rode)) : "—"}`);
 
+  const rep = await framed(R, "r_kick", seatR, "r_report", "a frame; the probe answers with a report in the console.");
+  verdict(rep.added === 1, "(1) R: a frame's turn ended with a report — exactly one wake word", seen(rep));
+  verdict(rep.started === 1, "(1) R: the turn the wake word started ended with a report — no second word (its own turn)", seen(rep));
+
+  const q = await framed(R, "r_kick", seatR, "r_question", "a frame; the probe answers with a short question.");
+  verdict(q.added === 1 && q.started === 1, `(?) R: a frame answered «${QUESTION}» (short, with «?») — exactly one wake word`, seen(q));
+
+  const ask = await framed(R, "r_kick", seatR, "r_ask", "a frame; the probe puts an ask card in the case.");
+  const [askR] = resultsOf("r_ask");
+  report.push(`--- R ask ---\n${askR}`);
+  verdict(askR !== null && ask.added === 0, "(a) R: a frame's turn that put an ask card in the case, then a report — no wake word", `ask ${askR === null ? "—" : JSON.stringify(askR.slice(0, 120))} · ${seen(ask)}`);
+
+  // ── A: a human wrote within 30 minutes ───────────────────────────────────────────────────
+  const A = session(proj.A, "turnend A");
+  const seatA = await seated(A, "TURN_STEP=a_human: a human's word; reply.", "A");
+  const wA = await framed(A, "a_human", seatA, "a_report", "a frame; the probe answers with a report in the console.");
+  verdict(wA.requests > 0 && wA.added === 0, "(w) A: a human wrote in the session minutes ago — a frame's turn ended with a report gets no wake word", seen(wA));
+
+  // ── B: no human, the cover's rituals leave `turn` out ────────────────────────────────────
   const B = session(proj.B, "turnend B");
-  await humanTurn(B, "TURN_STEP=b_seat: stand.");
-  const [standB] = resultsOf("b_seat");
-  if (!(await board()).includes(`:${seatB}`)) throw new Error(`B: seat ${seatB} not on the board — ${String(standB).slice(0, 200)}`);
-  at = primaries().length;
-  await frame(seatB, "b_text", "a frame to the seat; the probe answers in the console only.");
-  await settle(B, "TURN_STEP=b_text");
-  const afterB = of("b_seat", at);
-  report.push(`--- B after the text frame: last user words ---\n${afterB.map((b) => lastUser(b).slice(0, 160)).join("\n")}`);
-  verdict(afterB.some((b) => lastUser(b).includes("TURN_STEP=b_text")) && afterB.every((b) => wakes(users(b).join("\n")) === 0),
-    "(4) a cover with `rituals: start push` — a frame's turn ended with text gets no wake word", `requests ${afterB.length} · wake words ${afterB.reduce((n, b) => n + wakes(users(b).join("\n")), 0)}`);
+  const seatB = await seated(B, `${FRAME_MARK} TURN_STEP=b_kick: a turn the delivery's mark starts.`, "B");
+  const oB = await framed(B, "b_kick", seatB, "b_report", "a frame; the probe answers with a report in the console.");
+  verdict(oB.requests > 0 && oB.added === 0, "(o) B: a cover with `rituals: start push` — a frame's turn ended with a report gets no wake word", seen(oB));
   report.push(`--- wire: ${wire.length} requests, ${primaries().length} primary ---`);
 } catch (e) {
   errorVerdict(e.message, setup);
