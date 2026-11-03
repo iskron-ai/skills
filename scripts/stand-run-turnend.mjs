@@ -31,6 +31,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { FRAME_MARK, TURN } from "../js/delivery/index.ts";
+import { quiet } from "../js/shared/quietframe.ts";
 import { BUILT_BRIDGE, BUILT_PLUGIN } from "../js/tests/built.mjs";
 import { runCleanup } from "./stand-recall-cleanup.mjs";
 import { secretScrubber } from "./stand-recall-evidence.mjs";
@@ -332,7 +333,7 @@ try {
   const rec = await framed(R, "r_kick", seatR, "r_receipt", "a frame; the probe answers with a short line without a question.");
   verdict(rec.added === 0, `(r) R: a frame answered «${RECEIPT}» (under 280 signs, no «?») — no wake word`, seen(rec));
   const rode = of("r_kick").find((b) => lastUser(b).includes("TURN_STEP=r_receipt"));
-  report.push(`INFO (q) the record's count rode the next prompt: ${rode ? /Проба конца хода: служебная|none (?:of them )?(?:is )?yours|ни одна не ваша|не ваш/i.test(lastUser(rode)) : "—"}`);
+  report.push(`INFO (q) the record's count rode the next prompt: ${rode ? lastUser(rode).split("\n").some((l) => l.trim() && quiet(l)) : "—"}`);
 
   const rep = await framed(R, "r_kick", seatR, "r_report", "a frame; the probe answers with a report in the console.");
   verdict(rep.added === 1, "(1) R: a frame's turn ended with a report — exactly one wake word", seen(rep));
