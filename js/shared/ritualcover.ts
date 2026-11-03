@@ -28,7 +28,7 @@ export function bodyLang(text: string): Lang | undefined {
     .split("\n")
     .filter((l) => /^#{1,6}\s/.test(l))
     .map((l) => l.replace(/^#+\s*/, "").toLowerCase());
-  return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle.toLowerCase())));
+  return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle().toLowerCase())));
 }
 
 /** The addresses of the cover of the repository holding dir; none, foreign or no graph — null. */

@@ -6,7 +6,7 @@ import type { Lang } from "../lang.ts";
 
 export interface RiteWords {
   /** Заголовок раздела, на который ссылаются слова: стоит в теле AGENTS.md — язык слов ритуалов. */
-  lifecycle: string;
+  lifecycle: () => string;
   /** Пуш открыл или обновил PR. */
   push: () => string;
   /** Мерж форжи слил PR или ствол подтянут; holon — фокус-контур обложки, если назван. */
@@ -17,7 +17,7 @@ export interface RiteWords {
 
 export const RITES: Readonly<Record<Lang, RiteWords>> = {
   ru: {
-    lifecycle: "Жизненный цикл сессии",
+    lifecycle: () => "Жизненный цикл сессии",
     push: () =>
       "[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md, «Самопроверка этапа» и раздел о ревью). Отгрузка — мерж.",
     merge: (holon) =>
@@ -26,7 +26,7 @@ export const RITES: Readonly<Record<Lang, RiteWords>> = {
       `[iskron] обложка AGENTS.md называет граф ${graph}, контура и роли агента в ней ещё нет — продолжи онбординг: ветвь «Первый граф» скилла iskronify, с недостающего шага; номеров контура и роли не выдумывай.`,
   },
   en: {
-    lifecycle: "Session lifecycle",
+    lifecycle: () => "Session lifecycle",
     push: () =>
       "[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md, «Stage self-check» and the review section). Shipping is the merge.",
     merge: (holon) =>
