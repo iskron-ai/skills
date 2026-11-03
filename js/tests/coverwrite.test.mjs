@@ -98,4 +98,8 @@ test("ritualsOf: нет поля — все; пустое — ни одного;
   const some = of(`---\n${BLOCK}  rituals: start  merge pushh # c\n---\n`);
   assert.deepEqual([...some.on], ["start", "merge"]);
   assert.deepEqual(some.unknown, ["pushh"]);
+  // A quoted value with a comment after it: the comment is not part of the list.
+  const quoted = of(`---\n${BLOCK}  rituals: 'push merge' # c\n---\n`);
+  assert.deepEqual([...quoted.on], ["push", "merge"]);
+  assert.deepEqual(quoted.unknown, []);
 });

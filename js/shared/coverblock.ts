@@ -31,7 +31,12 @@ const PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
 export const TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
 export const CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
 /** A bare value ends where a comment starts. */
-const bare = (v: string): string => unquote(/^['"]/.test(v.trim()) ? v : v.replace(/\s+#.*$/, ""));
+const bare = (v: string): string =>
+  unquote(
+    /^['"]/.test(v.trim())
+      ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1")
+      : v.replace(/\s+#.*$/, ""),
+  );
 
 /** The lines of the text and the indexes of its front matter's fences; none — null. */
 export function fences(text: string): { lines: string[]; end: number } | null {
