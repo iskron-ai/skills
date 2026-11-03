@@ -17,7 +17,7 @@
 // command only when it is last in the chain or stands before `&&` (a pipe or
 // `;` after it hands the status to someone else) — otherwise only a printed
 // confirmation does. The iskronify template (references/hooks.md, the copy
-// that ships to other repos) must carry the very filters this repo runs, so
+// that ships to other repos) must carry the very filters the fixture runs, so
 // the projection cannot drift from its source.
 //
 // ISKRON_HOOKS_SETTINGS / ISKRON_HOOKS_SURFACES / ISKRON_HOOKS_TEMPLATE point
@@ -943,7 +943,7 @@ test("opencode rituals template: another forge's merge (fj) wakes by outcome", a
 });
 
 test(
-  "iskronify template carries the filters this repo runs",
+  "iskronify template carries the filters the fixture runs",
   { skip: !!(process.env.ISKRON_HOOKS_SETTINGS || process.env.ISKRON_HOOKS_TEMPLATE) },
   () => {
     const skill = readFileSync(templatePath, "utf8");
