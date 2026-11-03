@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.30.0](https://github.com/iskron-ai/skills/compare/v7.29.1...v7.30.0) (2026-11-03)
+
+
+### Features
+
+* rituals switched on and off by the cover's rituals: field ([#636](https://github.com/iskron-ai/skills/issues/636)) ([6173bc6](https://github.com/iskron-ai/skills/commit/6173bc6cb956c4d504ae5a2d5d1c90ed1d7ce238))
+* session rituals carried by the delivery, iskronify contract 39 ([#633](https://github.com/iskron-ai/skills/issues/633)) ([346bda1](https://github.com/iskron-ai/skills/commit/346bda1751cbb58088116ff6bc31f96a61897a7c))
+* turn-end word on a watch — a frame's turn does not end in the console. Дело №2664. ([#637](https://github.com/iskron-ai/skills/issues/637)) ([19709cf](https://github.com/iskron-ai/skills/commit/19709cfd3b7c1867c1fa93794c5a3a9081c1e495))
+
+
+### Bug Fixes
+
+* findings of the 7.30.0 candidate review ([#635](https://github.com/iskron-ai/skills/issues/635)) ([2c590ff](https://github.com/iskron-ai/skills/commit/2c590ffdafb8eab5434bd2848dc1127ed7843cbf))
+* **skills:** reports where the person sees them, guard by the rituals field ([#638](https://github.com/iskron-ai/skills/issues/638)) ([ee92a91](https://github.com/iskron-ai/skills/commit/ee92a9128f443a814671c60d6a3e1453b839b756))
+
 ## [7.29.1](https://github.com/iskron-ai/skills/compare/v7.29.0...v7.29.1) (2026-11-02)
 
 
