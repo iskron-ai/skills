@@ -82,7 +82,8 @@ test("claude code: a push to the trunk says the merge word (#8362), a branch's p
 });
 
 // Review of case №2730: a quiet push prints no report; git's state says it landed on the trunk.
-test("claude code: a quiet push to the trunk says the merge word (#8362)", () => {
+/** A repository on main whose HEAD equals its push ref — a quiet push there has landed. */
+function onTrunk() {
   const dir = repo();
   const origin = mkdtempSync(join(tmpdir(), "rites-origin-"));
   const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
@@ -91,11 +92,34 @@ test("claude code: a quiet push to the trunk says the merge word (#8362)", () =>
   g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "a");
   g("remote", "add", "origin", origin);
   g("push", "-q", "-u", "origin", "main");
-  g("-c", "user.email=p@x", "-c", "user.name=p", "commit", "-q", "--allow-empty", "-m", "b");
-  g("push", "-q", "origin", "main");
-  const said = bash(dir, "git push -q origin main 2>&1 | tail -1", "")?.additionalContext ?? "";
+  return dir;
+}
+
+test("claude code: a quiet push to the trunk says the merge word (#8362)", () => {
+  const said =
+    bash(onTrunk(), "git push -q origin main 2>&1 | tail -1", "")?.additionalContext ?? "";
   assert.match(said, /мерж — .*контур #12/);
   assert.doesNotMatch(said, /пуш — не отгрузка/);
+});
+
+// Case №2777 [6]: a quiet push with a known non-zero exit was refused — equal refs do not outvote it.
+test("claude code: a quiet push that exited non-zero says nothing (#6919)", () => {
+  const dir = onTrunk();
+  for (const cmd of ["git push -q origin main", "git push -q origin feat/x"])
+    assert.equal(bash(dir, cmd, "", 1), null, cmd);
+  assert.match(
+    bash(dir, "git push -q origin main | tail", "", 1)?.additionalContext ?? "",
+    /мерж —/,
+  );
+});
+
+// The session's folder sits on main while the push ran from another work tree: a quiet push names no
+// target and prints none, so the folder's branch says nothing about where it went — a branch's word.
+test("claude code: a quiet push naming no trunk from a folder on main is no trunk push (#8362)", () => {
+  for (const cmd of ["git push -q", "git push -q 2>&1 | tail -1"]) {
+    const said = bash(onTrunk(), cmd, "")?.additionalContext ?? "";
+    assert.doesNotMatch(said, /мерж —/, cmd);
+  }
 });
 
 // #9351: in nks-mcp the words named template sections its AGENTS.md does not have.
