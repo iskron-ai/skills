@@ -19,7 +19,7 @@
 // and a bare remote, no rituals of its own — the start word in the first request, a push line
 // after `git push` (none on a refused push), a merge line after `gh pr merge` (a stand-in gh on
 // PATH printing the forge's outcome) and after `git checkout main && git pull`, a quiet push of a
-// commit on main (`git push -q`, nothing printed) — the merge line, no push line (#8362), the memory guard
+// commit on main (`git push -q origin main`, nothing printed) — the merge line, no push line (#8362), the memory guard
 // refuses a write into ~/.claude/projects/…/memory/, an ordinary file passes; (B) the same with
 // its own `.opencode/plugins/iskron-rituals.js` — the delivery keeps silent, the own plugin's
 // word comes once; (C) a clean repository with origin = the scene's repository — `prepare --json`
@@ -285,7 +285,7 @@ try {
     a_refused: { dir: proj.A, shell: "git push nowhere feat/x" },
     a_gh: { dir: proj.A, shell: "gh pr merge 1 --squash" },
     a_pull: { dir: proj.A, shell: "git checkout main && git pull" },
-    a_trunk: { dir: proj.A, shell: "git push -q" },
+    a_trunk: { dir: proj.A, shell: "git push -q origin main" },
     a_guard: { write: memoryFile },
     a_file: { write: join(proj.A, "notes.md") },
     b_start: {},
@@ -327,7 +327,7 @@ try {
   verdict(r.a_gh !== null && either(r.a_gh, merge) === one("merge"), `(1c) after gh pr merge — ${on("merge") ? "one merge line naming the holon" : "no merge line"}${field}`, `merge lines ${either(r.a_gh, merge)}`);
   verdict(r.a_pull !== null && either(r.a_pull, merge) === one("merge"), `(1c) after git checkout main && git pull — ${on("merge") ? "one merge line" : "no merge line"}${field}`, `merge lines ${either(r.a_pull, merge)}`);
   const landed = git(proj.A, "rev-parse", "HEAD") === git(proj.A, "rev-parse", "origin/main");
-  verdict(r.a_trunk !== null && landed && either(r.a_trunk, merge) === one("push") && either(r.a_trunk, push) === 0, `(1f) a quiet push to the trunk (git push -q on main) — ${on("push") ? "one merge line" : "no merge line"}, no push line (#8362)${field}`, `landed ${landed} · merge lines ${either(r.a_trunk, merge)} · push lines ${either(r.a_trunk, push)}`);
+  verdict(r.a_trunk !== null && landed && either(r.a_trunk, merge) === one("push") && either(r.a_trunk, push) === 0, `(1f) a quiet push to the trunk (git push -q origin main) — ${on("push") ? "one merge line" : "no merge line"}, no push line (#8362)${field}`, `landed ${landed} · merge lines ${either(r.a_trunk, merge)} · push lines ${either(r.a_trunk, push)}`);
   // #9351: the push and merge words cite the file's own headings as they stand, and none the file
   // lacks (the guard's own text quotes «Раскладке»: its section is judged by the exact word, 1d).
   const cited = ["a_push", "a_gh", "a_trunk"].flatMap((s) => (r[s] ?? "").match(/«[^»\n]+»/g) ?? []);
