@@ -32,6 +32,7 @@ import { createRootSeats } from "./rootseat.ts";
 import { startWords, watchCover } from "./rootseat-start.ts";
 import { setupSkillReads } from "./skillread.ts";
 import { type Say, setupTools } from "./tools.ts";
+import { createTurnEnds } from "./turnend.ts";
 import { createTwins, sweepAll } from "./twins.ts";
 import { createUsageFeed } from "./usage.ts";
 import { createWaits } from "./waits.ts";
@@ -104,6 +105,13 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     bridgeOf: (s) => half.bridgeOf(s),
     overflow: (s, n) => say(W.pulseOverflow(s, n), "warning"),
   });
+  // A frame's turn that left its word in the console is woken once (turnend.ts, #9342); the
+  // cover's list of rituals is to switch it by TURN_RITE.
+  const turns = createTurnEnds(ctx, {
+    skip: (s) => parents.has(s) || (roots.has(s) && roots.get(s) !== s) || closed(s),
+    on: async () => true,
+    say: (text) => say(text, "warning"),
+  });
   try {
     // The owner's stop goes by seats (#7440): every instance of the process takes its children's seats down.
     // Lead subagents — by the tools half, which comes up after the channel (#7505).
@@ -114,7 +122,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       parents,
       () => sweepAll(),
       { ended: (s) => half.ended(s), launcherOf: (s) => half.launcherOf(s) },
-      pulse.prompted,
+      (s, inbox) => {
+        pulse.prompted(s, inbox);
+        turns.laid(s, inbox);
+      },
     );
     ch = c0;
     onChannel = (s, p, c) => c0.onEvent(s, p, c);
@@ -182,6 +193,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   const rites = createRites(ctx);
   try {
     await rites.wire();
+    await turns.wire();
   } catch (e) {
     say(W.ritesDown((e as Error).message), "error");
   }
@@ -190,6 +202,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   try {
     await ctx.session.hook("prompt", async (p) => {
       const sid = String(p.sessionID);
+      turns.prompt(sid, p.prompt.text);
       const root = (await rootOf(sid)) === sid;
       const word = await half.launch(sid, p.prompt.text);
       if (word) p.prompt.text = withWord(p.prompt.text, word);
@@ -268,10 +281,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         waits.onEvent(ev);
         pulse.onEvent(ev);
         compaction.onEvent(ev);
+        turns.onEvent(ev);
         switch (ev?.type) {
           case "session.deleted":
             if (!id) break;
             pulse.forget(id);
+            turns.forget(id);
             compaction.forget(id);
             rootSeats.forget(id);
             onboard.forget(id);
