@@ -18,6 +18,7 @@ export type PrepareLeft =
   | "cover.contract"
   | "cover.flat"
   | "cover.repeat"
+  | "cover.rituals"
   | "CLAUDE.md"
   | "hook.start"
   | "hook.guard"
@@ -37,7 +38,7 @@ export interface PrepareWords {
   start: (a: PrepareAddr) => string;
   /** Сообщение memory-guard; graph — rN обложки (полного адреса без сети нет). */
   guard: (graph: string) => string;
-  /** keys — названные дважды ключи обложки, для cover.repeat. */
+  /** keys — названные дважды ключи обложки (cover.repeat) или незнакомые ритуалы (cover.rituals). */
   left: (item: PrepareLeft, keys?: string) => string;
   /** Стоящий хук-скрипт, который prepare не узнал как хук этого рода: своего рядом не пишет. */
   unread: (item: PrepareLeft, hook: string) => string;
@@ -74,6 +75,7 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
     left: (item, keys) =>
       ({
         "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
+        "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
         "cover.graph": "граф не назван — --graph rN (iskron_realm action=list), такт 1 iskronify",
         "cover.holon":
           "контур не назван — --holon N: поиск контура по атрибуту repository или его заведение",
@@ -113,6 +115,7 @@ export const PREPARE: Readonly<Record<Lang, PrepareWords>> = {
     left: (item, keys) =>
       ({
         "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
+        "cover.rituals": `the delivery knows no ritual ${keys} in the cover's rituals: field — it switches nothing on; its rituals: start push merge guard turn. Fix the name or drop it`,
         "cover.graph": "no graph named — --graph rN (iskron_realm action=list), iskronify tact 1",
         "cover.holon":
           "no holon named — --holon N: find the holon by its repository attribute or create it",

@@ -20,8 +20,9 @@ import {
   type CoverData,
   FIELDS,
   repeatedKeys,
-  writeCover,
+  ritualsOf,
 } from "../shared/coverblock.ts";
+import { writeCover } from "../shared/coverwrite.ts";
 import { words } from "../shared/lang.ts";
 import { ownRitualsPlugin } from "../shared/ritualcover.ts";
 import { type Outcome } from "./preparehooks.ts";
@@ -82,7 +83,10 @@ export function coverText(root: string, given: CoverData): CoverText | { why: st
   return { file, before, text, data, repeated };
 }
 
-/** The cover written; what is missing in it, a flat cover beside it, a key twice — to the model. */
+/**
+ * The cover written; what is missing in it, a ritual it names that the delivery has not, a flat
+ * cover beside it, a key twice — to the model.
+ */
 export function writeAgents(c: CoverText, out: Outcome): void {
   if (c.repeated.length) {
     out.left.push("cover.repeat");
@@ -95,6 +99,11 @@ export function writeAgents(c: CoverText, out: Outcome): void {
   for (const k of ["graph", "holon", "agent_role", "contract"] as const)
     if (c.data[k] === undefined) out.left.push(`cover.${k}` as const);
   if (c.repeated.length) return;
+  const { unknown } = ritualsOf(coverBlock(c.text, COVER.root));
+  if (unknown.length) {
+    out.left.push("cover.rituals");
+    out.rituals = unknown;
+  }
   if (c.before !== null && !coverBlock(c.before, COVER.root) && hasCover(c.before))
     out.left.push("cover.flat");
 }

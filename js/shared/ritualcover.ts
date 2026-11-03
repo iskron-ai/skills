@@ -2,7 +2,7 @@
 // section RITUALS; the cover — #9316): the delivery's block of the cover file at the repository
 // root, read locally. The graph switches on the memory guard, the push and merge words and the
 // early start word of an unfinished onboarding (#8018); the full start word needs the holon and
-// the agent role too. The words speak the language of the file's body — the one whose section
+// the agent role too. The block's rituals field keeps each one it leaves out silent. The words speak the language of the file's body — the one whose section
 // they name heads it — else the session's. A rituals plugin of the repository's own keeps the
 // delivery's silent in OpenCode until the transition takes it off.
 import { readdirSync, readFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { COVER, LANGS, PREPARE, RITES } from "../delivery/index.ts";
 import { type CoverKeys, stampOf } from "./cover.ts";
-import { coverBlock } from "./coverblock.ts";
+import { coverBlock, type Ritual, ritualsOf } from "./coverblock.ts";
 import { type Lang, wordsIn } from "./lang.ts";
 import { repoRoot } from "./reposigns.ts";
 
@@ -20,6 +20,8 @@ export interface RitualCover {
   holon?: string;
   role?: string;
   lang?: Lang;
+  /** The rituals the cover switches on; one off keeps silent (#9341). */
+  on: ReadonlySet<Ritual>;
 }
 
 /** The language whose lifecycle section heads the text; none — undefined. */
@@ -48,7 +50,8 @@ export function ritualCover(dir: string, cover: CoverKeys = COVER): RitualCover 
   const holon = block.get("holon") || undefined;
   const role = block.get("agent_role") || undefined;
   const lang = bodyLang(text);
-  return { root, graph, ...(holon ? { holon } : {}), ...(role ? { role } : {}), lang };
+  const { on } = ritualsOf(block);
+  return { root, graph, ...(holon ? { holon } : {}), ...(role ? { role } : {}), lang, on };
 }
 
 /** The start word the cover calls for: full with graph, holon and agent role, else the early one. */

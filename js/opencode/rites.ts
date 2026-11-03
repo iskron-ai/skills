@@ -2,7 +2,8 @@
 // what a repository's rituals plugin did, carried by the plugin and switched on by the cover of
 // the session's repository (shared/ritualcover.ts). A root's first prompt gets the start word,
 // the early one while the cover names only the graph (#8018); a write into local project memory is refused (shared/memorypath.ts); a shell call that pushed
-// or merged gets one more line (shared/ritualjudge.ts). A repository keeping a rituals plugin
+// or merged gets one more line (shared/ritualjudge.ts); a kind the cover's rituals field leaves
+// out keeps silent. A repository keeping a rituals plugin
 // of its own hears only that one — the delivery keeps silent there until the transition.
 import { PREPARE, RITES } from "../delivery/index.ts";
 import { wordsIn } from "../shared/lang.ts";
@@ -52,7 +53,7 @@ export function createRites(ctx: Context) {
       if (started.has(session)) return null;
       started.add(session);
       const c = await coverOf(session);
-      return c ? startWord(c.cover) : null;
+      return c?.cover.on.has("start") ? startWord(c.cover) : null;
     },
     /** The guard before a writing call and the push and merge lines after a shell call. */
     async wire(): Promise<boolean> {
@@ -62,7 +63,7 @@ export function createRites(ctx: Context) {
         const paths = pathsOf(t.tool, t.input);
         if (!paths.some(Boolean)) return;
         const c = await coverOf(String(t.sessionID));
-        if (c && paths.some((p) => p && inLocalMemory(p, c.dir)))
+        if (c?.cover.on.has("guard") && paths.some((p) => p && inLocalMemory(p, c.dir)))
           throw new Error(wordsIn(PREPARE, c.cover.lang).guard(c.cover.graph));
       });
       await tool.hook("execute.after", async (t) => {
@@ -82,7 +83,11 @@ export function createRites(ctx: Context) {
         const c = await coverOf(String(t.sessionID));
         if (!c) return;
         const W = wordsIn(RITES, c.cover.lang);
-        const note = [pushed(call, c.dir) && W.push(), merged(call) && W.merge(c.cover.holon)]
+        const { on, holon } = c.cover;
+        const note = [
+          on.has("push") && pushed(call, c.dir) && W.push(),
+          on.has("merge") && merged(call) && W.merge(holon),
+        ]
           .filter(Boolean)
           .join("\n\n");
         if (!note || !once(t.id)) return;
