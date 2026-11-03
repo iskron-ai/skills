@@ -45,6 +45,9 @@ function targets(args: string): string[] | null {
   return out.length ? out : ["HEAD"];
 }
 
+/** Whether a branch name is the trunk. */
+export const isTrunk = (branch: string): boolean => TRUNK.test(branch);
+
 /** Whether a refspec of the push names the trunk itself (not HEAD). */
 export const namesTrunk = (runs: string[]): boolean =>
   runs.some((args) => (targets(args) ?? []).some((r) => TRUNK.test(r)));
