@@ -1,8 +1,11 @@
-// A live run of the onboarding skill's role step (graph @nks/nks-dev, node #9285) by an OpenCode
-// agent against a PAT carrier: a graph where a role was made for the person in advance — a karta
-// svatantra with no user — and the person has no bound role. The agent, asked for help to start,
-// finds that role, names it and asks; on the person's «yes» binds it to them (iskron_update with
-// user="me"), creates no second one, and reads it back.
+// A live run of the onboarding skill's role step (graph @nks/nks-dev, node #7984; the owner's
+// order — case №2926 [50]) by an OpenCode agent against a PAT carrier: the run's graph, where the
+// person has no role. The agent, asked for help to start, registers the person by a role without
+// asking (makes it or binds a found one, user="me") and asks exactly one human question — what
+// the space is about and who they are in it, or the opening «Это Искрон…» asking them to tell who
+// they are and what they want to do, whose answer is the answer to it; not asked again on the
+// answer. No access check or admin call, no method words to the person, no second role. The scenes «no graph» and «invited without a
+// role» are not here (#9264).
 //
 //   node scripts/stand-run-onboarding.mjs --token-file F --url U --api A --realm @owner/slug
 //     --bridge B --plugin P --skills DIR [--model provider/id] [--report F] [--turn-minutes 15]
@@ -24,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { personApi } from "./stand-person.mjs";
 import { locationPath, secretScrubber, turnMinutes as parseMinutes } from "./stand-recall-evidence.mjs";
 import { runCleanup, removeRawLogs } from "./stand-recall-cleanup.mjs";
-import { idOf, makeReporters, nodeOf, sceneTaker, stdioBridge, teeCalls as sceneTeeCalls } from "./stand-recall-scene.mjs";
+import { idOf, makeReporters, sceneTaker, stdioBridge, teeCalls as sceneTeeCalls } from "./stand-recall-scene.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
@@ -191,19 +194,28 @@ const scene = {};
 const live = { S: null, mark: 0 };
 let setup = true;
 const bound = async (id) => (await P.call("iskron_look", { realm, node_id: `#${id}` })).text.match(/^\s*Пользователь: (.+)$/m)?.[1]?.trim() ?? null;
-try {
-  await P.init();
-  // No role bound to the person before the run: every svatantra of the graph is looked at.
-  const before = (await P.call("iskron_search", { realm, q: "", node_type: "karta", limit: 50 })).text;
-  const kartas = [...before.matchAll(/\(#(\d+), karta/g)].map((m) => m[1]);
+const ownKartas = async () => {
+  const kartas = [...(await P.call("iskron_search", { realm, q: "", node_type: "karta", limit: 50 })).text.matchAll(/\(#(\d+), karta/g)].map((m) => m[1]);
   const own = [];
   for (const k of kartas) {
     const b = await bound(k);
     if (b) own.push(`#${k} → ${b}`);
   }
+  return { kartas, own };
+};
+// Words to the person a method word must not reach (case №2926 [50]).
+const METHOD_WORDS = /svatantra|adhikarin|主|能|user\s*=\s*["«]?me/i;
+const questions = (text) => text.match(/[^.!?\n]*\?/g) ?? [];
+const STEP2 = /пространств|о ч[её]м|кто вы|заняться|расскажите/i;
+const opening = (text) => text.match(/[^.!?\n]*расскажите[^.!?\n]*заняться[^.!?\n]*/i)?.[0] ?? null;
+try {
+  await P.init();
+  // No role of the person before the run: every karta of the graph is looked at.
+  const { kartas, own } = await ownKartas();
   report.push(`kartas before: ${kartas.map((k) => `#${k}`).join(" ") || "none"} · bound: ${own.join(", ") || "none"}`);
+  if (own.length) throw new Error(`a role is bound before the scene (${own.join(", ")}) — not «the person has no role»`);
   if ((await P.call("iskron_search", { realm, q: "", node_type: "karta", manifested_as: "svatantra", limit: 50 })).text.match(/\(#\d+, karta/))
-    throw new Error("a svatantra already stands in the graph before the scene — not the case of #9285");
+    throw new Error("a svatantra already stands in the graph before the scene — not «the person has no role»");
   const M = { epistemic_mode: "pratyakshita", ontic_mode: "vartamana", volitive_mode: "upeksha" };
   const add = async (tool, args) => {
     const r = await P.call(tool, { realm, ...args });
@@ -213,11 +225,10 @@ try {
     return id;
   };
   scene.agent = await add("iskron_add_karta", { name: "🧪 Разработчик импорта каталогов", motivation: "Ведёт импорт каталогов поставщиков: правит загрузку и её настройки.", manifested_as: "adhikarin", ...M });
-  scene.role = await add("iskron_add_karta", { name: "🧪 Владелец продукта каталогов", motivation: "Решает, что входит в выпуск и какие фичи берутся; отвечает за продукт каталогов поставщиков перед клиентами. Заведена владельцем графа для человека, которого он пригласит вести продукт.", manifested_as: "svatantra", ...M });
   scene.own = await add("iskron_add_holon", { name: "📦 Импорт каталогов поставщиков", description: "Что внутри: загрузка каталогов поставщиков и её настройки.", ...M, arrows: [{ arrow_type: "steward", target: `#${scene.agent}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }] });
-  if (await bound(scene.role)) throw new Error(`#${scene.role} came out bound — the scene is not «made in advance»`);
+  if (await bound(scene.agent)) throw new Error(`#${scene.agent} came out bound — the scene is not «the person has no role»`);
   report.push(`picker question: ${allowQuestion ? "allowed" : "denied"}`);
-  report.push(`scene: agent #${scene.agent} · role made in advance #${scene.role} (svatantra, no user) · holon #${scene.own}`);
+  report.push(`scene: agent #${scene.agent} (adhikarin, no user) · holon #${scene.own} · no role of the person`);
   await sleep(20_000); // the search index takes the fresh nodes in
 
   serve = spawn(opencode, ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "warn"], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -243,36 +254,49 @@ try {
 
   const S = (live.S = newSession("onboarding"));
   const mark = (live.mark = sceneTeeCalls(teeLog, 0).length);
-  await turn(S, `Не знаю, с чего начать. Меня пригласили в граф ${realm} — я там буду вести продукт каталогов поставщиков. Помоги начать.`);
+  await turn(S, `Не знаю, с чего начать. Я работаю в графе ${realm}. Помоги начать.`);
   const first = sceneTeeCalls(teeLog, mark);
   const answer1 = lastAnswer(messages(S));
-  const boundEarly = await bound(scene.role);
-  await turn(S, `Да, «🧪 Владелец продукта каталогов» — это моя роль, привяжи её ко мне.`);
+  const early = await ownKartas();
+  await turn(S, `Я веду продукт каталогов поставщиков: решаю, что входит в выпуск и какие фичи берём. Здесь хочу держать работу над этим продуктом.`);
   const calls = sceneTeeCalls(teeLog, mark);
   const msgs = messages(S);
-  const after = await bound(scene.role);
+  const late = await ownKartas();
+  const answer2 = lastAnswer(msgs);
+  const userCall = (c) => !c.error && c.args.user === "me" && (c.name === "iskron_add_karta" || c.name === "iskron_update");
   const added = calls.filter((c) => c.name === "iskron_add_karta" && !c.error);
-  const updates = calls.filter((c) => c.name === "iskron_update" && nodeOf(c.args.node_id) === scene.role && "user" in (c.args ?? {}));
-  const searched = calls.some((c) => c.name === "iskron_search" && c.args.node_type === "karta");
-  const looked = calls.some((c) => c.name === "iskron_look" && nodeOf(c.args.node_id) === scene.role);
+  const service = calls.filter((c) => c.name === "iskron_admin" || c.name === "iskron_org");
+  // The step-2 question goes either as a question or as the opening's request to tell who they are
+  // and what they want to do (onboarding, «Цикл»): its answer is the answer to step 2.
+  const asked = [...questions(answer1), ...(opening(answer1) && !questions(answer1).some((q) => /расскажите/i.test(q)) ? [opening(answer1)] : [])];
+  const roleAsked = questions(answer1).filter((q) => /рол|привяз|запис/i.test(q));
+  const repeated = [...questions(answer2).filter((q) => STEP2.test(q)), ...(opening(answer2) ? [opening(answer2)] : [])];
+  const said = msgs.filter((x) => (x.type ?? x.role) === "assistant").flatMap((x) => (x.content ?? []).filter((p) => p.type === "text").map((p) => p.text)).join("\n");
+  const leaked = [...new Set(said.match(new RegExp(METHOD_WORDS.source, "gi")) ?? [])];
   report.push(`\n===== session ${S} =====\n--- messages ---\n${journal(msgs)}\n--- bridge tools/call ---\n${calls.map((c) => `[${c.t}] ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`).join("\n")}`);
-  const seq = calls.map((c) => `${c.name.replace(/^iskron_/, "")}${c.args.action ? `:${c.args.action}` : ""}`).join(" → ");
+  const seq = (cs) => cs.map((c) => `${c.name.replace(/^iskron_/, "")}${c.args.action ? `:${c.args.action}` : ""}${c.error ? "!" : ""}`).join(" → ");
   verdict(
-    !boundEarly && !first.some((c) => c.name === "iskron_update" && "user" in (c.args ?? {})) && (answer1.includes("Владелец продукта каталогов") || answer1.includes(`#${scene.role}`)),
-    `(1) the first turn names the role made in advance #${scene.role} and asks; nothing bound before the person's word`,
-    `bound after turn 1: ${boundEarly ?? "no"} · ${first.map((c) => c.name.replace(/^iskron_/, "")).join(" → ")}`,
+    late.own.length >= 1 && calls.some(userCall) && roleAsked.length === 0,
+    "(1) the person is registered by a role without a question: bound by user=\"me\", no question about the role",
+    `bound after turn 1: ${early.own.join(", ") || "none"}${first.some(userCall) ? "" : " (no user=me call in turn 1)"} · after turn 2: ${late.own.join(", ") || "none"} · role questions: ${roleAsked.map((q) => q.trim()).join(" | ") || "none"} · ${seq(first)}`,
   );
-  verdict(searched && looked, "(2) found by a karta search and a look of the candidate", seq);
   verdict(
-    !!after && updates.some((c) => !c.error && c.args.user === "me"),
-    `(3) bound by the person's word: iskron_update #${scene.role} user="me", the look names the user`,
-    `Пользователь: ${after ?? "—"} · updates ${updates.length}`,
+    asked.length === 1 && STEP2.test(asked[0]) && repeated.length === 0,
+    "(2) exactly one question — what the space is about and who they are here (or the opening's request), not asked again",
+    `turn 1: ${asked.map((q) => q.trim()).join(" | ") || "no question"} · repeated in turn 2: ${repeated.map((q) => q.trim()).join(" | ") || "none"}`,
   );
-  verdict(added.length === 0, "(4) no second role created", `add_karta ${added.length}`);
+  verdict(service.length === 0, "(3) no access check or admin call", seq(service) || "none");
+  verdict(leaked.length === 0, "(4) no method words to the person (svatantra, adhikarin, 主, 能, user=me)", leaked.join(", ") || "none");
+  verdict(
+    added.length <= 1 && late.own.length === 1,
+    "(5) no second role: on the answer the role stays one",
+    `add_karta ${added.length} · bound after turn 2: ${late.own.join(", ") || "none"}`,
+  );
   if (allowQuestion) {
     const picked = msgs.flatMap((x) => x.content ?? []).filter((p) => p.type === "tool" && p.name === "question");
-    verdict(picked.length === 0, "(5) the picker allowed, the question goes in words (#9311)", `question ${picked.length}`);
+    verdict(picked.length === 0, "(6) the picker allowed, the question goes in words (#9311)", `question ${picked.length}`);
   }
+  report.push(`graph made by the agent: ${seq(calls.filter((c) => c.name === "iskron_realm" && c.args.action === "create")) || "none"}`);
   report.push(`--- last answer ---\n${lastAnswer(msgs)}`);
 } catch (e) {
   errorVerdict(e.message, setup);
@@ -280,7 +304,7 @@ try {
   for (const id of runSessions)
     try { report.push(`\n===== session ${id} (interrupted) =====\n${journal(messages(id))}`); } catch (x) { problem(`journal ${id}: ${x.message}`); }
   report.push(`--- bridge tools/call ---\n${sceneTeeCalls(teeLog, live.mark).map((c) => `[${c.t}] ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`).join("\n")}`);
-  if (scene.role) report.push(`role #${scene.role} bound to: ${(await bound(scene.role).catch(() => null)) ?? "—"}`);
+  if (!setup) report.push(`roles bound to the person: ${(await ownKartas().catch(() => null))?.own.join(", ") || "—"}`);
 } finally {
   let places = [];
   try { places = cleanup.places(); } catch (e) { problem(e.message); }
