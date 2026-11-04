@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.31.1](https://github.com/iskron-ai/skills/compare/v7.31.0...v7.31.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **onboarding:** agents are stewards, never the person ([#662](https://github.com/iskron-ai/skills/issues/662)) ([8ffb25d](https://github.com/iskron-ai/skills/commit/8ffb25dcaf2bee441f60e0765da284a12ace738d))
+* **onboarding:** closing in the harness after AGENTS.md, in the window after the first material; the opening's answer spares the question; standing's exception narrowed ([#663](https://github.com/iskron-ai/skills/issues/663)) ([51274e7](https://github.com/iskron-ai/skills/commit/51274e778075a29106a4b30ef2b5a8f921d1a88c))
+* **onboarding:** first graph asks the one question only when the opening's answer left it open; standing names the identifier-like attribute ([#665](https://github.com/iskron-ai/skills/issues/665)) ([bc1dda5](https://github.com/iskron-ai/skills/commit/bc1dda57fc7723ca2b70a9cebedf18fdce866d6e))
+* **onboarding:** key entry opens only when the window has not ([#664](https://github.com/iskron-ai/skills/issues/664)) ([201fbfa](https://github.com/iskron-ai/skills/commit/201fbfa5c37b299e8adbcd324a52015ebbc90088))
+* **onboarding:** opening and closing words, minimal load per message, first-graph branch registers the person without a question ([#658](https://github.com/iskron-ai/skills/issues/658)) ([64d6d7d](https://github.com/iskron-ai/skills/commit/64d6d7d3b63733ac75493da876b5e3a9cfcc62a1))
+* **onboarding:** the person is registered by name without a question, then one human question; no method words, no contours or repositories before their word, one readiness read ([#657](https://github.com/iskron-ai/skills/issues/657)) ([d4188e0](https://github.com/iskron-ai/skills/commit/d4188e01ee54a31bf0b190d4d16597e815b7c877))
+* **onboarding:** the person's role is an unbound role with their name or a new one, never a guess; repository once, offered in the closing ([#660](https://github.com/iskron-ai/skills/issues/660)) ([a0f8c42](https://github.com/iskron-ai/skills/commit/a0f8c4257b78bae306035e338c16754e0589290f))
+* **onboarding:** window wizard owns opening and closing; closing after role, answer and first area; no steward for the person; one closing in the harness branch ([#661](https://github.com/iskron-ai/skills/issues/661)) ([7981e49](https://github.com/iskron-ai/skills/commit/7981e49e8f3d4f6b77ece6111005046844999c52))
+* **rituals:** a push before && keeps its word when its report shows it landed — the exit is the last command's ([#655](https://github.com/iskron-ai/skills/issues/655)) ([430d109](https://github.com/iskron-ai/skills/commit/430d10963d7a3379ed5cd1e5ab958408e64d7252))
+
 ## [7.31.0](https://github.com/iskron-ai/skills/compare/v7.30.1...v7.31.0) (2026-11-03)
 
 
