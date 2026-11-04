@@ -1,9 +1,10 @@
 // A live run of the onboarding skill's role step (graph @nks/nks-dev, node #7984; the owner's
 // order — case №2926 [50]) by an OpenCode agent against a PAT carrier: the run's graph, where the
 // person has no role. The agent, asked for help to start, registers the person by a role without
-// asking (makes it or binds a found one, user="me"), then asks exactly one human question — what
-// the space is about and who they are in it; no access check or admin call, no method words to
-// the person, and on the answer no second role. The scenes «no graph» and «invited without a
+// asking (makes it or binds a found one, user="me") and asks exactly one human question — what
+// the space is about and who they are in it, or the opening «Это Искрон…» asking them to tell who
+// they are and what they want to do, whose answer is the answer to it; not asked again on the
+// answer. No access check or admin call, no method words to the person, no second role. The scenes «no graph» and «invited without a
 // role» are not here (#9264).
 //
 //   node scripts/stand-run-onboarding.mjs --token-file F --url U --api A --realm @owner/slug
@@ -205,6 +206,8 @@ const ownKartas = async () => {
 // Words to the person a method word must not reach (case №2926 [50]).
 const METHOD_WORDS = /svatantra|adhikarin|主|能|user\s*=\s*["«]?me/i;
 const questions = (text) => text.match(/[^.!?\n]*\?/g) ?? [];
+const STEP2 = /пространств|о ч[её]м|кто вы|заняться|расскажите/i;
+const opening = (text) => text.match(/[^.!?\n]*расскажите[^.!?\n]*заняться[^.!?\n]*/i)?.[0] ?? null;
 try {
   await P.init();
   // No role of the person before the run: every karta of the graph is looked at.
@@ -255,27 +258,32 @@ try {
   const first = sceneTeeCalls(teeLog, mark);
   const answer1 = lastAnswer(messages(S));
   const early = await ownKartas();
-  await turn(S, `Это пространство продукта каталогов поставщиков: решаем, что входит в выпуск и какие фичи берём. Я здесь веду продукт.`);
+  await turn(S, `Я веду продукт каталогов поставщиков: решаю, что входит в выпуск и какие фичи берём. Здесь хочу держать работу над этим продуктом.`);
   const calls = sceneTeeCalls(teeLog, mark);
   const msgs = messages(S);
   const late = await ownKartas();
+  const answer2 = lastAnswer(msgs);
   const userCall = (c) => !c.error && c.args.user === "me" && (c.name === "iskron_add_karta" || c.name === "iskron_update");
   const added = calls.filter((c) => c.name === "iskron_add_karta" && !c.error);
   const service = calls.filter((c) => c.name === "iskron_admin" || c.name === "iskron_org");
-  const asked = questions(answer1);
+  // The step-2 question goes either as a question or as the opening's request to tell who they are
+  // and what they want to do (onboarding, «Цикл»): its answer is the answer to step 2.
+  const asked = [...questions(answer1), ...(opening(answer1) && !questions(answer1).some((q) => /расскажите/i.test(q)) ? [opening(answer1)] : [])];
+  const roleAsked = questions(answer1).filter((q) => /рол|привяз|запис/i.test(q));
+  const repeated = [...questions(answer2).filter((q) => STEP2.test(q)), ...(opening(answer2) ? [opening(answer2)] : [])];
   const said = msgs.filter((x) => (x.type ?? x.role) === "assistant").flatMap((x) => (x.content ?? []).filter((p) => p.type === "text").map((p) => p.text)).join("\n");
   const leaked = [...new Set(said.match(new RegExp(METHOD_WORDS.source, "gi")) ?? [])];
   report.push(`\n===== session ${S} =====\n--- messages ---\n${journal(msgs)}\n--- bridge tools/call ---\n${calls.map((c) => `[${c.t}] ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`).join("\n")}`);
   const seq = (cs) => cs.map((c) => `${c.name.replace(/^iskron_/, "")}${c.args.action ? `:${c.args.action}` : ""}${c.error ? "!" : ""}`).join(" → ");
   verdict(
-    early.own.length === 1 && first.some(userCall),
-    "(1) the first turn registers the person by a role without a question: one role bound by user=\"me\" before their answer",
-    `bound after turn 1: ${early.own.join(", ") || "none"} · ${seq(first)}`,
+    late.own.length >= 1 && calls.some(userCall) && roleAsked.length === 0,
+    "(1) the person is registered by a role without a question: bound by user=\"me\", no question about the role",
+    `bound after turn 1: ${early.own.join(", ") || "none"}${first.some(userCall) ? "" : " (no user=me call in turn 1)"} · after turn 2: ${late.own.join(", ") || "none"} · role questions: ${roleAsked.map((q) => q.trim()).join(" | ") || "none"} · ${seq(first)}`,
   );
   verdict(
-    asked.length === 1 && /пространств|о ч[её]м|кто вы/i.test(asked[0]),
-    "(2) then exactly one question — what the space is about and who they are here",
-    asked.map((q) => q.trim()).join(" | ") || "no question",
+    asked.length === 1 && STEP2.test(asked[0]) && repeated.length === 0,
+    "(2) exactly one question — what the space is about and who they are here (or the opening's request), not asked again",
+    `turn 1: ${asked.map((q) => q.trim()).join(" | ") || "no question"} · repeated in turn 2: ${repeated.map((q) => q.trim()).join(" | ") || "none"}`,
   );
   verdict(service.length === 0, "(3) no access check or admin call", seq(service) || "none");
   verdict(leaked.length === 0, "(4) no method words to the person (svatantra, adhikarin, 主, 能, user=me)", leaked.join(", ") || "none");
