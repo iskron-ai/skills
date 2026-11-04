@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.31.2](https://github.com/iskron-ai/skills/compare/v7.31.1...v7.31.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **evals:** distinguish relation traversal from text matches ([15ca7d9](https://github.com/iskron-ai/skills/commit/15ca7d971fec4b72b3752c7bc3669b6dec5529d4))
+* **skills:** read graph relationships before reactive changes ([b199bbf](https://github.com/iskron-ai/skills/commit/b199bbf4be8011bf18e2b28012f6749726880fce))
+* **skills:** read graph relationships before reactive changes ([064eb3d](https://github.com/iskron-ai/skills/commit/064eb3d24318f80e0e1d87829693093a4b0c75f9))
+
 ## [7.31.1](https://github.com/iskron-ai/skills/compare/v7.31.0...v7.31.1) (2026-11-04)
 
 
