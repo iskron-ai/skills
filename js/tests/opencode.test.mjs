@@ -8692,7 +8692,7 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 
 /** Строка счёта дела проб без адресованных месту (#6574). */
 const countOf = (n, since, zachin = "Стенд") =>
-  `№7 «${zachin}»: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `№7 «${zachin}»: записей ${n}, тебе 0; ` +
   `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
 test("a room frame to me reaches the agent short: case, entry, words, who, no answer call; a word to all queues as a count, a platform record with no author is the platform's", async () => {
@@ -8710,7 +8710,7 @@ test("a room frame to me reaches the agent short: case, entry, words, who, no an
     const text = rec.prompts[0].text;
     assert.match(
       text,
-      /^№7 «Стенд» \[41\] слово от Алексей \(@aleksei:probe\) — роль #48\n/,
+      /^№7 «Стенд» \[41\] слово от @aleksei:probe\n/,
       "the case, the entry, the kind in words and a doer's role, by via+auth",
     );
     assert.doesNotMatch(text, /ответ:/, "delivery asks no answer (#6574)");
@@ -8795,19 +8795,13 @@ for (const [server, en] of [
       if (en) {
         assert.doesNotMatch(word, CYRILLIC, word);
         assert.doesNotMatch(line, CYRILLIC, line);
-        assert.match(
-          word,
-          /^case №7 «Bench» \[\d+\] message from Alex \(@alex:probe\) — role #48\n/,
-        );
+        assert.match(word, /^case №7 «Bench» \[\d+\] message from @alex:probe\n/);
         assert.doesNotMatch(word, /answer:/);
-        assert.match(
-          line,
-          /^case №7 «Bench»: 1 records, yours 0 — none of them yours; in full — iskron_case\(/,
-        );
+        assert.match(line, /^case №7 «Bench»: 1 records, yours 0; in full — iskron_case\(/);
       } else {
-        assert.match(word, /^№7 «Bench» \[\d+\] слово от Alex \(@alex:probe\) — роль #48\n/);
+        assert.match(word, /^№7 «Bench» \[\d+\] слово от @alex:probe\n/);
         assert.doesNotMatch(word, /ответ:/);
-        assert.match(line, /^№7 «Bench»: записей 1, тебе 0 — адресованных месту нет; целиком — /);
+        assert.match(line, /^№7 «Bench»: записей 1, тебе 0; целиком — /);
       }
       assert.doesNotMatch(line, /probes green/);
     } finally {
@@ -8835,7 +8829,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(p1.delivery, "steer", "closing interrupts the running turn, stack=defer or not");
     assert.match(
       p1.text,
-      /ведущий Алексей \(@aleksei:probe\) предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/,
+      /ведущий @aleksei:probe предлагает закрыть дело до 2026-09-23T10:05:00Z; свидетельства: 41/,
     );
     assert.match(p1.text, /ты можешь возразить — iskron_case\(action="object", in_reply_to=50\)/);
     assert.match(p1.text, /^№7 «Стенд» \[50\] /, "the case and the entry lead");
@@ -8863,10 +8857,10 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.equal(r1.delivery, "steer", "an invite to my role interrupts");
     assert.match(
       r1.text,
-      /^№7 «Стенд»: записей 4, тебе 0 — адресованных месту нет; [^\n]*since=43\)\.\n/,
+      /^№7 «Стенд»: записей 4, тебе 0; [^\n]*since=43\)\.\n/,
       "the counts waiting ride in front of the next prompt",
     );
-    assert.match(r1.text, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+    assert.match(r1.text, /@aleksei:probe зовёт 🚚 Поставщик плитки в дело/);
     assert.doesNotMatch(r1.text, /пробы зелёные|род weather мосту неизвестен|стопкой/);
     await quiet(roleInvite(69, MY_KARTA + 1)); // an invite to another role
     const otherRealm = roleInvite(70);
@@ -8874,12 +8868,12 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     await quiet(otherRealm); // my role's seq in another graph is not my role
     const r4 = await send(withdraw(71), 3);
     assert.equal(r4.delivery, "queue", "a withdrawn invite batches, even when it was mine");
-    assert.match(r4.text, /^№7 «Стенд»: записей 3, тебе 1 — адресованные строками ниже; /);
-    assert.match(r4.text, /приглашение отозвано, отзывает Алексей \(@aleksei:probe\)/);
+    assert.match(r4.text, /^№7 «Стенд»: записей 3, тебе 1; /);
+    assert.match(r4.text, /приглашение отозвано, отзывает @aleksei:probe/);
 
     const p6 = await send(roomFrame("invite", { entry_id: 64, key: `invite:${ME_ID}` }), 4);
     assert.equal(p6.delivery, "steer", "an invite to my own standing id interrupts");
-    assert.match(p6.text, new RegExp(`Алексей \\(@aleksei:probe\\) зовёт ${ME_ID} в дело`));
+    assert.match(p6.text, new RegExp(`@aleksei:probe зовёт ${ME_ID} в дело`));
     await quiet(
       roomFrame("invite", {
         entry_id: 65,
@@ -8890,7 +8884,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     await quiet(roomFrame("opened", { entry_id: 66 }));
     const p9 = await send(roomFrame("invite", { entry_id: 67, key: "invite:@tester:proba" }), 5);
     assert.equal(p9.delivery, "steer", "an invite to my own standing address interrupts too");
-    assert.match(p9.text, /^№7 «Стенд»: записей 2, тебе 0 — /, "the invite to another and opened");
+    assert.match(p9.text, /^№7 «Стенд»: записей 2, тебе 0; /, "the invite to another and opened");
     assert.doesNotMatch(p9.text, /Прораб/, "an invite to someone else is a count, no words");
     // may_object carries standing ids only: my address there is not me, another id is not me.
     const notMine = closing();
@@ -8945,8 +8939,8 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     await quiet(byPerson);
     const a = await send(answer(91, 90, ME, { choice: "later" }), 2);
     assert.equal(a.delivery, "steer", "the answer to my question wakes me now");
-    assert.match(a.text, /^№7 «Стенд»: записей 4, тебе 0 — /, "the others ride as a count");
-    assert.match(a.text, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: later; «после обеда»/);
+    assert.match(a.text, /^№7 «Стенд»: записей 4, тебе 0; /, "the others ride as a count");
+    assert.match(a.text, /@dmitry:phone \(человек\) отвечает на \[90\]: later; «после обеда»/);
     assert.doesNotMatch(a.text, /снят|@boris/);
     // A question to my seat (fields.to.standing) is mine even when its role is not mine.
     const toSeat = ask(97, MY_KARTA + 1);
@@ -9032,8 +9026,8 @@ test("room kinds: a said in flight, bodies and aborts not to me prompt nothing a
     assert.equal(rec.prompts.length, 1);
     const loudP = rec.prompts[0];
     assert.equal(loudP.delivery, "steer", "body of a word to me with stack=interrupt steers");
-    assert.match(loudP.text, /^№7 «Стенд»: записей 2, тебе 0 — [^\n]*since=53\)\.\n/);
-    assert.match(loudP.text, /текст слова \[60\] от Алексей \(@aleksei:probe\)/);
+    assert.match(loudP.text, /^№7 «Стенд»: записей 2, тебе 0; [^\n]*since=53\)\.\n/);
+    assert.match(loudP.text, /текст слова \[60\] от @aleksei:probe/);
     assert.match(loudP.text, /\nтекст моего слова$/, "the word's text passes through whole");
     assert.doesNotMatch(
       loudP.text,
@@ -9122,10 +9116,7 @@ test("records to a sibling seat of my role and account prompt nothing: one count
   const { frames, hidden } = siblingMatrix();
   const prompts = await asidePrompts("sibling-seat", frames, 0);
   assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
-  assert.match(
-    prompts.rode,
-    new RegExp(`записей ${frames.length}, тебе 0 — адресованных месту нет`),
-  );
+  assert.match(prompts.rode, new RegExp(`записей ${frames.length}, тебе 0;`));
   for (const s of hidden)
     assert.ok(!prompts.rode.includes(s), `«${s}» reached another seat:\n${prompts.rode}`);
 });
@@ -9135,7 +9126,7 @@ test("a platform call of another role in reply to my question, and its withdrawa
   const calls = [roleAsked(97, 99, 90), roleAsked(98, 99, 97, true)];
   const prompts = await asidePrompts("role-asked", calls, 0);
   assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
-  assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
+  assert.match(prompts.rode, /записей 2, тебе 0;/);
   assert.doesNotMatch(prompts.rode, /зовёт/);
 });
 
@@ -9144,7 +9135,7 @@ test("a person's word with from_person and no user_karta_seq steers as a person'
   const prompts = await asidePrompts("from-person", [personWord(110), personWord(111, false)], 1);
   assert.equal(prompts.length, 1, JSON.stringify(prompts.map((p) => p.text)));
   assert.equal(prompts[0].delivery, "steer");
-  assert.match(prompts[0].text, /^№7 «Стенд» \[110\] [^\n]* — человек\n/);
+  assert.match(prompts[0].text, /^№7 «Стенд» \[110\] слово от @dmitry:phone \(человек\)\n/);
   assert.match(prompts[0].text, /СЛОВО-ЧЕЛОВЕКА-110$/);
   assert.match(prompts.rode, /записей 1, тебе 0/);
   assert.doesNotMatch(prompts.rode, /СЛОВО-ЧЕЛОВЕКА-111/);
@@ -9162,7 +9153,7 @@ test("the withdrawal of the platform's call of my role reaches me: тебе 1 an
 test("B: a question to my role alone, the api's choice another seat or none, prompts nothing: a count, тебе 0", async () => {
   const prompts = await asidePrompts("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 0);
   assert.equal(prompts.length, 0, JSON.stringify(prompts.map((p) => p.text)));
-  assert.match(prompts.rode, /записей 2, тебе 0 — адресованных месту нет/);
+  assert.match(prompts.rode, /записей 2, тебе 0;/);
   assert.doesNotMatch(prompts.rode, /ВОПРОС-РОЛИ/);
 });
 
@@ -9199,7 +9190,7 @@ test("progress lines of one key fold into the last: the count names the supersed
   const prompts = await asidePrompts("fold", frames, 1);
   assert.equal(prompts.length, 1, "only the word to me prompts");
   assert.match(prompts[0].text, /тайное слово 48$/, "the word to me whole");
-  assert.match(prompts.rode, /^ход\n\n№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
+  assert.match(prompts.rode, /^ход\n\n№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2; /);
 });
 
 // Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
@@ -9226,7 +9217,7 @@ test("(в) an addressed word to me with stack interrupt steers at once and whole
   const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 1);
   assert.equal(prompts.length, 1, "only the word to me prompts");
   assert.equal(prompts[0].delivery, "steer");
-  assert.match(prompts[0].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87$/);
+  assert.match(prompts[0].text, /слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
   assert.equal(prompts.rode, `ход\n\n${countOf(1, 85)}`);
 });
 
@@ -9268,7 +9259,7 @@ test("(ж) the body of a reply to me and of an important word comes as text; the
   );
   assert.equal(prompts.length, 1);
   const text = prompts[0].text;
-  assert.match(text, /^№7 «Стенд»: записей 5, тебе 4 — адресованные строками ниже; /, text);
+  assert.match(text, /^№7 «Стенд»: записей 5, тебе 4; /, text);
   assert.match(text, /\n№7 \[55\] текст слова \[54\] [^\n]*: ответ мне второй фазой\n/, text);
   assert.match(text, /\n№7 \[57\] текст слова \[56\] [^\n]*: важное тело 56$/, text);
   assert.doesNotMatch(text, /моё тело 58/, text);
@@ -9293,14 +9284,11 @@ test("a lone case frame to me is short: a said's text once, no JSON, «in reply 
   );
   const word = prompts.find((p) => p.delivery === "steer").text;
   assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
-  assert.match(
-    word,
-    /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]\n/,
-  );
+  assert.match(word, /^№7 «Стенд» \[62\] слово от @aleksei:probe[^\n]*в ответ на \[60\]\n/);
   assert.ok(!word.includes('{"'), word);
   const batch = prompts.find((p) => p.delivery === "queue").text.split("\n");
-  assert.match(batch[0], /^№7 «Стенд»: записей 3, тебе 1 — адресованные строками ниже; /);
-  assert.match(batch[1], /^№7 «Стенд» \[86\] слово от Алексей/);
+  assert.match(batch[0], /^№7 «Стенд»: записей 3, тебе 1; /);
+  assert.match(batch[1], /^№7 «Стенд» \[86\] слово от @aleksei:probe/);
   assert.equal(batch.length, 2, batch.join("\n"));
   assert.ok(!batch.join("\n").includes("пробы зелёные"), batch.join("\n"));
 });
@@ -9330,7 +9318,7 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
       /^роль #48 \(@alari:sosed\)\nпрямое слово соседа$/,
       "the direct word goes whole and short: who and the text, no answer call (#6574)",
     );
-    assert.match(steered[1].text, /^№7 «Стенд» \[230\] [^\n]* — человек\n/);
+    assert.match(steered[1].text, /^№7 «Стенд» \[230\] слово от @aleksei:probe \(человек\)\n/);
     assert.match(steered[1].text, /\nслово со стопкой defer$/, "the human word goes whole");
     assert.equal(
       await rec.prompt("s-direct", "ход"),
@@ -9457,7 +9445,7 @@ test("while the burst prompt waits in the session's queue, new case frames wait 
     await until(() => rec.prompts.length === 2, "the held frames after the take");
     assert.equal(rec.prompts[1].delivery, "queue");
     const held = rec.prompts[1].text.split("\n");
-    assert.match(held[0], /^№7 «Стенд»: записей 3, тебе 3 — [^\n]*since=242\)\.$/);
+    assert.match(held[0], /^№7 «Стенд»: записей 3, тебе 3; [^\n]*since=242\)\.$/);
     assert.deepEqual(
       held.slice(1).map((l) => /\[(\d+)\]/.exec(l)?.[1]),
       ["243", "244", "245"],
@@ -9515,7 +9503,7 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
     assert.match(rec.prompts[5].text, /^№r-1 «Стенд» \[74\] род auto, стопка interrupt\n/);
     assert.match(
       rec.prompts[7].text,
-      /^№r-1 «Стенд»: записей 1, тебе 1 — [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
+      /^№r-1 «Стенд»: записей 1, тебе 1; [^\n]*\n№r-1 «Стенд» \[76\] кадр room-old-76: /,
       "an old deferred room frame is a line of the case burst",
     );
     assert.ok(

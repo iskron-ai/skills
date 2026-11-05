@@ -2641,7 +2641,7 @@ test("the Monitor watchdog marks the frames a stale batch named but did not show
   assert.equal(shown(), 20);
   assert.match(
     wd.out,
-    /не вошедшее — iskron_case\(action="mine"\)/,
+    /целиком — iskron_case\(action="mine"\)/,
     "the left-out stale frames are pointed at the seat's cases",
   );
   assert.ok(
@@ -3855,6 +3855,27 @@ part("rooms");
 const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
 /** Слово мне со стопкой прерывания — адресованное будит; счёт ждавших идёт перед ним (#6574). */
 const nudge = (fake, id = 999) => sendRoom(fake, { ...said("interrupt", id), addressee: ME });
+
+test("the built bridge renders a person's answer with one author, reference and body", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  t.after(async () => {
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  const frame = answer(778, 762, ME, {});
+  frame.line.done = "compact_unique_answer";
+  frame.body = frame.line.done;
+  await sendRoom(fake, frame);
+  await waitFor(() => wd.out.includes("compact_unique_answer"), "the rendered answer");
+  assert.equal(wd.out.split("[762]").length - 1, 1, wd.out);
+  assert.equal(wd.out.split("compact_unique_answer").length - 1, 1, wd.out);
+  assert.equal(wd.out.split(frame.line.author.standing).length - 1, 1, wd.out);
+  assert.ok(!wd.out.includes(" — человек"), wd.out);
+});
+
 /** Пачка из одних счётов хода не будит: окно прошло — ни строки; затем слово мне — счёт перед ним. */
 async function quietThenNudge(fake, wd, ms, id) {
   await new Promise((r) => setTimeout(r, ms));
@@ -5037,11 +5058,11 @@ test("an invite to my role reaches the Monitor watchdog at once; an invite to an
   await sendRoom(fake, withdraw(71));
   await sendRoom(fake, roleInvite(68));
   await waitFor(() => wd.out.includes("[68] "), "the invite to my role printed", 3000);
-  assert.match(wd.out, /Алексей \(@aleksei:probe\) зовёт 🚚 Поставщик плитки в дело/);
+  assert.match(wd.out, /@aleksei:probe зовёт 🚚 Поставщик плитки в дело/);
   // #6574: отзыв приглашения мне — адресованная запись, строкой в пачке;
   // приглашение чужой роли — числом в шапке, без строки.
   assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 1/);
-  assert.match(wd.out, /\[71\] приглашение отозвано, отзывает Алексей/);
+  assert.match(wd.out, /\[71\] приглашение отозвано, отзывает @aleksei:probe/);
   assert.ok(!wd.out.includes("[69] "), `another role's invite got a line:\n${wd.out}`);
   const flat = wd.out.replace(/\n/g, " ");
   assert.ok(
@@ -5191,10 +5212,10 @@ part("words");
 // ── An addressed word not to me (#6081): no body, no wake; #6574: words not to
 // the seat are one count of the case in the batch. To me — whole and by its stack. ──
 
-const ASIDE = "Алексей (@aleksei:probe) → @boris:probe";
+const ASIDE = "@aleksei:probe → @boris:probe";
 /** Строка счёта дела проб без адресованных месту (#6574). */
 const countOf = (n, since) =>
-  `№7 «Стенд»: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `№7 «Стенд»: записей ${n}, тебе 0; ` +
   `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
 test("(а) an addressed word not to me with stack interrupt does not wake the Monitor watchdog and prints a count without its body", async (t) => {
@@ -5269,7 +5290,7 @@ test("(в) an addressed word to me with stack interrupt wakes the Monitor watchd
   await waitFor(() => wd.out.includes("тайное слово 87"), "the word to me, whole", 3000);
   await sendRoom(fake, addressed(88, ME));
   await waitFor(() => wd.out.includes("тайное слово 88"), "the word to me, whole", 3000);
-  assert.match(wd.out, /слово от Алексей \(@aleksei:probe\)/);
+  assert.match(wd.out, /слово от @aleksei:probe/);
   const flat = wd.out.replace(/\n/g, " ");
   const aside = flat.indexOf(countOf(1, 85));
   assert.ok(aside >= 0 && aside < flat.indexOf("тайное слово 87"), `the count first:\n${wd.out}`);
@@ -5410,7 +5431,7 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
   );
   assert.match(
     wd.out,
-    /^№7 [^\n]*\[321\] [^\n]*— человек/m,
+    /^№7 [^\n]*\[321\] слово от @dmitry:bridge \(человек\)/m,
     `printed alone, a human's:\n${wd.out}`,
   );
   wd.proc.kill("SIGKILL");
@@ -5466,7 +5487,11 @@ test("a human's word in flight in one case does not claim the body of another ca
     !wd.out.includes("тело слова агента в деле 8"),
     `the other case's body went as the human's word:\n${wd.out}`,
   );
-  assert.match(wd.out, /^№7 [^\n]*— человек/m, `case 7's body is the human's:\n${wd.out}`);
+  assert.match(
+    wd.out,
+    /^№7 [^\n]*от @aleksei:probe \(человек\)/m,
+    `case 7's body is the human's:\n${wd.out}`,
+  );
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
@@ -5490,7 +5515,7 @@ test("a change of numbering forgets the words in flight: an old number claims a 
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 5000);
   assert.doesNotMatch(
     wd.out,
-    /— человек/,
+    /^№7 [^\n]*\[(?:81|83)\] [^\n]*\(человек\)/m,
     `a body under the new numbering went as the human's word:\n${wd.out}`,
   );
   for (const text of ["тело слова агента по новой нумерации", "тело чужого слова 82"])
@@ -5595,7 +5620,11 @@ test("question kinds under the Monitor watchdog: another seat's answer to my que
   await nudge(fake);
   await waitFor(() => wd.out.includes("[999]"), "the word to me", 3000);
   const flat = wd.out.replace(/\n/g, " ");
-  assert.match(flat, /записей 5, тебе 2; вопрос \[90\] к тебе закрыт: ответил Дмитрий/, wd.out);
+  assert.match(
+    flat,
+    /записей 5, тебе 2; вопрос \[90\] к тебе закрыт: ответил @dmitry:phone \(человек\)/,
+    wd.out,
+  );
   assert.doesNotMatch(flat, /вопрос \[90\] снят/, `told twice:\n${wd.out}`);
   assert.doesNotMatch(flat, /отвечает на \[90\]/, `another's answer in words:\n${wd.out}`);
   assert.match(flat, /ответ \[96\] принят/, `the ack to me in words:\n${wd.out}`);
@@ -5803,16 +5832,13 @@ test("a case batch under Monitor is short: a count head with a pointer to read i
   // How to read it whole stands in the head: a cut takes the tail, not the head.
   assert.match(
     lines[head],
-    /^№7 «Стенд»: записей 6, тебе 2 — адресованные строками ниже; целиком — iskron_case\(realm="nks-dev", action="history", room=7, since=399\)\.$/,
+    /^№7 «Стенд»: записей 6, тебе 2; целиком — iskron_case\(realm="nks-dev", action="history", room=7, since=399\)\.$/,
   );
   // No hint about an «older tool without since»: the delivery ships the tool with since.
   assert.doesNotMatch(wd.out, /старый тул|older tool/);
   const body = lines.slice(head + 1, head + 3);
   // A line only for a record to me (#6574); the case's zachin — on its first line only (#6081).
-  assert.match(
-    body[0],
-    /^№7 «Стенд» \[400\] слово от Алексей \(@aleksei:probe\): слово со стопкой defer$/,
-  );
+  assert.match(body[0], /^№7 «Стенд» \[400\] слово от @aleksei:probe: слово со стопкой defer$/);
   assert.ok(body[1].startsWith("№7 [405] "), body[1]);
   assert.ok(body[1].endsWith("…") && !body[1].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[1]);
   assert.ok(!lines[head + 3]?.startsWith("№7 [4"), "two lines, the rest by count");
@@ -5835,7 +5861,7 @@ test("a lone interrupting said to me under Monitor prints whole and short: case,
   });
   await waitFor(() => wd.out.includes("КОНЕЦ-ЦЕЛ"), "the said printed", 3000);
   assert.ok(wd.out.includes(text), `the text whole:\n${wd.out}`);
-  assert.match(wd.out, /^№7 «Стенд» \[500\] слово от Алексей/m);
+  assert.match(wd.out, /^№7 «Стенд» \[500\] слово от @aleksei:probe/m);
   assert.equal(wd.out.split("КОНЕЦ-ЦЕЛ").length - 1, 1, `the text once:\n${wd.out}`);
   const own = wd.out.slice(wd.out.indexOf("№7 «Стенд» [500]")); // hello выше печатается как есть
   assert.ok(!own.includes('{"'), `no raw JSON:\n${own}`);
@@ -5914,9 +5940,9 @@ test("a wake with a record to the seat and one not, of one case: one count «з�
   });
   await waitFor(() => data().some((d) => d.kind === "backlog"), "the wake batch", 5000);
   const burst = data().find((d) => d.kind === "backlog");
-  assert.match(burst.text, /\n№7 «Стенд»: записей 2, тебе 1 — адресованные строками ниже; /);
+  assert.match(burst.text, /\n№7 «Стенд»: записей 2, тебе 1; /);
   assert.doesNotMatch(burst.text, /тебе 0/, burst.text);
-  assert.match(burst.text, /\[45\] слово от Алексей[^\n]*\nслово со стопкой defer/);
+  assert.match(burst.text, /\[45\] слово от @aleksei:probe[^\n]*\nслово со стопкой defer/);
   assert.doesNotMatch(burst.text, /пробы зелёные/, burst.text);
 });
 
@@ -5973,7 +5999,7 @@ test("watchdog-codex: progress starts no turn; closing carries the batch count i
   // #6574: a ledger line not to the seat rides into the thread as a count, no words.
   assert.ok(
     second.startsWith(
-      '№7 «Стенд»: записей 1, тебе 0 — адресованных месту нет; целиком — iskron_case(realm="nks-dev", action="history", room=7, since=46).\n',
+      '№7 «Стенд»: записей 1, тебе 0; целиком — iskron_case(realm="nks-dev", action="history", room=7, since=46).\n',
     ),
     second,
   );
@@ -6330,10 +6356,7 @@ test("another's answer and a re-ask to a sibling that close my question: a closi
     await sendRoom(fake, f);
   await waitFor(() => wd.out.includes("[93]"), "the batch with the questions to me", 4000);
   const flat = wd.out.replace(/\n/g, " ");
-  assert.match(
-    flat,
-    /записей 4, тебе 2; вопрос \[90\] к тебе закрыт: ответил Дмитрий \(@dmitry:phone\)/,
-  );
+  assert.match(flat, /записей 4, тебе 2; вопрос \[90\] к тебе закрыт: ответил @dmitry:phone/);
   assert.match(flat, /вопрос \[93\] к тебе переадресован proba\.1 \(@tester:proba\.1\)/);
   for (const s of ["ОТВЕТ-БОРИСУ", "ПЕРЕСПРОС-СОСЕДУ", "отвечает на [90]"])
     assert.ok(!flat.includes(s), `«${s}» reached me:\n${wd.out}`);
@@ -6412,7 +6435,11 @@ test(".asks: a replayed closer of my question is decided the same after a bridge
   await new Promise((r) => setTimeout(r, 1200));
   await nudge(fake);
   assert.equal((await next.done).exit, 0, next.err);
-  assert.match(next.out, /вопрос \[90\] к тебе закрыт: ответил Дмитрий/, next.out);
+  assert.match(
+    next.out,
+    /вопрос \[90\] к тебе закрыт: ответил @dmitry:phone \(человек\)/,
+    next.out,
+  );
   assert.ok(!next.out.includes("ОТВЕТ-БОРИСУ"), next.out);
   // A second name for the file's inode: a rewrite in place would cut what it holds — what
   // a write cut short leaves; a rename leaves it whole.
@@ -6536,7 +6563,7 @@ test("a person's word with from_person and no user_karta_seq comes at once as a 
   await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
   await sendRoom(fake, personWord(110));
   await waitFor(() => wd.out.includes("СЛОВО-ЧЕЛОВЕКА-110"), "the person's word at once", 1200);
-  assert.match(wd.out, /^№7 [^\n]*\[110\] [^\n]*— человек/m, wd.out);
+  assert.match(wd.out, /^№7 [^\n]*\[110\] слово от @dmitry:phone \(человек\)/m, wd.out);
   await sendRoom(fake, personWord(111, false));
   await quietThenNudge(fake, wd, 2200);
   assert.ok(wd.out.includes("записей 1, тебе 0"), `the count:\n${wd.out}`);

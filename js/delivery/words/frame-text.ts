@@ -24,7 +24,7 @@ export interface FrameTextWords {
   /** Указание, где читать целиком: args — аргументы history дела через «; »; пусто — дела места. */
   inFull: (cases: string) => string;
   /** Вызов history одного дела. */
-  caseHistory: (args: string, since: number) => string;
+  caseHistory: (args: string, since: number | string) => string;
   /** Под текстом побудки о живости (дело №1046): чем на неё ответить. */
   lifeCheckReply: () => string;
   /** Какое место побудка предупредила; пусто — платформа места не назвала. */
