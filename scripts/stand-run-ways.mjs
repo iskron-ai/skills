@@ -9,10 +9,13 @@
 //
 //   node scripts/stand-run-ways.mjs --token-file F --api A --resolve R --mind @owner/mind
 //     --work @owner/work --bridge B --plugin P --skills DIR [--model provider/id] [--report F]
-//     [--turn-minutes 15] [--scene report|interview] [--again]
+//     [--turn-minutes 15] [--scene report|interview] [--again] [--cover]
 //
 // --again: the way session 1 laid already stands (exactly one ways umbrella) — its graph is
 // re-judged by (1) and session 2 runs alone, a second sample of (2).
+// --cover: the work folder carries an iskron: cover (the work graph, a holon laid for the run and
+// taken off, the person's role #1) and the root seats by it — the start a person's session gets;
+// a session 2 that did not read the personal slice of mind (attrs_filter with ways) is INVALID.
 //
 // --resolve — a process-only resolver (node --require) for the LAB's LAN ingress: HTTPS, Host, SNI
 // and certificate checks stay. The bridge's MCP goes through stand-mcp-ledger.mjs (session evidence);
@@ -28,7 +31,7 @@ import { fileURLToPath } from "node:url";
 import { personApi } from "./stand-person.mjs";
 import { locationPath, secretScrubber, turnMinutes as parseMinutes } from "./stand-recall-evidence.mjs";
 import { runCleanup, removeRawLogs } from "./stand-recall-cleanup.mjs";
-import { makeReporters, stdioBridge, teeCalls, teeLines } from "./stand-recall-scene.mjs";
+import { idOf, makeReporters, sceneTaker, stdioBridge, teeCalls, teeLines } from "./stand-recall-scene.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const arg = (n, d) => (process.argv.includes(n) ? process.argv[process.argv.indexOf(n) + 1] : d);
@@ -36,6 +39,7 @@ const fail = (code, t) => (process.stderr.write(`stand-run-ways: ${t}\n`), proce
 const [tokenFile, apiArg, mind, work] = ["--token-file", "--api", "--mind", "--work"].map((n) => arg(n));
 const model = arg("--model", "anthropic/claude-opus-5-5");
 const again = process.argv.includes("--again");
+const withCover = process.argv.includes("--cover");
 if (!tokenFile || !apiArg || !mind || !work || !arg("--resolve") || !arg("--bridge") || !arg("--plugin") || !arg("--skills"))
   fail(2, "--token-file, --api, --resolve, --mind, --work, --bridge, --plugin and --skills are required");
 if (!["anthropic/claude-opus-5-5", "openai/gpt-6.1-sol"].includes(model)) fail(2, "--model: opus-5-5 or gpt-6.1-sol");
@@ -125,7 +129,8 @@ const env = {
   ISKRON_BRIDGE_URL: `http://127.0.0.1:${ledgerPort}/mcp-iskron`,
   ISKRON_BRIDGE_NO_UPDATE: "1",
   ISKRON_BRIDGE_NO_BROWSER: "1",
-  ISKRON_ROOT_SEAT: "0",
+  // With a cover the session starts as a person's does: the root seats by it and gets the start word.
+  ISKRON_ROOT_SEAT: withCover ? "1" : "0",
 };
 const nodeEnv = { ...env, NODE_OPTIONS: `--require=${resolver}` };
 {
@@ -239,6 +244,7 @@ const { verdicts, report, problem, verdict, error: errorVerdict, count } = makeR
 const cleanup = runCleanup({ run, auth, bridge, env: nodeEnv, cwd, report, scrub, problem });
 const P = stdioBridge({ run, bridge, env: nodeEnv, token, name: "stand-run-ways", problem });
 const live = { mark: 0 };
+const laid = [];
 let setup = true;
 const ids = (text) => [...new Set([...String(text).matchAll(/#(\d+)\)/g)].map((m) => m[1]))];
 // An arrow block of a look: its header line and the condensed «↳» lines under it.
@@ -286,6 +292,15 @@ try {
   for (let i = 0; i < 40 && !/listening/.test(lout); i++) await sleep(250);
   if (!/listening/.test(lout)) throw new Error("the MCP ledger did not start");
   await P.init();
+  if (withCover) {
+    // The work folder aligned as a person's is: the cover names the work graph, a holon of it and the person's role.
+    const r = await P.call("iskron_add_holon", { realm: work, name: "📦 Моя текущая работа", description: "Что внутри: текущая работа человека в команде — задачи и встречи. Снаружи — работа других команд.", epistemic_mode: "pratyakshita", ontic_mode: "vartamana", volitive_mode: "upeksha" });
+    const id = idOf(r.text);
+    if (r.error || !id) throw new Error(`cover holon: ${r.text.slice(0, 300)}`);
+    laid.push(id);
+    writeFileSync(join(cwd, "AGENTS.md"), `---\niskron:\n  graph: "${work}"\n  holon: ${id}\n  agent_role: 1\n  contract: 39\n  stamp: 2026-11-03\n---\n# Рабочая папка\n\nЗаметки и отчёты по текущей работе.\n\n## Жизненный цикл сессии\n- Старт — раздел «Старт» двери iskron.\n`);
+    report.push(`cover: AGENTS.md iskron: graph ${work}, holon #${id} (laid for the run), agent_role #1 · ISKRON_ROOT_SEAT=1`);
+  }
   const before = await ways();
   report.push(`mind ways before: ${before.all.map((i) => `#${i}`).join(" ") || "none"} · of this kind: ${before.ids.map((i) => `#${i}`).join(" ") || "none"}`);
   if (again ? before.ids.length !== 1 : before.ids.length) throw new Error(again ? `--again needs exactly one ways umbrella of this kind in ${mind}` : `a ways umbrella of this kind already stands in ${mind} — not a fresh way (--again runs session 2 alone)`);
@@ -361,7 +376,15 @@ try {
   const asks = (answer.match(/[^.!?\n]*\?/g) ?? []).map((q) => q.trim());
   const checkQ = asks.filter((q) => /так(?![а-яё])|по этому|этим способом|этой схем|как обычно|подходит|верно/i.test(q));
   report.push(`\n===== session 2 ${S2} =====\n--- messages ---\n${journal(msgs2)}\n--- bridge tools/call ---\n${calls2.map((c) => `[${c.t}] ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`).join("\n")}`);
-  verdict(
+  // With a cover: how the start reached the session, and whether it read the personal slice of mind.
+  const firstUser = msgs2.find((x) => (x.type ?? x.role) === "user");
+  const userText = String(firstUser?.text ?? JSON.stringify(firstUser?.content ?? ""));
+  const sliceRead = calls2.filter((c) => c.name === "iskron_search" && inRealm(c, mind, "r293") && /ways/.test(String(c.args.attrs_filter ?? "")));
+  if (withCover)
+    report.push(`start delivered: start word in the first prompt ${/раздел «Старт» двери iskron|Start section of the iskron door/.test(userText) ? "yes" : "no"} · iskron door loaded ${skillsLoaded(msgs2).includes("iskron") ? "yes" : "no"} · slice read: ${seq(sliceRead) || "none"} ${sliceRead.map((c) => JSON.stringify(c.args)).join(" ")}`);
+  if (withCover && !sliceRead.length)
+    verdicts.push(`INVALID (2) the start did not read the personal slice (attrs_filter with ways) — neither pass nor fail · start word ${/раздел «Старт» двери iskron|Start section of the iskron door/.test(userText) ? "delivered" : "absent"} · skills loaded: ${skillsLoaded(msgs2).join(", ") || "none"} · ${seq(calls2).slice(0, 300)}`);
+  else verdict(
     shown.length === STEPS.length && checkQ.length >= 1 && graphWrites.length === 0 && fileWrites.length === 0,
     "(2) session 2's first reply shows the steps and asks «так и делаю?» before any writing work",
     `steps shown ${shown.length}/${STEPS.length} · check question: ${checkQ.join(" | ") || `none (questions: ${asks.join(" | ") || "none"})`} · graph writes: ${seq(graphWrites) || "none"} · file writes: ${fileWrites.map((p) => p.name).join(",") || "none"} · skills loaded: ${skillsLoaded(msgs2).join(", ") || "none"} · mind reads: ${seq(calls2.filter((c) => inRealm(c, mind, "r293"))) || "none"}`,
@@ -387,6 +410,8 @@ try {
   }
   try { places.push(...cleanup.places()); } catch (e) { problem(e.message); }
   await cleanup.revoke(places, P, person);
+  const take = sceneTaker(P, { realm: work, problem, laid });
+  for (const id of [...laid].reverse()) await take(id).catch((e) => problem(`cleanup #${id}: ${e.message}`));
   await P.close();
   await cleanup.stopDaemons();
   if (ledger && ledger.exitCode === null) { ledger.kill("SIGTERM"); await sleep(500); }
