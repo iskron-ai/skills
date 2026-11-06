@@ -493,7 +493,13 @@ test("the plugin asks the bridge for response fields in its handshake and declar
     const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
     assert.deepEqual(
       seen[0],
-      { experimental: { "iskron/structured": {}, "iskron/halts": {} } },
+      {
+        experimental: {
+          "iskron/structured": {},
+          "iskron/halts": {},
+          "compact-counts": { version: 1 },
+        },
+      },
       JSON.stringify(seen),
     );
   } finally {
