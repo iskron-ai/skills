@@ -1,6 +1,7 @@
 import { FRAME_MARK, FRAME_TEXT, ROOM } from "../delivery/index.ts";
 import { addressedToMine, closedQuestion } from "./addressed.ts";
 import { classifyOrigin, type Frame, type FrameOrigin } from "./channel.ts";
+import { compactCounts } from "./frame-format.ts";
 import { superseded } from "./keyfold.ts";
 import { words as wordsOf } from "./lang.ts";
 import { addresseeOf, need, opt } from "./room-fields.ts";
@@ -165,12 +166,9 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
 export const warnedSeat = (frame: Frame): string =>
   typeof frame.to_standing === "string" ? frame.to_standing.replace(/^.*:/, "") : "";
 
-/** Start of the frame text in a batch line — how many characters. */
-const BATCH_TEXT = 160;
-
 /**
  * A case batch frame for the watchdog in one line: case, [entry_id], kind, author,
- * start of text; the case opening on its first appearance. An addressed word not to
+ * full text; the case opening on its first appearance. An addressed word not to
  * me (#6081) has no body; run — the number of words in the pair's run closed by this
  * frame (foldAsides), absent for a lone frame. No envelope: batchPointer reads it whole.
  */
@@ -187,8 +185,7 @@ export function batchLine(frame: Frame, run?: number, withZachin = true): string
     .replace(/\s+/g, " ")
     .trim();
   const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
-  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
-  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  const text = textOf(frame).replace(/\s+/g, " ").trim();
   const dup = !!text && words.includes(text);
   return `${pre}[${entry}] ${words}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text && !dup ? `: ${text}` : ""}`;
 }
@@ -247,7 +244,15 @@ function closingOf(frame: Frame): string {
  */
 export function caseCountLine(frames: Frame[]): string {
   const count = countText(frames, false);
+  if (!compactCounts()) return legacyCountLine(frames, false);
   return count ? `${count}; ${batchPointer(frames)}.` : "";
+}
+
+function legacyCountLine(frames: Frame[], incomplete: boolean): string {
+  const count = countText(frames, false);
+  if (!count) return "";
+  const yours = frames.some((f) => addressedToMine(f)) ? "; " : T().noneYours();
+  return count + yours + (incomplete ? T().inFull("") : batchPointer(frames)) + ".";
 }
 
 function countText(frames: Frame[], withCursor: boolean): string {
@@ -273,6 +278,7 @@ function countText(frames: Frame[], withCursor: boolean): string {
 export function caseCountLines(frames: Frame[], incomplete = false): string[] {
   const groups = casesOf(frames).filter((group) => caseOf(group[0]));
   if (!groups.length) return [];
+  if (!compactCounts()) return groups.map((group) => legacyCountLine(group, incomplete));
   if (groups.length === 1 && !incomplete) return [caseCountLine(groups[0])];
   const counts = groups.map((group) => countText(group, true));
   const pointer = incomplete ? T().inFull("") : batchPointer(groups.flat());
