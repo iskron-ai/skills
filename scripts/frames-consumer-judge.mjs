@@ -84,6 +84,14 @@ export function intentFor(f, me, refs = []) {
   return byAddr && byAddr.addr === me.standing ? "mine" : "theirs";
 }
 
+/** Whole text, verbatim or with whitespace flattened on a single batch-preview line.
+ * Never match fragments: truncation and missing words still fail the consumer probe.
+ */
+export function shownTexts(texts, output) {
+  return texts.filter((text) => output.includes(text) ||
+    output.split("\n").some((line) => line.includes(text.replace(/\s+/g, " ").trim())));
+}
+
 /** The frame's own words: what must not reach another seat and must reach the addressed one. */
 export function textsOf(f) {
   const line = obj(f.line);

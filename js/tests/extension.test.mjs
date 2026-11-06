@@ -1293,9 +1293,9 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     const [q, a, k, gone, waiting] = rec.messages.map((m) => m.msg.content);
     assert.match(
       q,
-      /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\) \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
+      /спрашивает роль 🚚 Поставщик плитки \(место @tester:proba\) \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
     );
-    assert.match(a, /Дмитрий \(@dmitry:phone\) отвечает на \[90\]: yes; «после обеда»/);
+    assert.match(a, /@dmitry:phone \(человек\) отвечает на \[90\]: yes; «после обеда»/);
     assert.match(k, /ответ \[91\] принят: «выкатываю после обеда»/);
     assert.match(
       gone,
@@ -1334,7 +1334,7 @@ test("question kinds: a re-ask of me replaces my question on its key; after its 
 const CASE7 = "№7 «Стенд»";
 /** Строка счёта дела проб без адресованных месту (#6574). */
 const countOf = (n, since) =>
-  `${CASE7}: записей ${n}, тебе 0 — адресованных месту нет; ` +
+  `${CASE7}: записей ${n}, тебе 0; ` +
   `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
 
 async function asideMessages(name, frames, n) {
@@ -1371,7 +1371,7 @@ test("B: a question to my role alone, the api's choice another seat or none: a c
   const got = await asideMessages("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
-  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0 — `));
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0; `));
   assert.doesNotMatch(got[0].text, /ВОПРОС-РОЛИ/);
 });
 
@@ -1400,7 +1400,7 @@ test("a platform call of another role in reply to my question, and its withdrawa
     1,
   );
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0 — `));
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 0; `));
   assert.doesNotMatch(got[0].text, /зовёт/);
 });
 
@@ -1411,7 +1411,7 @@ test("a person's word with from_person and no user_karta_seq wakes as a person's
   assert.ok(word, JSON.stringify(got));
   assert.equal(word.triggerTurn, true, JSON.stringify(word));
   assert.notEqual(word.deliverAs, "nextTurn");
-  assert.match(word.text, /^№7 «Стенд» \[110\] [^\n]* — человек\n/);
+  assert.match(word.text, /^№7 «Стенд» \[110\] слово от @dmitry:phone \(человек\)\n/);
   assert.ok(!got.some((m) => m.text.includes("СЛОВО-ЧЕЛОВЕКА-111")), JSON.stringify(got));
 });
 
@@ -1428,7 +1428,7 @@ test("records to a sibling seat of my role and account: one count, тебе 0, n
   const got = await asideMessages("sibling-seat", frames, 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
-  assert.match(got[0].text, new RegExp(`^${CASE7}: записей ${frames.length}, тебе 0 — `));
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей ${frames.length}, тебе 0; `));
   for (const s of hidden)
     assert.ok(!got[0].text.includes(s), `«${s}» reached another seat:\n${got[0].text}`);
 });
@@ -1443,7 +1443,7 @@ test("progress lines of one key fold into the last: the count names the supersed
   const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
   const got = await asideMessages("fold", frames, 2);
   assert.equal(got.length, 2, JSON.stringify(got));
-  assert.match(got[0].text, /^№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2 — /);
+  assert.match(got[0].text, /^№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2; /);
   assert.match(got[1].text, /тайное слово 48$/, "the word to me whole");
 });
 
@@ -1475,7 +1475,7 @@ test("(в) an addressed word to me with stack interrupt steers at once and whole
   assert.equal(got[0].text, countOf(1, 85));
   assert.equal(got[0].deliverAs, "nextTurn");
   assert.equal(got[1].deliverAs, "steer", "the word to me steers");
-  assert.match(got[1].text, /слово от Алексей \(@aleksei:probe\)[^\n]*\nтайное слово 87$/);
+  assert.match(got[1].text, /слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
   assert.doesNotMatch(got[1].text, /ответ:/, "delivery does not ask for an answer");
 });
 
@@ -1520,10 +1520,7 @@ test("a lone case frame to me is short: a said's text once, no JSON, no answer c
     assert.equal(join, countOf(1, 84));
     const word = rec.messages[1].msg.content;
     assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
-    assert.match(
-      word,
-      /^№7 «Стенд» \[62\] слово от Алексей \(@aleksei:probe\)[^\n]*в ответ на \[60\]/,
-    );
+    assert.match(word, /^№7 «Стенд» \[62\] слово от @aleksei:probe[^\n]*в ответ на \[60\]/);
     assert.doesNotMatch(word, /ответ: iskron_case/, "delivery does not ask for an answer");
     assert.ok(!word.includes('{"'), word);
   } finally {

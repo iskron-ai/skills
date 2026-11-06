@@ -148,7 +148,7 @@ test("a wake-up batch with an inbox frame and its case copy says one frame", () 
   b.note(inbox());
   b.note(caseCopy());
   b.flushNow();
-  assert.match(text, /Побудка: кадров 1 /, text);
+  assert.match(text, /Побудка: кадров 1\./, text);
 });
 
 test("a stale burst with an inbox frame and its case copy says one frame", async () => {
@@ -160,7 +160,7 @@ test("a stale burst with an inbox frame and its case copy says one frame", async
   ])
     s.note(f, (ev) => (got = ev));
   await pause(1700);
-  assert.match(got?.text ?? "", /Лежалых кадров: 1 /, got?.text);
+  assert.match(got?.text ?? "", /Лежалых кадров: 1\./, got?.text);
   assert.ok(got.marks?.includes("room-msg-60"), "the absorbed copy is marked handed out");
 });
 
@@ -174,7 +174,7 @@ test("a wake-up batch shows twenty frames past the case copies it absorbs", () =
   for (let i = 0; i < 19; i++) b.note(graphPosed(`o-${i}`, 100 + i));
   b.flushNow();
   assert.equal(ev.frames.length, 20);
-  assert.match(ev.text, /Побудка: кадров 20 /, ev.text);
+  assert.match(ev.text, /Побудка: кадров 20\./, ev.text);
   assert.doesNotMatch(ev.text, /не вошло/, ev.text);
 });
 
@@ -195,7 +195,7 @@ test("a wake-up batch of three tacts shows the last one, counts one and marks al
   b.open(0, (e) => (ev = e));
   for (const n of [1, 2, 3]) b.note(tact(n));
   b.flushNow();
-  assert.match(ev.text, /Побудка: кадров 1 /, ev.text);
+  assert.match(ev.text, /Побудка: кадров 1\./, ev.text);
   assert.match(ev.text, /вахта 3/);
   assert.doesNotMatch(ev.text, /вахта [12]/, ev.text);
   for (const n of [1, 2, 3]) assert.ok(ev.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
@@ -206,7 +206,7 @@ test("a stale burst of three tacts shows the last one and marks all", async () =
   let got = null;
   for (const n of [1, 2, 3]) s.note(tact(n, { stale: true }), (ev) => (got = ev));
   await pause(1700);
-  assert.match(got?.text ?? "", /Лежалых кадров: 1 /, got?.text);
+  assert.match(got?.text ?? "", /Лежалых кадров: 1\./, got?.text);
   assert.doesNotMatch(got.text, /вахта [12]/, got.text);
   for (const n of [1, 2, 3]) assert.ok(got.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
 });

@@ -41,7 +41,7 @@ import { BUILT_BRIDGE } from "../js/tests/built.mjs";
 import { startFakeNks } from "../js/tests/fake-nks.mjs";
 import { PAT } from "../js/tests/ownseat-kit.mjs";
 import { roomFrame } from "../js/tests/room-frames.mjs";
-import { addressHint, branchOutcome, intentFor, judge, kindOf, readSegment, table, textsOf } from "./frames-consumer-judge.mjs";
+import { addressHint, branchOutcome, intentFor, judge, kindOf, readSegment, shownTexts, table, textsOf } from "./frames-consumer-judge.mjs";
 import { loadSeats, scenarioOf, scenarioTable } from "./frames-consumer-scenarios.mjs";
 
 const BATCH_MS = 400;
@@ -174,7 +174,7 @@ async function runSeat(bridgePath, seat) {
       const got = tapped.slice(before).find(same);
       const texts = textsOf(f);
       const repeat = !!f.id && seat.messages.slice(0, i).some((p) => p?.id === f.id);
-      const obs = { outside: seat.outside, apiWhole: textsOf(f).length > 0 && f.body_withheld !== true, delivered: !!got, repeat, stale: f.stale === true, withheld: f.body_withheld === true, addressed: got?.frame?.addressed, texts, shown: texts.filter((t) => segment.includes(t)), ...readSegment(segment, f.entry_id) };
+      const obs = { outside: seat.outside, apiWhole: textsOf(f).length > 0 && f.body_withheld !== true, delivered: !!got, repeat, stale: f.stale === true, withheld: f.body_withheld === true, addressed: got?.frame?.addressed, texts, shown: shownTexts(texts, segment), ...readSegment(segment, f.entry_id) };
       const intent = intentFor(f, seat, seat.messages);
       const rec = { seat: seat.label, entry: f.entry_id ?? `#${i}`, kind: kindOf(f), intent, hint: addressHint(f), ...obs, late: [], segment };
       lateInto(rec, tail);
@@ -195,7 +195,7 @@ async function runSeat(bridgePath, seat) {
 
 /** A record's text or line in output that came after its nudge: it counts as shown. */
 function lateInto(r, tail) {
-  const shown = r.texts.filter((t) => tail.includes(t) && !r.shown.includes(t));
+  const shown = shownTexts(r.texts, tail).filter((t) => !r.shown.includes(t));
   const line = readSegment(tail, r.entry).recordLine;
   if (!shown.length && !line) return;
   r.shown.push(...shown);
