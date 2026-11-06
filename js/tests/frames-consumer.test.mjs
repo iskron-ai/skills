@@ -16,6 +16,7 @@ import {
   judge,
   kindOf,
   readSegment,
+  shownTexts,
   textsOf,
 } from "../../scripts/frames-consumer-judge.mjs";
 import { loadSeats, wireOf } from "../../scripts/frames-consumer-scenarios.mjs";
@@ -34,6 +35,18 @@ import {
 } from "./room-frames.mjs";
 
 const me = { standing_id: ME_ID, standing: ME };
+
+test("consumer text matching allows only complete whitespace-flattened previews", () => {
+  const texts = ["ask line one\nask line two"];
+  assert.deepEqual(shownTexts(texts, "«ask line one ask line two»"), texts);
+  assert.deepEqual(shownTexts(texts, "«ask line one\nask line two»"), texts);
+  for (const output of [
+    "«ask line one…»",
+    "«ask line one line two»",
+    "ask line one\nother ask line two",
+  ])
+    assert.deepEqual(shownTexts(texts, output), []);
+});
 const sib = { standing_id: SIB.id, standing: SIB.standing };
 const deliver = (seat, frames) =>
   frames.map((f) => ({ ...f, to_standing_id: seat.standing_id, to_standing: seat.standing }));

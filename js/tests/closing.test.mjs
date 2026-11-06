@@ -18,6 +18,6 @@ test("the closing line of my question closed by another's answer does not depend
   assert.equal(closedQuestion(theirs), "90", "asked again, the same");
   // A fresh copy of the same record (nothing set on it yet) straight into the count.
   const head = batchHead([answer(91, 90, BORIS)]);
-  assert.match(head, /тебе 0; вопрос \[90\] к тебе закрыт: ответил Дмитрий/);
+  assert.match(head, /тебе 0; вопрос \[90\] к тебе закрыт: ответил @dmitry:phone \(человек\)/);
   assert.doesNotMatch(head, /после обеда/, "the answer's text stays in history");
 });
