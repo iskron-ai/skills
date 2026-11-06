@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
+import { PREPARE } from "../delivery/words/prepare.ts";
 import { coverBlock } from "../shared/coverblock.ts";
 import { REPO } from "./built.mjs";
 import { BRIDGE, NODE } from "./status-kit.mjs";
@@ -114,6 +115,37 @@ test("memory-guard — образец hooks.md байт в байт, кроме 
   assert.doesNotMatch(guard, /[<>]Граф|<Раздел/);
 });
 
+// Отказ guard — маршрут (#9317: свойства кода живут в AGENTS.md, в граф — смысл кода; #7910:
+// стаба MEMORY.md нет — директорию держит сам guard); образцы справок несут те же слова.
+test("отказ guard: свойства кода → AGENTS.md, смысл кода → граф, стаба не обещает; образцы справок — те же слова", () => {
+  const dir = repo();
+  prepare(dir, ADDR);
+  const message = (c) => /echo '([^']*)' >&2/.exec(c)?.[1] ?? "";
+  const msg = message(commands(settings(dir), "PreToolUse")[0]);
+  assert.match(msg, /свойства кода[^;]*→ AGENTS\.md/);
+  assert.match(msg, /смысл кода[^;]*→ граф r7/);
+  assert.doesNotMatch(msg, /факты о коде|стаб/);
+  for (const lang of ["ru", "en"]) {
+    const w = PREPARE[lang].guard("r7");
+    assert.doesNotMatch(w, /стаб|stub/i, lang);
+    assert.match(w, /memory-guard/, lang);
+    assert.doesNotMatch(w, /'/, `${lang}: апостроф ломает echo '…' хука`);
+  }
+  const hooks = read(REPO, "skills/iskronify/references/hooks.md");
+  const sample = [...hooks.matchAll(/```json\n([\s\S]*?)```/g)]
+    .map((m) => JSON.parse(m[1]))
+    .find((j) => j.matcher?.startsWith("Write|Edit|MultiEdit")).hooks[0].command;
+  const slots = ["<Граф>", "<Раздел персистентности>"];
+  assert.equal(message(sample), PREPARE.ru.guard(...slots), "образец hooks.md — слова prepare");
+  assert.ok(
+    hooks.includes(PREPARE.en.guard(...slots)),
+    "английский текст hooks.md — слова prepare",
+  );
+  const surfaces = read(REPO, "skills/iskronify/references/harness-surfaces.md");
+  assert.match(surfaces, /свойства кода[^;]*→ AGENTS\.md/);
+  assert.doesNotMatch(surfaces, /факты о коде|стабе-запрете/);
+});
+
 test("чужие записи хуков и прочие ключи settings.json остаются", () => {
   const dir = repo();
   mkdirSync(join(dir, ".claude"));
@@ -185,6 +217,25 @@ test("свой плагин ритуалов OpenCode назван на снят
   mkdirSync(join(bare, ".opencode/plugins"), { recursive: true });
   writeFileSync(join(bare, ".opencode/plugins/merge-gate.js"), "export default {};\n");
   assert.ok(!items(prepare(bare, ADDR).out.left).includes("opencode.rituals"), "гейт остаётся");
+});
+
+// Guard прежней поставки — те же адреса, старые слова: признак устаревания — нынешний текст,
+// а не форма старого; переписывается на месте, не остаётся «kept» и не дублируется.
+test("guard старыми словами при тех же адресах — устаревший: переписан на месте", () => {
+  const dir = repo();
+  prepare(dir, ADDR);
+  const s = settings(dir);
+  const fresh = commands(s, "PreToolUse")[0];
+  const old = fresh.replace(
+    /echo '[^']*' >&2/,
+    "echo 'BLOCKED: локальная память запрещена (AGENTS.md). Факты о коде → граф r7. Директория заморожена на стабе-запрете.' >&2",
+  );
+  assert.notEqual(old, fresh);
+  s.hooks.PreToolUse[0].hooks[0].command = old;
+  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify(s));
+  const { out } = prepare(dir, ADDR);
+  assert.ok(out.done.includes("hook.guard"), JSON.stringify(out));
+  assert.deepEqual(commands(settings(dir), "PreToolUse"), [fresh]);
 });
 
 test("адреса сменились — свой guard переписан на месте, чужая запись цела", () => {

@@ -2,9 +2,10 @@
 // repository's .claude/settings.json beside every other entry. Start, push and merge are carried
 // by the delivery's own hooks (section RITUALS) and never written here; a repository holding
 // such a hook of its own in any form (hookkinds.ts) has it named to the model — the transition
-// takes it off, until then the delivery keeps silent on that kind. A guard written by a run of
-// prepare for other addresses is rewritten in place; a script prepare cannot read as a guard
-// holds its own back and is named to the model.
+// takes it off, until then the delivery keeps silent on that kind. A guard that reads as one but
+// differs from the current text — other addresses, the words of an earlier delivery — is stale
+// and rewritten in place: the sign of staleness is the current text, not the shape of the old
+// one. A script prepare cannot read as a guard holds its own back and is named to the model.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -33,16 +34,6 @@ const quoted = (t: string): string => `'${t.replace(/'/g, "'\\''")}'`;
 const guardCommand = (graph: string): string =>
   `${GUARD_HEAD}echo ${quoted(words(PREPARE).guard(graph))}${GUARD_TAIL}`;
 
-/** Whether a command is the one written for some address: each slot of the builder any address. */
-const SLOT = "§";
-const written = (c: string, build: (slot: string) => string): boolean =>
-  new RegExp(
-    `^${build(SLOT)
-      .split(SLOT)
-      .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join("[\\w./@-]*")}$`,
-  ).test(c);
-
 /** The kinds the delivery carries: a repository's own one is named for the transition. */
 const CARRIED: RiteKind[] = ["hook.start", "hook.push", "hook.merge"];
 
@@ -69,12 +60,16 @@ function load(path: string): Settings | null {
   }
 }
 
-/** The guard where it is missing or stale; addr null — no graph, none is written. */
+/**
+ * The guard where it is missing or stale; addr null — no graph, none is written. Stale — every
+ * inline guard (its own command reads as one) whose text is not the current one: an earlier
+ * address or earlier words. A guard carried by a repository script is the repository's own: kept.
+ */
 function guard(root: string, s: Settings, addr: PrepareAddr | null, out: Outcome): boolean {
   const k = KNOWN["hook.guard"];
   const command = addr ? guardCommand(addr.graph) : undefined;
   const known = knownOf(root, s, "hook.guard");
-  const stale = known.filter((h) => h.command !== command && written(cmd(h), guardCommand));
+  const stale = known.filter((h) => h.command !== command && k.known(cmd(h)));
   const unread = hooksOf(s, k.event, k.on).find((h) => opaque(root, cmd(h)));
   if (command && stale.length && !known.some((h) => h.command === command)) {
     for (const h of stale) h.command = command;
