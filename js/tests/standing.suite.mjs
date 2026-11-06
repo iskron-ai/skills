@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { quiet } from "../shared/quietframe.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
@@ -1511,6 +1512,55 @@ test("the Monitor watchdog prints a message frame as text in lines, none longer 
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
+
+for (const compact of [false, true]) {
+  test(`compact count watchdog: ${compact ? "explicit reader" : "unknown Stop reader"}`, async (t) => {
+    const init = { ...INIT, capabilities: { experimental: { "compact-counts": { version: 1 } } } };
+    const { fake, dir, key } = await connected(t, { init });
+    const flags = ["--auth-dir", dir, ...(compact ? ["--compact-counts"] : [])];
+    const wd = runClient("watchdog", dir, key, 8000, {}, flags);
+    t.after(async () => {
+      wd.proc.kill("SIGTERM");
+      await wd.done;
+    });
+    await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+    await fake.control({
+      ws_send: JSON.stringify({ ...roomFrame("progress", { entry_id: 91 }), stale: true }),
+    });
+    await waitFor(() => wd.out.includes("тебе 0"), "the printed count");
+    assert.equal(wd.out.includes("адресованных месту нет"), !compact, wd.out);
+  });
+}
+
+// A replay the service makes after a session rebuild comes with stale: true
+for (const compact of [false, true])
+  for (const kind of ["stale", "backlog"]) {
+    test(`compact count negotiation: ${compact ? "declared reader" : "unknown reader"} gets a safe ${kind} count`, async (t) => {
+      const init = {
+        ...INIT,
+        clientInfo: { name: "opencode-iskron", version: "1" },
+        capabilities: compact ? { experimental: { "compact-counts": { version: 1 } } } : {},
+      };
+      const { fake, bridge } = await connected(t, { init });
+      await waitFor(() => fake.state.ws.size === 1, "the socket");
+      if (kind === "backlog")
+        await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 1 }) });
+      await fake.control({
+        ws_send: JSON.stringify({
+          ...roomFrame("progress", { entry_id: 81 }),
+          ...(kind === "stale" ? { stale: true } : {}),
+        }),
+      });
+      await waitFor(
+        () => bridge.notifications.some((n) => n.params?.data?.kind === kind),
+        "the count-only batch",
+      );
+      const text = bridge.notifications.find((n) => n.params?.data?.kind === kind).params.data.text;
+      assert.match(text, /тебе 0/);
+      assert.equal(text.includes("адресованных месту нет"), !compact, text);
+      assert.equal(quiet(text), true, text);
+    });
+  }
 
 // A replay the service makes after a session rebuild comes with stale: true
 // under new ids (#4881): it wakes nobody — the exit watchdog waits past it and
