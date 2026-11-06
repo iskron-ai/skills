@@ -33,6 +33,7 @@ import { dirname, join } from "node:path";
 import { test as nodeTest } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { quiet } from "../shared/quietframe.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
@@ -219,7 +220,14 @@ const waitSeen = (standings, id) =>
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
-function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}, flags = ["--auth-dir", dir]) {
+function runClient(
+  sub,
+  dir,
+  key,
+  timeoutMs = 8000,
+  extraEnv = {},
+  flags = ["--auth-dir", dir, "--compact-counts"],
+) {
   const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), ...flags], {
     env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
@@ -1511,6 +1519,56 @@ test("the Monitor watchdog prints a message frame as text in lines, none longer 
   wd.proc.kill("SIGKILL");
   await wd.done;
 });
+
+for (const compact of [false, true]) {
+  test(`compact count watchdog: ${compact ? "explicit reader" : "unknown Stop reader"}`, async (t) => {
+    const init = { ...INIT, capabilities: { experimental: { "compact-counts": { version: 1 } } } };
+    const { fake, dir, key } = await connected(t, { init });
+    await waitFor(() => fake.state.ws.size === 1, "the upstream socket before replay");
+    const flags = ["--auth-dir", dir, ...(compact ? ["--compact-counts"] : [])];
+    const wd = runClient("watchdog", dir, key, 8000, {}, flags);
+    t.after(async () => {
+      wd.proc.kill("SIGTERM");
+      await wd.done;
+    });
+    await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog");
+    await fake.control({
+      ws_send: JSON.stringify({ ...roomFrame("progress", { entry_id: 91 }), stale: true }),
+    });
+    await waitFor(() => wd.out.includes("тебе 0"), "the printed count");
+    assert.equal(wd.out.includes("адресованных месту нет"), !compact, wd.out);
+  });
+}
+
+// A replay the service makes after a session rebuild comes with stale: true
+for (const compact of [false, true])
+  for (const kind of ["stale", "backlog"]) {
+    test(`compact count negotiation: ${compact ? "declared reader" : "unknown reader"} gets a safe ${kind} count`, async (t) => {
+      const init = {
+        ...INIT,
+        clientInfo: { name: "opencode-iskron", version: "1" },
+        capabilities: compact ? { experimental: { "compact-counts": { version: 1 } } } : {},
+      };
+      const { fake, bridge } = await connected(t, { init });
+      await waitFor(() => fake.state.ws.size === 1, "the socket");
+      if (kind === "backlog")
+        await fake.control({ ws_send: JSON.stringify({ type: "hello", pending: 1 }) });
+      await fake.control({
+        ws_send: JSON.stringify({
+          ...roomFrame("progress", { entry_id: 81 }),
+          ...(kind === "stale" ? { stale: true } : {}),
+        }),
+      });
+      await waitFor(
+        () => bridge.notifications.some((n) => n.params?.data?.kind === kind),
+        "the count-only batch",
+      );
+      const text = bridge.notifications.find((n) => n.params?.data?.kind === kind).params.data.text;
+      assert.match(text, /тебе 0/);
+      assert.equal(text.includes("адресованных месту нет"), !compact, text);
+      assert.equal(quiet(text), true, text);
+    });
+  }
 
 // A replay the service makes after a session rebuild comes with stale: true
 // under new ids (#4881): it wakes nobody — the exit watchdog waits past it and
@@ -5807,7 +5865,7 @@ test("the Monitor watchdog: the head of a batch of frames already handed does no
   await wd.done;
 });
 
-test("a case batch under Monitor is short: a count head with a pointer to read it whole with since, then a line per record to me, no envelopes", async (t) => {
+test("a case batch under Monitor has one count head and full addressed words, no envelopes", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -5819,7 +5877,7 @@ test("a case batch under Monitor is short: a count head with a pointer to read i
   delete first.entry_id;
   await sendRoom(fake, first);
   for (let i = 1; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
-  const long = "длинное слово ".repeat(40) + "НЕ-ДОЛЖНО-ВОЙТИ";
+  const long = "длинное слово ".repeat(20) + "КОНЕЦ-ЦЕЛ";
   await sendRoom(fake, {
     ...roomFrame("said", { entry_id: 405, key: "said", stack: "defer", body: long }),
     addressee: ME,
@@ -5840,7 +5898,7 @@ test("a case batch under Monitor is short: a count head with a pointer to read i
   // A line only for a record to me (#6574); the case's zachin — on its first line only (#6081).
   assert.match(body[0], /^№7 «Стенд» \[400\] слово от @aleksei:probe: слово со стопкой defer$/);
   assert.ok(body[1].startsWith("№7 [405] "), body[1]);
-  assert.ok(body[1].endsWith("…") && !body[1].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[1]);
+  assert.equal(body[1], `№7 [405] слово от @aleksei:probe: ${long}`);
   assert.ok(!lines[head + 3]?.startsWith("№7 [4"), "two lines, the rest by count");
   assert.ok(!body.some((s) => s.includes('{"')), "no envelopes in the batch");
   wd.proc.kill("SIGKILL");
