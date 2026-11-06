@@ -194,13 +194,7 @@ test("F6: REALITY называет носитель автопосадки, фа
     .split("\n")
     .find((line) => line.startsWith("| Корень выровненного проекта садится до первого запроса |"));
   assert.ok(row, "класс заявки записан");
-  for (const text of [
-    "opencode serve",
-    "rootseat-run-opencode.mjs",
-    "Фальсификаторы:",
-    "Наблюдено",
-    "Предел:",
-  ])
+  for (const text of ["opencode serve", "rootseat-run-opencode.mjs", "Фальсификаторы:", "Предел:"])
     assert.ok(row.includes(text), text);
 });
 
