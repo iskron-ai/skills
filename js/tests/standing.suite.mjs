@@ -5864,7 +5864,7 @@ test("the Monitor watchdog: the head of a batch of frames already handed does no
   await wd.done;
 });
 
-test("a case batch under Monitor is short: a count head with a pointer to read it whole with since, then a line per record to me, no envelopes", async (t) => {
+test("a case batch under Monitor has one count head and full addressed words, no envelopes", async (t) => {
   const { fake, dir, key } = await connected(t, {
     env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "10000" },
   });
@@ -5876,7 +5876,7 @@ test("a case batch under Monitor is short: a count head with a pointer to read i
   delete first.entry_id;
   await sendRoom(fake, first);
   for (let i = 1; i < 5; i++) await sendRoom(fake, said("defer", 400 + i));
-  const long = "длинное слово ".repeat(40) + "НЕ-ДОЛЖНО-ВОЙТИ";
+  const long = "длинное слово ".repeat(20) + "КОНЕЦ-ЦЕЛ";
   await sendRoom(fake, {
     ...roomFrame("said", { entry_id: 405, key: "said", stack: "defer", body: long }),
     addressee: ME,
@@ -5897,7 +5897,7 @@ test("a case batch under Monitor is short: a count head with a pointer to read i
   // A line only for a record to me (#6574); the case's zachin — on its first line only (#6081).
   assert.match(body[0], /^№7 «Стенд» \[400\] слово от @aleksei:probe: слово со стопкой defer$/);
   assert.ok(body[1].startsWith("№7 [405] "), body[1]);
-  assert.ok(body[1].endsWith("…") && !body[1].includes("НЕ-ДОЛЖНО-ВОЙТИ"), body[1]);
+  assert.equal(body[1], `№7 [405] слово от @aleksei:probe: ${long}`);
   assert.ok(!lines[head + 3]?.startsWith("№7 [4"), "two lines, the rest by count");
   assert.ok(!body.some((s) => s.includes('{"')), "no envelopes in the batch");
   wd.proc.kill("SIGKILL");
