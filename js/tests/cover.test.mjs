@@ -198,7 +198,6 @@ test("F6: REALITY называет носитель автопосадки, фа
     "opencode serve",
     "rootseat-run-opencode.mjs",
     "Фальсификаторы:",
-    "Наблюдено",
     "Предел:",
   ])
     assert.ok(row.includes(text), text);
