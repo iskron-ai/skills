@@ -8947,7 +8947,7 @@ test("question kinds: an answer to my seat steers; an answer to another and a wi
     toSeat.line.fields.to.standing = { id: ME_ID, standing: ME, name: "proba" };
     const s = await send(toSeat, 3);
     assert.equal(s.delivery, "queue", "a question to my seat comes in words");
-    assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\)/);
+    assert.match(s.text, /спрашивает роль 🚚 Поставщик плитки \(место @tester:proba\)/);
     // Only the named seat is the addressee (#6574): another seat of my account in my role,
     // a seat of another account, my role without a seat — not mine.
     const sibling = ask(100, MY_KARTA, {}, OTHER_KEY);

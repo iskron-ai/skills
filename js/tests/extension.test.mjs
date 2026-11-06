@@ -1293,7 +1293,7 @@ test("question kinds: the answer to my seat and a call of my role wake; a questi
     const [q, a, k, gone, waiting] = rec.messages.map((m) => m.msg.content);
     assert.match(
       q,
-      /спрашивает роль 🚚 Поставщик плитки \(место proba \(@tester:proba\)\) \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
+      /спрашивает роль 🚚 Поставщик плитки \(место @tester:proba\) \[выкат: сегодня\?\]: «Выкатывать сегодня\?»; ответ: да или нет \(yes \| no\); рекомендация: yes — гейт зелёный/,
     );
     assert.match(a, /@dmitry:phone \(человек\) отвечает на \[90\]: yes; «после обеда»/);
     assert.match(k, /ответ \[91\] принят: «выкатываю после обеда»/);

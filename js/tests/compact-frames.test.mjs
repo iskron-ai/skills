@@ -74,6 +74,19 @@ test("answer and acceptance do not reprint a multiline body in their batch previ
   }
 });
 
+test("a question names the target role and seat once, without a second seat name", () => {
+  const frame = reply("ask");
+  frame.line.fields.to = {
+    karta: { seq: 4, name: "Target role" },
+    standing: { standing: ME, name: "Repeated seat name" },
+  };
+  for (const render of [frameToText(frame, ""), batchLine(frame)]) {
+    assert.equal(occurrences(render, "Target role"), 1, render);
+    assert.equal(occurrences(render, ME), 1, render);
+    assert(!render.includes("Repeated seat name"), render);
+  }
+});
+
 test("a batch has one history hint, while retaining each case's cursor and realm", () => {
   const a = reply();
   const b = { ...reply(), room: { ...a.room, seq: 8, realm: "@other/run" }, entry_id: 90 };
