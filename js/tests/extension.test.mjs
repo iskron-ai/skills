@@ -495,7 +495,11 @@ test("the extension asks the bridge for response fields in its handshake", async
   const rec = await session(env);
   try {
     const seen = readFileSync(caps, "utf8").trim().split("\n").map(JSON.parse);
-    assert.deepEqual(seen[0], { experimental: { "iskron/structured": {} } }, JSON.stringify(seen));
+    assert.deepEqual(
+      seen[0],
+      { experimental: { "iskron/structured": {}, "compact-counts": { version: 1 } } },
+      JSON.stringify(seen),
+    );
   } finally {
     await rec.stop();
   }
