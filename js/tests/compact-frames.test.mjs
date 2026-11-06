@@ -74,6 +74,21 @@ test("answer and acceptance do not reprint a multiline body in their batch previ
   }
 });
 
+test("an addressed word in a batch retains its full multiline body once", () => {
+  const body = `BODY-START\n${"Middle words beyond the short caption. ".repeat(12)}\nBODY-END`;
+  const frame = roomFrame("said", {
+    author: HUMAN,
+    fields: { to: { standing: ME } },
+    envelope: { addressee: ME },
+    body,
+  });
+  const render = batchLine(frame);
+  assert(render.includes(body.replace(/\s+/g, " ").trim()), render);
+  assert.equal(occurrences(render, "BODY-START"), 1, render);
+  assert.equal(occurrences(render, "BODY-END"), 1, render);
+  assert.equal(render.split("\n").length, 1, render);
+});
+
 test("a question names the target role and seat once, without a second seat name", () => {
   const frame = reply("ask");
   frame.line.fields.to = {

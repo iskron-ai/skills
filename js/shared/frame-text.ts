@@ -166,12 +166,9 @@ export function frameToText(frame: Frame | null | undefined, raw: string): strin
 export const warnedSeat = (frame: Frame): string =>
   typeof frame.to_standing === "string" ? frame.to_standing.replace(/^.*:/, "") : "";
 
-/** Start of the frame text in a batch line — how many characters. */
-const BATCH_TEXT = 160;
-
 /**
  * A case batch frame for the watchdog in one line: case, [entry_id], kind, author,
- * start of text; the case opening on its first appearance. An addressed word not to
+ * full text; the case opening on its first appearance. An addressed word not to
  * me (#6081) has no body; run — the number of words in the pair's run closed by this
  * frame (foldAsides), absent for a lone frame. No envelope: batchPointer reads it whole.
  */
@@ -188,8 +185,7 @@ export function batchLine(frame: Frame, run?: number, withZachin = true): string
     .replace(/\s+/g, " ")
     .trim();
   const author = rk?.author && !words.includes(rk.author) ? ` — ${rk.author}` : "";
-  const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
-  const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
+  const text = textOf(frame).replace(/\s+/g, " ").trim();
   const dup = !!text && words.includes(text);
   return `${pre}[${entry}] ${words}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text && !dup ? `: ${text}` : ""}`;
 }
