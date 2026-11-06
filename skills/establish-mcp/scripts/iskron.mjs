@@ -145,7 +145,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.32.0";
+var VERSION = "7.33.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -205,6 +205,52 @@ var ASK = {
   }
 };
 
+// js/delivery/words/backlog.ts
+var BACKLOG = {
+  ru: {
+    head: (count, expected, shown, direct) => `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + "." + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : "")
+  },
+  en: {
+    head: (count, expected, shown, direct) => `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + "." + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
+  }
+};
+
+// js/delivery/words/take.ts
+var TAKE = {
+  ru: {
+    rule: () => "только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы"
+  },
+  en: {
+    rule: () => "only on the human's word; a seat on the board is no evidence its holder is alive: a dead agent's seat closes in about a minute when it held the seat through a machine bridge with a daemon, otherwise by the platform's term"
+  }
+};
+
+// js/delivery/words/call.ts
+var CALL = {
+  ru: {
+    sameNamePrefix: () => "то же имя под другой ролью; ",
+    heardAdvice: (other, asked, led) => `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true): ${TAKE.ru.rule()}`,
+    sameKeysAdvice: () => "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
+    sameNameAdvice: () => "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
+    takeOtherAdvice: () => "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
+    otherPlace: (led, asked, advice) => `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`,
+    besideConnect: (led) => `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`,
+    besideStand: (led) => `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
+    noReply: () => "ответа нет"
+  },
+  en: {
+    sameNamePrefix: () => "the same name under another role; ",
+    heardAdvice: (other, asked, led) => `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true): ${TAKE.en.rule()}`,
+    sameKeysAdvice: () => "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
+    sameNameAdvice: () => "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
+    takeOtherAdvice: () => "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
+    otherPlace: (led, asked, advice) => `Refused (bridge): this bridge already leads the seat ${led} — one seat per bridge in a graph, and the seat ${asked} would silently take it off the socket. ${advice}; holding both at once needs a second bridge, that is another harness session; a seat in another graph stands beside by itself.`,
+    besideConnect: (led) => `Refused (bridge): this bridge leads the seat ${led}, and a connect in another graph would open a second channel and take it off the socket. A seat in another graph stands beside on the same channel — iskron_stand(realm=…) or register.`,
+    besideStand: (led) => `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`,
+    noReply: () => "no reply"
+  }
+};
+
 // js/delivery/words/frame-text.ts
 var FRAME_TEXT = {
   ru: {
@@ -258,52 +304,6 @@ var CASE_LINE = {
   en: {
     platform: () => "platform",
     quote: (s2) => `“${s2}”`
-  }
-};
-
-// js/delivery/words/backlog.ts
-var BACKLOG = {
-  ru: {
-    head: (count, expected, shown, direct) => `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + ` — адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : "")
-  },
-  en: {
-    head: (count, expected, shown, direct) => `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + ` — those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
-  }
-};
-
-// js/delivery/words/take.ts
-var TAKE = {
-  ru: {
-    rule: () => "только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы"
-  },
-  en: {
-    rule: () => "only on the human's word; a seat on the board is no evidence its holder is alive: a dead agent's seat closes in about a minute when it held the seat through a machine bridge with a daemon, otherwise by the platform's term"
-  }
-};
-
-// js/delivery/words/call.ts
-var CALL = {
-  ru: {
-    sameNamePrefix: () => "то же имя под другой ролью; ",
-    heardAdvice: (other, asked, led) => `${other ? `место ${asked} слушает другая сессия` : `слушает ли место ${asked} другая сессия, мост не знает`} — его не трогай; своё место этого моста — ${led}: оставайся на нём либо назови другое name; встать рядом — iskron_stand без name; отнять место (take=true): ${TAKE.ru.rule()}`,
-    sameKeysAdvice: () => "ключи совпали — это то же место: повтори iskron_stand с take=true, чтобы переоткрыть его сознательно",
-    sameNameAdvice: () => "то же имя под другой ролью (оно вывелось из того же каталога) — передай другое name, либо iskron_stand с take=true, чтобы сменить место этого моста",
-    takeOtherAdvice: () => "занять другое место вместо этого — iskron_stand с take=true (прежнее останется на доске без слуха; ненужное сними revoke)",
-    otherPlace: (led, asked, advice) => `Отказано (мост): этот мост уже ведёт место ${led} — в графе место одно на мост, и место ${asked} его сняло бы с сокета молча. ${advice}; держать оба разом — второй мост, то есть другая сессия харнесса; место в другом графе встаёт рядом само.`,
-    besideConnect: (led) => `Отказано (мост): этот мост ведёт место ${led}, а connect в другом графе открыл бы второй канал и снял бы его с сокета. Место в другом графе встаёт рядом на том же канале — iskron_stand(realm=…) или register.`,
-    besideStand: (led) => `Отказано (мост): этот мост ведёт место ${led}, но сокета канала у него сейчас нет (ушёл с места или место отняли) — место другого графа встать рядом не может. Сперва верни ${led}: iskron_stand его графа.`,
-    noReply: () => "ответа нет"
-  },
-  en: {
-    sameNamePrefix: () => "the same name under another role; ",
-    heardAdvice: (other, asked, led) => `${other ? `another session listens on the seat ${asked}` : `the bridge does not know whether another session listens on the seat ${asked}`} — leave it alone; this bridge's own seat is ${led}: stay on it or pass another name; to stand beside — iskron_stand without name; taking the seat (take=true): ${TAKE.en.rule()}`,
-    sameKeysAdvice: () => "the keys match — it is the same seat: repeat iskron_stand with take=true to reopen it deliberately",
-    sameNameAdvice: () => "the same name under another role (derived from the same directory) — pass another name, or iskron_stand with take=true to change this bridge's seat",
-    takeOtherAdvice: () => "to take another seat instead of this one — iskron_stand with take=true (the former stays on the board without hearing; remove what is not needed with revoke)",
-    otherPlace: (led, asked, advice) => `Refused (bridge): this bridge already leads the seat ${led} — one seat per bridge in a graph, and the seat ${asked} would silently take it off the socket. ${advice}; holding both at once needs a second bridge, that is another harness session; a seat in another graph stands beside by itself.`,
-    besideConnect: (led) => `Refused (bridge): this bridge leads the seat ${led}, and a connect in another graph would open a second channel and take it off the socket. A seat in another graph stands beside on the same channel — iskron_stand(realm=…) or register.`,
-    besideStand: (led) => `Refused (bridge): this bridge leads the seat ${led}, but has no channel socket now (it left the seat or the seat was taken) — a seat of another graph cannot stand beside. First bring back ${led}: iskron_stand for its graph.`,
-    noReply: () => "no reply"
   }
 };
 
@@ -1465,10 +1465,10 @@ var SEPARATE = {
 // js/delivery/words/stalebatch.ts
 var STALE = {
   ru: {
-    head: (count, shown) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.`
+    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
   },
   en: {
-    head: (count, shown) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.`
+    head: (count, shown, legacy = false) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + (legacy ? ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` : ".")
   }
 };
 
@@ -5044,7 +5044,8 @@ function askValues(kind, line, fields) {
   const W4 = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
-  const place = addresseeOf(to.standing)?.label ?? "";
+  const seat2 = addresseeOf(to.standing);
+  const place = seat2?.addr[0] ?? seat2?.label ?? "";
   const rec5 = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
@@ -5191,8 +5192,8 @@ function authorOf(author) {
   const a = obj(author);
   const name2 = str(a.name);
   const standing = str(a.standing);
-  if (name2) return standing ? `${name2} (${standing})` : name2;
   if (standing) return standing;
+  if (name2) return name2;
   return a.kind === "platform" ? words(CASE_LINE).platform() : "?";
 }
 function roomOf(v) {
@@ -5265,9 +5266,10 @@ function roomKind(frame2) {
   const key2 = str(line.key);
   const node = obj(fields.node);
   const cause = kind === "invite" ? str(fields.cause) : "";
-  const byWhom = authorOf(
+  const authorName = authorOf(
     kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
   );
+  const byWhom = (frame2.origin ?? classifyOrigin(frame2)) === "human" ? `${authorName} (${words(ROOM).whoHuman("")})` : authorName;
   const values = {
     kind,
     cause,
@@ -5319,7 +5321,7 @@ function roomKind(frame2) {
   const to = word3 ? named2.map(addresseeOf).find(Boolean) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   if (to && (withheld || seatIs(f, ...named2) === false)) {
     const counts = kind === "said";
-    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const pair = JSON.stringify([roomOf(f.room), authorName, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);
     const by = need(values.author);
     const addressee = need(to.label);
@@ -5339,7 +5341,16 @@ function roomKind(frame2) {
   }
   const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending2 ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words: text3, author, phase, known: true };
+  const bodyInWords = !!str(line.done) && (ASK_KINDS.has(kind) || kind === "progress" || kind === "node");
+  return {
+    kind,
+    rule: phase ? "batch" : stack,
+    words: text3,
+    author,
+    bodyInWords,
+    phase,
+    known: true
+  };
 }
 var byKind = (frame2) => roomKind(frame2) !== null;
 var stackOf = (frame2) => roomKind(frame2)?.rule ?? (frame2?.stack === "defer" ? "batch" : "interrupt");
@@ -6180,13 +6191,15 @@ function superseded(frames) {
 // js/shared/frame-text.ts
 var W = () => words(ROOM);
 var T2 = () => words(FRAME_TEXT);
+var CAPTION_REPLY = /* @__PURE__ */ new Set(["body", "answer", "ack", "retract"]);
 var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
 function casesOf(frames) {
   const by = /* @__PURE__ */ new Map();
   for (const f of frames) {
-    const key2 = caseKey(f) || idOf2(f.id) || "?";
+    const c = caseOf(f);
+    const key2 = c ? JSON.stringify([c.realm, c.room]) : idOf2(f.id) || "?";
     const got = by.get(key2);
     if (got) got.push(f);
     else by.set(key2, [f]);
@@ -6222,7 +6235,8 @@ function whoOf2(frame2, withPlace) {
   return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 function textOf(frame2) {
-  if (roomKind(frame2)?.aside) return "";
+  const rk = roomKind(frame2);
+  if (rk?.aside || rk?.bodyInWords) return "";
   const b = frame2.body;
   return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
 }
@@ -6262,9 +6276,9 @@ function frameToText(frame2, raw) {
     const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
     const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
-    const who = origin2 === "platform" ? "" : whoOf2(frame2, false);
+    const who = rk || origin2 === "platform" ? "" : whoOf2(frame2, false);
     const by = [author, who].filter(Boolean).join(", ");
-    const withReply = rk?.kind !== "body";
+    const withReply = !rk || !CAPTION_REPLY.has(rk.kind);
     const head = `${caseHead(frame2, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
     const lines2 = [head];
     if (text3 && !words2.includes(text3.trim())) lines2.push(text3);
@@ -6288,12 +6302,12 @@ function batchLine(frame2, run2, withZachin = true) {
   const line = rec2(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words2 = rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?");
+  const words2 = (rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?")).replace(/\s+/g, " ").trim();
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
   const flat = [...textOf(frame2).replace(/\s+/g, " ").trim()];
   const text3 = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
   const dup = !!text3 && words2.includes(text3);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame2, rk?.kind !== "body")}${text3 && !dup ? `: ${text3}` : ""}`;
+  return `${pre}[${entry}] ${words2}${author}${tail(frame2, !rk || !CAPTION_REPLY.has(rk.kind))}${text3 && !dup ? `: ${text3}` : ""}`;
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
@@ -6320,35 +6334,52 @@ function closingOf(frame2) {
   return T2().askMoved(n, need(seat2));
 }
 function caseCountLine(frames) {
+  const count = countText(frames, false);
+  return count ? `${count}; ${batchPointer(frames)}.` : "";
+}
+function countText(frames, withCursor) {
   const c = frames.length ? caseOf(frames[0]) : null;
   if (!c) return "";
   const mineN = frames.filter((f) => addressedToMine(f)).length;
   const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
-  const yours = mineN ? T2().yoursBelow() : T2().noneYours();
+  const cursor = withCursor ? cursorOf(frames) : null;
   const n = frames.length - gone;
-  return T2().count(head, n, mineN) + (gone ? T2().supersededLines(gone) : "") + frames.map(closingOf).join("") + yours + batchPointer(frames) + ".";
+  return T2().count(head, n, mineN) + (gone ? T2().supersededLines(gone) : "") + frames.map(closingOf).join("") + (cursor ? ` · realm=${JSON.stringify(cursor.realm)}, since=${cursor.since}` : "");
 }
-function caseCountLines(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean);
+function caseCountLines(frames, incomplete2 = false) {
+  const groups = casesOf(frames).filter((group) => caseOf(group[0]));
+  if (!groups.length) return [];
+  if (groups.length === 1 && !incomplete2) return [caseCountLine(groups[0])];
+  const counts = groups.map((group) => countText(group, true));
+  const pointer = incomplete2 ? T2().inFull("") : batchPointer(groups.flat());
+  return groups.length === 1 ? [`${counts[0]}; ${pointer}.`] : [...counts, `${pointer}.`];
 }
 function batchHead(frames) {
   return caseCountLines(frames).join("\n");
 }
+function cursorOf(frames) {
+  const first2 = frames[0];
+  const c = first2 && caseOf(first2);
+  if (!c?.realm) return null;
+  const room = rec2(first2.room);
+  const entries2 = frames.map((f) => idOf2(f.entry_id ?? rec2(f.line).entry_id));
+  if (entries2.some((e) => !e || !Number.isSafeInteger(Number(e)) || Number(e) < 1)) return null;
+  return {
+    realm: c.realm,
+    room: JSON.stringify(room.seq ?? room.id),
+    since: Math.min(...entries2.map(Number)) - 1
+  };
+}
 function batchPointer(frames) {
-  const since = /* @__PURE__ */ new Map();
-  for (const frame2 of frames) {
-    const f = frame2;
-    const room = f.room ?? {};
-    const line = f.line ?? {};
-    const n = room.seq ?? room.id;
-    const e = Number(f.entry_id ?? line.entry_id);
-    if (typeof n !== "number" && typeof n !== "string" || !Number.isFinite(e)) continue;
-    const realm = room.realm ?? f.realm;
-    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n === "number" ? String(n) : JSON.stringify(n)}`;
-    since.set(args, Math.min(since.get(args) ?? e, e));
-  }
-  return T2().inFull([...since].map(([args, e]) => T2().caseHistory(args, e - 1)).join("; "));
+  const cursors = casesOf(frames).map(cursorOf);
+  const c = cursors[0];
+  if (!c || cursors.some((cursor) => !cursor)) return T2().inFull("");
+  if (cursors.length > 1)
+    return T2().inFull(T2().caseHistory('realm=R, action="history", room=N', "S"));
+  return T2().inFull(
+    T2().caseHistory(`realm=${JSON.stringify(c.realm)}, action="history", room=${c.room}`, c.since)
+  );
 }
 
 // js/bridge/backlog.ts
@@ -6424,7 +6455,7 @@ var Backlog = class {
     this.flush = null;
     if (!got.length || !emit2) return;
     const bodies = [
-      ...caseCountLines(got),
+      ...caseCountLines(got, count > got.length),
       ...got.filter((f) => addressedToMine(f)).map((f) => {
         const t = frameToText(f, JSON.stringify(f));
         return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
@@ -6823,7 +6854,7 @@ function staleBatch(all2, has) {
   const count = kept3.length;
   if (!count) return { text: "", keys };
   const bodies = [
-    ...caseCountLines(frames),
+    ...caseCountLines(frames, count > frames.length),
     ...frames.filter((f) => addressedToMine(f)).map((f) => {
       const t = frameToText(f, JSON.stringify(f));
       return [...t].length > BODY_CAP2 ? [...t].slice(0, BODY_CAP2).join("") + "…" : t;

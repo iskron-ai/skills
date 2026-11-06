@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.32.0";
+var VERSION = "7.33.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -83,6 +83,40 @@ var ASK = {
     withdrawn: (withdraws, key, done, verdict, author) => `question [${withdraws}] withdrawn: [${key}] [${done}] = ${verdict} · ${author}`,
     inviteOwnerless: (who, standing) => `the platform calls the role ${who} to the case: the seat ${standing} is gone, its lines are nobody's`,
     inviteAnswerWaiting: (who, standing) => `the platform calls the role ${who} to the case: an answer awaits acceptance, the asking seat ${standing} has left`
+  }
+};
+
+// js/delivery/words/bridge-client.ts
+var BRIDGE_CLIENT = {
+  ru: {
+    failedToStart: (message) => `мост не запустился: ${message}`,
+    exited: (code, signal, why) => `мост вышел (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; последнее от моста: ${lines}`,
+    aborted: () => "вызов отменён",
+    noAnswer: (method2, ms, why) => `${method2}: нет ответа за ${ms} мс${why}`,
+    noWrites: () => "мост не принимает запись",
+    sessionClosed: () => "сессия закрыта",
+    emptyAnswer: () => "(пустой ответ)"
+  },
+  en: {
+    failedToStart: (message) => `the bridge failed to start: ${message}`,
+    exited: (code, signal, why) => `the bridge exited (code=${code}, signal=${signal})${why}`,
+    lastFromBridge: (lines) => `; last from the bridge: ${lines}`,
+    aborted: () => "call aborted",
+    noAnswer: (method2, ms, why) => `${method2}: no answer in ${ms} ms${why}`,
+    noWrites: () => "the bridge does not accept writes",
+    sessionClosed: () => "session closed",
+    emptyAnswer: () => "(empty answer)"
+  }
+};
+
+// js/delivery/words/take.ts
+var TAKE = {
+  ru: {
+    rule: () => "только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы"
+  },
+  en: {
+    rule: () => "only on the human's word; a seat on the board is no evidence its holder is alive: a dead agent's seat closes in about a minute when it held the seat through a machine bridge with a daemon, otherwise by the platform's term"
   }
 };
 
@@ -139,40 +173,6 @@ var CASE_LINE = {
   en: {
     platform: () => "platform",
     quote: (s) => `“${s}”`
-  }
-};
-
-// js/delivery/words/bridge-client.ts
-var BRIDGE_CLIENT = {
-  ru: {
-    failedToStart: (message) => `мост не запустился: ${message}`,
-    exited: (code, signal, why) => `мост вышел (code=${code}, signal=${signal})${why}`,
-    lastFromBridge: (lines) => `; последнее от моста: ${lines}`,
-    aborted: () => "вызов отменён",
-    noAnswer: (method2, ms, why) => `${method2}: нет ответа за ${ms} мс${why}`,
-    noWrites: () => "мост не принимает запись",
-    sessionClosed: () => "сессия закрыта",
-    emptyAnswer: () => "(пустой ответ)"
-  },
-  en: {
-    failedToStart: (message) => `the bridge failed to start: ${message}`,
-    exited: (code, signal, why) => `the bridge exited (code=${code}, signal=${signal})${why}`,
-    lastFromBridge: (lines) => `; last from the bridge: ${lines}`,
-    aborted: () => "call aborted",
-    noAnswer: (method2, ms, why) => `${method2}: no answer in ${ms} ms${why}`,
-    noWrites: () => "the bridge does not accept writes",
-    sessionClosed: () => "session closed",
-    emptyAnswer: () => "(empty answer)"
-  }
-};
-
-// js/delivery/words/take.ts
-var TAKE = {
-  ru: {
-    rule: () => "только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы"
-  },
-  en: {
-    rule: () => "only on the human's word; a seat on the board is no evidence its holder is alive: a dead agent's seat closes in about a minute when it held the seat through a machine bridge with a daemon, otherwise by the platform's term"
   }
 };
 
@@ -614,7 +614,8 @@ function askValues(kind, line, fields) {
   const W3 = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
-  const place = addresseeOf(to.standing)?.label ?? "";
+  const seat = addresseeOf(to.standing);
+  const place = seat?.addr[0] ?? seat?.label ?? "";
   const rec3 = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
@@ -761,8 +762,8 @@ function authorOf(author) {
   const a = obj(author);
   const name = str(a.name);
   const standing = str(a.standing);
-  if (name) return standing ? `${name} (${standing})` : name;
   if (standing) return standing;
+  if (name) return name;
   return a.kind === "platform" ? words(CASE_LINE).platform() : "?";
 }
 function roomOf(v) {
@@ -835,9 +836,10 @@ function roomKind(frame) {
   const key = str(line.key);
   const node = obj(fields.node);
   const cause = kind === "invite" ? str(fields.cause) : "";
-  const byWhom = authorOf(
+  const authorName = authorOf(
     kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
   );
+  const byWhom = (frame.origin ?? classifyOrigin(frame)) === "human" ? `${authorName} (${words(ROOM).whoHuman("")})` : authorName;
   const values = {
     kind,
     cause,
@@ -889,7 +891,7 @@ function roomKind(frame) {
   const to = word2 ? named2.map(addresseeOf).find(Boolean) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   if (to && (withheld || seatIs(f, ...named2) === false)) {
     const counts = kind === "said";
-    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const pair = JSON.stringify([roomOf(f.room), authorName, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);
     const by = need(values.author);
     const addressee = need(to.label);
@@ -909,7 +911,16 @@ function roomKind(frame) {
   }
   const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
-  return { kind, rule: phase ? "batch" : stack, words: text, author, phase, known: true };
+  const bodyInWords = !!str(line.done) && (ASK_KINDS.has(kind) || kind === "progress" || kind === "node");
+  return {
+    kind,
+    rule: phase ? "batch" : stack,
+    words: text,
+    author,
+    bodyInWords,
+    phase,
+    known: true
+  };
 }
 var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
@@ -1241,13 +1252,15 @@ function superseded(frames) {
 // js/shared/frame-text.ts
 var W = () => words(ROOM);
 var T2 = () => words(FRAME_TEXT);
+var CAPTION_REPLY = /* @__PURE__ */ new Set(["body", "answer", "ack", "retract"]);
 var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
 function casesOf(frames) {
   const by = /* @__PURE__ */ new Map();
   for (const f of frames) {
-    const key = caseKey(f) || idOf2(f.id) || "?";
+    const c = caseOf(f);
+    const key = c ? JSON.stringify([c.realm, c.room]) : idOf2(f.id) || "?";
     const got = by.get(key);
     if (got) got.push(f);
     else by.set(key, [f]);
@@ -1283,7 +1296,8 @@ function whoOf2(frame, withPlace) {
   return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
 }
 function textOf(frame) {
-  if (roomKind(frame)?.aside) return "";
+  const rk = roomKind(frame);
+  if (rk?.aside || rk?.bodyInWords) return "";
   const b = frame.body;
   return typeof b === "string" ? b : b === void 0 ? "" : JSON.stringify(b);
 }
@@ -1324,9 +1338,9 @@ function frameToText(frame, raw) {
     const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
     const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
-    const who = origin2 === "platform" ? "" : whoOf2(frame, false);
+    const who = rk || origin2 === "platform" ? "" : whoOf2(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
-    const withReply = rk?.kind !== "body";
+    const withReply = !rk || !CAPTION_REPLY.has(rk.kind);
     const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
@@ -1350,12 +1364,12 @@ function batchLine(frame, run, withZachin = true) {
   const line = rec2(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
-  const words2 = rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?");
+  const words2 = (rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?")).replace(/\s+/g, " ").trim();
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
   const flat = [...textOf(frame).replace(/\s+/g, " ").trim()];
   const text = flat.length > BATCH_TEXT ? flat.slice(0, BATCH_TEXT).join("") + "…" : flat.join("");
   const dup = !!text && words2.includes(text);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame, rk?.kind !== "body")}${text && !dup ? `: ${text}` : ""}`;
+  return `${pre}[${entry}] ${words2}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text && !dup ? `: ${text}` : ""}`;
 }
 function batchLines(frames) {
   const seen = /* @__PURE__ */ new Set();
@@ -1377,35 +1391,52 @@ function closingOf(frame) {
   return T2().askMoved(n2, need(seat));
 }
 function caseCountLine(frames) {
+  const count = countText(frames, false);
+  return count ? `${count}; ${batchPointer(frames)}.` : "";
+}
+function countText(frames, withCursor) {
   const c = frames.length ? caseOf(frames[0]) : null;
   if (!c) return "";
   const mineN = frames.filter((f) => addressedToMine(f)).length;
   const gone = superseded(frames).size;
   const head = caseHead(frames[0], true);
-  const yours = mineN ? T2().yoursBelow() : T2().noneYours();
+  const cursor = withCursor ? cursorOf(frames) : null;
   const n2 = frames.length - gone;
-  return T2().count(head, n2, mineN) + (gone ? T2().supersededLines(gone) : "") + frames.map(closingOf).join("") + yours + batchPointer(frames) + ".";
+  return T2().count(head, n2, mineN) + (gone ? T2().supersededLines(gone) : "") + frames.map(closingOf).join("") + (cursor ? ` · realm=${JSON.stringify(cursor.realm)}, since=${cursor.since}` : "");
 }
-function caseCountLines(frames) {
-  return casesOf(frames).map(caseCountLine).filter(Boolean);
+function caseCountLines(frames, incomplete = false) {
+  const groups = casesOf(frames).filter((group) => caseOf(group[0]));
+  if (!groups.length) return [];
+  if (groups.length === 1 && !incomplete) return [caseCountLine(groups[0])];
+  const counts = groups.map((group) => countText(group, true));
+  const pointer = incomplete ? T2().inFull("") : batchPointer(groups.flat());
+  return groups.length === 1 ? [`${counts[0]}; ${pointer}.`] : [...counts, `${pointer}.`];
 }
 function batchHead(frames) {
   return caseCountLines(frames).join("\n");
 }
+function cursorOf(frames) {
+  const first = frames[0];
+  const c = first && caseOf(first);
+  if (!c?.realm) return null;
+  const room = rec2(first.room);
+  const entries = frames.map((f) => idOf2(f.entry_id ?? rec2(f.line).entry_id));
+  if (entries.some((e) => !e || !Number.isSafeInteger(Number(e)) || Number(e) < 1)) return null;
+  return {
+    realm: c.realm,
+    room: JSON.stringify(room.seq ?? room.id),
+    since: Math.min(...entries.map(Number)) - 1
+  };
+}
 function batchPointer(frames) {
-  const since = /* @__PURE__ */ new Map();
-  for (const frame of frames) {
-    const f = frame;
-    const room = f.room ?? {};
-    const line = f.line ?? {};
-    const n2 = room.seq ?? room.id;
-    const e = Number(f.entry_id ?? line.entry_id);
-    if (typeof n2 !== "number" && typeof n2 !== "string" || !Number.isFinite(e)) continue;
-    const realm = room.realm ?? f.realm;
-    const args = (typeof realm === "string" && realm ? `realm="${realm}", ` : "") + `action="history", room=${typeof n2 === "number" ? String(n2) : JSON.stringify(n2)}`;
-    since.set(args, Math.min(since.get(args) ?? e, e));
-  }
-  return T2().inFull([...since].map(([args, e]) => T2().caseHistory(args, e - 1)).join("; "));
+  const cursors = casesOf(frames).map(cursorOf);
+  const c = cursors[0];
+  if (!c || cursors.some((cursor) => !cursor)) return T2().inFull("");
+  if (cursors.length > 1)
+    return T2().inFull(T2().caseHistory('realm=R, action="history", room=N', "S"));
+  return T2().inFull(
+    T2().caseHistory(`realm=${JSON.stringify(c.realm)}, action="history", room=${c.room}`, c.since)
+  );
 }
 
 // js/bridge/backlog.ts
