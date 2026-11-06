@@ -238,6 +238,22 @@ test("guard старыми словами при тех же адресах — 
   assert.deepEqual(commands(settings(dir), "PreToolUse"), [fresh]);
 });
 
+// Устаревший — только guard, написанный prepare: свой inline-хук человека о той же директории
+// (с проверками и аудитом сверх guard) prepare не переписывает.
+test("свой inline-хук памяти, не написанный prepare, — kept, не переписан", () => {
+  const dir = repo();
+  mkdirSync(join(dir, ".claude"));
+  const own =
+    'case "$(jq -r .tool_input.file_path)" in *.claude/projects/*/memory*) logger audit; echo no >&2; exit 2 ;; esac';
+  const s = {
+    hooks: { PreToolUse: [{ matcher: "Write|Edit", hooks: [{ type: "command", command: own }] }] },
+  };
+  writeFileSync(join(dir, ".claude/settings.json"), JSON.stringify(s));
+  const { out } = prepare(dir, ADDR);
+  assert.ok(out.kept.includes("hook.guard"), JSON.stringify(out));
+  assert.deepEqual(commands(settings(dir), "PreToolUse"), [own]);
+});
+
 test("адреса сменились — свой guard переписан на месте, чужая запись цела", () => {
   const dir = repo();
   mkdirSync(join(dir, ".claude"));
