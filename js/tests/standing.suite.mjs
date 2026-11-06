@@ -2271,10 +2271,10 @@ test("hello with pending and a platform wake each open a backlog window: the fra
   assert.equal(burst.pending, 2);
   assert.match(burst.text, /Побудка: кадров 2 \(ожидало в очереди: 2\)/);
   assert.match(burst.text, /первое в очереди[\s\S]*второе в очереди/);
-  assert.match(
+  assert.doesNotMatch(
     burst.text,
     /iskron_case\(action="mine"\)/,
-    "the rest is pointed at the seat's cases, not dropped",
+    "a complete batch of non-case messages has no case-history pointer",
   );
   assert.ok(
     !burst.text.includes('iskron_channel(action="history"'),
@@ -2639,10 +2639,10 @@ test("the Monitor watchdog marks the frames a stale batch named but did not show
   await waitFor(() => /Лежалых кадров: 25, здесь первые 20/.test(wd.out), "the stale batch");
   await new Promise((r) => setTimeout(r, 300)); // the marks follow the print
   assert.equal(shown(), 20);
-  assert.match(
+  assert.doesNotMatch(
     wd.out,
     /целиком — iskron_case\(action="mine"\)/,
-    "the left-out stale frames are pointed at the seat's cases",
+    "non-case messages cannot be recovered from the seat's cases",
   );
   assert.ok(
     !wd.out.includes('iskron_channel(action="history"'),

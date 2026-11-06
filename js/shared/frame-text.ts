@@ -272,7 +272,7 @@ function countText(frames: Frame[], withCursor: boolean): string {
  */
 export function caseCountLines(frames: Frame[], incomplete = false): string[] {
   const groups = casesOf(frames).filter((group) => caseOf(group[0]));
-  if (!groups.length) return frames.length ? [`${T().inFull("")}.`] : [];
+  if (!groups.length) return [];
   if (groups.length === 1 && !incomplete) return [caseCountLine(groups[0])];
   const counts = groups.map((group) => countText(group, true));
   const pointer = incomplete ? T().inFull("") : batchPointer(groups.flat());

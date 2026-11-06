@@ -7,8 +7,9 @@ import { FRAME_TEXT, STALE } from "../delivery/index.ts";
 import { batchHead, batchLine, caseCountLines, frameToText } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
 import { quiet } from "../shared/quietframe.ts";
+import { roomKind } from "../shared/room-kinds.ts";
 import { staleBatch } from "../shared/stalebatch.ts";
-import { HUMAN, ME, roomFrame } from "./room-frames.mjs";
+import { graphPosed, HUMAN, ME, roomFrame } from "./room-frames.mjs";
 
 const occurrences = (text, value) => text.split(value).length - 1;
 const reply = (kind = "answer", body = "Feeds") => ({
@@ -27,6 +28,29 @@ const reply = (kind = "answer", body = "Feeds") => ({
     user: "alari",
     from_standing: HUMAN.standing,
   },
+});
+
+test("a batch without case records does not point to case history or mine", () => {
+  const frame = graphPosed();
+  assert.deepEqual(caseCountLines([frame]), []);
+  assert(!staleBatch([frame], () => false).text.includes("iskron_case("));
+});
+
+test("a human word and its body share an aside key without repeating provenance", () => {
+  const said = roomFrame("said", {
+    author: HUMAN,
+    fields: { to: { standing: "@other:seat" } },
+    envelope: { body_withheld: true },
+  });
+  said.provenance.from_person = true;
+  const body = {
+    ...said,
+    event_kind: "room.body",
+    line: { ...said.line, kind: "body" },
+    provenance: { ...said.provenance, from_person: undefined },
+  };
+  assert.equal(roomKind(said).aside.pair, roomKind(body).aside.pair);
+  assert.match(roomKind(said).words, /человек/);
 });
 
 test("a person's answer names its author, reference and body once", () => {

@@ -247,7 +247,7 @@ export function roomKind(frame: Frame | null | undefined): RoomKind | null {
     : null;
   if (to && (withheld || seatIs(f, ...named) === false)) {
     const counts = kind === "said";
-    const pair = JSON.stringify([roomOf(f.room), author, to.addr[0]]);
+    const pair = JSON.stringify([roomOf(f.room), authorName, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);
     const by = need(values.author);
     const addressee = need(to.label);
