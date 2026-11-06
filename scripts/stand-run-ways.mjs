@@ -9,7 +9,7 @@
 //
 //   node scripts/stand-run-ways.mjs --token-file F --api A --resolve R --mind @owner/mind
 //     --work @owner/work --bridge B --plugin P --skills DIR [--model provider/id] [--report F]
-//     [--turn-minutes 15] [--again]
+//     [--turn-minutes 15] [--scene report|interview] [--again]
 //
 // --again: the way session 1 laid already stands (exactly one ways umbrella) — its graph is
 // re-judged by (1) and session 2 runs alone, a second sample of (2).
@@ -193,16 +193,40 @@ function journal(msgs) {
   return out.join("\n");
 }
 
-// The dictated way: four steps, each with words a step kriya's name or description carries.
-const STEPS = [
-  { text: "сначала выгружаю из трекера все задачи, закрытые за неделю", re: /выгру|трекер|закрыт/i },
-  { text: "потом раскладываю их на три группы — сделано, в работе, риски", re: /групп|раскла|риск/i },
-  { text: "затем пишу сверху итог в три строки, не больше", re: /итог|три строки|резюм/i },
-  { text: "и в конце отправляю руководителю в личные сообщения до пятницы 16:00, не в общий канал", re: /отправ|руковод|16:00|пятниц/i },
-];
-const SESSION1 = `Я работаю в графе ${work}. Расскажу, как я готовлю еженедельный отчёт руководителю — это мой собственный способ, я так делаю на любой работе: ${STEPS.map((s) => s.text).join("; ")}.`;
+// The dictated ways, one per scene: four steps, each with words a step kriya's name or description
+// carries; `kind` tells this scene's umbrella from another kind's in the same mind.
+const SCENES = {
+  report: {
+    kind: /отч[её]т/i,
+    steps: [
+      { text: "сначала выгружаю из трекера все задачи, закрытые за неделю", re: /выгру|трекер|закрыт/i },
+      { text: "потом раскладываю их на три группы — сделано, в работе, риски", re: /групп|раскла|риск/i },
+      { text: "затем пишу сверху итог в три строки, не больше", re: /итог|три строки|резюм/i },
+      { text: "и в конце отправляю руководителю в личные сообщения до пятницы 16:00, не в общий канал", re: /отправ|руковод|16:00|пятниц/i },
+    ],
+    dictate: "как я готовлю еженедельный отчёт руководителю",
+    task: "Подготовь, пожалуйста, мой еженедельный отчёт руководителю за эту неделю.",
+  },
+  interview: {
+    kind: /собесед|кандидат/i,
+    steps: [
+      { text: "сначала читаю резюме и выписываю три вопроса по его прошлому опыту", re: /резюме|три вопрос/i },
+      { text: "потом прошу у рекрутера тестовое задание кандидата и просматриваю его", re: /тестов|рекрутер/i },
+      { text: "затем составляю план беседы на 45 минут: 10 — знакомство, 25 — техника, 10 — вопросы кандидата", re: /план|45/i },
+      { text: "и в тот же день после встречи пишу отзыв в пять строк с решением «да» или «нет»", re: /отзыв|пять строк|да.{0,8}нет/i },
+    ],
+    dictate: "как я готовлюсь к собеседованию с кандидатом",
+    task: "Завтра у меня собеседование с кандидатом на бэкенд-разработчика, помоги подготовиться.",
+  },
+};
+const scene = SCENES[arg("--scene", "report")];
+if (!scene) fail(2, `--scene: ${Object.keys(SCENES).join(" or ")}`);
+const STEPS = scene.steps;
+const SESSION1 = `Я работаю в графе ${work}. Расскажу, ${scene.dictate} — это мой собственный способ, я так делаю на любой работе: ${STEPS.map((s) => s.text).join("; ")}.`;
 const SESSION1_ANSWER = "Это мой личный способ, не проекта.";
-const SESSION2 = `Я работаю в графе ${work}. Подготовь, пожалуйста, мой еженедельный отчёт руководителю за эту неделю.`;
+const SESSION2 = `Я работаю в графе ${work}. ${scene.task}`;
+// The umbrella's essence carries the check «так и делаю?» in its «После» (fix/ways-carry).
+const CARRIES = /после[\s\S]*(так и делаю|подтверди|сверк|свери)/i;
 const WRITES = /^iskron_(add_|update$|batch$|arrow$|delete_node$)/;
 const CASE_READS = new Set(["read", "history", "mine", "at", "?"]);
 const writing = (c) => WRITES.test(c.name) || (c.name === "iskron_case" && !CASE_READS.has(c.args.action));
@@ -233,7 +257,10 @@ const nameOf = (text) => text.split("\n")[0];
 async function ways() {
   const r = await P.call("iskron_search", { realm: mind, q: "", node_type: "kriya", attrs_filter: "slice:ways", limit: 50 });
   if (r.error) throw new Error(`search ${mind} slice:ways: ${r.text.slice(0, 300)}`);
-  return { text: r.text, ids: [...r.text.matchAll(/\(#(\d+), kriya/g)].map((m) => m[1]) };
+  const all = [...r.text.matchAll(/\(#(\d+), kriya/g)].map((m) => m[1]);
+  const ids = [];
+  for (const u of all) if (scene.kind.test(await look(mind, u))) ids.push(u);
+  return { text: r.text, all, ids };
 }
 // The umbrella's steps in the next-chain order, read from the steps' own looks.
 async function wayOf(u) {
@@ -260,8 +287,8 @@ try {
   if (!/listening/.test(lout)) throw new Error("the MCP ledger did not start");
   await P.init();
   const before = await ways();
-  report.push(`mind ways before: ${before.ids.map((i) => `#${i}`).join(" ") || "none"} · ${before.text.slice(0, 200)}`);
-  if (again ? before.ids.length !== 1 : before.ids.length) throw new Error(again ? `--again needs exactly one ways umbrella in ${mind}` : `a ways umbrella already stands in ${mind} — not a fresh person (--again runs session 2 alone)`);
+  report.push(`mind ways before: ${before.all.map((i) => `#${i}`).join(" ") || "none"} · of this kind: ${before.ids.map((i) => `#${i}`).join(" ") || "none"}`);
+  if (again ? before.ids.length !== 1 : before.ids.length) throw new Error(again ? `--again needs exactly one ways umbrella of this kind in ${mind}` : `a ways umbrella of this kind already stands in ${mind} — not a fresh way (--again runs session 2 alone)`);
 
   serve = spawn(opencode, ["serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "warn"], { env, cwd, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
@@ -303,10 +330,11 @@ try {
     report.push(`session 1 skills loaded: ${skillsLoaded(messages(S1)).join(", ") || "none"}`);
     report.push(`\n===== session 1 ${S1} =====\n--- messages ---\n${journal(messages(S1))}\n--- bridge tools/call ---\n${calls1.map((c) => `[${c.t}] ${c.name}${c.error ? " ERROR" : ""} ${JSON.stringify(c.args)}\n${c.text}`).join("\n")}`);
   }
-  const workWays = calls1.filter((c) => !c.error && /^iskron_add_|^iskron_batch$/.test(c.name) && inRealm(c, work, "r294") && /отч[её]т|выгру|трекер|руковод/i.test(JSON.stringify(c.args)));
+  const workWays = calls1.filter((c) => !c.error && /^iskron_add_|^iskron_batch$/.test(c.name) && inRealm(c, work, "r294") && [scene.kind, ...STEPS.map((s) => s.re)].some((re) => re.test(JSON.stringify(c.args))));
   const found = [];
   for (const u of after1.ids) found.push({ u, ...(await wayOf(u)) });
-  const good = found.find((w) => w.chain.length === w.steps.length && w.chain.length >= STEPS.length
+  const essence = (l) => l.split(/^\s*(?:СУТЬ|ESSENCE):\s*$/m)[1]?.split(/^\s*[А-ЯA-Z ]+:\s*$/m)[0] ?? "";
+  const good = found.find((w) => CARRIES.test(essence(w.look)) && w.chain.length === w.steps.length && w.chain.length >= STEPS.length
     && STEPS.every((s, i) => s.re.test(nameOf(w.chain[i]?.look ?? "")) || s.re.test(w.chain[i]?.look ?? "")));
   for (const w of found) {
     report.push(`--- umbrella #${w.u} ---\n${w.look}`);
@@ -314,8 +342,8 @@ try {
   }
   verdict(
     !!good && workWays.length === 0,
-    `(1) the dictated way lies in mind: umbrella kriya slice=ways, steps by contains in order, linked by next; not in work${again ? " (--again: graph re-read only)" : ""}`,
-    `ways after: ${after1.ids.map((i) => `#${i}`).join(" ") || "none"} · ${found.map((w) => `#${w.u}: steps ${w.steps.map((s) => `#${s.id}`).join(",") || "—"}, chain ${w.chain.map((s) => `#${s.id}`).join("→") || "—"}, heads ${w.heads.length}`).join(" | ") || "no umbrella"} · way-like writes in work: ${workWays.length}${answered ? ` · the agent asked, answered «${SESSION1_ANSWER}»` : ""} · ${seq(calls1.filter(writing))}`,
+    `(1) the dictated way lies in mind: umbrella kriya slice=ways whose essence «После» carries «так и делаю?», steps by contains in order, linked by next; not in work${again ? " (--again: graph re-read only)" : ""}`,
+    `ways after: ${after1.ids.map((i) => `#${i}`).join(" ") || "none"} · ${found.map((w) => `#${w.u}: essence carries the check ${CARRIES.test(essence(w.look)) ? "yes" : "no"}, steps ${w.steps.map((s) => `#${s.id}`).join(",") || "—"}, chain ${w.chain.map((s) => `#${s.id}`).join("→") || "—"}, heads ${w.heads.length}`).join(" | ") || "no umbrella"} · way-like writes in work: ${workWays.length}${answered ? ` · the agent asked, answered «${SESSION1_ANSWER}»` : ""} · ${seq(calls1.filter(writing))}`,
   );
   report.push(`session 1 calls: ${seq(calls1)}`);
   if (!again) await sleep(20_000); // the search index takes the fresh nodes in
@@ -336,7 +364,7 @@ try {
   verdict(
     shown.length === STEPS.length && checkQ.length >= 1 && graphWrites.length === 0 && fileWrites.length === 0,
     "(2) session 2's first reply shows the steps and asks «так и делаю?» before any writing work",
-    `steps shown ${shown.length}/${STEPS.length} · check question: ${checkQ.join(" | ") || `none (questions: ${asks.join(" | ") || "none"})`} · graph writes: ${seq(graphWrites) || "none"} · file writes: ${fileWrites.map((p) => p.name).join(",") || "none"} · mind reads: ${seq(calls2.filter((c) => inRealm(c, mind, "r293"))) || "none"}`,
+    `steps shown ${shown.length}/${STEPS.length} · check question: ${checkQ.join(" | ") || `none (questions: ${asks.join(" | ") || "none"})`} · graph writes: ${seq(graphWrites) || "none"} · file writes: ${fileWrites.map((p) => p.name).join(",") || "none"} · skills loaded: ${skillsLoaded(msgs2).join(", ") || "none"} · mind reads: ${seq(calls2.filter((c) => inRealm(c, mind, "r293"))) || "none"}`,
   );
   report.push(`session 2 calls: ${seq(calls2)} · skills loaded: ${skillsLoaded(msgs2).join(", ") || "none"}`);
   report.push(`--- session 2 first reply ---\n${answer}`);
