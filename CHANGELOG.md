@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.34.0](https://github.com/iskron-ai/skills/compare/v7.33.0...v7.34.0) (2026-11-06)
+
+
+### Features
+
+* **iskronify:** контракт 40 — сокращение скилла и шаблона, migrations.md, отказ понижать контракт, слова guard ([#686](https://github.com/iskron-ai/skills/issues/686)) ([fb81445](https://github.com/iskron-ai/skills/commit/fb81445ce271ba9343ad43b387d5e4c8fa0e9992))
+
+
+### Bug Fixes
+
+* **bridge:** preserve parent binding on another seat's id revoke ([#687](https://github.com/iskron-ai/skills/issues/687)) ([d8451ac](https://github.com/iskron-ai/skills/commit/d8451accbca4b438d18c21e62e0509d4d811bbf9))
+
 ## [7.33.0](https://github.com/iskron-ai/skills/compare/v7.32.0...v7.33.0) (2026-11-06)
 
 
