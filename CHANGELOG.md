@@ -1,5 +1,28 @@
 # Changelog
 
+## [7.33.0](https://github.com/iskron-ai/skills/compare/v7.32.0...v7.33.0) (2026-11-06)
+
+
+### Features
+
+* **assistant,minding:** the person hears about their graph in their own words — no rN, node kinds, empty counts or transport ([#680](https://github.com/iskron-ai/skills/issues/680)) ([e2c3e1a](https://github.com/iskron-ai/skills/commit/e2c3e1acf4825cd74c61bd9a96e3127e9de0f8a1))
+* **help:** a new skill helps the person on the spot with Iskron itself — one step together and how to do it alone; an honest 'not working' with what works now ([#681](https://github.com/iskron-ai/skills/issues/681)) ([bfeec62](https://github.com/iskron-ai/skills/commit/bfeec62f317d802dd338621d39b774c099b48254))
+* **iskron:** a refusal reaches the person in product words — what, why, what instead — without codes or tool names ([#678](https://github.com/iskron-ai/skills/issues/678)) ([e852e06](https://github.com/iskron-ai/skills/commit/e852e06f59bf8e715a9a7715cb81a49827717ea6))
+* **iskron:** picking up abandoned cases starts with your own open questions to the person — re-ask in a live case or withdraw ([#679](https://github.com/iskron-ai/skills/issues/679)) ([6a752b8](https://github.com/iskron-ai/skills/commit/6a752b80687c86fc6732aa39e3b82b6004aa69b1))
+* **iskron:** the person's refusal of a question ([#677](https://github.com/iskron-ai/skills/issues/677)) ([d945a3e](https://github.com/iskron-ai/skills/commit/d945a3e11437659864389d40847bf0728db98378))
+* **minding:** the person's instruction to their Companion lands as one principle with slice companion, outside the agents slice the door reads ([#676](https://github.com/iskron-ai/skills/issues/676)) ([0c3169f](https://github.com/iskron-ai/skills/commit/0c3169f82251128ea2ed59d919807e9836f03095))
+
+
+### Bug Fixes
+
+* **bridge:** negotiate compact counts with readers ([1ff96d2](https://github.com/iskron-ai/skills/commit/1ff96d25fed6e8504a3c5b900cb71e69f9c4fa78))
+* **bridge:** negotiate compact counts with readers ([ee10ae8](https://github.com/iskron-ai/skills/commit/ee10ae82755d755a4b2124b2315ffd9867536e45))
+* **bridge:** retain full addressed text in frame batches ([7a05dc0](https://github.com/iskron-ai/skills/commit/7a05dc055de95262bb48c32c3b985ddc360fd88c))
+* **help:** access offered, not letter sent; retry yourself ([#683](https://github.com/iskron-ai/skills/issues/683)) ([e5d0a74](https://github.com/iskron-ai/skills/commit/e5d0a740c55ab44358197f8310656c2a1698a27d))
+* **minding:** only a way written by steps is restructured into a task kriya, and its old card is retired ([#674](https://github.com/iskron-ai/skills/issues/674)) ([971589d](https://github.com/iskron-ai/skills/commit/971589de147370e45de352218eb0e48924ec6d85))
+* **minding:** the person's rule for how agents work goes to mind ([#685](https://github.com/iskron-ai/skills/issues/685)) ([220bd63](https://github.com/iskron-ai/skills/commit/220bd637e75f2c4f5939f8dc95b736a8d3bf48e0))
+* render compact case frames without repeated facts ([b40df46](https://github.com/iskron-ai/skills/commit/b40df46b92f0d8f705bd97b1714e34fadd922704))
+
 ## [7.32.0](https://github.com/iskron-ai/skills/compare/v7.31.2...v7.32.0) (2026-11-06)
 
 
