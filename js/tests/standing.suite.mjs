@@ -3617,6 +3617,84 @@ test("iskron/check finds its own place with karta «#931», and a neighbour x.pr
 // bare connect/mint/register alike — unless the move is deliberate (take=true);
 // the same place with take=true works as before, and a revoke of another place
 // never touches the one the bridge holds.
+test("revoking another seat by channel id preserves the parent's binding and socket", async (t) => {
+  const { fake, bridge, standings, dir, key } = await connected(t, {
+    fakeOpts: { futureArgs: { iskron_channel: ["channel"] } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the parent's socket");
+  await fake.control({ places: [{ karta: 931, name: "child", standing_id: "other-seat-id" }] });
+  const reply = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "r5", action: "revoke", karta: "931", channel: "other-seat-id" },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "parent hold remains",
+  );
+  const missing = await bridge.call("tools/call", 7, {
+    name: "iskron_channel",
+    arguments: { realm: "r5", action: "revoke", karta: "931", channel: "unknown-seat-id" },
+  });
+  assert.ok(missing.result?.isError, "an unknown id is refused");
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "unknown id keeps parent hold",
+  );
+  await fake.control({ places: [{ karta: 931, name: "child2", standing_id: "second-child-id" }] });
+  const explicit = await bridge.call("tools/call", 8, {
+    name: "iskron_channel",
+    arguments: {
+      realm: "r5",
+      action: "revoke",
+      karta: "931",
+      channel: "second-child-id",
+      standing: "@tester:child2",
+    },
+  });
+  assert.ok(!explicit.result?.isError, JSON.stringify(explicit));
+  assert.ok(
+    readdirSync(standings).some((f) => f.endsWith(".hold")),
+    "id with name keeps parent hold",
+  );
+  const status = await bridge.call("tools/call", 6, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "status", text: "parent still here" },
+  });
+  assert.match(JSON.stringify(status), /занятость @tester:proba/);
+  assert.equal(fake.state.ws.size, 1, "parent socket remains open");
+  const wd = runClient("watchdog", dir, key);
+  t.after(async () => {
+    wd.proc.kill("SIGTERM");
+    await wd.done;
+  });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the parent's listener");
+  await fake.control({ ws_say: { name: "proba", text: "PARENT-AFTER-CHILD-REVOKE" } });
+  await waitFor(() => wd.out.includes("PARENT-AFTER-CHILD-REVOKE"), "the parent's incoming word");
+});
+
+test("revoking the held seat by channel id releases its binding quietly", async (t) => {
+  const { fake, bridge, standings } = await connected(t, {
+    fakeOpts: { futureArgs: { iskron_channel: ["channel"] } },
+  });
+  await waitFor(() => fake.state.ws.size === 1, "the held socket");
+  const own = [...fake.state.channels.values()]
+    .flatMap((c) => [...c.places.values()])
+    .find((p) => p.name === "proba");
+  assert.ok(own?.standing_id, "the service named the held seat id");
+  const reply = await bridge.call("tools/call", 5, {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "revoke", karta: "931", channel: own.standing_id },
+  });
+  assert.ok(!reply.result?.isError, JSON.stringify(reply));
+  await waitFor(() => fake.state.ws.size === 0, "the revoked socket to close");
+  assert.ok(!readdirSync(standings).some((f) => f.endsWith(".hold")), "own hold is dropped");
+  assert.ok(
+    !bridge.notifications.some((n) => n.params?.data?.kind === "stopped"),
+    "own revoke is not an external stop",
+  );
+});
+
 test("a bridge leading a place refuses another role or name without take=true, keeps its socket and binding; take=true on the same place still works; revoke of another place leaves it alone", async (t) => {
   const { fake, bridge, standings } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
