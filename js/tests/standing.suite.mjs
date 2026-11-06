@@ -1524,6 +1524,7 @@ for (const compact of [false, true]) {
   test(`compact count watchdog: ${compact ? "explicit reader" : "unknown Stop reader"}`, async (t) => {
     const init = { ...INIT, capabilities: { experimental: { "compact-counts": { version: 1 } } } };
     const { fake, dir, key } = await connected(t, { init });
+    await waitFor(() => fake.state.ws.size === 1, "the upstream socket before replay");
     const flags = ["--auth-dir", dir, ...(compact ? ["--compact-counts"] : [])];
     const wd = runClient("watchdog", dir, key, 8000, {}, flags);
     t.after(async () => {
