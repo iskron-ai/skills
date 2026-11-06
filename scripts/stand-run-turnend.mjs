@@ -6,6 +6,7 @@
 //
 //   node scripts/stand-run-turnend.mjs --token-file F --url U --api A --realm @owner/slug
 //     [--ledger-log F] [--bridge B] [--plugin P] [--report F]
+//     [--wire-report F] [--matrix]
 //
 // Scene: the agent role and the asked role, a holon with a case on it (the scene bridge stands
 // as the asked role and opens it); taken off at the end. Every session is a root seated on the
@@ -27,6 +28,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -50,8 +52,9 @@ const bridge = resolve(arg("--bridge", BUILT_BRIDGE));
 const plugin = resolve(arg("--plugin", BUILT_PLUGIN));
 for (const p of [bridge, plugin, tokenFile]) if (!existsSync(p)) fail(2, `${p} does not exist`);
 if ((statSync(tokenFile).mode & 0o077) !== 0) fail(2, `${tokenFile} is readable by others`);
-const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+const stamp = `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12)}-${randomUUID().slice(0, 8)}`;
 const reportFile = resolve(arg("--report", `stand-run-turnend-${stamp}.txt`));
+const wireFile = arg("--wire-report");
 const token = readFileSync(tokenFile, "utf8").trim();
 const { secrets, scrub } = secretScrubber(token);
 const opencode = spawnSync("sh", ["-c", "command -v opencode"]).stdout.toString().trim();
@@ -220,6 +223,8 @@ const resultsOf = (step) => (steps[step]?.ids ?? []).map((id) => {
 const seatsIn = (board) => new Set([...board.matchAll(/@[^\s:]+:(\S+) —/g)].map((m) => m[1]));
 
 const { verdicts, report, problem, verdict, error: errorVerdict, count: failures } = makeReporters();
+for (const [label, file] of [["bridge", bridge], ["plugin", plugin]])
+  report.push(`${label}: ${file} · sha256 ${createHash("sha256").update(readFileSync(file)).digest("hex")}`);
 const P = stdioBridge({ run, bridge, env, token, name: "stand-run-turnend", problem });
 const cleanup = runCleanup({ run, auth, bridge, env, cwd: run, report, scrub, problem });
 const person = personApi({ api: apiArg, token });
@@ -240,12 +245,12 @@ try {
     laid.push(id);
     return { id, text: r.text };
   };
-  const role = (await add("iskron_add_karta", { name: "🧪 Агент пробы конца хода", motivation: "Стоит на вахте в пробной сессии OpenCode: отвечает на кадры.", manifested_as: "adhikarin", ...M })).id;
-  const asked = (await add("iskron_add_karta", { name: "🧪 Спрашиваемый пробы конца хода", motivation: "Получает вопрос карточкой ask от агента пробы.", manifested_as: "adhikarin", ...M })).id;
+  const role = (await add("iskron_add_karta", { name: `🧪 Агент пробы конца хода ${stamp}`, motivation: "Стоит на вахте в пробной сессии OpenCode: отвечает на кадры.", manifested_as: "adhikarin", ...M })).id;
+  const asked = (await add("iskron_add_karta", { name: `🧪 Спрашиваемый пробы конца хода ${stamp}`, motivation: "Получает вопрос карточкой ask от агента пробы.", manifested_as: "adhikarin", ...M })).id;
   const ownerSeat = `turnend-asked-${stamp}`;
   const st = await P.call("iskron_stand", { realm, karta: `#${asked}`, name: ownerSeat, model: "stand-run" });
   if (st.error) throw new Error(`scene stand: ${st.text.slice(0, 300)}`);
-  const h = await add("iskron_add_holon", { name: "🧪 Пробный проект конца хода", description: "Что внутри: пробный проект прогона знака конца хода на вахте.", ...M, open_room: "проба конца хода: вопрос карточкой", arrows: [{ arrow_type: "steward", target: `#${role}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }] });
+  const h = await add("iskron_add_holon", { name: `🧪 Пробный проект конца хода ${stamp}`, description: "Что внутри: пробный проект прогона знака конца хода на вахте.", ...M, open_room: "проба конца хода: вопрос карточкой", arrows: [{ arrow_type: "steward", target: `#${role}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }] });
   const holon = h.id;
   const room = h.text.match(/№\s*(\d+)/)?.[1];
   if (!room) throw new Error(`no case opened on #${holon}: ${h.text.slice(0, 300)}`);
@@ -327,13 +332,13 @@ try {
   if (said.error) throw new Error(`the scene's say: ${said.text.slice(0, 300)}`);
   await sleep(45_000);
   await hush(R, 10_000);
-  const quiet = of("r_kick", at);
-  verdict(quiet.length === 0 && !active().includes(R), "(q) R: a case record addressed to nobody — no turn, no wake word", `requests since the record ${quiet.length} · wake words ${quiet.reduce((n, b) => n + wakes(lastUser(b)), 0)}`);
+  const quietRequests = of("r_kick", at);
+  verdict(quietRequests.length === 0 && !active().includes(R), "(q) R: a case record addressed to nobody — no turn, no wake word", `requests since the record ${quietRequests.length} · wake words ${quietRequests.reduce((n, b) => n + wakes(lastUser(b)), 0)}`);
 
   const rec = await framed(R, "r_kick", seatR, "r_receipt", "a frame; the probe answers with a short line without a question.");
   verdict(rec.added === 0, `(r) R: a frame answered «${RECEIPT}» (under 280 signs, no «?») — no wake word`, seen(rec));
   const rode = of("r_kick").find((b) => lastUser(b).includes("TURN_STEP=r_receipt"));
-  report.push(`INFO (q) the record's count rode the next prompt: ${rode ? lastUser(rode).split("\n").some((l) => l.trim() && quiet(l)) : "—"}`);
+  verdict(!!rode && lastUser(rode).split("\n").some((l) => l.trim() && quiet(l)), "(q) the record's quiet count rode the next prompt");
 
   const rep = await framed(R, "r_kick", seatR, "r_report", "a frame; the probe answers with a report in the console.");
   verdict(rep.added === 1, "(1) R: a frame's turn ended with a report — exactly one wake word", seen(rep));
@@ -346,6 +351,45 @@ try {
   const [askR] = resultsOf("r_ask");
   report.push(`--- R ask ---\n${askR}`);
   verdict(askR !== null && ask.added === 0, "(a) R: a frame's turn that put an ask card in the case, then a report — no wake word", `ask ${askR === null ? "—" : JSON.stringify(askR.slice(0, 120))} · ${seen(ask)}`);
+
+  if (process.argv.includes("--matrix")) {
+    const address = seatAddress(await board(), seatR);
+    const matrixBody = (step, marker) => `TURN_STEP=${step}: ${marker}\nПервая строка тела пробы; пробелы и переносы должны сохраниться по смыслу.\n${"Средняя строка продолжается за короткую подпись кадра. ".repeat(3)}\nBODY-END-${step}`;
+    const entry = (r) => {
+      const n = r.text.match(/\[(\d+)\]/)?.[1];
+      if (r.error || !n) throw new Error(`matrix call refused: ${r.text.slice(0, 300)}`);
+      return n;
+    };
+    async function delivered(step, marker, send) {
+      steps[step] = { text: RECEIPT };
+      const before = primaries().length;
+      await send();
+      await settle(R, marker);
+      const requests = of("r_kick", before).filter((b) => lastUser(b).includes(marker));
+      const flat = (text) => text.replace(/\s+/g, " ").trim();
+      verdict(requests.length > 0 && requests.every((b) => count(lastUser(b), marker) === 1 && flat(lastUser(b)).includes(flat(matrixBody(step, marker)))), `matrix ${step}: full multiline body, marker exactly once in each delivered prompt`, `requests ${requests.length}`);
+      report.push(`--- matrix ${step}: delivered text ---\n${requests.map(lastUser).join("\n---\n")}`);
+    }
+    await delivered("m_say", "MATRIX-SAY-733", async () => {
+      const r = await P.call("iskron_case", { realm, action: "say", room, to: address, text: matrixBody("m_say", "MATRIX-SAY-733") });
+      if (r.error) throw new Error(r.text);
+    });
+    await delivered("m_answer", "MATRIX-ANSWER-733", async () => {
+      const answer = entry(await P.call("iskron_case", { realm, action: "answer", room, in_reply_to: askR.match(/\[(\d+)\]/)[1], text: matrixBody("m_answer", "MATRIX-ANSWER-733") }));
+      steps.m_answer.calls = [["iskron_case", { realm, action: "ack", room, in_reply_to: answer, text: "Принял ответ пробы." }]];
+    });
+    await delivered("m_ask", "MATRIX-ASK-733", async () => {
+      const askedEntry = entry(await P.call("iskron_case", { realm, action: "ask", room, key: "matrix inbound ask", karta: `#${role}`, standing: address, text: matrixBody("m_ask", "MATRIX-ASK-733"), payload: { form: "free" } }));
+      steps.m_ask.calls = [["iskron_case", { realm, action: "answer", room, in_reply_to: askedEntry, text: "Ответ пробы входящего вопроса." }]];
+    });
+    const [answerResult] = resultsOf("m_ask");
+    const answeredEntry = answerResult?.match(/\[(\d+)\]/)?.[1];
+    if (!answeredEntry) throw new Error(`matrix answer result: ${answerResult}`);
+    await delivered("m_ack", "MATRIX-ACK-733", async () => {
+      const r = await P.call("iskron_case", { realm, action: "ack", room, in_reply_to: answeredEntry, text: matrixBody("m_ack", "MATRIX-ACK-733") });
+      if (r.error) throw new Error(r.text);
+    });
+  }
 
   // ── A: a human wrote within 30 minutes ───────────────────────────────────────────────────
   const A = session(proj.A, "turnend A");
@@ -391,5 +435,8 @@ try {
   }
 }
 writeFileSync(reportFile, scrub([...verdicts, ...report].join("\n")) + "\n", { mode: 0o600 });
+if (wireFile) writeFileSync(resolve(wireFile), scrub(JSON.stringify(wire, null, 2)) + "\n", { mode: 0o600 });
 process.stdout.write(scrub(verdicts.join("\n")) + `\n\nreport: ${reportFile}\n`);
-process.exit(setup ? 2 : failures() ? 1 : 0);
+const exitCode = setup ? 2 : failures() ? 1 : 0;
+process.stdout.write(`exit: ${exitCode}\n`);
+process.exit(exitCode);
