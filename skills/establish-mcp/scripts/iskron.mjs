@@ -145,7 +145,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.33.0";
+var VERSION = "7.34.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1023,7 +1023,7 @@ var PREPARE = {
 Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
 `,
     start: ({ graph, holon, role }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы и команды репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); факты о коде, состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директория заморожена на стабе-запрете.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы, команды и свойства кода репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); смысл кода (решения, основания), состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директорию держит замороженной этот memory-guard.`,
     left: (item, keys) => ({
       "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
       "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
@@ -1053,7 +1053,7 @@ var PREPARE = {
 Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}. Until they are, behavioral claims are not accepted.
 `,
     start: ({ graph, holon, role }) => `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role ? `, agent role #${role}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
-    guard: (graph, section = "Persistence rules") => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md${section ? `, «${section}»` : ""}). Route the fact: repo conventions, rituals and commands → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); code facts, project state, servers and dated duties → the graph ${graph}; a user's fact outside the project, machine facts included → personal memory through minding. The directory stays frozen at its prohibition stub.`,
+    guard: (graph, section = "Persistence rules") => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md${section ? `, «${section}»` : ""}). Route the fact: repo conventions, rituals, commands and code properties → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); the meaning of code (decisions, grounds), project state, servers and dated duties → the graph ${graph}; a fact of the user outside the project, machine facts included → personal memory through minding. This memory-guard keeps the directory frozen.`,
     left: (item, keys) => ({
       "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
       "cover.rituals": `the delivery knows no ritual ${keys} in the cover's rituals: field — it switches nothing on; its rituals: start push merge guard turn. Fix the name or drop it`,
@@ -11854,6 +11854,10 @@ function revokesOwn(msg) {
   return names(a, s2) && !otherRealm(a.realm, s2.realm);
 }
 function names(a, s2) {
+  if (a.channel != null) {
+    const id = standingIdIn(s2.realm);
+    return typeof a.channel === "string" && id !== null && a.channel.trim() === id && normKarta(a.karta ?? s2.karta) === normKarta(s2.karta);
+  }
   const asked = typeof a.standing === "string" ? a.standing.trim() : "";
   const own = asked === "" || asked === "mine" || asked === (s2.name ?? "") || asked.endsWith(`:${s2.name ?? ""}`);
   return own && normKarta(a.karta ?? s2.karta) === normKarta(s2.karta);
@@ -18081,10 +18085,13 @@ var GUARD_TAIL = " >&2; exit 2; } || exit 0";
 var GUARD_MATCHER = "Write|Edit|MultiEdit|NotebookEdit";
 var quoted = (t) => `'${t.replace(/'/g, "'\\''")}'`;
 var guardCommand = (graph) => `${GUARD_HEAD}echo ${quoted(words(PREPARE).guard(graph))}${GUARD_TAIL}`;
-var SLOT = "§";
-var written = (c, build) => new RegExp(
-  `^${build(SLOT).split(SLOT).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\w./@-]*")}$`
-).test(c);
+var written = (c) => {
+  const head = `${GUARD_HEAD}echo '`;
+  const tail2 = `'${GUARD_TAIL}`;
+  if (!c.startsWith(head) || !c.endsWith(tail2) || c.length < head.length + tail2.length)
+    return false;
+  return /^(?:[^']|'\\'')*$/.test(c.slice(head.length, c.length - tail2.length));
+};
 var CARRIED = ["hook.start", "hook.push", "hook.merge"];
 function load2(path) {
   if (!existsSync17(path)) return {};
@@ -18099,7 +18106,7 @@ function guard(root, s2, addr, out7) {
   const k = KNOWN["hook.guard"];
   const command = addr ? guardCommand(addr.graph) : void 0;
   const known2 = knownOf(root, s2, "hook.guard");
-  const stale = known2.filter((h) => h.command !== command && written(cmd(h), guardCommand));
+  const stale = known2.filter((h) => h.command !== command && written(cmd(h)));
   const unread = hooksOf(s2, k.event, k.on).find((h) => opaque(root, cmd(h)));
   if (command && stale.length && !known2.some((h) => h.command === command)) {
     for (const h of stale) h.command = command;
