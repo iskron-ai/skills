@@ -1,5 +1,18 @@
 # Changelog
 
+## [7.32.0](https://github.com/iskron-ai/skills/compare/v7.31.2...v7.32.0) (2026-11-06)
+
+
+### Features
+
+* **minding:** a way dictated by steps lands as a task kriya with ordered step kriyas; a new task of that kind is checked with the person first ([#668](https://github.com/iskron-ai/skills/issues/668)) ([0b3e4f7](https://github.com/iskron-ai/skills/commit/0b3e4f7b2ad337c26ebd88d2818f4560d7236915))
+
+
+### Bug Fixes
+
+* **minding:** the start read keeps preferences beside ways; a found step climbs to its task, a prose way is restructured; shown only where the person reads; triggers ([#670](https://github.com/iskron-ai/skills/issues/670)) ([1e94d7f](https://github.com/iskron-ai/skills/commit/1e94d7f338c091a32c2f608e4efc27dd2ac50e10))
+* **minding:** the way's task kriya carries the check in its outcome, so an agent finding it without the skill still asks first ([#673](https://github.com/iskron-ai/skills/issues/673)) ([db79185](https://github.com/iskron-ai/skills/commit/db79185941448b0e8d2596ecce052e7144e6b2a8))
+
 ## [7.31.2](https://github.com/iskron-ai/skills/compare/v7.31.1...v7.31.2) (2026-11-04)
 
 
