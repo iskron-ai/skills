@@ -6,7 +6,7 @@
 //
 //   node scripts/stand-run-turnend.mjs --token-file F --url U --api A --realm @owner/slug
 //     [--ledger-log F] [--bridge B] [--plugin P] [--report F]
-//     [--wire-report F] [--matrix]
+//     [--wire-report F] [--matrix] [--lifecycle]
 //
 // Scene: the agent role and the asked role, a holon with a case on it (the scene bridge stands
 // as the asked role and opens it); taken off at the end. Every session is a root seated on the
@@ -402,6 +402,39 @@ try {
   const seatB = await seated(B, `${FRAME_MARK} TURN_STEP=b_kick: a turn the delivery's mark starts.`, "B");
   const oB = await framed(B, "b_kick", seatB, "b_report", "a frame; the probe answers with a report in the console.");
   verdict(oB.requests > 0 && oB.added === 0, "(o) B: a cover with `rituals: start push` — a frame's turn ended with a report gets no wake word", seen(oB));
+  if (process.argv.includes("--lifecycle")) {
+    const life = await add("iskron_add_holon", { name: `🧪 Дело пробы кадров ${stamp}`, description: "Что внутри: отдельное дело для приглашения, входа и закрытия.", ...M, open_room: "TURN_STEP=m_invite: проба жизненного цикла", arrows: [{ arrow_type: "steward", target: `#${role}`, direction: "from", volitive_mode: "upeksha", sense: "кто держит границу" }] });
+    const lifeRoom = life.text.match(/№\s*(\d+)/)?.[1];
+    if (!lifeRoom) throw new Error("lifecycle case was not opened");
+    steps.m_invite = { text: RECEIPT, calls: [["iskron_case", { realm, action: "join", room: lifeRoom }]] };
+    const invited = await P.call("iskron_case", { realm, action: "invite", room: lifeRoom, standing: seatAddress(await board(), seatR) });
+    if (invited.error) throw new Error(`lifecycle invite: ${invited.text}`);
+    await settle(R, "TURN_STEP=m_invite");
+    const joins = resultsOf("m_invite");
+    verdict(joins.length === 1 && /Ты в деле|You are in/.test(joins[0] ?? ""), "lifecycle invite: the addressed session received the call and joined once");
+    delete steps.m_invite.calls;
+    steps.a_join = { text: RECEIPT, calls: [["iskron_case", { realm, action: "join", room: lifeRoom }]] };
+    at = primaries().length;
+    await prompt(A, "TURN_STEP=a_join: join the lifecycle case.");
+    await hush(R, 10_000);
+    verdict(of("r_kick", at).length === 0, "lifecycle joined: another participant's entry started no recipient turn");
+    steps.m_life_receipt = { text: RECEIPT };
+    const rideAt = primaries().length;
+    await framed(R, "r_kick", seatR, "m_life_receipt", "a word carrying the lifecycle entry count.");
+    const rider = of("r_kick", rideAt).map(lastUser).find((t) => t.includes("TURN_STEP=m_life_receipt"));
+    verdict(!!rider && rider.split("\n").some((l) => l.includes(`№${lifeRoom}`) && l.includes("тебе 0")), "lifecycle joined: its case count rode the next word");
+    const closeAt = primaries().length;
+    const proposed = await P.call("iskron_case", { realm, action: "propose_close", room: lifeRoom, text: "LIFECYCLE-CLOSING-733: приглашение и вход пройдены.", evidence: "3" });
+    if (proposed.error) throw new Error(`lifecycle propose_close: ${proposed.text}`);
+    const closedText = () => of("r_kick", closeAt).map(lastUser).find((t) => t.includes(`№${lifeRoom}`) && /дело закрыто|case closed/.test(t));
+    for (const end = Date.now() + 12 * 60_000; !closedText(); await sleep(1000))
+      if (Date.now() > end) throw new Error("lifecycle: no platform close in 12 minutes");
+    await hush(R, 15_000);
+    const closingTexts = of("r_kick", closeAt).map(lastUser).filter((t) => t.includes("LIFECYCLE-CLOSING-733"));
+    verdict(closingTexts.length > 0 && closingTexts.every((t) => count(t, "LIFECYCLE-CLOSING-733") === 1), "lifecycle closing: proposal body once in each recipient prompt");
+    verdict(!!closedText() && count(closedText(), "дело закрыто") + count(closedText(), "case closed") === 1, "lifecycle closed: the platform's close reached the recipient once");
+    report.push(`--- lifecycle case №${lifeRoom} ---\n${of("r_kick", closeAt).map(lastUser).join("\n---\n")}`);
+  }
   report.push(`--- wire: ${wire.length} requests, ${primaries().length} primary ---`);
 } catch (e) {
   errorVerdict(e.message, setup);
