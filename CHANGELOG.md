@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.33.0](https://github.com/iskron-ai/skills/compare/v7.32.0...v7.33.0) (2026-11-06)
+
+
+### Features
+
+* **iskron:** a refusal reaches the person in product words — what, why, what instead — without codes or tool names ([#678](https://github.com/iskron-ai/skills/issues/678)) ([e852e06](https://github.com/iskron-ai/skills/commit/e852e06f59bf8e715a9a7715cb81a49827717ea6))
+* **iskron:** the person's refusal of a question ([#677](https://github.com/iskron-ai/skills/issues/677)) ([d945a3e](https://github.com/iskron-ai/skills/commit/d945a3e11437659864389d40847bf0728db98378))
+* **minding:** the person's instruction to their Companion lands as one principle with slice companion, outside the agents slice the door reads ([#676](https://github.com/iskron-ai/skills/issues/676)) ([0c3169f](https://github.com/iskron-ai/skills/commit/0c3169f82251128ea2ed59d919807e9836f03095))
+
+
+### Bug Fixes
+
+* **minding:** only a way written by steps is restructured into a task kriya, and its old card is retired ([#674](https://github.com/iskron-ai/skills/issues/674)) ([971589d](https://github.com/iskron-ai/skills/commit/971589de147370e45de352218eb0e48924ec6d85))
+* render compact case frames without repeated facts ([b40df46](https://github.com/iskron-ai/skills/commit/b40df46b92f0d8f705bd97b1714e34fadd922704))
+
 ## [7.32.0](https://github.com/iskron-ai/skills/compare/v7.31.2...v7.32.0) (2026-11-06)
 
 
