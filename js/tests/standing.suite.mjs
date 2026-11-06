@@ -220,7 +220,14 @@ const waitSeen = (standings, id) =>
 // The watchdog is given the auth dir the way the bridge's own block names it —
 // the `--auth-dir` flag, never a variable the bridge was not started with. One
 // lever for both halves, or a drift between their roots would pass green here.
-function runClient(sub, dir, key, timeoutMs = 8000, extraEnv = {}, flags = ["--auth-dir", dir]) {
+function runClient(
+  sub,
+  dir,
+  key,
+  timeoutMs = 8000,
+  extraEnv = {},
+  flags = ["--auth-dir", dir, "--compact-counts"],
+) {
   const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), ...flags], {
     env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
