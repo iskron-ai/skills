@@ -811,6 +811,7 @@ export async function startFakeNks(opts = {}) {
           st.places.set(`${pl.karta}:${pl.name}`, {
             karta: String(pl.karta),
             name: pl.name,
+            ...(pl.standing_id ? { standing_id: pl.standing_id } : {}),
             incoming: `${base}/api/channel/in/mailbox-${pl.name}`,
             listening: pl.listening !== false,
             pending: pl.pending ?? 0, // «не доставлено N» on the board
@@ -1752,7 +1753,13 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "revoke") {
-          const name = String(a.standing ?? "").replace(/^.*:/, "");
+          const byId = a.channel
+            ? [...st.channels.values()]
+                .flatMap((c) => [...c.places.values()])
+                .concat([...st.places.values()])
+                .find((p) => p.standing_id === a.channel)
+            : null;
+          const name = byId?.name ?? String(a.standing ?? "").replace(/^.*:/, "");
           // Снятие — по id места; основное место канала не снимается, пока на
           // канале стоят места других графов (#5186) — как у настоящей поверхности.
           const target = st.channels.get(channelOfPlace(a.realm, name));
