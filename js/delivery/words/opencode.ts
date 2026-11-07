@@ -120,8 +120,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     statusTools: (n, source) => `тулов iskron_*: ${n} (${source})`,
     statusBridges: (live, sessions) => `мостов живых: ${live}, сессий с мостом: ${sessions}`,
     commandHead: (id) =>
-      `Загрузи скилл \`${id}\` инструментом \`skill\` (id: \`${id}\`) и действуй строго по нему. ` +
-      "Это набрал человек, а не ты; его слова — ниже.\n\n",
+      `Запрос человека: загрузи \`${id}\` инструментом skill и исполни скилл.\n\n`,
     commandsCount: (n) => `Искрон: команд «/» по скиллам поставки: ${n}.`,
     frame: () => "кадр",
     frameId: (id) => `кадр ${id}`,

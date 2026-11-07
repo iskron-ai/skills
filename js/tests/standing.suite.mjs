@@ -2366,7 +2366,7 @@ test("hello with pending and a platform wake each open a backlog window: the fra
     ["wake"],
   );
   assert.ok(frames().includes("peer"), "the neighbour's word as its own notification");
-  assert.match(backlogs()[1].params.data.text, /Прямых слов 1 — не здесь/);
+  assert.match(backlogs()[1].params.data.text, /Прямых слов 1 — отдельно, целиком/);
   assert.match(backlogs()[1].params.data.text, /платформа — побудка/);
   // Outside a window a frame rides alone, as before.
   await new Promise((r) => setTimeout(r, 800));
@@ -6053,7 +6053,7 @@ for (const name of ["opencode-iskron", "pi-iskron"]) {
       burst.text,
       /Побудка: кадров 23 \(ожидало в очереди: 25\), здесь первые 20, не вошло 3/,
     );
-    assert.match(burst.text, /Прямых слов 2 — не здесь/);
+    assert.match(burst.text, /Прямых слов 2 — отдельно, целиком/);
   });
 }
 

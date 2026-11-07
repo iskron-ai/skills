@@ -53,8 +53,7 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
     listeningCodex: (key, thread) => `слушаю стояние ${key}; кадры кладу в тред ${thread}`,
     backfilled: (count) => ` (${count} задним числом)`,
     frames: ruFrames,
-    noHeld: () =>
-      "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания",
+    noHeld: () => "мост без места: iskron_stand(realm, karta, model); команда слушания — в ответе",
     severalHeld: (held) => `мост держит несколько стояний — назови нужное: ${held}`,
     bridgeLetGo: () => "мост отпустил стояние или ушёл — сессия кончилась?",
     seatNotBack: (s, path) =>
@@ -68,10 +67,9 @@ export const WATCHDOG: Readonly<Record<Lang, WatchdogWords>> = {
     aliveNote: () => "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место",
     codexLost: () => "Искрон: стояние потеряно — назовись заново: iskron_stand",
     codexAlive: () => "Искрон: сокет рвут, а служба отвечает — мост держит место",
-    noThread: () =>
-      "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение",
+    noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай сторожа из оболочки сессии Codex",
     noDoor: (path) =>
-      `ДЕЛАТЕЛЬ: двери нет (${path}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
+      `ДЕЛАТЕЛЬ: двери нет (${path}). Скажи человеку: ход ЧЕЛОВЕКА — запустить демон app-server и сессию с одним коротким CODEX_HOME (SETUP, Codex). Пока слушай watchdog-exit`,
     threadRefused: (why) => `ДЕЛАТЕЛЬ: тред не принял кадр — ${why}`,
     refusal: () => "отказ",
     framePut: (thread) => `кадр вложен в тред ${thread}`,

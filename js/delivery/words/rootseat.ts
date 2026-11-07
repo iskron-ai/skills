@@ -59,9 +59,9 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
     notNumber: (file, key) => `'${key}' в ${file} — не число`,
     seated: (place, karta, realm, file) =>
-      `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
+      `Искрон: место ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Для вахты (room/model) или своего имени — iskron_stand: предварительное место заменит без take.`,
     ownSeated: (place, karta, realm, file) =>
-      `Искрон: сессия стоит своим местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
+      `Искрон: сессия своим местом ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
     cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
     cleanupFailed: (place, why) =>
       `Отменённая посадка ${place}: снять место не удалось (${why}); мост закрывается, место может остаться до простоя на сервере.`,
@@ -70,7 +70,7 @@ export const ROOT_SEAT: Readonly<Record<Lang, RootSeatWords>> = {
     notSeated: (why) =>
       `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     realign: (why, file) =>
-      `Искрон: сессия не посажена — ${why}. Выровняй репозиторий скиллом iskronify по действительным источникам; граф или роль не угадывай — неопределимое спроси по процедуре выравнивания. Посадка повторится сама, как только обложка ${file} станет однозначной.`,
+      `Искрон: сессия не посажена — ${why}. Выровняй ${file} через iskronify; граф и роль не угадывай. Однозначная обложка — посадка повторится сама.`,
     refused: (text) => `посадка сорвалась: ${text}`,
     ownOther: (place, karta, realm) =>
       `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
