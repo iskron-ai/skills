@@ -4151,6 +4151,25 @@ test("every skill of the delivery's set with `slash: true` becomes a «/» comma
     rec.ctx.session.prompt = prompt;
     assert.equal(await rec.promptRaw("s-h", "refused"), "refused");
     assert.equal(await rec.context("s-h"), "", "a refused command leaves no stale header");
+    for (const admittedBeforeMove of [false, true]) {
+      const sessionID = `command-move-${admittedBeforeMove}`;
+      await cmd.execute({ sessionID, prompt: { text: "same input" }, delivery: "queue" });
+      const queued = rec.prompts.at(-1);
+      if (admittedBeforeMove)
+        await rec.promptRaw(sessionID, queued.text, { metadata: queued.metadata });
+      rec.emit({
+        type: "session.moved",
+        data: { sessionID, location: { directory: join(SANDBOX, "command-moved") } },
+      });
+      await delay(30);
+      if (!admittedBeforeMove)
+        await rec.promptRaw(sessionID, queued.text, { metadata: queued.metadata });
+      assert.equal(
+        await rec.context(sessionID),
+        "",
+        `move clears the command header, admitted before move: ${admittedBeforeMove}`,
+      );
+    }
     // A skill installed later shows up after skill.updated.
     skills.push(skill("design", 'name: design\nslash: true\ndescription: "Проектирование"'));
     rec.emit({ type: "skill.updated", data: {} });

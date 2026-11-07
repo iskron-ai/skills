@@ -230,8 +230,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     for (const hook of ["context", "compaction"] as const)
       await ctx.session.hook(hook, (req) => {
         annotate(req, (s) => half.leadOf(s));
-        if (hook === "compaction") compaction.instruct(req);
-        else compaction.tell(req);
+        if (hook === "compaction") {
+          hookContext.compact(String(req.sessionID));
+          compaction.instruct(req);
+        } else compaction.tell(req);
         if (hook === "context") {
           const sid = String(req.sessionID);
           const ready = hookContext.take(sid, req.messages);
@@ -297,6 +299,9 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         compaction.onEvent(ev);
         turns.onEvent(ev);
         switch (ev?.type) {
+          case "session.compaction.failed":
+            if (id) hookContext.failed(id);
+            break;
           case "session.deleted":
             if (!id) break;
             hookContext.forget(id);
