@@ -200,6 +200,10 @@ export async function startFakeNks(opts = {}) {
     futureArgs: opts.futureArgs ?? {},
     kartaTypes: {}, // роль → тип в шапке iskron_look (主 — роль владельца)
     searchRefuse: false, // iskron_search отвечает отказом
+    // Личный граф: { missing: true } — признак missing; { rules: [{ seq, name, text }] } — present
+    // и срез agents,ways в iskron_search(realm="mind"); { refuse: "проза" } — отказ этого поиска;
+    // null — readiness без признака.
+    mind: opts.mind ?? null,
     // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
     // судят здесь, а не по тому, что фейк принял.
     calls: [],
@@ -771,6 +775,7 @@ export async function startFakeNks(opts = {}) {
         "mcpDropAction",
         "kartaTypes",
         "searchRefuse",
+        "mind", // личный граф учётки: null — readiness не знает его, иначе { missing } или { rules }
         "listDelayMs", // hold every board read (iskron_channel list) open this long
         "realmDelayMs", // hold the realm list (iskron_realm list) answer open this long
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
@@ -1974,6 +1979,46 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         }
+      }
+      // Личный граф (#9817) — формы живого сервера 07.11.2026: признак personal_mind readiness
+      // и строки iskron_search с фрагментом описания.
+      const mindCall =
+        msg.method === "tools/call" &&
+        (msg.params?.name === "iskron_me" ||
+          (msg.params?.name === "iskron_search" && msg.params.arguments?.realm === "mind"));
+      if (mindCall) {
+        const m = st.mind;
+        const rules = m?.rules ?? [];
+        if (msg.params.name === "iskron_search" && m?.refuse)
+          return json(
+            res,
+            200,
+            {
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { isError: true, content: [{ type: "text", text: m.refuse }] },
+            },
+            extra,
+          );
+        const text =
+          msg.params.name === "iskron_me"
+            ? "Готовность @tester (Tester)\nпризнаки (1):\n" +
+              (m
+                ? `  personal_mind «Личная память» — ${m.missing ? "missing" : "present"} · scope: person · ready: ${m.missing ? "нет" : "да"}\n`
+                : "")
+            : rules.length
+              ? `Найдено ${rules.length} узлов:\n` +
+                rules
+                  .map((r) => `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`)
+                  .join("\n") +
+                `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
+              : "Ничего не найдено.";
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
       }
       // Чтение роли — шапка той формы, что печатает живой iskron_look: «(#N, karta <тип>, vK)»;
       // тип — st.kartaTypes[N], иначе 能 (adhikarin). 主 — svatantra, роль владельца.

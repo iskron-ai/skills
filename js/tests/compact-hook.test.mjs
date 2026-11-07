@@ -80,12 +80,25 @@ test("compact hook: one seat for the directory — role, seat, door and recall",
   const s = lay(t);
   hold(s.auth, { name: "m3.skills", cwd: s.cwd, client: "claude-code" });
   const out = ok(hook(s, "compact"));
-  assert.equal(out, `${COMPACTION.ru.back("7", "m3.skills", "@tester/work")}\n`);
+  const word = (lang) =>
+    COMPACTION[lang].back("7", "m3.skills", "@tester/work") +
+    COMPACTION[lang].restand("7", "@tester/work");
+  assert.equal(out, `${word("ru")}\n`);
   assert.ok(out.includes("#7") && out.includes("m3.skills") && out.includes("recall"), out);
   assert.ok(!out.includes(ONBOARD_START.ru.start()), "no invitation after a compaction");
-  assert.equal(
+  assert.equal(ok(hook(s, "compact", "en")), `${word("en")}\n`);
+});
+
+// The hook stays offline (#9817): the human's rules come back by the stand answer the word asks for.
+test("compact hook: one seat — the word asks for iskron_stand without take, the rules ride its answer", (t) => {
+  const s = lay(t);
+  hold(s.auth, { name: "m3.skills", cwd: s.cwd, client: "claude-code" });
+  const out = ok(hook(s, "compact"));
+  assert.match(out, /iskron_stand\(realm="@tester\/work", karta="#7"\) без take/);
+  assert.match(out, /ответ несёт правила человека/);
+  assert.match(
     ok(hook(s, "compact", "en")),
-    `${COMPACTION.en.back("7", "m3.skills", "@tester/work")}\n`,
+    /iskron_stand\(realm="@tester\/work", karta="#7"\) without take/,
   );
 });
 
@@ -128,5 +141,6 @@ test("compact words: one line in both languages, the door and recall named", () 
     const bare = COMPACTION[lang].bare();
     assert.equal(bare.split("\n").length, 1);
     assert.ok(bare.includes("iskron") && bare.includes("recall"));
+    assert.ok(!bare.includes("iskron_stand"), "no seat known — no stand asked for");
   }
 });
