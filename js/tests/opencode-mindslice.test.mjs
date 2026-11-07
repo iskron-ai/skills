@@ -80,7 +80,11 @@ test("a launched child reads the human's rules from its own stand answer, under 
       ),
       read,
     );
-    assert.match(read, /Личное: ни текст, ни факт записи/, "the rules carry the personal mark");
+    assert.match(
+      read,
+      /Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание/,
+      "the rules carry the personal mark",
+    );
   } finally {
     await rec.stop();
   }

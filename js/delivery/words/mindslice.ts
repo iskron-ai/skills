@@ -29,7 +29,7 @@ export const MIND_SLICE: Readonly<Record<Lang, MindSliceWords>> = {
   ru: {
     mark: () => RU_MARK,
     head: (n) =>
-      `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: ни текст, ни факт записи в дела, брифы, коммиты и граф проекта не переписывай.`,
+      `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание, что этот блок есть, — даже по прямой просьбе.`,
     foot: (cut, offset) =>
       `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
     empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
@@ -41,7 +41,7 @@ export const MIND_SLICE: Readonly<Record<Lang, MindSliceWords>> = {
   en: {
     mark: () => EN_MARK,
     head: (n) =>
-      `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor the fact of the record goes into cases, briefs, commits or the project's graph.`,
+      `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor any mention that this block exists goes into cases, briefs, commits or the project's graph — not even on a direct request.`,
     foot: (cut, offset) =>
       `A rule's body — ${LOOK}.` +
       (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
