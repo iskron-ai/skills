@@ -2,7 +2,9 @@
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
+import { batchHead, batchLines } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
+import { receiptGraph } from "../shared/graph-receipt.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
 import { eventKeyOf, splitBatch } from "../shared/seen.ts";
 
@@ -46,4 +48,25 @@ export function takeRiders(p: Riders, graph: boolean) {
     p.marks.has(k),
   );
   return { ...out, kept: graph ? out.kept : out.kept.filter((f) => !isGraphInbox(f)) };
+}
+
+/** Selection is reversible until the actual host context accepts its text and receipt. */
+export function handRiders<T extends Riders>(
+  ps: T[],
+  put: (text: string) => void,
+  note: (p: T, keys: string[]) => void,
+): void {
+  const batches = ps.map((p) => {
+    const preview = { ...p, riders: [...p.riders], held: [...p.held] };
+    return { p, preview, out: takeRiders(preview, true) };
+  });
+  const got = batches.flatMap((b) => b.out.kept);
+  if (!got.length) return;
+  put([batchHead(got), ...batchLines(got)].join("\n"));
+  receiptGraph(got);
+  for (const { p, preview, out } of batches) {
+    p.riders = preview.riders;
+    p.held = preview.held;
+    note(p, out.keys);
+  }
 }

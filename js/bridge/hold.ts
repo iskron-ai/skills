@@ -15,7 +15,7 @@ import { markAddressed } from "./addressmark.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
-import { type ChannelEvent, Door, type DoorHooks, ENV_KEY } from "./door.ts";
+import { type ChannelEvent, Door, type DoorHooks, ENV_KEY, frameEvent } from "./door.ts";
 import { isDelivered, redundantCopy } from "./fanout.ts";
 import { holdStray, letGo, takeSpool } from "./handoff.ts";
 import { dropOwnHoldRecord, keyOf, readHoldRecord, writeHoldRecord } from "./holdrecord.ts";
@@ -367,7 +367,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   for (const x of hello ? doors() : [d]) x.push(text, full);
   if (hello) Object.assign(H, { unheard: false, deafKey: null }); // hearing proven
   if (hello) for (const w of [...H.helloWaiters]) w(full);
-  const ev: ChannelEvent = { kind: "frame", raw: text, frame: full };
+  const ev = frameEvent(text, full, seenPath);
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
   // Watchdogs get batched room frames per window, an interrupting one after the batch (roomstack.ts).
@@ -390,7 +390,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
       if (full.origin === "platform" && !isLifeCheck(full)) d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
     }
-    for (const k of deliveryKeys(full)) noteSeen(seenPath, k, d.seen);
+    if (!isGraphInbox(full)) for (const k of deliveryKeys(full)) noteSeen(seenPath, k, d.seen);
   }
   notify("info", keyed(d, ev));
 }

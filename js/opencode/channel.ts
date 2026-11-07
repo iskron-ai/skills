@@ -21,6 +21,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
+import { carryGraphReceipt } from "../shared/graph-receipt.ts";
 import { words } from "../shared/lang.ts";
 import { carryGraphMarks, deliveryKeys, eventIn, isLifeCheck } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
@@ -31,7 +32,7 @@ import { createHalts, descendantsOf } from "./halts.ts";
 import { archiver } from "./host.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
-import { freshRiders, takeRiders, toPile } from "./piles.ts";
+import { freshRiders, handRiders, takeRiders, toPile } from "./piles.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -57,7 +58,7 @@ export interface Channel {
   /** The plugin stops: what gathered leaves now. */
   stop(): void;
   /** Counts of records waiting for a passing prompt into root session `session`; null — none. */
-  ride(session: string): string | null;
+  ride(session: string, put: (text: string) => void): void;
   /** The stop word a turn of root session `session` reads while it stays stopped; null — none. */
   stopWord(session: string): string | null;
 }
@@ -405,12 +406,12 @@ export function setupChannel(
         flush(p);
       }
     },
-    ride(session) {
-      if (halts.halted(session)) return null;
+    ride(session, put) {
+      if (halts.halted(session)) return;
       const own = [...piles.values()].filter(
         (p) => !p.child && (p.session === session || (!p.session && freshestRoot() === session)),
       );
-      return riding(own, true).join("\n") || null;
+      handRiders(own, put, noteOwn);
     },
     stopWord(session) {
       const word = halts.wordOf(session, P.stoppedAny());
@@ -423,6 +424,7 @@ export function setupChannel(
         case "frame": {
           const frame = ev.frame ?? null;
           carryGraphMarks(frame, ev.marks);
+          carryGraphReceipt(frame, ev.seen, authDir());
           // Service frames wake nothing: hello proves the socket is held, and only that.
           if (frame?.type === "hello") return say(P.listening(), "info");
           if (frame?.type === "status") return;

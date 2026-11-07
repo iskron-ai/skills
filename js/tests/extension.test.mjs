@@ -214,6 +214,8 @@ const ENV_KEYS = [
   "ISKRON_BRIDGE_URL",
   "ISKRON_BRIDGE_TOKEN",
   "ISKRON_BRIDGE_NO_BROWSER",
+  "ISKRON_BRIDGE_AUTH_DIR",
+  "ISKRON_BRIDGE_DAEMON",
 ];
 
 let seq = 0;
@@ -1357,6 +1359,98 @@ async function asideMessages(name, frames, n) {
 }
 
 // Contract #7334 → #7333: a role's graph inbox must not cut the current turn.
+for (const mode of ["deliver", "stop", "write-error", "restart"]) {
+  test(`notified receipt: real bridge pi actual context message ${mode}`, () =>
+    notifiedContext(mode));
+}
+async function notifiedContext(mode) {
+  const fake = await startFakeNks({ pat: "nks_pat_receipt" });
+  await fake.control({ richTools: true });
+  const auth = mkdtempSync(join(SANDBOX, "receipt-"));
+  const env = {
+    ISKRON_BRIDGE_PATH: BUILT_BRIDGE,
+    ISKRON_BRIDGE_URL: fake.mcpUrl,
+    ISKRON_BRIDGE_TOKEN: "nks_pat_receipt",
+    ISKRON_BRIDGE_AUTH_DIR: auth,
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+    ISKRON_BRIDGE_DAEMON: "0",
+  };
+  let rec = await session(env);
+  try {
+    await rec.tools
+      .get("iskron_stand")
+      .execute("id", { realm: "nks-dev", karta: 931, name: "proba" }, undefined, () => {}, rec.ctx);
+    const old = graphPosed("receipt-old", 9);
+    const latest = graphPosed("receipt-latest", 10);
+    Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "ACTUAL_CONTEXT_LATEST" });
+    for (const f of [old, latest]) await fake.control({ ws_send: JSON.stringify(f) });
+    const folder = join(auth, "standings");
+    await new Promise((r) => setTimeout(r, 400));
+    const marks = () =>
+      readdirSync(folder)
+        .filter((f) => f.endsWith(".seen"))
+        .flatMap((f) => readFileSync(join(folder, f), "utf8").split("\n"));
+    assert.ok(!marks().includes("ev:10"), "notification is not actual context");
+    assert.ok(!marks().includes("ev:9"));
+    const ledger = join(
+      folder,
+      readdirSync(folder).find((f) => f.endsWith(".graph-retirements.json")),
+    );
+    assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+    if (mode === "restart") {
+      await rec.stop();
+      await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+      rec = await session(env);
+      await rec.tools
+        .get("iskron_stand")
+        .execute(
+          "retry",
+          { realm: "nks-dev", karta: 931, name: "proba" },
+          undefined,
+          () => {},
+          rec.ctx,
+        );
+      for (const f of [old, latest, old])
+        await fake.control({ ws_send: JSON.stringify({ ...f, id: `restart-${f.id}` }) });
+      await new Promise((r) => setTimeout(r, 300));
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries[0].eventKey, "ev:10");
+    }
+    const messages = [];
+    for (const fn of rec.handlers.get("before_agent_start") ?? []) {
+      const result = await fn({}, rec.ctx);
+      if (result?.message) messages.push({ role: "custom", ...result.message });
+    }
+    assert.ok(!marks().includes("ev:10"), "selection before insertion is not handoff");
+    if (mode === "stop") {
+      await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+      await new Promise((r) => setTimeout(r, 300));
+      await rec.fire("context", { messages });
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.deepEqual(JSON.parse(readFileSync(ledger, "utf8")).entries, []);
+      return;
+    }
+    const seen = ledger.slice(0, -".graph-retirements.json".length);
+    if (mode === "write-error") {
+      mkdirSync(seen);
+      await assert.rejects(() => rec.fire("context", { messages }), /EISDIR|directory/);
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+      rmSync(seen, { recursive: true });
+    }
+    await rec.fire("context", { messages });
+    assert.match(JSON.stringify(messages), /ACTUAL_CONTEXT_LATEST/);
+    assert.ok(marks().includes("ev:10"));
+    await fake.control({ ws_send: JSON.stringify({ ...old, id: "receipt-old-replay" }) });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(marks().includes("ev:9"));
+  } finally {
+    await rec.stop();
+    await fake.stop();
+  }
+}
+
 async function graphMessages(name, frames, stopped = false) {
   const { events, env } = eventsEnv(name);
   const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
@@ -1376,6 +1470,7 @@ async function graphMessages(name, frames, stopped = false) {
       const result = await fn({ prompt: "ход" }, rec.ctx);
       if (result?.message) got.push(result.message);
     }
+    await rec.fire("context", { messages: got.map((m) => ({ role: "custom", ...m })) });
     if (!stopped) {
       for (const f of frames) push(events, frame(f));
       await delay(400);

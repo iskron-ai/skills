@@ -32,6 +32,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -9174,6 +9175,97 @@ async function asidePrompts(name, frames, n) {
 }
 
 // Contract #7334 → #7333: graph inbox is input to the next turn, not a steer.
+for (const mode of ["deliver", "stop", "write-error", "restart"]) {
+  test(`notified receipt: real bridge OpenCode actual admitted context ${mode}`, () =>
+    notifiedContext(mode));
+}
+async function notifiedContext(mode) {
+  const previous = Object.fromEntries(
+    ["ISKRON_BRIDGE_AUTH_DIR", "ISKRON_BRIDGE_DAEMON"].map((k) => [k, process.env[k]]),
+  );
+  const fake = await startFakeNks({ pat: "nks_pat_receipt" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(SANDBOX, "receipt-"));
+  const auth = join(dir, "auth");
+  const env = {
+    ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+    ISKRON_BRIDGE_URL: fake.mcpUrl,
+    ISKRON_BRIDGE_TOKEN: "nks_pat_receipt",
+    ISKRON_BRIDGE_AUTH_DIR: auth,
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+    ISKRON_BRIDGE_DAEMON: "0",
+  };
+  let rec = await plugin(env, { location: { directory: dir } });
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "tools", 15000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: 931, name: "proba" }, "receipt");
+    const old = graphPosed("receipt-old", 9);
+    const latest = graphPosed("receipt-latest", 10);
+    Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "ACTUAL_CONTEXT_LATEST" });
+    for (const f of [old, latest]) await fake.control({ ws_send: JSON.stringify(f) });
+    const folder = join(auth, "standings");
+    await until(
+      () => readdirSync(folder).some((f) => f.endsWith(".graph-retirements.json")),
+      "sidecar",
+    );
+    await delay(300);
+    const marks = () =>
+      readdirSync(folder)
+        .filter((f) => f.endsWith(".seen"))
+        .flatMap((f) => readFileSync(join(folder, f), "utf8").split("\n"));
+    assert.ok(!marks().includes("ev:10"), "notification is not actual context");
+    assert.ok(!marks().includes("ev:9"));
+    assert.equal(rec.prompts.length, 0);
+    const ledger = join(
+      folder,
+      readdirSync(folder).find((f) => f.endsWith(".graph-retirements.json")),
+    );
+    assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+    if (mode === "restart") {
+      await rec.stop();
+      await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+      rec = await plugin(env, { location: { directory: dir } });
+      await until(() => rec.tools().has("iskron_channel"), "restarted tools", 15000);
+      await rec.call("iskron_stand", { realm: "nks-dev", karta: 931, name: "proba" }, "receipt");
+      for (const f of [old, latest, old])
+        await fake.control({ ws_send: JSON.stringify({ ...f, id: `restart-${f.id}` }) });
+      await delay(300);
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries[0].eventKey, "ev:10");
+    }
+    if (mode === "stop") {
+      await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+      await delay(300);
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.deepEqual(JSON.parse(readFileSync(ledger, "utf8")).entries, []);
+      return;
+    }
+    const seen = ledger.slice(0, -".graph-retirements.json".length);
+    await rec.promptRaw("receipt", "unchanged", { messageID: "receipt-user" });
+    if (mode === "write-error") {
+      mkdirSync(seen);
+      await assert.rejects(() => rec.context("receipt"), /EISDIR|directory/);
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+      rmSync(seen, { recursive: true });
+      await rec.promptRaw("receipt", "retry", { messageID: "receipt-retry" });
+    }
+    const context = await rec.context("receipt");
+    assert.match(context, /ACTUAL_CONTEXT_LATEST/);
+    assert.ok(marks().includes("ev:10"));
+    await fake.control({ ws_send: JSON.stringify({ ...old, id: "receipt-old-replay" }) });
+    await until(() => marks().includes("ev:9"), "retired after actual context");
+  } finally {
+    await rec.stop();
+    await fake.stop();
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
 async function graphContext(name, frames, stopped = false) {
   const b = bridgeEnv(name);
   const rec = await plugin(b.env);

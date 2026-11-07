@@ -82,12 +82,18 @@ const opencode = () =>
     () => "A",
   );
 
+const contextOf = (ch, session) => {
+  const system = [];
+  ch.ride(session, (text) => system.push(text));
+  return system.join("\n");
+};
+
 test("OpenCode: an inbox frame of another session leaves this session's case copy counted", async () => {
   const ch = opencode();
   ch.onEvent("A", frameEv(caseCopy()));
   ch.onEvent("B", frameEv(inbox()));
   await pause(300);
-  assert.match(ch.ride("A") ?? "", /записей 1/);
+  assert.match(contextOf(ch, "A"), /записей 1/);
 });
 
 for (const kind of ["backlog", "stale"])
@@ -97,7 +103,7 @@ for (const kind of ["backlog", "stale"])
     const frames = [inbox()];
     ch.onEvent("A", { data: { kind, text: "пачка", frames, marks: deliveryKeys(inbox()) } });
     await pause(300);
-    const context = ch.ride("A") ?? "";
+    const context = contextOf(ch, "A");
     assert.match(context, /5829/, "batch graph waits for next-turn context");
     assert.doesNotMatch(context, /записей/, "room copy is not counted");
   });

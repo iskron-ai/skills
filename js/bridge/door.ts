@@ -105,6 +105,16 @@ export interface DoorHooks {
   onError: (text: string) => void;
 }
 
+/** Delivery metadata belongs to this local door, never to fields of the server frame. */
+export function frameEvent(raw: string, frame: Frame | null, seen: string): ChannelEvent {
+  return {
+    kind: "frame",
+    raw,
+    frame,
+    ...(isGraphInbox(frame) ? { seen, marks: deliveryKeys(frame) } : {}),
+  };
+}
+
 export class Door {
   readonly key: string;
   readonly clients = new Set<Socket>();

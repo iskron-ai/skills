@@ -6,6 +6,8 @@
 // into the running turn and raises a turn for an idle agent: `pi.sendMessage(..., { triggerTurn:
 // true })`. Frames come as the standard MCP `notifications/message` with the channel logger;
 // the tools half hands them here as they are.
+import { randomUUID } from "node:crypto";
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
@@ -14,6 +16,7 @@ import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
+import { carryGraphReceipt, receiptGraph } from "../shared/graph-receipt.ts";
 import { words } from "../shared/lang.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
 import {
@@ -26,6 +29,7 @@ import {
   tactAt,
 } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
+import { authDirFromEnv } from "../shared/standings.ts";
 
 /** The fold window of unaddressed case frames; the variable is a probe seam. */
 const ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3_000;
@@ -50,6 +54,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
     aside.splice(0);
+    graphHandoff = null;
   });
 
   // fatal — the holding ended (a dead token); without it — a word into the turn, the holding goes on.
@@ -64,6 +69,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   // Case records not addressed to the seat (#6574) gather in a short window and leave as one
   // entry for the next turn (nextTurn: no interrupt, no raise): counts per case with addressed lines.
   const aside: Frame[] = [];
+  let graphHandoff: { token: string; unit: Frame[]; kept: Frame[]; keys: string[] } | null = null;
   let asideTimer: ReturnType<typeof setTimeout> | null = null;
   /** Marks of what entered the turn as text (seen.ts deliveryKeys): the fold's count skips them. */
   const marks = new Set<string>();
@@ -95,17 +101,33 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     if (halted || !aside.some(isGraphInbox)) return;
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
-    const out = splitBatch(aside.splice(0), Infinity, (k) => marks.has(k));
-    noteText(out.keys);
+    const unit = [...aside];
+    const out = splitBatch(unit, Infinity, (k) => marks.has(k));
     if (!out.kept.length) return;
+    const token = randomUUID();
+    graphHandoff = { token, unit, kept: out.kept, keys: out.keys };
     return {
       message: {
         customType: LOGGERS.channel,
         content: markFrame([batchHead(out.kept), ...batchLines(out.kept)].join("\n")),
         display: true,
-        details: { graphInbox: true },
+        details: { graphInbox: true, receipt: token },
       },
     };
+  });
+
+  pi.on("context", async (event) => {
+    const h = graphHandoff;
+    if (halted || !h || !event.messages.some((m: any) => m.details?.receipt === h.token)) return;
+    try {
+      receiptGraph(h.kept);
+    } catch (e) {
+      ctxRef?.ui?.notify?.(`graph receipt failed: ${(e as Error).message}`, "error");
+      throw e;
+    }
+    noteText(h.keys);
+    for (let i = aside.length - 1; i >= 0; i--) if (h.unit.includes(aside[i])) aside.splice(i, 1);
+    graphHandoff = null;
   });
 
   // One batch — one word into the turn: stale frames or a wake-up with the backlog.
@@ -155,6 +177,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   let halted = false;
   function stopped(text: string): void {
     halted = true;
+    graphHandoff = null;
     if (tactPoll) clearInterval(tactPoll);
     tactPoll = null;
     tact = null;
@@ -183,6 +206,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       case "frame": {
         const frame = ev.frame ?? null;
         carryGraphMarks(frame, ev.marks);
+        carryGraphReceipt(frame, ev.seen, authDirFromEnv());
         const raw = ev.raw ?? "";
         // Service frames wake nothing: hello proves the socket is held, and only that.
         if (frame?.type === "hello") {
