@@ -10,6 +10,8 @@ export interface CompactionWords {
   back: (karta: string, name: string, realm: string) => string;
   /** То же слово, когда место сессии однозначно не установить: без роли и места. */
   bare: () => string;
+  /** Хвост `back` в Claude Code: хук сети не трогает — срез правил человека несёт ответ iskron_stand (#9817). */
+  restand: (karta: string, name: string, realm: string) => string;
   returned: (sessionID: string) => string;
 }
 
@@ -26,6 +28,8 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
       `Искрон: контекст сжат. Роль ${role(karta, "<роль>")}, граф ${realm}, место ${name} держит мост — заново не занимай. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.`,
     bare: () =>
       "Искрон: контекст сжат. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.",
+    restand: (karta, name, realm) =>
+      ` Первым ходом вызови iskron_stand(realm="${realm}", karta="${role(karta, "<роль>")}", name="${name}") без take: место остаётся, ответ несёт правила человека.`,
     returned: (sessionID) =>
       `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`,
   },
@@ -43,6 +47,8 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
       `Iskron: the context was compacted. Before the first substantive move load the door (the iskron ` +
       `skill) and the role's skills — the door names them; only those, not all the earlier ones. The ` +
       `summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
+    restand: (karta, name, realm) =>
+      ` As the first move call iskron_stand(realm="${realm}", karta="${role(karta, "<role>")}", name="${name}") without take: the seat stays, and its answer carries the human's rules.`,
     returned: (sessionID) =>
       `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`,
   },
