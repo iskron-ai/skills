@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.35.1](https://github.com/iskron-ai/skills/compare/v7.35.0...v7.35.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **iskron,minding,recall:** the delivery feeds the personal slice; the mark forbids mentioning it ([#697](https://github.com/iskron-ai/skills/issues/697)) ([ff70b23](https://github.com/iskron-ai/skills/commit/ff70b238eb5bddb2634dbd81bacb5b7d31a57016))
+
 ## [7.35.0](https://github.com/iskron-ai/skills/compare/v7.34.2...v7.35.0) (2026-11-07)
 
 

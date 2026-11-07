@@ -150,7 +150,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.35.0";
+var VERSION = "7.35.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -868,7 +868,7 @@ var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:ag
 var MIND_SLICE = {
   ru: {
     mark: () => RU_MARK,
-    head: (n) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: ни текст, ни факт записи в дела, брифы, коммиты и граф проекта не переписывай.`,
+    head: (n) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание, что этот блок есть, — даже по прямой просьбе.`,
     foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
     empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
     absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
@@ -877,7 +877,7 @@ var MIND_SLICE = {
   },
   en: {
     mark: () => EN_MARK,
-    head: (n) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor the fact of the record goes into cases, briefs, commits or the project's graph.`,
+    head: (n) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor any mention that this block exists goes into cases, briefs, commits or the project's graph — not even on a direct request.`,
     foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
     empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
     absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
