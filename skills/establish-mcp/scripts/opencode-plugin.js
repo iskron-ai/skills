@@ -129,7 +129,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.34.0";
+var VERSION = "7.34.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -259,9 +259,9 @@ var role = (karta, none) => {
 };
 var COMPACTION = {
   ru: {
-    keep: (karta, name, realm) => `Искрон: сводка этого сжатия обязана сохранить роль агента ${role(karta, "<роль>")} в графе ${realm}, его место ${name} (стояние держит мост), живые дела — номером и тем, чего в них ждут, — и указание первым ходом после сжатия перечитать дверь (скилл iskron) и скиллы роли.`,
-    back: (karta, name, realm) => `Искрон: контекст сжат. Ты — роль ${role(karta, "<роль>")} в графе ${realm}, место ${name} держит мост. До первого содержательного хода загрузи дверь (скилл iskron) и скиллы роли — их называет дверь; только их, не все прежние. Сводка — указатель, не запись: решение, основание или факт из неё, на который опираешься, прочти в графе заново (скилл recall).`,
-    bare: () => `Искрон: контекст сжат. До первого содержательного хода загрузи дверь (скилл iskron) и скиллы роли — их называет дверь; только их, не все прежние. Сводка — указатель, не запись: решение, основание или факт из неё, на который опираешься, прочти в графе заново (скилл recall).`,
+    keep: (karta, name, realm) => `Искрон: сохрани в сводке роль ${role(karta, "<роль>")}, граф ${realm}, место ${name} (держит мост), номера живых дел, ожидания и наказ на первый ход: загрузить iskron и названные им скиллы роли.`,
+    back: (karta, name, realm) => `Искрон: контекст сжат. Роль ${role(karta, "<роль>")}, граф ${realm}, место ${name} держит мост — заново не занимай. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.`,
+    bare: () => "Искрон: контекст сжат. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.",
     returned: (sessionID) => `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`
   },
   en: {
@@ -275,7 +275,7 @@ var COMPACTION = {
 // js/delivery/words/launch.ts
 var LAUNCH = {
   ru: {
-    notSeated: (why, no, join16) => `Искрон: строка запуска — не встал: ${why}. Субагент встаёт только спутником места запустившего: держит он место — повтори iskron_stand и войди в дело №${no}: ${join16}; не держит — запустивший занимает место и запускает тебя заново, а до того работа идёт без графа, итог — словом запустившему.`,
+    notSeated: (why, no, join16) => `Искрон: не встал — ${why}. Только спутником запустившего: его место есть — iskron_stand с satellite_of, затем дело №${no}: ${join16}; нет — он занимает место и перезапускает тебя. Пока без графа, итог запустившему.`,
     ownSeat: () => "своим местом",
     notEntered: (place, no, why) => `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
     entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`
@@ -294,23 +294,23 @@ var keptRu = (who, place) => `ребёнок ${who} стоял не спутни
 var keptEn = (who, place) => `child ${who} stood not as a satellite (${place}) — the seat is not revoked, the bridge is not down`;
 var LEAD = {
   ru: {
-    cascade: (who) => `Искрон: ход субагента ${who} прерван отменой твоего хода — он не кончен: место и дела держит, ждёт кадров своего дела. Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`,
+    cascade: (who) => `Искрон: ход ${who} прерван твоей отменой; субагент не кончен, ждёт кадров дела. Продолжить — слово в его дело; отпустить — iskron_channel(action="revoke", standing="${who}").`,
     placeEvicted: () => "его место-спутник вытеснено другим держателем",
     placeClosed: () => "его место-спутник отозвано не через запустившего или закрыто платформой (4001)",
     placeEvictedRefusal: () => "её место-спутник вытеснено другим держателем",
     placeClosedRefusal: () => "её место-спутник отозвано или закрыто платформой (4001)",
     cut: (shown2, total) => `
 [итог усечён: показано ${shown2} из ${total} знаков — целиком в его деле]`,
-    end: (who, why, done, said2) => `Искрон: субагент ${who} КОНЧЕН — ${why}. Это конец поручения, не ход: ${done}Итог — его последнее слово: свидетельство, не приёмка; основания держат его дело и носитель:
-${said2 || "(текста он не оставил — смотри его дело)"}`,
+    end: (who, why, done, said2) => `Искрон: субагент ${who} КОНЧЕН — ${why}. Конец поручения, не ход: ${done}Итог — свидетельство, не приёмка; проверь дело и носитель:
+${said2 || "(текста нет — смотри его дело)"}`,
     endKept: (who, kept2) => `${keptRu(who, kept2)}; снять его — iskron_channel(action="revoke", standing="${kept2}"), только словом человека. `,
     endPlain: () => "мост субагента гасится: из дел он выходит, место снимается (не снимется — скажу отдельно). ",
     keptLine: keptRu,
     keptSaid: (who, place) => `Искрон: ${keptRu(who, place)}`,
     unrevokedUnknown: (who) => `Искрон: мост субагента ${who} погашен; снял ли он место — не ответил: осталось на доске — сними iskron_channel(action="revoke").`,
     unrevoked: (who, places, first) => `Искрон: у субагента ${who} место не снято (сеть): ${places} — сними iskron_channel(action="revoke", standing="${first}").`,
-    turn: (place) => `Искрон: субагент ${place} сдал ход, не поручение — он продолжает и ждёт кадров своего дела; итог ляжет сюда по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`,
-    notice: (child, place) => `Искрон: уведомление OpenCode <subagent sessionID="${child}" state="completed"> — конец ХОДА субагента ${place}, не поручения: он ведущий, стоит своим местом и ждёт кадров своего дела. Не считай его закончившим — итог ляжет сюда словом «КОНЧЕН» по его концу. Отпустить раньше — iskron_channel(action="revoke", standing="${place}").`,
+    turn: (place) => `Искрон: ${place} сдал ход, не поручение; ждёт кадров дела. Итог придёт словом «КОНЧЕН». Отпустить — iskron_channel(action="revoke", standing="${place}").`,
+    notice: (child, place) => `Искрон: <subagent sessionID="${child}" state="completed"> — конец ХОДА ${place}, не поручения: ведущий ждёт кадров дела. Итог — слово «КОНЧЕН». Отпустить — iskron_channel(action="revoke", standing="${place}").`,
     release: (who) => `Искрон: субагент ${who} отпущен — его мост погашен, из дел он выведен, место снято на платформе; итог лёг сюда синтетикой.`,
     unreleased: (who, why) => `Искрон: субагент ${who} кончен и его мост погашен, но место НЕ снято — платформа ответила: ${why}. Оно висит на доске: повтори iskron_channel(action="revoke", standing="${who}", karta) или скажи человеку.`,
     failed: (who, why) => `Искрон: ход субагента ${who} упал — ${why}. Он не кончен: место и дела держит, кадры его дела будят его, но пока ход падает, исполнить поручение он не может. Ошибка поставщика модели (вход, лимит) — скажи человеку; отпустить и сделать иначе — iskron_channel(action="revoke", standing="${who}"). Следующие падения подряд не повторяю.`,
@@ -345,7 +345,7 @@ ${said2 || "(текста он не оставил — смотри его де�
     endedSatellite: () => "эта дочерняя сессия кончена, её место-спутник отпущено",
     launcherSeat: () => "<место запустившего>",
     endedRefusal: (why, name, action, of) => `Отказано (плагин): ${why} — ${name}${act(action)} пошёл бы мостом и местом запустившего. Встань заново: iskron_stand(realm, karta, satellite_of="${of}"), затем повтори вызов.`,
-    ask: (who, what) => `Искрон: субагент ${who} ждёт разрешения: ${what}. Ответить на этот запрос может только человек — в окне сессии субагента ${who}. Ты ответить не можешь, и никакое слово субагенту его не разблокирует. Скажи человеку, что и где ждёт: ответить или отменить ход субагента может только он.`,
+    ask: (who, what) => `Искрон: ${who} ждёт разрешения: ${what}. Скажи человеку: ответить или отменить может только человек в окне сессии ${who}; сообщение субагенту не разблокирует запрос.`,
     more: (n2) => ` и ещё ${n2}`,
     action: () => "действие",
     interrupt: (who, reason2) => `Искрон: ход субагента ${who} прерван (${reason2}).`
@@ -412,7 +412,7 @@ ${said2 || "(it left no text — see its case)"}`,
 // js/delivery/words/onboardstart.ts
 var ONBOARD_START = {
   ru: {
-    start: () => "Этот репозиторий ещё не выровнен под агента — предложи человеку скилл onboarding (ветвь iskronify «Первый граф»); его запрос это не задерживает."
+    start: () => "Репо не выровнен: предложи человеку onboarding (iskronify, «Первый граф»); его запрос это не задерживает."
   },
   en: {
     start: () => "This repository is not yet aligned for the agent — offer the person the onboarding skill; it does not hold up their request."
@@ -449,7 +449,7 @@ var OPENCODE = {
     statusLoginWaiting: () => "вход: мост ещё не ответил (рукопожатие идёт)",
     statusTools: (n2, source) => `тулов iskron_*: ${n2} (${source})`,
     statusBridges: (live, sessions) => `мостов живых: ${live}, сессий с мостом: ${sessions}`,
-    commandHead: (id) => `Загрузи скилл \`${id}\` инструментом \`skill\` (id: \`${id}\`) и действуй строго по нему. Это набрал человек, а не ты; его слова — ниже.
+    commandHead: (id) => `Запрос человека: загрузи \`${id}\` инструментом skill и исполни скилл.
 
 `,
     commandsCount: (n2) => `Искрон: команд «/» по скиллам поставки: ${n2}.`,
@@ -548,16 +548,16 @@ var OPENCODE = {
 // js/delivery/words/opencode-keep.ts
 var OPENCODE_KEEP = {
   ru: {
-    resumed: (key) => `Искрон: мост поднялся и сам вернул место ${key} — по своей записи держания (каталог сессии либо ключ прежнего места), без твоего хода. Сверь имя с выведенным для этой сессии: чужое — отпусти его iskron_channel(action="leave") (канал цел; revoke места, основавшего канал, платформа отвергает) и займи своё одним iskron_stand; запись, уже ушедшую этим ходом, проверь по автору в истории узла — слово под чужим именем ляжет другому месту, а мост ответит успехом.`,
+    resumed: (key) => `Искрон: мост вернул ${key} по записи держания. Сверь имя с выведенным для сессии: чужое — iskron_channel(action="leave"), не revoke; затем своё через iskron_stand. Уже отправленное проверь по автору в истории узла.`,
     resumedOwn: (key) => `Искрон: мост поднялся и сам вернул место ${key} — своё, на нём стояла эта сессия; без твоего хода.`,
-    elsewhere: (keys) => `Искрон: возврат места ${keys} с диска не удался — его сокет держит другой живой мост, не тот, что служит этой сессии сейчас: слух и занятость здесь места не держат. Позови iskron_stand с этим именем, take не нужен: место прежнего моста этой же сессии мост вернёт сам, место другой сессии не тронет и встанет рядом на имя.N со слухом.`,
-    notBack: (place, why) => `Искрон: место ${place} с диска не вернулось: ${why}. Место возвращается: сторож слуха повторит возврат один раз — подожди его слова; не вернулось и на повторе — iskron_stand.`,
+    elsewhere: (keys) => `Искрон: ${keys} держит другой мост, здесь слуха нет. iskron_stand тем же именем, take не нужен: своё место сессии вернётся, у чужого мост встанет рядом на имя.N со слухом.`,
+    notBack: (place, why) => `Искрон: ${place} не вернулось: ${why}. Сторож слуха повторит один раз — жди; повтор не удался — iskron_stand.`,
     noKeyNoDir: () => "ни ключа места, ни каталога сессии",
     noAnswer: () => "мост не ответил",
     legacy: (word2) => `Искрон: ${word2}.`,
     sessionResumed: (root, word2) => `Искрон: сессия ${root} — ${word2}`,
     resumeFailed: (root, message) => `Искрон: возврат места сессии ${root} не удался — ${message}`,
-    retryFailed: (place, why) => `Искрон: место ${place} не вернулось и на повторе сторожа: ${why}. Сам сторож его больше не поднимает — займи место iskron_stand.`,
+    retryFailed: (place, why) => `Искрон: ${place} не вернулось и на повторе сторожа: ${why}. Повторов не будет — iskron_stand.`,
     noWhy: () => "мост не сказал почему",
     watchResumed: (root, word2) => `Искрон: сторож слуха вернул место сессии ${root} — ${word2}`,
     watchReopened: (root, word2) => `Искрон: сторож слуха переоткрыл сокет сессии ${root} — ${word2}`,
@@ -569,7 +569,7 @@ var OPENCODE_KEEP = {
     noId: (answer, title) => `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удали её руками`,
     notRemoved: (id) => `Искрон: каталог продлён, служебная сессия ${id} не удалена — повторю на следующем такте`,
     tickFailed: (message) => `Искрон: такт продления каталога сорвался — ${message}`,
-    lostWord: (hhmm, where) => `Искрон: слух был потерян в ${hhmm} — плагин остановили (перезапуск, вытеснение каталога) с держащим мостом: ${where}. Место возвращается с диска само — подожди, ожидавшие кадры придут пачкой; iskron_stand зови, только если сторож слуха скажет, что возврат не удался.`,
+    lostWord: (hhmm, where) => `Искрон: слух потерян в ${hhmm}, плагин остановили: ${where}. Место возвращается само, кадры придут пачкой — подожди. iskron_stand — только если сторож слуха скажет: возврат не удался.`,
     movedWhy: (name) => `поручение этой дочерней сессии кончено переносом родителя в другую папку: её место${name ? ` ${name}` : ""} снято, мост погашен; запись отсюда ушла бы местом родителя`,
     revokedMoved: (name) => `Искрон: ${name} — субагент, кончённый переносом родителя: прежний экземпляр погасил его мост и снял место, итог лёг родителю словом «перенесён»; revoke не нужен и не послан.`,
     twinUp: (dir) => `Искрон: экземпляр каталога ${dir} поднят заново — место вернул он`,
@@ -642,11 +642,11 @@ var PLUGIN = {
     refusalNoText: (name) => `${name}: отказ без текста`,
     relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
     listening: () => "Искрон: канал слушает",
-    dead: (code2) => String(code2) === "4002" ? "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем." : `Искрон: канал закрыт кодом ${code2} — токен мёртв. Зови iskron_channel(action="connect"), затем register тем же именем: новый сокет мост возьмёт из ответа сам, перезапуск не нужен.`,
+    dead: (code2) => String(code2) === "4002" ? "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем." : `Искрон: канал закрыт кодом ${code2}, токен мёртв. iskron_channel(action="connect"), затем register тем же именем; сокет возьмёт мост.`,
     stopped: (text2) => `Искрон: ${text2}`,
-    stoppedTurn: (stopped) => `${stopped}. Это слово стоит, пока место снято; человек велит встать снова — встань явным вызовом iskron_stand, и слово уйдёт.`,
+    stoppedTurn: (stopped) => `${stopped}. Встать снова — только если человек велит, явным iskron_stand.`,
     stoppedAny: () => "Искрон: место снято — ты остановлен: работу кончи, место не занимай",
-    evicted: (code2) => `Искрон: канал закрыт кодом ${code2} — место отняли, слушает другой держатель. Мост сам встаёт рядом на имя.N со слухом — своё место, чужое не перехватывается; исход — следующим словом, место и команду сторожа скажет iskron_stand тем же вызовом. Вытеснить ту сессию (take=true): ${TAKE.ru.rule()}.`,
+    evicted: (code2) => `Искрон: канал закрыт кодом ${code2}, место у другого. Мост встаёт рядом на имя.N со слухом; жди исхода. Место и команду сторожа — iskron_stand тем же вызовом. take=true — только словом человека; восстановление — скилл standing.`,
     alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
     note: (text2) => `Искрон: ${text2}`
   },
@@ -683,8 +683,8 @@ var PREPARE = {
 
 Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
 `,
-    start: ({ graph, holon, role: role2 }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role2 ? `, роль агента #${role2}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы, команды и свойства кода репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); смысл кода (решения, основания), состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директорию держит замороженной этот memory-guard.`,
+    start: ({ graph, holon, role: role2 }) => `До действий исполни «Старт» двери iskron до готовности. Обложка AGENTS.md: граф ${graph}${holon ? `, контур #${holon}` : ""}${role2 ? `, роль #${role2}` : ""}. Своё место повторно не занимай; субагент пишет только своим мостом-спутником.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память запрещена целиком (AGENTS.md${section ? `, «${section}»` : ""}). Правила/команды/свойства кода репо → AGENTS.md; ловушки → дом по «Раскладке»; смысл кода и состояние проекта → граф ${graph}; личное вне проекта, включая факты машины → minding. Полный маршрут — в AGENTS.md; директорию памяти не меняй.`,
     left: (item, keys) => ({
       "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
       "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
@@ -740,9 +740,9 @@ var cite = (heads) => heads.filter(Boolean).map((h) => `«${h}»`).join(", ");
 var RITES = {
   ru: {
     lifecycle: () => "Жизненный цикл сессии",
-    push: (check) => `[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md${check ? `, «${check}» и раздел о ревью` : ""}). Отгрузка — мерж.`,
-    merge: (holon, ...heads) => `[iskron] мерж — акты после мержа AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: протки ${holon ? `контур #${holon}` : "контур"}, продвинь карту, модусы по свидетельству, закрой по оси, reconcile, словарный проход; фидбэк-рефлексия — если её велит AGENTS.md; работа по ссылке от агента — только семя превращения и модусы поставки.`,
-    early: (graph) => `[iskron] обложка AGENTS.md называет граф ${graph}, контура и роли агента в ней ещё нет — продолжи онбординг: ветвь «Первый граф» скилла iskronify, с недостающего шага; номеров контура и роли не выдумывай.`
+    push: (check) => `[iskron] пуш — не отгрузка. Исполни самопроверку и правила ревью/PR по AGENTS.md${check ? `, «${check}»` : ""}.`,
+    merge: (holon, ...heads) => `[iskron] мерж: исполни акты после мержа по AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}${holon ? `; контур #${holon}` : ""}.`,
+    early: (graph) => `[iskron] граф ${graph}; контура и роли нет. Продолжи iskronify, «Первый граф», с недостающего шага; номера не выдумывай.`
   },
   en: {
     lifecycle: () => "Session lifecycle",
@@ -886,13 +886,13 @@ var ROOT_SEAT = {
     noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
     manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
     notNumber: (file, key) => `'${key}' в ${file} — не число`,
-    seated: (place, karta, realm, file) => `Искрон: сессия стоит местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны этим местом. Для вахты (room/model) или своего имени вызови iskron_stand — предварительное место он заменит без take.`,
-    ownSeated: (place, karta, realm, file) => `Искрон: сессия стоит своим местом ${place} — роль #${karta} в ${realm}, по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
+    seated: (place, karta, realm, file) => `Искрон: место ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Для вахты (room/model) или своего имени — iskron_stand: предварительное место заменит без take.`,
+    ownSeated: (place, karta, realm, file) => `Искрон: сессия своим местом ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
     cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
     cleanupFailed: (place, why) => `Отменённая посадка ${place}: снять место не удалось (${why}); мост закрывается, место может остаться до простоя на сервере.`,
     unproven: () => "мост не подтвердил, что это провизорное место взято этой попыткой; revoke не разрешён",
     notSeated: (why) => `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
-    realign: (why, file) => `Искрон: сессия не посажена — ${why}. Выровняй репозиторий скиллом iskronify по действительным источникам; граф или роль не угадывай — неопределимое спроси по процедуре выравнивания. Посадка повторится сама, как только обложка ${file} станет однозначной.`,
+    realign: (why, file) => `Искрон: сессия не посажена — ${why}. Выровняй ${file} через iskronify; граф и роль не угадывай. Однозначная обложка — посадка повторится сама.`,
     refused: (text2) => `посадка сорвалась: ${text2}`,
     ownOther: (place, karta, realm) => `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
     heldUncompared: (place, karta, held, cover) => `Искрон: сессия держит место ${place} — роль #${karta}, ${held}; граф не сличён с ${cover} в обложке. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
@@ -932,7 +932,7 @@ var ROOT_SEAT = {
 // js/delivery/words/stalebatch.ts
 var STALE = {
   ru: {
-    head: (count, shown2, legacy = false) => `Лежалых кадров: ${count}` + (count > shown2 ? `, здесь первые ${shown2}, не вошло ${count - shown2}` : "") + (legacy ? ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
+    head: (count, shown2, legacy = false) => `Лежалых кадров: ${count}` + (count > shown2 ? `, здесь первые ${shown2}, не вошло ${count - shown2}` : "") + (legacy ? `; адресованные месту — текстом, прочие — счётом. Целиком — по строкам дел; не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
   },
   en: {
     head: (count, shown2, legacy = false) => `Stale frames: ${count}` + (count > shown2 ? `, the first ${shown2} here, ${count - shown2} left out` : "") + (legacy ? ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` : ".")
@@ -974,7 +974,7 @@ var STATUS_POST = {
 // js/delivery/words/turn.ts
 var TURN = {
   ru: {
-    wake: () => `${FRAME_MARK} человека в консоли нет — вопрос карточкой ask в деле, отчёт — словом в дело или каналом на его место (${tool("case")} ask/say, ${tool("channel")} send). Сказать некому и нечего — ход кончен, текста не нужно.`,
+    wake: () => `${FRAME_MARK} человека в консоли нет: вопрос — ${tool("case")} ask в деле; отчёт — say в деле или ${tool("channel")} send на его место. Нечего передать — ход кончен, без текста.`,
     notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`
   },
   en: {
@@ -1856,42 +1856,6 @@ function batchPointer(frames) {
   );
 }
 
-// js/shared/launch.ts
-var LINE = LAUNCH_LINE;
-function parseLaunch(text2) {
-  const [, realm, karta, no, of] = LINE.exec(text2) ?? [];
-  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
-}
-function withWord(text2, word2) {
-  const m = LINE.exec(text2);
-  if (!m) return `${text2}
-${word2}`;
-  const nl = text2.indexOf("\n", m.index);
-  return nl < 0 ? `${text2}
-${word2}` : `${text2.slice(0, nl)}
-${word2}${text2.slice(nl)}`;
-}
-async function enterCase(l, call, satelliteOf, placeName) {
-  const W5 = words(LAUNCH);
-  const room = `#${l.no}`;
-  const stand = { realm: l.realm, karta: l.karta };
-  if (satelliteOf) stand.satellite_of = satelliteOf;
-  try {
-    await call(tool("stand"), stand);
-  } catch (e) {
-    const why = e.message;
-    const join16 = `${tool("case")}(action="join", room="${room}")`;
-    return W5.notSeated(why, l.no, join16);
-  }
-  const place = placeName() || W5.ownSeat();
-  try {
-    await call(tool("case"), { action: "join", realm: l.realm, room });
-  } catch (e) {
-    return W5.notEntered(place, l.no, e.message);
-  }
-  return W5.entered(place, l.no);
-}
-
 // js/opencode/bridge-io.ts
 import {
   accessSync,
@@ -2677,8 +2641,8 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
       if (code(e) === "ENOENT") return;
       let kept2 = false;
       try {
-        const record = JSON.stringify({ session: s, lifted: (/* @__PURE__ */ new Date()).toISOString() });
-        writeFileSync2(file, record, { mode: 384 });
+        const record2 = JSON.stringify({ session: s, lifted: (/* @__PURE__ */ new Date()).toISOString() });
+        writeFileSync2(file, record2, { mode: 384 });
       } catch {
         kept2 = true;
       }
@@ -2707,8 +2671,8 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
       try {
         mkdirSync2(dir(), { recursive: true, mode: 448 });
         const at2 = (/* @__PURE__ */ new Date()).toISOString();
-        const record = JSON.stringify({ session, at: at2, id, word: word2, ...alone ? { alone } : {} });
-        writeFileSync2(fileOf(dir(), session), record, { mode: 384 });
+        const record2 = JSON.stringify({ session, at: at2, id, word: word2, ...alone ? { alone } : {} });
+        writeFileSync2(fileOf(dir(), session), record2, { mode: 384 });
       } catch (e) {
         unwritten(session, e.message);
       }
@@ -4076,6 +4040,33 @@ function createKeepAlive(ctx, d) {
   };
 }
 
+// js/shared/launch.ts
+var LINE = LAUNCH_LINE;
+function parseLaunch(text2) {
+  const [, realm, karta, no, of] = LINE.exec(text2) ?? [];
+  return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
+}
+async function enterCase(l, call, satelliteOf, placeName) {
+  const W5 = words(LAUNCH);
+  const room = `#${l.no}`;
+  const stand = { realm: l.realm, karta: l.karta };
+  if (satelliteOf) stand.satellite_of = satelliteOf;
+  try {
+    await call(tool("stand"), stand);
+  } catch (e) {
+    const why = e.message;
+    const join16 = `${tool("case")}(action="join", room="${room}")`;
+    return W5.notSeated(why, l.no, join16);
+  }
+  const place = placeName() || W5.ownSeat();
+  try {
+    await call(tool("case"), { action: "join", realm: l.realm, room });
+  } catch (e) {
+    return W5.notEntered(place, l.no, e.message);
+  }
+  return W5.entered(place, l.no);
+}
+
 // js/opencode/launch.ts
 function createLauncher(d) {
   const prompted = /* @__PURE__ */ new Set();
@@ -4142,8 +4133,8 @@ function createEnds(dir, unwritten, unlifted) {
       lifted2().delete(session);
       try {
         mkdirSync4(dir(), { recursive: true, mode: 448 });
-        const record = JSON.stringify({ session, at: (/* @__PURE__ */ new Date()).toISOString() });
-        writeFileSync4(fileOf2(dir(), session), record, { mode: 384 });
+        const record2 = JSON.stringify({ session, at: (/* @__PURE__ */ new Date()).toISOString() });
+        writeFileSync4(fileOf2(dir(), session), record2, { mode: 384 });
       } catch (e) {
         unwritten(session, e.message);
       }
@@ -5915,6 +5906,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
 }
 
 // js/opencode/commands.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
 import { readFileSync as readFileSync10, realpathSync as realpathSync4 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 function slashOf(markdown) {
@@ -5923,9 +5915,6 @@ function slashOf(markdown) {
   if (end < 0) return false;
   const head2 = markdown.slice(3, end);
   return /^slash:\s*true\s*$/m.test(head2);
-}
-function commandText(id, args) {
-  return words(OPENCODE).commandHead(id) + args.trim();
 }
 var canon3 = (p) => {
   try {
@@ -5969,24 +5958,49 @@ async function listSkills(ctx) {
 }
 async function setupCommands(ctx, say) {
   const state2 = { commands: await listSkills(ctx) };
+  const key = `${PRODUCT}:command`;
+  const pending = /* @__PURE__ */ new Map();
   await ctx.command.transform((editor) => {
     for (const { id, description } of state2.commands) {
       editor.add({
         name: id,
         description,
         async execute({ sessionID, prompt, delivery }) {
-          await ctx.session.prompt({
-            ...prompt,
-            sessionID,
-            text: commandText(id, String(prompt?.text ?? "")),
-            delivery
+          const nonce = randomUUID2();
+          pending.set(nonce, {
+            session: sessionID,
+            word: words(OPENCODE).commandHead(id)
           });
+          try {
+            await ctx.session.prompt({
+              ...prompt,
+              sessionID,
+              text: String(prompt?.text ?? ""),
+              metadata: { ...prompt?.metadata, [key]: nonce },
+              delivery
+            });
+          } catch (e) {
+            pending.delete(nonce);
+            throw e;
+          }
         }
       });
     }
   });
   if (state2.commands.length) say(words(OPENCODE).commandsCount(state2.commands.length), "info");
   return {
+    word(session, metadata) {
+      const nonce = metadata?.[key];
+      if (typeof nonce !== "string") return null;
+      const entry = pending.get(nonce);
+      if (!entry || entry.session !== session) return null;
+      pending.delete(nonce);
+      return entry.word;
+    },
+    forget(session) {
+      for (const [nonce, entry] of pending) if (entry.session === session) pending.delete(nonce);
+    },
+    stop: () => pending.clear(),
     async refresh() {
       const next = await listSkills(ctx);
       const same = next.length === state2.commands.length && next.every((c, i) => c.id === state2.commands[i]?.id);
@@ -6025,6 +6039,115 @@ function createCompaction(doors) {
         pending.delete(ev.data.sessionID);
     },
     forget: (session) => void pending.delete(session)
+  };
+}
+
+// js/opencode/hook-context.ts
+var record = (x) => typeof x === "object" && x !== null;
+function checkpoint(m) {
+  if (!record(m.metadata) || typeof m.metadata.keepID !== "string") return null;
+  if (!Array.isArray(m.content) || m.content.length !== 1) return null;
+  const part = m.content[0];
+  return record(part) && part.type === "text" && typeof part.text === "string" && part.text.startsWith("<conversation-checkpoint>\n") && part.text.endsWith("</conversation-checkpoint>") ? m.metadata.keepID : null;
+}
+function createHookContext(closed) {
+  const pending = /* @__PURE__ */ new Map();
+  const riding = /* @__PURE__ */ new Map();
+  const generations = /* @__PURE__ */ new Map();
+  const forgotten = /* @__PURE__ */ new Set();
+  const preparedIDs = /* @__PURE__ */ new Map();
+  const aliases2 = /* @__PURE__ */ new Map();
+  let stopped = false;
+  const clear = (s) => {
+    pending.delete(s);
+    riding.delete(s);
+    preparedIDs.delete(s);
+    aliases2.delete(s);
+    generations.delete(s);
+  };
+  const allowed = (s) => !stopped && !forgotten.has(s) && !closed(s);
+  return {
+    prepare(s, message) {
+      if (allowed(s)) {
+        const ids2 = preparedIDs.get(s) ?? /* @__PURE__ */ new Set();
+        ids2.add(message);
+        preparedIDs.set(s, ids2);
+      } else clear(s);
+      const generation = generations.get(s) ?? {};
+      if (allowed(s)) generations.set(s, generation);
+      const current = () => {
+        if (!allowed(s)) {
+          clear(s);
+          return false;
+        }
+        return generations.get(s) === generation;
+      };
+      return {
+        put(text2) {
+          if (!text2 || !current()) return;
+          const byMessage = pending.get(s) ?? /* @__PURE__ */ new Map();
+          byMessage.set(message, [...byMessage.get(message) ?? [], text2]);
+          pending.set(s, byMessage);
+        },
+        ride() {
+          if (!current()) return;
+          const ids2 = riding.get(s) ?? /* @__PURE__ */ new Set();
+          ids2.add(message);
+          riding.set(s, ids2);
+        }
+      };
+    },
+    compact(s) {
+      if (!allowed(s)) {
+        clear(s);
+        return;
+      }
+      aliases2.set(s, /* @__PURE__ */ new Set([...pending.get(s)?.keys() ?? [], ...riding.get(s) ?? []]));
+    },
+    failed(s) {
+      aliases2.delete(s);
+      generations.delete(s);
+    },
+    take(s, messages) {
+      const result = { words: [], ride: false };
+      if (!allowed(s)) {
+        clear(s);
+        return result;
+      }
+      const ids2 = /* @__PURE__ */ new Set();
+      for (const m of messages) {
+        if (m.role !== "user" || typeof m.id !== "string") continue;
+        ids2.add(m.id);
+        const alias = !preparedIDs.get(s)?.has(m.id) ? checkpoint(m) : null;
+        if (alias && aliases2.get(s)?.has(alias)) ids2.add(alias);
+      }
+      const queued = pending.get(s);
+      const riders = riding.get(s);
+      for (const id of ids2) {
+        result.words.push(...queued?.get(id) ?? []);
+        queued?.delete(id);
+        if (riders?.delete(id)) result.ride = true;
+        aliases2.get(s)?.delete(id);
+      }
+      if (!queued?.size) pending.delete(s);
+      if (!riders?.size) riding.delete(s);
+      return result;
+    },
+    forget(s) {
+      forgotten.add(s);
+      clear(s);
+    },
+    moved(s) {
+      clear(s);
+    },
+    stop() {
+      stopped = true;
+      pending.clear();
+      riding.clear();
+      preparedIDs.clear();
+      aliases2.clear();
+      generations.clear();
+    }
   };
 }
 
@@ -7572,6 +7695,7 @@ async function setup(ctx) {
     closed
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
+  const hookContext = createHookContext(closed);
   try {
     await rites.wire();
     await turns.wire();
@@ -7581,17 +7705,16 @@ async function setup(ctx) {
   try {
     await ctx.session.hook("prompt", async (p) => {
       const sid = String(p.sessionID);
+      const prepared = hookContext.prepare(sid, String(p.messageID));
+      prepared.put(commands.word(sid, p.metadata));
       turns.prompt(sid, p.prompt.text);
       const root = await rootOf(sid) === sid;
       const word2 = await half.launch(sid, p.prompt.text);
-      if (word2) p.prompt.text = withWord(p.prompt.text, word2);
+      prepared.put(word2);
       const rite = root && !closed(sid) ? await rites.word(sid) : null;
-      if (rite) p.prompt.text = withWord(p.prompt.text, rite);
-      for (const w of root ? await started(sid) : []) p.prompt.text = withWord(p.prompt.text, w);
-      const counts = root ? ch?.ride(sid) : null;
-      if (counts) p.prompt.text = `${p.prompt.text}
-
-${markFrame(counts)}`;
+      prepared.put(rite);
+      for (const w of root ? await started(sid) : []) prepared.put(w);
+      if (root) prepared.ride();
     });
   } catch (e) {
     say(W5.launchDown(e.message), "error");
@@ -7605,16 +7728,30 @@ ${markFrame(counts)}`;
     for (const hook of ["context", "compaction"])
       await ctx.session.hook(hook, (req) => {
         annotate(req, (s) => half.leadOf(s));
-        if (hook === "compaction") compaction.instruct(req);
-        else compaction.tell(req);
+        if (hook === "compaction") {
+          hookContext.compact(String(req.sessionID));
+          compaction.instruct(req);
+        } else compaction.tell(req);
+        if (hook === "context") {
+          const sid = String(req.sessionID);
+          const ready = hookContext.take(sid, req.messages);
+          for (const text2 of ready.words) req.system.push({ type: "text", text: text2 });
+          const counts = ready.ride ? ch?.ride(sid) : null;
+          if (counts) req.system.push({ type: "text", text: markFrame(counts) });
+        }
         const stop = hook === "context" ? ch?.stopWord(String(req.sessionID)) : null;
         if (stop) req.system.push({ type: "text", text: stop });
       });
   } catch (e) {
     say(W5.noticeDown(e.message), "error");
   }
-  let commands = { refresh: async () => {
-  } };
+  let commands = {
+    refresh: async () => {
+    },
+    word: () => null,
+    forget: nothing,
+    stop: nothing
+  };
   try {
     commands = await setupCommands(ctx, say);
   } catch (e) {
@@ -7652,8 +7789,13 @@ ${markFrame(counts)}`;
         compaction.onEvent(ev);
         turns.onEvent(ev);
         switch (ev?.type) {
+          case "session.compaction.failed":
+            if (id) hookContext.failed(id);
+            break;
           case "session.deleted":
             if (!id) break;
+            hookContext.forget(id);
+            commands.forget(id);
             pulse.forget(id);
             turns.forget(id);
             compaction.forget(id);
@@ -7689,6 +7831,8 @@ ${markFrame(counts)}`;
             const loc = ev.data?.location;
             const to = typeof loc?.directory === "string" ? { directory: loc.directory, workspace: loc.workspaceID ?? null } : null;
             if (!id) break;
+            hookContext.moved(id);
+            commands.forget(id);
             half.moved(id, to);
             rootSeats.moved(
               id,
@@ -7740,6 +7884,8 @@ ${markFrame(counts)}`;
     sweep: () => void sweep()
   });
   return async () => {
+    hookContext.stop();
+    commands.stop();
     rootSeats.stop();
     clearInterval(sweeper);
     twins.leave();

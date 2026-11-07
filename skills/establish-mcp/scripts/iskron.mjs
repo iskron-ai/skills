@@ -145,7 +145,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.34.0";
+var VERSION = "7.34.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -208,7 +208,7 @@ var ASK = {
 // js/delivery/words/backlog.ts
 var BACKLOG = {
   ru: {
-    head: (count, expected, shown, direct) => `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + "." + (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : "")
+    head: (count, expected, shown, direct) => `Побудка: кадров ${count}` + (expected ? ` (ожидало в очереди: ${expected})` : "") + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + "." + (direct ? ` Прямых слов ${direct} — отдельно, целиком.` : "")
   },
   en: {
     head: (count, expected, shown, direct) => `Wake-up: ${count} frames` + (expected ? ` (waiting in the queue: ${expected})` : "") + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + "." + (direct ? ` ${direct} direct messages are not here: each came on its own and whole.` : "")
@@ -1022,8 +1022,8 @@ var PREPARE = {
 
 Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
 `,
-    start: ({ graph, holon, role }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы, команды и свойства кода репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); смысл кода (решения, основания), состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директорию держит замороженной этот memory-guard.`,
+    start: ({ graph, holon, role }) => `До действий исполни «Старт» двери iskron до готовности. Обложка AGENTS.md: граф ${graph}${holon ? `, контур #${holon}` : ""}${role ? `, роль #${role}` : ""}. Своё место повторно не занимай; субагент пишет только своим мостом-спутником.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память запрещена целиком (AGENTS.md${section ? `, «${section}»` : ""}). Правила/команды/свойства кода репо → AGENTS.md; ловушки → дом по «Раскладке»; смысл кода и состояние проекта → граф ${graph}; личное вне проекта, включая факты машины → minding. Полный маршрут — в AGENTS.md; директорию памяти не меняй.`,
     left: (item, keys) => ({
       "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
       "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
@@ -1465,7 +1465,7 @@ var SEPARATE = {
 // js/delivery/words/stalebatch.ts
 var STALE = {
   ru: {
-    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
+    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? `; адресованные месту — текстом, прочие — счётом. Целиком — по строкам дел; не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
   },
   en: {
     head: (count, shown, legacy = false) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + (legacy ? ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` : ".")
@@ -1997,7 +1997,7 @@ var WATCHDOG = {
     listeningCodex: (key2, thread) => `слушаю стояние ${key2}; кадры кладу в тред ${thread}`,
     backfilled: (count) => ` (${count} задним числом)`,
     frames: ruFrames,
-    noHeld: () => "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания",
+    noHeld: () => "мост без места: iskron_stand(realm, karta, model); команда слушания — в ответе",
     severalHeld: (held2) => `мост держит несколько стояний — назови нужное: ${held2}`,
     bridgeLetGo: () => "мост отпустил стояние или ушёл — сессия кончилась?",
     seatNotBack: (s2, path) => `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
@@ -2010,8 +2010,8 @@ var WATCHDOG = {
     aliveNote: () => "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место",
     codexLost: () => "Искрон: стояние потеряно — назовись заново: iskron_stand",
     codexAlive: () => "Искрон: сокет рвут, а служба отвечает — мост держит место",
-    noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение",
-    noDoor: (path) => `ДЕЛАТЕЛЬ: двери нет (${path}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
+    noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай сторожа из оболочки сессии Codex",
+    noDoor: (path) => `ДЕЛАТЕЛЬ: двери нет (${path}). Скажи человеку: ход ЧЕЛОВЕКА — запустить демон app-server и сессию с одним коротким CODEX_HOME (SETUP, Codex). Пока слушай watchdog-exit`,
     threadRefused: (why) => `ДЕЛАТЕЛЬ: тред не принял кадр — ${why}`,
     refusal: () => "отказ",
     framePut: (thread) => `кадр вложен в тред ${thread}`,
