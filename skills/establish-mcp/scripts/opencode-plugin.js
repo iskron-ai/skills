@@ -58,6 +58,11 @@ var LAUNCH_LINE = new RegExp(
   "imu"
 );
 
+// js/delivery/patterns/mind.ts
+var MIND_PRESENT = /^\s*personal_mind\b[^\n]*—\s*present\b/m;
+var MIND_MISSING = /^\s*personal_mind\b[^\n]*—\s*missing\b/m;
+var MIND_ROW = /^\s+(\S[^\n]*?) \(#(\d+), [^\s,)]+[^)\n]*\)(?: — ([^\n]*))?$/;
+
 // js/delivery/patterns/mine.ts
 var MINE_ROW = /^\s*№\s*\d+\s/;
 var MINE_NONE = /^\s*Дел\s[^\n]*\sнет(?=[\s.,;:!]|$)/;
@@ -129,7 +134,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.34.2";
+var VERSION = "7.35.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -262,12 +267,14 @@ var COMPACTION = {
     keep: (karta, name, realm) => `Искрон: сохрани в сводке роль ${role(karta, "<роль>")}, граф ${realm}, место ${name} (держит мост), номера живых дел, ожидания и наказ на первый ход: загрузить iskron и названные им скиллы роли.`,
     back: (karta, name, realm) => `Искрон: контекст сжат. Роль ${role(karta, "<роль>")}, граф ${realm}, место ${name} держит мост — заново не занимай. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.`,
     bare: () => "Искрон: контекст сжат. До работы загрузи iskron и названные им скиллы роли; факты-основания сводки перечитай в графе через recall.",
+    restand: (karta, name, realm) => ` Первым ходом вызови iskron_stand(realm="${realm}", karta="${role(karta, "<роль>")}", name="${name}") без take: место остаётся, ответ несёт правила человека.`,
     returned: (sessionID) => `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`
   },
   en: {
     keep: (karta, name, realm) => `Iskron: the summary of this compaction must keep the agent's role ${role(karta, "<role>")} in graph ${realm}, its seat ${name} (the bridge holds the standing), the live cases — by number and what they wait for — and the instruction to reread the door (the iskron skill) and the role's skills as the first move after the compaction.`,
     back: (karta, name, realm) => `Iskron: the context was compacted. You are role ${role(karta, "<role>")} in graph ${realm}, the bridge holds seat ${name}. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
     bare: () => `Iskron: the context was compacted. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
+    restand: (karta, name, realm) => ` As the first move call iskron_stand(realm="${realm}", karta="${role(karta, "<role>")}", name="${name}") without take: the seat stays, and its answer carries the human's rules.`,
     returned: (sessionID) => `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`
   }
 };
@@ -406,6 +413,32 @@ ${said2 || "(it left no text — see its case)"}`,
     more: (n2) => ` and ${n2} more`,
     action: () => "action",
     interrupt: (who, reason2) => `Iskron: the turn of subagent ${who} was interrupted (${reason2}).`
+  }
+};
+
+// js/delivery/words/mindslice.ts
+var RU_MARK = "Искрон · личное человека:";
+var EN_MARK = "Iskron · the human's own:";
+var LOOK = 'iskron_look(realm="mind", node_id="#N")';
+var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:agents,ways", offset=${offset})`;
+var MIND_SLICE = {
+  ru: {
+    mark: () => RU_MARK,
+    head: (n2) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n2}). Держи их ниже правил проекта. Личное: ни текст, ни факт записи в дела, брифы, коммиты и граф проекта не переписывай.`,
+    foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
+    empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
+    absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
+    unknown: () => `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
+    unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`
+  },
+  en: {
+    mark: () => EN_MARK,
+    head: (n2) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n2}). Keep them below the project's rules. Personal: neither the text nor the fact of the record goes into cases, briefs, commits or the project's graph.`,
+    foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
+    empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
+    absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
+    unknown: () => `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
+    unread: (why) => `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`
   }
 };
 
@@ -4260,6 +4293,52 @@ function createKeepAlive(ctx, d) {
   };
 }
 
+// js/shared/mindslice.ts
+var LIMIT2 = 100;
+var NODE_ROW = /^\s+\S.* \(#\d+, /;
+var SLICE_ARGS = {
+  realm: "mind",
+  q: "",
+  attrs_filter: "slice:agents,ways",
+  limit: LIMIT2,
+  include_description: true
+};
+var brief = (s) => {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > 120 ? `${t.slice(0, 119)}…` : t || "-";
+};
+async function mindSlice(call) {
+  const W5 = words(MIND_SLICE);
+  try {
+    const ready = await call(tool("me"), { action: "readiness" });
+    if (ready.isError) return W5.unread(brief(ready.text));
+    if (MIND_MISSING.test(ready.text)) return W5.absent();
+    if (!MIND_PRESENT.test(ready.text)) return W5.unknown();
+    const got = await call(tool("search"), SLICE_ARGS);
+    if (got.isError) return W5.unread(brief(got.text));
+    const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
+    const rows = got.text.split("\n").flatMap((l) => {
+      const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
+      return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
+    });
+    if (!rows.length) return listed >= LIMIT2 ? `${W5.empty()}
+${W5.foot(true, LIMIT2)}` : W5.empty();
+    return [W5.head(rows.length), ...rows, W5.foot(listed >= LIMIT2, LIMIT2)].join("\n");
+  } catch (e) {
+    return W5.unread(brief(e.message));
+  }
+}
+function sliceIn(text2) {
+  for (const lang2 of LANGS) {
+    const mark = MIND_SLICE[lang2].mark();
+    if (text2.startsWith(mark)) return text2;
+    const at2 = text2.indexOf(`
+${mark}`);
+    if (at2 >= 0) return text2.slice(at2 + 1);
+  }
+  return null;
+}
+
 // js/shared/launch.ts
 var LINE = LAUNCH_LINE;
 function parseLaunch(text2) {
@@ -4271,8 +4350,11 @@ async function enterCase(l, call, satelliteOf, placeName) {
   const room = `#${l.no}`;
   const stand = { realm: l.realm, karta: l.karta };
   if (satelliteOf) stand.satellite_of = satelliteOf;
+  let rules = null;
+  const said2 = (word2) => rules ? `${word2}
+${rules}` : word2;
   try {
-    await call(tool("stand"), stand);
+    rules = sliceIn(await call(tool("stand"), stand));
   } catch (e) {
     const why = e.message;
     const join16 = `${tool("case")}(action="join", room="${room}")`;
@@ -4282,9 +4364,9 @@ async function enterCase(l, call, satelliteOf, placeName) {
   try {
     await call(tool("case"), { action: "join", realm: l.realm, room });
   } catch (e) {
-    return W5.notEntered(place, l.no, e.message);
+    return said2(W5.notEntered(place, l.no, e.message));
   }
-  return W5.entered(place, l.no);
+  return said2(W5.entered(place, l.no));
 }
 
 // js/opencode/launch.ts
@@ -6243,7 +6325,7 @@ async function setupCommands(ctx, say) {
 var FAILED = "session.compaction.failed";
 function createCompaction(doors) {
   const W5 = () => words(COMPACTION);
-  const pending = /* @__PURE__ */ new Set();
+  const pending = /* @__PURE__ */ new Map();
   const seated = (s) => doors.closed(s) ? null : doors.placeOf(s);
   return {
     /** The "compaction" hook: what the summary must keep; the session waits for its word. */
@@ -6252,15 +6334,19 @@ function createCompaction(doors) {
       const p = seated(s);
       if (!p) return;
       req.system.push({ type: "text", text: W5().keep(p.karta, p.name, p.realm) });
-      pending.add(s);
+      if (!pending.get(s)) pending.set(s, doors.slice(s));
     },
     /** The "context" hook: the first primary request after a compaction carries the word. */
-    tell(req) {
+    async tell(req) {
       const s = String(req.sessionID);
-      if (!pending.delete(s)) return;
+      if (!pending.has(s)) return;
+      const rules = pending.get(s);
+      pending.delete(s);
       const p = seated(s);
       if (!p) return;
       req.system.push({ type: "text", text: W5().back(p.karta, p.name, p.realm) });
+      const text2 = rules ? await rules : null;
+      if (text2 && !doors.closed(s)) req.system.push({ type: "text", text: text2 });
       doors.say(W5().returned(s), "info");
     },
     onEvent(ev) {
@@ -6381,6 +6467,19 @@ function createHookContext(closed) {
       generations.clear();
     }
   };
+}
+
+// js/opencode/mindslice.ts
+var SLICE_MS = 1e4;
+function sliceBy(bridge) {
+  return mindSlice(async (name, args) => {
+    const got = await bridge.request(
+      "tools/call",
+      { name, arguments: args },
+      { timeoutMs: SLICE_MS, service: true }
+    );
+    return { isError: !!got?.isError, text: textOf2(got) };
+  });
 }
 
 // js/opencode/notice.ts
@@ -7931,6 +8030,10 @@ async function setup(ctx) {
     closed
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
+  const rulesOf = (s) => {
+    const bridge = half.bridgeOf(s);
+    return bridge ? sliceBy(bridge) : null;
+  };
   const hookContext = createHookContext(closed);
   cancelContext = () => hookContext.sweep();
   try {
@@ -7950,7 +8053,9 @@ async function setup(ctx) {
       prepared.put(word2);
       const rite = root && !closed(sid) ? await rites.word(sid) : null;
       prepared.put(rite);
-      for (const w of root ? await started(sid) : []) prepared.put(w);
+      const start = root ? await started(sid) : [];
+      for (const w of start) prepared.put(w);
+      if (start.length) prepared.put(await (rulesOf(sid) ?? null));
       if (root) prepared.ride();
     });
   } catch (e) {
@@ -7959,16 +8064,17 @@ async function setup(ctx) {
   const compaction = createCompaction({
     placeOf: (s) => half.held(s)?.place ?? null,
     closed,
+    slice: rulesOf,
     say
   });
   try {
     for (const hook of ["context", "compaction"])
-      await ctx.session.hook(hook, (req) => {
+      await ctx.session.hook(hook, async (req) => {
         annotate(req, (s) => half.leadOf(s));
         if (hook === "compaction") {
           hookContext.compact(String(req.sessionID));
           compaction.instruct(req);
-        } else compaction.tell(req);
+        } else await compaction.tell(req);
         if (hook === "context") {
           const sid = String(req.sessionID);
           const ready = hookContext.take(sid, req.messages);

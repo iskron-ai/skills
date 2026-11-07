@@ -93,6 +93,11 @@ var LAUNCH_LINE = new RegExp(
   "imu"
 );
 
+// js/delivery/patterns/mind.ts
+var MIND_PRESENT = /^\s*personal_mind\b[^\n]*—\s*present\b/m;
+var MIND_MISSING = /^\s*personal_mind\b[^\n]*—\s*missing\b/m;
+var MIND_ROW = /^\s+(\S[^\n]*?) \(#(\d+), [^\s,)]+[^)\n]*\)(?: — ([^\n]*))?$/;
+
 // js/delivery/patterns/satprobe.ts
 var SAT_LOGIN_RE = /\/login\b|oauth|authoriz|sign.?in|log.?in|вход|войд|токен отвергнут|\b401\b/i;
 var SAT_OLD_FLAG_RE = /satellite|unknown (flag|option)|неизвестн/i;
@@ -145,7 +150,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.34.2";
+var VERSION = "7.35.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -852,6 +857,32 @@ var MACHINE_STATUS = {
     silent: () => "not listening",
     lastWork: () => "last graph call",
     unknown: () => "not observed"
+  }
+};
+
+// js/delivery/words/mindslice.ts
+var RU_MARK = "Искрон · личное человека:";
+var EN_MARK = "Iskron · the human's own:";
+var LOOK = 'iskron_look(realm="mind", node_id="#N")';
+var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:agents,ways", offset=${offset})`;
+var MIND_SLICE = {
+  ru: {
+    mark: () => RU_MARK,
+    head: (n) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: ни текст, ни факт записи в дела, брифы, коммиты и граф проекта не переписывай.`,
+    foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
+    empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
+    absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
+    unknown: () => `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
+    unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`
+  },
+  en: {
+    mark: () => EN_MARK,
+    head: (n) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor the fact of the record goes into cases, briefs, commits or the project's graph.`,
+    foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
+    empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
+    absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
+    unknown: () => `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
+    unread: (why) => `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`
   }
 };
 
@@ -13660,6 +13691,48 @@ async function standAgainWord(realm, karta, miss) {
   return call ? ` ${words(STAND_MOVES).standAgain(call)}` : "";
 }
 
+// js/shared/mindslice.ts
+var LIMIT3 = 100;
+var NODE_ROW = /^\s+\S.* \(#\d+, /;
+var SLICE_ARGS = {
+  realm: "mind",
+  q: "",
+  attrs_filter: "slice:agents,ways",
+  limit: LIMIT3,
+  include_description: true
+};
+var brief = (s2) => {
+  const t = s2.replace(/\s+/g, " ").trim();
+  return t.length > 120 ? `${t.slice(0, 119)}…` : t || "-";
+};
+async function mindSlice(call) {
+  const W4 = words(MIND_SLICE);
+  try {
+    const ready = await call(tool("me"), { action: "readiness" });
+    if (ready.isError) return W4.unread(brief(ready.text));
+    if (MIND_MISSING.test(ready.text)) return W4.absent();
+    if (!MIND_PRESENT.test(ready.text)) return W4.unknown();
+    const got = await call(tool("search"), SLICE_ARGS);
+    if (got.isError) return W4.unread(brief(got.text));
+    const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
+    const rows = got.text.split("\n").flatMap((l) => {
+      const [, name2, seq3, line] = MIND_ROW.exec(l) ?? [];
+      return name2 ? [`  ${name2} (#${seq3})${line ? ` — ${line}` : ""}`] : [];
+    });
+    if (!rows.length) return listed >= LIMIT3 ? `${W4.empty()}
+${W4.foot(true, LIMIT3)}` : W4.empty();
+    return [W4.head(rows.length), ...rows, W4.foot(listed >= LIMIT3, LIMIT3)].join("\n");
+  } catch (e) {
+    return W4.unread(brief(e.message));
+  }
+}
+
+// js/bridge/standtail.ts
+async function standTail(stood) {
+  const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
+  return [...stale ? [stale] : [], ...stood ? [await mindSlice(callTool)] : []];
+}
+
 // js/bridge/standundo.ts
 var mw2 = () => words(STAND_MOVES);
 var heldAddress = (realm, prior) => prior && holdsStanding(realm, prior.karta, prior.name ?? "") && H2.currentUrl ? { url: H2.currentUrl, statusUrl: H2.currentStatusUrl } : null;
@@ -14055,9 +14128,8 @@ async function standOnce(msg) {
       st.ok ? busyLine(a.status.trim(), realm) : sw2().statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : "")
     );
   }
-  const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
-  if (stale) lines.push(stale);
   if (!priorKept) noteStood(auto, realm, karta, name2);
+  lines.push(...await standTail(!priorKept && !auto));
   return done(priorKept);
 }
 

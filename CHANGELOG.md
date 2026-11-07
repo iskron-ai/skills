@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.35.0](https://github.com/iskron-ai/skills/compare/v7.34.2...v7.35.0) (2026-11-07)
+
+
+### Features
+
+* **bridge:** give the human's rules from mind with the stand answer, after compaction and at launch ([#695](https://github.com/iskron-ai/skills/issues/695)) ([bb73004](https://github.com/iskron-ai/skills/commit/bb7300422673efdbfe47dc106ddcaa3fccd2b574))
+
 ## [7.34.2](https://github.com/iskron-ai/skills/compare/v7.34.1...v7.34.2) (2026-11-07)
 
 

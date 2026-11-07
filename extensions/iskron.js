@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.34.2";
+var VERSION = "7.35.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -189,6 +189,32 @@ var LAUNCH = {
     ownSeat: () => "in a seat of its own",
     notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
     entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
+  }
+};
+
+// js/delivery/words/mindslice.ts
+var RU_MARK = "Искрон · личное человека:";
+var EN_MARK = "Iskron · the human's own:";
+var LOOK = 'iskron_look(realm="mind", node_id="#N")';
+var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:agents,ways", offset=${offset})`;
+var MIND_SLICE = {
+  ru: {
+    mark: () => RU_MARK,
+    head: (n2) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n2}). Держи их ниже правил проекта. Личное: ни текст, ни факт записи в дела, брифы, коммиты и граф проекта не переписывай.`,
+    foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
+    empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
+    absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
+    unknown: () => `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
+    unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`
+  },
+  en: {
+    mark: () => EN_MARK,
+    head: (n2) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n2}). Keep them below the project's rules. Personal: neither the text nor the fact of the record goes into cases, briefs, commits or the project's graph.`,
+    foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
+    empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
+    absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
+    unknown: () => `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
+    unread: (why) => `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`
   }
 };
 
@@ -2224,6 +2250,18 @@ function resultToContent(result) {
   ];
 }
 
+// js/shared/mindslice.ts
+function sliceIn(text) {
+  for (const lang2 of LANGS) {
+    const mark = MIND_SLICE[lang2].mark();
+    if (text.startsWith(mark)) return text;
+    const at = text.indexOf(`
+${mark}`);
+    if (at >= 0) return text.slice(at + 1);
+  }
+  return null;
+}
+
 // js/shared/launch.ts
 var LINE = LAUNCH_LINE;
 function parseLaunch(text) {
@@ -2244,8 +2282,11 @@ async function enterCase(l, call, satelliteOf, placeName) {
   const room = `#${l.no}`;
   const stand = { realm: l.realm, karta: l.karta };
   if (satelliteOf) stand.satellite_of = satelliteOf;
+  let rules = null;
+  const said = (word2) => rules ? `${word2}
+${rules}` : word2;
   try {
-    await call(tool("stand"), stand);
+    rules = sliceIn(await call(tool("stand"), stand));
   } catch (e) {
     const why = e.message;
     const join4 = `${tool("case")}(action="join", room="${room}")`;
@@ -2255,9 +2296,9 @@ async function enterCase(l, call, satelliteOf, placeName) {
   try {
     await call(tool("case"), { action: "join", realm: l.realm, room });
   } catch (e) {
-    return W3.notEntered(place, l.no, e.message);
+    return said(W3.notEntered(place, l.no, e.message));
   }
-  return W3.entered(place, l.no);
+  return said(W3.entered(place, l.no));
 }
 
 // js/shared/busyargs.ts
