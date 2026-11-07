@@ -9886,32 +9886,46 @@ for (const [lang, chosen, label] of [
 ]) {
   const say = SPEECH[lang];
   test(`${label}: the missing bridge, the listening channel and a seat gone idle are said in ${lang}`, async () => {
-    const missing = join(SANDBOX, "no-such-bridge.mjs");
-    const none = await plugin({ ISKRON_BRIDGE_PATH: missing, ...chosen });
+    // A prior real release bridge installs its home copy. This case needs an empty
+    // home, not the shared sandbox's installation; leave that earlier state intact.
+    const home = mkdtempSync(join(SANDBOX, "missing-home-"));
+    const previousHome = process.env.HOME;
+    const previousAuth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+    process.env.HOME = home;
+    process.env.ISKRON_BRIDGE_AUTH_DIR = join(home, "auth");
     try {
-      const tried = [missing, join(SANDBOX, ".iskron-bridge", "iskron-bridge.mjs")].join(", ");
-      assert.ok(none.said().includes(`[iskron/error] ${say.missing(tried)}\n`), none.said());
-      if (lang === "en") assert.doesNotMatch(none.said(), ANY_CYRILLIC, none.said());
+      const missing = join(SANDBOX, "no-such-bridge.mjs");
+      let none;
+      try {
+        none = await plugin({ ISKRON_BRIDGE_PATH: missing, ...chosen });
+        const tried = [missing, join(home, ".iskron-bridge", "iskron-bridge.mjs")].join(", ");
+        assert.ok(none.said().includes(`[iskron/error] ${say.missing(tried)}\n`), none.said());
+        if (lang === "en") assert.doesNotMatch(none.said(), ANY_CYRILLIC, none.said());
+      } finally {
+        await none?.stop();
+      }
+      const b = bridgeEnv(`speech-${label.replace(/\W+/g, "-")}`, chosen);
+      const rec = await plugin(b.env);
+      try {
+        await serverTools(rec);
+        await rec.call("iskron_channel", { action: "connect" }, "s-lang");
+        const pid = pidOf(b.log);
+        appendFileSync(
+          `${b.events}.${pid}`,
+          event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
+        );
+        await until(() => rec.said().includes(`[iskron] ${say.listening}\n`), "the hello line");
+        appendFileSync(`${b.events}.${pid}`, event("dead", { code: 4002 }));
+        await until(() => rec.prompts.length === 1, "the dead-seat prompt");
+        assert.equal(rec.prompts[0].text, say.dead());
+        assert.ok(rec.said().includes(`[iskron/error] ${say.dead()}\n`), rec.said());
+      } finally {
+        await rec.stop();
+      }
     } finally {
-      await none.stop();
-    }
-    const b = bridgeEnv(`speech-${label.replace(/\W+/g, "-")}`, chosen);
-    const rec = await plugin(b.env);
-    try {
-      await serverTools(rec);
-      await rec.call("iskron_channel", { action: "connect" }, "s-lang");
-      const pid = pidOf(b.log);
-      appendFileSync(
-        `${b.events}.${pid}`,
-        event("frame", { frame: { type: "hello", pending: 0 }, raw: "{}" }),
-      );
-      await until(() => rec.said().includes(`[iskron] ${say.listening}\n`), "the hello line");
-      appendFileSync(`${b.events}.${pid}`, event("dead", { code: 4002 }));
-      await until(() => rec.prompts.length === 1, "the dead-seat prompt");
-      assert.equal(rec.prompts[0].text, say.dead());
-      assert.ok(rec.said().includes(`[iskron/error] ${say.dead()}\n`), rec.said());
-    } finally {
-      await rec.stop();
+      process.env.HOME = previousHome;
+      process.env.ISKRON_BRIDGE_AUTH_DIR = previousAuth;
+      rmSync(home, { recursive: true, force: true });
     }
   });
 }

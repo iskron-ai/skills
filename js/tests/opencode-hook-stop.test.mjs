@@ -109,6 +109,51 @@ test("stopped4001→explicit held without context cancels own and descendant wor
   }
 });
 
+test(
+  "parent stop→held cancels an existing child's admission while its parentID lookup is pending",
+  { todo: "Принятый владельцем остаток: граф @nks/nks-dev #9890; №3482[100]" },
+  async () => {
+    const { rec, command, stop, resume } = await setup("stop-lineage");
+    let release;
+    const gate = new Promise((r) => {
+      release = r;
+    });
+    const get = rec.ctx.session.get;
+    let waiting = false;
+    rec.ctx.session.get = async (args) => {
+      if (args.sessionID === "child" && !waiting) {
+        waiting = true;
+        await gate;
+      }
+      return get(args);
+    };
+    try {
+      await command("other", "unrelated");
+      const late = command("child", "old-child");
+      await until(() => waiting, "existing child's parentID lookup paused");
+      await stop();
+      await resume("lineage-resumed");
+      release();
+      await late;
+      assert.doesNotMatch(
+        await rec.context("child"),
+        commandWord,
+        "unknown lineage cannot save old words",
+      );
+      assert.match(await rec.context("other"), commandWord, "unrelated queue survives");
+      await command("child", "fresh-child");
+      assert.match(
+        await rec.context("child"),
+        commandWord,
+        "fresh child command after resume works",
+      );
+    } finally {
+      release();
+      await rec.stop();
+    }
+  },
+);
+
 test("stop→held invalidates a late async put and ride even after a new preparation", async () => {
   const { rec, command, stop, resume, send } = await setup("stop-async");
   rec.emit({ type: "session.created", data: { sessionID: "root" } });
