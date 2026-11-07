@@ -392,7 +392,7 @@ test("a frame the platform sends again is not printed twice", async (t) => {
 // back stale when the socket reopens (#5829). The doer hears the event once: a
 // second live copy, a stale copy, and a copy after the watchdog is re-armed are
 // all dropped; a stale re-send of a frame already delivered is not re-offered.
-// The frame as the platform emits a graph event: via=graph, an object body, a numeric event_id.
+// A non-inbox graph event: fanout itself stays live; posed_to has its own soft-path probes.
 const graphEvent = (id, eventId, reason, extra = {}) =>
   JSON.stringify({
     type: "message",
@@ -401,7 +401,7 @@ const graphEvent = (id, eventId, reason, extra = {}) =>
     provenance: { via: "graph" },
     body: {
       realm_slug: "nks-dev",
-      event_kind: "posed_to",
+      event_kind: "node.updated",
       vimarsha_seq: 5829,
       vimarsha_version: 1,
       event_id: eventId,
@@ -6246,9 +6246,81 @@ test("the exit watchdog leaving on a batch marks the counted records after its l
 // Today's production (api 0.86.0) sends no event_kind: every old room frame, whatever its
 // kind or stack, and every non-room frame reach a watchdog at once, as on main. Guards of
 // main's behaviour — green on main by design.
+test("graph inbox contract: bridge folds waiting question updates before the next watchdog arm", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = graphPosed("g-old", 733305);
+  first.body.vimarsha_name = "GRAPH_OLD_VERSION";
+  const last = graphPosed("g-new", 733306);
+  Object.assign(last.body, {
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LAST_VERSION",
+    reason: "updated",
+  });
+  await sendRoom(fake, first);
+  await sendRoom(fake, last);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const wd = runClient("watchdog", dir, key, 8000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("GRAPH_LAST_VERSION"), "the latest pending question");
+  assert.doesNotMatch(
+    wd.out,
+    /GRAPH_OLD_VERSION/,
+    "superseded question must not enter the next turn",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+for (const graphFirst of [true, false]) {
+  test(`graph inbox contract: watchdog waits for rearm and deduplicates room, graph first=${graphFirst}`, async (t) => {
+    const { fake, dir, key, standings } = await connected(t, {
+      env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "300" },
+    });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const busy = runClient("watchdog", dir, key, 8000);
+    t.after(() => busy.proc.kill("SIGKILL"));
+    await waitFor(() => busy.out.includes("слушаю стояние"), "the current watchdog");
+    const graph = graphPosed("g-soft", 733320);
+    const room = { ...progress(733320), event_id: 733320 };
+    for (const f of graphFirst ? [graph, room] : [room, graph]) await sendRoom(fake, f);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.doesNotMatch(busy.out, /5829|записей/, "no timer interrupts the current arm");
+    busy.proc.kill("SIGKILL");
+    await busy.done;
+    const next = runClient("watchdog", dir, key, 8000);
+    t.after(() => next.proc.kill("SIGKILL"));
+    await waitFor(() => next.out.includes("5829"), "the pending question at rearm");
+    assert.doesNotMatch(next.out, /записей/, "room copy adds no count");
+    await waitSeen(standings, "ev:733320");
+    next.proc.kill("SIGKILL");
+    await next.done;
+    const again = runClient("watchdog", dir, key, 8000);
+    t.after(() => again.proc.kill("SIGKILL"));
+    await waitFor(() => again.out.includes("слушаю стояние"), "the next arm");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.doesNotMatch(again.out, /5829|записей/, "read graph and room are not replayed");
+    again.proc.kill("SIGKILL");
+    await again.done;
+  });
+}
+
+test("graph inbox contract: owner stop drops the bridge's pending soft batch", async (t) => {
+  const { fake, dir, key, bridge } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 8000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the current arm");
+  await sendRoom(fake, graphPosed("g-stop", 733330));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  assert.equal((await wd.done).exit, 0, wd.err);
+  assert.doesNotMatch(wd.out, /5829/, "stopped pending graph is not handed out");
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "backlog"));
+});
+
 const LEGACY_AT_ONCE = () => [
   [directWord(), "прямое слово соседа"],
-  [graphPosed(), '"vimarsha_seq":5829'],
   [legacyRoom("text", "interrupt", 71), "прежний род text со стопкой interrupt"],
   [legacyRoom("direct", "interrupt", 75), "прежний род direct"],
   [legacyRoom("digest", "defer", 76), "прежний род digest"],

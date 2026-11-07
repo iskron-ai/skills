@@ -7,9 +7,17 @@ import { dirname } from "node:path";
 
 import { DOOR } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
+import { foldedGraph } from "../shared/graph-inbox.ts";
 import { words } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
-import { foldedTacts, type Marks, noteSeen, seenIds, splitBatch } from "../shared/seen.ts";
+import {
+  deliveryKeys,
+  foldedTacts,
+  type Marks,
+  noteSeen,
+  seenIds,
+  splitBatch,
+} from "../shared/seen.ts";
 import {
   keyFilePathOf,
   privateDirProblem,
@@ -218,14 +226,18 @@ export class Door {
       // the ring is folded and marked by the bridge (#6569).
       const folded = foldedTacts(this.ring.map((r) => r.frame));
       for (const f of folded) if (f.id) noteSeen(this.seenPath, String(f.id), this.seen);
-      const waiting = this.ring.filter(
-        ({ frame }) =>
-          frame?.type !== "message" ||
-          (!folded.has(frame) &&
-            !this.marks(String(frame.id ?? "")) &&
-            !this.roomBatch.holds(frame)),
-      );
+      const waiting = this.ring
+        .filter(
+          ({ frame }) =>
+            frame?.type !== "message" ||
+            (!folded.has(frame) &&
+              !this.marks(String(frame.id ?? "")) &&
+              !this.roomBatch.holds(frame)),
+        )
+        .concat(this.roomBatch.takeGraph());
       const msgs = waiting.flatMap(({ frame }) => (frame?.type === "message" ? [frame] : []));
+      for (const f of foldedGraph(msgs))
+        for (const k of deliveryKeys(f)) noteSeen(this.seenPath, k, this.seen);
       const kept = new Set<Frame | null>(splitBatch(msgs, Infinity, this.marks).kept);
       const backlog = waiting.filter(({ frame }) => frame?.type !== "message" || kept.has(frame));
       sock.write(

@@ -8,6 +8,7 @@ import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs
 
 import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
+import { foldedGraph } from "./graph-inbox.ts";
 
 /**
  * How many marks the memory keeps: a day of a seat's traffic plus the whole queue the
@@ -139,6 +140,7 @@ export function splitBatch(
   has: Marks,
 ): { shown: Frame[]; kept: Frame[]; keys: string[] } {
   const folded = foldedTacts(all);
+  for (const frame of foldedGraph(all)) folded.add(frame);
   let kept = all.filter((f) => !folded.has(f) && !eventIn(f, has));
   for (;;) {
     const shown = new Set(kept.slice(0, keep));

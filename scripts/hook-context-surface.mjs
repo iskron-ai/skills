@@ -7,16 +7,18 @@ import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { OPENCODE } from "../js/delivery/index.ts";
+import { graphPosed, progress } from "../js/tests/room-frames.mjs";
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const delivery = process.argv.includes("--delivery");
+const graphInbox = process.argv.includes("--graph-inbox");
+const delivery = process.argv.includes("--delivery") || graphInbox;
 const bundle = process.env.ISKRON_OPENCODE_PLUGIN || fileURLToPath(new URL("../dist/dev/skills/establish-mcp/scripts/opencode-plugin.js", import.meta.url));
-const out = process.argv.slice(2).find((a) => !a.startsWith("--")) || mkdtempSync(join(tmpdir(), "hook-context-surface-"));
+const out = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) || mkdtempSync(join(tmpdir(), "hook-context-surface-")));
 const home = join(out, "home"), cwd = join(out, "project"), config = join(home, ".config/opencode");
 for (const p of [cwd, join(config, "plugins"), join(home, "tmp")]) mkdirSync(p, { recursive: true });
 const save = (name, data) => writeFileSync(join(out, name), typeof data === "string" ? data : JSON.stringify(data, null, 2));
@@ -57,6 +59,13 @@ save("home/.config/opencode/opencode.json", {
 });
 const bin = (await exec("which", ["opencode"])).stdout.trim();
 const env = { PATH: `${dirname(bin)}:${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: home, TMPDIR: join(home, "tmp"), LANG: "en_US.UTF-8", XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local/share"), XDG_STATE_HOME: join(home, ".local/state"), XDG_CACHE_HOME: join(home, ".cache"), OPENCODE_CONFIG_DIR: config, SCRIPTED_API_KEY: "local-not-a-secret", ISKRON_ROOT_SEAT: "0", ISKRON_BRIDGE_LANG: "ru", ISKRON_BRIDGE_PATH: join(out, "no-bridge.mjs") };
+if (graphInbox) {
+  env.ISKRON_BRIDGE_PATH = fileURLToPath(new URL("../js/tests/fake-bridge.mjs", import.meta.url));
+  env.FB_EVENTS = join(out, "graph-events.jsonl");
+  env.FB_LOG = join(out, "bridges.log");
+  env.FB_TOOLS = JSON.stringify([{ name: "iskron_channel", inputSchema: { type: "object" } }]);
+  writeFileSync(env.FB_EVENTS, "");
+}
 const port = 48000 + Math.floor(Math.random() * 10000), base = `http://127.0.0.1:${port}`;
 let serve, stdout = "", headers;
 const until = async (fn, why) => { for (let i = 0; i < 160 && !fn(); i++) await sleep(250); assert.ok(fn(), why); };
@@ -82,8 +91,18 @@ try {
   const input = "  IDENTICAL_COMMAND_ARGUMENTS 🙂\r\n  ";
   const ordinary = await api("POST", `/api/session/${session.id}/prompt`, { text: input, resume: true, delivery: "queue" });
   await until(() => wire.length === 1, "ordinary request held at provider");
+  if (graphInbox) {
+    const old = graphPosed("graph-old", 733350);
+    old.body.vimarsha_name = "GRAPH_OLD_VERSION";
+    const last = graphPosed("graph-last", 733351);
+    Object.assign(last.body, { vimarsha_version: 2, vimarsha_name: "GRAPH_LAST_VERSION", reason: "updated" });
+    const copy = { ...progress(733351), event_id: 733351 };
+    writeFileSync(env.FB_EVENTS, [old, last, copy].map((frame) => JSON.stringify({ kind: "frame", frame, raw: JSON.stringify(frame) })).join("\n") + "\n");
+    await sleep(1500);
+    assert.equal(wire.length, 1, "graph inbox does not interrupt the held HTTP turn");
+  }
   const nonce = "command-correlation-probe";
-  const command = delivery
+  const command = delivery && !graphInbox
     ? await api("POST", `/api/session/${session.id}/command`, { name: "correlation-probe", text: input, delivery: "queue" })
     : await api("POST", `/api/session/${session.id}/prompt`, { text: input, metadata: { probeNonce: nonce }, resume: true, delivery: "queue" });
   save("admissions.json", { ordinary, command });
@@ -91,15 +110,15 @@ try {
   await until(() => wire.length >= 2, "queued identical input reaches another context");
   await sleep(1000);
   const hooks = readFileSync(join(out, "hooks.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  const admitted = hooks.find((e) => e.kind === "prompt" && (delivery ? typeof e.metadata?.["iskron:command"] === "string" : e.metadata?.probeNonce === nonce));
+  const admitted = hooks.find((e) => e.kind === "prompt" && (delivery && !graphInbox ? typeof e.metadata?.["iskron:command"] === "string" : e.metadata?.probeNonce === nonce));
   assert.ok(admitted?.messageID, "the command metadata reaches its exact prompt hook");
   if (!delivery) assert.equal(admitted.messageID, command.id, "metadata and the exact admitted message id roundtrip");
   const commandID = admitted.messageID;
   const contexts = hooks.filter((e) => e.kind === "context");
+  assert.equal(wire.length, 2, "two human inputs, no additional model request");
   assert.ok(contexts[0].messages.some((m) => m.id === ordinary.id));
   assert.ok(!contexts[0].messages.some((m) => m.id === commandID), "earlier context excludes later admission");
   assert.ok(contexts[1].messages.some((m) => m.id === commandID));
-  assert.equal(wire.length, 2, "two human inputs, no additional model request");
   save("contexts.json", contexts);
   const history = await api("GET", `/api/session/${session.id}/context`);
   save("history.json", history);
@@ -114,17 +133,25 @@ try {
       assert.equal(users.length, i + 1, "no extra user message on the wire");
       for (const user of users) assert.ok(strings(user.content).includes(input), "exact human bytes on the wire");
     }
-    assert.ok(!system(wire[0]).includes(head), "the ordinary request has no command header");
-    assert.ok(system(wire[1]).includes(head), "header is in the first HTTP containing the command admission");
+    if (graphInbox) {
+      assert.ok(!system(wire[0]).includes("GRAPH_"), "no graph in the earlier HTTP");
+      assert.ok(system(wire[1]).includes("GRAPH_LAST_VERSION"), "latest graph is separate context at next turn");
+      assert.ok(!system(wire[1]).includes("GRAPH_OLD_VERSION"), "superseded graph is absent");
+      assert.ok(!/№7 «Стенд»: записей/.test(system(wire[1])), "room event copy adds no count");
+    } else {
+      assert.ok(!system(wire[0]).includes(head), "the ordinary request has no command header");
+      assert.ok(system(wire[1]).includes(head), "header is in the first HTTP containing the command admission");
+    }
     await api("POST", `/api/session/${session.id}/prompt`, { text: input, delivery: "queue", resume: true });
     await until(() => wire.length >= 3, "later identical ordinary input");
     await sleep(500);
     assert.equal(wire.length, 3, "three human inputs, three HTTP requests");
     assert.ok(!system(wire[2]).includes(head), "a historical command id cannot replay its word");
+    if (graphInbox) assert.ok(!system(wire[2]).includes("GRAPH_"), "graph context is not repeated");
   }
   const finalContexts = readFileSync(join(out, "hooks.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter((e) => e.kind === "context");
   save("contexts.json", finalContexts);
-  console.log(JSON.stringify({ out, version: (await exec(bin, ["--version"], { env })).stdout.trim(), delivery, plugin: delivery ? bundle : null, digest: delivery ? createHash("sha256").update(readFileSync(join(config, "plugins/delivery.js"))).digest("hex") : null, admitted: admitted.messageID, ordinary: ordinary.id, requests: wire.length, contexts: finalContexts.length, metadataRoundtrip: true, ceiling: "local scripted provider, no production graph or bridge transport; own private serve stopped after assertions" }, null, 2));
+  console.log(JSON.stringify({ out, version: (await exec(bin, ["--version"], { env })).stdout.trim(), delivery, graphInbox, plugin: delivery ? bundle : null, digest: delivery ? createHash("sha256").update(readFileSync(join(config, "plugins/delivery.js"))).digest("hex") : null, admitted: admitted.messageID, ordinary: ordinary.id, requests: wire.length, contexts: finalContexts.length, metadataRoundtrip: true, ceiling: "local scripted provider, no production graph or bridge transport; own private serve stopped after assertions" }, null, 2));
 } catch (e) {
   save("failure.txt", e.stack);
   console.error(e);

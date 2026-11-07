@@ -74,6 +74,7 @@ import {
   BORIS,
   closing,
   directWord,
+  graphOther,
   graphPosed,
   idMatrix,
   importantBody,
@@ -9172,6 +9173,116 @@ async function asidePrompts(name, frames, n) {
   }
 }
 
+// Contract #7334 → #7333: graph inbox is input to the next turn, not a steer.
+async function graphContext(name, frames, stopped = false) {
+  const b = bridgeEnv(name);
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    const sid = `s-${name}`;
+    await rec.call("iskron_channel", { action: "connect" }, sid);
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(frames));
+    await delay(BATCH_MS * 4);
+    if (stopped) {
+      appendFileSync(`${b.events}.${pid}`, event("stopped", { text: "GRAPH_STOP" }));
+      await delay(BATCH_MS * 4);
+      appendFileSync(`${b.events}.${pid}`, event("held", { key: "k", automatic: false }));
+      await delay(BATCH_MS * 4);
+    }
+    const input = "ход";
+    const messageID = `user-${name}`;
+    assert.equal(await rec.promptRaw(sid, input, { messageID }), input);
+    const messages = rec.messages(sid);
+    assert.equal(messages.at(-1).content[0].text, input, "stored user is unchanged");
+    assert.equal(await rec.context(sid, "context", []), "", "no other message drains inbox");
+    const rode = await rec.context(sid, "context", messages);
+    assert.equal(await rec.context(sid, "context", messages), "", "context is one shot");
+    if (!stopped) {
+      appendFileSync(`${b.events}.${pid}`, lines(frames));
+      await delay(BATCH_MS * 4);
+      assert.equal(await rec.promptRaw(sid, "ещё", { messageID: `again-${name}` }), "ещё");
+      assert.equal(await rec.context(sid), "", "replayed event stays read in a new turn");
+    }
+    const prompts = [...rec.prompts];
+    prompts.rode = rode;
+    return prompts;
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("graph inbox contract: OpenCode stop drops pending graph before an explicit return", async () => {
+  const got = await graphContext("graph-stop", [graphPosed("stopped-graph", 733310)], true);
+  assert.equal(got.length, 0);
+  assert.doesNotMatch(got.rode, /5829/);
+});
+
+test("graph inbox contract: OpenCode keeps distinct graph and question identities", async () => {
+  const frames = [
+    graphPosed("one", 733311),
+    graphPosed("two", 733312),
+    graphPosed("three", 733313),
+  ];
+  frames[1].body.realm_slug = "other";
+  frames[2].body.vimarsha_seq++;
+  frames.forEach((f, i) => {
+    f.body.vimarsha_name = `DISTINCT_${i}`;
+  });
+  const got = await graphContext("graph-distinct", frames);
+  assert.equal(got.length, 0);
+  for (let i = 0; i < 3; i++) assert.match(got.rode, new RegExp(`DISTINCT_${i}`));
+});
+
+test("graph inbox contract: OpenCode case-pile flush never drains pending graph text", async () => {
+  const got = await graphContext("graph-beside-ask", [graphPosed("g-beside", 733314), ask(90)]);
+  assert.match(got.rode, /5829/, "case-pile timer must leave graph for next-turn context");
+  assert.ok(
+    got.every((p) => !p.text.includes("5829")),
+    "graph starts no prompt of its own",
+  );
+});
+
+test("graph inbox contract: posed_to waits for the next OpenCode turn without steering", async () => {
+  const prompts = await graphContext("graph-next-turn", [graphPosed("g-next", 733301)]);
+  assert.equal(prompts.length, 0, "posed_to must not start or interrupt a turn");
+  assert.match(prompts.rode, /5829/, "the pending question must enter the next turn");
+});
+
+test("graph inbox contract: OpenCode folds updates of one question into the latest", async () => {
+  const first = graphPosed("g-first", 733302);
+  first.body.vimarsha_name = "GRAPH_OLD_VERSION";
+  const last = graphPosed("g-last", 733303);
+  Object.assign(last.body, {
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LAST_VERSION",
+    reason: "updated",
+  });
+  const prompts = await graphContext("graph-fold", [first, last]);
+  assert.match(prompts.rode, /GRAPH_LAST_VERSION/, "latest update must wait for the next turn");
+  assert.doesNotMatch(
+    prompts.rode,
+    /GRAPH_OLD_VERSION/,
+    "superseded question must not enter the turn",
+  );
+  assert.equal(prompts.length, 0, "neither update may steer");
+});
+
+for (const graphFirst of [true, false]) {
+  test(`graph inbox contract: OpenCode deduplicates event_id, graph first=${graphFirst}`, async () => {
+    const graph = graphPosed(`g-copy-${graphFirst}`, 733304);
+    const room = { ...progress(733304), event_id: 733304 };
+    const prompts = await graphContext(
+      `graph-copy-${graphFirst}`,
+      graphFirst ? [graph, room] : [room, graph],
+    );
+    assert.doesNotMatch(prompts.rode, /записей/, "the room copy must not add a second event count");
+    assert.match(prompts.rode, /5829/, "the graph event must enter the next turn");
+    assert.equal((prompts.rode.match(/5829/g) ?? []).length, 1, "event body occurs once");
+    assert.equal(prompts.length, 0, "duplicate events must not steer");
+  });
+}
+
 test("(а) an addressed word not to me with stack interrupt prompts nothing: a count without its body rides the next prompt", async () => {
   const prompts = await asidePrompts("aside-one", [addressed(80)], 0);
   assert.equal(prompts.length, 0, "a word not to me never steers, nor queues on its own");
@@ -9270,10 +9381,10 @@ test("progress lines of one key fold into the last: the count names the supersed
 // ждущая в пачке, вынимается кадром инбокса — событие входит один раз (#5842).
 test("a case copy of an event waiting in the pile is taken out by its inbox frame: no count rides on", async () => {
   const frames = [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)];
-  const prompts = await asidePrompts("event-copy", frames, 1);
-  assert.equal(prompts.length, 1, "the inbox frame prompts");
-  assert.doesNotMatch(prompts[0].text, /записей/, prompts[0].text);
-  assert.equal(prompts.rode, "ход", "no count of the case copy rides the next prompt");
+  const prompts = await graphContext("event-copy", frames);
+  assert.equal(prompts.length, 0, "the inbox frame starts no prompt");
+  assert.match(prompts.rode, /5829/, "the question enters separate next-turn context");
+  assert.doesNotMatch(prompts.rode, /записей/, "no count of the case copy rides along");
 });
 
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
@@ -9542,7 +9653,7 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
     const [pid] = pidsOf(b.log);
     const cases = [
       [directWord(), "steer"],
-      [graphPosed(), "steer"],
+      [graphOther(), "steer"],
       [legacyRoom("text", "interrupt", 71), "steer"],
       [legacyRoom("text", "defer", 72), "queue"],
       [legacyRoom("text", undefined, 73), "steer"],

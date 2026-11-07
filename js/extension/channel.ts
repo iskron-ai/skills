@@ -13,9 +13,11 @@ import { envName, LOGGERS, PLUGIN, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-text.ts";
+import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { words } from "../shared/lang.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveryKeys, eventIn, isTact, onlyTacts, tactAt } from "../shared/seen.ts";
+import { deliveryKeys, eventIn, isTact, onlyTacts, splitBatch, tactAt } from "../shared/seen.ts";
+import { separateGraphBatch } from "../shared/softbatch.ts";
 
 /** The fold window of unaddressed case frames; the variable is a probe seam. */
 const ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3_000;
@@ -37,6 +39,9 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   });
   pi.on("session_shutdown", async () => {
     ctxRef = null;
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    aside.splice(0);
   });
 
   // fatal — the holding ended (a dead token); without it — a word into the turn, the holding goes on.
@@ -61,7 +66,10 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   function flushAsides(): void {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
-    const got = aside.splice(0).filter((f) => !eventIn(f, (k) => marks.has(k)));
+    const unit = aside.splice(0);
+    const out = splitBatch(unit, Infinity, (k) => marks.has(k));
+    aside.push(...unit.filter(isGraphInbox));
+    const got = out.kept.filter((f) => !isGraphInbox(f));
     if (!got.length) return;
     pi.sendMessage(
       {
@@ -73,6 +81,24 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       { triggerTurn: false, deliverAs: "nextTurn" },
     );
   }
+
+  // The harness admits a new turn here: graph updates stay foldable until this boundary.
+  pi.on("before_agent_start", async () => {
+    if (halted || !aside.some(isGraphInbox)) return;
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    const out = splitBatch(aside.splice(0), Infinity, (k) => marks.has(k));
+    noteText(out.keys);
+    if (!out.kept.length) return;
+    return {
+      message: {
+        customType: LOGGERS.channel,
+        content: markFrame([batchHead(out.kept), ...batchLines(out.kept)].join("\n")),
+        display: true,
+        details: { graphInbox: true },
+      },
+    };
+  });
 
   // One batch — one word into the turn: stale frames or a wake-up with the backlog.
   function sendBatch(ev: ChannelEvent): void {
@@ -141,7 +167,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
   }
 
   return (params: any) => {
-    const ev = params?.data as ChannelEvent | undefined;
+    let ev = params?.data as ChannelEvent | undefined;
     if (!ev || typeof ev !== "object") return;
     if (ev.kind === "held") halted = false;
     if (halted && ev.kind !== "stopped") return;
@@ -156,6 +182,11 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
           return;
         }
         if (frame?.type === "status") return;
+        if (frame && eventIn(frame, (k) => marks.has(k))) return;
+        if (isGraphInbox(frame)) {
+          aside.push(frame as Frame);
+          return;
+        }
         // The point of it all: the frame enters the running turn and raises an idle agent.
         // A case record not addressed to the seat (#6574) goes to the fold as a count, no text.
         if (frame && (byKind(frame) || roomKind(frame)?.aside) && !addressedToMine(frame)) {
@@ -185,6 +216,11 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
         return;
       case "stale":
       case "backlog":
+        {
+          const parts = separateGraphBatch(ev);
+          aside.push(...parts.graph.filter((f) => !eventIn(f, (k) => marks.has(k))));
+          ev = parts.rest;
+        }
         noteText(ev.marks); // the batch's marks — what it brought into the turn
         if (!ev.text) return;
         // An attention tact does not enter a busy turn: it waits, a new one replaces it (seen.ts foldedTacts).

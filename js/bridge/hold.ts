@@ -7,6 +7,7 @@
 // The busy text is written by the doer beside the socket (#4231) and published by the bridge.
 import { LOGGERS } from "../delivery/index.ts";
 import { type HoldOptions, isDirectWord, statusUrl as deriveStatusUrl } from "../shared/channel.ts";
+import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { bindAll } from "../shared/scope.ts";
 import { deliveryKeys, isLifeCheck, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
@@ -351,7 +352,8 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   // a stale copy of a delivered frame is skipped. In pi and OpenCode the batch notification is
   // the delivery, so every frame of the lane is marked seen, else the platform re-sends and
   // wakes again after reconnect (#5831). A direct word and a life check skip it and go live.
-  if (full?.type === "message" && full.stale === true && !isDirectWord(full) && !isLifeCheck(full))
+  const live = isDirectWord(full) || isLifeCheck(full) || isGraphInbox(full);
+  if (full?.type === "message" && full.stale === true && !live)
     return again
       ? log(`stale frame ${id} already delivered — dropped`)
       : d.stale.note(full, (ev) => {
@@ -384,7 +386,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
       notify("info", keyed(d, b));
     };
     if (hello && Number(full.pending) > 0) d.backlog.open(Number(full.pending), flushBacklog);
-    if (full?.type === "message") {
+    if (full?.type === "message" && !isGraphInbox(full)) {
       if (full.origin === "platform" && !isLifeCheck(full)) d.backlog.open(0, flushBacklog);
       if (d.backlog.note(full)) return;
     }
