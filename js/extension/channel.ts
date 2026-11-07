@@ -16,7 +16,15 @@ import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-t
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { words } from "../shared/lang.ts";
 import { byKind, roomKind, stackOf } from "../shared/room-kinds.ts";
-import { deliveryKeys, eventIn, isTact, onlyTacts, splitBatch, tactAt } from "../shared/seen.ts";
+import {
+  carryGraphMarks,
+  deliveryKeys,
+  eventIn,
+  isTact,
+  onlyTacts,
+  splitBatch,
+  tactAt,
+} from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
 
 /** The fold window of unaddressed case frames; the variable is a probe seam. */
@@ -174,6 +182,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     switch (ev.kind) {
       case "frame": {
         const frame = ev.frame ?? null;
+        carryGraphMarks(frame, ev.marks);
         const raw = ev.raw ?? "";
         // Service frames wake nothing: hello proves the socket is held, and only that.
         if (frame?.type === "hello") {

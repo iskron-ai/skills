@@ -22,7 +22,7 @@ import { type Frame } from "../shared/channel.ts";
 import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { words } from "../shared/lang.ts";
-import { deliveryKeys, eventIn, isLifeCheck } from "../shared/seen.ts";
+import { carryGraphMarks, deliveryKeys, eventIn, isLifeCheck } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
 import { createCuts } from "./cuts.ts";
@@ -422,6 +422,7 @@ export function setupChannel(
       switch (ev.kind) {
         case "frame": {
           const frame = ev.frame ?? null;
+          carryGraphMarks(frame, ev.marks);
           // Service frames wake nothing: hello proves the socket is held, and only that.
           if (frame?.type === "hello") return say(P.listening(), "info");
           if (frame?.type === "status") return;

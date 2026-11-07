@@ -343,7 +343,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const seenPath = d.seenPath;
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // A copy of a graph event already offered or delivered (fanout.ts) goes to no one.
-  if (redundantCopy(full, d)) return;
+  if (!d.approveGraph(raw, full) || redundantCopy(full, d)) return;
   if (full?.type === "message") markAddressed(full, seenPath, d.seen); // before repeat and stale checks
   // A repeat of a delivered frame (same id, re-sent after the place returned) is broadcast to no one; clients mark delivered frames themselves, in the file.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);

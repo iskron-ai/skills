@@ -22,16 +22,29 @@ export function graphInboxKey(frame: Frame | null | undefined): string | null {
 export const isGraphInbox = (frame: Frame | null | undefined): boolean =>
   graphInboxKey(frame) !== null;
 
-/** Superseded, not yet handed out: arrival order, scoped by graph and question. */
-export function foldedGraph(frames: readonly Frame[]): Set<Frame> {
-  const last = new Map<string, Frame>();
-  const folded = new Set<Frame>();
+const versionOf = (frame: Frame): unknown =>
+  (frame.body as Record<string, unknown>).vimarsha_version;
+
+/** Pending groups scoped by graph and question; a replay cannot replace a higher version. */
+export function graphFolds(frames: readonly Frame[]) {
+  const groups = new Map<string, Frame[]>();
   for (const frame of frames) {
     const key = graphInboxKey(frame);
     if (key === null) continue;
-    const was = last.get(key);
-    if (was) folded.add(was);
-    last.set(key, frame);
+    const group = groups.get(key) ?? [];
+    group.push(frame);
+    groups.set(key, group);
   }
-  return folded;
+  return [...groups.values()].map((group) => {
+    const latest = group.reduce((a, b) => {
+      const av = versionOf(a);
+      const bv = versionOf(b);
+      return typeof av === "number" && typeof bv === "number" && av > bv ? a : b;
+    });
+    return { latest, superseded: group.filter((f) => f !== latest) };
+  });
 }
+
+/** Superseded, not yet handed out: no delivery marks are written by folding. */
+export const foldedGraph = (frames: readonly Frame[]): Set<Frame> =>
+  new Set(graphFolds(frames).flatMap((g) => g.superseded));
