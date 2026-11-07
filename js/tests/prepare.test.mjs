@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 
 import { PREPARE } from "../delivery/words/prepare.ts";
+import { RITES } from "../delivery/words/rites.ts";
 import { coverBlock } from "../shared/coverblock.ts";
 import { REPO } from "./built.mjs";
 import { BRIDGE, NODE } from "./status-kit.mjs";
@@ -142,8 +143,43 @@ test("отказ guard: свойства кода → AGENTS.md, смысл ко
     "английский текст hooks.md — слова prepare",
   );
   const surfaces = read(REPO, "skills/iskronify/references/harness-surfaces.md");
-  assert.match(surfaces, /свойства кода[^;]*→ AGENTS\.md/);
+  const refusal = /const REFUSAL =\s*([\s\S]*?);\n/.exec(surfaces)?.[1];
+  assert.ok(refusal, "образец OpenCode содержит REFUSAL");
+  const text = [...refusal.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => JSON.parse(`"${m[1]}"`))
+    .join("");
+  assert.equal(text, PREPARE.ru.guard(...slots), "REFUSAL OpenCode — слова prepare точно");
   assert.doesNotMatch(surfaces, /факты о коде|стабе-запрете/);
+});
+
+test("ручные legacy-конверты несут нынешние RU слова, не обещая установки SessionStart", () => {
+  const hooks = read(REPO, "skills/iskronify/references/hooks.md");
+  const surfaces = read(REPO, "skills/iskronify/references/harness-surfaces.md");
+  const start = PREPARE.ru.start({
+    graph: "<Граф>",
+    holon: "<Фокус-контур>",
+    role: "<Роль агента>",
+  });
+  const envelope = JSON.parse([...hooks.matchAll(/```json\n([\s\S]*?)```/g)][0][1]);
+  const command = envelope.hooks.SessionStart[0].hooks[0].command;
+  const output = JSON.parse(/^echo '(.*)'$/.exec(command)[1]);
+  assert.equal(output.hookSpecificOutput.hookEventName, "SessionStart");
+  assert.equal(output.hookSpecificOutput.additionalContext, start);
+  const startExpr = /const START =\s*([\s\S]*?);\n/.exec(surfaces)[1];
+  const text = [...startExpr.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => JSON.parse(`"${m[1]}"`))
+    .join("");
+  assert.equal(text, start);
+  for (const [event, expected] of [
+    ["pushed", RITES.ru.push()],
+    ["merged", RITES.ru.merge()],
+  ]) {
+    const literal = new RegExp(`${event} && ("[^"\\n]*")`).exec(surfaces)?.[1];
+    assert.ok(literal, event);
+    assert.equal(JSON.parse(literal), expected, event);
+  }
+  assert.match(start, /двери iskron/, "маркер собственного старта сохранён");
+  assert.match(hooks, /`prepare` их не устанавливает/);
 });
 
 test("чужие записи хуков и прочие ключи settings.json остаются", () => {

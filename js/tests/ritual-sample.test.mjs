@@ -15,6 +15,7 @@ import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { PREPARE } from "../delivery/words/prepare.ts";
 import { REPO } from "./built.mjs";
 import { memoryPath, ritualSample, settle, standServer, toolCall } from "./opencode-stand.mjs";
 
@@ -140,11 +141,7 @@ for (const md of sources) {
     s.sessions.set("mine", { dir: s.own });
     await assert.rejects(
       p.call("execute.before", toolCall("write", "mine", { path: memoryPath, content: "x" })),
-      (e) =>
-        !/@<?handle>?\/mind/.test(String(e?.message)) &&
-        ["<Граф>", "<Раздел персистентности>", "личная память через minding"].every((slot) =>
-          String(e?.message).includes(slot),
-        ),
+      { message: PREPARE.ru.guard("<Граф>", "<Раздел персистентности>") },
     );
     await s.stop();
   });

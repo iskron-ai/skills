@@ -100,6 +100,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // Each half under its own try: a failed one takes neither the other nor the plugin's load.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
+  let cancelContext = nothing;
   // The session's word on its turn goes to the bridge of its own seat (pulse.ts, #7529).
   const pulse = createPulseFeed({
     bridgeOf: (s) => half.bridgeOf(s),
@@ -122,7 +123,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       say,
       freshestRoot,
       parents,
-      () => sweepAll(),
+      () => {
+        cancelContext();
+        sweepAll();
+      },
       { ended: (s) => half.ended(s), launcherOf: (s) => half.launcherOf(s) },
       (s, inbox, _delivery, text) => {
         pulse.prompted(s, inbox);
@@ -192,6 +196,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
   const hookContext = createHookContext(closed);
+  cancelContext = () => hookContext.sweep();
   try {
     await rites.wire();
     await turns.wire();
@@ -388,6 +393,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // A child holding a seat under a stopped session (the stop on disk, halts.ts) — another instance's,
   // another server's, or before a reload — goes down as by its own 4001: its turn cut, its seat taken off.
   async function sweep(): Promise<void> {
+    hookContext.sweep();
     for (const s of half.children()) {
       if (!parents.has(s)) await rootOf(s); // the parent chain of a child this instance has not walked yet
       if (ch?.halt(s)) half.halt(s);
