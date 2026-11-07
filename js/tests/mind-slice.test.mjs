@@ -72,6 +72,14 @@ test("iskron_stand: a full page with an unparsed row — the foot names the next
   assert.equal(sliceIn(text).split("\n").at(-1), W.foot(true, 100));
 });
 
+test("iskron_stand: a full page of unparsed rows only — no rule here, the foot names the next page", async (t) => {
+  const page = rules(100).map((r) => ({
+    row: `  📌 Отпущенное (#${r.seq}, phenomenon, Pt/At/Vs, v2) · отпущено`,
+  }));
+  const { text } = await stood(t, { rules: page });
+  assert.equal(sliceIn(text), `${W.empty()}\n${W.foot(true, 100)}`);
+});
+
 test("iskron_stand: no own mind — one line, mind is not read", async (t) => {
   const { fake, text } = await stood(t, { missing: true });
   assert.equal(sliceIn(text), W.absent());

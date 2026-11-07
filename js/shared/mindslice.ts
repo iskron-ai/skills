@@ -51,7 +51,7 @@ export async function mindSlice(call: MindCall): Promise<string> {
       const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
       return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
     });
-    if (!rows.length) return W.empty();
+    if (!rows.length) return listed >= LIMIT ? `${W.empty()}\n${W.foot(true, LIMIT)}` : W.empty();
     return [W.head(rows.length), ...rows, W.foot(listed >= LIMIT, LIMIT)].join("\n");
   } catch (e) {
     return W.unread(brief((e as Error).message));
