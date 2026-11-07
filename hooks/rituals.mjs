@@ -180,8 +180,8 @@ var PREPARE = {
 
 Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
 `,
-    start: ({ graph, holon, role }) => `Прочти раздел «Старт» двери iskron до действий и закончи его готовностью, не чтением. Адреса — обложка iskron: в AGENTS.md: граф ${graph}${holon ? `, фокус-контур #${holon}` : ""}${role ? `, роль агента #${role}` : ""}. Стояние — на вахту или перед первой записью в граф или дело, одним iskron_stand; читающая сессия места не занимает. start <граф> <роль> <дело №N> — вход в это дело; субагент встаёт своим мостом-спутником (iskron_stand с satellite_of) и на мосту позвавшего в граф не пишет.`,
-    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память агента запрещена целиком, по директории (AGENTS.md${section ? `, «${section}»` : ""}). Маршрутизируй факт: конвенции, ритуалы, команды и свойства кода репо → AGENTS.md; ловушки → их дом по «Раскладке» (GOTCHAS.md либо граф); смысл кода (решения, основания), состояние проекта, серверы и датированные долги → граф ${graph}; факт пользователя вне проекта, включая факты машины → личная память через minding. Директорию держит замороженной этот memory-guard.`,
+    start: ({ graph, holon, role }) => `До действий исполни «Старт» двери iskron до готовности. Обложка AGENTS.md: граф ${graph}${holon ? `, контур #${holon}` : ""}${role ? `, роль #${role}` : ""}. Своё место повторно не занимай; субагент пишет только своим мостом-спутником.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память запрещена целиком (AGENTS.md${section ? `, «${section}»` : ""}). Правила/команды/свойства кода репо → AGENTS.md; ловушки → дом по «Раскладке»; смысл кода и состояние проекта → граф ${graph}; личное вне проекта, включая факты машины → minding. Полный маршрут — в AGENTS.md; директорию памяти не меняй.`,
     left: (item, keys) => ({
       "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
       "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
@@ -237,9 +237,9 @@ var cite = (heads) => heads.filter(Boolean).map((h) => `«${h}»`).join(", ");
 var RITES = {
   ru: {
     lifecycle: () => "Жизненный цикл сессии",
-    push: (check) => `[iskron] пуш — не отгрузка: самопроверка диффа, словарный проход по тексту PR; ревью — раз на готовую пачку (AGENTS.md${check ? `, «${check}» и раздел о ревью` : ""}). Отгрузка — мерж.`,
-    merge: (holon, ...heads) => `[iskron] мерж — акты после мержа AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: протки ${holon ? `контур #${holon}` : "контур"}, продвинь карту, модусы по свидетельству, закрой по оси, reconcile, словарный проход; фидбэк-рефлексия — если её велит AGENTS.md; работа по ссылке от агента — только семя превращения и модусы поставки.`,
-    early: (graph) => `[iskron] обложка AGENTS.md называет граф ${graph}, контура и роли агента в ней ещё нет — продолжи онбординг: ветвь «Первый граф» скилла iskronify, с недостающего шага; номеров контура и роли не выдумывай.`
+    push: (check) => `[iskron] пуш — не отгрузка. Исполни самопроверку и правила ревью/PR по AGENTS.md${check ? `, «${check}»` : ""}.`,
+    merge: (holon, ...heads) => `[iskron] мерж: исполни акты после мержа по AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}${holon ? `; контур #${holon}` : ""}.`,
+    early: (graph) => `[iskron] граф ${graph}; контура и роли нет. Продолжи iskronify, «Первый граф», с недостающего шага; номера не выдумывай.`
   },
   en: {
     lifecycle: () => "Session lifecycle",
@@ -343,7 +343,7 @@ var ROOM = {
 // js/delivery/words/stalebatch.ts
 var STALE = {
   ru: {
-    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? ` — принятые, пока место не слушали, или повтор службы после пересборки сессии; адресованные месту — текстом, прочие — счётом; целиком — по строкам дел ниже, не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
+    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? `; адресованные месту — текстом, прочие — счётом. Целиком — по строкам дел; не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
   },
   en: {
     head: (count, shown, legacy = false) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + (legacy ? ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` : ".")
@@ -361,7 +361,7 @@ var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
 // js/delivery/words/turn.ts
 var TURN = {
   ru: {
-    wake: () => `${FRAME_MARK} человека в консоли нет — вопрос карточкой ask в деле, отчёт — словом в дело или каналом на его место (${tool("case")} ask/say, ${tool("channel")} send). Сказать некому и нечего — ход кончен, текста не нужно.`,
+    wake: () => `${FRAME_MARK} человека в консоли нет: вопрос — ${tool("case")} ask в деле; отчёт — say в деле или ${tool("channel")} send на его место. Нечего передать — ход кончен, без текста.`,
     notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`
   },
   en: {
@@ -384,7 +384,7 @@ var WATCHDOG = {
     listeningCodex: (key, thread) => `слушаю стояние ${key}; кадры кладу в тред ${thread}`,
     backfilled: (count) => ` (${count} задним числом)`,
     frames: ruFrames,
-    noHeld: () => "мост не держит ни одного стояния — назовись одним вызовом iskron_stand(realm, karta, model): его ответ назовёт команду слушания",
+    noHeld: () => "мост без места: iskron_stand(realm, karta, model); команда слушания — в ответе",
     severalHeld: (held) => `мост держит несколько стояний — назови нужное: ${held}`,
     bridgeLetGo: () => "мост отпустил стояние или ушёл — сессия кончилась?",
     seatNotBack: (s, path) => `место не вернулось за ${s}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
@@ -397,8 +397,8 @@ var WATCHDOG = {
     aliveNote: () => "ДЕЛАТЕЛЬ: сокет рвут, а служба отвечает — мост держит место",
     codexLost: () => "Искрон: стояние потеряно — назовись заново: iskron_stand",
     codexAlive: () => "Искрон: сокет рвут, а служба отвечает — мост держит место",
-    noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай этого сторожа из оболочки сессии Codex: там Codex кладёт id треда в окружение",
-    noDoor: (path) => `ДЕЛАТЕЛЬ: двери нет (${path}) — этот тред не под демоном app-server. Это ход ЧЕЛОВЕКА до запуска сессии, не твой: демон и сессия Codex должны стартовать с одним коротким CODEX_HOME (рецепт в SETUP, раздел Codex). Скажи ему это; пока двери нет — слушай watchdog-exit`,
+    noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай сторожа из оболочки сессии Codex",
+    noDoor: (path) => `ДЕЛАТЕЛЬ: двери нет (${path}). Скажи человеку: ход ЧЕЛОВЕКА — запустить демон app-server и сессию с одним коротким CODEX_HOME (SETUP, Codex). Пока слушай watchdog-exit`,
     threadRefused: (why) => `ДЕЛАТЕЛЬ: тред не принял кадр — ${why}`,
     refusal: () => "отказ",
     framePut: (thread) => `кадр вложен в тред ${thread}`,

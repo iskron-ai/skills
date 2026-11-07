@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.34.1](https://github.com/iskron-ai/skills/compare/v7.34.0...v7.34.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* separate hook context from user input and shorten service words ([#691](https://github.com/iskron-ai/skills/issues/691)) ([d52efe9](https://github.com/iskron-ai/skills/commit/d52efe99638e2f54ea22d3bf4ba078709065a3d2))
+
 ## [7.34.0](https://github.com/iskron-ai/skills/compare/v7.33.0...v7.34.0) (2026-11-06)
 
 

@@ -38,6 +38,10 @@ export function createHookContext(closed: (session: string) => boolean) {
   const allowed = (s: string): boolean => !stopped && !forgotten.has(s) && !closed(s);
 
   return {
+    sweep(): void {
+      // A failed compaction drops the generation but keeps direct words and prepared IDs.
+      for (const s of preparedIDs.keys()) if (closed(s)) clear(s);
+    },
     prepare(s: string, message: string) {
       if (allowed(s)) {
         const ids = preparedIDs.get(s) ?? new Set<string>();
