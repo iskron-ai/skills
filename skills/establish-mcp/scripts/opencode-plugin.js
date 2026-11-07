@@ -6067,6 +6067,9 @@ function createHookContext(closed) {
   };
   const allowed = (s) => !stopped && !forgotten.has(s) && !closed(s);
   return {
+    sweep() {
+      for (const s of preparedIDs.keys()) if (closed(s)) clear(s);
+    },
     prepare(s, message) {
       if (allowed(s)) {
         const ids2 = preparedIDs.get(s) ?? /* @__PURE__ */ new Set();
@@ -7626,6 +7629,7 @@ async function setup(ctx) {
   let onChannel = () => {
   };
   let ch = null;
+  let cancelContext = nothing;
   const pulse = createPulseFeed({
     bridgeOf: (s) => half.bridgeOf(s),
     overflow: (s, n2) => say(W5.pulseOverflow(s, n2), "warning")
@@ -7642,7 +7646,10 @@ async function setup(ctx) {
       say,
       freshestRoot,
       parents,
-      () => sweepAll(),
+      () => {
+        cancelContext();
+        sweepAll();
+      },
       { ended: (s) => half.ended(s), launcherOf: (s) => half.launcherOf(s) },
       (s, inbox, _delivery, text2) => {
         pulse.prompted(s, inbox);
@@ -7696,6 +7703,7 @@ async function setup(ctx) {
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
   const hookContext = createHookContext(closed);
+  cancelContext = () => hookContext.sweep();
   try {
     await rites.wire();
     await turns.wire();
@@ -7868,6 +7876,7 @@ async function setup(ctx) {
     }
   })();
   async function sweep() {
+    hookContext.sweep();
     for (const s of half.children()) {
       if (!parents.has(s)) await rootOf(s);
       if (ch?.halt(s)) half.halt(s);
