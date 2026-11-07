@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.34.2](https://github.com/iskron-ai/skills/compare/v7.34.1...v7.34.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* deliver role questions in the next context without interruption ([#693](https://github.com/iskron-ai/skills/issues/693)) ([62477c1](https://github.com/iskron-ai/skills/commit/62477c11e1d1623d39abf0bed70704783f3d362f))
+
 ## [7.34.1](https://github.com/iskron-ai/skills/compare/v7.34.0...v7.34.1) (2026-11-07)
 
 
