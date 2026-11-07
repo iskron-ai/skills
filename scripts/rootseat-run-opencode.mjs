@@ -180,14 +180,23 @@ try {
     assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");
     console.log(JSON.stringify({ verdict: "PASS", mode: `realign-${realign}${negative ? "-negative" : ""}`, session: session.id, afterTool: r.afterTool, end: r.end, requests: wire.length, paidPosts: 0 }, null, 2));
   } else {
-    await api("POST", `/api/session/${session.id}/prompt`, { text: "ROOTSEAT_WIRE_PROBE: reply OK only.", resume: true });
+    const input = "  ROOTSEAT_WIRE_PROBE: reply OK only. 🙂\r\n\tEND  ";
+    await api("POST", `/api/session/${session.id}/prompt`, { text: input, resume: true });
     for (let i = 0; i < 120 && !wire.some((w) => w.body.tools?.length); i++) await sleep(250);
     const first = wire.find((w) => w.body.tools?.length);
     assert.ok(first, `no primary provider request; ${join(out, "serve.log")}`);
+    const wireUser = first.body.messages.filter((m) => m.role === "user");
+    const strings = (x) => typeof x === "string" ? [x] : Array.isArray(x) ? x.flatMap(strings) : x && typeof x === "object" ? Object.values(x).flatMap(strings) : [];
+    assert.ok(strings(wireUser).includes(input), "first HTTP user part preserves exact input bytes");
+    const history = await api("GET", `/api/session/${session.id}/context`);
+    writeFileSync(join(out, "first-history.json"), JSON.stringify(history, null, 2));
+    assert.equal(history.find((m) => m.type === "user")?.text, input, "persisted human input is byte-for-byte unchanged");
+    assert.equal(history.filter((m) => m.type === "user").length, 1, "no added service message in history");
+    assert.equal(wire.filter((w) => w.body.tools?.length).length, 1, "no added primary model step");
     assert.equal(first.seats.length, seats ? 1 : 0, JSON.stringify(first));
     assert.deepEqual(heldBy(auth, session.id), first.seats, "the root's own bridge holds it");
     if (seats) {
-      const text = JSON.stringify(first.body.messages.filter((m) => m.role === "user"));
+      const text = JSON.stringify(first.body.messages.filter((m) => m.role === "system"));
       assert.ok(text.includes(first.seats[0]), "model request names the seat");
       assert.ok(!text.includes("граф не сличён"), "fresh rN is resolved by the bridge");
       if (legacy) {
@@ -201,7 +210,7 @@ try {
       const stop = readdirSync(auth).filter((name) => name.startsWith("opencode-stopped.")).map((name) => JSON.parse(readFileSync(join(auth, name), "utf8"))).find((r) => r.session === session.id);
       assert.ok(stop?.id && !stop.lifted, "the disk stop is not lifted (read disk, not the driver's registry)");
     }
-    const userText = JSON.stringify(first.body.messages.filter((m) => m.role === "user"));
+    const userText = JSON.stringify(first.body.messages.filter((m) => m.role === "system"));
     const invitation = ONBOARD_START.ru.start();
     if (invites) {
       assert.ok(userText.includes(invitation), "the first real provider request contains onboarding");
@@ -218,8 +227,8 @@ try {
       const later = () => wire.find((w) => w.body.tools?.length && JSON.stringify(w.body.messages).includes("ONBOARD_SECOND_PROMPT_PROBE"));
       for (let i = 0; i < 120 && !later(); i++) await sleep(250);
       assert.ok(later(), "second primary request observed");
-      const said = JSON.stringify(later().body.messages.filter((m) => m.role === "user")).split(invitation).length - 1;
-      assert.equal(said, invites ? 1 : 0, "the history keeps the first invitation, the second prompt adds none");
+      const said = JSON.stringify(later().body.messages).split(invitation).length - 1;
+      assert.equal(said, 0, "one-shot context is not persisted in history or repeated on the next turn");
       secondPrompt = { invitations: said };
     }
     assert.equal(fake.state.writes.length, 0, "the script did not write to the graph");

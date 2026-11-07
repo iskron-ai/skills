@@ -9,7 +9,7 @@ export interface OnboardStartWords {
 export const ONBOARD_START: Readonly<Record<Lang, OnboardStartWords>> = {
   ru: {
     start: () =>
-      "Этот репозиторий ещё не выровнен под агента — предложи человеку скилл onboarding (ветвь iskronify «Первый граф»); его запрос это не задерживает.",
+      "Репо не выровнен: предложи человеку onboarding (iskronify, «Первый граф»); его запрос это не задерживает.",
   },
   en: {
     start: () =>

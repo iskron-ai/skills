@@ -29,7 +29,7 @@ import {
 test("(a) без фронтматтера — слово выравнивания, не «словом человека»; места нет", T, async (t) => {
   const { s, oc } = await aligning(t);
   const r = await oc.turn("root", "привет");
-  assert.ok(r.prompt.includes(ALIGN) && r.prompt.includes("iskronify"), look(oc, r));
+  assert.ok(r.system.includes(ALIGN) && r.system.includes("iskronify"), look(oc, r));
   assert.ok(!r.told.includes(HUMAN), look(oc, r));
   assert.ok(!stood(r.told), `не готовность: ложного «встал» нет\n${look(oc, r)}`);
   await sleep(500);
@@ -58,7 +58,7 @@ for (const [tool, input] of [
       assert.equal(connects(s), 1, `ровно одна посадка\n${look(oc)}`);
       assert.equal(oc.wordsTo("root").filter(stood).length, 1, look(oc));
       const next = await oc.turn("root", "дальше");
-      assert.ok(!stood(next.prompt) && !next.prompt.includes(ALIGN), look(oc, next));
+      assert.ok(!stood(next.system) && !next.system.includes(ALIGN), look(oc, next));
       assert.equal(connects(s), 1);
     },
   );
@@ -69,7 +69,7 @@ test("(c) обложка записана, следующее событие —
   writeAgents(project);
   const r = await oc.turn("root", "готово");
   assert.equal(r.atRequest.seats.length, 1, look(oc, r));
-  assert.ok(r.prompt.includes(SEATED), look(oc, r));
+  assert.ok(r.system.includes(SEATED), look(oc, r));
   await oc.toolAfter("root", "write", {});
   await sleep(800);
   assert.equal(connects(s), 1, `ровно одна посадка\n${look(oc, r)}`);
@@ -85,7 +85,7 @@ test("(d) после правки граф неоднозначен — поса
   await until(() => oc.wordsTo("root").some((w) => w.includes(why)), "точное слово", 5_000);
   await oc.toolAfter("root", "edit", {});
   const r = await oc.turn("root", "ещё");
-  assert.ok(!r.prompt.includes(why), `причина не повторяется\n${look(oc, r)}`);
+  assert.ok(!r.system.includes(why), `причина не повторяется\n${look(oc, r)}`);
   assert.equal(oc.wordsTo("root").filter((w) => w.includes(why)).length, 1, look(oc, r));
   await sleep(500);
   assert.equal(connects(s), 0);
@@ -198,13 +198,13 @@ test(
     const { s, project, oc } = await aligning(t, { agents: false });
     const r = await oc.turn("root", "привет");
     assert.ok(
-      r.prompt.includes(ROOT_SEAT.ru.realign(ROOT_SEAT.ru.noFile("AGENTS.md"), "AGENTS.md")),
+      r.system.includes(ROOT_SEAT.ru.realign(ROOT_SEAT.ru.noFile("AGENTS.md"), "AGENTS.md")),
       look(oc, r),
     );
-    assert.ok(!r.prompt.includes(ONBOARD_START.ru.start()), look(oc, r));
+    assert.ok(!r.told.includes(ONBOARD_START.ru.start()), look(oc, r));
     writeAgents(project);
     const next = await oc.turn("root", "готово");
-    assert.ok(next.prompt.includes(SEATED), look(oc, next));
+    assert.ok(next.system.includes(SEATED), look(oc, next));
     assert.equal(connects(s), 1);
   },
 );

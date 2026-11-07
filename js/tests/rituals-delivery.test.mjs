@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { PREPARE, REPO_SIGNS } from "../delivery/index.ts";
+import { repoSigns } from "../shared/reposigns.ts";
 import {
   bash,
   COVER,
@@ -22,6 +24,30 @@ import {
   shellCall,
   start,
 } from "./rites-kit.mjs";
+
+test("the start word remains a repository start-hook marker in both languages", () => {
+  for (const lang of ["ru", "en"]) {
+    const word = PREPARE[lang].start({ graph: "r5", holon: "34", role: "931" });
+    assert.match(word, REPO_SIGNS.startMark);
+    const settings = {
+      hooks: {
+        SessionStart: [
+          {
+            matcher: "startup",
+            hooks: [{ type: "command", command: `echo ${JSON.stringify(word)}` }],
+          },
+        ],
+      },
+    };
+    const bare = repo({ agents: null, settings });
+    assert.equal(repoSigns(bare, "claude-code").hooks["claude-code"], true);
+    assert.equal(
+      start(repo({ settings })),
+      null,
+      "the built delivery hook does not duplicate the repository's word",
+    );
+  }
+});
 
 test("hooks.json: the rituals entry on start (not compact) and after Bash", () => {
   assert.deepEqual(
@@ -38,7 +64,7 @@ test("claude code: the start word by the cover, once per start, none after a com
   const dir = repo();
   const said = start(dir);
   assert.equal(said?.hookEventName, "SessionStart");
-  for (const s of ["r7", "#12", "#34", "iskron_stand"])
+  for (const s of ["r7", "#12", "#34", "«Старт» двери iskron до готовности", "мостом-спутником"])
     assert.ok(said.additionalContext.includes(s), s);
   assert.equal(start(dir, "compact"), null);
   assert.equal(start(repo({ agents: "# no cover\n" })), null);
@@ -48,9 +74,9 @@ test("claude code: push and merge by outcome, the holon in the merge word", () =
   const dir = repo();
   const push = bash(dir, "git push origin HEAD", PUSHED);
   assert.match(push.additionalContext, /пуш — не отгрузка/);
-  assert.doesNotMatch(push.additionalContext, /мерж —/);
+  assert.doesNotMatch(push.additionalContext, /мерж:/);
   const merge = bash(dir, "gh pr merge 12 --squash");
-  assert.match(merge.additionalContext, /мерж — .*контур #12/);
+  assert.match(merge.additionalContext, /мерж: .*контур #12/);
   assert.equal(bash(dir, "gh pr merge --help", "Usage: gh pr merge"), null);
   assert.equal(bash(repo({ agents: "# x\n" }), "git push origin HEAD", PUSHED), null);
 });
@@ -69,13 +95,13 @@ test("claude code: a push to the trunk says the merge word (#8362), a branch's p
     ["git push origin feat/x:main", ""],
   ]) {
     const said = bash(dir, command, out)?.additionalContext ?? "";
-    assert.match(said, /мерж — .*контур #12/, `${command} | ${out}`);
+    assert.match(said, /мерж: .*контур #12/, `${command} | ${out}`);
     assert.doesNotMatch(said, /пуш — не отгрузка/, `${command} | ${out}`);
   }
   for (const command of ["git push origin feat/x", "git push origin main:feat/x"]) {
     const said = bash(dir, command, "")?.additionalContext ?? "";
     assert.match(said, /пуш — не отгрузка/, command);
-    assert.doesNotMatch(said, /мерж —/, command);
+    assert.doesNotMatch(said, /мерж:/, command);
   }
   const branch = bash(dir, "git push", PUSHED)?.additionalContext ?? "";
   assert.match(branch, /пуш — не отгрузка/, "git's report names the branch it went to");
@@ -98,7 +124,7 @@ function onTrunk() {
 test("claude code: a quiet push to the trunk says the merge word (#8362)", () => {
   const said =
     bash(onTrunk(), "git push -q origin main 2>&1 | tail -1", "")?.additionalContext ?? "";
-  assert.match(said, /мерж — .*контур #12/);
+  assert.match(said, /мерж: .*контур #12/);
   assert.doesNotMatch(said, /пуш — не отгрузка/);
 });
 
@@ -109,7 +135,7 @@ test("claude code: a quiet push that exited non-zero says nothing (#6919)", () =
     assert.equal(bash(dir, cmd, "", 1), null, cmd);
   assert.match(
     bash(dir, "git push -q origin main | tail", "", 1)?.additionalContext ?? "",
-    /мерж —/,
+    /мерж:/,
   );
 });
 
@@ -135,16 +161,16 @@ const FENCED = `${COVER}\n\`\`\`md\n## Самопроверка этапа\n## �
 test("claude code: the words cite the repository's own sections, none it lacks (#9351)", () => {
   const headed = repo({ agents: HEADED });
   const push = bash(headed, "git push origin HEAD", PUSHED).additionalContext;
-  assert.match(push, /\(AGENTS\.md, «Самопроверка этапа» и раздел о ревью\)/);
+  assert.match(push, /самопроверку и правила ревью\/PR по AGENTS\.md, «Самопроверка этапа»/);
   const merge = bash(headed, "gh pr merge 12 --squash").additionalContext;
-  assert.match(merge, /акты после мержа AGENTS\.md \(«Мерж → граф»\):/);
+  assert.match(merge, /акты после мержа по AGENTS\.md \(«Мерж → граф»\)/);
   for (const bare of [repo(), repo({ agents: FENCED })]) {
     assert.match(
       bash(bare, "git push origin HEAD", PUSHED).additionalContext,
-      /PR; ревью — раз на готовую пачку \(AGENTS\.md\)\./,
+      /самопроверку и правила ревью\/PR по AGENTS\.md\./,
     );
     const m = bash(bare, "gh pr merge 12 --squash").additionalContext;
-    assert.match(m, /акты после мержа AGENTS\.md: протки/);
+    assert.match(m, /акты после мержа по AGENTS\.md; контур #12/);
     assert.doesNotMatch(m, /«/);
   }
 });
@@ -155,16 +181,16 @@ const TRUNKED = `${COVER}\n## Жизненный цикл сессии\n\n## П�
 test("a push to the trunk cites the trunk push section, the merge sections otherwise (#9351)", async () => {
   const dir = repo({ agents: TRUNKED });
   const trunk = bash(dir, "git push origin main", "")?.additionalContext ?? "";
-  assert.match(trunk, /акты после мержа AGENTS\.md \(«Пуш в main → граф»\):/);
+  assert.match(trunk, /акты после мержа по AGENTS\.md \(«Пуш в main → граф»\)/);
   const merge = bash(dir, "gh pr merge 3")?.additionalContext ?? "";
-  assert.match(merge, /AGENTS\.md \(«Жизненный цикл сессии»\):/, "a merge keeps the merge's");
+  assert.match(merge, /AGENTS\.md \(«Жизненный цикл сессии»\)/, "a merge keeps the merge's");
   const headed = bash(repo({ agents: HEADED }), "git push origin main", "")?.additionalContext;
-  assert.match(headed ?? "", /AGENTS\.md \(«Мерж → граф»\):/, "no trunk section: the merge's");
+  assert.match(headed ?? "", /AGENTS\.md \(«Мерж → граф»\)/, "no trunk section: the merge's");
   const { rec, run } = await opencode(repo({ agents: TRUNKED }));
   try {
     const p = shellCall("t1-trunked", "git push origin main", "");
     await run("execute.after", p);
-    assert.match(String(p.result.content), /AGENTS\.md \(«Пуш в main → граф»\):/);
+    assert.match(String(p.result.content), /AGENTS\.md \(«Пуш в main → граф»\)/);
   } finally {
     await rec.stop();
   }
@@ -175,10 +201,10 @@ test("opencode: the words and the guard cite the repository's own sections, none
     [
       HEADED,
       /«Самопроверка этапа»/,
-      /AGENTS\.md \(«Мерж → граф»\):/,
+      /AGENTS\.md \(«Мерж → граф»\)/,
       /\(AGENTS\.md, «Правила персистентности»\)/,
     ],
-    [COVER, /пачку \(AGENTS\.md\)\./, /AGENTS\.md: протки/, /по директории \(AGENTS\.md\)\./],
+    [COVER, /ревью\/PR по AGENTS\.md\./, /акты после мержа по AGENTS\.md;/, /\(AGENTS\.md\)/],
   ]) {
     const { rec, run } = await opencode(repo({ agents }));
     const id = (n) => `s${n}-${agents.length}`; // a call id is told once per process
@@ -261,13 +287,13 @@ test("opencode: push and merge words after a shell call, once per call id", asyn
     assert.match(String(p.result.content), /пуш — не отгрузка/);
     const m = shellCall("c2", "gh pr merge 5 --squash", "");
     await run("execute.after", m);
-    assert.match(String(m.result.content), /мерж — .*#12/);
+    assert.match(String(m.result.content), /мерж: .*#12/);
     const again = shellCall("c2", "gh pr merge 5 --squash", "");
     await run("execute.after", again);
     assert.equal(again.result.content, "", "the same call is told once");
     const trunk = shellCall("c4", "git push origin main", "");
     await run("execute.after", trunk);
-    assert.match(String(trunk.result.content), /мерж — .*#12/, "a push to the trunk (#8362)");
+    assert.match(String(trunk.result.content), /мерж: .*#12/, "a push to the trunk (#8362)");
     assert.doesNotMatch(String(trunk.result.content), /пуш — не отгрузка/);
   } finally {
     await rec.stop();

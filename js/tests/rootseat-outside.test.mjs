@@ -20,8 +20,8 @@ test("(m) вне git, дефектный AGENTS.md — «не посажена»
   const { s, project, oc } = await aligning(t, { repo: "none" });
   const r = await oc.turn("root", "привет");
   const word = ROOT_SEAT.ru.notSeated(ROOT_SEAT.ru.noFrontmatter("AGENTS.md"));
-  assert.ok(r.prompt.includes(word), look(oc, r));
-  assert.ok(!r.prompt.includes(ALIGN) && !r.prompt.includes("iskronify"), look(oc, r));
+  assert.ok(r.system.includes(word), look(oc, r));
+  assert.ok(!r.told.includes(ALIGN) && !r.told.includes("iskronify"), look(oc, r));
   writeAgents(project);
   await oc.toolAfter("root", "write", {});
   const next = await oc.turn("root", "ещё");
@@ -35,7 +35,7 @@ test("(n) вне git, верная обложка — первичная авт�
   const { s, project, oc } = await aligning(t, { repo: "none", agents: false });
   writeAgents(project); // before the root's first prompt
   const r = await oc.turn("root", "привет");
-  assert.ok(r.prompt.includes(SEATED), look(oc, r));
+  assert.ok(r.system.includes(SEATED), look(oc, r));
   assert.equal(heldBy(s.dir, "root").length, 1);
   assert.equal(connects(s), 1);
 });

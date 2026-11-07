@@ -16,7 +16,7 @@ export const BACKLOG: Readonly<Record<Lang, BacklogWords>> = {
       (expected ? ` (ожидало в очереди: ${expected})` : "") +
       (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") +
       "." +
-      (direct ? ` Прямых слов ${direct} — не здесь: каждое пришло отдельно и целиком.` : ""),
+      (direct ? ` Прямых слов ${direct} — отдельно, целиком.` : ""),
   },
   en: {
     head: (count, expected, shown, direct) =>

@@ -42,7 +42,10 @@ for (const mode of ["cover", "fresh-repo", "outside", "halted"]) {
         assert.ok(text.includes(seated), text);
         assert.ok(!text.includes(invitation), text);
       } else {
-        assert.equal(text, mode === "fresh-repo" ? `hello\n${invitation}` : "hello");
+        if (mode === "halted") {
+          assert.match(text, /ONBOARD_OWNER_STOP/);
+          assert.ok(!text.includes(invitation));
+        } else assert.equal(text, mode === "fresh-repo" ? `hello\n${invitation}` : "hello");
         assert.ok(Date.now() - started < 1500, "no cover must not wait for the 3s seating window");
         assert.equal(s.fake.state.counts.connect, 0, "no seating without cover");
       }
@@ -51,7 +54,9 @@ for (const mode of ["cover", "fresh-repo", "outside", "halted"]) {
         0,
         "the signs are local: no call to the graph",
       );
-      assert.equal(await oc.promptOnly(sid, "second"), "second");
+      const second = await oc.promptOnly(sid, "second");
+      if (mode === "halted") assert.match(second, /ONBOARD_OWNER_STOP/);
+      else assert.equal(second, "second");
       assert.equal(s.fake.state.writes.length, 0);
       await sleep(20);
       assert.ok(

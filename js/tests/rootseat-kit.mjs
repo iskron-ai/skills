@@ -12,6 +12,7 @@
 // до setup экземпляра: кит его просто не шлёт (create(..., {emit: false})).
 //
 // Предел: порядок хуков взят из типов SDK, не наблюдён на живом OpenCode; провайдер — не сеть.
+import assert from "node:assert/strict";
 import {
   copyFileSync,
   mkdtempSync,
@@ -232,9 +233,17 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
   return {
     interrupts,
     async promptOnly(sessionID, text) {
-      const p = { sessionID, prompt: { text }, delivery: "queue" };
+      const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
-      return p.prompt.text;
+      assert.equal(p.prompt.text, text, "persisted prompt is unchanged");
+      const req = {
+        sessionID,
+        system: [],
+        messages: [{ id: p.messageID, role: "user", content: text }],
+      };
+      for (const cb of hooks.context ?? []) await cb(req);
+      const system = req.system.map((p) => p.text).join("\n");
+      return system ? `${text}\n${system}` : text;
     },
     tools: () => tools.list,
     /** Тул сессии отработал (модель записала файл write или shell): хуки tool.execute.after. */
@@ -290,13 +299,14 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       const t0 = Date.now();
       const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
+      assert.equal(p.prompt.text, text, "persisted prompt is unchanged");
       const model = { id: "m1", providerID: "p" };
       const req = {
         sessionID,
         agent: "build",
         model,
         system: [],
-        messages: [{ role: "user", content: p.prompt.text }],
+        messages: [{ id: p.messageID, role: "user", content: p.prompt.text }],
         options: {},
         tools: {},
       };

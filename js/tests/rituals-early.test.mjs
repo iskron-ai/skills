@@ -15,7 +15,7 @@ const RU = `${COVER}\n## Жизненный цикл сессии\n- прави�
 test("claude code: a cover with only the graph — the early word, on to the onboarding", () => {
   const said = start(repo({ agents: EARLY }))?.additionalContext ?? "";
   assert.match(said, /r7/);
-  assert.match(said, /«Первый граф» скилла iskronify/);
+  assert.match(said, /iskronify, «Первый граф», с недостающего шага/);
   assert.doesNotMatch(said, /iskron_stand/, "not the full start word");
   assert.equal(start(repo({ agents: EARLY }), "compact"), null);
   const own = {
@@ -29,7 +29,7 @@ test("opencode: a cover with only the graph — the early word on the root's fir
   try {
     const first = await rec.prompt("root", "hello");
     assert.match(first, /r7/);
-    assert.match(first, /«Первый граф» скилла iskronify/);
+    assert.match(first, /iskronify, «Первый граф», с недостающего шага/);
   } finally {
     await rec.stop();
   }
@@ -40,7 +40,10 @@ test("claude code: an English AGENTS.md on a Russian server hears English words"
   assert.match(start(dir)?.additionalContext ?? "", /^Read the Start section/);
   assert.match(bash(dir, "git push origin HEAD", PUSHED)?.additionalContext ?? "", /push ships/);
   assert.match(bash(dir, "gh pr merge 3")?.additionalContext ?? "", /«Session lifecycle»/);
-  assert.match(start(repo({ agents: RU }))?.additionalContext ?? "", /^Прочти раздел/);
+  assert.match(
+    start(repo({ agents: RU }))?.additionalContext ?? "",
+    /^До действий исполни «Старт» двери iskron/,
+  );
 });
 
 test("opencode: an English AGENTS.md on a Russian server hears English words", async () => {
@@ -60,9 +63,14 @@ test("opencode: an English AGENTS.md on a Russian server hears English words", a
   }
 });
 
-test("the merge word asks for feedback reflection only where AGENTS.md calls for it", async () => {
+test("the merge word delegates the post-merge duties to AGENTS.md, including its feedback policy", async () => {
   const said = bash(repo(), "gh pr merge 3")?.additionalContext ?? "";
-  assert.match(said, /фидбэк-рефлексия — если её велит AGENTS\.md/);
+  assert.match(said, /исполни акты после мержа по AGENTS\.md/);
+  assert.doesNotMatch(
+    said,
+    /фидбэк-рефлексия/,
+    "the short word does not invent a policy outside AGENTS.md",
+  );
   const { rec, run } = await opencode(repo({ agents: EN }));
   try {
     const m = shellCall("f1", "gh pr merge 6 --squash", "");

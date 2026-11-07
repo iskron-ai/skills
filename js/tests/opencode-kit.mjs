@@ -98,6 +98,8 @@ function fakeCtx({
   let wake = null;
   const stderr = [];
   let calls = 0;
+  let messageSeq = 0;
+  const admitted = new Map();
   const ctx = {
     app,
     ...(location ? { location } : {}),
@@ -230,15 +232,35 @@ function fakeCtx({
       for (const cb of hooks["permission.evaluate"] ?? []) await cb(e);
       return e.effect;
     },
-    /** A prompt into a session through its "prompt" hooks; returns what the model would read. */
-    promptRaw: async (sessionID, text) => {
-      const p = { sessionID, messageID: "m", prompt: { text }, delivery: "queue" };
+    /** Persisted human input, before the model's separate system context. */
+    messages: (sessionID) => [...(admitted.get(sessionID) ?? [])],
+    promptRaw: async (sessionID, text, { metadata, messageID = `msg-${++messageSeq}` } = {}) => {
+      const p = { sessionID, messageID, prompt: { text }, metadata, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
+      admitted.set(sessionID, [
+        ...(admitted.get(sessionID) ?? []),
+        {
+          id: messageID,
+          role: "user",
+          content: [{ type: "text", text: p.prompt.text }],
+          metadata: p.metadata ?? {},
+        },
+      ]);
       return p.prompt.text;
     },
-    /** The same, the delivery's mark on riding counts (#6815 item 3) taken off. */
+    async context(sessionID, hook = "context", messages = this.messages(sessionID)) {
+      const req = { sessionID, system: [], messages };
+      for (const cb of hooks[hook] ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    },
+    /** A model's view of this input and separate system; always verify the stored input. */
     async prompt(sessionID, text) {
-      return (await this.promptRaw(sessionID, text)).replace(`\n\n${FRAME_MARK} `, "\n\n");
+      const stored = await this.promptRaw(sessionID, text);
+      if (stored !== text) throw new Error("prompt hook changed the human's input");
+      const system = await this.context(sessionID);
+      // Preserve the readable separation used by the count assertions; this is not stored text.
+      const gap = system.startsWith(`${FRAME_MARK} `) ? "\n\n" : "\n";
+      return system ? `${stored}${gap}${system.replace(`${FRAME_MARK} `, "")}` : stored;
     },
     emit: (ev) => {
       queue.push(ev);

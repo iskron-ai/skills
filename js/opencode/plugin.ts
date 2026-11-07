@@ -14,13 +14,13 @@ import type { Plugin } from "@opencode/plugin";
 import { LOGGERS, OPENCODE, PLUGIN, PRODUCT } from "../delivery/index.ts";
 import { markFrame } from "../shared/frame-text.ts";
 import { words } from "../shared/lang.ts";
-import { withWord } from "../shared/launch.ts";
 import { authDir } from "./bridge-io.ts";
 import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { createCompaction } from "./compaction.ts";
 import { idleHalf } from "./half.ts";
 import { createHalts } from "./halts.ts";
+import { createHookContext } from "./hook-context.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { createKeepAlive, keepaliveTitle } from "./keepalive.ts";
 import { teller } from "./leaddoors.ts";
@@ -191,6 +191,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     closed,
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
+  const hookContext = createHookContext(closed);
   try {
     await rites.wire();
     await turns.wire();
@@ -202,16 +203,16 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   try {
     await ctx.session.hook("prompt", async (p) => {
       const sid = String(p.sessionID);
+      const prepared = hookContext.prepare(sid, String(p.messageID));
+      prepared.put(commands.word(sid, p.metadata));
       turns.prompt(sid, p.prompt.text);
       const root = (await rootOf(sid)) === sid;
       const word = await half.launch(sid, p.prompt.text);
-      if (word) p.prompt.text = withWord(p.prompt.text, word);
+      prepared.put(word);
       const rite = root && !closed(sid) ? await rites.word(sid) : null;
-      if (rite) p.prompt.text = withWord(p.prompt.text, rite);
-      for (const w of root ? await started(sid) : []) p.prompt.text = withWord(p.prompt.text, w);
-      // Counts of records that woke no turn ride the prompt that starts one (#6574); the root's only into the root.
-      const counts = root ? ch?.ride(sid) : null;
-      if (counts) p.prompt.text = `${p.prompt.text}\n\n${markFrame(counts)}`;
+      prepared.put(rite);
+      for (const w of root ? await started(sid) : []) prepared.put(w);
+      if (root) prepared.ride();
     });
   } catch (e) {
     say(W.launchDown((e as Error).message), "error");
@@ -229,8 +230,18 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     for (const hook of ["context", "compaction"] as const)
       await ctx.session.hook(hook, (req) => {
         annotate(req, (s) => half.leadOf(s));
-        if (hook === "compaction") compaction.instruct(req);
-        else compaction.tell(req);
+        if (hook === "compaction") {
+          hookContext.compact(String(req.sessionID));
+          compaction.instruct(req);
+        } else compaction.tell(req);
+        if (hook === "context") {
+          const sid = String(req.sessionID);
+          const ready = hookContext.take(sid, req.messages);
+          for (const text of ready.words) req.system.push({ type: "text", text });
+          // Counts wake no turn; take them only when their own root actually requests a model.
+          const counts = ready.ride ? ch?.ride(sid) : null;
+          if (counts) req.system.push({ type: "text", text: markFrame(counts) });
+        }
         const stop = hook === "context" ? ch?.stopWord(String(req.sessionID)) : null;
         if (stop) req.system.push({ type: "text", text: stop });
       });
@@ -238,7 +249,12 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say(W.noticeDown((e as Error).message), "error");
   }
 
-  let commands: Awaited<ReturnType<typeof setupCommands>> = { refresh: async () => {} };
+  let commands: Awaited<ReturnType<typeof setupCommands>> = {
+    refresh: async () => {},
+    word: () => null,
+    forget: nothing,
+    stop: nothing,
+  };
   try {
     commands = await setupCommands(ctx, say);
   } catch (e) {
@@ -283,8 +299,13 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         compaction.onEvent(ev);
         turns.onEvent(ev);
         switch (ev?.type) {
+          case "session.compaction.failed":
+            if (id) hookContext.failed(id);
+            break;
           case "session.deleted":
             if (!id) break;
+            hookContext.forget(id);
+            commands.forget(id);
             pulse.forget(id);
             turns.forget(id);
             compaction.forget(id);
@@ -325,6 +346,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
                 ? { directory: loc.directory, workspace: loc.workspaceID ?? null }
                 : null;
             if (!id) break;
+            hookContext.moved(id);
+            commands.forget(id);
             half.moved(id, to);
             // A wait for the old folder's cover ends with the move, and comes back with the session.
             rootSeats.moved(
@@ -387,6 +410,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
 
   // The stop waits for the subagents' bridges to pause (children.ts): a reload is not their end.
   return async () => {
+    hookContext.stop();
+    commands.stop();
     rootSeats.stop();
     clearInterval(sweeper);
     twins.leave();

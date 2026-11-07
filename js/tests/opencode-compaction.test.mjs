@@ -70,21 +70,22 @@ test("a seated session: the first request after the compaction carries one word 
     await holds(rec, events, pids[0], "k-c");
     assert.equal(words(await system(rec, "context", "s-c")), 0, "no compaction — no word");
     const order = await system(rec, "compaction", "s-c");
-    assert.match(order, /сводка этого сжатия обязана сохранить роль агента #931/, order);
+    assert.match(order, /сохрани в сводке роль #931/, order);
     assert.match(order, /host\.repo\.opus-5/);
-    assert.match(order, /живые дела/);
-    assert.match(order, /перечитать дверь/);
+    assert.match(order, /номера живых дел, ожидания/);
+    assert.match(order, /наказ на первый ход: загрузить iskron и названные им скиллы роли/);
     assert.equal(words(order), 0, "the compaction request itself gets no role word");
     // The compaction request may be retried (an unfilled template): still one word.
     await system(rec, "compaction", "s-c");
     rec.emit(compactionEvent("session.compaction.ended", "s-c", "evt-1", 10));
     const first = await system(rec, "context", "s-c");
     assert.equal(words(first), 1, first);
-    assert.match(first, /роль #931 в графе @nks\/nks-dev, место host\.repo\.opus-5/);
-    assert.match(first, /До первого содержательного хода загрузи дверь/);
+    assert.match(first, /Роль #931, граф @nks\/nks-dev, место host\.repo\.opus-5/);
+    assert.match(first, /держит мост — заново не занимай/);
+    assert.match(first, /До работы загрузи iskron и названные им скиллы роли/);
     assert.match(
       first,
-      /Сводка — указатель, не запись.*recall/,
+      /факты-основания сводки перечитай в графе через recall/,
       "the summary is not a source: recall",
     );
     assert.equal(

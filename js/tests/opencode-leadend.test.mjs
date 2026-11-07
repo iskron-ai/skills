@@ -114,7 +114,7 @@ function turn(rec, text, sessionID = "child") {
   rec.emit({ type: "session.execution.succeeded", data: { sessionID } });
 }
 
-const ends = (rec) => rec.synthetics.filter((s) => /КОНЧЕН/.test(s.text));
+const ends = (rec) => rec.synthetics.filter((s) => / КОНЧЕН —/.test(s.text));
 const turnWords = (rec) => rec.synthetics.filter((s) => /сдал ход, не поручение/.test(s.text));
 const callsIn = (file) =>
   readFileSync(file, "utf8")

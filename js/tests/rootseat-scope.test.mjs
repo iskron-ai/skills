@@ -49,7 +49,7 @@ async function subdirQuiet(t, { aligned }) {
   const next = await oc.turn("sub", "ещё");
   await sleep(800);
   assert.equal(connects(s), 0, `ожидания нет — посадки нет\n${look(oc, next)}`);
-  assert.ok(!stood(next.prompt) && !oc.wordsTo("sub").some(stood), look(oc, next));
+  assert.ok(!stood(next.system) && !oc.wordsTo("sub").some(stood), look(oc, next));
 }
 
 test("(s1) подкаталог выровненного репо — ни слова выравнивания, ни ожидания", T, (t) =>
@@ -69,7 +69,7 @@ test(
     symlinkSync(project, link);
     oc.create("via", { directory: link });
     const r = await oc.turn("via", "привет");
-    assert.ok(r.prompt.includes(ALIGN), look(oc, r));
+    assert.ok(r.system.includes(ALIGN), look(oc, r));
   },
 );
 
@@ -78,7 +78,7 @@ async function movedAway(t) {
   const x = await aligning(t);
   const { s, project, oc } = x;
   const r = await oc.turn("root", "выровняй");
-  assert.ok(r.prompt.includes(ALIGN), look(oc, r));
+  assert.ok(r.system.includes(ALIGN), look(oc, r));
   const other = scratch(t);
   writeAgents(other); // the new folder has a valid cover: a retry reading it would seat
   oc.move("root", other);
@@ -109,7 +109,7 @@ test(
     await sleep(800);
     assert.equal(connects(s), 1, `ровно одна посадка\n${look(oc, next)}`);
     assert.equal(oc.wordsTo("root").filter(stood).length, 1, look(oc, next));
-    assert.ok(!stood(next.prompt), look(oc, next));
+    assert.ok(!stood(next.system), look(oc, next));
   },
 );
 
@@ -166,7 +166,7 @@ test(
   T,
   async (t) => {
     const { s, project, oc } = await aligning(t);
-    assert.ok((await oc.turn("root", "выровняй")).prompt.includes(ALIGN), look(oc));
+    assert.ok((await oc.turn("root", "выровняй")).system.includes(ALIGN), look(oc));
     oc.create("kid", { parentID: "root" });
     await sleep(200);
     const other = scratch(t);
@@ -220,7 +220,7 @@ test("(s5) тул сессии B не сажает ждущую A; A садит�
   writeRaw(repoB, "# B\n");
   oc.create("B", { directory: repoB });
   for (const id of ["root", "B"])
-    assert.ok((await oc.turn(id, "выровняй")).prompt.includes(ALIGN), look(oc));
+    assert.ok((await oc.turn(id, "выровняй")).system.includes(ALIGN), look(oc));
   writeAgents(project);
   const t0 = Date.now();
   await oc.toolAfter("B", "write", {});
@@ -230,7 +230,7 @@ test("(s5) тул сессии B не сажает ждущую A; A садит�
   assert.ok(!oc.wordsTo("root").some(stood), look(oc));
   assert.ok(held < 1000, `ход B не держится: ${held} мс`);
   const a = await oc.turn("root", "готово");
-  assert.ok(a.prompt.includes(SEATED), look(oc, a));
+  assert.ok(a.system.includes(SEATED), look(oc, a));
   await until(() => heldBy(s.dir, "root").length === 1, "A встала своим промптом", 10_000);
   assert.equal(connects(s), 1);
 });

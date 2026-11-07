@@ -14,7 +14,7 @@ export interface TurnWords {
 export const TURN: Readonly<Record<Lang, TurnWords>> = {
   ru: {
     wake: () =>
-      `${FRAME_MARK} человека в консоли нет — вопрос карточкой ask в деле, отчёт — словом в дело или каналом на его место (${tool("case")} ask/say, ${tool("channel")} send). Сказать некому и нечего — ход кончен, текста не нужно.`,
+      `${FRAME_MARK} человека в консоли нет: вопрос — ${tool("case")} ask в деле; отчёт — say в деле или ${tool("channel")} send на его место. Нечего передать — ход кончен, без текста.`,
     notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`,
   },
   en: {

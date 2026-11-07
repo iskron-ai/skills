@@ -53,8 +53,8 @@ async function stage(t, cover = COVER) {
   return { ...s, project };
 }
 
-/** Начало слова «встал» — его не должно быть там, где места нет. */
-const SEATED = ROOT_SEAT.ru.seated("\0", "\0", "\0", "\0").split("\0")[0];
+/** Отличительный фрагмент слова о занятом месте: общая голова «Искрон:» есть и у стопа. */
+const SEATED = ROOT_SEAT.ru.seated("\0", "\0", "\0", "\0").split("\0")[1];
 const board = (r, oc) =>
   `доска в миг запроса: ${JSON.stringify(r.atRequest)}\nсказано модели: ${r.told || "(ничего)"}\nstderr плагина:\n${oc.said()}`;
 const resetStops = () => {
@@ -116,7 +116,11 @@ test("round3 P3b: reading the seating stop does not interrupt a turn", T, async 
       () => {},
       () => {},
     ).stop("pure-gate", "stop");
-    assert.equal(await oc.promptOnly("pure-gate", "hello"), "hello");
+    assert.match(
+      await oc.promptOnly("pure-gate", "hello"),
+      /stop/,
+      "system retains the owner's stop",
+    );
     assert.equal(oc.interrupts.length, 0);
   } finally {
     await oc.stop();

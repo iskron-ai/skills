@@ -128,7 +128,7 @@ test("отказ guard: свойства кода → AGENTS.md, смысл ко
   for (const lang of ["ru", "en"]) {
     const w = PREPARE[lang].guard("r7");
     assert.doesNotMatch(w, /стаб|stub/i, lang);
-    assert.match(w, /memory-guard/, lang);
+    assert.match(w, lang === "ru" ? /директорию памяти не меняй/ : /memory-guard/, lang);
     assert.doesNotMatch(w, /'/, `${lang}: апостроф ломает echo '…' хука`);
   }
   const hooks = read(REPO, "skills/iskronify/references/hooks.md");

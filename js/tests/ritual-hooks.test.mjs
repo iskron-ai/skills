@@ -427,7 +427,11 @@ const refusal = (groups) => {
 };
 test("memory-guard (hooks.md): the refusal routes through the slots", () => {
   const said = refusal(templateGuard());
-  for (const slot of ["<Граф>", "<Раздел персистентности>", "личная память через minding"])
+  for (const slot of [
+    "<Граф>",
+    "<Раздел персистентности>",
+    "личное вне проекта, включая факты машины → minding",
+  ])
     assert.ok(said.includes(slot), `the refusal names ${slot}: ${said}`);
   assert.doesNotMatch(said, /@<?handle>?\/mind/, "no constructed personal address");
 });
@@ -442,7 +446,10 @@ test("memory-guard (settings): the refusal names this repo's graph and section",
     [...said.matchAll(/«([^»]+)»/g)].some((m) => headings.has(m[1])),
     `the refusal names a section of AGENTS.md as it is titled: ${said}`,
   );
-  assert.ok(said.includes("личная память через minding"), `personal route: ${said}`);
+  assert.ok(
+    said.includes("личное вне проекта, включая факты машины → minding"),
+    `personal route: ${said}`,
+  );
   assert.doesNotMatch(said, /@<?handle>?\/mind/, "no constructed personal address");
   assert.doesNotMatch(said, /<[^>\s]+>/, "no slot is left unfilled");
 });

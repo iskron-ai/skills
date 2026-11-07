@@ -1146,7 +1146,7 @@ test("a dead-token event complains loudly and names connect; mint is offered on 
         assert.match(rec.notices.at(-1).text, /4002 — место погасло по простою/);
         assert.match(rec.notices.at(-1).text, /iskron_stand тем же именем/);
       } else {
-        assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code} — токен мёртв`));
+        assert.match(rec.notices.at(-1).text, new RegExp(`закрыт кодом ${code}, токен мёртв`));
         // connect opens what is not there too; mint answers 409 once the channel
         // is back (the iskron_channel surface, graph nks-dev: #5189) — so never mint.
         assert.match(rec.notices.at(-1).text, /action="connect"/);
@@ -1636,11 +1636,11 @@ test("an eviction is loud: the bridge stands beside by itself, take=true by the 
     await delay(250);
     assert.equal(rec.messages.length, 1, "the eviction passed silently");
     assert.equal(rec.messages[0].opts.triggerTurn, true);
-    assert.match(rec.messages[0].msg.content, /место отняли/);
-    assert.match(rec.messages[0].msg.content, /Мост сам встаёт рядом на имя\.N со слухом/);
+    assert.match(rec.messages[0].msg.content, /место у другого/);
+    assert.match(rec.messages[0].msg.content, /Мост встаёт рядом на имя\.N со слухом/);
     assert.match(
       rec.messages[0].msg.content,
-      /Вытеснить ту сессию \(take=true\): только словом человека; место на доске — не свидетельство, что держатель жив: место умершего закроется примерно через минуту, если он держал его мостом машины с демоном, иначе — сроком платформы\./,
+      /take=true — только словом человека; восстановление — скилл standing\./,
     );
     assert.ok(!/токен мёртв/.test(rec.messages[0].msg.content), "an eviction is not a dead token");
   } finally {
