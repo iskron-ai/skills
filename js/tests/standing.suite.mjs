@@ -6305,6 +6305,63 @@ for (const graphFirst of [true, false]) {
   });
 }
 
+test("graph inbox contract: ring eviction and a repeated pending event still deliver its text once", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const original = graphPosed("original", 7);
+  original.body.vimarsha_name = "GRAPH_REPEATED_EVENT";
+  await sendRoom(fake, original);
+  // More than the public door's ring capacity: original remains only in RoomBatch.
+  for (let i = 0; i < 25; i++)
+    await sendRoom(fake, { type: "message", id: `ring-fill-${i}`, body: `filler ${i}` });
+  const replayed = { ...original, id: "replayed", body: { ...original.body } };
+  await sendRoom(fake, replayed);
+  const other = graphPosed("other-question", 8);
+  other.body.vimarsha_seq++;
+  other.body.vimarsha_name = "GRAPH_OTHER_QUESTION";
+  await sendRoom(fake, other);
+  const old = graphPosed("old-version", 9);
+  old.body.vimarsha_seq += 2;
+  old.body.vimarsha_name = "GRAPH_SUPERSEDED_VERSION";
+  await sendRoom(fake, old);
+  const latest = graphPosed("latest-version", 10);
+  Object.assign(latest.body, {
+    vimarsha_seq: old.body.vimarsha_seq,
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LATEST_VERSION",
+  });
+  await sendRoom(fake, latest);
+  const wd = runClient("watchdog", dir, key, 10000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the new watchdog arm");
+  await sendRoom(fake, { type: "message", id: "ring-barrier", body: "GRAPH_RING_BARRIER" });
+  await waitFor(() => wd.out.includes("GRAPH_RING_BARRIER"), "replay drained before barrier");
+  assert.equal(
+    (wd.out.match(/GRAPH_REPEATED_EVENT/g) ?? []).length,
+    1,
+    `a repeated pending event must survive ring eviction exactly once:\n${wd.out}`,
+  );
+  assert.match(wd.out, /GRAPH_OTHER_QUESTION/, "a different question is not folded away");
+  assert.match(wd.out, /GRAPH_LATEST_VERSION/);
+  assert.doesNotMatch(wd.out, /GRAPH_SUPERSEDED_VERSION/);
+  await waitSeen(standings, "ev:7");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  await sendRoom(fake, { ...replayed, id: "after-delivery" });
+  const again = runClient("watchdog", dir, key, 10000);
+  t.after(() => again.proc.kill("SIGKILL"));
+  await waitFor(() => again.out.includes("слушаю стояние"), "the subsequent watchdog arm");
+  await sendRoom(fake, { type: "message", id: "second-barrier", body: "GRAPH_SECOND_BARRIER" });
+  await waitFor(() => again.out.includes("GRAPH_SECOND_BARRIER"), "the next replay drained");
+  assert.doesNotMatch(
+    again.out,
+    /GRAPH_REPEATED_EVENT|GRAPH_OTHER_QUESTION|GRAPH_LATEST_VERSION|GRAPH_SUPERSEDED_VERSION/,
+    "delivered text and its superseded version do not return",
+  );
+  again.proc.kill("SIGKILL");
+  await again.done;
+});
+
 test("graph inbox contract: owner stop drops the bridge's pending soft batch", async (t) => {
   const { fake, dir, key, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");

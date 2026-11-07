@@ -10,14 +10,7 @@ import { type Frame } from "../shared/channel.ts";
 import { foldedGraph } from "../shared/graph-inbox.ts";
 import { words } from "../shared/lang.ts";
 import { bindScope } from "../shared/scope.ts";
-import {
-  deliveryKeys,
-  foldedTacts,
-  type Marks,
-  noteSeen,
-  seenIds,
-  splitBatch,
-} from "../shared/seen.ts";
+import { foldedTacts, type Marks, noteSeen, seenIds, splitBatch } from "../shared/seen.ts";
 import {
   keyFilePathOf,
   privateDirProblem,
@@ -236,8 +229,8 @@ export class Door {
         )
         .concat(this.roomBatch.takeGraph());
       const msgs = waiting.flatMap(({ frame }) => (frame?.type === "message" ? [frame] : []));
-      for (const f of foldedGraph(msgs))
-        for (const k of deliveryKeys(f)) noteSeen(this.seenPath, k, this.seen);
+      // Folding retires only the old frame id: the kept copy's event is not delivered yet.
+      for (const f of foldedGraph(msgs)) if (f.id) noteSeen(this.seenPath, String(f.id), this.seen);
       const kept = new Set<Frame | null>(splitBatch(msgs, Infinity, this.marks).kept);
       const backlog = waiting.filter(({ frame }) => frame?.type !== "message" || kept.has(frame));
       sock.write(
