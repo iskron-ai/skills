@@ -35,7 +35,10 @@ function line(): string | null {
     const W = words(COMPACTION);
     const seat = seatByDir(authDirFromEnv(), dir, "claude-code");
     // The hook stays offline: the human's rules come back by the stand answer (#9817).
-    if (seat) return W.back(seat.karta, seat.name, seat.realm) + W.restand(seat.karta, seat.realm);
+    if (seat)
+      return (
+        W.back(seat.karta, seat.name, seat.realm) + W.restand(seat.karta, seat.name, seat.realm)
+      );
     // No seat of this directory: the bare word only where the repository is aligned — elsewhere
     // the session has no graph work to return to, and the word would be noise.
     const { verdict } = repoSigns(dir, "claude-code");

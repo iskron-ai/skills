@@ -63,6 +63,15 @@ test("iskron_stand: the answer closes with the human's rules — personal mark, 
   ]);
 });
 
+// A full page holds rows the rule parser skips (a released node's form): the page is still full,
+// the foot still names the next page — the cut is the server's page, not the parsed rules.
+test("iskron_stand: a full page with an unparsed row — the foot names the next page", async (t) => {
+  const page = rules(100);
+  page[99] = { row: `  📌 Отпущенное правило (#129, phenomenon, Pt/At/Vs, v2) · отпущено` };
+  const { text } = await stood(t, { rules: page });
+  assert.equal(sliceIn(text).split("\n").at(-1), W.foot(true, 100));
+});
+
 test("iskron_stand: no own mind — one line, mind is not read", async (t) => {
   const { fake, text } = await stood(t, { missing: true });
   assert.equal(sliceIn(text), W.absent());

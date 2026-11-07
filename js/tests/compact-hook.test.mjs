@@ -82,7 +82,7 @@ test("compact hook: one seat for the directory — role, seat, door and recall",
   const out = ok(hook(s, "compact"));
   const word = (lang) =>
     COMPACTION[lang].back("7", "m3.skills", "@tester/work") +
-    COMPACTION[lang].restand("7", "@tester/work");
+    COMPACTION[lang].restand("7", "m3.skills", "@tester/work");
   assert.equal(out, `${word("ru")}\n`);
   assert.ok(out.includes("#7") && out.includes("m3.skills") && out.includes("recall"), out);
   assert.ok(!out.includes(ONBOARD_START.ru.start()), "no invitation after a compaction");
@@ -94,11 +94,15 @@ test("compact hook: one seat — the word asks for iskron_stand without take, th
   const s = lay(t);
   hold(s.auth, { name: "m3.skills", cwd: s.cwd, client: "claude-code" });
   const out = ok(hook(s, "compact"));
-  assert.match(out, /iskron_stand\(realm="@tester\/work", karta="#7"\) без take/);
+  // The seat's own name: without it the stand derives another name and the bridge refuses it.
+  assert.match(
+    out,
+    /iskron_stand\(realm="@tester\/work", karta="#7", name="m3\.skills"\) без take/,
+  );
   assert.match(out, /ответ несёт правила человека/);
   assert.match(
     ok(hook(s, "compact", "en")),
-    /iskron_stand\(realm="@tester\/work", karta="#7"\) without take/,
+    /iskron_stand\(realm="@tester\/work", karta="#7", name="m3\.skills"\) without take/,
   );
 });
 

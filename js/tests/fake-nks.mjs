@@ -2009,7 +2009,10 @@ export async function startFakeNks(opts = {}) {
             : rules.length
               ? `Найдено ${rules.length} узлов:\n` +
                 rules
-                  .map((r) => `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`)
+                  .map(
+                    (r) =>
+                      r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
+                  )
                   .join("\n") +
                 `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
               : "Ничего не найдено.";

@@ -20,6 +20,8 @@ export type MindCall = (
 ) => Promise<{ isError?: boolean; text: string }>;
 
 const LIMIT = 100;
+/** Any node row of the server's page, a rule or not: the page is full by these, not by parsed rules. */
+const NODE_ROW = /^\s+\S.* \(#\d+, /;
 const SLICE_ARGS = {
   realm: "mind",
   q: "",
@@ -44,12 +46,13 @@ export async function mindSlice(call: MindCall): Promise<string> {
     const got = await call(tool("search"), SLICE_ARGS);
     if (got.isError) return W.unread(brief(got.text));
     // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
+    const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
     const rows = got.text.split("\n").flatMap((l) => {
       const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
       return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
     });
     if (!rows.length) return W.empty();
-    return [W.head(rows.length), ...rows, W.foot(rows.length >= LIMIT, LIMIT)].join("\n");
+    return [W.head(rows.length), ...rows, W.foot(listed >= LIMIT, LIMIT)].join("\n");
   } catch (e) {
     return W.unread(brief((e as Error).message));
   }
