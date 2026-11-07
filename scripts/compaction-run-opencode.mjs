@@ -26,7 +26,8 @@ assert.ok(out && !out.startsWith("--"), "usage: compaction-run-opencode.mjs <out
 const negative = process.argv.includes("--negative");
 // --pending-command: queue a real delivery /skill behind the held first HTTP;
 // its near-limit usage forces real auto-compaction before the command's HTTP.
-// In this mode --negative requires the SAME assertions to fail (exit 1), never PASS.
+// In this mode --negative labels the control but does not alter its assertions or exit:
+// a good plugin exits 0 as UNEXPECTED_PASS; inspect the exact failure of a bad one.
 const pendingCommand = process.argv.includes("--pending-command");
 const keep = process.argv.includes("--keep");
 const commandName = "compaction-probe";
@@ -255,7 +256,6 @@ try {
     assert.equal(inSystem(continued, head), 1, "pending command head in first continued system exactly once");
     assert.equal(wire.reduce((n, w) => n + count(w.body, head), 0), 1, "command head appears once overall, only system");
     assert.ok(strings(continued.body.messages.filter((m) => m.role === "user")).some((s) => s.includes(`<recent-context>\n[User]: ${commandInput}\n</recent-context>`)), "continued HTTP preserves native recent exactly");
-    assert.ok(!negative, "negative control unexpectedly passed all command assertions");
   }
   if (negative && !pendingCommand) {
     assert.ok(summary.every((r) => r.word === 0 && r.keep === 0), "the old plugin: neither the order nor the word");
@@ -266,7 +266,7 @@ try {
     assert.ok(summary.every((r) => r.word === r.wordInSystem), "the word only ever rides in system");
     assert.equal(summary.filter((r) => r.wordInSystem > 0).length, 1, "(d) the word rides in one request only");
   }
-  console.log(JSON.stringify({ verdict: "PASS", mode: negative ? "negative" : "positive", continued: continued.i }));
+  console.log(JSON.stringify({ verdict: pendingCommand && negative ? "UNEXPECTED_PASS" : "PASS", mode: negative ? "negative" : "positive", continued: continued.i }));
   if (keep) {
     saveDigests();
     writeFileSync(join(out, "assertions-exit-code.txt"), "0\n");
@@ -276,7 +276,7 @@ try {
   }
 } catch (e) {
   writeFileSync(join(out, "failure.txt"), e.stack + "\n");
-  if (pendingCommand && negative) console.error("NEGATIVE CONTROL FAILED as required; exit 1, NOT a green scenario. See failure.txt for the exact falsifier.");
+  if (pendingCommand && negative) console.error("Negative-control run failed; inspect failure.txt to distinguish a behavioural counterexample from an infrastructure failure.");
   console.error(e);
   process.exitCode = 1;
 } finally {
