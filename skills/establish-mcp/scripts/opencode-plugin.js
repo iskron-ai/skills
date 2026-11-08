@@ -134,7 +134,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.35.3";
+var VERSION = "7.36.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
