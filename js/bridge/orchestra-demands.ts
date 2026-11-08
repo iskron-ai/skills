@@ -1,5 +1,6 @@
 // Read-only local demands (graph @nks/nks-dev, nodes #9957, #9958, #8202).
 import { object, startRow, stopRow } from "./demand-rows.ts";
+import { canonIn, realmIndexOf } from "./realmindex.ts";
 
 export interface Demands {
   schema_version: 1;
@@ -58,7 +59,26 @@ export async function readDemands(
     error("scope", "invalid_realm");
     return result;
   }
-  if (!realms.length || realms.some((r) => !r || !boundary.includes(r))) {
+  let canonicalBoundary = boundary;
+  if (realms.some((r) => !boundary.includes(r)) && boundary.some((r) => /^r\d+$/i.test(r.trim()))) {
+    if (!base || !token) {
+      error("connection", "unavailable");
+      return result;
+    }
+    try {
+      const index = realmIndexOf(items(await get(base, token, `/realms?limit=${LIMIT}`)));
+      canonicalBoundary = boundary.map((r) => {
+        if (!/^r\d+$/i.test(r.trim())) return r;
+        const canonical = canonIn(index, r);
+        if (!canonical) throw new Error("invalid_boundary");
+        return canonical;
+      });
+    } catch (e) {
+      error("scope", code(e));
+      return result;
+    }
+  }
+  if (!realms.length || realms.some((r) => !r || !canonicalBoundary.includes(r))) {
     error("scope", "outside_boundary");
     return result;
   }
