@@ -5,6 +5,18 @@ import { fixture } from "./demands-fixture.mjs";
 
 const empty = { body: { items: [] } };
 
+test("demands: a short graph alias in hold metadata cannot hide canonical stop orders", async () => {
+  const f = await fixture(() => empty, ["r5"]);
+  try {
+    const r = await f.read("r5");
+    assert.equal(r.code, 1);
+    assert.equal(JSON.parse(r.out).complete, false);
+    assert.equal(f.calls.length, 0, "aliases are refused before reading incomparable rows");
+  } finally {
+    await f.close();
+  }
+});
+
 test("demands: empty queues are complete only after both sources answered", async () => {
   const f = await fixture(() => empty);
   try {

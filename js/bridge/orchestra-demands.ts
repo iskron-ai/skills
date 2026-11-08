@@ -53,6 +53,11 @@ export async function readDemands(
     result.complete = false;
     result.errors.push({ source, ...(realm ? { realm } : {}), code: why });
   };
+  // Orders name canonical refs; aliases would silently drop their matching stop rows.
+  if (realms.some((r) => !/^@[^/\s]+\/[^/\s]+$/.test(r))) {
+    error("scope", "invalid_realm");
+    return result;
+  }
   if (!realms.length || realms.some((r) => !r || !boundary.includes(r))) {
     error("scope", "outside_boundary");
     return result;
