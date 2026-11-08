@@ -14,7 +14,7 @@ import { type ChannelEvent } from "../bridge/hold.ts";
 import { envName, LOGGERS, PLUGIN, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
-import { batchHead, batchLines, frameToText, markFrame } from "../shared/frame-text.ts";
+import { batchText, frameToText, markFrame } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { carryGraphReceipt, receiptGraph } from "../shared/graph-receipt.ts";
 import { words } from "../shared/lang.ts";
@@ -88,7 +88,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     pi.sendMessage(
       {
         customType: LOGGERS.channel,
-        content: markFrame([batchHead(got), ...batchLines(got)].join("\n")),
+        content: markFrame(batchText(got)),
         display: true,
         details: { count: got.map((f) => f.id ?? null) },
       },
@@ -109,7 +109,7 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     return {
       message: {
         customType: LOGGERS.channel,
-        content: markFrame([batchHead(out.kept), ...batchLines(out.kept)].join("\n")),
+        content: markFrame(batchText(out.kept)),
         display: true,
         details: { graphInbox: true, receipt: token },
       },

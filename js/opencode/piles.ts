@@ -2,7 +2,7 @@
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
-import { batchHead, batchLines } from "../shared/frame-text.ts";
+import { batchShown, batchText, caseKey, frameToText, underCounts } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { receiptGraph } from "../shared/graph-receipt.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -27,6 +27,15 @@ interface Riders {
   riders: Frame[];
   held: Frame[];
   marks: Set<string>;
+}
+
+/** Riding counts before a frame given as text; the frame stands under its case's count (#9654). */
+export function rideWith(got: Frame[], frame: Frame | null, raw: string): string {
+  const text = (withCase: boolean): string => frameToText(frame, raw, withCase);
+  if (!got.length || !frame)
+    return [...(got.length ? [batchText(got)] : []), text(true)].join("\n");
+  const own = !caseKey(frame) || addressedToMine(frame) ? [{ frame, text }] : [];
+  return underCounts([...got, frame], [...batchShown(got), ...own]).join("\n");
 }
 
 /** Pending graph text suppresses its counted case copy before either is handed out. */
@@ -62,7 +71,7 @@ export function handRiders<T extends Riders>(
   });
   const got = batches.flatMap((b) => b.out.kept);
   if (!got.length) return;
-  put([batchHead(got), ...batchLines(got)].join("\n"));
+  put(batchText(got));
   receiptGraph(got);
   for (const { p, preview, out } of batches) {
     p.riders = preview.riders;

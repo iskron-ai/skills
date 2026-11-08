@@ -2,9 +2,8 @@
 // it out, at that moment (seen.ts): the bridge notifying pi and OpenCode, the watchdog
 // printing or threading it. An event already in the turn is not repeated (eventIn).
 import { STALE } from "../delivery/index.ts";
-import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
-import { caseCountLines, frameToText } from "./frame-text.ts";
+import { textShown, underCounts } from "./frame-text.ts";
 import { words } from "./lang.ts";
 import { type Marks, splitBatch } from "./seen.ts";
 
@@ -20,15 +19,7 @@ export function staleBatch(all: readonly Frame[], has: Marks): { text: string; k
   const { shown: frames, kept, keys } = splitBatch(all, STALE_BURST_KEEP, has);
   const count = kept.length;
   if (!count) return { text: "", keys };
-  const bodies = [
-    ...caseCountLines(frames, count > frames.length),
-    ...frames
-      .filter((f) => addressedToMine(f))
-      .map((f) => {
-        const t = frameToText(f, JSON.stringify(f));
-        return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-      }),
-  ];
+  const bodies = underCounts(frames, textShown(frames, BODY_CAP), count > frames.length);
   const head = words(STALE).head(count, frames.length);
   return { text: `${head}\n\n${bodies.join("\n\n")}`, keys };
 }

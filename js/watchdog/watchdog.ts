@@ -8,10 +8,10 @@ import { writeSync } from "node:fs";
 import { envName } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
-import { batchLine, caseKey, frameToText } from "../shared/frame-text.ts";
+import { batchLine, caseKey, frameToText, type Shown } from "../shared/frame-text.ts";
 import { deliveryKeys, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
-import { adoptSeenPath, attach, heldHeads, resolveStanding, staleOf } from "./client.ts";
+import { adoptSeenPath, attach, heldText, resolveStanding, staleOf } from "./client.ts";
 import { RingReplay } from "./replay.ts";
 import { doer, wd } from "./words.ts";
 
@@ -109,7 +109,7 @@ export function runWatchdog(argv: string[]): void {
   let head = false; // the current batch's head waits for its first addressed line
   let fresh = false; // the current batch has a frame not delivered before
   let batch: Frame[] = []; // the current batch's frames, its count
-  const riders: Frame[][] = []; // count-only batches, as frames until printed (heldHeads)
+  const riders: Frame[][] = []; // count-only batches, as frames until printed (heldText)
   const riderMarks: (() => void)[] = []; // their marks, after printing
   const hold = (): void => {
     if (head) riders.push(batch);
@@ -117,17 +117,19 @@ export function runWatchdog(argv: string[]): void {
     head = false;
   };
   /** Lines and marks of the current batch's addressed lines, printed as a block on its last frame. */
-  let block: { lines: string[]; marks: (() => void)[]; carriers: Frame[] } = {
-    lines: [],
-    marks: [],
-    carriers: [],
-  };
-  /** Waiting heads and the current batch's head as lines before the addressed one, at print time; marks after. */
-  const take = (carriers: Frame[]): { lines: () => string[]; marks: (() => void)[] } => {
+  let block: { shown: Shown[]; marks: (() => void)[] } = { shown: [], marks: [] };
+  /**
+   * Waiting heads and the current batch's head as lines, the shown records under them, at
+   * print time; marks after. `apart` — a frame printed right after as its own event.
+   */
+  const take = (
+    shown: Shown[],
+    apart: Frame[] = [],
+  ): { lines: () => string[]; marks: (() => void)[] } => {
     const groups = [...riders.splice(0), ...(head ? [batch] : [])];
     head = false;
     return {
-      lines: () => heldHeads(groups, (k) => seen.has(k), carriers),
+      lines: () => heldText(groups, (k) => seen.has(k), shown, apart),
       marks: riderMarks.splice(0),
     };
   };
@@ -179,12 +181,12 @@ export function runWatchdog(argv: string[]): void {
             // A case batch goes as a per-case count in the head (#6574); a line only for
             // the addressed seat. A folded word not for me prints no line and is marked with
             // the run line that counts it (#6081); an unaddressed one with the head that
-            // counted it. The batch prints as one block on its last frame (client.ts heldHeads).
+            // counted it. The batch prints as one block on its last frame (client.ts heldText).
             if (ev.batch.at === 1) {
               cases.clear(); // a case's intro goes with its first line in the batch
               fresh = false;
               batch = [];
-              block = { lines: [], marks: [], carriers: [] };
+              block = { shown: [], marks: [] };
             }
             batch.push(f);
             if (!again) fresh = true;
@@ -199,30 +201,28 @@ export function runWatchdog(argv: string[]): void {
                 const first = !cases.has(caseKey(f));
                 cases.add(caseKey(f));
                 if (fromRing) ring.printed++;
-                block.lines.push(...wrapLines(batchLine(f, ev.batch.fold, first)));
+                const fold = ev.batch.fold;
+                const text = (w: boolean): string =>
+                  wrapLines(batchLine(f, fold, first, w)).join("\n");
+                block.shown.push({ frame: f, text });
                 block.marks.push(all);
-                block.carriers.push(f);
               }
             }
             if (ev.batch.at < ev.batch.of) break;
             // A batch of only delivered frames is a repeat: its head went already.
             if (!fresh) head = false;
-            if (!block.lines.length) {
+            if (!block.shown.length) {
               hold();
               break;
             }
-            const r = take(block.carriers);
-            const { lines, marks } = block;
-            out(
-              () => [...r.lines(), ...lines],
-              false,
-              () => [...r.marks, ...marks].forEach((m) => m()),
-            );
+            const r = take(block.shown);
+            const { marks } = block;
+            out(r.lines, false, () => [...r.marks, ...marks].forEach((m) => m()));
             break;
           }
           if (!again) {
             if (fromRing) ring.printed++;
-            const r = take([f]);
+            const r = take([], [f]);
             out(r.lines, false, () => r.marks.forEach((m) => m()));
             out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
           }
