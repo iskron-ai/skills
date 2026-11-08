@@ -11,7 +11,7 @@ export interface MindSliceWords {
   /** Хвост блока: где тело; cut — выдача упёрлась в limit, offset — следующая страница. */
   foot: (cut: boolean, offset: number) => string;
   empty: () => string;
-  /** Своего графа mind у учётки нет. */
+  /** Личная память не готова: readiness говорит personal_mind missing (нет графа или карты человека). */
   absent: () => string;
   /** Readiness не назвал признака своего графа: mind не читается. */
   unknown: () => string;
