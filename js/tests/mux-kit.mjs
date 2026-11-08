@@ -36,7 +36,7 @@ export const textOf = (r) => (r?.result?.content ?? []).map((c) => c.text ?? "")
 
 /** Клиент диспетчера без моста: кадры по типу, ожидание следующего. */
 export async function rawClient(url) {
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url, { headers: { "user-agent": "probe" } });
   const got = [];
   ws.onmessage = (e) => got.push(JSON.parse(String(e.data)));
   await new Promise((res, rej) => ((ws.onopen = res), (ws.onerror = rej)));

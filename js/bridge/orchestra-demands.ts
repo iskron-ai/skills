@@ -1,4 +1,5 @@
 // Read-only local demands (graph @nks/nks-dev, nodes #9957, #9958, #8202).
+import { namedFetch } from "../shared/http.ts";
 import { object, startRow, stopRow } from "./demand-rows.ts";
 
 export interface Demands {
@@ -14,7 +15,7 @@ export interface Demands {
 const LIMIT = 200;
 const MAX_PAGES = 50;
 async function get(base: string, token: string, path: string): Promise<Record<string, unknown>> {
-  const r = await fetch(`${base}${path}`, {
+  const r = await namedFetch(`${base}${path}`, {
     headers: { authorization: `Bearer ${token}` },
     redirect: "error",
     signal: AbortSignal.timeout(10_000),

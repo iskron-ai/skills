@@ -32,6 +32,10 @@ const DECLARED_ARGS =
   JSON.parse(readFileSync(new URL("../../fixtures/surface.json", import.meta.url), "utf8")).args ??
   {};
 
+// Имя моста в каждом его запросе (#9972): имя поставки и версия сборки (пробы
+// обновления штампуют копиям свою).
+const BRIDGE_AGENT = /^iskron-bridge\/\d+\.\d+\.\d+$/;
+
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
 const token = (p) => `${p}-${b64url(randomBytes(9))}`;
@@ -153,6 +157,9 @@ export async function startFakeNks(opts = {}) {
     initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
     // Закрытие сессии клиентом (спека MCP, DELETE с её id; #9174): каждый DELETE как пришёл.
     deletes: [],
+    // Кто спрашивал (#9972): метод, путь и user-agent каждого запроса и апгрейда, кроме
+    // /control пробы и /authorize — его открывает «человек», не мост.
+    agents: [],
     deleteStatus: null, // ответ на DELETE этим кодом, сессия не закрывается
     deleteHangMs: 0, // DELETE держится открытым столько — ответ позже срока клиента
     // faults the test switches on through /control
@@ -468,6 +475,8 @@ export async function startFakeNks(opts = {}) {
   const server = createServer(async (req, res) => {
     const u = new URL(req.url, base);
     const p = u.pathname;
+    if (p !== "/control" && p !== "/authorize")
+      st.agents.push({ method: req.method, path: p, ua: req.headers["user-agent"] ?? "" });
     if (st.requestHook?.(req, res, u)) return; // диспетчер каналов без апгрейда (fake-mux.mjs)
 
     // Службу спрашивают о версии, когда сокет рвут: отвечает — служба жива.
@@ -2164,6 +2173,7 @@ export async function startFakeNks(opts = {}) {
   // сторона моста ничего не шлёт, кроме ответов на закрытие.
   server.on("upgrade", (req, socket) => {
     const u = new URL(req.url, base);
+    st.agents.push({ method: "UPGRADE", path: u.pathname, ua: req.headers["user-agent"] ?? "" });
     if (st.upgradeHook?.(req, socket, u)) return; // диспетчер каналов (fake-mux.mjs)
     // Сервер без диспетчера отвечает на его адрес 404, как живой api (#8620): не рвёт апгрейд.
     if (u.pathname.endsWith("/channel/mux")) {
@@ -2292,12 +2302,27 @@ export async function startFakeNks(opts = {}) {
       ),
     // Открытый ws держит сервер живым: сперва рвём захваченные сокеты, иначе
     // close() ждёт их вечно, а с ним и проба.
-    stop: () => {
+    // Остановка — и проба #9972 на каждом пути каждого набора: запрос без имени моста
+    // роняет набор. Свои запросы проба метит user-agent "probe"; сцена со сборкой
+    // прошлого выпуска ставит state.anyAgent. Бросок — мимо цепочки stop: уборка пробы
+    // после stop (мосты, каталоги) идёт до конца, а не виснет.
+    stop: async () => {
       for (const s of [...st.ws, ...st.evicted]) s.destroy();
       st.ws.clear();
       st.evicted.clear();
       server.closeAllConnections?.();
-      return new Promise((r) => server.close(r));
+      await new Promise((r) => server.close(r));
+      const bare = st.anyAgent
+        ? []
+        : st.agents.filter((r) => !BRIDGE_AGENT.test(r.ua) && r.ua !== "probe");
+      if (!bare.length) return;
+      const err = new Error(
+        `requests without user-agent ${BRIDGE_AGENT} (#9972): ` +
+          bare.map((r) => `${r.method} ${r.path} [${r.ua}]`).join(", "),
+      );
+      setImmediate(() => {
+        throw err;
+      });
     },
   };
 }
