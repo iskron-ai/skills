@@ -82,12 +82,18 @@ const opencode = () =>
     () => "A",
   );
 
+const contextOf = (ch, session) => {
+  const system = [];
+  ch.ride(session, (text) => system.push(text));
+  return system.join("\n");
+};
+
 test("OpenCode: an inbox frame of another session leaves this session's case copy counted", async () => {
   const ch = opencode();
   ch.onEvent("A", frameEv(caseCopy()));
   ch.onEvent("B", frameEv(inbox()));
   await pause(300);
-  assert.match(ch.ride("A") ?? "", /записей 1/);
+  assert.match(contextOf(ch, "A"), /записей 1/);
 });
 
 for (const kind of ["backlog", "stale"])
@@ -97,7 +103,9 @@ for (const kind of ["backlog", "stale"])
     const frames = [inbox()];
     ch.onEvent("A", { data: { kind, text: "пачка", frames, marks: deliveryKeys(inbox()) } });
     await pause(300);
-    assert.equal(ch.ride("A"), null);
+    const context = contextOf(ch, "A");
+    assert.match(context, /5829/, "batch graph waits for next-turn context");
+    assert.doesNotMatch(context, /записей/, "room copy is not counted");
   });
 
 // Слово человека в деле входит текстом — и его событие тоже: копия инбокса того же
@@ -114,9 +122,16 @@ test("a case record that went in as text marks its event: the inbox copy of it i
 // «не вошло»: событие делатель уже прочёл, а шапка послала бы его в history за ним.
 const pastCut = (extra = {}) => [
   { ...inbox(), ...extra },
-  ...Array.from({ length: 19 }, (_, i) => ({ ...graphPosed(`o-${i}`, 100 + i), ...extra })),
+  ...Array.from({ length: 19 }, (_, i) => ({ ...otherQuestion(i), ...extra })),
   { ...caseCopy(), ...extra },
 ];
+
+// These are nineteen distinct questions, not nineteen superseded edits of one.
+function otherQuestion(i) {
+  const f = graphPosed(`o-${i}`, 100 + i);
+  f.body.vimarsha_seq += i + 1;
+  return f;
+}
 
 test("a wake-up batch does not count past its cut a case copy whose inbox copy it shows", () => {
   const b = new Backlog(none);
@@ -171,7 +186,7 @@ test("a wake-up batch shows twenty frames past the case copies it absorbs", () =
   b.open(0, (e) => (ev = e));
   b.note(inbox());
   b.note(caseCopy());
-  for (let i = 0; i < 19; i++) b.note(graphPosed(`o-${i}`, 100 + i));
+  for (let i = 0; i < 19; i++) b.note(otherQuestion(i));
   b.flushNow();
   assert.equal(ev.frames.length, 20);
   assert.match(ev.text, /Побудка: кадров 20\./, ev.text);
@@ -244,11 +259,18 @@ test("pi: a stale tact older than the one waiting for the busy turn does not rep
 
 test("pi: an inbox frame inside a backlog batch takes its case copy out of the aside", async () => {
   const sent = [];
-  const deliver = piChannel({ on: () => {}, sendMessage: (m) => sent.push(unmarked(m.content)) });
+  const on = new Map();
+  const deliver = piChannel({
+    on: (name, fn) => on.set(name, fn),
+    sendMessage: (m) => sent.push(unmarked(m.content)),
+  });
   deliver(frameEv(caseCopy()));
   deliver({
     data: { kind: "backlog", text: "пачка", frames: [inbox()], marks: deliveryKeys(inbox()) },
   });
   await pause(300);
-  assert.deepEqual(sent, ["пачка"]);
+  assert.deepEqual(sent, [], "graph batch does not start or interrupt a turn");
+  const next = await on.get("before_agent_start")();
+  assert.match(next.message.content, /5829/);
+  assert.doesNotMatch(next.message.content, /записей/, "no second count of the room copy");
 });

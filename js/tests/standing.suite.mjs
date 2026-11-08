@@ -15,6 +15,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -228,7 +229,9 @@ function runClient(
   extraEnv = {},
   flags = ["--auth-dir", dir, "--compact-counts"],
 ) {
-  const proc = spawn(NODE, [FILE, sub, ...(key ? [key] : []), ...flags], {
+  // Probe-only seam: keep the holder current while exercising an older watchdog binary.
+  const clientFile = process.env.ISKRON_WATCHDOG_PATH || FILE;
+  const proc = spawn(NODE, [clientFile, sub, ...(key ? [key] : []), ...flags], {
     env: { ...process.env, ...extraEnv },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -392,7 +395,7 @@ test("a frame the platform sends again is not printed twice", async (t) => {
 // back stale when the socket reopens (#5829). The doer hears the event once: a
 // second live copy, a stale copy, and a copy after the watchdog is re-armed are
 // all dropped; a stale re-send of a frame already delivered is not re-offered.
-// The frame as the platform emits a graph event: via=graph, an object body, a numeric event_id.
+// A non-inbox graph event: fanout itself stays live; posed_to has its own soft-path probes.
 const graphEvent = (id, eventId, reason, extra = {}) =>
   JSON.stringify({
     type: "message",
@@ -401,7 +404,7 @@ const graphEvent = (id, eventId, reason, extra = {}) =>
     provenance: { via: "graph" },
     body: {
       realm_slug: "nks-dev",
-      event_kind: "posed_to",
+      event_kind: "node.updated",
       vimarsha_seq: 5829,
       vimarsha_version: 1,
       event_id: eventId,
@@ -6246,9 +6249,361 @@ test("the exit watchdog leaving on a batch marks the counted records after its l
 // Today's production (api 0.86.0) sends no event_kind: every old room frame, whatever its
 // kind or stack, and every non-room frame reach a watchdog at once, as on main. Guards of
 // main's behaviour — green on main by design.
+test("graph inbox contract: bridge folds waiting question updates before the next watchdog arm", async (t) => {
+  const { fake, dir, key } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const first = graphPosed("g-old", 733305);
+  first.body.vimarsha_name = "GRAPH_OLD_VERSION";
+  const last = graphPosed("g-new", 733306);
+  Object.assign(last.body, {
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LAST_VERSION",
+    reason: "updated",
+  });
+  await sendRoom(fake, first);
+  await sendRoom(fake, last);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const wd = runClient("watchdog", dir, key, 8000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("GRAPH_LAST_VERSION"), "the latest pending question");
+  assert.doesNotMatch(
+    wd.out,
+    /GRAPH_OLD_VERSION/,
+    "superseded question must not enter the next turn",
+  );
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+});
+
+for (const graphFirst of [true, false]) {
+  test(`graph inbox contract: watchdog waits for rearm and deduplicates room, graph first=${graphFirst}`, async (t) => {
+    const { fake, dir, key, standings } = await connected(t, {
+      env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "300" },
+    });
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const busy = runClient("watchdog", dir, key, 8000);
+    t.after(() => busy.proc.kill("SIGKILL"));
+    await waitFor(() => busy.out.includes("слушаю стояние"), "the current watchdog");
+    const graph = graphPosed("g-soft", 733320);
+    const room = { ...progress(733320), event_id: 733320 };
+    for (const f of graphFirst ? [graph, room] : [room, graph]) await sendRoom(fake, f);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.doesNotMatch(busy.out, /5829|записей/, "no timer interrupts the current arm");
+    busy.proc.kill("SIGKILL");
+    await busy.done;
+    const next = runClient("watchdog", dir, key, 8000);
+    t.after(() => next.proc.kill("SIGKILL"));
+    await waitFor(() => next.out.includes("5829"), "the pending question at rearm");
+    assert.doesNotMatch(next.out, /записей/, "room copy adds no count");
+    await waitSeen(standings, "ev:733320");
+    next.proc.kill("SIGKILL");
+    await next.done;
+    const again = runClient("watchdog", dir, key, 8000);
+    t.after(() => again.proc.kill("SIGKILL"));
+    await waitFor(() => again.out.includes("слушаю стояние"), "the next arm");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.doesNotMatch(again.out, /5829|записей/, "read graph and room are not replayed");
+    again.proc.kill("SIGKILL");
+    await again.done;
+  });
+}
+
+test("graph inbox contract: ring eviction and a repeated pending event still deliver its text once", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const original = graphPosed("original", 7);
+  original.body.vimarsha_name = "GRAPH_REPEATED_EVENT";
+  await sendRoom(fake, original);
+  // More than the public door's ring capacity: original remains only in RoomBatch.
+  for (let i = 0; i < 25; i++)
+    await sendRoom(fake, { type: "message", id: `ring-fill-${i}`, body: `filler ${i}` });
+  const replayed = { ...original, id: "replayed", body: { ...original.body } };
+  await sendRoom(fake, replayed);
+  const other = graphPosed("other-question", 8);
+  other.body.vimarsha_seq++;
+  other.body.vimarsha_name = "GRAPH_OTHER_QUESTION";
+  await sendRoom(fake, other);
+  const old = graphPosed("old-version", 9);
+  old.body.vimarsha_seq += 2;
+  old.body.vimarsha_name = "GRAPH_SUPERSEDED_VERSION";
+  await sendRoom(fake, old);
+  const latest = graphPosed("latest-version", 10);
+  Object.assign(latest.body, {
+    vimarsha_seq: old.body.vimarsha_seq,
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LATEST_VERSION",
+  });
+  await sendRoom(fake, latest);
+  const wd = runClient("watchdog", dir, key, 10000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the new watchdog arm");
+  await sendRoom(fake, { type: "message", id: "ring-barrier", body: "GRAPH_RING_BARRIER" });
+  await waitFor(() => wd.out.includes("GRAPH_RING_BARRIER"), "replay drained before barrier");
+  assert.equal(
+    (wd.out.match(/GRAPH_REPEATED_EVENT/g) ?? []).length,
+    1,
+    `a repeated pending event must survive ring eviction exactly once:\n${wd.out}`,
+  );
+  assert.match(wd.out, /GRAPH_OTHER_QUESTION/, "a different question is not folded away");
+  assert.match(wd.out, /GRAPH_LATEST_VERSION/);
+  assert.doesNotMatch(wd.out, /GRAPH_SUPERSEDED_VERSION/);
+  await waitSeen(standings, "ev:7");
+  wd.proc.kill("SIGKILL");
+  await wd.done;
+  await sendRoom(fake, { ...replayed, id: "after-delivery" });
+  const again = runClient("watchdog", dir, key, 10000);
+  t.after(() => again.proc.kill("SIGKILL"));
+  await waitFor(() => again.out.includes("слушаю стояние"), "the subsequent watchdog arm");
+  await sendRoom(fake, { type: "message", id: "second-barrier", body: "GRAPH_SECOND_BARRIER" });
+  await waitFor(() => again.out.includes("GRAPH_SECOND_BARRIER"), "the next replay drained");
+  assert.doesNotMatch(
+    again.out,
+    /GRAPH_REPEATED_EVENT|GRAPH_OTHER_QUESTION|GRAPH_LATEST_VERSION|GRAPH_SUPERSEDED_VERSION/,
+    "delivered text and its superseded version do not return",
+  );
+  again.proc.kill("SIGKILL");
+  await again.done;
+});
+
+test("graph inbox contract: a delivered latest version retires older events across ring eviction", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const otherRealm = graphPosed("other-realm-event-12", 12);
+  Object.assign(otherRealm.body, { realm_slug: "other", vimarsha_name: "GRAPH_OTHER_REALM" });
+  const otherQuestion = graphPosed("other-question-event-13", 13);
+  otherQuestion.body.vimarsha_seq++;
+  otherQuestion.body.vimarsha_name = "GRAPH_OTHER_QUESTION";
+  await sendRoom(fake, otherRealm);
+  await sendRoom(fake, otherQuestion);
+  const old = graphPosed("old-event-9", 9);
+  old.body.vimarsha_name = "GRAPH_RETIRED_V1";
+  const latest = graphPosed("latest-event-10", 10);
+  Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "GRAPH_ACCEPTED_V2" });
+  await sendRoom(fake, old);
+  await sendRoom(fake, latest);
+  const first = runClient("watchdog", dir, key, 10000);
+  t.after(() => first.proc.kill("SIGKILL"));
+  await waitFor(() => first.out.includes("GRAPH_ACCEPTED_V2"), "latest version delivered");
+  assert.doesNotMatch(first.out, /GRAPH_RETIRED_V1/, "only the latest enters the turn");
+  assert.match(first.out, /GRAPH_OTHER_REALM/, "another graph is not superseded");
+  assert.match(first.out, /GRAPH_OTHER_QUESTION/, "another question is not superseded");
+  await waitSeen(standings, "ev:10");
+  first.proc.kill("SIGKILL");
+  await first.done;
+  for (let i = 0; i < 25; i++)
+    await sendRoom(fake, { type: "message", id: `retirement-fill-${i}`, body: `filler ${i}` });
+  await sendRoom(fake, { ...old, id: "replayed-old-event-9", body: { ...old.body } });
+  await sendRoom(fake, { ...latest, id: "replayed-latest-event-10", body: { ...latest.body } });
+  await sendRoom(fake, { ...otherRealm, id: "replayed-other-realm" });
+  await sendRoom(fake, { ...otherQuestion, id: "replayed-other-question" });
+  const next = runClient("watchdog", dir, key, 10000);
+  t.after(() => next.proc.kill("SIGKILL"));
+  await waitFor(() => next.out.includes("слушаю стояние"), "new watchdog arm after eviction");
+  await sendRoom(fake, { type: "message", id: "retirement-barrier", body: "RETIREMENT_BARRIER" });
+  await waitFor(() => next.out.includes("RETIREMENT_BARRIER"), "replay drained before barrier");
+  assert.equal(
+    (
+      next.out.match(
+        /GRAPH_RETIRED_V1|GRAPH_ACCEPTED_V2|GRAPH_OTHER_REALM|GRAPH_OTHER_QUESTION/g,
+      ) ?? []
+    ).length,
+    0,
+    `accepted latest must retire earlier events, not just their original frame ids:\n${next.out}`,
+  );
+  next.proc.kill("SIGKILL");
+  await next.done;
+});
+
+for (const delivered of [false, true]) {
+  test(`graph retirement socket: bridge restart with latest delivered=${delivered}`, async (t) => {
+    const { fake, dir, key, bridge, standings } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const old = graphPosed("restart-old", 9);
+    old.body.vimarsha_name = "RESTART_GRAPH_OLD";
+    const latest = graphPosed("restart-latest", 10);
+    Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "RESTART_GRAPH_LATEST" });
+    await sendRoom(fake, old);
+    await sendRoom(fake, latest);
+    await waitFor(
+      () =>
+        readdirSync(standings).some(
+          (f) =>
+            f.endsWith(".graph-retirements.json") &&
+            readFileSync(join(standings, f), "utf8").includes('"eventKey":"ev:10"'),
+        ),
+      "persisted latest relation",
+    );
+    if (delivered) {
+      const first = runClient("watchdog", dir, key, 10000);
+      t.after(() => first.proc.kill("SIGKILL"));
+      await waitFor(() => first.out.includes("RESTART_GRAPH_LATEST"), "first latest delivery");
+      await waitSeen(standings, "ev:10");
+      first.proc.kill("SIGKILL");
+      await first.done;
+    }
+    bridge.proc.kill("SIGKILL");
+    await waitFor(() => bridge.proc.signalCode !== null, "bridge killed before reconciliation");
+    await waitFor(() => fake.state.ws.size === 0, "socket closed");
+    const second = startBridge(fake.mcpUrl, dir);
+    t.after(() => second.stop());
+    assert.ok((await second.call("initialize", 1, INIT)).result);
+    await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+    const st = await second.call("tools/call", 2, {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba" },
+    });
+    assert.ok(!st.result?.isError, JSON.stringify(st));
+    await waitFor(() => fake.state.ws.size === 1, "resumed socket");
+    await sendRoom(fake, { ...old, id: "restart-old-copy" });
+    await sendRoom(fake, { ...latest, id: "restart-latest-copy" });
+    await sendRoom(fake, { ...old, id: "restart-late-old-copy" });
+    const next = runClient("watchdog", dir, key, 10000);
+    t.after(() => next.proc.kill("SIGKILL"));
+    await waitFor(() => next.out.includes("слушаю стояние"), "next old-reader arm");
+    if (!delivered)
+      await waitFor(() => next.out.includes("RESTART_GRAPH_LATEST"), "server replay restores body");
+    await sendRoom(fake, { type: "message", id: "restart-barrier", body: "RESTART_GRAPH_BARRIER" });
+    await waitFor(() => next.out.includes("RESTART_GRAPH_BARRIER"), "restart barrier");
+    assert.doesNotMatch(next.out, /RESTART_GRAPH_OLD/);
+    assert.equal((next.out.match(/RESTART_GRAPH_LATEST/g) ?? []).length, delivered ? 0 : 1);
+    await sendRoom(fake, { ...old, id: "restart-after-receipt-old" });
+    await waitSeen(standings, "ev:9");
+    next.proc.kill("SIGKILL");
+    await next.done;
+  });
+}
+
+for (const fault of ["corrupt", "unknown", "atomic", "limit"]) {
+  test(`graph retirement socket: ${fault} holds graph, ordinary words pass, repaired rearm recovers`, async (t) => {
+    const { fake, dir, key, bridge, standings } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    await sendRoom(fake, graphPosed("fault-old", 9));
+    await waitFor(
+      () => readdirSync(standings).some((f) => f.endsWith(".graph-retirements.json")),
+      "sidecar",
+    );
+    const path = join(
+      standings,
+      readdirSync(standings).find((f) => f.endsWith(".graph-retirements.json")),
+    );
+    const saved = readFileSync(path, "utf8");
+    if (fault === "corrupt") writeFileSync(path, "{broken");
+    else if (fault === "unknown") writeFileSync(path, '{"version":2,"entries":[]}');
+    else if (fault === "atomic") {
+      // The sidecar remains readable; only the atomic temporary write is refused.
+      writeFileSync(path.slice(0, -".graph-retirements.json".length), "");
+      chmodSync(standings, 0o500);
+      t.after(() => chmodSync(standings, 0o700));
+    } else {
+      const data = JSON.parse(saved);
+      data.entries[0].retiredKeys = Array.from({ length: 4999 }, (_, i) => `ev:${100 + i}`);
+      writeFileSync(path, JSON.stringify(data));
+    }
+    const latest = graphPosed("fault-latest", 10);
+    Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "FAULT_GRAPH_LATEST" });
+    await sendRoom(fake, latest);
+    const wd = runClient("watchdog", dir, key, 10000);
+    t.after(() => wd.proc.kill("SIGKILL"));
+    await waitFor(() => wd.out.includes("слушаю стояние"), "arm under failure");
+    await sendRoom(fake, { type: "message", id: "fault-word", body: "FAULT_ORDINARY_WORD" });
+    await waitFor(
+      () => wd.out.includes("FAULT_ORDINARY_WORD"),
+      "ordinary word bypasses graph failure",
+    );
+    await waitSeen(standings, "fault-word");
+    assert.doesNotMatch(wd.out, /FAULT_GRAPH_LATEST|vimarsha_seq/);
+    const marks = readdirSync(standings)
+      .filter((f) => f.endsWith(".seen"))
+      .map((f) => readFileSync(join(standings, f), "utf8"))
+      .join("\n");
+    assert.doesNotMatch(marks, /(?:^|\n)ev:(9|10)(?:\n|$)/);
+    assert.equal(
+      bridge.notifications.filter((n) =>
+        n.params?.data?.text?.includes("graph retirement unavailable"),
+      ).length,
+      1,
+    );
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+    if (fault === "atomic") chmodSync(standings, 0o700);
+    writeFileSync(path, saved);
+    const repaired = runClient("watchdog-exit", dir, key, 10000);
+    assert.equal((await repaired.done).exit, 0, repaired.err);
+    assert.match(repaired.out, /FAULT_GRAPH_LATEST/);
+    await waitSeen(standings, "ev:10");
+  });
+}
+
+test("graph inbox contract: a refused transfer leaves retirement keys pending for the next giver", async (t) => {
+  const { fake, dir, key, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const old = graphPosed("refused-old", 9);
+  const latest = graphPosed("refused-latest", 10);
+  latest.body.vimarsha_name = "GRAPH_REFUSED_LATEST";
+  latest.body.vimarsha_version = 2;
+  await sendRoom(fake, old);
+  await sendRoom(fake, latest);
+  const home = codexHome(t);
+  const sock = join(home, "app-server-control", "app-server-control.sock");
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(sock, log);
+  t.after(() => door.stop());
+  const refused = runClient("watchdog-codex", dir, key, 10000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "no-such-thread",
+  });
+  t.after(() => refused.proc.kill("SIGKILL"));
+  await waitFor(() => refused.err.includes("тред не принял кадр"), "thread refuses latest");
+  const before = readdirSync(standings)
+    .filter((f) => f.endsWith(".seen"))
+    .map((f) => readFileSync(join(standings, f), "utf8"))
+    .join("\n");
+  assert.doesNotMatch(before, /(?:^|\n)ev:(?:9|10)(?:\n|$)/, "refusal is not a receipt");
+  refused.proc.kill("SIGKILL");
+  await refused.done;
+  const next = runClient("watchdog-exit", dir, key, 10000);
+  assert.equal((await next.done).exit, 0, next.err);
+  assert.match(next.out, /GRAPH_REFUSED_LATEST/);
+  await waitSeen(standings, "ev:10");
+  // An old giver writes only its ordinary receipt; the bridge must reconcile it
+  // before deciding a replay, not infer delivery from its earlier socket write.
+  await sendRoom(fake, { ...old, id: "refused-old-after-receipt" });
+  await waitSeen(standings, "ev:9");
+  const again = runClient("watchdog", dir, key, 10000);
+  t.after(() => again.proc.kill("SIGKILL"));
+  await waitFor(() => again.out.includes("слушаю стояние"), "arm after accepted fallback");
+  await sendRoom(fake, { type: "message", id: "refused-barrier", body: "REFUSED_BARRIER" });
+  await waitFor(() => again.out.includes("REFUSED_BARRIER"), "refusal replay barrier");
+  assert.doesNotMatch(again.out, /GRAPH_REFUSED_LATEST|refused-old/);
+  again.proc.kill("SIGKILL");
+  await again.done;
+});
+
+test("graph inbox contract: owner stop drops the bridge's pending soft batch", async (t) => {
+  const { fake, dir, key, bridge, standings } = await connected(t);
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 8000);
+  t.after(() => wd.proc.kill("SIGKILL"));
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the current arm");
+  await sendRoom(fake, graphPosed("g-stop-old", 9));
+  const latest = graphPosed("g-stop-new", 10);
+  latest.body.vimarsha_version = 2;
+  await sendRoom(fake, latest);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  assert.equal((await wd.done).exit, 0, wd.err);
+  assert.doesNotMatch(wd.out, /5829/, "stopped pending graph is not handed out");
+  assert.ok(!bridge.notifications.some((n) => n.params?.data?.kind === "backlog"));
+  const marks = readdirSync(standings)
+    .filter((f) => f.endsWith(".seen"))
+    .map((f) => readFileSync(join(standings, f), "utf8"))
+    .join("\n");
+  assert.doesNotMatch(marks, /(?:^|\n)ev:(?:9|10)(?:\n|$)/, "stop is not a delivery");
+});
+
 const LEGACY_AT_ONCE = () => [
   [directWord(), "прямое слово соседа"],
-  [graphPosed(), '"vimarsha_seq":5829'],
   [legacyRoom("text", "interrupt", 71), "прежний род text со стопкой interrupt"],
   [legacyRoom("direct", "interrupt", 75), "прежний род direct"],
   [legacyRoom("digest", "defer", 76), "прежний род digest"],

@@ -32,6 +32,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -74,6 +75,7 @@ import {
   BORIS,
   closing,
   directWord,
+  graphOther,
   graphPosed,
   idMatrix,
   importantBody,
@@ -9258,6 +9260,207 @@ async function asidePrompts(name, frames, n) {
   }
 }
 
+// Contract #7334 → #7333: graph inbox is input to the next turn, not a steer.
+for (const mode of ["deliver", "stop", "write-error", "restart"]) {
+  test(`notified receipt: real bridge OpenCode actual admitted context ${mode}`, () =>
+    notifiedContext(mode));
+}
+async function notifiedContext(mode) {
+  const previous = Object.fromEntries(
+    ["ISKRON_BRIDGE_AUTH_DIR", "ISKRON_BRIDGE_DAEMON"].map((k) => [k, process.env[k]]),
+  );
+  const fake = await startFakeNks({ pat: "nks_pat_receipt" });
+  await fake.control({ richTools: true });
+  const dir = mkdtempSync(join(SANDBOX, "receipt-"));
+  const auth = join(dir, "auth");
+  const env = {
+    ISKRON_BRIDGE_PATH: REAL_BRIDGE,
+    ISKRON_BRIDGE_URL: fake.mcpUrl,
+    ISKRON_BRIDGE_TOKEN: "nks_pat_receipt",
+    ISKRON_BRIDGE_AUTH_DIR: auth,
+    ISKRON_BRIDGE_NO_BROWSER: "1",
+    ISKRON_BRIDGE_DAEMON: "0",
+  };
+  let rec = await plugin(env, { location: { directory: dir } });
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "tools", 15000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: 931, name: "proba" }, "receipt");
+    const old = graphPosed("receipt-old", 9);
+    const latest = graphPosed("receipt-latest", 10);
+    Object.assign(latest.body, { vimarsha_version: 2, vimarsha_name: "ACTUAL_CONTEXT_LATEST" });
+    for (const f of [old, latest]) await fake.control({ ws_send: JSON.stringify(f) });
+    const folder = join(auth, "standings");
+    await until(
+      () => readdirSync(folder).some((f) => f.endsWith(".graph-retirements.json")),
+      "sidecar",
+    );
+    await delay(300);
+    const marks = () =>
+      readdirSync(folder)
+        .filter((f) => f.endsWith(".seen"))
+        .flatMap((f) => readFileSync(join(folder, f), "utf8").split("\n"));
+    assert.ok(!marks().includes("ev:10"), "notification is not actual context");
+    assert.ok(!marks().includes("ev:9"));
+    assert.equal(rec.prompts.length, 0);
+    const ledger = join(
+      folder,
+      readdirSync(folder).find((f) => f.endsWith(".graph-retirements.json")),
+    );
+    assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+    if (mode === "restart") {
+      await rec.stop();
+      await fake.control({ places: [{ karta: "931", name: "proba", listening: false }] });
+      rec = await plugin(env, { location: { directory: dir } });
+      await until(() => rec.tools().has("iskron_channel"), "restarted tools", 15000);
+      await rec.call("iskron_stand", { realm: "nks-dev", karta: 931, name: "proba" }, "receipt");
+      for (const f of [old, latest, old])
+        await fake.control({ ws_send: JSON.stringify({ ...f, id: `restart-${f.id}` }) });
+      await delay(300);
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries[0].eventKey, "ev:10");
+    }
+    if (mode === "stop") {
+      await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+      await delay(300);
+      assert.ok(!marks().includes("ev:10"));
+      assert.ok(!marks().includes("ev:9"));
+      assert.deepEqual(JSON.parse(readFileSync(ledger, "utf8")).entries, []);
+      return;
+    }
+    const seen = ledger.slice(0, -".graph-retirements.json".length);
+    await rec.promptRaw("receipt", "unchanged", { messageID: "receipt-user" });
+    if (mode === "write-error") {
+      mkdirSync(seen);
+      await assert.rejects(() => rec.context("receipt"), /EISDIR|directory/);
+      assert.equal(JSON.parse(readFileSync(ledger, "utf8")).entries.length, 1);
+      rmSync(seen, { recursive: true });
+      await rec.promptRaw("receipt", "retry", { messageID: "receipt-retry" });
+    }
+    const context = await rec.context("receipt");
+    assert.match(context, /ACTUAL_CONTEXT_LATEST/);
+    assert.ok(marks().includes("ev:10"));
+    await fake.control({ ws_send: JSON.stringify({ ...old, id: "receipt-old-replay" }) });
+    await until(() => marks().includes("ev:9"), "retired after actual context");
+  } finally {
+    await rec.stop();
+    await fake.stop();
+    for (const [k, v] of Object.entries(previous)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+async function graphContext(name, frames, stopped = false) {
+  const b = bridgeEnv(name);
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    const sid = `s-${name}`;
+    await rec.call("iskron_channel", { action: "connect" }, sid);
+    const [pid] = pidsOf(b.log);
+    appendFileSync(`${b.events}.${pid}`, lines(frames));
+    await delay(BATCH_MS * 4);
+    if (stopped) {
+      appendFileSync(`${b.events}.${pid}`, event("stopped", { text: "GRAPH_STOP" }));
+      await delay(BATCH_MS * 4);
+      appendFileSync(`${b.events}.${pid}`, event("held", { key: "k", automatic: false }));
+      await delay(BATCH_MS * 4);
+    }
+    const input = "ход";
+    const messageID = `user-${name}`;
+    assert.equal(await rec.promptRaw(sid, input, { messageID }), input);
+    const messages = rec.messages(sid);
+    assert.equal(messages.at(-1).content[0].text, input, "stored user is unchanged");
+    assert.equal(await rec.context(sid, "context", []), "", "no other message drains inbox");
+    const rode = await rec.context(sid, "context", messages);
+    assert.equal(await rec.context(sid, "context", messages), "", "context is one shot");
+    if (!stopped) {
+      appendFileSync(`${b.events}.${pid}`, lines(frames));
+      await delay(BATCH_MS * 4);
+      assert.equal(await rec.promptRaw(sid, "ещё", { messageID: `again-${name}` }), "ещё");
+      assert.equal(await rec.context(sid), "", "replayed event stays read in a new turn");
+    }
+    const prompts = [...rec.prompts];
+    prompts.rode = rode;
+    return prompts;
+  } finally {
+    await rec.stop();
+  }
+}
+
+test("graph inbox contract: OpenCode stop drops pending graph before an explicit return", async () => {
+  const got = await graphContext("graph-stop", [graphPosed("stopped-graph", 733310)], true);
+  assert.equal(got.length, 0);
+  assert.doesNotMatch(got.rode, /5829/);
+});
+
+test("graph inbox contract: OpenCode keeps distinct graph and question identities", async () => {
+  const frames = [
+    graphPosed("one", 733311),
+    graphPosed("two", 733312),
+    graphPosed("three", 733313),
+  ];
+  frames[1].body.realm_slug = "other";
+  frames[2].body.vimarsha_seq++;
+  frames.forEach((f, i) => {
+    f.body.vimarsha_name = `DISTINCT_${i}`;
+  });
+  const got = await graphContext("graph-distinct", frames);
+  assert.equal(got.length, 0);
+  for (let i = 0; i < 3; i++) assert.match(got.rode, new RegExp(`DISTINCT_${i}`));
+});
+
+test("graph inbox contract: OpenCode case-pile flush never drains pending graph text", async () => {
+  const got = await graphContext("graph-beside-ask", [graphPosed("g-beside", 733314), ask(90)]);
+  assert.match(got.rode, /5829/, "case-pile timer must leave graph for next-turn context");
+  assert.ok(
+    got.every((p) => !p.text.includes("5829")),
+    "graph starts no prompt of its own",
+  );
+});
+
+test("graph inbox contract: posed_to waits for the next OpenCode turn without steering", async () => {
+  const prompts = await graphContext("graph-next-turn", [graphPosed("g-next", 733301)]);
+  assert.equal(prompts.length, 0, "posed_to must not start or interrupt a turn");
+  assert.match(prompts.rode, /5829/, "the pending question must enter the next turn");
+});
+
+test("graph inbox contract: OpenCode folds updates of one question into the latest", async () => {
+  const first = graphPosed("g-first", 733302);
+  first.body.vimarsha_name = "GRAPH_OLD_VERSION";
+  const last = graphPosed("g-last", 733303);
+  Object.assign(last.body, {
+    vimarsha_version: 2,
+    vimarsha_name: "GRAPH_LAST_VERSION",
+    reason: "updated",
+  });
+  const prompts = await graphContext("graph-fold", [first, last]);
+  assert.match(prompts.rode, /GRAPH_LAST_VERSION/, "latest update must wait for the next turn");
+  assert.doesNotMatch(
+    prompts.rode,
+    /GRAPH_OLD_VERSION/,
+    "superseded question must not enter the turn",
+  );
+  assert.equal(prompts.length, 0, "neither update may steer");
+});
+
+for (const graphFirst of [true, false]) {
+  test(`graph inbox contract: OpenCode deduplicates event_id, graph first=${graphFirst}`, async () => {
+    const graph = graphPosed(`g-copy-${graphFirst}`, 733304);
+    const room = { ...progress(733304), event_id: 733304 };
+    const prompts = await graphContext(
+      `graph-copy-${graphFirst}`,
+      graphFirst ? [graph, room] : [room, graph],
+    );
+    assert.doesNotMatch(prompts.rode, /записей/, "the room copy must not add a second event count");
+    assert.match(prompts.rode, /5829/, "the graph event must enter the next turn");
+    assert.equal((prompts.rode.match(/5829/g) ?? []).length, 1, "event body occurs once");
+    assert.equal(prompts.length, 0, "duplicate events must not steer");
+  });
+}
+
 test("(а) an addressed word not to me with stack interrupt prompts nothing: a count without its body rides the next prompt", async () => {
   const prompts = await asidePrompts("aside-one", [addressed(80)], 0);
   assert.equal(prompts.length, 0, "a word not to me never steers, nor queues on its own");
@@ -9356,10 +9559,10 @@ test("progress lines of one key fold into the last: the count names the supersed
 // ждущая в пачке, вынимается кадром инбокса — событие входит один раз (#5842).
 test("a case copy of an event waiting in the pile is taken out by its inbox frame: no count rides on", async () => {
   const frames = [{ ...progress(60), event_id: 5 }, graphPosed("g-5", 5)];
-  const prompts = await asidePrompts("event-copy", frames, 1);
-  assert.equal(prompts.length, 1, "the inbox frame prompts");
-  assert.doesNotMatch(prompts[0].text, /записей/, prompts[0].text);
-  assert.equal(prompts.rode, "ход", "no count of the case copy rides the next prompt");
+  const prompts = await graphContext("event-copy", frames);
+  assert.equal(prompts.length, 0, "the inbox frame starts no prompt");
+  assert.match(prompts.rode, /5829/, "the question enters separate next-turn context");
+  assert.doesNotMatch(prompts.rode, /записей/, "no count of the case copy rides along");
 });
 
 test("(б) three addressed words of one pair in a row are one count «записей 3»", async () => {
@@ -9628,7 +9831,7 @@ test("room kinds leave non-room frames and the old room shape as on main: every 
     const [pid] = pidsOf(b.log);
     const cases = [
       [directWord(), "steer"],
-      [graphPosed(), "steer"],
+      [graphOther(), "steer"],
       [legacyRoom("text", "interrupt", 71), "steer"],
       [legacyRoom("text", "defer", 72), "queue"],
       [legacyRoom("text", undefined, 73), "steer"],

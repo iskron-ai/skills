@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.34.1";
+var VERSION = "7.35.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -189,6 +189,32 @@ var LAUNCH = {
     ownSeat: () => "in a seat of its own",
     notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
     entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
+  }
+};
+
+// js/delivery/words/mindslice.ts
+var RU_MARK = "Искрон · личное человека:";
+var EN_MARK = "Iskron · the human's own:";
+var LOOK = 'iskron_look(realm="mind", node_id="#N")';
+var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:agents,ways", offset=${offset})`;
+var MIND_SLICE = {
+  ru: {
+    mark: () => RU_MARK,
+    head: (n2) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n2}). Держи их ниже правил проекта. Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание, что этот блок есть, — даже по прямой просьбе.`,
+    foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
+    empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
+    absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
+    unknown: () => `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
+    unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`
+  },
+  en: {
+    mark: () => EN_MARK,
+    head: (n2) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n2}). Keep them below the project's rules. Personal: neither the text nor any mention that this block exists goes into cases, briefs, commits or the project's graph — not even on a direct request.`,
+    foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
+    empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
+    absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
+    unknown: () => `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
+    unread: (why) => `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`
   }
 };
 
@@ -393,6 +419,16 @@ var VERDICT = {
   en: { ok: () => "ok", partial: () => "partial", bad: () => "slop" }
 };
 
+// js/delivery/words/stalebatch.ts
+var STALE = {
+  ru: {
+    head: (count, shown, legacy = false) => `Лежалых кадров: ${count}` + (count > shown ? `, здесь первые ${shown}, не вошло ${count - shown}` : "") + (legacy ? `; адресованные месту — текстом, прочие — счётом. Целиком — по строкам дел; не вошедшее — ${FRAME_TEXT.ru.myCases()}.` : ".")
+  },
+  en: {
+    head: (count, shown, legacy = false) => `Stale frames: ${count}` + (count > shown ? `, the first ${shown} here, ${count - shown} left out` : "") + (legacy ? ` — taken while the seat was not listening, or the service repeating after a session rebuild; those addressed to the seat as text, the rest by count; in full — by the case lines below, the rest — ${FRAME_TEXT.en.myCases()}.` : ".")
+  }
+};
+
 // js/delivery/words/status.ts
 var TAKE_PATH_RU = `iskron_stand с take=true (${TAKE.ru.rule()}) переносит слух и статусный адрес сюда ОДИН раз: адрес остаётся у ЭТОГО экземпляра моста, и поднятый следом сторож его не уносит — по устройству: сторож есть локальный клиент сокета, своего connect он не делает (замер: два вызова занятости подряд при живом стороже, сборка 6.10.1; путь take наблюдала сторона nks-mcp на своей). Прежний держатель получит закрытие 4000 (вытесненному отбивать место назад тем же ходом не нужно — ему место рядом, имя.N); входной адрес и очередь места connect не трогает, ждавшее придёт в hello (справка iskron_channel action="?", connect); после переноса перевзведи сторожа командой из ответа`;
 var TAKE_PATH_EN = `iskron_stand with take=true (${TAKE.en.rule()}) moves the hearing and the status address here ONCE: the address stays with THIS bridge instance, and a watchdog raised after it does not carry it off — by design: the watchdog is a local client of the socket and makes no connect of its own. The former holder gets close 4000 (the evicted one need not take the seat back the same way — it gets a seat beside, name.N); connect does not touch the seat's incoming address and queue, what waited comes in hello (help: iskron_channel action="?", connect); after the move re-arm the watchdog with the command from the answer`;
@@ -479,6 +515,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), HOME_DIR);
 var authDirFromEnv = () => envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
+var standingsDirOf = (authDir) => join(authDir, "standings");
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 
 // js/shared/lang.ts
@@ -503,6 +540,9 @@ var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
 var words = (dict) => dict[lang()];
 
+// js/extension/channel.ts
+import { randomUUID } from "node:crypto";
+
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
 var FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
@@ -518,6 +558,40 @@ function classifyOrigin(frame, myKarta) {
     return "sibling";
   return "peer";
 }
+
+// js/shared/graph-inbox.ts
+function graphInboxKey(frame) {
+  if (frame?.type !== "message" || frame.provenance?.via !== "graph") return null;
+  const b = frame.body;
+  if (!b || typeof b !== "object" || Array.isArray(b)) return null;
+  const body = b;
+  if (typeof body.realm_slug !== "string" || !body.realm_slug || typeof body.vimarsha_seq !== "number" || !Number.isInteger(body.vimarsha_seq) || body.vimarsha_seq <= 0 || !["posed_to", "updated", "vimarsha.updated"].includes(String(body.event_kind)))
+    return null;
+  return JSON.stringify([body.realm_slug, body.vimarsha_seq]);
+}
+var isGraphInbox = (frame) => graphInboxKey(frame) !== null;
+var versionOf = (frame) => frame.body.vimarsha_version;
+function graphFolds(frames) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const frame of frames) {
+    const key = graphInboxKey(frame);
+    if (key === null) continue;
+    const group = groups.get(key) ?? [];
+    group.push(frame);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => {
+    const latest = group.reduce((a, b) => {
+      const av = versionOf(a);
+      const bv = versionOf(b);
+      return typeof av === "number" && typeof bv === "number" && av > bv ? a : b;
+    });
+    return { latest, superseded: group.filter((f) => f !== latest) };
+  });
+}
+
+// js/shared/seen.ts
+import { appendFileSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "node:fs";
 
 // js/shared/room-fields.ts
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -1027,6 +1101,14 @@ function closedQuestion(frame) {
 }
 
 // js/shared/seen.ts
+var SEEN_KEEP = 5e3;
+var SEEN_SLACK = 1e3;
+var graphMarks = /* @__PURE__ */ new WeakMap();
+function carryGraphMarks(frame, keys) {
+  if (!frame || !isGraphInbox(frame) || !keys?.length) return;
+  const all = [.../* @__PURE__ */ new Set([...graphMarks.get(frame) ?? [], ...keys])];
+  graphMarks.set(frame, all.slice(-SEEN_KEEP));
+}
 var evOf = (v) => typeof v === "number" || typeof v === "string" && v ? `ev:${v}` : "";
 function eventKeyOf(frame) {
   const via = frame?.provenance?.via;
@@ -1041,7 +1123,10 @@ function deliveryKeys(frame, named2 = false) {
   const id = typeof frame?.id === "string" ? frame.id : "";
   const ev = frame && asText(frame) ? eventKeyOf(frame) : "";
   const mark = ev && frame?.stale === true ? `evs:${ev.slice(3)}` : ev;
-  return [id, mark && (named2 ? `c${mark}` : mark)].filter(Boolean);
+  const retired = (frame && !named2 && asText(frame) ? graphMarks.get(frame) ?? [] : []).map(
+    (k) => frame?.stale === true && k.startsWith("ev:") ? `evs:${k.slice(3)}` : k
+  );
+  return [...new Set([...retired, id, mark && (named2 ? `c${mark}` : mark)].filter(Boolean))];
 }
 function eventIn(frame, has) {
   const ev = frame ? eventKeyOf(frame) : "";
@@ -1053,8 +1138,68 @@ function eventIn(frame, has) {
 }
 var isTact = (frame) => frame?.provenance?.wake === "look_up";
 var isLifeCheck = (frame) => frame?.provenance?.wake === "life_check";
+function foldedTacts(all) {
+  const tacts = all.filter((f) => isTact(f));
+  const last = tacts.reduce((a, f) => a && tactAt([a]) > tactAt([f]) ? a : f, null);
+  return new Set(tacts.filter((f) => f !== last));
+}
 var tactAt = (frames) => (frames ?? []).filter(isTact).map((f) => typeof f.received_at === "string" ? f.received_at : "").reduce((a, b) => b > a ? b : a, "");
 var onlyTacts = (frames) => !!frames?.length && frames.every(isTact);
+function splitBatch(all, keep, has) {
+  const folded = foldedTacts(all);
+  for (const { latest, superseded: superseded2 } of graphFolds(all)) {
+    for (const frame of superseded2) {
+      folded.add(frame);
+      carryGraphMarks(latest, [...deliveryKeys(frame), eventKeyOf(frame)].filter(Boolean));
+    }
+  }
+  let kept2 = all.filter((f) => !folded.has(f) && !eventIn(f, has));
+  for (; ; ) {
+    const shown = new Set(kept2.slice(0, keep));
+    const marks = /* @__PURE__ */ new Set();
+    const local = (k) => marks.has(k) || has(k);
+    const texts = kept2.filter((f) => {
+      if (!asText(f)) return true;
+      if (eventIn(f, local)) return false;
+      for (const k of deliveryKeys(f, !shown.has(f))) marks.add(k);
+      return true;
+    });
+    const next = texts.filter((f) => asText(f) || !eventIn(f, local));
+    if (next.length < kept2.length) {
+      kept2 = next;
+      continue;
+    }
+    const on = new Set(next.slice(0, keep));
+    return {
+      shown: next.slice(0, keep),
+      kept: next,
+      keys: all.flatMap((f) => deliveryKeys(f, !on.has(f)))
+    };
+  }
+}
+function seenIds(seenPath) {
+  try {
+    return new Set(readFileSync2(seenPath, "utf8").split("\n").filter(Boolean));
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function noteSeenStrict(seenPath, id, seen) {
+  if (seen.has(id)) return;
+  appendFileSync(seenPath, id + "\n");
+  seen.add(id);
+  if (seen.size > SEEN_KEEP + SEEN_SLACK) compact(seenPath, seen);
+}
+function compact(seenPath, seen) {
+  const file = [...seenIds(seenPath)];
+  const inFile = new Set(file);
+  const tail2 = [...[...seen].filter((x) => !inFile.has(x)), ...file].slice(-SEEN_KEEP);
+  const tmp = `${seenPath}.${process.pid}.tmp`;
+  writeFileSync(tmp, tail2.join("\n") + "\n");
+  renameSync(tmp, seenPath);
+  seen.clear();
+  for (const x of tail2) seen.add(x);
+}
 
 // js/shared/clients.ts
 var OPENCODE_CLIENT = CLIENTS.opencode;
@@ -1068,13 +1213,13 @@ var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 
 // js/shared/version.ts
 import { createHash } from "node:crypto";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
 import { fileURLToPath } from "node:url";
 var releaseBuildIn = (text) => text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
 var devBuildIn = (text) => text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
-    const src = readFileSync2(fileURLToPath(selfUrl));
+    const src = readFileSync3(fileURLToPath(selfUrl));
     return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
   } catch {
     return `v${VERSION}`;
@@ -1462,6 +1607,26 @@ var B = scoped(() => /* @__PURE__ */ new Map());
 // js/bridge/roomstack.ts
 var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 
+// js/shared/stalebatch.ts
+var STALE_BURST_KEEP = 20;
+var BODY_CAP = 800;
+function staleBatch(all, has) {
+  const { shown: frames, kept: kept2, keys } = splitBatch(all, STALE_BURST_KEEP, has);
+  const count = kept2.length;
+  if (!count) return { text: "", keys };
+  const bodies = [
+    ...caseCountLines(frames, count > frames.length),
+    ...frames.filter((f) => addressedToMine(f)).map((f) => {
+      const t = frameToText(f, JSON.stringify(f));
+      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
+    })
+  ];
+  const head = words(STALE).head(count, frames.length);
+  return { text: `${head}
+
+${bodies.join("\n\n")}`, keys };
+}
+
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
@@ -1614,6 +1779,57 @@ var SERVICE_ID = `${ID_PREFIX}service-`;
 // js/bridge/seatorigin.ts
 var origin = new AsyncLocalStorage2();
 
+// js/shared/graph-receipt.ts
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, resolve as resolve3 } from "node:path";
+var receipts = /* @__PURE__ */ new WeakMap();
+function carryGraphReceipt(frame, seen, root) {
+  if (frame && isGraphInbox(frame) && typeof seen === "string")
+    receipts.set(frame, { path: seen, root });
+}
+function receiptGraph(frames) {
+  const paths = /* @__PURE__ */ new Map();
+  for (const f of frames) {
+    const receipt = receipts.get(f);
+    if (!receipt) continue;
+    const { path, root } = receipt;
+    if (!isAbsolute(path) || dirname(resolve3(path)) !== resolve3(standingsDirOf(root)) || !/^[a-f0-9]{16}(?:\.[a-f0-9]{8})?\.seen$/.test(basename(path)) || realpathSync(dirname(path)) !== resolve3(realpathSync(root), "standings"))
+      throw new Error("graph receipt outside its bridge standings directory");
+    try {
+      if (lstatSync(path).isSymbolicLink()) throw new Error("graph receipt path is a link");
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+    }
+    const keys = paths.get(path) ?? /* @__PURE__ */ new Set();
+    for (const k of deliveryKeys(f)) keys.add(k);
+    paths.set(path, keys);
+  }
+  for (const [path, keys] of paths) {
+    const seen = seenIds(path);
+    for (const k of keys) noteSeenStrict(path, k, seen);
+  }
+}
+
+// js/shared/softbatch.ts
+function separateGraphBatch(ev) {
+  const graph = ev.frames?.filter(isGraphInbox) ?? [];
+  if (!graph.length) return { graph, rest: ev };
+  const other = splitBatch(ev.frames ?? [], Infinity, () => false).kept.filter(
+    (f) => !isGraphInbox(f)
+  );
+  const graphMarks2 = new Set(graph.flatMap((f) => deliveryKeys(f)));
+  const text = !other.length ? "" : ev.kind === "stale" ? staleBatch(other, () => false).text : [batchHead(other), ...batchLines(other)].filter(Boolean).join("\n");
+  return {
+    graph,
+    rest: {
+      ...ev,
+      frames: other,
+      marks: ev.marks?.filter((key) => !graphMarks2.has(key)),
+      text
+    }
+  };
+}
+
 // js/extension/channel.ts
 var ASIDE_MS = Number(process.env[envName("PI_ASIDE_MS")]) || 3e3;
 var TACT_POLL_MS = 1e3;
@@ -1625,6 +1841,10 @@ function setupChannel(pi) {
   });
   pi.on("session_shutdown", async () => {
     ctxRef = null;
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    aside.splice(0);
+    graphHandoff = null;
   });
   function loud(text, fatal = true) {
     if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
@@ -1634,6 +1854,7 @@ function setupChannel(pi) {
     );
   }
   const aside = [];
+  let graphHandoff = null;
   let asideTimer = null;
   const marks = /* @__PURE__ */ new Set();
   function noteText(keys) {
@@ -1643,7 +1864,10 @@ function setupChannel(pi) {
   function flushAsides() {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
-    const got = aside.splice(0).filter((f) => !eventIn(f, (k) => marks.has(k)));
+    const unit = aside.splice(0);
+    const out2 = splitBatch(unit, Infinity, (k) => marks.has(k));
+    aside.push(...unit.filter(isGraphInbox));
+    const got = out2.kept.filter((f) => !isGraphInbox(f));
     if (!got.length) return;
     pi.sendMessage(
       {
@@ -1655,6 +1879,37 @@ function setupChannel(pi) {
       { triggerTurn: false, deliverAs: "nextTurn" }
     );
   }
+  pi.on("before_agent_start", async () => {
+    if (halted || !aside.some(isGraphInbox)) return;
+    if (asideTimer) clearTimeout(asideTimer);
+    asideTimer = null;
+    const unit = [...aside];
+    const out2 = splitBatch(unit, Infinity, (k) => marks.has(k));
+    if (!out2.kept.length) return;
+    const token = randomUUID();
+    graphHandoff = { token, unit, kept: out2.kept, keys: out2.keys };
+    return {
+      message: {
+        customType: LOGGERS.channel,
+        content: markFrame([batchHead(out2.kept), ...batchLines(out2.kept)].join("\n")),
+        display: true,
+        details: { graphInbox: true, receipt: token }
+      }
+    };
+  });
+  pi.on("context", async (event) => {
+    const h = graphHandoff;
+    if (halted || !h || !event.messages.some((m) => m.details?.receipt === h.token)) return;
+    try {
+      receiptGraph(h.kept);
+    } catch (e) {
+      ctxRef?.ui?.notify?.(`graph receipt failed: ${e.message}`, "error");
+      throw e;
+    }
+    noteText(h.keys);
+    for (let i = aside.length - 1; i >= 0; i--) if (h.unit.includes(aside[i])) aside.splice(i, 1);
+    graphHandoff = null;
+  });
   function sendBatch(ev) {
     pi.sendMessage(
       {
@@ -1692,6 +1947,7 @@ function setupChannel(pi) {
   let halted = false;
   function stopped(text) {
     halted = true;
+    graphHandoff = null;
     if (tactPoll) clearInterval(tactPoll);
     tactPoll = null;
     tact = null;
@@ -1711,19 +1967,26 @@ function setupChannel(pi) {
     );
   }
   return (params) => {
-    const ev = params?.data;
+    let ev = params?.data;
     if (!ev || typeof ev !== "object") return;
     if (ev.kind === "held") halted = false;
     if (halted && ev.kind !== "stopped") return;
     switch (ev.kind) {
       case "frame": {
         const frame = ev.frame ?? null;
+        carryGraphMarks(frame, ev.marks);
+        carryGraphReceipt(frame, ev.seen, authDirFromEnv());
         const raw = ev.raw ?? "";
         if (frame?.type === "hello") {
           if (ctxRef?.hasUI) ctxRef.ui.setStatus?.(PRODUCT, P.listening());
           return;
         }
         if (frame?.type === "status") return;
+        if (frame && eventIn(frame, (k) => marks.has(k))) return;
+        if (isGraphInbox(frame)) {
+          aside.push(frame);
+          return;
+        }
         if (frame && (byKind(frame) || roomKind(frame)?.aside) && !addressedToMine(frame)) {
           aside.push(frame);
           asideTimer ??= setTimeout(flushAsides, ASIDE_MS);
@@ -1749,6 +2012,11 @@ function setupChannel(pi) {
         return;
       case "stale":
       case "backlog":
+        {
+          const parts = separateGraphBatch(ev);
+          aside.push(...parts.graph.filter((f) => !eventIn(f, (k) => marks.has(k))));
+          ev = parts.rest;
+        }
         noteText(ev.marks);
         if (!ev.text) return;
         if (onlyTacts(ev.frames) && ctxRef?.isIdle?.() === false) return holdTact(ev);
@@ -1779,18 +2047,18 @@ function setupChannel(pi) {
 
 // js/extension/tools.ts
 import { existsSync } from "node:fs";
-import { dirname as dirname2 } from "node:path";
+import { dirname as dirname3 } from "node:path";
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
-import { basename } from "node:path";
+import { basename as basename2 } from "node:path";
 var W2 = () => words(BRIDGE_CLIENT);
 function bridgeRuntime() {
   const own = process.env[envName("NODE")]?.trim();
   if (own) return { bin: own, env: process.env };
   if (process.versions?.bun)
     return { bin: process.execPath, env: { ...process.env, BUN_BE_BUN: "1" } };
-  if (!/^node/i.test(basename(process.execPath))) return { bin: "node", env: process.env };
+  if (!/^node/i.test(basename2(process.execPath))) return { bin: "node", env: process.env };
   return { bin: process.execPath, env: process.env };
 }
 var STOP_GRACE_MS = 5e3;
@@ -1905,12 +2173,12 @@ var Bridge = class {
         opts.signal?.removeEventListener("abort", onAbort);
         fn(v);
       };
-      const resolve4 = settle(res);
+      const resolve5 = settle(res);
       const reject = settle(rej);
       function onAbort() {
         reject(new Error(W2().aborted()));
       }
-      this.pending.set(id, { resolve: resolve4, reject });
+      this.pending.set(id, { resolve: resolve5, reject });
       if (opts.signal) {
         if (opts.signal.aborted) return onAbort();
         opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -1982,6 +2250,18 @@ function resultToContent(result) {
   ];
 }
 
+// js/shared/mindslice.ts
+function sliceIn(text) {
+  for (const lang2 of LANGS) {
+    const mark = MIND_SLICE[lang2].mark();
+    if (text.startsWith(mark)) return text;
+    const at = text.indexOf(`
+${mark}`);
+    if (at >= 0) return text.slice(at + 1);
+  }
+  return null;
+}
+
 // js/shared/launch.ts
 var LINE = LAUNCH_LINE;
 function parseLaunch(text) {
@@ -2002,8 +2282,11 @@ async function enterCase(l, call, satelliteOf, placeName) {
   const room = `#${l.no}`;
   const stand = { realm: l.realm, karta: l.karta };
   if (satelliteOf) stand.satellite_of = satelliteOf;
+  let rules = null;
+  const said = (word2) => rules ? `${word2}
+${rules}` : word2;
   try {
-    await call(tool("stand"), stand);
+    rules = sliceIn(await call(tool("stand"), stand));
   } catch (e) {
     const why = e.message;
     const join4 = `${tool("case")}(action="join", room="${room}")`;
@@ -2013,9 +2296,9 @@ async function enterCase(l, call, satelliteOf, placeName) {
   try {
     await call(tool("case"), { action: "join", realm: l.realm, room });
   } catch (e) {
-    return W3.notEntered(place, l.no, e.message);
+    return said(W3.notEntered(place, l.no, e.message));
   }
-  return W3.entered(place, l.no);
+  return said(W3.entered(place, l.no));
 }
 
 // js/shared/busyargs.ts
@@ -2071,12 +2354,12 @@ import {
   accessSync,
   chmodSync,
   constants,
-  readFileSync as readFileSync3,
-  renameSync,
+  readFileSync as readFileSync4,
+  renameSync as renameSync2,
   unlinkSync,
-  writeFileSync
+  writeFileSync as writeFileSync2
 } from "node:fs";
-import { dirname, resolve as resolve3 } from "node:path";
+import { dirname as dirname2, resolve as resolve4 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/home.ts
@@ -2094,8 +2377,8 @@ function newer(a, b) {
   return 0;
 }
 function packagedBridgePath() {
-  return resolve3(
-    dirname(fileURLToPath2(import.meta.url)),
+  return resolve4(
+    dirname2(fileURLToPath2(import.meta.url)),
     "..",
     "skills",
     BRIDGE_SKILL,
@@ -2116,7 +2399,7 @@ function refreshHomeBridge(notify, canSpeak) {
   const homePath = homeBridgePath();
   let packaged;
   try {
-    packaged = readFileSync3(packagedPath);
+    packaged = readFileSync4(packagedPath);
   } catch {
     return;
   }
@@ -2128,7 +2411,7 @@ function refreshHomeBridge(notify, canSpeak) {
   if (!releaseBuildIn(packaged.toString("utf8"))) return;
   let home;
   try {
-    home = readFileSync3(homePath);
+    home = readFileSync4(homePath);
   } catch {
     return;
   }
@@ -2142,9 +2425,9 @@ function refreshHomeBridge(notify, canSpeak) {
   const was = vHome ?? W3.noVersion();
   const tmp = `${homePath}.tmp-${process.pid}`;
   try {
-    writeFileSync(tmp, packaged);
+    writeFileSync2(tmp, packaged);
     chmodSync(tmp, 493);
-    renameSync(tmp, homePath);
+    renameSync2(tmp, homePath);
     notify(vHome === vPackaged ? W3.replacedSame(vPackaged) : W3.updated(was, vPackaged), "info");
   } catch (e) {
     try {
@@ -2161,7 +2444,7 @@ function findBridge() {
     tried.push(p);
   };
   const named2 = process.env[BRIDGE_PATH_ENV]?.trim();
-  push(named2 ? resolve3(named2) : null);
+  push(named2 ? resolve4(named2) : null);
   try {
     push(packagedBridgePath());
   } catch {
@@ -2317,7 +2600,7 @@ async function hostEnv() {
   const env = {};
   try {
     const bridge = packagedBridgePath();
-    if (existsSync(bridge)) env[SKILLS_ROOT_ENV] = dirname2(dirname2(dirname2(bridge)));
+    if (existsSync(bridge)) env[SKILLS_ROOT_ENV] = dirname3(dirname3(dirname3(bridge)));
   } catch {
   }
   try {

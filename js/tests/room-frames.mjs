@@ -261,6 +261,14 @@ export const directWord = (id = "direct-1") => ({
   provenance: { from_standing: "@alari:sosed", from_karta_seq: 48, auth: "oidc" },
 });
 
+/** Unknown non-room graph events retain their live path. */
+export const graphOther = () => ({
+  type: "message",
+  id: "graph-other",
+  provenance: { via: "graph" },
+  body: { realm_slug: "nks-dev", event_kind: "node.updated", event_id: 9002 },
+});
+
 /** Не кадр комнаты: событие графа posed_to (via=graph, тело-объект с event_id и своим event_kind). */
 export const graphPosed = (id = "graph-1", event_id = 9001) => ({
   type: "message",

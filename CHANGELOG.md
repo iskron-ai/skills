@@ -1,5 +1,26 @@
 # Changelog
 
+## [7.35.1](https://github.com/iskron-ai/skills/compare/v7.35.0...v7.35.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **iskron,minding,recall:** the delivery feeds the personal slice; the mark forbids mentioning it ([#697](https://github.com/iskron-ai/skills/issues/697)) ([ff70b23](https://github.com/iskron-ai/skills/commit/ff70b238eb5bddb2634dbd81bacb5b7d31a57016))
+
+## [7.35.0](https://github.com/iskron-ai/skills/compare/v7.34.2...v7.35.0) (2026-11-07)
+
+
+### Features
+
+* **bridge:** give the human's rules from mind with the stand answer, after compaction and at launch ([#695](https://github.com/iskron-ai/skills/issues/695)) ([bb73004](https://github.com/iskron-ai/skills/commit/bb7300422673efdbfe47dc106ddcaa3fccd2b574))
+
+## [7.34.2](https://github.com/iskron-ai/skills/compare/v7.34.1...v7.34.2) (2026-11-07)
+
+
+### Bug Fixes
+
+* deliver role questions in the next context without interruption ([#693](https://github.com/iskron-ai/skills/issues/693)) ([62477c1](https://github.com/iskron-ai/skills/commit/62477c11e1d1623d39abf0bed70704783f3d362f))
+
 ## [7.34.1](https://github.com/iskron-ai/skills/compare/v7.34.0...v7.34.1) (2026-11-07)
 
 
