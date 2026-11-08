@@ -1187,6 +1187,7 @@ for (const [label, first, second] of [
 ]) {
   test(`${label}: it stays thin and its seat stands`, async () => {
     await withFake(async ({ dir, procs, fake }) => {
+      fake.state.anyAgent = true; // the last release names no sender (#9972)
       const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
       const env = { HOME: home, USERPROFILE: home };
       const at = (path) => {
