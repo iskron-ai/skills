@@ -30,7 +30,8 @@ const argv = process.argv.slice(2);
 const [first, ...rest] = argv;
 
 // Admission precedes home alignment, re-execution and all command side effects.
-if (argv.includes("--help") || argv.includes("-h")) {
+const optionArgs = argv.slice(0, argv.includes("--") ? argv.indexOf("--") : argv.length);
+if (optionArgs.includes("--help") || optionArgs.includes("-h")) {
   process.stdout.write(usage());
   process.exit(0);
 }

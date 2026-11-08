@@ -6,7 +6,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
-import { envName } from "../delivery/index.ts";
+import { envName, LANGS } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { setCompactCounts } from "../shared/frame-format.ts";
 import { batchHead } from "../shared/frame-text.ts";
@@ -44,7 +44,8 @@ export function parseWatchdogArgs(argv: string[]): WatchdogArgs {
       if (!value || value.startsWith("-")) throw new Error(`${a} needs a value`);
       if (a === "--auth-dir") out.authDir = value;
       else {
-        if (value !== "en" && value !== "ru") throw new Error("--lang needs en or ru");
+        if (!LANGS.some((lang) => lang === value))
+          throw new Error("--lang needs a supported language");
         setLang(value);
       }
     } else if (a === "--compact-counts") continue;
