@@ -43,7 +43,7 @@ export interface OrchestraWords {
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status|step> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "использование: orchestra <on|off|status|step|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
     doorSilent: () =>
@@ -80,7 +80,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status|step> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "usage: orchestra <on|off|status|step|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",
     doorSilent: () =>
