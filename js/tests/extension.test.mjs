@@ -1558,6 +1558,17 @@ test("(а2) an addressed word whose addressee has left the case (addressee_left)
   assert.doesNotMatch(got[0].text, /явное слово 89/);
 });
 
+// #9654: a gathered count and the word to me that flushes it enter as one message — the case once.
+test("a gathered count and a word to me of the same case are one message naming the case once", async () => {
+  const word = { ...said("interrupt", 86), addressee: ME };
+  const got = await asideMessages("aside-then-word", [addressed(80), word], 1);
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.equal(got[0].text.split(CASE7).length - 1, 1, got[0].text);
+  assert.match(got[0].text, new RegExp(`^${CASE7}: записей 2, тебе 1; [^\\n]*\\n\\[86\\] `));
+  assert.equal(got[0].deliverAs, "steer");
+  assert.equal(got[0].triggerTurn, true);
+});
+
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
 test("B: a question to my role alone, the api's choice another seat or none: a count, тебе 0, no text", async () => {
   const got = await asideMessages("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 1);
@@ -1633,10 +1644,11 @@ test("progress lines of one key fold into the last: the count names the supersed
     line: { done: "упало", verdict: "bad" },
   });
   const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
-  const got = await asideMessages("fold", frames, 2);
-  assert.equal(got.length, 2, JSON.stringify(got));
-  assert.match(got[0].text, /^№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2; /);
-  assert.match(got[1].text, /тайное слово 48$/, "the word to me whole");
+  const got = await asideMessages("fold", frames, 1);
+  // #9654: the gathered count rides in the word's message, the word under it.
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.match(got[0].text, /^№7 «Стенд»: записей 3, тебе 1, сменённых строк ключа 2; /);
+  assert.match(got[0].text, /\n\[48\] [^\n]*\nтайное слово 48$/, "the word to me whole");
 });
 
 // Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
@@ -1661,13 +1673,13 @@ test("(б) three addressed words of one pair in a row are one count «запис
 });
 
 test("(в) an addressed word to me with stack interrupt steers at once and whole; the count before it goes first", async () => {
-  const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 2);
-  assert.equal(got.length, 2, JSON.stringify(got));
-  assert.equal(got[0].text, countOf(1, 85));
-  assert.equal(got[0].deliverAs, "nextTurn");
-  assert.equal(got[1].deliverAs, "steer", "the word to me steers");
-  assert.match(got[1].text, /слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
-  assert.doesNotMatch(got[1].text, /ответ:/, "delivery does not ask for an answer");
+  const got = await asideMessages("aside-mine", [addressed(86), addressed(87, ME)], 1);
+  // #9654: the count goes first in the word's own message.
+  assert.equal(got.length, 1, JSON.stringify(got));
+  assert.ok(got[0].text.startsWith(countOf(2, 85).replace("тебе 0", "тебе 1")), got[0].text);
+  assert.equal(got[0].deliverAs, "steer", "the word to me steers");
+  assert.match(got[0].text, /\n\[87\] слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
+  assert.doesNotMatch(got[0].text, /ответ:/, "delivery does not ask for an answer");
 });
 
 test("(г) a word without an addressee between two asides is not to me either: one count of three", async () => {
@@ -1706,12 +1718,12 @@ test("a lone case frame to me is short: a said's text once, no JSON, no answer c
     push(events, frame(joinedMember()));
     push(events, frame(reply));
     await delay(1000);
-    assert.equal(rec.messages.length, 2, JSON.stringify(rec.messages));
-    const join = rec.messages[0].msg.content;
-    assert.equal(join, countOf(1, 84));
-    const word = rec.messages[1].msg.content;
+    // #9654: the join's count rides in the word's message, the word under it.
+    assert.equal(rec.messages.length, 1, JSON.stringify(rec.messages));
+    const word = rec.messages[0].msg.content;
+    assert.match(word, /^№7 «Стенд»: записей 2, тебе 1; /, word);
     assert.equal(word.split("слово со стопкой interrupt").length - 1, 1, word);
-    assert.match(word, /^№7 «Стенд» \[62\] слово от @aleksei:probe[^\n]*в ответ на \[60\]/);
+    assert.match(word, /\n\[62\] слово от @aleksei:probe[^\n]*в ответ на \[60\]/);
     assert.doesNotMatch(word, /ответ: iskron_case/, "delivery does not ask for an answer");
     assert.ok(!word.includes('{"'), word);
   } finally {

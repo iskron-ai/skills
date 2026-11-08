@@ -133,6 +133,10 @@ export function runWatchdog(argv: string[]): void {
       marks: riderMarks.splice(0),
     };
   };
+  /** A head of this case waits: a frame of it rides in that head's output (#9654). */
+  const heldCase = (f: Frame): boolean =>
+    !!caseKey(f) &&
+    [...riders, ...(head ? [batch] : [])].some((g) => g.some((x) => caseKey(x) === caseKey(f)));
   // The attach line goes after the ring frames, with the printed count (replay.ts).
   const ring = new RingReplay();
   // The watchdog's last word does not wait for the ring gate.
@@ -222,9 +226,17 @@ export function runWatchdog(argv: string[]): void {
           }
           if (!again) {
             if (fromRing) ring.printed++;
-            const r = take([], [f]);
-            out(r.lines, false, () => r.marks.forEach((m) => m()));
-            out(wrapLines(frameToText(f, ev.raw ?? "")), true, mark);
+            const raw = ev.raw ?? "";
+            if (heldCase(f)) {
+              // The waiting heads ride in the frame's own event: its case is named once (#9654).
+              const text = (w: boolean): string => wrapLines(frameToText(f, raw, w)).join("\n");
+              const r = take([{ frame: f, text }]);
+              out(r.lines, true, () => [...r.marks, mark].forEach((m) => m()));
+            } else {
+              const r = take([], [f]);
+              out(r.lines, false, () => r.marks.forEach((m) => m()));
+              out(wrapLines(frameToText(f, raw)), true, mark);
+            }
           }
           break;
         }

@@ -7,10 +7,9 @@ import { join } from "node:path";
 
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { envName } from "../delivery/index.ts";
-import { addressedToMine } from "../shared/addressed.ts";
 import { type Frame } from "../shared/channel.ts";
 import { setCompactCounts } from "../shared/frame-format.ts";
-import { caseKey, type Shown, underCounts } from "../shared/frame-text.ts";
+import { countsWithShown, type Shown } from "../shared/frame-text.ts";
 import { setLang } from "../shared/lang.ts";
 import { carryGraphMarks, deliveryKeys, eventIn, type Marks, seenIds } from "../shared/seen.ts";
 import { staleBatch } from "../shared/stalebatch.ts";
@@ -110,8 +109,8 @@ export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: str
  * already in the turn by the watchdog's memory, or goes as text in this same output
  * (`shown`), is not counted (seen.ts eventIn). The shown case records are counted in their
  * case's head and stand under it, without naming the case again (#9654); with nothing
- * counted they go alone, as they are. `apart` — frames going as text in an output of their
- * own right after: not counted, as the shown ones.
+ * counted they go alone, as they are (countsWithShown). `apart` — frames going as text in
+ * an output of their own right after: not counted, as the shown ones.
  */
 export function heldText(
   groups: Frame[][],
@@ -123,11 +122,7 @@ export function heldText(
   const own = new Set(carriers.flatMap((f) => deliveryKeys(f)));
   const has: Marks = (k) => marks(k) || own.has(k);
   const counted = groups.flatMap((g) => g.filter((f) => carriers.includes(f) || !eventIn(f, has)));
-  if (!counted.length) return shown.map((s) => s.text(true));
-  const extra = shown
-    .map((s) => s.frame)
-    .filter((f) => !counted.includes(f) && caseKey(f) && addressedToMine(f));
-  return underCounts([...counted, ...extra], shown);
+  return countsWithShown(counted, shown);
 }
 
 export interface AttachOptions {

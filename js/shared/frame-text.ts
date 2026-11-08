@@ -280,6 +280,20 @@ export function underCounts(counted: Frame[], shown: Shown[], incomplete = false
 }
 
 /**
+ * Waiting counts and the records shown with them in one output (#9654): a shown case record
+ * not to the seat joins its case's count (#6574), not a count line of its own; the shown to
+ * the seat are counted in their case and stand under it. Nothing counted — the shown alone.
+ */
+export function countsWithShown(counted: Frame[], shown: Shown[]): string[] {
+  const asCount = shown.filter((s) => caseOf(s.frame) && !addressedToMine(s.frame));
+  const lines = shown.filter((s) => !asCount.includes(s));
+  const all = [...counted, ...asCount.map((s) => s.frame).filter((f) => !counted.includes(f))];
+  if (!all.length) return lines.map((s) => s.text(true));
+  const extra = lines.map((s) => s.frame).filter((f) => caseOf(f) && !all.includes(f));
+  return underCounts([...all, ...extra], lines);
+}
+
+/**
  * Another's record that closed my question (closes_mine, set by addressedToMine): who
  * answered or whom it is re-asked of — its text stays in history (#6867, #6574).
  */
@@ -334,7 +348,11 @@ function countText(frames: Frame[], withCursor: boolean): string {
 export const caseCountLines = (frames: Frame[], incomplete = false): string[] =>
   underCounts(frames, [], incomplete);
 
-/** Case batch head: counts per case and where to read in full (#6574) — at the head, since cutting trims the tail. */
+/**
+ * Case batch head: counts per case and where to read in full (#6574). The pointer closes the
+ * counts — in one case's count line, after several cases' counts and so after their records
+ * under them (underCounts); nothing trims a batch's text, bodies are cut per record (textShown).
+ */
 export function batchHead(frames: Frame[]): string {
   return caseCountLines(frames).join("\n");
 }
