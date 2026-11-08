@@ -134,7 +134,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.35.1";
+var VERSION = "7.35.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -4639,7 +4639,7 @@ function createLeads(d) {
       else if (room)
         void lastLeave(child, l, room, String(args.realm ?? "").trim() || l.place?.realm || "");
     },
-    async release(caller, name, args) {
+    async release(caller, name, args, canon4) {
       const s = String(args.standing ?? "").trim();
       if (name !== tool("channel") || args.action !== "revoke" || !s) return null;
       for (const [child, l] of leads) {
@@ -4648,8 +4648,10 @@ function createLeads(d) {
         gone.set(child, void 0);
         const place = l.place ?? null;
         const run = await finish(child, W3().releasedByLauncher(), true, true, "end", true);
+        const asked = String(args.realm ?? "").trim();
+        const realm = asked && !asked.startsWith("@") && run?.revoked.length ? await canon4(asked) : asked;
         const seat = place && {
-          realm: String(args.realm ?? "").trim() || place.realm,
+          realm: realm || place.realm,
           karta: args.karta == null ? place.karta : String(args.karta),
           name: place.name
         };
@@ -5022,9 +5024,6 @@ async function revokeAsLauncher(freed, args, call) {
   }
 }
 
-// js/opencode/rootseat-tools.ts
-import { readFileSync as readFileSync10 } from "node:fs";
-
 // js/opencode/rootseat-by.ts
 function heldSeat(d, slot, session) {
   if (slot.place) return { ...slot.place };
@@ -5098,6 +5097,7 @@ async function seatBy(d, root, realm, karta) {
 }
 
 // js/opencode/rootseat-tools.ts
+import { readFileSync as readFileSync10 } from "node:fs";
 var explicitHeld = (slot) => ({
   logger: LOGGERS.channel,
   data: { kind: "held", key: slot.key, automatic: false }
@@ -5666,7 +5666,15 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
         async execute(input, tool2) {
           return seats.explicit(String(tool2.sessionID), name, input ?? {}, async () => {
             const caller = String(tool2.sessionID);
-            const freed = await leads.release(caller, name, input ?? {});
+            const freed = await leads.release(
+              caller,
+              name,
+              input ?? {},
+              (realm) => slotFor(caller).then(
+                (slot2) => canonOf(slot2, realm),
+                () => realm
+              )
+            );
             if (freed)
               return {
                 content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
