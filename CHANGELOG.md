@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.36.0](https://github.com/iskron-ai/skills/compare/v7.35.3...v7.36.0) (2026-11-08)
+
+
+### Features
+
+* **bridge:** expose read-only agent demands and Orca planning ([#703](https://github.com/iskron-ai/skills/issues/703)) ([a19db04](https://github.com/iskron-ai/skills/commit/a19db0476893451f4fd8c4c1d34fa7dc1fc7faa0))
+* **bridge:** name the bridge in every request to the API with user-agent ([#705](https://github.com/iskron-ai/skills/issues/705)) ([973998c](https://github.com/iskron-ai/skills/commit/973998cca7f99f88e548425ae39e080a3d8977b1))
+
+
+### Bug Fixes
+
+* distinguish greeting dispatch from incoming reachability ([#708](https://github.com/iskron-ai/skills/issues/708)) ([3f93367](https://github.com/iskron-ai/skills/commit/3f93367e849dd8259931080ae3822308dcd84575))
+* resolve demands boundary and align skill entry routes ([#706](https://github.com/iskron-ai/skills/issues/706)) ([8c2a0f6](https://github.com/iskron-ai/skills/commit/8c2a0f67f950303ece97a0325d46a74bb2435e64))
+
 ## [7.35.3](https://github.com/iskron-ai/skills/compare/v7.35.2...v7.35.3) (2026-11-08)
 
 
