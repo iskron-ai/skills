@@ -6,13 +6,17 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию: прежний мост не выравнивает
 // дом и не знает подкоманды update — краснота, ради которой проба написана.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  readlinkSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -244,6 +248,169 @@ test("the skill set survives the hand-over: the home copy names the starter's se
 // (js/build.mjs under ISKRON_BUILD_CHANNEL=release); a working copy's make build-js is dev.
 const OLD_HOME = '#!/usr/bin/env node\nconst VERSION = "0.0.1";\n';
 const releaseBuildOf = (text) => text.replaceAll('"iskron-build:dev"', '"iskron-build:release"');
+
+function treeSnapshot(root) {
+  const out = [];
+  function visit(path, relative) {
+    const stat = lstatSync(path);
+    out.push([
+      relative,
+      stat.mode,
+      stat.isSymbolicLink()
+        ? readlinkSync(path)
+        : stat.isFile()
+          ? createHash("sha256").update(readFileSync(path)).digest("hex")
+          : null,
+    ]);
+    if (stat.isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(join(path, name), `${relative}/${name}`);
+    }
+  }
+  visit(root, ".");
+  return out;
+}
+
+const watchdogCommands = ["watchdog", "watchdog-exit", "watchdog-codex"];
+const helpCommands = [
+  [],
+  ...[
+    "bridge",
+    ...watchdogCommands,
+    "doctor",
+    "status",
+    "stop",
+    "orchestra",
+    "prepare",
+    "update",
+    "use",
+    "check-rituals",
+    "daemon",
+    "version",
+    "https://example.invalid/mcp",
+  ].map((cmd) => [cmd]),
+];
+const invalidBridgeArgs = [
+  ["--unknown"],
+  ["--auth-dir"],
+  ["--client-name"],
+  ["--timeout"],
+  ["--tools"],
+  ["--auth-dir", "--debug"],
+  ["https://example.invalid/mcp", "extra"],
+];
+const admissionCases = [
+  ...helpCommands.flatMap((prefix) =>
+    ["--help", "-h"].map((flag) => ({ argv: [...prefix, flag], code: 0 })),
+  ),
+  ...[[], ["bridge"]].flatMap((prefix) =>
+    invalidBridgeArgs.map((args) => ({ argv: [...prefix, ...args], code: 2 })),
+  ),
+  ...watchdogCommands.flatMap((cmd) =>
+    [
+      ["--unknown"],
+      ["one", "two"],
+      ["--auth-dir"],
+      ["--lang"],
+      ["--auth-dir", "--compact-counts"],
+      ["--lang", "fr"],
+      ["-x"],
+    ].map((args) => ({ argv: [cmd, ...args], code: 2 })),
+  ),
+  { argv: ["unknown-command"], code: 2 },
+];
+
+for (const populated of [false, true]) {
+  test(`CLI admission leaves the entire ${populated ? "populated" : "new"} HOME unchanged`, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "iskron-admission-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const release = join(root, "iskron.mjs");
+    writeFileSync(release, releaseBuildOf(SELF));
+    // A sibling makes home/plugin alignment observable, too.
+    writeFileSync(join(root, "opencode-plugin.js"), "// candidate plugin\n");
+    for (const { argv, code } of admissionCases) {
+      await t.test(argv.join(" "), () => {
+        const isolated = join(root, "isolated");
+        rmSync(isolated, { recursive: true, force: true });
+        mkdirSync(isolated);
+        const home = join(isolated, "home");
+        mkdirSync(home);
+        if (populated) {
+          mkdirSync(join(home, ".iskron-bridge"));
+          writeFileSync(join(home, ".iskron-bridge", "iskron-bridge.mjs"), OLD_HOME, {
+            mode: 0o751,
+          });
+          const plugins = join(home, ".config", "opencode", "plugins");
+          mkdirSync(plugins, { recursive: true });
+          writeFileSync(join(plugins, "iskron.js"), "// installed plugin\n", { mode: 0o640 });
+          symlinkSync("iskron.js", join(plugins, "existing-link"));
+        }
+        const env = {
+          ...process.env,
+          HOME: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_STATE_HOME: join(home, ".local", "state"),
+          CODEX_HOME: join(home, ".codex"),
+          TMPDIR: isolated,
+          ISKRON_BRIDGE_AUTH_DIR: join(home, "auth"),
+        };
+        delete env.ISKRON_BRIDGE_NO_UPDATE;
+        delete env.ISKRON_BRIDGE_REEXEC;
+        delete env.ISKRON_BRIDGE_DAEMON;
+        const before = treeSnapshot(isolated);
+        const result = spawnSync(NODE, [release, ...argv], {
+          env,
+          cwd: isolated,
+          encoding: "utf8",
+          timeout: 3000,
+        });
+        assert.deepEqual(treeSnapshot(isolated), before, `filesystem changed: ${result.stderr}`);
+        assert.equal(
+          result.status,
+          code,
+          `${result.error ?? ""}\n${result.stdout}\n${result.stderr}`,
+        );
+        if (code === 0) assert.match(result.stdout, /watchdog-codex/, "help prints the CLI usage");
+      });
+    }
+  });
+}
+
+test("admitted watchdog grammars still align the release home before runtime checks", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "iskron-admitted-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const release = join(root, "iskron.mjs");
+  writeFileSync(release, releaseBuildOf(SELF));
+  for (const cmd of watchdogCommands) {
+    const home = join(root, cmd);
+    const auth = join(home, ".iskron-bridge");
+    mkdirSync(auth, { recursive: true });
+    const installed = join(auth, "iskron-bridge.mjs");
+    writeFileSync(installed, OLD_HOME);
+    const env = {
+      ...process.env,
+      HOME: home,
+      TMPDIR: root,
+      CODEX_HOME: join(home, ".codex"),
+      XDG_CONFIG_HOME: join(home, ".config"),
+      XDG_CACHE_HOME: join(home, ".cache"),
+      XDG_DATA_HOME: join(home, ".local", "share"),
+      XDG_STATE_HOME: join(home, ".local", "state"),
+      ISKRON_BRIDGE_AUTH_DIR: auth,
+    };
+    delete env.ISKRON_BRIDGE_NO_UPDATE;
+    delete env.ISKRON_BRIDGE_REEXEC;
+    delete env.CODEX_THREAD_ID;
+    const result = spawnSync(
+      NODE,
+      [release, cmd, "--auth-dir", auth, "--lang", "en", "--compact-counts"],
+      { env, cwd: home, encoding: "utf8", timeout: 3000 },
+    );
+    assert.equal(result.status, 2, result.stderr); // no held seat / no Codex thread
+    assert.equal(readFileSync(installed, "utf8"), releaseBuildOf(SELF), cmd);
+  }
+});
 
 test("a newer release build lays itself into an older home at start", async (t) => {
   const fake = await startFakeNks({ pat: PAT });
