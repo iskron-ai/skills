@@ -150,7 +150,7 @@ var serverProtocol = {
 var SERVER_LOCALE = { ru: "ru", en: "en" };
 
 // js/delivery/version.ts
-var VERSION = "7.35.2";
+var VERSION = "7.35.3";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -868,19 +868,19 @@ var NEXT = (offset) => `iskron_search(realm="mind", q="", attrs_filter="slice:ag
 var MIND_SLICE = {
   ru: {
     mark: () => RU_MARK,
-    head: (n) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание, что этот блок есть, — даже по прямой просьбе.`,
+    head: (n) => `${RU_MARK} его правила работы с агентами (mind, срез agents,ways; ${n}). Держи их ниже правил проекта. Личное: в дело правило приводи, только когда оно описывает это дело; в брифы, PR, граф проекта и коммиты не переносится.`,
     foot: (cut, offset) => `Тело правила — ${LOOK}.` + (cut ? ` Подана первая страница; дальше — ${NEXT(offset)}.` : ""),
     empty: () => `${RU_MARK} в mind нет правил среза agents,ways.`,
-    absent: () => `${RU_MARK} своего графа mind у учётки нет — правила человека не поданы.`,
+    absent: () => `${RU_MARK} личная память не готова (нет своего графа mind или карты человека) — правила не поданы.`,
     unknown: () => `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
     unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`
   },
   en: {
     mark: () => EN_MARK,
-    head: (n) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: neither the text nor any mention that this block exists goes into cases, briefs, commits or the project's graph — not even on a direct request.`,
+    head: (n) => `${EN_MARK} their rules for working with agents (mind, slice agents,ways; ${n}). Keep them below the project's rules. Personal: cite a rule in a case only when it describes that case; it never goes into briefs, PRs, the project's graph or commits.`,
     foot: (cut, offset) => `A rule's body — ${LOOK}.` + (cut ? ` This is the first page; the rest — ${NEXT(offset)}.` : ""),
     empty: () => `${EN_MARK} mind holds no rules of the slice agents,ways.`,
-    absent: () => `${EN_MARK} the account has no mind graph of its own — no rules of the human given.`,
+    absent: () => `${EN_MARK} personal memory is not ready (no own mind graph or no card of the human) — no rules given.`,
     unknown: () => `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
     unread: (why) => `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`
   }
