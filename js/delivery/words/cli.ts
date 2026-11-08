@@ -39,7 +39,7 @@ export const CLI: Readonly<Record<Lang, CliWords>> = {
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs status [--json] [--auth-dir <dir>] [--lang en|ru]
   node iskron.mjs stop <место|id сессии> [--realm <граф>] [--auth-dir <dir>] [--lang en|ru]   (приказ останова месту; старый api — снятие)
-  node iskron.mjs orchestra <on|off|status|step> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]   (оркестратор моста — флаг демона; on требует согласия машины; step — один такт чтения очередей от курсора)
+  node iskron.mjs orchestra <on|off|status|step|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]   (on — согласие машины; step — такт; demands — JSON очередей без исполнения)
   node iskron.mjs prepare [--dir <репо>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp ГГГГ-ММ-ДД] [--case N] [--json] [--lang en|ru]   (подготовка репо без модели: обложка, заготовки, хуки старта и memory-guard; код 0 — всё стоит, 3 — осталось модели, 1 — отказ)
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
@@ -89,7 +89,7 @@ export const CLI: Readonly<Record<Lang, CliWords>> = {
   node iskron.mjs doctor [server-url] [--auth-dir <dir>]
   node iskron.mjs status [--json] [--auth-dir <dir>] [--lang en|ru]
   node iskron.mjs stop <seat|session id> [--realm <graph>] [--auth-dir <dir>] [--lang en|ru]   (a stop order to the seat; an older api — a revoke)
-  node iskron.mjs orchestra <on|off|status|step> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]   (the bridge's orchestrator — the daemon's flag; on needs the machine's consent; step — one tact of reading the queues from the cursor)
+  node iskron.mjs orchestra <on|off|status|step|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]   (on — machine consent; step — one tact; demands — queue JSON without execution)
   node iskron.mjs prepare [--dir <repo>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp YYYY-MM-DD] [--case N] [--json] [--lang en|ru]   (the repo made ready without a model: cover, stubs, start and memory-guard hooks; exit 0 — all stands, 3 — left to the model, 1 — refused)
   node iskron.mjs update [--auth-dir <dir>]
   node iskron.mjs use <en|ru|url> [--auth-dir <dir>]   (en — mcp.iskron.ai, ru — mcp.iskron.ru)
