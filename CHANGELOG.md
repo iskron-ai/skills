@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.35.2](https://github.com/iskron-ai/skills/compare/v7.35.1...v7.35.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **opencode:** a satellite revoke in a short graph is not sent again ([#7599](https://github.com/iskron-ai/skills/issues/7599)) ([#699](https://github.com/iskron-ai/skills/issues/699)) ([123d383](https://github.com/iskron-ai/skills/commit/123d38363f0e40afa84712fa929a468cd4e6c1ba))
+
 ## [7.35.1](https://github.com/iskron-ai/skills/compare/v7.35.0...v7.35.1) (2026-11-07)
 
 
