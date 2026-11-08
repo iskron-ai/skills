@@ -82,7 +82,7 @@ test("a launched child reads the human's rules from its own stand answer, under 
     );
     assert.match(
       read,
-      /Личное: в дела, брифы, коммиты и граф проекта не переносится ни текст, ни упоминание/,
+      /Личное: в дело правило приводи, только когда оно описывает это дело/,
       "the rules carry the personal mark",
     );
   } finally {
