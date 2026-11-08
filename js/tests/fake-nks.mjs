@@ -7,8 +7,9 @@
 // test plays that part by fetching the authorize URL itself.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { dirname } from "node:path";
 
 import {
   DEVICE_GRANT,
@@ -35,6 +36,39 @@ const DECLARED_ARGS =
 // Имя моста в каждом его запросе (#9972): имя поставки и версия сборки (пробы
 // обновления штампуют копиям свою).
 const BRIDGE_AGENT = /^iskron-bridge\/\d+\.\d+\.\d+$/;
+
+/**
+ * Сцена перехода (#6702): выпуск до имени моста шлёт user-agent рантайма — тот же, что
+ * голый fetch ветки. Копия прошлого выпуска в `to` метит каждый свой запрос и апгрейд
+ * past-release/<версия> (преамбула после шебанга; её демон — та же копия), фейк отсеивает
+ * ровно их, запросы моста ветки остаются под проверкой. Возвращает путь копии.
+ */
+export function pastRelease(fake, file, to) {
+  const text = readFileSync(file, "utf8");
+  const version = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text)?.[1] ?? "?";
+  fake.state.pastRelease = version;
+  const ua = JSON.stringify(`past-release/${version}`);
+  const preamble = [
+    `globalThis.fetch = ((bare) => (input, init = {}) => {`,
+    `  const headers = new Headers(init.headers);`,
+    `  headers.set("user-agent", ${ua});`,
+    `  return bare(input, { ...init, headers });`,
+    `})(globalThis.fetch);`,
+    `globalThis.WebSocket = class extends globalThis.WebSocket {`,
+    `  constructor(url, init) {`,
+    `    const o = typeof init === "string" || Array.isArray(init) ? { protocols: init } : init;`,
+    `    super(url, { ...o, headers: { ...o?.headers, "user-agent": ${ua} } });`,
+    `  }`,
+    `};`,
+  ].join("\n");
+  const [first, ...rest] = text.split("\n");
+  const body = first.startsWith("#!")
+    ? [first, preamble, ...rest].join("\n")
+    : [preamble, text].join("\n");
+  mkdirSync(dirname(to), { recursive: true });
+  writeFileSync(to, body);
+  return to;
+}
 
 const b64url = (b) => Buffer.from(b).toString("base64url");
 const sha256 = (s) => createHash("sha256").update(s).digest();
@@ -2304,17 +2338,18 @@ export async function startFakeNks(opts = {}) {
     // close() ждёт их вечно, а с ним и проба.
     // Остановка — и проба #9972 на каждом пути каждого набора: запрос без имени моста
     // роняет набор. Свои запросы проба метит user-agent "probe"; сцена со сборкой
-    // прошлого выпуска ставит state.anyAgent. Бросок — мимо цепочки stop: уборка пробы
-    // после stop (мосты, каталоги) идёт до конца, а не виснет.
+    // прошлого выпуска отсеивает его запросы по версии (pastRelease). Бросок — мимо
+    // цепочки stop: уборка пробы после stop (мосты, каталоги) идёт до конца, а не виснет.
     stop: async () => {
       for (const s of [...st.ws, ...st.evicted]) s.destroy();
       st.ws.clear();
       st.evicted.clear();
       server.closeAllConnections?.();
       await new Promise((r) => server.close(r));
-      const bare = st.anyAgent
-        ? []
-        : st.agents.filter((r) => !BRIDGE_AGENT.test(r.ua) && r.ua !== "probe");
+      const past = st.pastRelease && `past-release/${st.pastRelease}`;
+      const bare = st.agents.filter(
+        (r) => !BRIDGE_AGENT.test(r.ua) && r.ua !== "probe" && r.ua !== past,
+      );
       if (!bare.length) return;
       const err = new Error(
         `requests without user-agent ${BRIDGE_AGENT} (#9972): ` +

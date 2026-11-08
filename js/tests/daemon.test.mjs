@@ -29,7 +29,7 @@ import { connectSeam, helloFrame, patShaOf } from "../shared/seam.ts";
 import { seamSocketPath } from "../shared/seam-entrance.ts";
 import { socketPathOf } from "../shared/standings.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
-import { startFakeNks } from "./fake-nks.mjs";
+import { pastRelease, startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1187,11 +1187,12 @@ for (const [label, first, second] of [
 ]) {
   test(`${label}: it stays thin and its seat stands`, async () => {
     await withFake(async ({ dir, procs, fake }) => {
-      fake.state.anyAgent = true; // the last release names no sender (#9972)
       const home = mkdtempSync(join(tmpdir(), "iskron-daemon-home-"));
+      // The last release names no sender (#9972): its copy marks its own requests.
+      const past = pastRelease(fake, OLD_BRIDGE, join(home, "release", "iskron.mjs"));
       const env = { HOME: home, USERPROFILE: home };
       const at = (path) => {
-        const b = startBridge(fake.mcpUrl, dir, env, [], path);
+        const b = startBridge(fake.mcpUrl, dir, env, [], path === OLD_BRIDGE ? past : path);
         procs.push(b);
         return b;
       };

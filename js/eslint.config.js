@@ -56,13 +56,26 @@ export default tseslint.config(
     },
   },
   {
-    // Запрос моста называет отправителя (#9972): fetch — только через shared/http.ts.
+    // Запрос моста называет отправителя (#9972): fetch и WebSocket — только через
+    // shared/http.ts, в том числе через globalThis.
     files: ["{bridge,shared,cli,opencode,extension,watchdog}/**/*.ts"],
     ignores: ["shared/http.ts"],
     rules: {
       "no-restricted-globals": [
         "error",
         { name: "fetch", message: "namedFetch из shared/http.ts несёт user-agent поставки." },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "NewExpression[callee.name='WebSocket']",
+          message: "namedSocket из shared/http.ts несёт user-agent поставки.",
+        },
+        {
+          selector:
+            "MemberExpression[object.name=/^(globalThis|global)$/][property.name=/^(fetch|WebSocket)$/]",
+          message: "namedFetch и namedSocket из shared/http.ts несут user-agent поставки.",
+        },
       ],
     },
   },

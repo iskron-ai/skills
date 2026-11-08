@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { BUILT_BRIDGE, REPO } from "./built.mjs";
-import { startFakeNks } from "./fake-nks.mjs";
+import { pastRelease, startFakeNks } from "./fake-nks.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -120,7 +120,7 @@ async function pluginRestart(t, resolver) {
   const old = oldRelease(join(scratch, "home", "release", "iskron.mjs"));
   if (!old) return t.skip("the v7.5.0 tag is not in this clone");
   const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
-  fake.state.anyAgent = true; // the past release names no sender (#9972)
+  pastRelease(fake, old, old); // the past release names no sender (#9972)
   const [dir, home, cwd] = ["auth", "home", "cwd"].map((d) => join(scratch, d));
   for (const d of [dir, cwd]) mkdirSync(d, { recursive: true });
   const env = {
@@ -229,7 +229,7 @@ async function besideBack(t, resolver) {
   const old = oldRelease(join(scratch, "home", "release", "iskron.mjs"), "v7.10.0");
   if (!old) return t.skip("the v7.10.0 tag is not in this clone");
   const fake = await startFakeNks({ pat: PAT, evictSameAddress: true });
-  fake.state.anyAgent = true; // the past release names no sender (#9972)
+  pastRelease(fake, old, old); // the past release names no sender (#9972)
   const [dir, home, cwd] = ["auth", "home", "cwd"].map((d) => join(scratch, d));
   for (const d of [dir, cwd]) mkdirSync(d, { recursive: true });
   const env = {
