@@ -56,6 +56,17 @@ export default tseslint.config(
     },
   },
   {
+    // Запрос моста называет отправителя (#9972): fetch — только через shared/http.ts.
+    files: ["{bridge,shared,cli,opencode,extension,watchdog}/**/*.ts"],
+    ignores: ["shared/http.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "namedFetch из shared/http.ts несёт user-agent поставки." },
+      ],
+    },
+  },
+  {
     // Пробы: один файл на набор, и набор моста один — 47 сцен против одного
     // фейка. Правило 500 строк писано про отгружаемый код, который читает
     // потребитель; здесь оно снято сознательно, а не забыто.

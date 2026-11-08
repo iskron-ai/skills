@@ -4288,6 +4288,7 @@ test("fake NKS drops arguments the surface snapshot does not declare, silently; 
         headers: {
           authorization: `Bearer ${PAT}`,
           "content-type": "application/json",
+          "user-agent": "probe",
           ...(sid ? { "mcp-session-id": sid } : {}),
         },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, ...body }),
