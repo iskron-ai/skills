@@ -1601,6 +1601,34 @@ for (const kind of ["stale", "backlog"]) {
       await rec.stop();
     }
   });
+
+  // A guard: a gathered count that is a copy of the event the batch brings as text is not counted again.
+  test(`a gathered copy of the event a ${kind} batch brings as text is not counted twice`, async () => {
+    const word = { ...said("interrupt", 87), addressee: ME, event_id: "ev-87" };
+    const copy = { ...addressed(87), id: "room-msg-87c", event_id: "ev-87" };
+    const head = kind === "stale" ? "Лежалых кадров: 1" : "Побудка: кадров 1";
+    const body = { head, shown: [0], incomplete: false };
+    // The batch's marks as the bridge gives them (seen.ts deliveryKeys): a stale copy marks evs:.
+    const mark = kind === "stale" ? "evs:ev-87" : "ev:ev-87";
+    const text = `${head}\n\n${CASE7} [87]`;
+    const batch = { kind, frames: [word], marks: [word.id, mark], body, text };
+    const { events, env } = eventsEnv(`aside-copy-${kind}`);
+    const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+    try {
+      push(events, frame(addressed(81)));
+      push(events, frame(copy));
+      push(events, batch);
+      const until = Date.now() + 5000;
+      while (!rec.messages.length && Date.now() < until) await delay(50);
+      await delay(700);
+      const got = rec.messages.map((m) => m.msg.content);
+      assert.equal(got.length, 1, JSON.stringify(got));
+      assert.equal(got[0].split(CASE7).length - 1, 1, got[0]);
+      assert.match(got[0], new RegExp(`${CASE7}: записей 2, тебе 1; `), got[0]);
+    } finally {
+      await rec.stop();
+    }
+  });
 }
 
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).

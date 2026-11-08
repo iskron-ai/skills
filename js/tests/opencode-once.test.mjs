@@ -10,7 +10,17 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { BATCH_MS, delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
-import { ack, answer, ask, closing, ME, ME_ID, progress, roomFrame } from "./room-frames.mjs";
+import {
+  ack,
+  addressed,
+  answer,
+  ask,
+  closing,
+  ME,
+  ME_ID,
+  progress,
+  roomFrame,
+} from "./room-frames.mjs";
 
 const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
 const LABEL = "№7 «Стенд»";
@@ -178,6 +188,37 @@ for (const kind of ["stale", "backlog"])
       once(text, LABEL, "[82]");
       const next = await prompt(answer(204, 202));
       assert.equal(next.split("\n").length, 1, `the case again in the next prompt:\n${next}`);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// A guard: a waiting count that is a copy of the event the batch brings as text is not counted again.
+for (const kind of ["stale", "backlog"])
+  test(`a waiting copy of the event a ${kind} batch brings as text is not counted twice`, async () => {
+    const { rec, ride, send } = await seated(`once-${kind}-copy`, `s-${kind}-copy`);
+    try {
+      await ride(progress(45, "k-45"));
+      await ride({ ...addressed(82), id: "room-msg-82c", event_id: "ev-82" });
+      const frame = {
+        ...roomFrame("said", {
+          entry_id: 82,
+          stack: "defer",
+          envelope: { addressee: ME },
+          body: "ТЕЛО-82",
+        }),
+        event_id: "ev-82",
+      };
+      const head = kind === "stale" ? "Лежалых кадров: 1." : "Побудка: кадров 1.";
+      // The batch's marks as the bridge gives them (seen.ts deliveryKeys): a stale copy marks evs:.
+      const marks = [frame.id, kind === "stale" ? "evs:ev-82" : "ev:ev-82"];
+      const n = rec.prompts.length;
+      const body = { head, shown: [0], incomplete: false };
+      send(kind, { frames: [frame], marks, text: `${head}\n\n[82] слово`, body });
+      await until(() => rec.prompts.length > n, `the ${kind} batch`);
+      const text = rec.prompts[n].text;
+      assert.match(text, /№7 «Стенд»: записей 2, тебе 1; /, text);
+      once(text, LABEL, "[82]");
     } finally {
       await rec.stop();
     }
