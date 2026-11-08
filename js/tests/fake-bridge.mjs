@@ -425,6 +425,10 @@ process.stdin.on("data", (chunk) => {
           answer();
         }, 20);
       }
+    } else if (msg.method === "iskron/realm") {
+      // A graph's name as the bridge's table names it (js/bridge/realmask.ts); unknown — as given.
+      const realm = String(msg.params?.realm ?? "").trim();
+      ok(msg.id, { realm: REALMS[realm] ?? realm });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).

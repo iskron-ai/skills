@@ -6654,6 +6654,100 @@ test("the launcher's revoke after the child's bridge revoked its seat itself: no
   }
 });
 
+// №3622 F1: simulated end receipt, not a live API envelope. Receipt shape is the
+// 7.34.1 fake-bridge iskron/end contract; r5 is the caller spelling in №3621 [10].
+// The receipt confirms this exact seat. Bare refusal prose by itself confirms nothing.
+for (const realm of [SUB_PLACE.realm, "r5"])
+  test(`3622 F1 confirmed canonical end receipt with caller realm ${realm}`, async () => {
+    const { b, rec, rootPid, childPid, sent } = await leadChild(
+      `3622-f1-${realm === "r5" ? "short" : "canonical"}`,
+      {
+        FB_END_REVOKED: `${SUB_PLACE.realm}|#${SUB_PLACE.karta}|${SUB}`,
+      },
+    );
+    try {
+      writeFileSync(`${b.reply}.iskron_channel`, `__ERROR__no standing named ${SUB}`);
+      const result = await rec
+        .call("iskron_channel", { realm, action: "revoke", standing: SUB }, "root")
+        .then(
+          (word) => ({ word }),
+          (error) => ({ error }),
+        );
+      await until(() => !alive(childPid), "the confirmed child's bridge to end");
+      assert.deepEqual(
+        sent().filter((c) => c.pid === rootPid && c.arguments.action === "revoke"),
+        [],
+        "F1: a confirmed end of this seat must not send a second revoke for its r5 alias",
+      );
+      assert.ifError(result.error);
+      assert.doesNotMatch(result.word.content, /НЕ снято|висит|повтори/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+test("3622 F1 no end confirmation and no-such-name prose remains unknown", async () => {
+  const { b, rec } = await leadChild("3622-f1-unknown", { FB_END_FAILED: SUB });
+  try {
+    writeFileSync(`${b.reply}.iskron_channel`, `__ERROR__no standing named ${SUB}`);
+    await assert.rejects(
+      rec.call("iskron_channel", { realm: "r5", action: "revoke", standing: SUB }, "root"),
+      /место НЕ снято[\s\S]*no standing named/,
+      "bare prose without a confirmed end receipt must not become proof of removal",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+// №3622 F2: a late cleanup of run A addressed by A's session leaves run B, now on A's
+// reused .sub-N name, alive. A revoke by the name itself is the current holder's —
+// a name is no generation on the wire (№3713), so that case is no probe here.
+test("3622 F2 late cleanup of run A by its session leaves reused-name run B alive", async () => {
+  const runA = "ses_3622_11111111-1111-4111-8111-111111111111";
+  const runB = "ses_3622_22222222-2222-4222-8222-222222222222";
+  const reused = { ...SUB_PLACE, name: `${ROOT_PLACE.name}.sub-3` };
+  const b = bridgeEnv("3622-f2-session", { FB_TOOLS: LEAD_TOOLS });
+  const rec = await plugin(b.env, {
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      { id: runA, parentID: "root", location: { directory: "/work/child" } },
+      { id: runB, parentID: "root", location: { directory: "/work/child" } },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
+    await rootHolds(rec, b);
+    await rec.call("iskron_stand", { realm: "nks-dev" }, runA);
+    const pidA = pidsOf(b.log)[1];
+    appendFileSync(`${b.events}.${pidA}`, event("held", { key: "k-run-a", place: reused }));
+    await until(() => /мост держит стояние k-run-a/.test(rec.said()), "A held");
+    await rec.call("iskron_channel", { realm: reused.realm, action: "leave" }, runA);
+    settle(rec, runA);
+    await until(() => !alive(pidA), "A ended before B starts");
+    await rec.call("iskron_stand", { realm: "nks-dev" }, runB);
+    const pidB = pidsOf(b.log)[2];
+    appendFileSync(`${b.events}.${pidB}`, event("held", { key: "k-run-b", place: reused }));
+    await until(() => /мост держит стояние k-run-b/.test(rec.said()), "B held same name");
+    await rec.call(
+      "iskron_channel",
+      { realm: reused.realm, action: "revoke", standing: runA },
+      "root",
+    );
+    assert.ok(
+      alive(pidB),
+      "F2: late cleanup owned by A must not close B's bridge at the reused name",
+    );
+    await assert.doesNotReject(
+      rec.call("iskron_stand", { realm: "nks-dev" }, runB),
+      "F2: B must not be sealed by cleanup of A",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a real refusal of the launcher's revoke is loud, and its hint names only the satellite — never the launcher's own seat from the platform's list", async () => {
   const { b, rec } = await leadChild("lead-release-refused-list", { FB_END_FAILED: SUB });
   try {
@@ -6727,10 +6821,10 @@ test("real bridges: the child's revoke answered by bare prose is not taken as re
   }
 });
 
-// #7599 after api 0.124.0: the launcher names its graph short («nks-dev»), so the child's confirmed
-// revoke does not match and the launcher's revoke goes — and meets the seat already off, now said
-// by rule (404 standing_not_found). That is «место снято», not the false «НЕ снято… повтори».
-test("real bridges: the launcher's revoke of a seat the child's bridge already revoked meets 404 standing_not_found — «место снято», no «НЕ снято»", async () => {
+// #7599: the launcher names its graph short («nks-dev»); its bridge resolves it (#8191), so the
+// child's confirmed revoke matches and the launcher's revoke does not go. Were it sent, it would
+// meet the seat already off (404 standing_not_found) — «место снято» either way, never «НЕ снято».
+test("real bridges: the launcher's revoke in a short graph of a seat the child's bridge already revoked is not sent again — «место снято», no «НЕ снято»", async () => {
   const fake = await startFakeNks({ pat: "nks_pat_plugin" });
   await fake.control({ richTools: true, revokeGone: 404 });
   const dir = mkdtempSync(join(tmpdir(), "iskron-lead-gone-"));
@@ -6771,7 +6865,7 @@ test("real bridges: the launcher's revoke of a seat the child's bridge already r
     const revokes = fake.state.calls.filter(
       (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
     );
-    assert.equal(revokes.length, 2, "the child's own revoke, then the launcher's");
+    assert.equal(revokes.length, 1, "the child's own revoke only");
     assert.match(said, /место снято/, said);
     assert.doesNotMatch(said, /НЕ снято|повтори/, said);
   } finally {
