@@ -2,7 +2,7 @@
 import { addressedToMine } from "../shared/addressed.ts";
 import { askFromPerson } from "../shared/asks.ts";
 import { classifyOrigin, type Frame, isDirectWord } from "../shared/channel.ts";
-import { batchShown, batchText, caseKey, frameToText, underCounts } from "../shared/frame-text.ts";
+import { batchShown, batchText, countsWithShown, frameToText } from "../shared/frame-text.ts";
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { receiptGraph } from "../shared/graph-receipt.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
@@ -31,11 +31,9 @@ interface Riders {
 
 /** Riding counts before a frame given as text; the frame stands under its case's count (#9654). */
 export function rideWith(got: Frame[], frame: Frame | null, raw: string): string {
+  if (!frame) return [...(got.length ? [batchText(got)] : []), raw].join("\n");
   const text = (withCase: boolean): string => frameToText(frame, raw, withCase);
-  if (!got.length || !frame)
-    return [...(got.length ? [batchText(got)] : []), text(true)].join("\n");
-  const own = !caseKey(frame) || addressedToMine(frame) ? [{ frame, text }] : [];
-  return underCounts([...got, frame], [...batchShown(got), ...own]).join("\n");
+  return countsWithShown(got, [...batchShown(got), { frame, text }]).join("\n");
 }
 
 /** Pending graph text suppresses its counted case copy before either is handed out. */

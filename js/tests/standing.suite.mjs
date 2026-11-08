@@ -1566,7 +1566,11 @@ for (const compact of [false, true])
         () => bridge.notifications.some((n) => n.params?.data?.kind === kind),
         "the count-only batch",
       );
-      const text = bridge.notifications.find((n) => n.params?.data?.kind === kind).params.data.text;
+      const data = bridge.notifications.find((n) => n.params?.data?.kind === kind).params.data;
+      const text = data.text;
+      // The parts ride along, so a giver with waiting counts of the case puts them in (#9654).
+      assert.deepEqual(data.body?.shown, [0], JSON.stringify(data));
+      assert.ok(text.startsWith(`${data.body.head}\n\n`), text);
       assert.match(text, /тебе 0/);
       assert.equal(text.includes("адресованных месту нет"), !compact, text);
       assert.equal(quiet(text), true, text);
@@ -4070,6 +4074,25 @@ test("the watchdog prints a held count and a lone word to the seat with the case
   await new Promise((r) => setTimeout(r, 500));
   onceIn(wd.out, LABEL, "[86]", "записей");
   assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 1; [^\n]*\n\[86\] /, wd.out);
+});
+
+test("the watchdog prints a held count in a stale batch of its case: the case once, one output", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "300" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const wd = runClient("watchdog", dir, key, 15_000);
+  t.after(async () => {
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  });
+  await waitFor(() => wd.out.includes("слушаю стояние"), "the watchdog to attach");
+  await sendRoom(fake, progress(81));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(!wd.out.includes("записей"), `a batch of counts printed on its own:\n${wd.out}`);
+  await sendRoom(fake, { ...toMe(), stale: true });
+  await waitFor(() => wd.out.includes("[82]"), "the stale batch", 6000);
+  await new Promise((r) => setTimeout(r, 500));
+  onceIn(wd.out, LABEL, "[82]", "записей");
+  assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 1; [^\n]*\n+\[82\] /, wd.out);
 });
 
 for (const kind of ["stale", "backlog"])

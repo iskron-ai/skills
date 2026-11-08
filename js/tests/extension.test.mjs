@@ -1569,6 +1569,40 @@ test("a gathered count and a word to me of the same case are one message naming 
   assert.equal(got[0].triggerTurn, true);
 });
 
+// #9654: пачка stale/backlog поверх ждущего счёта того же дела — один выход, дело названо раз.
+for (const kind of ["stale", "backlog"]) {
+  test(`a gathered count rides in a ${kind} batch of its case: one message naming the case once`, async () => {
+    const word = { ...said("interrupt", 87), addressee: ME };
+    const head = kind === "stale" ? "Лежалых кадров: 1" : "Побудка: кадров 1";
+    const body = { head, shown: [0], incomplete: false };
+    const batch = {
+      kind,
+      frames: [word],
+      marks: [word.id],
+      body,
+      text: `${head}\n\n${CASE7} [87]`,
+    };
+    const { events, env } = eventsEnv(`aside-then-${kind}`);
+    const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+    try {
+      push(events, frame(addressed(81)));
+      push(events, batch);
+      const until = Date.now() + 5000;
+      while (!rec.messages.length && Date.now() < until) await delay(50);
+      await delay(700); // past the gathering window: a separate count would have come
+      const got = rec.messages.map((m) => m.msg.content);
+      assert.equal(got.length, 1, JSON.stringify(got));
+      assert.equal(got[0].split(CASE7).length - 1, 1, got[0]);
+      assert.match(
+        got[0],
+        new RegExp(`^${head}\\n\\n${CASE7}: записей 2, тебе 1; [^\\n]*\\n\\n\\[87\\] `),
+      );
+    } finally {
+      await rec.stop();
+    }
+  });
+}
+
 // Проба B (#6867): вопрос только роли — текст одному месту, выбранному API (поле предположено).
 test("B: a question to my role alone, the api's choice another seat or none: a count, тебе 0, no text", async () => {
   const got = await asideMessages("role-only", [roleOnlyAsk(72, SIB), roleOnlyAsk(73)], 1);

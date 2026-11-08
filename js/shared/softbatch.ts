@@ -24,6 +24,7 @@ export function separateGraphBatch(ev: ChannelEvent) {
       frames: other,
       marks: ev.marks?.filter((key) => !graphMarks.has(key)),
       text,
+      body: undefined, // its indexes point into the frames before the split
     },
   };
 }

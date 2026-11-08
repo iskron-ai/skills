@@ -125,12 +125,13 @@ export function runWatchdog(argv: string[]): void {
   const take = (
     shown: Shown[],
     apart: Frame[] = [],
-  ): { lines: () => string[]; marks: (() => void)[] } => {
+  ): { lines: () => string[]; marks: (() => void)[]; frames: Frame[] } => {
     const groups = [...riders.splice(0), ...(head ? [batch] : [])];
     head = false;
     return {
       lines: () => heldText(groups, (k) => seen.has(k), shown, apart),
       marks: riderMarks.splice(0),
+      frames: groups.flat(),
     };
   };
   /** A head of this case waits: a frame of it rides in that head's output (#9654). */
@@ -247,15 +248,18 @@ export function runWatchdog(argv: string[]): void {
           break;
         case "stale": {
           // One batch, one event, judged at print time by the watchdog's memory
-          // (shared/stalebatch.ts). Printed means delivered whole.
+          // (shared/stalebatch.ts). Printed means delivered whole. Waiting heads of a case the
+          // batch brings ride in it: the case is named once (#9654).
+          const r = !ev.unshown && (ev.frames ?? []).some(heldCase) ? take([]) : null;
           let keys: string[] = [];
           const lines = (): string[] => {
-            const b = staleOf(ev, (k) => seen.has(k));
+            const b = staleOf(ev, (k) => seen.has(k), r?.frames);
             keys = b.keys;
-            return b.text ? wrapLines(b.text) : [];
+            return b.text ? wrapLines(b.text) : (r?.lines() ?? []);
           };
           out(lines, false, () => {
             for (const k of keys) noteSeen(seenPath, k, seen);
+            r?.marks.forEach((m) => m());
           });
           break;
         }

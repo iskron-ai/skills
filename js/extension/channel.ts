@@ -36,6 +36,7 @@ import {
   tactAt,
 } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
+import { batchBodyText, ridesIn } from "../shared/stalebatch.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
 
 /** The fold window of unaddressed case frames; the variable is a probe seam. */
@@ -141,12 +142,18 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
     graphHandoff = null;
   });
 
-  // One batch — one word into the turn: stale frames or a wake-up with the backlog.
+  // One batch — one word into the turn: stale frames or a wake-up with the backlog. Gathered
+  // of a case the batch shows rides in it, counted in that case, so the case is named once (#9654).
   function sendBatch(ev: ChannelEvent): void {
+    const frames = ev.frames ?? [];
+    const gathered = aside.filter((f) => !isGraphInbox(f));
+    const got = ev.body && ridesIn(gathered, frames, ev.body) ? takeAsides() : [];
     pi.sendMessage(
       {
         customType: LOGGERS.channel,
-        content: markFrame(ev.text ?? ""),
+        content: markFrame(
+          ev.body && got.length ? batchBodyText(frames, ev.body, got) : (ev.text ?? ""),
+        ),
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true },
       },

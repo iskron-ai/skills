@@ -96,9 +96,14 @@ export function adoptSeenPath(
  * An older bridge's event carries only the shown frames and the marks beyond them
  * (unshown): then its text and marks are used, shown ones as delivery keys (#5831);
  * events beyond the shown went in only as a count: `ev:`/`evs:` become `cev:`/`cevs:` (seen.ts).
+ * `riding` — waiting counts printed in the batch, counted in their cases (#9654).
  */
-export function staleOf(ev: ChannelEvent, has: Marks): { text: string; keys: string[] } {
-  if (!ev.unshown) return staleBatch(ev.frames ?? [], has);
+export function staleOf(
+  ev: ChannelEvent,
+  has: Marks,
+  riding: Frame[] = [],
+): { text: string; keys: string[] } {
+  if (!ev.unshown) return staleBatch(ev.frames ?? [], has, riding);
   const shown = (ev.frames ?? []).flatMap((f) => deliveryKeys(f));
   const named = ev.unshown.map((k) => (/^evs?:/.test(k) ? `c${k}` : k));
   return { text: ev.text ?? "", keys: [...shown, ...named] };
