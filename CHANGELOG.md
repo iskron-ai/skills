@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.35.3](https://github.com/iskron-ai/skills/compare/v7.35.2...v7.35.3) (2026-11-08)
+
+
+### Bug Fixes
+
+* **bridge:** the personal mark follows the owner's word — cite a rule in a case it describes ([#701](https://github.com/iskron-ai/skills/issues/701)) ([656c407](https://github.com/iskron-ai/skills/commit/656c40741424d54738d10482e654b3ccb615bf16))
+
 ## [7.35.2](https://github.com/iskron-ai/skills/compare/v7.35.1...v7.35.2) (2026-11-08)
 
 
