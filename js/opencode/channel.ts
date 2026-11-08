@@ -32,7 +32,7 @@ import { createHalts, descendantsOf } from "./halts.ts";
 import { archiver } from "./host.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
-import { freshRiders, handRiders, rideWith, takeRiders, toPile } from "./piles.ts";
+import { freshRiders, handRiders, ridersInBatch, rideWith, takeRiders, toPile } from "./piles.ts";
 import type { Context } from "./plugin.ts";
 import { setupTacts } from "./tacts.ts";
 import { type Say } from "./tools.ts";
@@ -282,12 +282,13 @@ export function setupChannel(
   function batch(session: string | null, child: boolean, ev: ChannelEvent, what: string): void {
     const parts = separateGraphBatch(ev);
     for (const frame of parts.graph) pile(session, child, frame);
-    ev = parts.rest;
-    noteOwn(piles.get(`${child ? "child" : "root"}:${session ?? ""}`), ev.marks);
-    if (!ev.text) return;
-    if (launcherWordIn(session, child, ev.frames))
-      void deliver(session, ev.text, what, "steer", child);
-    else if (!tact(session, child, ev, what)) void deliver(session, ev.text, what, "queue", child);
+    const own = piles.get(`${child ? "child" : "root"}:${session ?? ""}`);
+    noteOwn(own, parts.rest.marks);
+    if (!parts.rest.text) return;
+    const b = { ...parts.rest, text: ridersInBatch(own, parts.rest) };
+    if (launcherWordIn(session, child, b.frames))
+      void deliver(session, b.text, what, "steer", child);
+    else if (!tact(session, child, b, what)) void deliver(session, b.text, what, "queue", child);
   }
 
   const launcherWordIn = (

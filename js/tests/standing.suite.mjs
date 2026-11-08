@@ -4095,6 +4095,45 @@ test("the watchdog prints a held count in a stale batch of its case: the case on
   assert.match(wd.out, /№7 «Стенд»: записей 2, тебе 1; [^\n]*\n+\[82\] /, wd.out);
 });
 
+test("watchdog-codex puts a held count in a stale batch of its case: the case once, one turn", async (t) => {
+  const { fake, dir, key } = await connected(t, { env: { ISKRON_BRIDGE_ROOM_BATCH_MS: "300" } });
+  await waitFor(() => fake.state.ws.size === 1, "the socket");
+  const home = codexHome(t);
+  const log = join(home, "door.log");
+  writeFileSync(log, "");
+  const door = await startFakeCodex(
+    join(home, "app-server-control", "app-server-control.sock"),
+    log,
+  );
+  t.after(() => door.stop());
+  const wd = runClient("watchdog-codex", dir, key, 15_000, {
+    CODEX_HOME: home,
+    CODEX_THREAD_ID: "thread-stale",
+  });
+  t.after(async () => {
+    wd.proc.kill("SIGKILL");
+    await wd.done;
+  });
+  await waitFor(() => wd.err.includes("слушаю стояние"), "the watchdog to attach");
+  const turns = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.method === "turn/start")
+      .map((c) => c.params.input[0].text);
+  await sendRoom(fake, progress(81));
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.equal(turns().length, 0, "a batch of counts starts no turn");
+  await sendRoom(fake, { ...toMe(), stale: true });
+  await waitFor(() => turns().some((x) => x.includes("[82]")), "the stale batch", 6000);
+  await new Promise((r) => setTimeout(r, 500));
+  const all = turns().join("\n\n");
+  onceIn(all, LABEL, "[82]", "записей");
+  assert.match(all, /№7 «Стенд»: записей 2, тебе 1; [^\n]*\n+\[82\] /, all);
+});
+
 for (const kind of ["stale", "backlog"])
   test(`a ${kind} batch to OpenCode names the case once, its records to the seat under the count`, async (t) => {
     const init = {

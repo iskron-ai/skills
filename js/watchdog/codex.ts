@@ -14,7 +14,7 @@ import { CLIENTS, LOGGERS, PRODUCT } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
 import { type Door, openDoor } from "../shared/appserver.ts";
 import { type Frame } from "../shared/channel.ts";
-import { frameToText } from "../shared/frame-text.ts";
+import { caseKey, frameToText } from "../shared/frame-text.ts";
 import { deliveryKeys, eventIn, noteSeen, seenIds } from "../shared/seen.ts";
 import { seenFilePathOf } from "../shared/standings.ts";
 import {
@@ -163,7 +163,10 @@ export function runWatchdogCodex(argv: string[]): void {
     if (door) putStale(stale);
     else again.push(...stale);
   }
-  /** A stale batch is one turn, judged at put time (shared/stalebatch.ts); marks on acceptance. */
+  /**
+   * A stale batch is one turn, judged at put time (shared/stalebatch.ts); marks on acceptance.
+   * The pending count rides in it when a case of the batch is among it: the case once (#9654).
+   */
   function putStale(frames: Frame[], ev?: ChannelEvent): void {
     // An older bridge's batch goes as its text, nothing to judge it by (client.ts staleOf).
     const rest = ev?.unshown
@@ -171,9 +174,14 @@ export function runWatchdogCodex(argv: string[]): void {
       : holdOut(frames.map((f) => ({ frame: f, ids: deliveryKeys(f), stale: true }))).map(
           (h) => h.frame,
         );
-    const b = staleOf({ ...(ev ?? { kind: "stale" }), frames: rest }, (k) => seen.has(k));
-    if (b.text) void deliver(b.text, b.keys);
-    else for (const k of b.keys) noteSeen(seenPath, k, seen);
+    const cases = new Set(rest.map(caseKey).filter(Boolean));
+    const rides = !ev?.unshown && pend.some((p) => cases.has(caseKey(p.frame)));
+    const got = rides ? holdOut(pend.splice(0).map((p) => ({ ...p, stale: false }))) : [];
+    const riding = got.map((g) => g.frame);
+    const b = staleOf({ ...(ev ?? { kind: "stale" }), frames: rest }, (k) => seen.has(k), riding);
+    if (b.text) return void deliver(b.text, [...b.keys, ...got.flatMap((g) => g.ids)]);
+    for (const k of b.keys) noteSeen(seenPath, k, seen);
+    if (got.length) pend.unshift(...got.map(({ frame, ids }) => ({ frame, ids }))); // keep waiting
   }
 
   // The ring replays only what nobody delivered (#5428): frames that came between

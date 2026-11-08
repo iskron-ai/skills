@@ -53,7 +53,9 @@ async function seated(name, s) {
     await delay(BATCH_MS * 4);
     assert.equal(rec.prompts.length, n, "a count prompts nothing");
   };
-  return { rec, prompt, ride };
+  /** Lay a bridge event other than a frame. */
+  const send = (kind, extra) => appendFileSync(`${events}.${pid}`, event(kind, extra));
+  return { rec, prompt, ride, send };
 }
 
 const word = roomFrame("said", {
@@ -146,6 +148,36 @@ for (const [kind, frame, facts] of [
       once(text, LABEL, ...facts);
       assert.match(text, /^№7 «Стенд»: записей 2, тебе 1; /, text);
       assert.match(text.split("\n")[1], /^\[(205|50|207)\] /, text);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// A stale or wake-up batch of a case whose count waits: the count rides in the batch, counted in
+// its case, and no later prompt names the case again. The event carries its parts (body) as the
+// bridge gives them; the text is what an older plugin puts as is.
+for (const kind of ["stale", "backlog"])
+  test(`a waiting count rides in a ${kind} batch of its case: the case once, one prompt`, async () => {
+    const { rec, prompt, ride, send } = await seated(`once-${kind}-ride`, `s-${kind}-ride`);
+    try {
+      await ride(progress(45, "k-45"));
+      const frame = roomFrame("said", {
+        entry_id: 82,
+        stack: "defer",
+        envelope: { addressee: ME },
+        body: "ТЕЛО-82",
+      });
+      const head = kind === "stale" ? "Лежалых кадров: 1." : "Побудка: кадров 1.";
+      const count = '№7 «Стенд»: записей 1, тебе 1; целиком — iskron_case(action="history")';
+      const n = rec.prompts.length;
+      const body = { head, shown: [0], incomplete: false };
+      send(kind, { frames: [frame], text: `${head}\n\n${count}\n[82] слово`, body });
+      await until(() => rec.prompts.length > n, `the ${kind} batch`);
+      const text = rec.prompts[n].text;
+      assert.match(text, /№7 «Стенд»: записей 2, тебе 1; /, text);
+      once(text, LABEL, "[82]");
+      const next = await prompt(answer(204, 202));
+      assert.equal(next.split("\n").length, 1, `the case again in the next prompt:\n${next}`);
     } finally {
       await rec.stop();
     }
