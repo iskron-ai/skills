@@ -43,7 +43,7 @@ test("iskron_stand: the answer closes with the human's rules — personal mark, 
     lines[0],
     // #9818: on a direct request the agent named the block in a shared case — the mark forbids the mention too.
     // The owner's word (#9818): a rule may be cited in a case it describes; never into the graph or commits.
-    /Личное: в дело правило приводи, только когда оно описывает это дело; в брифы, граф проекта и коммиты не переносится/,
+    /Личное: в дело правило приводи, только когда оно описывает это дело; в брифы, PR, граф проекта и коммиты не переносится/,
   );
   assert.equal(lines.length, 5, block);
   assert.match(lines[1], /^ {2}📌 Правило 1: [^\n(]+ \(#30\) — Фрагмент описания/);
