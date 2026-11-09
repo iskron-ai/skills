@@ -261,6 +261,15 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       const system = req.system.map((p) => p.text).join("\n");
       return system ? `${text}\n${system}` : text;
     },
+    /** Только prompt-хуки: запрос модели не ушёл (хук упал позже, ход прерван). */
+    async promptLost(sessionID, text) {
+      const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
+      for (const cb of hooks.prompt ?? []) await cb(p);
+      const prior = contexts.get(sessionID);
+      if (prior === undefined || Array.isArray(prior))
+        contexts.set(sessionID, [...(prior ?? []), { id: p.messageID, type: "user", text }]);
+      return { id: p.messageID, role: "user", content: text };
+    },
     tools: () => tools.list,
     /** Тул сессии отработал (модель записала файл write или shell): хуки tool.execute.after. */
     async toolAfter(sessionID, tool, input = {}) {
@@ -309,9 +318,10 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     /**
      * Ход сессии: prompt-хуки, context-хуки, model.request-хуки — и провайдер. scenario(req)
      * отвечает [{tool, input}] — вызовы тулов модели, по порядку; иначе текстом.
-     * Возвращает доску в миг запроса и то, что модель прочла.
+     * Возвращает доску в миг запроса и то, что модель прочла. earlier — сообщения, которые
+     * запрос несёт перед этим (возврат promptLost): два промпта одного запроса.
      */
-    async turn(sessionID, text, scenario = () => []) {
+    async turn(sessionID, text, scenario = () => [], earlier = []) {
       const t0 = Date.now();
       const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
@@ -325,7 +335,7 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
         agent: "build",
         model,
         system: [],
-        messages: [{ id: p.messageID, role: "user", content: p.prompt.text }],
+        messages: [...earlier, { id: p.messageID, role: "user", content: p.prompt.text }],
         options: {},
         tools: {},
       };

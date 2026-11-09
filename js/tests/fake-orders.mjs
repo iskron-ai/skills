@@ -2,8 +2,8 @@
 // #7510; word of #48 in case №669): the stop frame on the seat's channel, GET /api/me/orders,
 // POST /api/me/orders/{id}/ack. An outcome closes the order and ends the seat — the founder
 // seat ends its channel whole, its seats beside too, and closes the channel's sockets once with
-// 4001 revoked:self; a seat beside goes alone by a standing_ended frame. /control: stop_order {id, standing_id, frame?, by?, reason_code?} puts
-// an order (frame: false — readable only), stop_orders: [...] many, orders_ack_drop: n — the next n answers lose their
+// 4001 revoked:self; a seat beside goes alone by a standing_ended frame. /control: stop_order {id, standing_id, frame?, by?, reason_code?, realm?, karta_seq?} puts
+// an order (frame: false — readable only), stop_orders: [...] many, orders_stop_answer: {status, body} — the stop of a seat on no channel answered so, orders_ack_drop: n — the next n answers lose their
 // connection without an answer, orders_ack_delay: {state: ms} — answers of that state are taken
 // so much later. The read pages by since and limit (≤200) as the api does: next_since — the
 // last seq given.
@@ -54,6 +54,8 @@ export function ordersControl(st, patch, wsFrame) {
   if (Number.isInteger(patch.orders_ack_drop)) st.orders.ackDrop = patch.orders_ack_drop;
   if (patch.orders_ack_delay) st.orders.ackDelay = patch.orders_ack_delay;
   if ("orders_route_missing" in patch) st.orders.routeMissing = !!patch.orders_route_missing;
+  if ("orders_stop_answer" in patch) st.orders.stopAnswer = patch.orders_stop_answer;
+  if ("orders_on_read" in patch) st.orders.onRead = patch.orders_on_read;
   for (const o of [...(patch.stop_orders ?? []), patch.stop_order]) if (o) putOrder(st, o, wsFrame);
 }
 
@@ -67,6 +69,7 @@ function putOrder(st, o, wsFrame) {
     by: o.by ?? "person",
     state: "issued",
     issued_at: new Date().toISOString(),
+    ...(o.realm ? { realm: o.realm, karta_seq: o.karta_seq ?? 931 } : {}),
   };
   st.orders.list.set(order.id, order);
   if (o.frame === false) return order;
@@ -110,6 +113,9 @@ async function standingsRoute(st, req, res, p, authed, { json, body, wsFrame }) 
     bearer,
   });
   if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
+  // orders_stop_answer {status, body}: a seat on no channel is answered so (the orchestrator's probes).
+  if (m[2] && st.orders.stopAnswer && !seatOf(st, id))
+    return (json(res, st.orders.stopAnswer.status, st.orders.stopAnswer.body), true);
   if (!seatOf(st, id)) return (json(res, 410, { error: "standing ended" }), true);
   if (m[2] && req.method === "POST") {
     if (st.orders.routeMissing) return (json(res, 404, { error: "not found" }), true);
@@ -135,6 +141,12 @@ export async function ordersRoute(st, req, res, p, { json, body, wsFrame }) {
     st.orders.reads++;
     if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
     const q = new URL(req.url, "http://x").searchParams;
+    // orders_on_read {order}: put once, just before the first read of every state is answered —
+    // an order issued between a tact's open-orders read and its read of all orders.
+    if (st.orders.onRead && q.get("open") !== "true") {
+      putOrder(st, st.orders.onRead, wsFrame);
+      st.orders.onRead = null;
+    }
     const since = Number(q.get("since") || 0);
     const limit = Math.min(Number(q.get("limit") || 50), 200);
     st.orders.queries.push({ since, limit });

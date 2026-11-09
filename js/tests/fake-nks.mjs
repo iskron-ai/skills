@@ -214,6 +214,8 @@ export async function startFakeNks(opts = {}) {
     realmResult: null, // Override the list result to probe unreadable/structured answers.
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     orchestraReadDelayMs: 0, // hold each invites/raised answer open this long (№1317 [19])
+    raisedHeld: 0, // raised reads put on hold by raised_holds
+    raisedRelease: [], // their release, by /control {raised_release}
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -245,6 +247,9 @@ export async function startFakeNks(opts = {}) {
     // и срез agents,ways в iskron_search(realm="mind"); { refuse: "проза" } — отказ этого поиска;
     // null — readiness без признака.
     mind: opts.mind ?? null,
+    // Ответ iskron_me(action="whoami") — форма живого сервера 09.11.2026; строка — подмена.
+    whoami:
+      opts.whoami ?? "Вызывающая идентичность: @tester · handle @tester (tester@probe.example)",
     // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
     // судят здесь, а не по тому, что фейк принял.
     calls: [],
@@ -550,6 +555,13 @@ export async function startFakeNks(opts = {}) {
       const state = st.orchestra?.realms?.[realm] ?? null;
       if (state?.refuse) return json(res, state.refuse, { error: "refused" });
       if (orchestraRoute[2] === "invites") return json(res, 200, { items: state?.invites ?? [] });
+      // raised_holds: держать ли каждое следующее чтение ленты по очереди — до /control
+      // {raised_release}; медленная перепроверка при быстром первом чтении без часов (#8202,
+      // №4050). raisedHeld — сколько чтений встало на удержание.
+      if (state?.raised_holds?.shift()) {
+        st.raisedHeld++;
+        await new Promise((r) => st.raisedRelease.push(r));
+      }
       const signals = state?.signals ?? [];
       const since = u.searchParams.get("since");
       const at = since ? signals.findIndex((s) => s.cursor === since) : -1;
@@ -557,6 +569,11 @@ export async function startFakeNks(opts = {}) {
       const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
       const items = signals.slice(start, start + limit);
       const cursor = items.length ? items[items.length - 1].cursor : (since ?? "0.0");
+      // late: сигналы, что лягут на ленту сразу после этого чтения — гонка перепроверки (#8203).
+      if (state?.late) {
+        state.signals = [...signals, ...state.late];
+        delete state.late;
+      }
       return json(res, 200, { items, cursor, numbering: "case" });
     }
 
@@ -725,6 +742,8 @@ export async function startFakeNks(opts = {}) {
       if (patch.orchestra !== undefined) st.orchestra = patch.orchestra;
       if (patch.orchestraReadDelayMs !== undefined)
         st.orchestraReadDelayMs = patch.orchestraReadDelayMs;
+      // Отпущенное чтение отвечает раньше ответа этого /control: ответ виден до следующей правки.
+      if (patch.raised_release) for (const r of st.raisedRelease.splice(0)) r();
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
@@ -2029,6 +2048,81 @@ export async function startFakeNks(opts = {}) {
       }
       // Личный граф (#9817) — формы живого сервера 07.11.2026: признак personal_mind readiness
       // и строки iskron_search с фрагментом описания.
+      // Описания запускателей оркестратора в mind (дело №4050): st.mind.orchestra = [{seq, body}] —
+      // поиск по attrs_filter slice:orchestra и сырое тело iskron_look(raw); refuseOrchestra — отказ поиска.
+      const a0 = msg.params?.arguments ?? {};
+      // Запись описания в mind (`orchestra on --launcher`): феномен с attrs slice:orchestra
+      // ложится в st.mind.orchestra и виден следующему поиску.
+      if (
+        msg.method === "tools/call" &&
+        msg.params.name === "iskron_add_phenomenon" &&
+        a0.realm === "mind" &&
+        a0.attrs?.slice === "orchestra"
+      ) {
+        st.mind ??= {};
+        st.mind.orchestra ??= [];
+        const seq = 900 + st.mind.orchestra.length;
+        st.mind.orchestra.push({ seq, body: String(a0.description ?? "") });
+        const text = `Создан феномен ${a0.name} (#${seq}, phenomenon, v1)`;
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
+      }
+      if (
+        msg.method === "tools/call" &&
+        a0.realm === "mind" &&
+        ((msg.params.name === "iskron_search" && a0.attrs_filter === "slice:orchestra") ||
+          (msg.params.name === "iskron_look" && a0.raw === true))
+      ) {
+        const list = st.mind?.orchestra ?? [];
+        const refuse = msg.params.name === "iskron_search" && st.mind?.refuseOrchestra;
+        const seq = String(a0.node_id ?? "").replace(/^#/, "");
+        const text =
+          msg.params.name === "iskron_search"
+            ? list.length
+              ? `Найдено ${list.length} узлов:\n` +
+                list.map((d) => `  🚀 Запускатель (#${d.seq}, phenomenon, Pt/Va/Ad, v1)`).join("\n")
+              : "Ничего не найдено."
+            : (list.find((d) => String(d.seq) === seq)?.body ?? "");
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ...(refuse ? { isError: true } : {}), content: [{ type: "text", text }] },
+          },
+          extra,
+        );
+      }
+      // Холоны mind (st.mind.holons = [{seq, name, agents}]): поиск node_type=holon и карточки
+      // slice:agents по context_holon — agents: true держит одну такую карточку.
+      if (
+        msg.method === "tools/call" &&
+        msg.params.name === "iskron_search" &&
+        a0.realm === "mind" &&
+        (a0.node_type === "holon" || a0.context_holon)
+      ) {
+        const holons = st.mind?.holons ?? [];
+        const rows =
+          a0.node_type === "holon"
+            ? holons.map((h) => `  🤝 ${h.name} (#${h.seq}, holon, Pt/Va/Ad, v1)`)
+            : holons
+                .filter((h) => `#${h.seq}` === a0.context_holon && h.agents)
+                .map((h) => `  📣 Правило (#${h.seq + 100}, phenomenon, Pt/Va/Ad, v1)`);
+        const text = rows.length
+          ? `Найдено ${rows.length} узлов:\n${rows.join("\n")}`
+          : "По этому фильтру узлы не найдены.";
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
+      }
       const mindCall =
         msg.method === "tools/call" &&
         (msg.params?.name === "iskron_me" ||
@@ -2048,21 +2142,23 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         const text =
-          msg.params.name === "iskron_me"
-            ? "Готовность @tester (Tester)\nпризнаки (1):\n" +
-              (m
-                ? `  personal_mind «Личная память» — ${m.missing ? "missing" : "present"} · scope: person · ready: ${m.missing ? "нет" : "да"}\n`
-                : "")
-            : rules.length
-              ? `Найдено ${rules.length} узлов:\n` +
-                rules
-                  .map(
-                    (r) =>
-                      r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
-                  )
-                  .join("\n") +
-                `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
-              : "Ничего не найдено.";
+          msg.params.name === "iskron_me" && msg.params.arguments?.action === "whoami"
+            ? st.whoami
+            : msg.params.name === "iskron_me"
+              ? "Готовность @tester (Tester)\nпризнаки (1):\n" +
+                (m
+                  ? `  personal_mind «Личная память» — ${m.missing ? "missing" : "present"} · scope: person · ready: ${m.missing ? "нет" : "да"}\n`
+                  : "")
+              : rules.length
+                ? `Найдено ${rules.length} узлов:\n` +
+                  rules
+                    .map(
+                      (r) =>
+                        r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
+                    )
+                    .join("\n") +
+                  `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
+                : "Ничего не найдено.";
         return json(
           res,
           200,

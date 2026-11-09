@@ -70,7 +70,7 @@ test-opencode: build-js
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
 test-stand: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/stand.test.mjs
+	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/stand.test.mjs js/tests/stand-2.test.mjs js/tests/stand-3.test.mjs
 
 test-update: build-js
 	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/update.test.mjs

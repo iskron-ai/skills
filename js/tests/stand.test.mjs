@@ -6,6 +6,11 @@
 // ISKRON_BRIDGE_PATH наводит пробу на любую копию: против моста без тула
 // tools/list его не несёт и вызов уходит на сервер как чужое имя — та
 // краснота, ради которой проба написана.
+//
+// Пробы идут тремя файлами: этот и stand-2/stand-3.test.mjs, которые ставят
+// ISKRON_STAND_PART и импортируют его; каждая проба регистрируется лишь в своей
+// трети по порядку регистрации — последовательно весь файл не укладывался в
+// предел файла на раннере CI.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -21,12 +26,17 @@ import {
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import { progress } from "./room-frames.mjs";
+
+const PARTS = 3;
+const PART = Number(process.env.ISKRON_STAND_PART ?? 1) - 1;
+let registered = 0;
+const test = (...args) => (registered++ % PARTS === PART ? nodeTest(...args) : undefined);
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const FILE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
