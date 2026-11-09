@@ -553,6 +553,10 @@ export async function startFakeNks(opts = {}) {
       const state = st.orchestra?.realms?.[realm] ?? null;
       if (state?.refuse) return json(res, state.refuse, { error: "refused" });
       if (orchestraRoute[2] === "invites") return json(res, 200, { items: state?.invites ?? [] });
+      // raised_delays: задержка каждого следующего чтения ленты по очереди — медленная
+      // перепроверка при быстром первом чтении (#8202, №4050 [32] п.2).
+      const delay = state?.raised_delays?.shift();
+      if (delay) await new Promise((r) => setTimeout(r, delay));
       const signals = state?.signals ?? [];
       const since = u.searchParams.get("since");
       const at = since ? signals.findIndex((s) => s.cursor === since) : -1;

@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
+import type { OpenOrder } from "./demand-rows.ts";
 import { type Run, runKey } from "./orchestra-runs.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
@@ -65,19 +66,15 @@ export function expireLaunches(runs: Record<string, Run>, now = Date.now()): str
 }
 
 /**
- * A stopping run whose order is no longer open (complete snapshot) has ended; a stop answered
- * without an id is tracked by its seat. The snapshot reads orders of the boundary's graphs
- * only — a run of a graph outside it is not settled by its order's absence.
+ * A stopping run whose order is no longer open has ended; a stop answered without an id is
+ * tracked by its seat. `open` is every open order of the account in any graph (a complete
+ * snapshot) — so a run of a graph that left the boundary ends too, and frees its limit slot.
  */
-export function settleStops(
-  runs: Record<string, Run>,
-  open: Record<string, unknown>[],
-  boundary: string[],
-): void {
-  const orders = new Set(open.map((s) => String(s.order_id)));
-  const seats = new Set(open.map((s) => String(s.standing_id)));
+export function settleStops(runs: Record<string, Run>, open: OpenOrder[]): void {
+  const orders = new Set(open.map((s) => s.order_id));
+  const seats = new Set(open.map((s) => s.standing_id));
   for (const r of Object.values(runs)) {
-    if (r.state !== "stopping" || !boundary.includes(r.realm)) continue;
+    if (r.state !== "stopping") continue;
     if (r.order_id ? !orders.has(r.order_id) : !seats.has(r.standing_id ?? "")) r.state = "ended";
   }
 }
@@ -126,6 +123,8 @@ export async function quench(
     if (gone?.gone) break;
     try {
       foldTape(r.realm, await reread(r.realm), runs);
+      // The re-read may outlast the caller: no order after it left.
+      if (gone?.gone) break;
       if (r.rooms !== 0) {
         said.push(w().leadRow(r.realm, r.invite, "composition_changed"));
         continue;

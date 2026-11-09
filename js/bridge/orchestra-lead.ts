@@ -5,6 +5,7 @@
 // consent nothing is raised or extinguished.
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import type { OpenOrder } from "./demand-rows.ts";
 import { readDemands } from "./orchestra-demands.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
@@ -27,14 +28,15 @@ export function leadAct(
     for (const r of reads) foldTape(r.realm, r.signals as Record<string, unknown>[], runs);
     const said = expireLaunches(runs);
     try {
-      const demands = await readDemands(base, token, boundary, boundary);
+      const owned: OpenOrder[] = [];
+      const demands = await readDemands(base, token, boundary, boundary, undefined, owned);
       if (!demands.complete) {
         said.push(
           w().leadIncomplete(demands.errors.map((e) => `${e.source}:${e.code}`).join(", ")),
         );
         return said;
       }
-      settleStops(runs, demands.stop, boundary);
+      settleStops(runs, owned);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(

@@ -35,6 +35,15 @@ export function startRow(v: unknown, realm: string): Row {
     author: text(x.author),
   };
 }
+/** An open order of the account in any graph — only what settles a stop of ours. */
+export interface OpenOrder {
+  order_id: string;
+  standing_id: string;
+}
+export function openOrder(v: unknown): OpenOrder {
+  const x = object(v);
+  return { order_id: required(x.id), standing_id: required(x.standing_id) };
+}
 export function stopRow(v: unknown, realms: readonly string[]): Row | null {
   const x = object(v);
   const realm = required(x.realm);

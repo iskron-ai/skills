@@ -71,8 +71,9 @@ const orcaProjects = (checkout) => ({
   ],
 });
 
-/** author — the caller's seat as the invites door carries it (#4951); the fake's account is
- * @tester, so the default call is the machine's own. */
+/** author — the caller's seat address, a string, as the invites door carries it (#4951; LOCAL
+ * 0.169.0 answered "author":"@skills-probe:lead", 09.11.2026); the fake's account is @tester, so
+ * the default call is the machine's own. */
 const invite = (entry, attrs, repository = REPO, author = "@tester:lead") => ({
   entry_id: entry,
   room_id: ROOM,
@@ -379,6 +380,21 @@ test("raise: the machine's account unknown — nothing is raised, said aloud", a
   assert.equal(o.launches().length, 0);
 });
 
+test("raise: the account from an English whoami, a hyphenated handle — own calls only", async (t) => {
+  // The en form as LOCAL 0.169.0 answers it (09.11.2026, №4050).
+  const o = await leading(t, {
+    whoami: "You are @skills-probe · handle @skills-probe (skills-probe@example.com)",
+  });
+  await o.queue([
+    invite(1, GOOD, REPO, "@skills-probe:lead"),
+    invite(2, GOOD, REPO, "@tester:lead"),
+  ]);
+  const r = await o.step();
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: caller_not_allowed/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
 test("raise: the host is this machine's name in any letter case", async (t) => {
   const o = await leading(t, {
     descriptions: () => {
@@ -492,6 +508,31 @@ test("quench: a membership landing after the read cancels the end — the re-che
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
 });
 
+test("quench: the caller gone during the re-check — no stop order after it (#8202)", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    orchestra: {
+      realms: {
+        [REALM]: {
+          invites: [],
+          signals: [signal(1, 9, [ROOM]), signal(2, 9, [])],
+          // The tact's read is quick; the re-check outlasts the client's ceiling (5 s).
+          raised_delays: [0, 6000],
+        },
+      },
+    },
+  });
+  const r = await o.step();
+  assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
+  await new Promise((done) => setTimeout(done, 8_000));
+  assert.equal(o.fake.state.orders.human.length, 0, "no stop order after the caller left");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
 test("quench: a raised seat that never joined within the window is a failed launch — stopped (#9970)", async (t) => {
   const o = await leading(t, { env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500" } });
   await o.queue([invite(9, GOOD)]);
@@ -543,7 +584,7 @@ test("quench: a stop answered without an id ends when no open order is left for 
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 
-test("quench: a stopping run whose graph left the boundary is not ended by the order's absence", async (t) => {
+test("quench: a stopping run whose graph left the boundary ends when its order closes, not before", async (t) => {
   const o = await stopping(t, { status: 201, body: { id: "ord-b" } }, "ord-b");
   const other = "@probe/other";
   writeFileSync(
@@ -554,7 +595,22 @@ test("quench: a stopping run whose graph left the boundary is not ended by the o
   writeFileSync(hold, JSON.stringify({ ...JSON.parse(readFileSync(hold, "utf8")), realm: other }));
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", "its order was not read");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", "its order is still open");
+  // The account's open orders are read whole, whatever the boundary: the closed order frees
+  // the run — and its limit slot (№4050 [32] п.3).
+  const closed = await fetch(`${o.fake.base}/api/me/orders/ord-b/ack`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer probe-pat",
+      "content-type": "application/json",
+      "user-agent": "iskron-bridge/0.0.0",
+    },
+    body: JSON.stringify({ state: "stopped" }),
+  });
+  assert.equal(closed.status, 200);
+  const after = await o.step();
+  assert.equal(after.code, 0, after.err + after.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 
 test("quench: a seat the orchestrator did not launch is never stopped", async (t) => {
