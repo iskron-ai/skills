@@ -118,7 +118,10 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     if (op === "on") {
       const prior = readOrchestraFlag(authDir);
       const terminal = extra?.consent === true;
-      if (!envAdmitted() && !terminal && !prior?.consent)
+      // A graph added to the boundary is enabling there: the same consent as `on` itself — the
+      // consent lying in the flag only re-says what the human named (#7514).
+      const widens = realms.some((r) => !(prior?.on ? prior.realms : []).includes(r));
+      if (!envAdmitted() && !terminal && (!prior?.consent || widens))
         return { ok: false, said: w().notAdmitted() };
       // A short rN does not ride REST as is (live probe: 404 "Realm not found") — the door
       // refuses it aloud instead of storing a boundary the tact cannot walk (#8202).

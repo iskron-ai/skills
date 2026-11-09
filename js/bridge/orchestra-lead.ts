@@ -13,7 +13,7 @@ import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
 import { readRuns, writeRuns } from "./orchestra-runs.ts";
-import { readTape, realmCanon, type TactAct } from "./orchestra-tact.ts";
+import { readTape, realmCanon, type TactAct, type TactRead } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -24,8 +24,17 @@ export function leadAct(
   mcpUrl: string,
   admitted: boolean,
 ): TactAct {
-  return async (reads, boundary, gone) => {
-    if (!admitted) return [w().leadNotAdmitted()];
+  // Without consent the tape is not folded, so its cursors hold: the signals of our own
+  // launches wait for the consent's return instead of being lost (#7514, #8202).
+  return async (reads, boundary, gone) =>
+    admitted
+      ? { said: await lead(reads, boundary, gone) }
+      : { said: [w().leadNotAdmitted()], hold: true };
+  async function lead(
+    reads: TactRead[],
+    boundary: string[],
+    gone?: { gone: boolean },
+  ): Promise<string[]> {
     const runs = readRuns(authDir);
     for (const r of reads) foldTape(r.realm, r.signals as Record<string, unknown>[], runs);
     const said: string[] = [];
@@ -43,7 +52,7 @@ export function leadAct(
       const foreign = await foreignStops(authDir, base, token, runs);
       said.push(...foreign.said);
       said.push(...(await expireLaunches(runs, gone)));
-      settleStops(runs, owned, foreign.fresh);
+      said.push(...settleStops(runs, owned, foreign.fresh));
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(
@@ -71,5 +80,5 @@ export function leadAct(
     } finally {
       writeRuns(authDir, runs);
     }
-  };
+  }
 }

@@ -17,6 +17,9 @@ const w = (): OrchestraWords => words(ORCHESTRA);
 const TIMEOUT_MS = 10_000;
 /** No seat this long after the launch — the claim went elsewhere or never came (#7523). */
 const RAISE_WINDOW_MS = Number(process.env[envName("ORCHESTRA_RAISE_WINDOW_MS")]) || 15 * 60_000;
+/** A stopping run's window from its stop has passed — whatever its order says (#7522). */
+export const stopLapsed = (r: Run, now = Date.now()): boolean =>
+  now - Date.parse(r.stopping_at ?? r.at) > RAISE_WINDOW_MS;
 
 type Signal = Record<string, unknown>;
 type Close = (handle: string, runtime: string) => Promise<string>;
@@ -104,22 +107,39 @@ export async function closeEnded(
 }
 
 /**
- * A stopping run whose order is no longer open has ended; a stop answered without an id is
+ * A stopping run whose order closed `stopped` has ended; a stop answered without an id is
  * tracked by its seat. `open` is every open order of the account in any graph (a complete
  * snapshot) — so a run of a graph that left the boundary ends too, and frees its limit slot.
  * `fresh` — runs marked stopping after that snapshot was read: it cannot speak of their order.
+ * A closed order of another outcome (failed, refused, unknown — or one never read) did not
+ * carry the stop out: the agent may still live, so the run stays stopping until its window
+ * passes, then frees its slot with its tab left open and said so — the branch of the agent that
+ * did not answer the stop (graph @nks/nks-dev, #7522); the tab is never closed on it. An order
+ * still open past the window (never taken) ends the run the same way, as stop_unanswered.
  */
 export function settleStops(
   runs: Record<string, Run>,
   open: OpenOrder[],
   fresh: ReadonlySet<Run> = new Set(),
-): void {
+  now = Date.now(),
+): string[] {
+  const said: string[] = [];
   const orders = new Set(open.map((s) => s.order_id));
   const seats = new Set(open.map((s) => s.standing_id));
   for (const r of Object.values(runs)) {
     if (r.state !== "stopping" || fresh.has(r)) continue;
-    if (r.order_id ? !orders.has(r.order_id) : !seats.has(r.standing_id ?? "")) r.state = "ended";
+    const unanswered = r.order_id ? orders.has(r.order_id) : seats.has(r.standing_id ?? "");
+    if (!unanswered && r.stop_outcome === "stopped") {
+      r.state = "ended";
+      continue;
+    }
+    if (!stopLapsed(r, now)) continue;
+    r.state = "ended";
+    r.closed = "terminal_left_open";
+    const outcome = unanswered ? "unanswered" : (r.stop_outcome ?? "unknown");
+    said.push(w().leadRow(r.realm, r.room, r.invite, `stop_${outcome}, ${r.closed}`));
   }
+  return said;
 }
 
 async function order(base: string, token: string, r: Run, key: string) {
@@ -177,6 +197,7 @@ export async function quench(
       const why = r.sat ? "" : "no_join, ";
       if (got.status >= 200 && got.status < 300) {
         r.state = "stopping";
+        r.stopping_at = new Date(now).toISOString();
         if (got.id) r.order_id = got.id;
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {

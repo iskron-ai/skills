@@ -41,6 +41,10 @@ export interface Run {
   /** The seat sat in a case once — an empty composition before that is not the moment. */
   sat?: boolean;
   order_id?: string;
+  /** When the run became stopping — its window to end runs from here (#7522). */
+  stopping_at?: string;
+  /** The closed stop order's state as the account's orders read it: only `stopped` ends it. */
+  stop_outcome?: string;
 }
 
 export const LIVE: readonly RunState[] = ["launched", "raised", "stopping"];

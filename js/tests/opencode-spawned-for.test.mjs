@@ -52,6 +52,25 @@ test("a stand again with the held pair is answered by the session's own seat", a
   );
 });
 
+// Only a repeated registration of the held pair is answered locally: a stand that sets status,
+// knocks into a room, takes or mutes siblings goes to the bridge (#9959).
+test("a stand carrying an act beyond registration reaches the bridge", async () => {
+  const acts = [
+    { status: "busy" },
+    { room: pair.room },
+    { room_karta: "1226" },
+    { take: true },
+    { mute_siblings: true },
+    { repeat_knock: true },
+  ];
+  for (const act of acts) {
+    const starts = await claimed({ realm: "@nks/nks-dev", karta: "931" });
+    const args = { realm: "@nks/nks-dev", karta: "931", ...act };
+    assert.equal(starts.apply("s", "iskron_stand", args), undefined, JSON.stringify(act));
+    assert.ok(!Object.hasOwn(args, "spawned_for"), `${JSON.stringify(act)}: pair re-attached`);
+  }
+});
+
 test("a claim with its realm names that graph", async () => {
   const word = (await claimed({ realm: "@nks/nks-dev" })).taken("s");
   assert.ok(word?.includes("@nks/nks-dev") && word.includes(pair.room), word ?? "(none)");

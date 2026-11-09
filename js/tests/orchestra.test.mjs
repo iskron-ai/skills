@@ -218,7 +218,7 @@ const cursorsAt = (dir) => join(dir, "run", "orchestra-cursors.json");
 /** A daemon that can read a server: the fake's address and a PAT beside the grant, and a
  * hold record per realm whose channel url names the api beside it — as lived sessions would
  * leave. The records' realms are ALSO the discovered half of the boundary (#8202). */
-async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {
+async function raiseReader(dir, fake, realms = ["@nks/nks-dev"], env = { ISKRON_ORCHESTRA: "1" }) {
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
   mkdirSync(join(dir, "standings"), { recursive: true });
@@ -235,7 +235,7 @@ async function raiseReader(dir, fake, realms = ["@nks/nks-dev"]) {
       }) + "\n",
     );
   }
-  return raiseDaemon(dir, { ISKRON_ORCHESTRA: "1" });
+  return raiseDaemon(dir, env);
 }
 
 test("orchestra: step reads invites and raised from its cursor; a step sees only the new", async () => {
@@ -376,7 +376,9 @@ test("orchestra: a step the caller left is a final refusal — no cursor moves a
         },
       },
     });
-    const refused = await cli(["step", "--auth-dir", dir]).done;
+    const refused = await cli(["step", "--auth-dir", dir], {
+      ISKRON_ORCHESTRA_STEP_WAIT_MS: "5000",
+    }).done;
     assert.notEqual(refused.code, 0, "the caller left — the door's answer is a refusal");
     assert.equal(fake.state.raisedHeld, 1, "the tape read was on hold when the client left");
     // Демон обслужил более поздний вопрос: закрытый сокет ушедшего клиента уже увиден.
@@ -520,5 +522,76 @@ test("orchestra: a live rN the realm list does not know — the tact is refused,
   } finally {
     await d.stop();
     await fake.stop();
+  }
+});
+
+// The flag lies, the machine's consent does not (a daemon restarted without the variable): the
+// tact leads nothing, and the raised tape it read is not folded — its cursor holds, so the
+// signals of our own launches wait for the consent's return (#7514, #8202).
+test("orchestra: a flag without the machine's consent moves no cursor of the raised tape", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  mkdirSync(join(dir, "run"), { recursive: true, mode: 0o700 });
+  writeFileSync(flagAt(dir), JSON.stringify({ on: true, realms: ["@nks/nks-dev"] }) + "\n");
+  const d = await raiseReader(dir, fake, ["@nks/nks-dev"], {});
+  try {
+    await untilDoor(dir);
+    await fake.control({
+      orchestra: {
+        realms: { "@nks/nks-dev": { invites: [invite], signals: [signal(1, "raised")] } },
+      },
+    });
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.match(r.out + r.err, /не допустила оркестратора/, r.out + r.err);
+    const kept = existsSync(cursorsAt(dir)) ? JSON.parse(readFileSync(cursorsAt(dir), "utf8")) : {};
+    assert.equal(kept.realms?.["@nks/nks-dev"], undefined, "the tape's cursor did not move");
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+// A manual step waits for the tact's outcome, not the door's 5 s (a tact reads, asks the
+// server and may launch for minutes).
+test("orchestra: a manual step longer than five seconds is answered with its outcome", async () => {
+  const fake = await startFakeNks({ pat: "probe-pat" });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  const d = await raiseReader(dir, fake);
+  try {
+    await untilDoor(dir, { ISKRON_ORCHESTRA: "1" });
+    await fake.control({
+      orchestra: { realms: { "@nks/nks-dev": { invites: [invite], signals: [] } } },
+      orchestraReadDelayMs: 3500,
+    });
+    const on = await cli(["on", "--realm", "@nks/nks-dev", "--auth-dir", dir]).done;
+    assert.equal(on.code, 0, on.err);
+    const r = await cli(["step", "--auth-dir", dir]).done;
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, /такт прошёл/, r.out);
+  } finally {
+    await d.stop();
+    await fake.stop();
+  }
+});
+
+// Widening the boundary is enabling for new graphs: an `on` from an agent's shell (no terminal,
+// no variable) does not add a graph even when a human's consent already lies (#7514).
+test("orchestra: on without a terminal does not widen a consented boundary", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-orchestra-"));
+  mkdirSync(join(dir, "run"), { recursive: true, mode: 0o700 });
+  const consent = { by: "terminal", at: "2026-11-09T20:00:00Z" };
+  writeFileSync(flagAt(dir), JSON.stringify({ on: true, realms: ["@x/one"], consent }) + "\n");
+  const d = await raiseDaemon(dir);
+  try {
+    await untilDoor(dir);
+    const wider = await cli(["on", "--realm", "@x/two", "--auth-dir", dir]).done;
+    assert.equal(wider.code, 1, wider.out);
+    assert.match(wider.err, /не допустила оркестратора/, wider.err);
+    assert.deepEqual(flagOf(dir).realms, ["@x/one"], "the boundary stayed as the human named it");
+    const same = await cli(["on", "--realm", "@x/one", "--auth-dir", dir]).done;
+    assert.equal(same.code, 0, same.err);
+    assert.deepEqual(flagOf(dir), { on: true, realms: ["@x/one"], consent });
+  } finally {
+    await d.stop();
   }
 });

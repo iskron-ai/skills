@@ -43,12 +43,13 @@ interface TactState {
   lead?: string;
 }
 /** The leading half of a tact (orchestra-lead.ts): acts on the reads before the cursors move;
- * a caller gone mid-act stops it before its next launch or stop order (#8202). */
+ * a caller gone mid-act stops it before its next launch or stop order (#8202). `hold` — the
+ * act did not take the tape in, so its cursors stay where they lay. */
 export type TactAct = (
   reads: TactRead[],
   boundary: string[],
   gone?: { gone: boolean },
-) => Promise<string[]>;
+) => Promise<{ said: string[]; hold?: boolean }>;
 function readTactState(authDir: string): TactState {
   try {
     const f = JSON.parse(readFileSync(cursorsFile(authDir), "utf8")) as TactState;
@@ -217,12 +218,12 @@ export async function stepTact(
     }
   }
   if (gone?.gone) return { ok: false, said: w().stepGone() };
-  const lead = act ? await act(reads, boundary, gone) : [];
-  state.lead = lead.join("; ");
+  const lead = act ? await act(reads, boundary, gone) : { said: [] };
+  state.lead = lead.said.join("; ");
   // Left during the act: what it did stays said for status, the cursors stay where they lay.
   const left = gone?.gone === true;
   const at = new Date().toISOString();
-  if (!left)
+  if (!left && !lead.hold)
     for (const r of reads)
       state.realms[r.realm] = {
         cursor: r.cursor,
