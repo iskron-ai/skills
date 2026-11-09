@@ -1,17 +1,15 @@
 // The daemon's orchestration: the flag and the named graph boundary (graph @nks/nks-dev,
 // nodes #7513, #7514, #8202). The daemon is the owner of runs: the flag lives in its hand and
 // persists next to the grant, so a restarted daemon keeps it. The door these ops ride is
-// orchestra-door.ts; this file is what they mean. Enabling needs the machine's consent: the
-// daemon's own environment admits the orchestrator, and without it the enabling is refused
-// aloud, the flag untouched. The tact (`step`, and the daemon's own timer while leading) reads
-// in orchestra-tact.ts and leads in orchestra-lead.ts; the run registry is orchestra-runs.ts.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// orchestra-door.ts; this file is what they mean. Enabling needs the machine's consent — the
+// daemon's environment or `on` typed at a terminal (orchestra-flag.ts) — and without it the
+// enabling is refused aloud, the flag untouched. The tact (`step`, and the daemon's own timer
+// while leading) reads in orchestra-tact.ts and leads in orchestra-lead.ts; the run registry
+// is orchestra-runs.ts.
 import type { Server } from "node:net";
-import { join } from "node:path";
 
 import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import { seamRunDir } from "../shared/seam-entrance.ts";
 import { readDemands } from "./orchestra-demands.ts";
 import { ensureLauncher, launcherSpecOf } from "./orchestra-describe.ts";
 import {
@@ -19,46 +17,17 @@ import {
   type OrchestraAnswer,
   type OrchestraServe,
 } from "./orchestra-door.ts";
+import {
+  envAdmitted,
+  orchestraAdmitted,
+  readOrchestraFlag,
+  writeOrchestraFlag,
+} from "./orchestra-flag.ts";
 import { leadAct } from "./orchestra-lead.ts";
 import { planTact } from "./orchestra-plan.ts";
 import { stepTact, tactStateOf } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
-
-/** The machine's consent: the daemon's environment admits the raising of agents. */
-export const ORCHESTRA_ENV = envName("ORCHESTRA");
-export const orchestraAdmitted = (): boolean => {
-  const v = process.env[ORCHESTRA_ENV]?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
-};
-
-export interface OrchestraFlag {
-  on: boolean;
-  realms: string[];
-}
-const flagFile = (authDir: string): string => join(seamRunDir(authDir), "orchestra.json");
-
-/** The flag as it lies next to the grant; null — none lies (a daemon never wrote one). */
-export function readOrchestraFlag(authDir: string): OrchestraFlag | null {
-  try {
-    const f = JSON.parse(readFileSync(flagFile(authDir), "utf8")) as {
-      on?: unknown;
-      realms?: unknown;
-    };
-    if (f.on !== true && f.on !== false) return null;
-    if (!Array.isArray(f.realms) || f.realms.some((x) => typeof x !== "string")) return null;
-    return { on: f.on, realms: f.realms as string[] };
-  } catch {
-    return null;
-  }
-}
-
-function writeOrchestraFlag(authDir: string, flag: OrchestraFlag): void {
-  mkdirSync(seamRunDir(authDir), { recursive: true, mode: 0o700 });
-  writeFileSync(flagFile(authDir), JSON.stringify({ on: flag.on, realms: flag.realms }) + "\n", {
-    mode: 0o600,
-  });
-}
 
 /** The daemon's way to its server's api: the base beside the channel (shared/channel.ts
  * apiBase — live-verified: the mcp server url does not name the REST doors), "" when
@@ -77,7 +46,7 @@ export interface OrchestraNet {
 
 /** The daemon leads: the flag on and the machine's consent given — it stays and tacts. */
 export const orchestraLeading = (authDir: string): boolean =>
-  orchestraAdmitted() && readOrchestraFlag(authDir)?.on === true;
+  orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true;
 
 /** The orchestrator's own tact while leading (#7513). */
 const TACT_MS = Number(process.env[envName("ORCHESTRA_TACT_MS")]) || 60_000;
@@ -129,7 +98,7 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     const token = n.token();
     const act =
       base && token
-        ? leadAct(authDir, base, token, n.mcp?.() ?? "", orchestraAdmitted())
+        ? leadAct(authDir, base, token, n.mcp?.() ?? "", orchestraAdmitted(authDir))
         : undefined;
     return stepTact(authDir, base, token, boundary, gone, act);
   };
@@ -147,7 +116,10 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
       return { ok: demands.complete, said: "", demands };
     }
     if (op === "on") {
-      if (!orchestraAdmitted()) return { ok: false, said: w().notAdmitted() };
+      const prior = readOrchestraFlag(authDir);
+      const terminal = extra?.consent === true;
+      if (!envAdmitted() && !terminal && !prior?.consent)
+        return { ok: false, said: w().notAdmitted() };
       // A short rN does not ride REST as is (live probe: 404 "Realm not found") — the door
       // refuses it aloud instead of storing a boundary the tact cannot walk (#8202).
       const short = realms.filter((r) => /^r\d+$/i.test(r.trim()));
@@ -161,9 +133,11 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
         } catch (e) {
           return { ok: false, said: (e as Error).message };
         }
-      const prior = readOrchestraFlag(authDir);
       const named = [...new Set([...(prior?.on ? prior.realms : []), ...realms])];
-      writeOrchestraFlag(authDir, { on: true, realms: named });
+      const consent = terminal
+        ? { by: "terminal" as const, at: new Date().toISOString() }
+        : prior?.consent;
+      writeOrchestraFlag(authDir, { on: true, realms: named, ...(consent ? { consent } : {}) });
       net?.changed?.();
       return { ok: true, said: [described, w().on(named.join(", "))].filter(Boolean).join("\n") };
     }

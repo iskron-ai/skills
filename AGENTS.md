@@ -155,7 +155,7 @@ Markdown `skills/<name>/SKILL.md` (+ `references/*.md`) на скилл — об
 | Поставить тулчейн | `make deps` (= `npm ci`; раз на клон; нужен для lint/typecheck/build-js и pre-commit-хука) |
 | Осмотреть мост машины | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs status [--json] [--auth-dir <каталог>] [--lang en\|ru]` |
 | Снять место агента машины | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs stop <место\|id сессии> [--realm <граф>]` (приказ останова; `--help` — флаги) |
-| Дверь оркестратора демона | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs orchestra <on\|off\|status\|step\|demands> [--realm <граф>]…` (`on` требует `ISKRON_ORCHESTRA=1`; `step --dry-run` — что поднял бы или отказал бы, без orca и записи; `demands` — JSON очередей без исполнения, exit 1 при неполноте) |
+| Дверь оркестратора демона | `node dist/dev/skills/establish-mcp/scripts/iskron.mjs orchestra <on\|off\|status\|step\|demands> [--realm <граф>]…` (`on` требует согласия человека: набран в терминале или `ISKRON_ORCHESTRA=1` у демона; `on --launcher <имя> --model <id>` пишет описание в mind, если его нет; `step --dry-run` — что поднял бы или отказал бы, без orca и записи; `demands` — JSON очередей без исполнения, exit 1 при неполноте) |
 | Сухой план Orca | `node scripts/orca-demands-plan.mjs demands.json orca-map.json` — только чтение схемы CLI и печать argv; запуск и `spawned_for` этим не проверяются |
 | Пересобрать производное рабочей копии | `make build` (= `make build-js` + зипы из `skills/`; детерминированно; или pre-commit-хуком) |
 | Собрать выходы JS (dev) | `make build-js` → `dist/dev/` вне индекса; пробы берут их отсюда (`js/tests/built.mjs`), живой прогон — тоже |

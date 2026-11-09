@@ -14,7 +14,7 @@ export interface OrchestraWords {
   unknownOp: (op: string) => string;
   /** Служба двери отказала ошибкой — ответ адресату, не молчание. */
   doorError: (message: string) => string;
-  /** Согласия машины нет: окружение демона не допускает оркестратора. */
+  /** Согласия машины нет: ни on из терминала, ни окружения демона. */
   notAdmitted: () => string;
   /** realms — названный перечень границы через запятую (может быть пуст). */
   on: (realms: string) => string;
@@ -93,7 +93,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     unknownOp: (op) => `оркестратор: неизвестное действие ${op}`,
     doorError: (message) => `вход демона ответил ошибкой: ${message}`,
     notAdmitted: () =>
-      "машина не допустила оркестратора: согласие даёт демон — переменная окружения ISKRON_ORCHESTRA=1 в его среде; без неё поднятие агентов запрещено, флаг не двинут",
+      "машина не допустила оркестратора: согласие даёт человек — та же команда orchestra on, набранная им в терминале, либо ISKRON_ORCHESTRA=1 в среде демона; из оболочки агента (без терминала) согласия нет, флаг не двинут",
     on: (realms) =>
       `оркестратор включён${realms ? `, названная граница: ${realms}` : " (граница — графы живых на машине агентов)"}; флаг лежит рядом с грантом`,
     onShortRealm: (realms) =>
@@ -122,7 +122,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     lead: (lines) => `ведение: ${lines}`,
     leadRow: (realm, room, invite, code) => `${realm} дело ${room} зов ${invite}: ${code}`,
     leadNotAdmitted: () =>
-      "флаг лежит, но машина не допустила оркестратора (ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
+      "флаг лежит, но машина не допустила оркестратора (orchestra on, набранная в терминале, или ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
     leadIncomplete: (errors) =>
       `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
     leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
@@ -163,7 +163,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     unknownOp: (op) => `orchestra: unknown op ${op}`,
     doorError: (message) => `the daemon's entrance answered with an error: ${message}`,
     notAdmitted: () =>
-      "the machine has not admitted the orchestrator: the daemon's consent is the ISKRON_ORCHESTRA=1 environment variable of its own process; without it raising agents is refused and the flag is not moved",
+      "the machine has not admitted the orchestrator: consent is the human's — this same orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment; an agent's shell (no terminal) gives none, and the flag is not moved",
     on: (realms) =>
       `the orchestrator is on${realms ? `, named boundary: ${realms}` : " (the boundary is the graphs of the machine's live agents)"}; the flag lies next to the grant`,
     onShortRealm: (realms) =>
@@ -192,7 +192,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     lead: (lines) => `leading: ${lines}`,
     leadRow: (realm, room, invite, code) => `${realm} case ${room} invite ${invite}: ${code}`,
     leadNotAdmitted: () =>
-      "the flag lies, but the machine has not admitted the orchestrator (ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
+      "the flag lies, but the machine has not admitted the orchestrator (orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
     leadIncomplete: (errors) =>
       `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
     leadNoLaunchers: (why) =>

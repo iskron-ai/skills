@@ -64,9 +64,15 @@ export async function runOrchestra(argv: string[]): Promise<void> {
   const op: OrchestraOp = dry >= 0 ? "plan" : named;
   parseArgs(["--auth-dir", authDir, ...args.filter((a) => a !== named)]);
   const slow = op === "demands" || op === "plan" || describes;
-  const extra = describes
-    ? { launcher: { launcher, models, ...(limit ? { limit: Number(limit) } : {}), host } }
-    : {};
+  // Typed at a terminal, `on` is the human's consent itself; an agent's shell runs it on pipes
+  // and gives none (bridge/orchestra-flag.ts).
+  const consent = op === "on" && !!process.stdin.isTTY && !!process.stdout.isTTY;
+  const extra = {
+    ...(describes
+      ? { launcher: { launcher, models, ...(limit ? { limit: Number(limit) } : {}), host } }
+      : {}),
+    ...(consent ? { consent } : {}),
+  };
   const answer = await orchestraAsk(authDir, op, realms, slow ? 120_000 : 5_000, extra);
   if (answer.demands) {
     process.stdout.write(`${JSON.stringify(answer.demands)}\n`);

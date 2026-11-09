@@ -31,9 +31,11 @@ export type OrchestraServe = (
   gone?: { gone: boolean },
   extra?: OrchestraExtra,
 ) => Promise<OrchestraAnswer>;
-/** What `on` may carry beside the realms: the launcher to describe (orchestra-describe.ts). */
+/** What `on` may carry beside the realms: the launcher to describe (orchestra-describe.ts) and
+ * the consent of a human at a terminal (orchestra-flag.ts). */
 export interface OrchestraExtra {
   launcher?: unknown;
+  consent?: boolean;
 }
 
 /**
@@ -56,7 +58,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       if (nl < 0) return;
       const line = buf.slice(0, nl);
       buf = "";
-      let msg: { op?: unknown; realms?: unknown; launcher?: unknown } = {};
+      let msg: { op?: unknown; realms?: unknown; launcher?: unknown; consent?: unknown } = {};
       try {
         msg = JSON.parse(line) as typeof msg;
       } catch {
@@ -76,7 +78,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       socket.on("close", () => {
         gone.gone = true;
       });
-      void serve(op, realms, gone, { launcher: msg.launcher })
+      void serve(op, realms, gone, { launcher: msg.launcher, consent: msg.consent === true })
         .then((a) => socket.end(JSON.stringify(a) + "\n"))
         .catch((e: Error) =>
           socket.end(JSON.stringify({ ok: false, said: w().doorError(e.message) }) + "\n"),

@@ -561,6 +561,56 @@ test("raise: the daemon's own timer leads — no step is asked", async (t) => {
   assert.equal(o.launches().length, 1, "the timer raised the agent by itself");
 });
 
+/** The CLI as a human types it at a terminal: under a pseudo-terminal of `script`, its words
+ * and its refusals on the one output. */
+function atTerminal(dir, args) {
+  const argv = [NODE, BRIDGE, "orchestra", ...args, "--auth-dir", dir, "--lang", "en"];
+  const q = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+  const [cmd, cargs] =
+    process.platform === "darwin"
+      ? ["script", ["-q", "/dev/null", ...argv]]
+      : ["script", ["-qec", argv.map(q).join(" "), "/dev/null"]];
+  const proc = spawn(cmd, cargs, {
+    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1" },
+    // A socket for stdin makes script refuse (tcgetattr on a socket): /dev/null it is.
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  proc.stdout.on("data", (c) => (out += c));
+  proc.stderr.on("data", (c) => (out += c));
+  return new Promise((resolve) => {
+    proc.once("exit", (code) => resolve({ code, out }));
+    setTimeout(() => proc.kill("SIGKILL"), 30_000).unref();
+  });
+}
+
+test("consent: on typed at a terminal admits the orchestrator in the living daemon, no variable, no restart; off takes it back", async (t) => {
+  const o = await leading(t, { admitted: false });
+  await o.queue([invite(9, GOOD)]);
+  const refused = await cli(o.dir, ["on", "--realm", REALM]);
+  assert.equal(refused.code, 1, "a piped on — an agent's shell — gives no consent");
+  assert.match(refused.err, /terminal/, refused.err);
+  const on = await atTerminal(o.dir, ["on", "--realm", REALM]);
+  assert.equal(on.code, 0, on.out);
+  assert.match(on.out, /the orchestrator is on/, on.out);
+  const flag = JSON.parse(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8"));
+  assert.equal(flag.consent?.by, "terminal", JSON.stringify(flag));
+  const r = await o.step();
+  assert.doesNotMatch(r.out, /has not admitted/, r.out);
+  assert.match(r.out, /invite 9: launched/, r.out);
+  // A later piped on (adding a graph) keeps the consent given at the terminal.
+  const more = await cli(o.dir, ["on", "--realm", "@probe/more"]);
+  assert.equal(more.code, 0, more.err);
+  const off = await cli(o.dir, ["off"]);
+  assert.equal(off.code, 0, off.err);
+  assert.equal(
+    JSON.parse(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8")).consent,
+    undefined,
+  );
+  const again = await cli(o.dir, ["on", "--realm", REALM]);
+  assert.equal(again.code, 1, "after off the consent is asked again");
+});
+
 const adds = (o) => o.fake.state.calls.filter((c) => c.name === "iskron_add_phenomenon");
 
 test("on --launcher: the description is written once in mind; the next on takes it as it lies", async (t) => {
