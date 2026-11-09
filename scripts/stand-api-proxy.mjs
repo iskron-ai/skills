@@ -6,7 +6,7 @@
 // of the run issues sockets on it by NKS_PUBLIC_API_URL=http://127.0.0.1:PORT/api. Anything else
 // is 404.
 //
-//   node scripts/stand-api-proxy.mjs --port 18091 --target 8091 [--ack-log F] [--journal-root D]
+//   node scripts/stand-api-proxy.mjs --port 18091 --target 8091 [--ack-log F] [--journal-root D] [--req-log F]
 //
 // --ack-log — every POST /me/orders/{id}/ack as one JSON line {t, done, order, state, status,
 // disk}: when the request came, when the api answered, the order, the state the bridge sent and
@@ -26,6 +26,9 @@
 // connection's TCP open (not its 101) and close with the bytes left unread is logged too, and a text frame that is not JSON or a compressed
 // one (the api offers no compression) as such, unread: a missing tick is a reading only within an
 // observed connection with no such line.
+// --req-log F — every request that reaches the proxy, HTTP and the WebSocket upgrade, as one JSON
+// line {t, method, path, ua}: the path the api is asked, its query cut off, and the User-Agent as
+// sent (null — none). No other header, no query, no body: credentials never reach the log.
 import { appendFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,6 +45,7 @@ const ackLog = arg("--ack-log", null);
 const journalRoot = arg("--journal-root", null);
 const acceptedDelay = Number(arg("--ack-delay-accepted", "0"));
 const tickLog = arg("--tick-log", null);
+const reqLog = arg("--req-log", null);
 const SKIP = new Set(["home", "node_modules"]);
 const ACK = /^\/me\/orders\/([0-9a-f-]+)\/ack(?:\?|$)/;
 
@@ -82,9 +86,13 @@ async function diskState(id) {
 }
 
 const strip = (url) => (url.startsWith("/api/") ? url.slice(4) : url === "/api" ? "/" : null);
+const noteReq = (req, path) =>
+  reqLog &&
+  appendFileSync(reqLog, JSON.stringify({ t: Date.now(), method: req.method, path: path.split("?")[0], ua: req.headers["user-agent"] ?? null }) + "\n");
 
 const server = http.createServer((req, res) => {
   const path = strip(req.url);
+  if (path !== null) noteReq(req, path);
   if (path === null) {
     res.writeHead(404).end();
     return;
@@ -206,6 +214,7 @@ function tickReader() {
 server.on("upgrade", (req, sock, head) => {
   const path = strip(req.url);
   if (path === null) return sock.destroy();
+  noteReq(req, path);
   const up = net.connect(TARGET, "127.0.0.1", () => {
     const lines = [`${req.method} ${path} HTTP/1.1`];
     for (let i = 0; i < req.rawHeaders.length; i += 2)
