@@ -149,18 +149,39 @@ export function launchHandle(out: string): string | undefined {
   return undefined;
 }
 
+/** The Orca runtime that answered: `_meta.runtimeId`, on every 1.4.242 answer observed (№4050 [74]). */
+function runtimeOf(out: string): string | undefined {
+  try {
+    const id = (JSON.parse(out) as { _meta?: { runtimeId?: unknown } })._meta?.runtimeId;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** ok — the harness was started (not yet a seat); ambiguous — do not launch again. */
-export async function orcaLaunch(
-  argv: string[],
-): Promise<{ outcome: "ok" | "ambiguous" | "failed"; why?: string; handle?: string }> {
+export async function orcaLaunch(argv: string[]): Promise<{
+  outcome: "ok" | "ambiguous" | "failed";
+  why?: string;
+  handle?: string;
+  runtime?: string;
+}> {
   const r = await run(argv, 120_000);
-  if (r.code === 0) return { outcome: "ok", handle: launchHandle(r.out) };
+  if (r.code === 0)
+    return { outcome: "ok", handle: launchHandle(r.out), runtime: runtimeOf(r.out) };
   if (r.code === "timeout") return { outcome: "ambiguous", why: "launch_timeout" };
   return { outcome: "failed", why: `launch_exit_${r.code}` };
 }
 
-/** Close the one terminal our own launch opened, by its handle — never a process by PID. */
-export async function orcaClose(handle: string): Promise<string> {
+/**
+ * Close the one terminal our own launch opened, by its handle — never a process by PID — and
+ * only while the Orca runtime that issued the handle still answers for it: a restarted Orca may
+ * hand the same handle to another tab.
+ */
+export async function orcaClose(handle: string, runtime: string): Promise<string> {
+  const shown = await run(["terminal", "show", "--terminal", handle, "--json"], 30_000);
+  if (shown.code !== 0) return `terminal_show_failed_${shown.code}`;
+  if (runtimeOf(shown.out) !== runtime) return "terminal_runtime_changed";
   const r = await run(["terminal", "close", "--terminal", handle, "--json"], 30_000);
   return r.code === 0 ? "terminal_closed" : `terminal_close_failed_${r.code}`;
 }

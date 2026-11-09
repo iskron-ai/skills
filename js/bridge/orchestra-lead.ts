@@ -38,9 +38,12 @@ export function leadAct(
         );
         return said;
       }
-      said.push(...(await foreignStops(authDir, base, token, runs)));
+      // An order put between the open-orders read above and this one is absent from `owned`:
+      // the run it marks stopping now waits for the next tact's read (review of №4050 [105]).
+      const foreign = await foreignStops(authDir, base, token, runs);
+      said.push(...foreign.said);
       said.push(...(await expireLaunches(runs, gone)));
-      settleStops(runs, owned);
+      settleStops(runs, owned, foreign.fresh);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(

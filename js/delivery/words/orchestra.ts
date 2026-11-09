@@ -67,8 +67,10 @@ export interface OrchestraWords {
   planCheckout: (repository: string) => string;
   /** Сухой такт: место брифа в argv. */
   planBrief: () => string;
-  /** on --launcher: описание записано в mind (seq — номер узла, может быть пуст). */
-  describeWritten: (launcher: string, seq: string) => string;
+  /** on --launcher: описание записано в mind (seq — номер узла, может быть пуст; holon — холон работы с агентами, пусто — корень). */
+  describeWritten: (launcher: string, seq: string, holon: string) => string;
+  /** on --launcher: имя запускателя длиннее, чем примет чтение описаний, — флаг не двинут. */
+  describeTooLong: (launcher: string, max: number) => string;
   /** on --launcher: описание этого запускателя уже лежит — взято как есть. */
   describeTaken: (launcher: string, seq: string) => string;
   /** on --launcher: нового описания без моделей не пишут — флаг не двинут. */
@@ -141,8 +143,13 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planAlready: (state) => `уже в реестре: ${state}`,
     planCheckout: (repository) => `<копия Orca для ${repository}>`,
     planBrief: () => "<бриф>",
-    describeWritten: (launcher, seq) =>
-      `описание запускателя ${launcher} записано в mind${seq ? ` (#${seq})` : ""}`,
+    describeWritten: (launcher, seq, holon) =>
+      `описание запускателя ${launcher} записано в mind${seq ? ` (#${seq})` : ""}` +
+      (holon
+        ? ` под холоном работы с агентами ${holon}`
+        : " в корень: холон работы с агентами (с карточками slice:agents) не найден однозначно — перенесите под него, когда он будет"),
+    describeTooLong: (launcher, max) =>
+      `имя запускателя ${launcher} длиннее ${max} знаков — такое описание мост не примет; назовите короче, флаг не двинут`,
     describeTaken: (launcher, seq) =>
       `запускатель ${launcher}: взято существующее описание в mind (${seq}), не тронуто — правится там же`,
     describeNoModel: (launcher) =>
@@ -212,8 +219,13 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planAlready: (state) => `already in the registry: ${state}`,
     planCheckout: (repository) => `<orca checkout of ${repository}>`,
     planBrief: () => "<brief>",
-    describeWritten: (launcher, seq) =>
-      `the description of launcher ${launcher} written in mind${seq ? ` (#${seq})` : ""}`,
+    describeWritten: (launcher, seq, holon) =>
+      `the description of launcher ${launcher} written in mind${seq ? ` (#${seq})` : ""}` +
+      (holon
+        ? ` under the holon of the work with agents ${holon}`
+        : " at the root: no single holon of the work with agents (holding slice:agents cards) was found — move it under one when there is"),
+    describeTooLong: (launcher, max) =>
+      `launcher name ${launcher} is longer than ${max} characters — the bridge would not take such a description; name it shorter, the flag is not moved`,
     describeTaken: (launcher, seq) =>
       `launcher ${launcher}: the existing description is taken from mind (${seq}), untouched — edit it there`,
     describeNoModel: (launcher) =>

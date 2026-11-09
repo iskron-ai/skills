@@ -19,6 +19,7 @@ const TIMEOUT_MS = 10_000;
 const RAISE_WINDOW_MS = Number(process.env[envName("ORCHESTRA_RAISE_WINDOW_MS")]) || 15 * 60_000;
 
 type Signal = Record<string, unknown>;
+type Close = (handle: string, runtime: string) => Promise<string>;
 
 const idOf = (v: unknown): string | null => {
   if (typeof v === "string" && v) return v;
@@ -63,7 +64,7 @@ export function foldTape(realm: string, tape: Signal[], runs: Record<string, Run
 export async function expireLaunches(
   runs: Record<string, Run>,
   gone?: { gone: boolean },
-  close: (handle: string) => Promise<string> = orcaClose,
+  close: Close = orcaClose,
   now = Date.now(),
 ): Promise<string[]> {
   const said: string[] = [];
@@ -71,7 +72,11 @@ export async function expireLaunches(
     if (r.state === "launched" && now - Date.parse(r.at) > RAISE_WINDOW_MS) {
       if (gone?.gone) break;
       r.state = "no_seat";
-      const closed = r.terminal ? await close(r.terminal) : "no_terminal_handle";
+      const closed = !r.terminal
+        ? "no_terminal_handle"
+        : r.runtime
+          ? await close(r.terminal, r.runtime)
+          : "terminal_runtime_unknown";
       if (r.terminal) r.closed = closed;
       said.push(w().leadRow(r.realm, r.room, r.invite, `no_seat (cause_unseen), ${closed}`));
     }
@@ -80,18 +85,19 @@ export async function expireLaunches(
 
 /**
  * An ended run's terminal is closed by its handle once (№4050 [74]): the harness exited on
- * its stop, and the tab it leaves is ours to close, as on no_seat.
+ * its stop, and the tab it leaves is ours to close, as on no_seat. Only a handle whose Orca
+ * runtime the registry kept at the launch: a run ended before that is never touched.
  */
 export async function closeEnded(
   runs: Record<string, Run>,
   gone?: { gone: boolean },
-  close: (handle: string) => Promise<string> = orcaClose,
+  close: Close = orcaClose,
 ): Promise<string[]> {
   const said: string[] = [];
   for (const r of Object.values(runs))
-    if (r.state === "ended" && r.terminal && !r.closed) {
+    if (r.state === "ended" && r.terminal && r.runtime && !r.closed) {
       if (gone?.gone) break;
-      r.closed = await close(r.terminal);
+      r.closed = await close(r.terminal, r.runtime);
       said.push(w().leadRow(r.realm, r.room, r.invite, `ended, ${r.closed}`));
     }
   return said;
@@ -101,12 +107,17 @@ export async function closeEnded(
  * A stopping run whose order is no longer open has ended; a stop answered without an id is
  * tracked by its seat. `open` is every open order of the account in any graph (a complete
  * snapshot) — so a run of a graph that left the boundary ends too, and frees its limit slot.
+ * `fresh` — runs marked stopping after that snapshot was read: it cannot speak of their order.
  */
-export function settleStops(runs: Record<string, Run>, open: OpenOrder[]): void {
+export function settleStops(
+  runs: Record<string, Run>,
+  open: OpenOrder[],
+  fresh: ReadonlySet<Run> = new Set(),
+): void {
   const orders = new Set(open.map((s) => s.order_id));
   const seats = new Set(open.map((s) => s.standing_id));
   for (const r of Object.values(runs)) {
-    if (r.state !== "stopping") continue;
+    if (r.state !== "stopping" || fresh.has(r)) continue;
     if (r.order_id ? !orders.has(r.order_id) : !seats.has(r.standing_id ?? "")) r.state = "ended";
   }
 }

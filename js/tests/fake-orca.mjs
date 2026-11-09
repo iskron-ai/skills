@@ -30,11 +30,21 @@ const delay = Number(process.env.FAKE_ORCA_DELAY_MS ?? 0);
 if (delay) await new Promise((r) => setTimeout(r, delay));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 // The launch answer's form by agent-context 1.4.242 (outcome.kind, outcome.handle), not an
-// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal close answers ok.
+// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal show and close
+// answer ok. Every answer carries _meta.runtimeId as 1.4.242 did (№4050 [74]): the content of
+// FAKE_ORCA_RUNTIME_FILE (a restarted Orca), else rt_fake; "" in the file — no _meta.
 const handle = process.env.FAKE_ORCA_HANDLE ?? "term_fake";
-const answer =
-  args[0] === "agent"
-    ? { ok: true, result: { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } } }
-    : { ok: true, result: {} };
+const rtFile = process.env.FAKE_ORCA_RUNTIME_FILE;
+const runtime = rtFile && existsSync(rtFile) ? readFileSync(rtFile, "utf8").trim() : "rt_fake";
+const answer = {
+  ok: true,
+  result:
+    args[0] === "agent"
+      ? { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } }
+      : args[1] === "show"
+        ? { terminal: { handle: args[3] } }
+        : {},
+  ...(runtime ? { _meta: { runtimeId: runtime } } : {}),
+};
 if (code === 0) process.stdout.write(JSON.stringify(answer) + "\n");
 process.exit(code);

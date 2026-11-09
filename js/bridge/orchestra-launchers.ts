@@ -42,6 +42,8 @@ export interface Launchers {
 const SLICE = "slice:orchestra";
 const LIMIT = 50;
 const HANDLE = /^@[^\s:@/]+$/;
+/** A launcher longer than this is no description: an attrs value's ceiling. */
+export const LAUNCHER_MAX = 64;
 
 const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 
@@ -55,7 +57,7 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
     return { code: "description_not_json" };
   }
   const d = (v ?? {}) as Record<string, unknown>;
-  if (!str(d.launcher) || d.launcher.length > 64) return { code: "launcher_missing" };
+  if (!str(d.launcher) || d.launcher.length > LAUNCHER_MAX) return { code: "launcher_missing" };
   const launcher = d.launcher.trim();
   if (d.host !== undefined && d.host !== null && !str(d.host))
     return { code: "host_invalid", launcher };

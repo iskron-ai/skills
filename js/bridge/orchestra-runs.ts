@@ -27,6 +27,8 @@ export interface Run {
   worktree: string;
   /** Orca's handle of the terminal the launch opened — closed on no_seat and on ended. */
   terminal?: string;
+  /** The Orca runtime that issued the handle; none (a launch before it was kept) — never closed. */
+  runtime?: string;
   /** The outcome of closing that terminal: it is closed once. */
   closed?: string;
   state: RunState;

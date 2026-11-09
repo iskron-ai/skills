@@ -2098,6 +2098,31 @@ export async function startFakeNks(opts = {}) {
           extra,
         );
       }
+      // Холоны mind (st.mind.holons = [{seq, name, agents}]): поиск node_type=holon и карточки
+      // slice:agents по context_holon — agents: true держит одну такую карточку.
+      if (
+        msg.method === "tools/call" &&
+        msg.params.name === "iskron_search" &&
+        a0.realm === "mind" &&
+        (a0.node_type === "holon" || a0.context_holon)
+      ) {
+        const holons = st.mind?.holons ?? [];
+        const rows =
+          a0.node_type === "holon"
+            ? holons.map((h) => `  🤝 ${h.name} (#${h.seq}, holon, Pt/Va/Ad, v1)`)
+            : holons
+                .filter((h) => `#${h.seq}` === a0.context_holon && h.agents)
+                .map((h) => `  📣 Правило (#${h.seq + 100}, phenomenon, Pt/Va/Ad, v1)`);
+        const text = rows.length
+          ? `Найдено ${rows.length} узлов:\n${rows.join("\n")}`
+          : "По этому фильтру узлы не найдены.";
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
+      }
       const mindCall =
         msg.method === "tools/call" &&
         (msg.params?.name === "iskron_me" ||

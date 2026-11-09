@@ -35,19 +35,30 @@ function writeSince(authDir: string, since: number): void {
   writeFileSync(cursorFile(authDir), JSON.stringify({ since }) + "\n", { mode: 0o600 });
 }
 
-/** Mark our live runs whose seat got someone else's stop order; a failed read changes nothing. */
+/**
+ * Mark our live runs whose seat got someone else's stop order; a failed read changes nothing.
+ * While a live run has no seat yet, the cursor stops before the first page with an order on an
+ * unknown seat: that order is read again until the seat is matched or the run ends otherwise.
+ * `fresh` — the runs marked stopping here.
+ */
 export async function foreignStops(
   authDir: string,
   base: string,
   token: string,
   runs: Record<string, Run>,
-): Promise<string[]> {
+): Promise<{ said: string[]; fresh: Set<Run> }> {
   const said: string[] = [];
+  const fresh = new Set<Run>();
   const bySeat = new Map<string, Run>();
+  let unseated = false;
   for (const r of Object.values(runs))
-    if ((r.state === "launched" || r.state === "raised") && r.standing_id)
-      bySeat.set(r.standing_id, r);
+    if (r.state === "launched" || r.state === "raised") {
+      if (r.standing_id) bySeat.set(r.standing_id, r);
+      else unseated = true;
+    }
+  const seen = new Set(Object.values(runs).map((r) => r.standing_id));
   let since = readSince(authDir);
+  let held: number | undefined;
   try {
     for (let n = 0; n < MAX_PAGES; n++) {
       const res = await namedFetch(`${base}/me/orders?limit=${LIMIT}&since=${since}`, {
@@ -63,11 +74,13 @@ export async function foreignStops(
         const seat = String(v.standing_id ?? "");
         const run = bySeat.get(seat);
         const id = typeof v.id === "string" ? v.id : "";
+        if (!run && unseated && seat && !seen.has(seat)) held ??= since;
         if (!run || !id || id === run.order_id) continue;
         bySeat.delete(seat);
         run.order_id = id;
         const open = OPEN.has(String(v.state));
         run.state = open ? "stopping" : "ended";
+        if (open) fresh.add(run);
         said.push(
           w().leadRow(
             run.realm,
@@ -85,6 +98,6 @@ export async function foreignStops(
   } catch (e) {
     said.push(w().leadOrdersUnread((e as Error).message));
   }
-  writeSince(authDir, since);
-  return said;
+  writeSince(authDir, held ?? since);
+  return { said, fresh };
 }

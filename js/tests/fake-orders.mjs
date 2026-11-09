@@ -55,6 +55,7 @@ export function ordersControl(st, patch, wsFrame) {
   if (patch.orders_ack_delay) st.orders.ackDelay = patch.orders_ack_delay;
   if ("orders_route_missing" in patch) st.orders.routeMissing = !!patch.orders_route_missing;
   if ("orders_stop_answer" in patch) st.orders.stopAnswer = patch.orders_stop_answer;
+  if ("orders_on_read" in patch) st.orders.onRead = patch.orders_on_read;
   for (const o of [...(patch.stop_orders ?? []), patch.stop_order]) if (o) putOrder(st, o, wsFrame);
 }
 
@@ -140,6 +141,12 @@ export async function ordersRoute(st, req, res, p, { json, body, wsFrame }) {
     st.orders.reads++;
     if (!authed) return (json(res, 401, { error: "unauthorized" }), true);
     const q = new URL(req.url, "http://x").searchParams;
+    // orders_on_read {order}: put once, just before the first read of every state is answered —
+    // an order issued between a tact's open-orders read and its read of all orders.
+    if (st.orders.onRead && q.get("open") !== "true") {
+      putOrder(st, st.orders.onRead, wsFrame);
+      st.orders.onRead = null;
+    }
     const since = Number(q.get("since") || 0);
     const limit = Math.min(Number(q.get("limit") || 50), 200);
     st.orders.queries.push({ since, limit });

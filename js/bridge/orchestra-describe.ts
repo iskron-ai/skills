@@ -2,12 +2,14 @@
 // orchestra-launchers.ts): the human switching on from the console describes the launcher in
 // the same command. A description of that launcher already lying in mind — any host, even a
 // broken one — is taken as it lies and never touched (a second one with the same launcher
-// would switch both off); none — the daemon writes one under its own key, the account's mind.
+// would switch both off); none — the daemon writes one under its own key, the account's mind,
+// in the holon of the work with agents as minding lays it. A launcher readLaunchers would refuse
+// for its length is refused here, aloud.
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { mcpSession } from "../shared/mcpsession.ts";
-import { parseLauncher } from "./orchestra-launchers.ts";
+import { LAUNCHER_MAX, parseLauncher } from "./orchestra-launchers.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -34,12 +36,41 @@ export function launcherSpecOf(v: unknown): LauncherSpec | null {
   };
 }
 
+/**
+ * The holon of the work with agents, as minding lays the description: the one holon of mind
+ * that holds the human's slice:agents cards; none or several — "" (the description lies in
+ * the root, and the outcome says so).
+ */
+async function agentsHolon(s: ReturnType<typeof mcpSession>): Promise<string> {
+  const holons = await s.call(tool("search"), {
+    realm: "mind",
+    q: "",
+    node_type: "holon",
+    limit: 100,
+  });
+  const found: string[] = [];
+  for (const seq of new Set([...holons.matchAll(/\(#(\d+), holon/g)].map((m) => m[1]))) {
+    const cards = await s.call(tool("search"), {
+      realm: "mind",
+      q: "",
+      context_holon: `#${seq}`,
+      transitive: false,
+      attrs_filter: "slice:agents",
+      limit: 1,
+    });
+    if (/\(#\d+, /.test(cards)) found.push(`#${seq}`);
+  }
+  return found.length === 1 ? found[0] : "";
+}
+
 /** The outcome said to the human; a refusal throws its words — the flag is then not moved. */
 export async function ensureLauncher(
   serverUrl: string,
   token: string | null,
   spec: LauncherSpec,
 ): Promise<string> {
+  if (spec.launcher.length > LAUNCHER_MAX)
+    throw new Error(w().describeTooLong(spec.launcher, LAUNCHER_MAX));
   if (!serverUrl || !token) throw new Error(w().describeFailed(spec.launcher, "no key"));
   const s = mcpSession(serverUrl, token, "orchestra");
   try {
@@ -58,6 +89,7 @@ export async function ensureLauncher(
     if (!spec.models.length) throw new Error(w().describeNoModel(spec.launcher));
     if (spec.limit !== undefined && spec.limit < 0)
       throw new Error(w().describeFailed(spec.launcher, "limit"));
+    const holon = await agentsHolon(s);
     const description = JSON.stringify({
       launcher: spec.launcher,
       ...(spec.host ? { host: spec.host } : {}),
@@ -74,9 +106,12 @@ export async function ensureLauncher(
       ontic_mode: "vartamana",
       volitive_mode: "adhimoksha",
       attrs: { slice: "orchestra" },
+      ...(holon
+        ? { arrows: [{ arrow_type: "context", target: holon, volitive_mode: "adhimoksha" }] }
+        : {}),
       reasoning: w().describeReason(),
     });
-    return w().describeWritten(spec.launcher, /\(#(\d+)/.exec(made)?.[1] ?? "");
+    return w().describeWritten(spec.launcher, /\(#(\d+)/.exec(made)?.[1] ?? "", holon);
   } catch (e) {
     const m = (e as Error).message;
     throw new Error(m.includes(spec.launcher) ? m : w().describeFailed(spec.launcher, m), {

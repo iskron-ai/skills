@@ -162,6 +162,7 @@ export async function raiseRows(
       w().brief(realm, run.karta, room, invite);
     const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
     if (got.handle) run.terminal = got.handle;
+    if (got.runtime) run.runtime = got.runtime;
     if (got.outcome === "failed") {
       run.state = "refused";
       run.why = got.why;

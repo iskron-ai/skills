@@ -110,7 +110,7 @@ const cover = (dir, text = coverOf()) => writeFileSync(join(dir, "AGENTS.md"), t
 /** A leading daemon: flag on, the fake's api beside a hold record, a substitute orca on PATH. */
 async function leading(
   t,
-  { descriptions, projects, env = {}, admitted = true, whoami, covered = coverOf() } = {},
+  { descriptions, projects, env = {}, admitted = true, whoami, covered = coverOf(), holons } = {},
 ) {
   // Short: the daemon's sockets live under it, and a Unix socket path is capped near 104 bytes.
   const dir = mkdtempSync(join(tmpdir(), "iskron-or-"));
@@ -119,7 +119,7 @@ async function leading(
   if (covered) cover(checkout, covered);
   const fake = await startFakeNks({
     pat: "probe-pat",
-    mind: { orchestra: descriptions?.(checkout) ?? [describe()] },
+    mind: { orchestra: descriptions?.(checkout) ?? [describe()], holons },
     whoami,
   });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
@@ -154,6 +154,7 @@ async function leading(
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_ORCA_LOG: log,
     FAKE_ORCA_PROJECTS: laid,
+    FAKE_ORCA_RUNTIME_FILE: join(dir, "orca-runtime"),
     ...(admitted ? { ISKRON_ORCHESTRA: "1" } : {}),
     ...env,
   };
@@ -184,7 +185,10 @@ async function leading(
     checkout,
     step: () => cli(dir, ["step"]),
     launches: () => orcaCalls(log).filter((a) => a[0] === "agent"),
-    closes: () => orcaCalls(log).filter((a) => a[0] === "terminal"),
+    closes: () => orcaCalls(log).filter((a) => a[0] === "terminal" && a[1] === "close"),
+    terminals: () => orcaCalls(log).filter((a) => a[0] === "terminal"),
+    /** A restarted Orca: its answers carry this runtime id from now on. */
+    restartOrca: (runtime) => writeFileSync(join(dir, "orca-runtime"), runtime),
     runs: () => {
       const f = join(dir, "run", "orchestra-runs.json");
       return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")).runs : {};
@@ -920,6 +924,131 @@ test("quench: a stop on demand already carried out before the tact ends the run 
   assert.match(r.out, /invite 9: stopped_elsewhere/, r.out);
   assert.match(r.out, /invite 9: ended, terminal_closed/, r.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+});
+
+// Review of №4050 [105] п.2: the order lands between the open-orders read of demands and the
+// read of every state — the run it marks stopping is not ended by the same tact's settle.
+test("quench: a stop on demand put inside the tact keeps the run stopping and its tab open", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    orders_on_read: { id: "ord-r", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_ordered_elsewhere/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  assert.equal(o.closes().length, 0, "the agent's bridge has not carried the order out yet");
+  // The next tact sees the order open among the account's orders: still stopping.
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  assert.equal(o.closes().length, 0);
+});
+
+// Review of №4050 [105] п.3: the order reaches the account before the raised tape names the seat.
+test("quench: a stop on demand of a seat not yet in the registry is read again once the seat is known", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.fake.control({
+    stop_order: { id: "ord-e", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  const early = await o.step();
+  assert.equal(early.code, 0, early.err + early.out);
+  assert.doesNotMatch(early.out, /elsewhere/, early.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "launched");
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  const known = await o.step();
+  assert.match(known.out, /invite 9: stop_ordered_elsewhere/, known.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  const cursor = () =>
+    JSON.parse(readFileSync(join(o.dir, "run", "orchestra-orders.json"), "utf8")).since;
+  assert.equal(cursor(), 1, "no unseated run left: the cursor passes the order");
+});
+
+// Review of №4050 [105] п.4: a tab is closed only by the handle of the Orca runtime the launch
+// kept — not a run ended before this code, not after Orca restarted; and once.
+test("close: an ended run with no Orca runtime kept — a registry from before — is never closed", async (t) => {
+  const o = await leading(t);
+  const old = {
+    realm: REALM,
+    room: ROOM,
+    invite: 7,
+    karta: 931,
+    launcher: "probe-mac",
+    harness: "opencode",
+    model: "m",
+    repository: REPO,
+    worktree: o.checkout,
+    terminal: "term_old",
+    state: "ended",
+    at: "2026-11-09T10:00:00Z",
+  };
+  writeFileSync(
+    join(o.dir, "run", "orchestra-runs.json"),
+    JSON.stringify({ runs: { [`${REALM}|${ROOM}|7`]: old } }),
+  );
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.equal(o.terminals().length, 0, JSON.stringify(o.terminals()));
+  assert.doesNotMatch(r.out, /invite 7/, r.out);
+});
+
+test("close: after Orca restarted, the old runtime's handle is not closed — said once", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].runtime, "rt_fake");
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  o.restartOrca("rt_new");
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: ended, terminal_runtime_changed/, r.out);
+  assert.equal(o.closes().length, 0);
+  const shows = o.terminals().length;
+  const again = await o.step();
+  assert.doesNotMatch(again.out, /invite 9: ended/, again.out);
+  assert.equal(o.terminals().length, shows, "asked once");
+});
+
+test("on --launcher: the description lies under the holon of the work with agents; a launcher too long is refused", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [],
+    holons: [
+      { seq: 30, name: "Работа с агентами", agents: true },
+      { seq: 44, name: "Способы" },
+    ],
+  });
+  const on = await cli(o.dir, ["on", "--launcher", "probe-new", "--model", "m/one"]);
+  assert.equal(on.code, 0, on.err + on.out);
+  assert.match(on.out, /under the holon of the work with agents #30/, on.out);
+  assert.deepEqual(adds(o)[0].arguments.arrows, [
+    { arrow_type: "context", target: "#30", volitive_mode: "adhimoksha" },
+  ]);
+  await cli(o.dir, ["off"]);
+  const long = await cli(o.dir, ["on", "--launcher", "x".repeat(65), "--model", "m/one"]);
+  assert.equal(long.code, 1, long.out);
+  assert.match(long.err, /longer than 64/, long.err);
+  assert.equal(adds(o).length, 1, "nothing written for it");
+  assert.equal(JSON.parse(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8")).on, false);
+});
+
+test("on --launcher: no single holon of the work with agents — the description lies at the root, said so", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [],
+    holons: [
+      { seq: 30, name: "Работа с агентами", agents: true },
+      { seq: 31, name: "Ещё агенты", agents: true },
+    ],
+  });
+  const on = await cli(o.dir, ["on", "--launcher", "probe-new", "--model", "m/one"]);
+  assert.equal(on.code, 0, on.err + on.out);
+  assert.match(on.out, /at the root/, on.out);
+  assert.equal(adds(o)[0].arguments.arrows, undefined);
 });
 
 test("quench: a seat the orchestrator did not launch is never stopped", async (t) => {
