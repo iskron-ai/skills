@@ -51,6 +51,8 @@ export interface OrchestraWords {
   leadNoLaunchers: (why: string) => string;
   /** Описание запускателя в mind не годится — по нему ничего не поднимается. */
   leadDescription: (what: string, code: string) => string;
+  /** Приказы учётки не прочитаны — останов по требованию не замечен в этом такте. */
+  leadOrdersUnread: (why: string) => string;
   /** Бриф поднимаемого агента после строки spawned_for. */
   brief: (realm: string, karta: number, room: string, invite: number) => string;
 }
@@ -101,6 +103,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
     leadDescription: (what, code) =>
       `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
+    leadOrdersUnread: (why) =>
+      `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
     brief: (realm, karta, room, invite) =>
       `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по первой строке. ` +
       `Заново не регистрируйся. До работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
@@ -152,6 +156,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the launcher descriptions in mind did not read (${why}) — nothing is raised`,
     leadDescription: (what, code) =>
       `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
+    leadOrdersUnread: (why) =>
+      `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
     brief: (realm, karta, room, invite) =>
       `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the first line. ` +
       `Do not register again. Before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +

@@ -670,14 +670,15 @@ async function stopping(t, answer, order) {
   await o.step();
   await o.queue([], [signal(1, 9, [ROOM])]);
   await o.step();
-  await o.fake.control({
-    orders_stop_answer: answer,
-    stop_order: { id: order, standing_id: "seat-raised", realm: REALM, frame: false },
-  });
+  await o.fake.control({ orders_stop_answer: answer });
   await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
   const r = await o.step();
-  assert.match(r.out, /invite 9: stop_ordered/, r.out);
+  assert.match(r.out, /invite 9: stop_ordered(?!_elsewhere)/, r.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  // The order our stop put, as the account's orders read it from now on.
+  await o.fake.control({
+    stop_order: { id: order, standing_id: "seat-raised", realm: REALM, frame: false },
+  });
   return o;
 }
 
@@ -725,6 +726,62 @@ test("quench: a stopping run whose graph left the boundary ends when its order c
   assert.equal(closed.status, 200);
   const after = await o.step();
   assert.equal(after.code, 0, after.err + after.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+});
+
+test("quench: a stop on demand of our seat by someone else ends the run, closes its tab and frees its slot", async (t) => {
+  const o = await leading(t, { descriptions: () => [describe({ body: { limit: 1 } })] });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([invite(9, GOOD), invite(10, GOOD)], [signal(1, 9, [ROOM])]);
+  const full = await o.step();
+  assert.match(full.out, /invite 10: limit_reached/, full.out);
+  // A person (or the chief of staff) orders our raised seat to stop — not the orchestrator.
+  await o.fake.control({
+    stop_order: { id: "ord-h", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  const open = await o.step();
+  assert.equal(open.code, 0, open.err + open.out);
+  assert.match(open.out, /invite 9: stop_ordered_elsewhere/, open.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  assert.equal(o.closes().length, 0, "the seat still holds its order: the tab stays");
+  // The agent's bridge carried the order out.
+  const acked = await fetch(`${o.fake.base}/api/me/orders/ord-h/ack`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer probe-pat",
+      "content-type": "application/json",
+      "user-agent": "iskron-bridge/0.0.0",
+    },
+    body: JSON.stringify({ state: "stopped" }),
+  });
+  assert.equal(acked.status, 200);
+  const after = await o.step();
+  assert.equal(after.code, 0, after.err + after.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.match(after.out, /invite 9: ended, terminal_closed/, after.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  // The slot is free: the waiting invite rises in the same tact.
+  assert.match(after.out, /invite 10: launched/, after.out);
+  assert.equal(o.launches().length, 2);
+  // The orchestrator itself ordered nothing.
+  assert.equal(o.fake.state.orders.human.filter((h) => h.method === "POST").length, 0);
+});
+
+test("quench: a stop on demand already carried out before the tact ends the run at once", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    stop_order: { id: "ord-q", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  o.fake.state.orders.list.get("ord-q").state = "stopped"; // closed between two tacts
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stopped_elsewhere/, r.out);
+  assert.match(r.out, /invite 9: ended, terminal_closed/, r.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 

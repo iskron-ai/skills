@@ -1,12 +1,14 @@
 // The leading half of one tact (graph @nks/nks-dev, nodes #7513, #5042, #9957; decisions of
 // case №4050): fold the raised tape into the registry, read the complete demands snapshot, settle
-// closed stops, extinguish empty compositions of our own launches, raise what the human's
+// closed stops (our own and someone else's stop on demand of our seat — orchestra-foreign.ts),
+// extinguish empty compositions of our own launches, raise what the human's
 // launcher descriptions answer. An incomplete snapshot acts on nothing; without the machine's
 // consent nothing is raised or extinguished.
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
 import { readDemands } from "./orchestra-demands.ts";
+import { foreignStops } from "./orchestra-foreign.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
@@ -36,6 +38,7 @@ export function leadAct(
         );
         return said;
       }
+      said.push(...(await foreignStops(authDir, base, token, runs)));
       said.push(...(await expireLaunches(runs, gone)));
       settleStops(runs, owned);
       const cursorOf = (realm: string): string | null =>
