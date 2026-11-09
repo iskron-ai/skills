@@ -46,6 +46,9 @@ test("Orca plan carries the complete claim in the first prompt line", () => {
     invite: row.invite,
     room: row.room,
   });
+  // No start line and no second stand: the root already took the seat by the first line.
+  assert.doesNotMatch(prompt, /^start |[Cc]onfirm|iskron_stand/m, prompt);
+  assert.ok(prompt.includes(`room="${row.room}")`), prompt);
   assert.equal(out.launch_verified, false);
 });
 

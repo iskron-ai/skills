@@ -36,10 +36,11 @@ export function plan(snapshot, mappings, schema, version) {
       if (seen.has(key)) throw new Error("duplicate invitation");
       seen.add(key);
       const spawnedFor = { invite: row.invite, room };
+      // The root takes the seat by the first line; the brief never asks for a second stand (№4050 [55]).
       const prompt = `spawned_for: ${JSON.stringify(spawnedFor)}\n` +
-        `start ${realm} ${row.karta} дело ${room}\n` +
-        `Invitation ${row.invite}. Confirm the spawned_for binding and join before doing work. ` +
-        "If this bridge cannot claim the invitation, report that limitation and do not work. " +
+        `You are already taken for invite ${row.invite} of case ${room} in graph ${realm}, role #${row.karta}, ` +
+        "by the first line. Do not register again. " +
+        `Before any work join the case: iskron_case(action="join", realm="${realm}", room="${room}"). ` +
         "Read the case assignment and its acceptance criteria; do not invent a task.";
       return {
         repository, spawned_for: spawnedFor,

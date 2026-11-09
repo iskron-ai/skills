@@ -25,6 +25,8 @@ export interface Run {
   model: string;
   repository: string;
   worktree: string;
+  /** Orca's handle of the terminal the launch opened — closed when no seat came (no_seat). */
+  terminal?: string;
   state: RunState;
   at: string;
   why?: string;

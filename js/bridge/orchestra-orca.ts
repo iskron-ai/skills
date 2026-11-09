@@ -131,12 +131,36 @@ export function launchArgv(
   ];
 }
 
+/** The terminal handle of a launch answer: `outcome.handle` of a terminal launch under result or
+ * result.launch, `agentTerminalHandle` of an older host — the form agent-context 1.4.242 declares,
+ * no launch answer observed. Anything else — no handle. */
+export function launchHandle(out: string): string | undefined {
+  try {
+    const r = (JSON.parse(out) as { result?: Record<string, unknown> }).result ?? {};
+    for (const o of [r.outcome, (r.launch as { outcome?: unknown } | undefined)?.outcome]) {
+      const x = o as { kind?: unknown; handle?: unknown } | undefined;
+      if (x?.kind === "terminal" && typeof x.handle === "string" && x.handle) return x.handle;
+    }
+    if (typeof r.agentTerminalHandle === "string" && r.agentTerminalHandle)
+      return r.agentTerminalHandle;
+  } catch {
+    /* not JSON — no handle */
+  }
+  return undefined;
+}
+
 /** ok — the harness was started (not yet a seat); ambiguous — do not launch again. */
 export async function orcaLaunch(
   argv: string[],
-): Promise<{ outcome: "ok" | "ambiguous" | "failed"; why?: string }> {
+): Promise<{ outcome: "ok" | "ambiguous" | "failed"; why?: string; handle?: string }> {
   const r = await run(argv, 120_000);
-  if (r.code === 0) return { outcome: "ok" };
+  if (r.code === 0) return { outcome: "ok", handle: launchHandle(r.out) };
   if (r.code === "timeout") return { outcome: "ambiguous", why: "launch_timeout" };
   return { outcome: "failed", why: `launch_exit_${r.code}` };
+}
+
+/** Close the one terminal our own launch opened, by its handle — never a process by PID. */
+export async function orcaClose(handle: string): Promise<string> {
+  const r = await run(["terminal", "close", "--terminal", handle, "--json"], 30_000);
+  return r.code === 0 ? "terminal_closed" : `terminal_close_failed_${r.code}`;
 }

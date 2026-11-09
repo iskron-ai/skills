@@ -10,6 +10,7 @@ import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
+import { orcaClose } from "./orchestra-orca.ts";
 import { type Run, runKey } from "./orchestra-runs.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
@@ -54,13 +55,24 @@ export function foldTape(realm: string, tape: Signal[], runs: Record<string, Run
   }
 }
 
-/** Launched without a seat past the window: no_seat. */
-export function expireLaunches(runs: Record<string, Run>, now = Date.now()): string[] {
+/**
+ * Launched without a seat past the window: no_seat, and the terminal our launch opened is closed
+ * by its handle (№4050 [56]) — a harness that cannot stand has no seat to take a stop order. Why
+ * it did not stand is the harness's own log, not the daemon's to read: said as cause_unseen.
+ */
+export async function expireLaunches(
+  runs: Record<string, Run>,
+  gone?: { gone: boolean },
+  close: (handle: string) => Promise<string> = orcaClose,
+  now = Date.now(),
+): Promise<string[]> {
   const said: string[] = [];
   for (const r of Object.values(runs))
     if (r.state === "launched" && now - Date.parse(r.at) > RAISE_WINDOW_MS) {
+      if (gone?.gone) break;
       r.state = "no_seat";
-      said.push(w().leadRow(r.realm, r.invite, "no_seat"));
+      const closed = r.terminal ? await close(r.terminal) : "no_terminal_handle";
+      said.push(w().leadRow(r.realm, r.invite, `no_seat (cause_unseen), ${closed}`));
     }
   return said;
 }

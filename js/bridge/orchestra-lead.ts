@@ -11,7 +11,7 @@ import { readLaunchers } from "./orchestra-launchers.ts";
 import { expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
 import { readRuns, writeRuns } from "./orchestra-runs.ts";
-import { readTape, type TactAct } from "./orchestra-tact.ts";
+import { readTape, realmCanon, type TactAct } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -26,7 +26,7 @@ export function leadAct(
     if (!admitted) return [w().leadNotAdmitted()];
     const runs = readRuns(authDir);
     for (const r of reads) foldTape(r.realm, r.signals as Record<string, unknown>[], runs);
-    const said = expireLaunches(runs);
+    const said = await expireLaunches(runs, gone);
     try {
       const owned: OpenOrder[] = [];
       const demands = await readDemands(base, token, boundary, boundary, undefined, owned);
@@ -57,7 +57,8 @@ export function leadAct(
         return said;
       }
       for (const r of launchers.refused) said.push(w().leadDescription(r.what, r.code));
-      said.push(...(await raiseRows(authDir, demands.start, launchers, runs, gone)));
+      const canon = realmCanon(base, token);
+      said.push(...(await raiseRows(authDir, demands.start, launchers, runs, canon, gone)));
       return said;
     } finally {
       writeRuns(authDir, runs);

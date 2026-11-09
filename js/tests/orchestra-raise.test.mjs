@@ -97,12 +97,26 @@ const signal = (i, entry, rooms, seat = "seat-raised") => ({
   cursor: `c${i}`,
 });
 
+const orcaCalls = (log) =>
+  existsSync(log)
+    ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)
+    : [];
+
+/** The checkout's cover: the raised agent's root seats itself by it (opencode/rootseat.ts). */
+const coverOf = (graph = REALM, role = 931) =>
+  `---\niskron:\n  graph: ${graph}\n  holon: 4057\n  agent_role: ${role}\n---\n# probe\n`;
+const cover = (dir, text = coverOf()) => writeFileSync(join(dir, "AGENTS.md"), text);
+
 /** A leading daemon: flag on, the fake's api beside a hold record, a substitute orca on PATH. */
-async function leading(t, { descriptions, projects, env = {}, admitted = true, whoami } = {}) {
+async function leading(
+  t,
+  { descriptions, projects, env = {}, admitted = true, whoami, covered = coverOf() } = {},
+) {
   // Short: the daemon's sockets live under it, and a Unix socket path is capped near 104 bytes.
   const dir = mkdtempSync(join(tmpdir(), "iskron-or-"));
   const checkout = join(dir, "checkout");
   mkdirSync(checkout);
+  if (covered) cover(checkout, covered);
   const fake = await startFakeNks({
     pat: "probe-pat",
     mind: { orchestra: descriptions?.(checkout) ?? [describe()] },
@@ -169,10 +183,8 @@ async function leading(t, { descriptions, projects, env = {}, admitted = true, w
     fake,
     checkout,
     step: () => cli(dir, ["step"]),
-    launches: () =>
-      existsSync(log)
-        ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)
-        : [],
+    launches: () => orcaCalls(log).filter((a) => a[0] === "agent"),
+    closes: () => orcaCalls(log).filter((a) => a[0] === "terminal"),
     runs: () => {
       const f = join(dir, "run", "orchestra-runs.json");
       return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")).runs : {};
@@ -202,13 +214,17 @@ test("raise: an invite naming this machine's launcher is launched once through o
   ]);
   const prompt = argv[argv.indexOf("--prompt") + 1];
   assert.equal(prompt.split("\n")[0], `spawned_for: {"invite":9,"room":"${ROOM}"}`);
-  assert.match(prompt, new RegExp(`start ${REALM} 931`));
   // The brief names graph, role and case, and the join before work (#10043).
   assert.ok(
     prompt.includes(`iskron_case(action="join", realm="${REALM}", room="${ROOM}")`),
     prompt,
   );
   assert.match(prompt, /role #931/);
+  // The root took the seat by the first line (№4050 [55]): no start line, no word to stand or
+  // confirm the claim again — a second registration of the same pair.
+  assert.doesNotMatch(prompt, /^start /m, prompt);
+  assert.doesNotMatch(prompt, /confirm the claim|iskron_stand/, prompt);
+  assert.match(prompt, /already taken/, prompt);
   assert.equal(argv.at(-1), "--json");
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "launched");
@@ -302,6 +318,7 @@ test("raise: two ready local setups of the repository — ambiguous, nothing lau
 
 test("raise: the description's own checkout overrides Orca for its key; no host answers any machine", async (t) => {
   const own = mkdtempSync(join(tmpdir(), "iskron-co-"));
+  cover(own);
   const o = await leading(t, {
     descriptions: () => [describe({ body: { host: undefined, checkouts: { [REPO]: own } } })],
   });
@@ -309,6 +326,65 @@ test("raise: the description's own checkout overrides Orca for its key; no host 
   const r = await o.step();
   assert.match(r.out, /invite 9: launched/, r.out);
   assert.equal(o.launches()[0][5], `path:${own}`);
+});
+
+// №4050 [56]: a checkout without the cover raised a harness that could not stand — nor be stopped.
+test("raise: a checkout without the cover of the call's graph and role launches nothing", async (t) => {
+  for (const [covered, code] of [
+    [null, "checkout_uncovered"],
+    ["# no front matter\n", "checkout_uncovered"],
+    [coverOf(REALM, 932), "checkout_other_seat"],
+    [coverOf("@nks/drugoy"), "checkout_other_seat"],
+    [coverOf("r7"), "checkout_other_seat"],
+    [coverOf("r999"), "checkout_cover_unresolved"],
+  ]) {
+    const o = await leading(t, { covered });
+    await o.queue([invite(9, GOOD)]);
+    const r = await o.step();
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, new RegExp(`invite 9: ${code}`), `${covered}\n${r.out}`);
+    assert.equal(o.launches().length, 0, `${covered}: nothing launched`);
+    assert.equal(o.runs()[`${REALM}|${ROOM}|9`], undefined, "no registry row");
+  }
+});
+
+test("raise: a cover naming the graph by its short form is the call's graph", async (t) => {
+  const o = await leading(t, { covered: coverOf("r5") });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
+// №4050 [56]: no seat within the window — the terminal the orchestrator opened is closed by its
+// own handle from the launch answer; the cause the harness refused with is not the daemon's to see.
+test("raise: no seat within the window closes our own terminal by its handle", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe1" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].terminal, "term_probe1");
+  await new Promise((done) => setTimeout(done, 2_000));
+  await o.queue([]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_seat \(cause_unseen\), terminal_closed/, r.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_probe1", "--json"]]);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "no_seat");
+  await o.step();
+  assert.equal(o.closes().length, 1, "closed once");
+});
+
+test("raise: no seat and no handle in the launch answer — said, nothing closed", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await new Promise((done) => setTimeout(done, 2_000));
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_seat \(cause_unseen\), no_terminal_handle/, r.out);
+  assert.equal(o.closes().length, 0);
 });
 
 test("raise: the description's limit holds — the second invite waits", async (t) => {

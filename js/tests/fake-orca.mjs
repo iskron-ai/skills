@@ -29,5 +29,12 @@ appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
 const delay = Number(process.env.FAKE_ORCA_DELAY_MS ?? 0);
 if (delay) await new Promise((r) => setTimeout(r, delay));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
-if (code === 0) process.stdout.write(JSON.stringify({ ok: true, agent: "fake" }) + "\n");
+// The launch answer's form by agent-context 1.4.242 (outcome.kind, outcome.handle), not an
+// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal close answers ok.
+const handle = process.env.FAKE_ORCA_HANDLE ?? "term_fake";
+const answer =
+  args[0] === "agent"
+    ? { ok: true, result: { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } } }
+    : { ok: true, result: {} };
+if (code === 0) process.stdout.write(JSON.stringify(answer) + "\n");
 process.exit(code);

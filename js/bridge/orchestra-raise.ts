@@ -4,13 +4,15 @@
 // callers (№4050 [22]–[23]), its attrs name one of this machine's launchers, a harness the launcher offers and the
 // adapter knows (its name is Orca's --agent), and a model the launcher allows; the checkout is
 // the description's own for that repository, else exactly one ready local Orca setup of the
-// project whose remote is the invite's repository (#4518). Anything else is an outcome said
+// project whose remote is the invite's repository (#4518), and its cover names the call's graph
+// and role — the raised root seats itself by it (№4050 [56]). Anything else is an outcome said
 // aloud, nothing launched. The invite is taken by the raised agent's own registration with
 // spawned_for (its first brief line) — not here; the registry row is written before the launch,
 // so a crash never launches twice.
 import { existsSync, statSync } from "node:fs";
 
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
+import { readCover } from "../shared/cover.ts";
 import { words } from "../shared/lang.ts";
 import { accountOf, type Launcher, type Launchers } from "./orchestra-launchers.ts";
 import {
@@ -74,12 +76,30 @@ function checkoutFor(
   return got.path;
 }
 
+/** The raised root seats itself only by its checkout's cover (opencode/rootseat.ts): without one
+ * naming the call's graph and role the harness can neither stand nor be stopped (№4050 [56]).
+ * A short rN of the cover goes by the realm list. */
+async function coverRefusal(
+  worktree: string,
+  realm: string,
+  karta: number,
+  canon: (name: string) => Promise<string | null>,
+): Promise<string | null> {
+  const c = readCover(worktree);
+  if (!c || "why" in c || "foreign" in c) return "checkout_uncovered";
+  if (Number(c.karta) !== karta) return "checkout_other_seat";
+  const graph = /^r\d+$/i.test(c.realm) ? await canon(c.realm) : c.realm;
+  if (!graph) return "checkout_cover_unresolved";
+  return graph === realm ? null : "checkout_other_seat";
+}
+
 /** Raise what the snapshot asks of this machine; the outcomes as words, one per row said. */
 export async function raiseRows(
   authDir: string,
   start: Row[],
   ls: Launchers,
   runs: Record<string, Run>,
+  canon: (name: string) => Promise<string | null>,
   gone?: { gone: boolean },
 ): Promise<string[]> {
   const said: string[] = [];
@@ -115,6 +135,11 @@ export async function raiseRows(
       said.push(w().leadRow(realm, invite, worktree.code));
       continue;
     }
+    const uncovered = await coverRefusal(worktree, realm, Number(row.karta), canon);
+    if (uncovered) {
+      said.push(w().leadRow(realm, invite, uncovered));
+      continue;
+    }
     if (gone?.gone) break;
     const run: Run = {
       realm,
@@ -136,6 +161,7 @@ export async function raiseRows(
       `spawned_for: ${JSON.stringify({ invite, room })}\n` +
       w().brief(realm, run.karta, room, invite);
     const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
+    if (got.handle) run.terminal = got.handle;
     if (got.outcome === "failed") {
       run.state = "refused";
       run.why = got.why;

@@ -19,7 +19,7 @@ import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import type { OrchestraAnswer } from "./orchestra-door.ts";
-import { realmIndexOf } from "./realmindex.ts";
+import { canonIn, type RealmIndex, realmIndexOf } from "./realmindex.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 /** The raised door's own cap (#6010): ?limit ≤ 200. */
@@ -103,6 +103,21 @@ async function resolveRealms(
     out.push(canon);
   }
   return { realms: [...new Set(out)] };
+}
+
+/** rN → @owner/slug by the same realm list, read once on first need; unknown or unread — null. */
+export function realmCanon(base: string, token: string): (name: string) => Promise<string | null> {
+  let index: Promise<RealmIndex | null> | undefined;
+  return async (name) => {
+    index ??= getJson(base, token, `/realms?limit=${LIMIT}`)
+      .then((v) => {
+        const listed = itemsOf(v);
+        return listed ? realmIndexOf(listed) : null;
+      })
+      .catch(() => null);
+    const got = await index;
+    return got ? canonIn(got, name) : null;
+  };
 }
 
 /** The raised tape of one realm from a cursor — the re-check before an end reads it too. */
