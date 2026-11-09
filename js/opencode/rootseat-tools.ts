@@ -244,13 +244,14 @@ export function createSeatLife(d: Doors) {
             callThrough: async (...args) => {
               attempt.onWire = true;
               attempt.fresh = true;
+              // Read before the wire: a session removed meanwhile forgets its claim.
+              const claim = d.claiming?.(args[3]) === true;
               try {
                 const out = await d.callThrough(...args);
                 if (out.fresh === false) attempt.returned = true;
                 // A bridge without the mark (an older release) proves an ordinary seat as before;
                 // a claim's seat is owned only on the mark.
-                const fresh =
-                  out.fresh === true || (out.fresh === undefined && !d.claiming?.(args[3]));
+                const fresh = out.fresh === true || (out.fresh === undefined && !claim);
                 if (fresh && out.provisional === true && out.key && out.place)
                   attempt.owned = { key: out.key, place: out.place };
                 return out;
