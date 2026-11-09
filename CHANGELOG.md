@@ -1,5 +1,21 @@
 # Changelog
 
+## [7.36.0](https://github.com/iskron-ai/skills/compare/v7.35.3...v7.36.0) (2026-11-09)
+
+
+### Features
+
+* **bridge:** expose read-only agent demands and Orca planning ([#703](https://github.com/iskron-ai/skills/issues/703)) ([a19db04](https://github.com/iskron-ai/skills/commit/a19db0476893451f4fd8c4c1d34fa7dc1fc7faa0))
+* **bridge:** name the bridge in every request to the API with user-agent ([#705](https://github.com/iskron-ai/skills/issues/705)) ([973998c](https://github.com/iskron-ai/skills/commit/973998cca7f99f88e548425ae39e080a3d8977b1))
+
+
+### Bug Fixes
+
+* distinguish greeting dispatch from incoming reachability ([#708](https://github.com/iskron-ai/skills/issues/708)) ([3f93367](https://github.com/iskron-ai/skills/commit/3f93367e849dd8259931080ae3822308dcd84575))
+* reconcile release corpus contracts and source recipes ([#711](https://github.com/iskron-ai/skills/issues/711)) ([4a2dc08](https://github.com/iskron-ai/skills/commit/4a2dc088871bcb55d09a23b258371554121804e1))
+* resolve demands boundary and align skill entry routes ([#706](https://github.com/iskron-ai/skills/issues/706)) ([8c2a0f6](https://github.com/iskron-ai/skills/commit/8c2a0f67f950303ece97a0325d46a74bb2435e64))
+* validate CLI before home updates and align skill contracts ([#710](https://github.com/iskron-ai/skills/issues/710)) ([ea75d39](https://github.com/iskron-ai/skills/commit/ea75d39e68ee11557d5b03a132e66e3da9e10055))
+
 ## [7.35.3](https://github.com/iskron-ai/skills/compare/v7.35.2...v7.35.3) (2026-11-08)
 
 
