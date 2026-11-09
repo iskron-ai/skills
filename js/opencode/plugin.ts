@@ -234,6 +234,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         const start = root ? await spawnStarts.start(sid, () => started(sid)) : [];
         spawnStarts.guard(sid);
         for (const w of start) prepared.put(w);
+        // Raised for an invite: the case it was taken for, by the delivery, not the brief (#10043).
+        prepared.put(spawnStarts.taken(sid));
         // A service seating's stand was not read by the model; its rules go beside it.
         if (start.length) prepared.put(await (rulesOf(sid) ?? null));
         spawnStarts.guard(sid);

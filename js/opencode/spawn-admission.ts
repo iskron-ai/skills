@@ -9,6 +9,9 @@ export interface SpawnStart {
   error?: Error;
   conflict?: boolean;
   claimed?: boolean;
+  /** The graph register confirmed the pair in; the taken word is told once (#10043). */
+  realm?: string;
+  told?: boolean;
   pending?: Promise<void>;
   ids?: Set<string>;
   start?: Promise<string[]>;

@@ -90,6 +90,34 @@ test(
   },
 );
 
+// #10043: the first model request names the case the claim took — the delivery's word, not
+// the brief's; a root without the pair hears no such word.
+test(
+  "spawned_for: the first model request names the taken case and the join before work",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("spawn-root", { emit: false });
+      oc.create("plain-root", { emit: false });
+      const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+      const r = await oc.turn("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+      assert.ok(r.told.includes(pair.room), board(r, oc));
+      assert.match(r.told, /invite 7|зову 7/, board(r, oc));
+      assert.ok(r.told.includes(`${tool("case")}(action="join"`), board(r, oc));
+      const again = await oc.turn("spawn-root", "next");
+      assert.ok(!again.told.includes(pair.room), "told once");
+      const plain = await oc.turn("plain-root", "hello");
+      assert.ok(!plain.told.includes(`${tool("case")}(action="join"`), board(plain, oc));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
 const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
 for (const mode of [
   "fresh",

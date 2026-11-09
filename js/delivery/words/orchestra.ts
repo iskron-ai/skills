@@ -2,6 +2,7 @@
 // #7514, #8202): флаг, граница графов и один такт — локальным входом демона машины. Демон —
 // владелец запусков; флаг лежит рядом с грантом и переживает перезапуск демона.
 import type { Lang } from "../lang.ts";
+import { tool } from "../protocol.ts";
 
 export interface OrchestraWords {
   usage: () => string;
@@ -102,8 +103,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
     brief: (realm, karta, room, invite) =>
       `start ${realm} ${karta} дело ${room}\n` +
-      `Тебя поднял оркестратор по зову ${invite} этого дела. Место встаёт со spawned_for из первой строки; ` +
-      "подтверди взятие и войди в дело до работы. Отказ взятия (зов уже взят, место под другим зовом, зов закрыт) — " +
+      `Тебя поднял оркестратор по зову ${invite} этого дела в графе ${realm}, роль #${karta}. Место встаёт со spawned_for из первой строки; ` +
+      `подтверди взятие и до работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
+      "Отказ взятия (зов уже взят, место под другим зовом, зов закрыт) — " +
       "не работай и не обходи его другим именем. Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
   },
   en: {
@@ -154,8 +156,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
     brief: (realm, karta, room, invite) =>
       `start ${realm} ${karta} case ${room}\n` +
-      `The orchestrator raised you for invite ${invite} of this case. Your seat stands with the spawned_for of the first line; ` +
-      "confirm the claim and join the case before any work. A refused claim (the invite already taken, the seat under another invite, the invite closed) — " +
+      `The orchestrator raised you for invite ${invite} of this case in graph ${realm}, role #${karta}. Your seat stands with the spawned_for of the first line; ` +
+      `confirm the claim and before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
+      "A refused claim (the invite already taken, the seat under another invite, the invite closed) — " +
       "do not work and do not get around it under another name. Read the case assignment and its acceptance criteria; do not invent a task.",
   },
 };

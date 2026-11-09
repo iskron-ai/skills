@@ -46,7 +46,17 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
         if (entry) entry.error = error;
         throw error;
       }
-      if (entry) entry.claimed = true;
+      if (entry) {
+        entry.claimed = true;
+        entry.realm = String(args.realm);
+      }
+    },
+    /** Once, after the confirmed claim: the case the seat was taken for — join it before work. */
+    taken(session: string): string | null {
+      const e = starts.get(session);
+      if (!e?.pair || !e.claimed || !e.realm || e.told) return null;
+      e.told = true;
+      return words(SPAWNED_FOR).taken(e.realm, e.pair.room, e.pair.invite);
     },
     prompt: spawnAdmission(starts, readContext),
     apply(session: string, name: string, args: Record<string, unknown>) {

@@ -203,6 +203,12 @@ test("raise: an invite naming this machine's launcher is launched once through o
   const prompt = argv[argv.indexOf("--prompt") + 1];
   assert.equal(prompt.split("\n")[0], `spawned_for: {"invite":9,"room":"${ROOM}"}`);
   assert.match(prompt, new RegExp(`start ${REALM} 931`));
+  // The brief names graph, role and case, and the join before work (#10043).
+  assert.ok(
+    prompt.includes(`iskron_case(action="join", realm="${REALM}", room="${ROOM}")`),
+    prompt,
+  );
+  assert.match(prompt, /role #931/);
   assert.equal(argv.at(-1), "--json");
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "launched");
