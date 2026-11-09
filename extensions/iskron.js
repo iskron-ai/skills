@@ -53,7 +53,7 @@ var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/version.ts
-var VERSION = "7.35.3";
+var VERSION = "7.36.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -543,6 +543,35 @@ var words = (dict) => dict[lang()];
 // js/extension/channel.ts
 import { randomUUID } from "node:crypto";
 
+// js/shared/version.ts
+import { createHash } from "node:crypto";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { fileURLToPath } from "node:url";
+var releaseBuildIn = (text) => text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
+var devBuildIn = (text) => text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync2(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
+function versionIn(text) {
+  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+  return m ? m[1] : null;
+}
+
+// js/shared/http.ts
+var USER_AGENT = `${BRIDGE_NAME}/${VERSION}`;
+function namedFetch(input, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("user-agent", USER_AGENT);
+  return fetch(input, { ...init, headers });
+}
+
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
 var FLAP_PAUSES_MS = (process.env[envName("CHANNEL_FLAP_MS")] || "5000,10000,20000,40000,60000").split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 > 0);
@@ -591,7 +620,7 @@ function graphFolds(frames) {
 }
 
 // js/shared/seen.ts
-import { appendFileSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
 
 // js/shared/room-fields.ts
 var obj = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
@@ -1179,7 +1208,7 @@ function splitBatch(all, keep, has) {
 }
 function seenIds(seenPath) {
   try {
-    return new Set(readFileSync2(seenPath, "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync3(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -1210,27 +1239,6 @@ var SKILLS_ROOT_ENV = envName("SKILLS_ROOT");
 // js/shared/fields.ts
 var FIELDS_CAPABILITY = STRUCTURED_CAPABILITY;
 var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
-
-// js/shared/version.ts
-import { createHash } from "node:crypto";
-import { readFileSync as readFileSync3 } from "node:fs";
-import { fileURLToPath } from "node:url";
-var releaseBuildIn = (text) => text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
-var devBuildIn = (text) => text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync3(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
-function versionIn(text) {
-  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
-  return m ? m[1] : null;
-}
 
 // js/bridge/build.ts
 var BUILD = buildOf(import.meta.url);
@@ -1741,7 +1749,7 @@ async function postStatus(url, text, until, standingId) {
   const left = until - Date.now();
   if (left <= 0) return { ok: false, body: late() };
   const signal = AbortSignal.timeout(left);
-  const post2 = () => fetch(url, {
+  const post2 = () => namedFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(

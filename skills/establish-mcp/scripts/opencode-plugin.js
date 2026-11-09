@@ -134,7 +134,7 @@ var serverProtocol = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.35.3";
+var VERSION = "7.36.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -1016,8 +1016,44 @@ var TURN = {
   }
 };
 
-// js/shared/lang.ts
+// js/shared/version.ts
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+function buildOf(selfUrl) {
+  try {
+    const src = readFileSync(fileURLToPath(selfUrl));
+    return `v${VERSION}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return `v${VERSION}`;
+  }
+}
+function buildOfFile(path) {
+  try {
+    const src = readFileSync(path);
+    const v = versionIn(src.toString("utf8")) ?? "?";
+    return `v${v}+${createHash("sha256").update(src).digest("hex").slice(0, 8)}`;
+  } catch {
+    return null;
+  }
+}
+var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
+function versionIn(text2) {
+  for (const [, name] of text2.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text2);
+  return m ? m[1] : null;
+}
+
+// js/shared/http.ts
+var USER_AGENT = `${BRIDGE_NAME}/${VERSION}`;
+function namedFetch(input, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("user-agent", USER_AGENT);
+  return fetch(input, { ...init, headers });
+}
+
+// js/shared/lang.ts
+import { readFileSync as readFileSync2 } from "node:fs";
 import { join as join2 } from "node:path";
 
 // js/shared/scope.ts
@@ -1066,13 +1102,13 @@ function envOf(k) {
 }
 
 // js/shared/standings.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 var defaultAuthDir = () => join(homedir(), HOME_DIR);
 var authDirFromEnv = () => envOf(envName("BRIDGE_AUTH_DIR"))?.trim() || defaultAuthDir();
 var standingsDirOf = (authDir2) => join(authDir2, "standings");
-var hashOf = (key) => createHash("sha256").update(key).digest("hex").slice(0, 16);
+var hashOf = (key) => createHash2("sha256").update(key).digest("hex").slice(0, 16);
 var HOLD_RECORD_MAX_AGE_MS = 6 * 60 * 60 * 1e3;
 var holdFilePathOf = (authDir2, key) => join(standingsDirOf(authDir2), `${hashOf(key)}.hold`);
 
@@ -1088,7 +1124,7 @@ function resolve2() {
   const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
   if (fromEnv) return langOfServer(fromEnv);
   try {
-    const text2 = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
+    const text2 = readFileSync2(join2(authDirFromEnv(), "server"), "utf8").trim();
     if (text2) return langOfServer(text2);
   } catch {
   }
@@ -1664,7 +1700,7 @@ function superseded(frames) {
 }
 
 // js/shared/seen.ts
-import { appendFileSync, readFileSync as readFileSync2, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync as readFileSync3, renameSync, writeFileSync } from "node:fs";
 
 // js/shared/graph-inbox.ts
 function graphInboxKey(frame) {
@@ -1776,7 +1812,7 @@ function splitBatch(all, keep, has) {
 }
 function seenIds(seenPath) {
   try {
-    return new Set(readFileSync2(seenPath, "utf8").split("\n").filter(Boolean));
+    return new Set(readFileSync3(seenPath, "utf8").split("\n").filter(Boolean));
   } catch {
     return /* @__PURE__ */ new Set();
   }
@@ -2227,34 +2263,6 @@ var FIELDS_CAPABILITIES = { experimental: { [FIELDS_CAPABILITY]: {} } };
 import { homedir as homedir2 } from "node:os";
 import { join as join3 } from "node:path";
 var homeBridgePath = () => join3(homedir2(), HOME_DIR, HOME_BRIDGE_FILE);
-
-// js/shared/version.ts
-import { createHash as createHash2 } from "node:crypto";
-import { readFileSync as readFileSync3 } from "node:fs";
-import { fileURLToPath } from "node:url";
-function buildOf(selfUrl) {
-  try {
-    const src = readFileSync3(fileURLToPath(selfUrl));
-    return `v${VERSION}+${createHash2("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return `v${VERSION}`;
-  }
-}
-function buildOfFile(path) {
-  try {
-    const src = readFileSync3(path);
-    const v = versionIn(src.toString("utf8")) ?? "?";
-    return `v${v}+${createHash2("sha256").update(src).digest("hex").slice(0, 8)}`;
-  } catch {
-    return null;
-  }
-}
-var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
-function versionIn(text2) {
-  for (const [, name] of text2.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text2);
-  return m ? m[1] : null;
-}
 
 // js/opencode/devicewait.ts
 import { readdirSync, statSync } from "node:fs";
@@ -2730,7 +2738,7 @@ async function postStatus(url, text2, until, standingId) {
   const left = until - Date.now();
   if (left <= 0) return { ok: false, body: late() };
   const signal = AbortSignal.timeout(left);
-  const post2 = () => fetch(url, {
+  const post2 = () => namedFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(
