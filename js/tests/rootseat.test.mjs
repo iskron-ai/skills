@@ -63,6 +63,281 @@ const resetStops = () => {
 };
 
 test(
+  "spawned_for firstline reaches the first automatic register without changing input",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("spawn-root", { emit: false });
+      const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+      const text = `spawned_for: ${JSON.stringify(pair)}\nstart @nks/nks-dev #931 дело №3952`;
+      await oc.turn("spawn-root", text);
+      assert.deepEqual(oc.contextCalls, ["spawn-root"]);
+      const calls = s.fake.state.calls.filter((c) => c.name === "iskron_channel");
+      const regs = calls.filter((c) => c.arguments.action === "register");
+      assert.ok(regs.length);
+      assert.deepEqual(regs[0].arguments.spawned_for, pair);
+      assert.equal(
+        calls.find((c) => c.arguments.action === "connect")?.arguments.spawned_for,
+        undefined,
+      );
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
+for (const mode of [
+  "fresh",
+  "old explicit",
+  "old provisional",
+  "old provisional, no fresh mark",
+  "revoke refusal",
+])
+  test(`spawned_for terminal conflict after dispatch: ${mode}`, T, async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const prior = mode.startsWith("old");
+    if (prior)
+      await priorBridge(s, "late-race", "old-held", {
+        kill: true,
+        provisional: mode.startsWith("old provisional"),
+      });
+    if (mode === "revoke refusal")
+      s.fake.state.revokeRefuseNext = [{ text: "cleanup denied", status: 403 }];
+    const before = s.fake.state.calls.length;
+    let release;
+    s.fake.state.registerToolGate = new Promise((r) => {
+      release = r;
+    });
+    const oc = await rootPlugin(
+      s,
+      s.project,
+      mode.endsWith("no fresh mark") ? { ISKRON_BRIDGE_PATH: unmarkedBridge(s.project) } : {},
+    );
+    let worked = false;
+    try {
+      oc.create("late-race", { emit: false });
+      oc.priorContext("late-race", () => []);
+      const first = oc.turn("late-race", `${INITIAL_LINE}\nfirst`, () => {
+        worked = true;
+        return [];
+      });
+      await until(
+        () =>
+          s.fake.state.calls
+            .slice(before)
+            .some((c) => c.name === "iskron_channel" && c.arguments.action === "register"),
+        "register dispatched before conflicting admission",
+      );
+      const second = oc.turn(
+        "late-race",
+        `${INITIAL_LINE.replace('"invite":7', '"invite":8')}\nsecond`,
+        () => {
+          worked = true;
+          return [];
+        },
+      );
+      const outcomes = Promise.allSettled([first, second]);
+      await until(() => oc.contextCalls.length === 2, "second context inspected before wire reply");
+      release();
+      const out = await outcomes;
+      assert.deepEqual(
+        out.map((x) => x.status),
+        ["rejected", "rejected"],
+      );
+      assert.equal(worked, false);
+      const calls = s.fake.state.calls.slice(before).filter((c) => c.name === "iskron_channel");
+      const revokes = calls.filter((c) => c.arguments.action === "revoke");
+      if (prior) {
+        assert.ok(revokes.every((c) => c.arguments.standing !== "old-held"));
+        assert.ok(heldBy(s.dir, "late-race").includes("old-held"));
+        assert.equal(s.fake.state.places.has("931:old-held"), true);
+      }
+      const name = calls.find((c) => c.arguments.action === "connect").arguments.name;
+      // A claim's seat is owned only on the mark: without it no revoke, the place may remain.
+      const unmarked = mode.endsWith("no fresh mark");
+      assert.equal(revokes.filter((c) => c.arguments.standing === name).length, unmarked ? 0 : 1);
+      if (mode === "revoke refusal" || unmarked) {
+        assert.equal(s.fake.state.places.has(`931:${name}`), true);
+        assert.match(oc.said(), /место может остаться|place may remain/);
+      } else {
+        assert.equal(s.fake.state.places.has(`931:${name}`), false);
+      }
+    } finally {
+      release();
+      await oc.stop();
+    }
+  });
+for (const kind of ["historical reload", "missing method", "refused", "unknown form"])
+  test(`spawned_for admission ${kind}: no connect/register`, T, async (t) => {
+    const s = await stage(t);
+    const oc = await rootPlugin(s, s.project, {}, [
+      { id: "existing", context: [{ id: "earlier", type: "user", text: "earlier word" }] },
+    ]);
+    try {
+      if (kind === "missing method") oc.withoutContext();
+      if (kind === "refused") oc.priorContext("existing", new Error("context unavailable"));
+      if (kind === "unknown form") oc.priorContext("existing", { data: [] });
+      await assert.rejects(oc.turn("existing", `${INITIAL_LINE}\nhello`), /spawned_for/);
+      assert.equal(
+        s.fake.state.calls.filter(
+          (c) =>
+            c.name === "iskron_channel" && ["connect", "register"].includes(c.arguments.action),
+        ).length,
+        0,
+      );
+    } finally {
+      await oc.stop();
+    }
+  });
+
+test("spawned_for admission historical prompt without marker stays ordinary", T, async (t) => {
+  const s = await stage(t);
+  const oc = await rootPlugin(s, s.project, {}, [
+    { id: "existing", context: [{ id: "earlier", type: "user", text: "earlier word" }] },
+  ]);
+  try {
+    const r = await oc.turn("existing", "ordinary historical prompt");
+    assert.equal(r.atRequest.seats.length, 1);
+    assert.deepEqual(oc.contextCalls, []);
+  } finally {
+    await oc.stop();
+  }
+});
+
+for (const same of [true, false])
+  test(`spawned_for admission overlapping initial pairs same=${same}`, T, async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    let release;
+    const pending = new Promise((r) => {
+      release = r;
+    });
+    try {
+      oc.create("race", { emit: false });
+      oc.priorContext("race", () => pending.then(() => []));
+      const first = oc.turn("race", `${INITIAL_LINE}\nfirst`);
+      await until(() => oc.contextCalls.length > 0, "first admission reads context");
+      const other = same ? INITIAL_LINE : INITIAL_LINE.replace('"invite":7', '"invite":8');
+      const second = oc.turn("race", `${other}\nsecond`);
+      const results = Promise.allSettled([first, second]);
+      await Promise.resolve();
+      release();
+      const out = await results;
+      assert.deepEqual(
+        out.map((r) => r.status),
+        same ? ["fulfilled", "fulfilled"] : ["rejected", "rejected"],
+      );
+      const regs = s.fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+      );
+      assert.equal(regs.length, same ? 1 : 0);
+      assert.equal(
+        s.fake.state.calls.filter(
+          (c) => c.name === "iskron_channel" && c.arguments.action === "connect",
+        ).length,
+        same ? 1 : 0,
+      );
+    } finally {
+      release();
+      await oc.stop();
+    }
+  });
+
+for (const line of [
+  "spawned_for: 7",
+  "spawned_for: broken",
+  "spawned_for: {}",
+  'spawned_for: {"invite":7,"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}',
+])
+  test(`spawned_for firstline invalid refuses before any seat: ${line}`, T, async (t) => {
+    const s = await stage(t);
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("bad-spawn", { emit: false });
+      await assert.rejects(oc.turn("bad-spawn", `${line}\nhello`), /spawned_for/);
+      assert.equal(
+        s.fake.state.calls.filter(
+          (c) =>
+            c.name === "iskron_channel" && ["connect", "register"].includes(c.arguments.action),
+        ).length,
+        0,
+      );
+    } finally {
+      await oc.stop();
+    }
+  });
+
+test("spawned_for firstline claim refusal aborts before model work", T, async (t) => {
+  const s = await stage(t);
+  s.fake.state.structured = true;
+  s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  s.fake.state.registerRefuseNext = [
+    { text: "spawned_for_claimed", rule: "spawned_for_claimed", status: 409 },
+  ];
+  const oc = await rootPlugin(s, s.project);
+  let worked = false;
+  try {
+    oc.create("loser", { emit: false });
+    await assert.rejects(
+      oc.turn(
+        "loser",
+        'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}\nhello',
+        () => {
+          worked = true;
+          return [];
+        },
+      ),
+      /spawned_for/,
+    );
+    assert.equal(worked, false);
+    assert.equal(
+      s.fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+      ).length,
+      1,
+    );
+  } finally {
+    await oc.stop();
+  }
+});
+
+test(
+  "spawned_for is only the first user prompt first line, not shared across roots or children",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("one", { emit: false });
+      oc.create("two", { emit: false });
+      oc.create("kid", { parentID: "one", emit: false });
+      const line = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
+      await oc.turn("one", `${line}\nhello`);
+      const n = s.fake.state.calls.length;
+      await oc.turn("two", `hello\n${line}`);
+      await assert.rejects(oc.turn("two", line), /spawned_for/);
+      await oc.turn("kid", "ordinary child");
+      const later = s.fake.state.calls.slice(n).filter((c) => c.name === "iskron_channel");
+      assert.ok(later.filter((c) => c.arguments.action === "register").length);
+      assert.ok(later.every((c) => !c.arguments.spawned_for));
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+test(
   "round3 P2-1: unload during disk return preserves explicit record, marker and next return",
   T,
   async (t) => {
@@ -357,17 +632,31 @@ test("P1-1: поздний provisional-held не снимает стоп, при
   }
 });
 
-for (const end of ["remove", "stop"])
+// The committed output is the last release's build: a bridge of a mixed install, with no fresh mark.
+const RELEASED_BRIDGE = join(import.meta.dirname, "../../skills/establish-mcp/scripts/iskron.mjs");
+for (const end of [
+  "remove",
+  "stop",
+  "remove мостом выпуска",
+  "stop мостом выпуска",
+  "remove мостом без fresh",
+  "stop мостом без fresh",
+])
   test(`P1-2: ${end} во время connect убирает позднее место, без слова посадки`, T, async (t) => {
     const s = await stage(t);
     await s.fake.control({ connect_delay_ms: 1400 });
-    const oc = await rootPlugin(s, s.project);
+    const released = end.endsWith("выпуска")
+      ? { ISKRON_BRIDGE_PATH: RELEASED_BRIDGE }
+      : end.endsWith("без fresh")
+        ? { ISKRON_BRIDGE_PATH: unmarkedBridge(s.project) }
+        : {};
+    const oc = await rootPlugin(s, s.project, released);
     let stopped = false;
     try {
       oc.create("root");
       const turn = oc.turn("root", "привет");
       await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
-      if (end === "remove") oc.remove("root");
+      if (end.startsWith("remove")) oc.remove("root");
       else {
         await oc.stop();
         stopped = true;
@@ -401,6 +690,60 @@ for (const end of ["remove", "stop"])
       if (!stopped) await oc.stop();
     }
   });
+
+/** The bridge under test with its fresh mark cut: claim-capable, yet silent about freshness. */
+function unmarkedBridge(project) {
+  const proxy = join(project, "unmarked-bridge.mjs");
+  writeFileSync(
+    proxy,
+    `
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+const p = spawn(process.execPath, [${JSON.stringify(BRIDGE_UNDER_TEST)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
+process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+createInterface({ input: p.stdout }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.result?.structuredContent) delete m.result.structuredContent.fresh;
+  process.stdout.write(JSON.stringify(m) + '\\n');
+});
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
+p.on('exit', c => process.exit(c ?? 0));
+`,
+  );
+  return proxy;
+}
+
+test(
+  "spawned_for на мосте выпуска: remove во время connect не снимает недоказанное место claim",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ connect_delay_ms: 1400 });
+    const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_PATH: RELEASED_BRIDGE });
+    try {
+      oc.create("root", { emit: false });
+      oc.priorContext("root", () => []);
+      const turn = oc.turn("root", `${INITIAL_LINE}\nпривет`).catch((e) => e);
+      await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
+      oc.remove("root");
+      await turn;
+      const registered = () =>
+        s.fake.state.calls.some(
+          (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+        );
+      await until(() => registered() && heardSeats(s.fake).length === 0, "мост попытки закрыт");
+      const name = placeArgs(s.fake, "connect")[0];
+      assert.ok(name, JSON.stringify(s.fake.state.calls));
+      const revokes = s.fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+      );
+      assert.deepEqual(revokes, [], "a claim's seat without the mark is not proven own");
+      assert.equal(s.fake.state.places.has(`931:${name}`), true);
+    } finally {
+      await oc.stop();
+    }
+  },
+);
 
 for (const language of ["ru", "en"])
   test(
@@ -1091,10 +1434,25 @@ test(
 // ── T6: своё возвращается, чужое не берётся ──────────────────────────────────
 
 /** Мост OpenCode прежнего экземпляра: стоял за сессию session в project и (kill) умер, не уйдя. */
-async function priorBridge(s, session, name, { kill, realm = "@nks/nks-dev", karta = 931 }) {
-  const b = await s.up(s.dir, undefined, [], OPENCODE);
+async function priorBridge(
+  s,
+  session,
+  name,
+  { kill, realm = "@nks/nks-dev", karta = 931, provisional = false },
+) {
+  const b = await s.up(
+    s.dir,
+    provisional ? { experimental: { "iskron/structured": {} } } : undefined,
+    [],
+    OPENCODE,
+  );
   await b.call("iskron/resume", { cwd: s.project, session });
-  const r = await stand(b, { realm, karta, name, cwd: s.project });
+  const r = await b.call(
+    "tools/call",
+    { name: "iskron_stand", arguments: { realm, karta, name, cwd: s.project, provisional } },
+    provisional,
+  );
+  if (provisional) assert.equal(r.result?.structuredContent?.provisional, true, textOf(r));
   assert.equal(placeOf(r), name, textOf(r));
   await until(() => heardSeats(s.fake, null).includes(name), `${name} слушает`);
   if (kill) {

@@ -1302,6 +1302,7 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "register") {
+          if (st.registerToolGate) await st.registerToolGate;
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));
           if (st.standingSeatGoneNext > 0) {
@@ -1481,17 +1482,20 @@ export async function startFakeNks(opts = {}) {
                     },
                   ],
                 },
-                {
-                  action: "register",
-                  seats: [
-                    {
-                      ...(seatId ? { seat_id: seatId } : {}),
-                      standing: `@tester:${cleanName(a.name)}`,
-                      opened: !existed,
-                      locale: a.locale ?? "ru",
+                typeof st.registerFields === "function"
+                  ? st.registerFields(a, seatId)
+                  : {
+                      action: "register",
+                      seats: [
+                        {
+                          ...(seatId ? { seat_id: seatId } : {}),
+                          standing: `@tester:${cleanName(a.name)}`,
+                          opened: !existed,
+                          locale: a.locale ?? "ru",
+                          ...(a.spawned_for ? { spawned_for: a.spawned_for } : {}),
+                        },
+                      ],
                     },
-                  ],
-                },
                 `Sitzung spricht jetzt für @tester:${a.name ?? "(unnamed)"}.`,
               ),
             },

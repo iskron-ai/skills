@@ -134,6 +134,8 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
   });
   const def = (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
   const sessions = new Map(); // id → { id, parentID?, location }
+  const contexts = new Map(known.map((k) => [k.id, k.context ?? []]));
+  const contextCalls = [];
   const held = new Map(); // id → a gate session.get answers after (holdGet)
   // Sessions already on disk at load: a previous instance's marker children are read at setup.
   for (const k of known)
@@ -181,6 +183,14 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     permission: { hook: hook("permission.") },
     command: { transform: async () => ({ dispose: async () => {} }), reload: async () => {} },
     session: {
+      // OpenCode 2.2.5, observed inside prompt admission: new history [], next [user, assistant, idle].
+      // Graph @nks/nks-dev #9867; independent carrier and verdict in case №4001 (not a REST-before-prompt check).
+      context: async ({ sessionID }) => {
+        contextCalls.push(sessionID);
+        const value = contexts.get(sessionID) ?? [];
+        if (value instanceof Error) throw value;
+        return typeof value === "function" ? await value() : structuredClone(value);
+      },
       get: async ({ sessionID }) => {
         const s = sessions.get(sessionID);
         if (!s) throw new Error(`Session not found: ${sessionID}`);
@@ -231,11 +241,17 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
   };
 
   return {
+    contextCalls,
+    priorContext: (session, value) => contexts.set(session, value),
+    withoutContext: () => delete ctx.session.context,
     interrupts,
     async promptOnly(sessionID, text) {
       const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
       assert.equal(p.prompt.text, text, "persisted prompt is unchanged");
+      const prior = contexts.get(sessionID);
+      if (prior === undefined || Array.isArray(prior))
+        contexts.set(sessionID, [...(prior ?? []), { id: p.messageID, type: "user", text }]);
       const req = {
         sessionID,
         system: [],
@@ -300,6 +316,9 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
       for (const cb of hooks.prompt ?? []) await cb(p);
       assert.equal(p.prompt.text, text, "persisted prompt is unchanged");
+      const prior = contexts.get(sessionID);
+      if (prior === undefined || Array.isArray(prior))
+        contexts.set(sessionID, [...(prior ?? []), { id: p.messageID, type: "user", text }]);
       const model = { id: "m1", providerID: "p" };
       const req = {
         sessionID,

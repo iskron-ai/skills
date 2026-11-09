@@ -28,17 +28,21 @@ export function plan(snapshot, mappings, schema, version) {
       if (!isAbsolute(worktree)) throw new Error("worktree mapping must be an absolute path");
       const realm = text(row.realm);
       const room = text(row.room);
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(room))
+        throw new Error("the invitation requires its room UUID, not a case number");
       if (!Number.isSafeInteger(row.karta) || row.karta <= 0 || !Number.isSafeInteger(row.invite) || row.invite <= 0)
         throw new Error("invalid role or invite");
       const key = JSON.stringify([realm, room, row.invite]);
       if (seen.has(key)) throw new Error("duplicate invitation");
       seen.add(key);
-      const prompt = `start ${realm} ${row.karta} дело ${room}\n` +
+      const spawnedFor = { invite: row.invite, room };
+      const prompt = `spawned_for: ${JSON.stringify(spawnedFor)}\n` +
+        `start ${realm} ${row.karta} дело ${room}\n` +
         `Invitation ${row.invite}. Confirm the spawned_for binding and join before doing work. ` +
         "If this bridge cannot claim the invitation, report that limitation and do not work. " +
         "Read the case assignment and its acceptance criteria; do not invent a task.";
       return {
-        repository, spawned_for: { invite: row.invite, room },
+        repository, spawned_for: spawnedFor,
         command: "orca",
         argv: ["agent", "launch", "--agent", text(m.agent), "--worktree", `path:${worktree}`,
           "--model", text(m.model), "--prompt", prompt, "--json"],

@@ -1,6 +1,7 @@
 // Слой поставки (граф @nks/nks-dev, узел #6809): ядро js/ берёт отсюда всё, чем
 // поставка отличается, — этим одним путём. Порядок — по пути файла: язык, формы
 // прозы сервера (patterns/), имя продукта, протокол, версия, слова (words/).
+export { CONTRACT_SUPPORT, CONTRACT_WORDS } from "./contract.ts";
 export { DEFAULT_LANG, type Lang, langOfServer, LANGS } from "./lang.ts";
 export { BOARD_FORM, BOARD_HEADER } from "./patterns/board.ts";
 export { CASE_EXIT_CLOSED } from "./patterns/caseexit.ts";
@@ -50,6 +51,7 @@ export {
   tool,
   TOOL_PREFIX,
 } from "./protocol.ts";
+export { SPAWNED_FOR, SPAWNED_FOR_ENV, spawnedForSchema } from "./spawned-for.ts";
 export { BUILD_MARK, CHANNEL_MARK, VERSION } from "./version.ts";
 export { ABSORB, type AbsorbWords } from "./words/absorb.ts";
 export { APPSERVER, type AppServerWords } from "./words/appserver.ts";
