@@ -25,8 +25,10 @@ export interface Run {
   model: string;
   repository: string;
   worktree: string;
-  /** Orca's handle of the terminal the launch opened — closed when no seat came (no_seat). */
+  /** Orca's handle of the terminal the launch opened — closed on no_seat and on ended. */
   terminal?: string;
+  /** The outcome of closing that terminal: it is closed once. */
+  closed?: string;
   state: RunState;
   at: string;
   why?: string;

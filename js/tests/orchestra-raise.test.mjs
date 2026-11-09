@@ -200,6 +200,8 @@ test("raise: an invite naming this machine's launcher is launched once through o
   const first = await o.step();
   assert.equal(first.code, 0, first.err + first.out);
   assert.match(first.out, /invite 9: launched/, first.out);
+  // Calls of different cases share their numbers: the row names its case (№4050 [74] (г)).
+  assert.match(first.out, new RegExp(`case ${ROOM} invite 9: launched`), first.out);
   const [argv, ...more] = o.launches();
   assert.equal(more.length, 0, "exactly one launch");
   assert.deepEqual(argv.slice(0, 8), [
@@ -373,6 +375,26 @@ test("raise: no seat within the window closes our own terminal by its handle", a
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "no_seat");
   await o.step();
   assert.equal(o.closes().length, 1, "closed once");
+});
+
+// №4050 [71] item 2: an incomplete snapshot acts on nothing — not even the expiry's close.
+test("raise: an incomplete snapshot closes no terminal; the next complete one does", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe2" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await new Promise((done) => setTimeout(done, 2_000));
+  const { room_id: _gone, ...broken } = invite(10, GOOD);
+  await o.queue([broken]);
+  const r = await o.step();
+  assert.match(r.out, /incomplete/, r.out);
+  assert.equal(o.closes().length, 0, "nothing closed by an incomplete snapshot");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "launched");
+  await o.queue([]);
+  const after = await o.step();
+  assert.match(after.out, /invite 9: no_seat \(cause_unseen\), terminal_closed/, after.out);
+  assert.equal(o.closes().length, 1);
 });
 
 test("raise: no seat and no handle in the launch answer — said, nothing closed", async (t) => {
@@ -562,8 +584,12 @@ test("quench: our seat's empty composition after it sat gets one composition_emp
   // The fake knows no such live seat (410): the seat is gone, the run ended, nothing repeats.
   assert.match(empty.out, /invite 9: seat_gone/, empty.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  // The ended run's tab is ours: closed by its handle, once (№4050 [74] (д)).
+  assert.match(empty.out, /invite 9: ended, terminal_closed/, empty.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
   await o.step();
   assert.equal(o.fake.state.orders.human.filter((h) => h.method === "POST").length, 1);
+  assert.equal(o.closes().length, 1, "closed once");
 });
 
 test("quench: a membership landing after the read cancels the end — the re-check reads the tape again", async (t) => {

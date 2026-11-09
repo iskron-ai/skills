@@ -72,7 +72,27 @@ export async function expireLaunches(
       if (gone?.gone) break;
       r.state = "no_seat";
       const closed = r.terminal ? await close(r.terminal) : "no_terminal_handle";
-      said.push(w().leadRow(r.realm, r.invite, `no_seat (cause_unseen), ${closed}`));
+      if (r.terminal) r.closed = closed;
+      said.push(w().leadRow(r.realm, r.room, r.invite, `no_seat (cause_unseen), ${closed}`));
+    }
+  return said;
+}
+
+/**
+ * An ended run's terminal is closed by its handle once (№4050 [74]): the harness exited on
+ * its stop, and the tab it leaves is ours to close, as on no_seat.
+ */
+export async function closeEnded(
+  runs: Record<string, Run>,
+  gone?: { gone: boolean },
+  close: (handle: string) => Promise<string> = orcaClose,
+): Promise<string[]> {
+  const said: string[] = [];
+  for (const r of Object.values(runs))
+    if (r.state === "ended" && r.terminal && !r.closed) {
+      if (gone?.gone) break;
+      r.closed = await close(r.terminal);
+      said.push(w().leadRow(r.realm, r.room, r.invite, `ended, ${r.closed}`));
     }
   return said;
 }
@@ -138,7 +158,7 @@ export async function quench(
       // The re-read may outlast the caller: no order after it left.
       if (gone?.gone) break;
       if (r.rooms !== 0) {
-        said.push(w().leadRow(r.realm, r.invite, "composition_changed"));
+        said.push(w().leadRow(r.realm, r.room, r.invite, "composition_changed"));
         continue;
       }
       const got = await order(base, token, r, key);
@@ -147,13 +167,13 @@ export async function quench(
       if (got.status >= 200 && got.status < 300) {
         r.state = "stopping";
         if (got.id) r.order_id = got.id;
-        said.push(w().leadRow(r.realm, r.invite, `${why}stop_ordered`));
+        said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
         r.state = "ended";
-        said.push(w().leadRow(r.realm, r.invite, `${why}seat_gone`));
-      } else said.push(w().leadRow(r.realm, r.invite, `${why}stop_refused_${got.status}`));
+        said.push(w().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
+      } else said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_refused_${got.status}`));
     } catch (e) {
-      said.push(w().leadRow(r.realm, r.invite, `stop_unsent (${(e as Error).message})`));
+      said.push(w().leadRow(r.realm, r.room, r.invite, `stop_unsent (${(e as Error).message})`));
     }
   }
   return said;

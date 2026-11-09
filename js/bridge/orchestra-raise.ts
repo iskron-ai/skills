@@ -115,12 +115,12 @@ export async function raiseRows(
     if (runs[key]) continue;
     const why = refusal(row, ls, runs);
     if (why) {
-      said.push(w().leadRow(realm, invite, why));
+      said.push(w().leadRow(realm, room, invite, why));
       continue;
     }
     ready = ready === undefined ? await orcaReady() : ready;
     if (ready) {
-      said.push(w().leadRow(realm, invite, ready));
+      said.push(w().leadRow(realm, room, invite, ready));
       continue;
     }
     const own = ls.own.get(String(row.launcher).trim())!;
@@ -132,12 +132,12 @@ export async function raiseRows(
       typeof orca === "string" ? () => ({ code: orca as string }) : orca,
     );
     if (typeof worktree !== "string") {
-      said.push(w().leadRow(realm, invite, worktree.code));
+      said.push(w().leadRow(realm, room, invite, worktree.code));
       continue;
     }
     const uncovered = await coverRefusal(worktree, realm, Number(row.karta), canon);
     if (uncovered) {
-      said.push(w().leadRow(realm, invite, uncovered));
+      said.push(w().leadRow(realm, room, invite, uncovered));
       continue;
     }
     if (gone?.gone) break;
@@ -170,6 +170,7 @@ export async function raiseRows(
     said.push(
       w().leadRow(
         realm,
+        room,
         invite,
         got.outcome === "failed" ? got.why! : `launched${got.why ? ` (${got.why})` : ""}`,
       ),

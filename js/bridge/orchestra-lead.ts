@@ -8,7 +8,7 @@ import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
 import { readDemands } from "./orchestra-demands.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
-import { expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
+import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
 import { readRuns, writeRuns } from "./orchestra-runs.ts";
 import { readTape, realmCanon, type TactAct } from "./orchestra-tact.ts";
@@ -26,7 +26,7 @@ export function leadAct(
     if (!admitted) return [w().leadNotAdmitted()];
     const runs = readRuns(authDir);
     for (const r of reads) foldTape(r.realm, r.signals as Record<string, unknown>[], runs);
-    const said = await expireLaunches(runs, gone);
+    const said: string[] = [];
     try {
       const owned: OpenOrder[] = [];
       const demands = await readDemands(base, token, boundary, boundary, undefined, owned);
@@ -36,6 +36,7 @@ export function leadAct(
         );
         return said;
       }
+      said.push(...(await expireLaunches(runs, gone)));
       settleStops(runs, owned);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
@@ -48,6 +49,7 @@ export function leadAct(
           gone,
         )),
       );
+      said.push(...(await closeEnded(runs, gone)));
       if (gone?.gone) return said;
       let launchers;
       try {

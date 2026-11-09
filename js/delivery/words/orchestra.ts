@@ -41,8 +41,8 @@ export interface OrchestraWords {
   tactOut: (realm: string, invites: number, signals: number, cursor: string, at: string) => string;
   /** lines — исходы ведения такта (подъём и погашение) через «; ». */
   lead: (lines: string) => string;
-  /** Исход по одному зову: граф, номер зова в деле и код исхода (коды — слова api и моста). */
-  leadRow: (realm: string, invite: number, code: string) => string;
+  /** Исход по одному зову: граф, дело (id), номер зова в деле и код исхода (коды — слова api и моста). */
+  leadRow: (realm: string, room: string, invite: number, code: string) => string;
   /** Флаг лежит, а согласия машины в среде демона нет — ни подъёма, ни погашения. */
   leadNotAdmitted: () => string;
   /** Снимок требований неполон — по нему ничего не поднимается и не гасится. */
@@ -93,7 +93,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: приглашений ${invites}, сигналов ${signals}, курсор ${cursor || "—"} (${at})`,
     lead: (lines) => `ведение: ${lines}`,
-    leadRow: (realm, invite, code) => `${realm} зов ${invite}: ${code}`,
+    leadRow: (realm, room, invite, code) => `${realm} дело ${room} зов ${invite}: ${code}`,
     leadNotAdmitted: () =>
       "флаг лежит, но машина не допустила оркестратора (ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
     leadIncomplete: (errors) =>
@@ -143,7 +143,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: invites ${invites}, signals ${signals}, cursor ${cursor || "—"} (${at})`,
     lead: (lines) => `leading: ${lines}`,
-    leadRow: (realm, invite, code) => `${realm} invite ${invite}: ${code}`,
+    leadRow: (realm, room, invite, code) => `${realm} case ${room} invite ${invite}: ${code}`,
     leadNotAdmitted: () =>
       "the flag lies, but the machine has not admitted the orchestrator (ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
     leadIncomplete: (errors) =>
