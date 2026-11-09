@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.36.2](https://github.com/iskron-ai/skills/compare/v7.36.1...v7.36.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* preserve human authority and independent graph boundaries ([#719](https://github.com/iskron-ai/skills/issues/719)) ([2ba9d60](https://github.com/iskron-ai/skills/commit/2ba9d60d59a9f192d1fc196d5d00a724b22b66a4))
+* route session messages without an owner-role alias ([#720](https://github.com/iskron-ai/skills/issues/720)) ([9b59d73](https://github.com/iskron-ai/skills/commit/9b59d73279430f59f55519f0c5d502dc406d43cc))
+* separate repository roles from session people ([#717](https://github.com/iskron-ai/skills/issues/717)) ([493930a](https://github.com/iskron-ai/skills/commit/493930a65e3ea2775091c0cf07eadeaf6e7107c4))
+* trim startup reference and clarify roadmap wording ([#722](https://github.com/iskron-ai/skills/issues/722)) ([73d8192](https://github.com/iskron-ai/skills/commit/73d8192c643d5d773c88d8ff328f0e18b9c03bf9))
+
 ## [7.36.1](https://github.com/iskron-ai/skills/compare/v7.36.0...v7.36.1) (2026-11-09)
 
 
