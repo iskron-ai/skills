@@ -422,6 +422,74 @@ test("spawned_for: the first claim refused with a passing 503 stays a lasting re
   assert.equal(fake.state.writes.length, 0);
 });
 
+// The api's temporary rules (#9959 v13, refusal as data — #6637) as the MCP surface 0.139.0
+// passes them by its code (case №3949 [33]): a word, not observed live. The first claim stays
+// strict under them; a confirmed claim's replay under them at 5xx or 429 is the hour's.
+const BUSY_RULES = ["db_pool_busy", "db_unreachable", "realm_busy"];
+for (const rule of BUSY_RULES)
+  test(`spawned_for: the first claim refused with 503 ${rule} stays a lasting refusal`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    await fake.control({ registerRefuseNext: [{ text: rule, status: 503, rule }] });
+    const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-first", spawned_for: SPAWN };
+    const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(first.result?.isError, textOf(first));
+    const work = await bridge.call("tools/call", {
+      name: "iskron_add_phenomenon",
+      arguments: { realm: "@nks/nks-dev", name: "no work" },
+    });
+    assert.ok(work.error || work.result?.isError, JSON.stringify(work));
+    assert.equal(fake.state.writes.length, 0);
+  });
+for (const [status, rule] of [...BUSY_RULES.map((r) => [503, r]), [429, "db_pool_busy"]])
+  test(`spawned_for: a confirmed claim's replay refused with ${status} ${rule} is retried before the next call`, async (t) => {
+    const { fake, regs, before, work, failed } = await rotatedClaim(t, {
+      registerRefuseNext: [{ text: rule, status, rule }],
+    });
+    const one = await work(1);
+    const two = await work(2);
+    const seen = JSON.stringify({ one, two, regs: regs().slice(before) });
+    assert.deepEqual(fake.state.registerRefuseNext, [], `the refusal went to the replay: ${seen}`);
+    assert.ok(regs().length >= before + 2, `register retried: ${seen}`);
+    assert.ok(!failed(two), seen);
+    assert.equal(fake.state.writes.at(-1)?.author, "spawn-held", seen);
+    assert.equal(fake.state.counts.unattributed, 0, seen);
+  });
+
+// #9959: a terminal claim refusal forbids any later register of the pair, the bridge's own
+// background ones too (skills refresh after a call's answer); cleanup revoke stays allowed.
+test("spawned_for: after the first claim's terminal refusal no register goes out, the background ones included", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  await fake.control({ registerRefuseNext: [{ text: "upstream unavailable", status: 503 }] });
+  const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-late", spawned_for: SPAWN };
+  const wire = () =>
+    sentToChannel(fake).map(
+      (a) => `${a.action}${a.spawned_for ? "+P" : ""}:${a.name ?? a.standing}`,
+    );
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(first.result?.isError, textOf(first));
+  const atReply = wire();
+  await new Promise((r) => setTimeout(r, 800));
+  const quiet = wire().slice(atReply.length);
+  const later = await bridge.call("tools/call", {
+    name: "iskron_add_phenomenon",
+    arguments: { realm: "@nks/nks-dev", name: "refused work" },
+  });
+  assert.ok(later.error || later.result?.isError, JSON.stringify(later));
+  await new Promise((r) => setTimeout(r, 800));
+  const seen = JSON.stringify({
+    atReply,
+    quiet,
+    after: wire().slice(atReply.length),
+    successfulRegisters: fake.state.counts.register_standing,
+  });
+  assert.equal(fake.state.counts.register_standing, 0, seen);
+  assert.deepEqual(wire().slice(atReply.length), [], `a register after the refusal: ${seen}`);
+});
+
 for (const [kind, patch] of [
   [
     "no echo of the pair",
@@ -443,6 +511,19 @@ for (const [kind, patch] of [
   [
     "seat gone",
     { registerRefuseNext: [{ text: "not held", status: 409, rule: "standing_not_held" }] },
+  ],
+  // The neighbours of the temporary class stay terminal (#9959 v13).
+  ["403 without a rule", { registerRefuseNext: [{ text: "forbidden", status: 403 }] }],
+  ["429 without a rule", { registerRefuseNext: [{ text: "slow down", status: 429 }] }],
+  ["403 db_pool_busy", { registerRefuseNext: [{ text: "x", status: 403, rule: "db_pool_busy" }] }],
+  ["503 unknown rule", { registerRefuseNext: [{ text: "x", status: 503, rule: "db_busy" }] }],
+  [
+    "503 spawned_for_unknown",
+    { registerRefuseNext: [{ text: "x", status: 503, rule: "spawned_for_unknown" }] },
+  ],
+  [
+    "503 standing_not_held",
+    { registerRefuseNext: [{ text: "x", status: 503, rule: "standing_not_held" }] },
   ],
 ])
   test(`spawned_for: after a confirmed claim the replay's ${kind} stays a lasting refusal`, async (t) => {

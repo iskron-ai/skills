@@ -14,7 +14,7 @@ import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { openedConcurrently, refusalOf } from "./refusal.ts";
 import { noteSkills } from "./skillwatch.ts";
-import { launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
+import { claimRefusal, launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
 import { debug, log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -130,6 +130,8 @@ async function registerOnce(
   place: Standing | null,
   freshSkills: boolean,
 ): Promise<JsonRpcMessage | null> {
+  // A terminal claim refusal ends every own register of this session: replay, skills, usage (#9959).
+  if (claimRefusal()) return null;
   const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
   let reply: JsonRpcMessage | null = null;
   const basis = launchBasis({ ...place });
