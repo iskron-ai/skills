@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.36.1](https://github.com/iskron-ai/skills/compare/v7.36.0...v7.36.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **bridge:** name a case once in a frame — records under its count, a seat by one address ([#709](https://github.com/iskron-ai/skills/issues/709)) ([f37d407](https://github.com/iskron-ai/skills/commit/f37d4075270d8ce32ecb7b338f0fd5387414ceea))
+* **bridge:** validate spawned-for admission and preserve unsupported contracts ([#712](https://github.com/iskron-ai/skills/issues/712)) ([ce2f2ab](https://github.com/iskron-ai/skills/commit/ce2f2abd7c695da9bfc0f48e38b80895eb5ca900))
+* **opencode:** read a claim before the stand reply — a session removed during connect keeps an unmarked claim seat ([#715](https://github.com/iskron-ai/skills/issues/715)) ([c9967c1](https://github.com/iskron-ai/skills/commit/c9967c1c689f07c2edb44606726f127260349222))
+
 ## [7.36.0](https://github.com/iskron-ai/skills/compare/v7.35.3...v7.36.0) (2026-11-09)
 
 
