@@ -247,7 +247,11 @@ export function createSeatLife(d: Doors) {
               try {
                 const out = await d.callThrough(...args);
                 if (out.fresh === false) attempt.returned = true;
-                if (out.fresh === true && out.provisional === true && out.key && out.place)
+                // A bridge without the mark (an older release) proves an ordinary seat as before;
+                // a claim's seat is owned only on the mark.
+                const fresh =
+                  out.fresh === true || (out.fresh === undefined && !d.claiming?.(args[3]));
+                if (fresh && out.provisional === true && out.key && out.place)
                   attempt.owned = { key: out.key, place: out.place };
                 return out;
               } catch (e) {

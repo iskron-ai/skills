@@ -314,6 +314,32 @@ for (const source of ["explicit", "env"])
     assert.equal(sent.find((a) => a.action === "connect")?.spawned_for, undefined);
   });
 
+// The fake answers a repeat the way the contract was told (case №3991, item 8): the same pair to
+// the same seat — 200 with the pair. Not observed on the live server.
+for (const repeat of ["stand again", "session rotation"])
+  test(`spawned_for ${repeat} on the own seat keeps the session working`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-repeat", spawned_for: SPAWN };
+    const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!first.result?.isError, textOf(first));
+    const regs = () => sentToChannel(fake).filter((a) => a.action === "register");
+    const before = regs().length;
+    if (repeat === "stand again") {
+      const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+      assert.ok(!again.error && !again.result?.isError, textOf(again));
+    } else await fake.control({ kill_session: true });
+    const work = await bridge.call("tools/call", {
+      name: "iskron_add_phenomenon",
+      arguments: { realm: "@nks/nks-dev", name: `after ${repeat}` },
+    });
+    assert.ok(!work.error && !work.result?.isError, JSON.stringify(work));
+    assert.equal(fake.state.writes.at(-1)?.author, "spawn-repeat");
+    assert.ok(regs().length > before, `no repeated register: ${JSON.stringify(regs())}`);
+    for (const reg of regs().slice(before)) assert.deepEqual(reg.spawned_for, SPAWN);
+  });
+
 for (const value of [
   7,
   null,
@@ -3225,6 +3251,30 @@ async function satelliteBridge(t, fake, { dir, args = [] } = {}) {
   return b;
 }
 const standAs = (b, args) => b.call("tools/call", { name: "iskron_stand", arguments: args });
+
+for (const own of [false, true])
+  test(`spawned_for satellite: the parent's environment pair is never the satellite's basis (own explicit: ${own})`, async (t) => {
+    const fake = await withCaller(t);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const parent = { ...SPAWN, invite: 8 };
+    const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
+    const b = startBridge(
+      fake.mcpUrl,
+      home,
+      process.cwd(),
+      { ISKRON_SPAWNED_FOR: JSON.stringify(parent) },
+      ["--satellite"],
+    );
+    t.after(() => b.stop());
+    assert.ok((await b.call("initialize", ASKS_FIELDS)).result);
+    const r = await standAs(b, { ...SAT_ARGS, ...(own ? { spawned_for: SPAWN } : {}) });
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${b.stderr}`);
+    assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
+    const regs = sentToChannel(fake).filter((a) => a.action === "register");
+    assert.ok(regs.length, JSON.stringify(sentToChannel(fake)));
+    for (const reg of regs) assert.deepEqual(reg.spawned_for, own ? SPAWN : undefined);
+  });
 
 test("satellite: a subagent's bridge stands as <caller>.sub-1 in the caller's role with a short ttl and no inbox hook; the next run takes .sub-2", async (t) => {
   const fake = await withCaller(t);

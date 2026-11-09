@@ -183,6 +183,8 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     permission: { hook: hook("permission.") },
     command: { transform: async () => ({ dispose: async () => {} }), reload: async () => {} },
     session: {
+      // OpenCode 2.2.5, observed inside prompt admission: new history [], next [user, assistant, idle].
+      // Graph @nks/nks-dev #9867; independent carrier and verdict in case №4001 (not a REST-before-prompt check).
       context: async ({ sessionID }) => {
         contextCalls.push(sessionID);
         const value = contexts.get(sessionID) ?? [];

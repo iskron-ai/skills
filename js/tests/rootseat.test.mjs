@@ -91,7 +91,13 @@ test(
 );
 
 const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
-for (const mode of ["fresh", "old explicit", "old provisional", "revoke refusal"])
+for (const mode of [
+  "fresh",
+  "old explicit",
+  "old provisional",
+  "old provisional, no fresh mark",
+  "revoke refusal",
+])
   test(`spawned_for terminal conflict after dispatch: ${mode}`, T, async (t) => {
     const s = await stage(t);
     s.fake.state.structured = true;
@@ -100,7 +106,7 @@ for (const mode of ["fresh", "old explicit", "old provisional", "revoke refusal"
     if (prior)
       await priorBridge(s, "late-race", "old-held", {
         kill: true,
-        provisional: mode === "old provisional",
+        provisional: mode.startsWith("old provisional"),
       });
     if (mode === "revoke refusal")
       s.fake.state.revokeRefuseNext = [{ text: "cleanup denied", status: 403 }];
@@ -109,7 +115,11 @@ for (const mode of ["fresh", "old explicit", "old provisional", "revoke refusal"
     s.fake.state.registerToolGate = new Promise((r) => {
       release = r;
     });
-    const oc = await rootPlugin(s, s.project);
+    const oc = await rootPlugin(
+      s,
+      s.project,
+      mode.endsWith("no fresh mark") ? { ISKRON_BRIDGE_PATH: unmarkedBridge(s.project) } : {},
+    );
     let worked = false;
     try {
       oc.create("late-race", { emit: false });
@@ -150,8 +160,10 @@ for (const mode of ["fresh", "old explicit", "old provisional", "revoke refusal"
         assert.equal(s.fake.state.places.has("931:old-held"), true);
       }
       const name = calls.find((c) => c.arguments.action === "connect").arguments.name;
-      assert.equal(revokes.filter((c) => c.arguments.standing === name).length, 1);
-      if (mode === "revoke refusal") {
+      // A claim's seat is owned only on the mark: without it no revoke, the place may remain.
+      const unmarked = mode.endsWith("no fresh mark");
+      assert.equal(revokes.filter((c) => c.arguments.standing === name).length, unmarked ? 0 : 1);
+      if (mode === "revoke refusal" || unmarked) {
         assert.equal(s.fake.state.places.has(`931:${name}`), true);
         assert.match(oc.said(), /место может остаться|place may remain/);
       } else {
@@ -620,17 +632,31 @@ test("P1-1: поздний provisional-held не снимает стоп, при
   }
 });
 
-for (const end of ["remove", "stop"])
+// The committed output is the last release's build: a bridge of a mixed install, with no fresh mark.
+const RELEASED_BRIDGE = join(import.meta.dirname, "../../skills/establish-mcp/scripts/iskron.mjs");
+for (const end of [
+  "remove",
+  "stop",
+  "remove мостом выпуска",
+  "stop мостом выпуска",
+  "remove мостом без fresh",
+  "stop мостом без fresh",
+])
   test(`P1-2: ${end} во время connect убирает позднее место, без слова посадки`, T, async (t) => {
     const s = await stage(t);
     await s.fake.control({ connect_delay_ms: 1400 });
-    const oc = await rootPlugin(s, s.project);
+    const released = end.endsWith("выпуска")
+      ? { ISKRON_BRIDGE_PATH: RELEASED_BRIDGE }
+      : end.endsWith("без fresh")
+        ? { ISKRON_BRIDGE_PATH: unmarkedBridge(s.project) }
+        : {};
+    const oc = await rootPlugin(s, s.project, released);
     let stopped = false;
     try {
       oc.create("root");
       const turn = oc.turn("root", "привет");
       await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
-      if (end === "remove") oc.remove("root");
+      if (end.startsWith("remove")) oc.remove("root");
       else {
         await oc.stop();
         stopped = true;
@@ -664,6 +690,60 @@ for (const end of ["remove", "stop"])
       if (!stopped) await oc.stop();
     }
   });
+
+/** The bridge under test with its fresh mark cut: claim-capable, yet silent about freshness. */
+function unmarkedBridge(project) {
+  const proxy = join(project, "unmarked-bridge.mjs");
+  writeFileSync(
+    proxy,
+    `
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+const p = spawn(process.execPath, [${JSON.stringify(BRIDGE_UNDER_TEST)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
+process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+createInterface({ input: p.stdout }).on('line', line => {
+  const m = JSON.parse(line);
+  if (m.result?.structuredContent) delete m.result.structuredContent.fresh;
+  process.stdout.write(JSON.stringify(m) + '\\n');
+});
+for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
+p.on('exit', c => process.exit(c ?? 0));
+`,
+  );
+  return proxy;
+}
+
+test(
+  "spawned_for на мосте выпуска: remove во время connect не снимает недоказанное место claim",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    await s.fake.control({ connect_delay_ms: 1400 });
+    const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_PATH: RELEASED_BRIDGE });
+    try {
+      oc.create("root", { emit: false });
+      oc.priorContext("root", () => []);
+      const turn = oc.turn("root", `${INITIAL_LINE}\nпривет`).catch((e) => e);
+      await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
+      oc.remove("root");
+      await turn;
+      const registered = () =>
+        s.fake.state.calls.some(
+          (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+        );
+      await until(() => registered() && heardSeats(s.fake).length === 0, "мост попытки закрыт");
+      const name = placeArgs(s.fake, "connect")[0];
+      assert.ok(name, JSON.stringify(s.fake.state.calls));
+      const revokes = s.fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+      );
+      assert.deepEqual(revokes, [], "a claim's seat without the mark is not proven own");
+      assert.equal(s.fake.state.places.has(`931:${name}`), true);
+    } finally {
+      await oc.stop();
+    }
+  },
+);
 
 for (const language of ["ru", "en"])
   test(

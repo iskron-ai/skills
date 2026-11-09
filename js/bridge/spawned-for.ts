@@ -2,6 +2,7 @@
 import { SPAWNED_FOR_ENV } from "../delivery/index.ts";
 import { envOf, scoped } from "../shared/scope.ts";
 import { mergeSpawn, parseSpawn, type SpawnedFor, spawnJson } from "../shared/spawned-for.ts";
+import { CFG } from "./config.ts";
 import { canonRealm } from "./realms.ts";
 
 const S = scoped(() => ({
@@ -20,7 +21,8 @@ const targetOf = (a: { realm?: unknown; karta?: unknown }): string =>
 export function launchBasis(a: Record<string, unknown>): SpawnedFor | undefined {
   const target = targetOf(a);
   const explicit = Object.hasOwn(a, "spawned_for") ? parseSpawn(a.spawned_for) : undefined;
-  const env = envOf(SPAWNED_FOR_ENV);
+  // A satellite inherits its launcher's environment, so the pair there is the launcher's.
+  const env = CFG.satellite ? undefined : envOf(SPAWNED_FOR_ENV);
   const inherited = S.target === null || S.target === target;
   const pair = mergeSpawn(
     explicit,

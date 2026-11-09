@@ -212,6 +212,27 @@ test("spawned_for daemon reads each session environment, never the first thin pr
   });
 });
 
+test("spawned_for thin satellite: the parent's environment pair is never its basis", async () => {
+  await withFake(async ({ fake, bridge }) => {
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const CALLER = "host.repo.opus-5";
+    await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
+    const parent = { invite: 8, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+    const s = bridge({ ISKRON_SPAWNED_FOR: JSON.stringify(parent) }, ["--satellite"]);
+    await handshake(s);
+    const r = await stand(s, { realm: "nks-dev", karta: 931, satellite_of: `@tester:${CALLER}` });
+    assert.ok(!r.error && !r.result?.isError, `${textOf(r)}\n${s.stderr}`);
+    assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
+    assert.ok(daemonPidIn(s.stderr).length, `through the daemon:\n${s.stderr}`);
+    const regs = fake.state.calls.filter(
+      (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+    );
+    assert.ok(regs.length, JSON.stringify(fake.state.calls));
+    for (const reg of regs) assert.equal(reg.arguments.spawned_for, undefined);
+  });
+});
+
 test("two sessions of one daemon at once keep their places, output, writes and satellite claims apart", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const a = bridge({}, [], INIT_PI);
