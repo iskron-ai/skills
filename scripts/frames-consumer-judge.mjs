@@ -107,9 +107,10 @@ export function readSegment(text, entry) {
     count: counts.length ? counts.reduce((a, m) => a + Number(m[1]), 0) : null,
     yours: counts.length ? counts.reduce((a, m) => a + Number(m[2]), 0) : null,
     closing: [...text.matchAll(/вопрос \[\d+\] к тебе (?:закрыт|переадресован)[^;\n]*/g)].map((m) => m[0]),
-    // A line of the record itself — «№N «зачин» [entry] …» — or an arrow line naming it
-    // («автор → адресат: [entry]»): either shows a record without text to the seat.
-    recordLine: lines.some((l) => l.includes(`» [${entry}]`) || (l.includes("→") && l.includes(`[${entry}]`))),
+    // A line of the record itself — «№N «зачин» [entry] …», or «[entry] …» under its case's
+    // count (#9654) — or an arrow line naming it («автор → адресат: [entry]»): either shows a
+    // record without text to the seat.
+    recordLine: lines.some((l) => l.includes(`» [${entry}]`) || l.startsWith(`[${entry}] `) || (l.includes("→") && l.includes(`[${entry}]`))),
   };
 }
 
