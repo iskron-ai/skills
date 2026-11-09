@@ -36,6 +36,24 @@ test("a session raised for an invite hears no invite at all: its own is taken, a
   assert.equal(none.text, "", "nothing left — an empty text wakes nothing");
 });
 
+test("a raised session still hears an invite of its own seat: a call to the seat asks the session", () => {
+  const seat = (f, fields, key) => ({
+    ...f,
+    to_standing_id: "seat-me",
+    to_standing: "@me:raised",
+    line: { ...f.line, fields, ...(key ? { key } : {}) },
+  });
+  const byField = seat(frame(7, 5, "invite", "invite:seat-me"), { standing: { id: "seat-me" } });
+  const byKey = seat(frame(8, 5, "invite", "invite:seat-me"), {});
+  const role = seat(frame(4, 5, "invite"), { karta: { id: "role-1", seq: 4 } });
+  const another = seat(frame(9, 5, "invite", "invite:seat-other"), {
+    standing: { id: "seat-other" },
+  });
+  const ev = quietCalls(stale([role, byField, byKey, another]), true);
+  assert.deepEqual(ev.frames, [byField, byKey]);
+  assert.match(ev.text, /№7/);
+});
+
 test("a batch without quiet calls and a backlog batch pass as they are", () => {
   const said = stale([frame(6, 9, "said", "said")]);
   assert.equal(quietCalls(said, true), said);
