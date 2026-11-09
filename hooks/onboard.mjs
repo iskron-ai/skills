@@ -33,7 +33,8 @@ var COVER = {
       /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
       roleQuotes: ["«", "»"],
       /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
-      stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+      stamp: /\(iskronify:\s*контракт\s*`?(\d+)`?\s*,\s*штамп/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*контракт\s*`?(\d+)`?(?=\s*[,—)])/m
     },
     en: {
       graph: "Graph",
@@ -41,7 +42,8 @@ var COVER = {
       role: "Agent role",
       /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
       roleQuotes: ['"', '"'],
-      stamp: /\(iskronify:\s*contract\s*`?\d+`?\s*,\s*stamp/
+      stamp: /\(iskronify:\s*contract\s*`?(\d+)`?\s*,\s*stamp/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*contract\s*`?(\d+)`?(?=\s*[,—)])/m
     }
   },
   /**
@@ -106,6 +108,9 @@ var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
+
+// js/delivery/spawned-for.ts
+var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/words/take.ts
 var TAKE = {
