@@ -152,7 +152,7 @@ async function registerOnce(
     },
     (m) => {
       if (m.id === id) {
-        m = claimResult(arguments_, m);
+        m = claimResult(arguments_, m, true);
         reply = m;
         if (!m.error && !m.result?.isError && place) noteSkills(place, arguments_.attrs.skills);
       }

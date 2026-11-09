@@ -340,6 +340,175 @@ for (const repeat of ["stand again", "session rotation"])
     for (const reg of regs().slice(before)) assert.deepEqual(reg.spawned_for, SPAWN);
   });
 
+// A passing refusal of the replay is the hour's, not the seat's (standing.ts): the bridge registers
+// again before the next call. The same must hold for a seat taken with spawned_for; the run
+// without the pair is the control that the fake's refusal itself passes.
+for (const pair of [false, true])
+  test(`spawned_for ${pair ? "seat" : "control without pair"}: a passing 503 of the replay after rotation is retried, not a lasting refusal`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-503" };
+    const first = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { ...args, ...(pair ? { spawned_for: SPAWN } : {}) },
+    });
+    assert.ok(!first.result?.isError, textOf(first));
+    const regs = () => sentToChannel(fake).filter((a) => a.action === "register");
+    const before = regs().length;
+    await fake.control({
+      kill_session: true,
+      registerRefuseNext: [{ text: "upstream unavailable", status: 503 }],
+    });
+    const work = (n) =>
+      bridge.call("tools/call", {
+        name: "iskron_add_phenomenon",
+        arguments: { realm: "@nks/nks-dev", name: `after 503 ${n}` },
+      });
+    const one = await work(1);
+    const afterOne = regs().length;
+    const two = await work(2);
+    const seen = JSON.stringify({
+      registersAfterRotation: regs().slice(before),
+      one: one.result ?? one.error,
+      two: two.result ?? two.error,
+      writes: fake.state.writes.map((w) => w.author),
+    });
+    assert.deepEqual(fake.state.registerRefuseNext, [], `the 503 went to the replay: ${seen}`);
+    assert.ok(afterOne > before, `the replay register was sent: ${seen}`);
+    assert.ok(regs().length >= before + 2, `register retried after the 503: ${seen}`);
+    assert.ok(!two.error && !two.result?.isError, `the next call works: ${seen}`);
+    assert.equal(fake.state.writes.at(-1)?.author, "spawn-503", seen);
+    assert.equal(fake.state.counts.unattributed, 0, `no call went without its author: ${seen}`);
+  });
+
+/** A seat taken with the pair, then the server session turned over under `patch`. */
+async function rotatedClaim(t, patch) {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-held", spawned_for: SPAWN };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!first.result?.isError, textOf(first));
+  const regs = () => sentToChannel(fake).filter((a) => a.action === "register");
+  const before = regs().length;
+  await fake.control({ kill_session: true, ...patch });
+  const work = (n) =>
+    bridge.call("tools/call", {
+      name: "iskron_add_phenomenon",
+      arguments: { realm: "@nks/nks-dev", name: `after rotation ${n}` },
+    });
+  const failed = (r) => !!(r.error || r.result?.isError);
+  return { bridge, fake, args, regs, before, work, failed };
+}
+
+test("spawned_for: the first claim refused with a passing 503 stays a lasting refusal", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  await fake.control({ registerRefuseNext: [{ text: "upstream unavailable", status: 503 }] });
+  const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-first", spawned_for: SPAWN };
+  const first = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(first.result?.isError, textOf(first));
+  for (const call of [
+    { name: "iskron_add_phenomenon", arguments: { realm: "@nks/nks-dev", name: "no work" } },
+    { name: "iskron_stand", arguments: args },
+    { name: "iskron_stand", arguments: { realm: "@nks/other", karta: "932", name: "elsewhere" } },
+  ]) {
+    const r = await bridge.call("tools/call", call);
+    assert.ok(r.error || r.result?.isError, JSON.stringify(r));
+  }
+  assert.equal(sentToChannel(fake).filter((a) => a.action === "connect").length, 1);
+  assert.equal(fake.state.writes.length, 0);
+});
+
+for (const [kind, patch] of [
+  [
+    "no echo of the pair",
+    {
+      registerFields: (a, seat_id) => ({
+        action: "register",
+        seats: [{ seat_id, standing: `@tester:${a.name}` }],
+      }),
+    },
+  ],
+  [
+    "spawned_for_held",
+    { registerRefuseNext: [{ text: "held", status: 409, rule: "spawned_for_held" }] },
+  ],
+  [
+    "spawned_for_unknown",
+    { registerRefuseNext: [{ text: "unknown", status: 422, rule: "spawned_for_unknown" }] },
+  ],
+  [
+    "seat gone",
+    { registerRefuseNext: [{ text: "not held", status: 409, rule: "standing_not_held" }] },
+  ],
+])
+  test(`spawned_for: after a confirmed claim the replay's ${kind} stays a lasting refusal`, async (t) => {
+    const { fake, args, regs, before, work, failed, bridge } = await rotatedClaim(t, {});
+    if (patch.registerFields) fake.state.registerFields = patch.registerFields;
+    else await fake.control(patch);
+    const one = await work(1);
+    const after = regs().length;
+    assert.ok(after > before, "the replay register was sent");
+    const two = await work(2);
+    const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(failed(one) && failed(two) && failed(again), JSON.stringify({ one, two, again }));
+    // The call answered 404 by the dead session is recorded by the fake, but nothing was written.
+    assert.equal(fake.state.writes.length, 0, JSON.stringify(fake.state.writes));
+    assert.equal(sentToChannel(fake).filter((a) => a.action === "connect").length, 1);
+  });
+
+test("spawned_for: while the claim's binding is not restored, another seat or raw connect does not bypass the wait", async (t) => {
+  const passing = { text: "upstream unavailable", status: 503 };
+  const { bridge, fake, regs, before, work, failed } = await rotatedClaim(t, {
+    registerRefuseNext: [passing, passing, passing],
+  });
+  const asked = (name, a) => bridge.call("tools/call", { name, arguments: a });
+  const other = await asked("iskron_stand", {
+    realm: "@nks/other",
+    karta: "932",
+    name: "elsewhere",
+  });
+  const plain = await asked("iskron_stand", { realm: "@nks/nks-dev", karta: "931", name: "plain" });
+  const raw = await asked("iskron_channel", {
+    action: "connect",
+    realm: "@nks/nks-dev",
+    karta: "931",
+    name: "raw",
+  });
+  const seen = JSON.stringify({ other, plain, raw, regs: regs().slice(before) });
+  assert.ok(failed(other) && failed(plain) && failed(raw), seen);
+  assert.match(textOf(other), /spawned_for/, seen);
+  assert.equal(sentToChannel(fake).filter((a) => a.action === "connect").length, 1, seen);
+  assert.ok(
+    regs()
+      .slice(before)
+      .every((a) => a.name === "spawn-held"),
+    seen,
+  );
+  fake.state.registerRefuseNext = []; // the hour passes
+  const back = await work(1);
+  assert.ok(!failed(back), JSON.stringify(back));
+  assert.equal(fake.state.writes.at(-1)?.author, "spawn-held");
+  assert.equal(fake.state.counts.unattributed, 0);
+});
+
+test("spawned_for: a replay register dropped by the transport is retried before the next call", async (t) => {
+  const { fake, regs, before, work, failed } = await rotatedClaim(t, {
+    mcpDrop: 1,
+    mcpDropAction: "iskron_channel:register",
+  });
+  await work(1);
+  const two = await work(2);
+  const seen = JSON.stringify({ two, regs: regs().slice(before), writes: fake.state.writes });
+  assert.equal(fake.state.mcpDrop, 0, `the drop went to the replay: ${seen}`);
+  assert.ok(!failed(two), seen);
+  assert.equal(fake.state.writes.at(-1)?.author, "spawn-held", seen);
+  assert.equal(fake.state.counts.unattributed, 0, seen);
+});
+
 for (const value of [
   7,
   null,

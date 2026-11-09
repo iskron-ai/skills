@@ -14,6 +14,8 @@ export const SPAWNED_FOR = {
       `spawned_for: свежесть места ${place} этой попыткой не подтверждена; прежнее место не отзываю. Место могло остаться.`,
     connect: () =>
       `Прямой channel connect не принимает spawned_for. Используй ${tool("stand")}: connect без поля, затем register с парой. Место не занято.`,
+    unbound: () =>
+      "spawned_for: привязка взятого места к этой сессии ещё не восстановлена после проходящего отказа; мост повторит её перед следующим вызовом. Этот вызов не выполнен; другое место или вызов без пары её не заменяют.",
     schema: () =>
       "Основание запуска: номер приглашения внутри дела и UUID дела. Регистрация должна подтвердить ту же пару; отказ не обходится другим именем или take.",
   },
@@ -28,6 +30,8 @@ export const SPAWNED_FOR = {
       `spawned_for: this attempt did not prove place ${place} fresh; the previous place is not revoked. The place may remain.`,
     connect: () =>
       `Raw channel connect does not accept spawned_for. Use ${tool("stand")}: connect without the field, then register with the pair. No seat was taken.`,
+    unbound: () =>
+      "spawned_for: the taken seat is not yet bound to this session again after a passing refusal; the bridge retries before the next call. This call did not run; another seat or a call without the pair does not replace it.",
     schema: () =>
       "Launch basis: the invitation number within its case and the case UUID. Register must confirm the same pair; do not bypass a refusal with another name or take.",
   },

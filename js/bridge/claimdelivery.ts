@@ -2,11 +2,13 @@
 import { SPAWNED_FOR, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { parseSpawn, spawnReceipt } from "../shared/spawned-for.ts";
-import { claimIdentity, noteClaimReceipt, noteClaimSeat } from "./claimseat.ts";
+import { claimIdentity, claimReceipt, noteClaimReceipt, noteClaimSeat } from "./claimseat.ts";
 import { structuredOf } from "./fields.ts";
+import { refusalOf } from "./refusal.ts";
 import { claimRefusal, launchBasis, refuseClaim } from "./spawned-for.ts";
-import { replyText } from "./standing.ts";
+import { replyText, seatIsGone } from "./standing.ts";
 import { emit } from "./streams.ts";
+import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const refused = (id: JsonRpcMessage["id"], text: string): JsonRpcMessage => ({
@@ -50,15 +52,41 @@ export function claimReply(msg: JsonRpcMessage, reply: JsonRpcMessage): JsonRpcM
   return claimResult(a ?? {}, reply);
 }
 
-/** Shared by proxied, own and replayed registrations; only the returned pair is proof. */
-export function claimResult(a: Record<string, unknown>, reply: JsonRpcMessage): JsonRpcMessage {
+/** A refusal that says nothing about the invitation: no rule, no 4xx, the seat not gone. */
+function passing(reply: JsonRpcMessage): boolean {
+  const r = refusalOf(reply);
+  const status = r?.status ?? 0;
+  return !r?.rule && !(status >= 400 && status < 500) && !seatIsGone(reply);
+}
+
+/**
+ * Shared by proxied, own and replayed registrations; only the returned pair is proof. `replay` —
+ * the bridge's own re-registration: after this target's confirmed claim a passing refusal is the
+ * hour's, retried before the next call, and work waits for it (refuseUnbound; #9959).
+ */
+export function claimResult(
+  a: Record<string, unknown>,
+  reply: JsonRpcMessage,
+  replay = false,
+): JsonRpcMessage {
   if (a.action !== "register" || !a.spawned_for) return reply;
   let m = reply;
   if (!m.error && !m.result?.isError) {
     const receipt = spawnReceipt(structuredOf(m), parseSpawn(a.spawned_for), claimIdentity(a));
     if (receipt) noteClaimReceipt(a, receipt);
     else m = refused(reply.id, words(SPAWNED_FOR).echo());
-  }
+  } else if (replay && claimReceipt(a) && passing(m)) return m;
   if (m.error || m.result?.isError) refuseClaim(replyText(m));
   return m;
+}
+
+/** A confirmed claim's seat not yet bound on this session: no call goes without its author. */
+export function refuseUnbound(msg: JsonRpcMessage): boolean {
+  const a = msg.params?.arguments;
+  if (msg.method !== "tools/call" || !state.standing || !claimReceipt(state.standing)) return false;
+  if (state.standingSession === state.sessionId) return false;
+  if (msg.params?.name === tool("channel") && ["revoke", "close"].includes(String(a?.action)))
+    return false;
+  emit(refused(msg.id, words(SPAWNED_FOR).unbound()));
+  return true;
 }

@@ -15,7 +15,7 @@ import { localAway } from "./away.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
 import { noteCaseEntry } from "./caseexit.ts";
-import { claimReply, refuseLaunch } from "./claimdelivery.ts";
+import { claimReply, refuseLaunch, refuseUnbound } from "./claimdelivery.ts";
 import { deafRefusal } from "./deaf.ts";
 import {
   AuthPending,
@@ -275,7 +275,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         await reinitialize();
       }
       if (!isInit) await ensureStanding(); // the session may have turned over under us
-      if (refuseLaunch(msg)) return; // replay may have failed its claim
+      if (refuseLaunch(msg) || refuseUnbound(msg)) return; // replay may have failed its claim
       // A taken or deaf seat signs no record (graph @nks/nks-dev, node #6706).
       const taken = hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null;
       if (taken) {
