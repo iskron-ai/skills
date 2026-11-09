@@ -35,7 +35,7 @@ export async function planTact(
     if (!c) return { ok: false, said: w().stepUnresolvedRealm(r, "not in the realm list") };
     realms.push(c);
   }
-  const demands = await readDemands(base, token, realms, [...boundary, ...realms]);
+  const demands = await readDemands(base, token, realms, boundary);
   if (!demands.complete)
     return {
       ok: false,

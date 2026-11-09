@@ -1,6 +1,6 @@
 // The orchestrator's flag next to the grant and the machine's consent (graph @nks/nks-dev,
 // nodes #7507, #7514; case №4050 [85]–[90]). Consent is the human's, not an agent's: either
-// ISKRON_ORCHESTRA=1 in the daemon's own environment, or `orchestra on` typed at a terminal —
+// the ORCHESTRA variable (envName) in the daemon's own environment, or `orchestra on` typed at a terminal —
 // the CLI says so only when its stdin and stdout are a terminal, which an agent's shell tool
 // (pipes) is not. The daemon keeps that consent in the flag, takes it at once without a
 // restart, and `off` drops it with the flag. A process of the same account can still fake a

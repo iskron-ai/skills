@@ -149,9 +149,8 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     if (op === "step") return step(gone);
     if (op === "plan") {
       const flag = readOrchestraFlag(authDir);
-      const boundary = [
-        ...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? []), ...realms]),
-      ];
+      // The machine's boundary as demands keeps it (#8202): a named graph narrows, never widens.
+      const boundary = [...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? [])])];
       return planTact(
         authDir,
         net?.base() ?? "",
