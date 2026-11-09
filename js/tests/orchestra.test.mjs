@@ -362,29 +362,28 @@ test("orchestra: a step the caller left is a final refusal — no cursor moves a
     const first = await cli(["step", "--auth-dir", dir]).done;
     assert.equal(first.code, 0, first.err + first.out);
     assert.match(first.out, /сигналов 2/, first.out);
-    // Новый сигнал приходит с задержкой дверей 6 с: дверь молчит дольше потолка клиента
-    // (5 с) — отказ; демон обязан увидеть уход клиента и не коммитить курсор.
+    // Чтение ленты с новым сигналом держит фейк до release — дольше потолка клиента: отказ;
+    // демон обязан увидеть уход клиента и не коммитить курсор. Удержание, не часы: под
+    // нагрузкой задержка 6 с против потолка 5 с флакала.
     await fake.control({
       orchestra: {
         realms: {
           "@nks/nks-dev": {
             invites: [invite],
             signals: [signal(1, "raised"), signal(2, "joined"), signal(3, "left")],
+            raised_holds: [true],
           },
         },
       },
-      orchestraReadDelayMs: 6000,
     });
-    const t0 = Date.now();
     const refused = await cli(["step", "--auth-dir", dir]).done;
-    assert.ok(Date.now() - t0 < 5_500, "the client gave up inside its own ceiling");
     assert.notEqual(refused.code, 0, "the caller left — the door's answer is a refusal");
-    // Дольше задержки дверей: даже дочитав, демон курсор не двинул — отказ окончателен.
-    await new Promise((r) => setTimeout(r, 8_000));
-    const kept = JSON.parse(readFileSync(cursorsAt(dir), "utf8"));
-    assert.equal(kept.realms["@nks/nks-dev"].cursor, "c2", "no cursor moved after the caller left");
-    // Лента не потеряна: без задержки следующий такт видит новый сигнал.
-    await fake.control({ orchestraReadDelayMs: 0 });
+    assert.equal(fake.state.raisedHeld, 1, "the tape read was on hold when the client left");
+    // Демон обслужил более поздний вопрос: закрытый сокет ушедшего клиента уже увиден.
+    assert.equal((await cli(["status", "--auth-dir", dir]).done).code, 0);
+    await fake.control({ raised_release: true });
+    // Лента не потеряна: следующий такт встаёт в очередь за ушедшим и видит новый сигнал —
+    // ушедший, дочитав, курсор не двинул; отказ окончателен.
     const third = await cli(["step", "--auth-dir", dir]).done;
     assert.equal(third.code, 0, third.err);
     assert.match(third.out, /сигналов 1/, third.out);
