@@ -526,15 +526,22 @@ test("quench: the caller gone during the re-check — no stop order after it (#8
         [REALM]: {
           invites: [],
           signals: [signal(1, 9, [ROOM]), signal(2, 9, [])],
-          // The tact's read is quick; the re-check outlasts the client's ceiling (5 s).
-          raised_delays: [0, 6000],
+          // The tact's read answers; the re-check is held until released — past the client's ceiling.
+          raised_holds: [false, true],
         },
       },
     },
   });
   const r = await o.step();
   assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
-  await new Promise((done) => setTimeout(done, 8_000));
+  assert.equal(o.fake.state.raisedHeld, 1, "the re-check was on hold when the client left");
+  // The daemon has served a later ask: the closed socket of the gone caller is seen by now.
+  assert.equal((await cli(o.dir, ["status"])).code, 0);
+  // The held re-check answers with the tape unchanged — the end still stands; then the tape is
+  // shut, so the next step, queued behind the gone tact, orders nothing of its own.
+  await o.fake.control({ raised_release: true });
+  await o.fake.control({ orchestra: { realms: { [REALM]: { refuse: 503 } } } });
+  await o.step();
   assert.equal(o.fake.state.orders.human.length, 0, "no stop order after the caller left");
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
 });

@@ -214,6 +214,8 @@ export async function startFakeNks(opts = {}) {
     realmResult: null, // Override the list result to probe unreadable/structured answers.
     registerToolDelayMs: 0, // hold the iskron_channel register tool open this long
     orchestraReadDelayMs: 0, // hold each invites/raised answer open this long (№1317 [19])
+    raisedHeld: 0, // raised reads put on hold by raised_holds
+    raisedRelease: [], // their release, by /control {raised_release}
     refreshDelayMs: opts.refreshDelayMs ?? 0, // widen the window several bridges race in
     codeDelayMs: opts.codeDelayMs ?? 0, // hold the code exchange open, as a slow server does
     registerDelayMs: opts.registerDelayMs ?? 0, // hold dynamic registration open: the window two bridges race in
@@ -553,10 +555,13 @@ export async function startFakeNks(opts = {}) {
       const state = st.orchestra?.realms?.[realm] ?? null;
       if (state?.refuse) return json(res, state.refuse, { error: "refused" });
       if (orchestraRoute[2] === "invites") return json(res, 200, { items: state?.invites ?? [] });
-      // raised_delays: задержка каждого следующего чтения ленты по очереди — медленная
-      // перепроверка при быстром первом чтении (#8202, №4050 [32] п.2).
-      const delay = state?.raised_delays?.shift();
-      if (delay) await new Promise((r) => setTimeout(r, delay));
+      // raised_holds: держать ли каждое следующее чтение ленты по очереди — до /control
+      // {raised_release}; медленная перепроверка при быстром первом чтении без часов (#8202,
+      // №4050). raisedHeld — сколько чтений встало на удержание.
+      if (state?.raised_holds?.shift()) {
+        st.raisedHeld++;
+        await new Promise((r) => st.raisedRelease.push(r));
+      }
       const signals = state?.signals ?? [];
       const since = u.searchParams.get("since");
       const at = since ? signals.findIndex((s) => s.cursor === since) : -1;
@@ -737,6 +742,8 @@ export async function startFakeNks(opts = {}) {
       if (patch.orchestra !== undefined) st.orchestra = patch.orchestra;
       if (patch.orchestraReadDelayMs !== undefined)
         st.orchestraReadDelayMs = patch.orchestraReadDelayMs;
+      // Отпущенное чтение отвечает раньше ответа этого /control: ответ виден до следующей правки.
+      if (patch.raised_release) for (const r of st.raisedRelease.splice(0)) r();
       if (Number.isInteger(patch.ws_refuse)) st.wsRefuse = patch.ws_refuse; // один раз: следующий апгрейд закрывается этим кодом, дальнейшие принимаются
       if ("turned_404" in patch) st.turned404 = !!patch.turned_404;
       if (patch.ws_mute) st.wsMute = true; // один раз: следующий апгрейд принят, но hello не идёт — служба медлит
