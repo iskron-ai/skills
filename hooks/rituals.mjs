@@ -1,5 +1,16 @@
 // js/cli/rituals-hook.ts
-import { readFileSync as readFileSync7 } from "node:fs";
+import { readFileSync as readFileSync8 } from "node:fs";
+
+// js/delivery/contract.ts
+var CONTRACT_SUPPORT = { minimum: 39, target: 40 };
+var CONTRACT_WORDS = {
+  ru: {
+    unsupported: (n, target) => `Контракт ${n} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
+  },
+  en: {
+    unsupported: (n, target) => `Contract ${n} is no longer supported; old hooks have not been removed. Run a full iskronify pass to ${target}; rituals will be accepted after verification`
+  }
+};
 
 // js/delivery/lang.ts
 var LANGS = ["ru", "en"];
@@ -33,7 +44,8 @@ var COVER = {
       /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
       roleQuotes: ["«", "»"],
       /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
-      stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/
+      stamp: /\(iskronify:\s*контракт\s*`?(\d+)`?\s*,\s*штамп/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*контракт\s*`?(\d+)`?(?=\s*[,—)])/m
     },
     en: {
       graph: "Graph",
@@ -41,7 +53,8 @@ var COVER = {
       role: "Agent role",
       /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
       roleQuotes: ['"', '"'],
-      stamp: /\(iskronify:\s*contract\s*`?\d+`?\s*,\s*stamp/
+      stamp: /\(iskronify:\s*contract\s*`?(\d+)`?\s*,\s*stamp/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*contract\s*`?(\d+)`?(?=\s*[,—)])/m
     }
   },
   /**
@@ -107,6 +120,9 @@ var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
+
+// js/delivery/spawned-for.ts
+var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/words/take.ts
 var TAKE = {
@@ -340,6 +356,62 @@ var ROOM = {
   }
 };
 
+// js/delivery/words/rootseat.ts
+var ROOT_SEAT = {
+  ru: {
+    noFile: (file) => `нет ${file}`,
+    noFrontmatter: (file) => `в ${file} нет YAML-фронтматтера обложки`,
+    noKey: (file, key) => `в обложке ${file} нет слота '${key}'`,
+    noForm: (file, keys) => `в обложке ${file} нет ни одного из слотов ${keys}`,
+    manyForms: (file, keys) => `обложка ${file} смешивает языки: ${keys} сразу`,
+    noGraph: (file, key) => `'${key}' в ${file} не начинается с полного адреса графа или rN`,
+    manyGraphs: (file, key, list) => `'${key}' в ${file} называет несколько графов: ${list}`,
+    noRoleRef: (file, key, ref) => `'${key}' в ${file} не начинается ссылкой ${ref}`,
+    manyRoles: (file, key, list) => `'${key}' в ${file} называет несколько ролей: ${list}`,
+    notNumber: (file, key) => `'${key}' в ${file} — не число`,
+    seated: (place, karta, realm, file) => `Искрон: место ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Для вахты (room/model) или своего имени — iskron_stand: предварительное место заменит без take.`,
+    ownSeated: (place, karta, realm, file) => `Искрон: сессия своим местом ${place}, роль #${karta} в ${realm} по ${file}; записи подписаны им. Другое имя — iskron_stand с take.`,
+    cancelled: () => "Экземпляр или сессия остановлены; новая посадка запрещена.",
+    cleanupFailed: (place, why) => `Отменённая посадка ${place}: снять место не удалось (${why}); мост закрывается, место может остаться до простоя на сервере.`,
+    unproven: () => "мост не подтвердил, что это провизорное место взято этой попыткой; revoke не разрешён",
+    notSeated: (why) => `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
+    realign: (why, file) => `Искрон: сессия не посажена — ${why}. Выровняй ${file} через iskronify; граф и роль не угадывай. Однозначная обложка — посадка повторится сама.`,
+    refused: (text2) => `посадка сорвалась: ${text2}`,
+    ownOther: (place, karta, realm) => `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
+    heldUncompared: (place, karta, held, cover) => `Искрон: сессия держит место ${place} — роль #${karta}, ${held}; граф не сличён с ${cover} в обложке. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
+    unknownRealm: () => "граф неизвестен (запись держания недоступна)",
+    uncompared: (cover, held) => `граф не сличён: ${cover} в обложке, ${held} у места`,
+    late: (seconds) => `посадка не уложилась в ${seconds} с, запрос идёт без места`,
+    noBridge: () => "мост не поднят"
+  },
+  en: {
+    noFile: (file) => `there is no ${file}`,
+    noFrontmatter: (file) => `${file} carries no YAML front matter`,
+    noKey: (file, key) => `the front matter of ${file} has no '${key}' slot`,
+    noForm: (file, keys) => `the front matter of ${file} has none of the slots ${keys}`,
+    manyForms: (file, keys) => `the cover of ${file} mixes languages: ${keys} at once`,
+    noGraph: (file, key) => `'${key}' in ${file} does not start with a full graph address or rN`,
+    manyGraphs: (file, key, list) => `'${key}' in ${file} names several graphs: ${list}`,
+    noRoleRef: (file, key, ref) => `'${key}' in ${file} does not start with a ${ref} reference`,
+    manyRoles: (file, key, list) => `'${key}' in ${file} names several roles: ${list}`,
+    notNumber: (file, key) => `'${key}' in ${file} is not a number`,
+    seated: (place, karta, realm, file) => `Iskron: the session holds seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by this seat. For a watch (room/model) or your own name, call iskron_stand — it replaces a provisional seat without take.`,
+    ownSeated: (place, karta, realm, file) => `Iskron: the session holds its own seat ${place} — role #${karta} in ${realm}, per ${file}; writes are signed by it. A different name requires iskron_stand with take.`,
+    cancelled: () => "The instance or session is stopped; no new seating is allowed.",
+    cleanupFailed: (place, why) => `Cancelled seating ${place}: could not revoke the seat (${why}); the bridge is closing, the seat may remain until the server's idle expiry.`,
+    unproven: () => "the bridge did not prove this attempt took a provisional seat; revoke is not authorized",
+    notSeated: (why) => `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
+    realign: (why, file) => `Iskron: the session is not seated — ${why}. Align the repository with the iskronify skill from valid sources; do not guess the graph or the role — ask what cannot be determined by the alignment procedure. Seating repeats by itself as soon as the cover ${file} becomes unambiguous.`,
+    refused: (text2) => `seating failed: ${text2}`,
+    ownOther: (place, karta, realm) => `Iskron: the session holds seat ${place} — role #${karta} in ${realm}; its role or graph differs from the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
+    heldUncompared: (place, karta, held, cover) => `Iskron: the session holds seat ${place} — role #${karta}, ${held}; its graph is not compared with ${cover} in the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
+    unknownRealm: () => "graph unknown (hold record unavailable)",
+    uncompared: (cover, held) => `graph not compared: ${cover} in the cover, ${held} on the seat`,
+    late: (seconds) => `seating did not finish in ${seconds} s, the request goes without a seat`,
+    noBridge: () => "no bridge raised"
+  }
+};
+
 // js/delivery/words/stalebatch.ts
 var STALE = {
   ru: {
@@ -444,6 +516,102 @@ var WATCHDOG = {
   }
 };
 
+// js/shared/covercontract.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+
+// js/shared/coverblock.ts
+var unquote = (v) => {
+  const t = v.trim();
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
+    return t.slice(1, -1).replace(/''/g, "'");
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    try {
+      return String(JSON.parse(t));
+    } catch {
+      return t.slice(1, -1);
+    }
+  }
+  return t;
+};
+var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
+var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
+var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
+var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
+var bare = (v) => unquote(
+  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
+);
+function fences(text2) {
+  const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  return end < 0 ? null : { lines, end };
+}
+function frontMatter(text2) {
+  const f = fences(text2);
+  if (!f) return null;
+  const raw = /* @__PURE__ */ new Map();
+  let last = null;
+  for (const line of f.lines.slice(1, f.end)) {
+    const kv = PAIR.exec(line);
+    if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
+    else if (last !== null && /^\s+[^\s#]/.test(line))
+      raw.set(last, `${raw.get(last)}
+${line.trim()}`);
+  }
+  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
+}
+function coverBlocks(text2) {
+  const blocks2 = /* @__PURE__ */ new Map();
+  const f = fences(text2);
+  let open = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const top = TOP.exec(line);
+    const child = open && CHILD.exec(line);
+    if (top) blocks2.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
+    else if (open && child) open.set(unquote(child[1]), bare(child[2] ?? ""));
+    else open = null;
+  }
+  return blocks2;
+}
+function repeatedKeys(text2) {
+  const f = fences(text2);
+  const [seen, twice] = [/* @__PURE__ */ new Set(), /* @__PURE__ */ new Set()];
+  let block = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    const kv = PAIR.exec(line);
+    const at2 = line.search(/\S/);
+    if (!kv || line[at2] === "-") continue;
+    const name = unquote(kv[1]);
+    if (at2 === 0) block = TOP.test(line) ? { root: name, at: -1 } : null;
+    else if (!block || block.at >= 0 && block.at !== at2) continue;
+    else block.at = at2;
+    const key = at2 === 0 ? name : `${block?.root}.${name}`;
+    (seen.has(key) ? twice : seen).add(key);
+  }
+  return [...twice];
+}
+var coverBlock = (text2, root) => coverBlocks(text2).get(root) ?? null;
+var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
+var foreignBlock = (text2, root) => [...coverBlocks(text2)].some(([k, b]) => k !== root && b.has("contract"));
+var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
+function ritualsOf(block) {
+  const field = block?.get("rituals");
+  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
+  const names = field.split(/\s+/).filter(Boolean);
+  const known = (n) => RITUALS2.includes(n);
+  return { on: new Set(names.filter(known)), unknown: names.filter((n) => !known(n)) };
+}
+
+// js/shared/graphslot.ts
+var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
+var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
+var FRAME = String.raw`[\s\x60'"]*`;
+var HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
+var ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
+var PROSE = new RegExp("^[—–\\-:.(]*\\s*(?!r\\d)\\p{L}", "u");
+
 // js/shared/lang.ts
 import { readFileSync } from "node:fs";
 import { join as join2 } from "node:path";
@@ -520,80 +688,28 @@ function resolve2() {
 }
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
+var words = (dict) => dict[lang()];
 var wordsIn = (dict, l) => dict[l ?? lang()];
 
-// js/shared/ritualcover.ts
-import { readdirSync, readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
-
-// js/shared/coverblock.ts
-var unquote = (v) => {
-  const t = v.trim();
-  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
-    return t.slice(1, -1).replace(/''/g, "'");
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
-    try {
-      return String(JSON.parse(t));
-    } catch {
-      return t.slice(1, -1);
-    }
-  }
-  return t;
-};
-var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
-var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
-var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
-var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
-var bare = (v) => unquote(
-  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
-);
-function fences(text2) {
-  const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  return end < 0 ? null : { lines, end };
-}
-function coverBlocks(text2) {
-  const blocks2 = /* @__PURE__ */ new Map();
-  const f = fences(text2);
-  let open = null;
-  for (const line of f ? f.lines.slice(1, f.end) : []) {
-    if (/^\s*(#|$)/.test(line)) continue;
-    const top = TOP.exec(line);
-    const child = open && CHILD.exec(line);
-    if (top) blocks2.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
-    else if (open && child) open.set(unquote(child[1]), bare(child[2] ?? ""));
-    else open = null;
-  }
-  return blocks2;
-}
-var coverBlock = (text2, root) => coverBlocks(text2).get(root) ?? null;
-var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
-var foreignBlock = (text2, root) => [...coverBlocks(text2)].some(([k, b]) => k !== root && b.has("contract"));
-var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
-function ritualsOf(block) {
-  const field = block?.get("rituals");
-  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
-  const names = field.split(/\s+/).filter(Boolean);
-  const known = (n) => RITUALS2.includes(n);
-  return { on: new Set(names.filter(known)), unknown: names.filter((n) => !known(n)) };
-}
-
-// js/shared/graphslot.ts
-var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
-var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
-var FRAME = String.raw`[\s\x60'"]*`;
-var HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
-var ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
-var PROSE = new RegExp("^[—–\\-:.(]*\\s*(?!r\\d)\\p{L}", "u");
-
 // js/shared/cover.ts
+var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
 function stampOf(text2, cover = COVER) {
   const block = coverBlock(text2, cover.root);
   if (block && stamped(block) || Object.values(cover.forms).some((f) => f.stamp.test(text2)))
     return "own";
   if (block) return null;
   return foreignBlock(text2, cover.root) || cover.stampShape.test(text2) ? "foreign" : null;
+}
+function formOf(pairs, cover = COVER) {
+  const W = words(ROOT_SEAT);
+  const listed = (keys) => keys.map((k) => `'${k}'`).join(", ");
+  const found = formsIn(pairs, cover);
+  if (found.length > 1)
+    return { why: W.manyForms(cover.file, listed(found.map(([, f]) => f.graph))) };
+  const [lang2, form] = found[0] ?? [];
+  const all = [cover.root, ...Object.values(cover.forms).map((f) => f.graph)];
+  if (!lang2 || !form) return { why: W.noForm(cover.file, listed(all)) };
+  return { lang: lang2, form };
 }
 
 // js/shared/reposigns.ts
@@ -617,7 +733,48 @@ function repoRoot(dir) {
   }
 }
 
+// js/shared/covercontract.ts
+function contractOf(text2, cover = COVER) {
+  if (stampOf(text2, cover) === "foreign") return { kind: "foreign" };
+  if (repeatedKeys(text2).length) return { kind: "ambiguous" };
+  const block = coverBlock(text2, cover.root);
+  const pairs = frontMatter(text2);
+  const stamps = Object.values(cover.forms).flatMap((f) => {
+    const re = f.contractStamp ?? f.stamp;
+    return [...text2.matchAll(new RegExp(re.source, `${re.flags.replace("g", "")}g`))].map(
+      (m) => m[1]
+    );
+  });
+  if (pairs) {
+    const form = formOf(pairs, cover);
+    const count = Object.values(cover.forms).filter(
+      (f) => pairs.has(f.graph) || pairs.has(f.role)
+    ).length;
+    if ("why" in form && count > 1 || block && count > 0) return { kind: "ambiguous" };
+  }
+  const values = [...block?.has("contract") ? [block.get("contract")] : [], ...stamps];
+  if (!values.length) return { kind: "missing" };
+  if (values.length > 1) return { kind: "ambiguous" };
+  const value = values[0] ?? "";
+  const n = Number(value);
+  return /^\d+$/.test(value) && Number.isSafeInteger(n) ? { kind: "known", contract: n } : { kind: "invalid" };
+}
+function contractWarning(c, lang2) {
+  return c.kind === "known" && c.contract < CONTRACT_SUPPORT.minimum ? wordsIn(CONTRACT_WORDS, lang2).unsupported(c.contract, CONTRACT_SUPPORT.target) : null;
+}
+function repoContractWarning(dir, lang2) {
+  const root = repoRoot(dir);
+  if (!root) return null;
+  try {
+    return contractWarning(contractOf(readFileSync3(join4(root, COVER.file), "utf8")), lang2);
+  } catch {
+    return null;
+  }
+}
+
 // js/shared/ritualcover.ts
+import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
+import { join as join5 } from "node:path";
 function headings(text2) {
   const lines = text2.split("\n");
   let i = lines[0]?.trim() === "---" ? lines.findIndex((l, n) => n > 0 && l.trim() === "---") + 1 : 0;
@@ -648,7 +805,7 @@ function ritualCover(dir, cover = COVER) {
   if (!root) return null;
   let text2;
   try {
-    text2 = readFileSync3(join4(root, cover.file), "utf8");
+    text2 = readFileSync4(join5(root, cover.file), "utf8");
   } catch {
     return null;
   }
@@ -829,12 +986,12 @@ var receipt = (text2) => [...text2.trim()].length <= RECEIPT_MAX && !text2.inclu
 var lostWord = (t, now = Date.now()) => t.framed && !t.human && !t.spoke && !!t.text.trim() && !receipt(t.text) && !(t.heard !== null && now - t.heard < WATCHED_MS);
 
 // js/cli/hookkinds.ts
-import { readFileSync as readFileSync5 } from "node:fs";
-import { join as join6 } from "node:path";
+import { readFileSync as readFileSync6 } from "node:fs";
+import { join as join7 } from "node:path";
 
 // js/cli/preparescripts.ts
-import { readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
-import { isAbsolute, join as join5 } from "node:path";
+import { readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
+import { isAbsolute, join as join6 } from "node:path";
 var SCRIPT = /\.(sh|bash|zsh|js|cjs|mjs|ts|py|rb|pl)$/;
 var PROJECT = /\$\{?CLAUDE_PROJECT_DIR\}?/g;
 var INTERPRETER = /(^|\/)(sh|bash|zsh|dash|node|bun|deno|tsx|python3?|ruby|perl)$/;
@@ -842,7 +999,7 @@ function scriptsOf(root, command) {
   const words3 = command.split(/\s+/).map((t) => t.replace(/["']/g, ""));
   const at2 = (t) => {
     const p = t.replace(PROJECT, root);
-    return isAbsolute(p) ? p : join5(root, p);
+    return isAbsolute(p) ? p : join6(root, p);
   };
   return words3.filter(
     (t, i) => SCRIPT.test(t) || t.includes("CLAUDE_PROJECT_DIR") || i > 0 && INTERPRETER.test(words3[i - 1] ?? "") && /^[\w.~]/.test(t) || t.includes("/") && isFile(at2(t))
@@ -857,7 +1014,7 @@ function isFile(path) {
 }
 function text(path) {
   try {
-    return isFile(path) ? readFileSync4(path, "utf8") : "";
+    return isFile(path) ? readFileSync5(path, "utf8") : "";
   } catch {
     return "";
   }
@@ -907,20 +1064,20 @@ var knownOf = (root, s, kind, target) => {
 };
 function read(path) {
   try {
-    const s = JSON.parse(readFileSync5(path, "utf8"));
+    const s = JSON.parse(readFileSync6(path, "utf8"));
     return s && typeof s === "object" && !Array.isArray(s) ? s : {};
   } catch {
     return {};
   }
 }
 function standingRites(root, target) {
-  const files = ["settings.json", "settings.local.json"].map((f) => read(join6(root, ".claude", f)));
+  const files = ["settings.json", "settings.local.json"].map((f) => read(join7(root, ".claude", f)));
   const kinds = Object.keys(KNOWN);
   return new Set(kinds.filter((k) => files.some((s) => knownOf(root, s, k, target).length > 0)));
 }
 
 // js/cli/turnread.ts
-import { readFileSync as readFileSync6 } from "node:fs";
+import { readFileSync as readFileSync7 } from "node:fs";
 
 // js/shared/quietframe.ts
 var flat = (s) => s.replace(/\s+/g, "");
@@ -1015,7 +1172,7 @@ var ended = (e) => {
 function lastTurn(path) {
   let entries;
   try {
-    entries = readFileSync6(path, "utf8").split("\n").filter((l) => l.trim()).map((l) => {
+    entries = readFileSync7(path, "utf8").split("\n").filter((l) => l.trim()).map((l) => {
       try {
         return JSON.parse(l);
       } catch {
@@ -1050,7 +1207,7 @@ function lastTurn(path) {
 // js/cli/rituals-hook.ts
 function hookInput() {
   try {
-    if (!process.stdin.isTTY) return JSON.parse(readFileSync7(0, "utf8")) ?? {};
+    if (!process.stdin.isTTY) return JSON.parse(readFileSync8(0, "utf8")) ?? {};
   } catch {
   }
   return {};
@@ -1064,14 +1221,15 @@ ${String(o.stderr ?? "")}`, exit };
 }
 function riteWords(input, dir) {
   const cover = ritualCover(dir);
-  if (!cover) return [];
   const event = input.hook_event_name;
   if (event === "SessionStart") {
     const source = typeof input.source === "string" ? input.source : "startup";
-    if (source === "compact" || !cover.on.has("start")) return [];
-    if (standingRites(cover.root, source).has("hook.start")) return [];
-    return [startWord(cover)];
+    if (source === "compact") return [];
+    const warning = repoContractWarning(dir, cover?.lang);
+    const start = cover?.on.has("start") && !standingRites(cover.root, source).has("hook.start") ? startWord(cover) : null;
+    return [warning, start].filter((s) => !!s);
   }
+  if (!cover) return [];
   if (event !== "PostToolUse" || input.tool_name !== "Bash") return [];
   const own = standingRites(cover.root, "Bash");
   const call = {

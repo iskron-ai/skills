@@ -52,8 +52,11 @@ var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
+// js/delivery/spawned-for.ts
+var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
+
 // js/delivery/version.ts
-var VERSION = "7.36.0";
+var VERSION = "7.36.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -665,8 +668,7 @@ function addresseeOf(v) {
   const handle = str(o.handle).replace(/^@/, "");
   const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
   const id = str(o.id);
-  const name = str(o.standing) ? str(o.name) : "";
-  const label = name && standing ? `${name} (${standing})` : standing || str(o.name) || id;
+  const label = standing || str(o.name) || id;
   const addr = [standing, id].filter(Boolean);
   return addr.length ? { addr, label } : null;
 }
@@ -876,9 +878,7 @@ function roomOf(v) {
 function whoOf(fields) {
   const st = obj(fields.standing);
   const ka = obj(fields.karta);
-  const name = str(st.name) || str(ka.name);
-  const addr = str(st.standing);
-  return name && addr ? `${name} (${addr})` : name || addr;
+  return str(st.standing) || str(st.name) || str(ka.name);
 }
 function kindText(kind, v, f, pending, aborted) {
   const W3 = words(ROOM);
@@ -1415,11 +1415,14 @@ var CAPTION_REPLY = /* @__PURE__ */ new Set(["body", "answer", "ack", "retract"]
 var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
+function groupKey(f) {
+  const c = caseOf(f);
+  return c ? JSON.stringify([c.realm, c.room]) : idOf2(f.id) || "?";
+}
 function casesOf(frames) {
   const by = /* @__PURE__ */ new Map();
   for (const f of frames) {
-    const c = caseOf(f);
-    const key = c ? JSON.stringify([c.realm, c.room]) : idOf2(f.id) || "?";
+    const key = groupKey(f);
     const got = by.get(key);
     if (got) got.push(f);
     else by.set(key, [f]);
@@ -1484,7 +1487,7 @@ function humanWordReply(frame, origin2) {
   };
   return Object.values(missing).every((x) => !x) ? T2().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame.id)) : T2().noReplyAddress(missing);
 }
-function frameToText(frame, raw) {
+function frameToText(frame, raw, withCase = true) {
   if (!frame) return raw;
   const f = frame;
   const origin2 = frame.origin ?? classifyOrigin(frame);
@@ -1500,7 +1503,8 @@ function frameToText(frame, raw) {
     const who = rk || origin2 === "platform" ? "" : whoOf2(frame, false);
     const by = [author, who].filter(Boolean).join(", ");
     const withReply = !rk || !CAPTION_REPLY.has(rk.kind);
-    const head = `${caseHead(frame, true)}${entry ? ` [${entry}]` : ""} ${words2}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
+    const label = [withCase ? caseHead(frame, true) : "", entry ? `[${entry}]` : ""];
+    const head = `${[...label.filter(Boolean), words2].join(" ")}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines2 = [head];
     if (text && !words2.includes(text.trim())) lines2.push(text);
     return lines2.join("\n");
@@ -1513,10 +1517,10 @@ function frameToText(frame, raw) {
   return lines.join("\n");
 }
 var warnedSeat = (frame) => typeof frame.to_standing === "string" ? frame.to_standing.replace(/^.*:/, "") : "";
-function batchLine(frame, run, withZachin = true) {
+function batchLine(frame, run, withZachin = true, withCase = true) {
   const f = frame;
   const rk = roomKind(frame);
-  const head = caseHead(frame, withZachin);
+  const head = withCase ? caseHead(frame, withZachin) : "";
   const pre = head ? `${head} ` : "";
   if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
   const line = rec2(f.line);
@@ -1528,15 +1532,49 @@ function batchLine(frame, run, withZachin = true) {
   const dup = !!text && words2.includes(text);
   return `${pre}[${entry}] ${words2}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text && !dup ? `: ${text}` : ""}`;
 }
-function batchLines(frames) {
+function batchShown(frames) {
   const seen = /* @__PURE__ */ new Set();
   return frames.flatMap((f) => {
     if (!addressedToMine(f)) return [];
     const key = caseKey(f);
     const first = !seen.has(key);
     seen.add(key);
-    return [batchLine(f, void 0, first)];
+    return [{ frame: f, text: (withCase) => batchLine(f, void 0, first, withCase) }];
   });
+}
+var textShown = (frames, cap) => frames.filter((f) => addressedToMine(f)).map((f) => ({
+  frame: f,
+  text: (withCase) => {
+    const t = [...frameToText(f, JSON.stringify(f), withCase)];
+    return t.length > cap ? t.slice(0, cap).join("") + "…" : t.join("");
+  }
+}));
+var batchText = (counted, frames = counted) => underCounts(counted, batchShown(frames)).join("\n");
+function underCounts(counted, shown, incomplete = false) {
+  const groups = casesOf(counted).filter((group) => caseOf(group[0]));
+  const placed = /* @__PURE__ */ new Set();
+  const under = (group) => {
+    const key = groupKey(group[0]);
+    return shown.filter((s) => caseOf(s.frame) && groupKey(s.frame) === key).map((s) => (placed.add(s), s.text(false)));
+  };
+  const rest = () => shown.filter((s) => !placed.has(s)).map((s) => s.text(true));
+  if (!groups.length) return rest();
+  if (!compactCounts())
+    return [...groups.flatMap((g) => [legacyCountLine(g, incomplete), ...under(g)]), ...rest()];
+  if (groups.length === 1 && !incomplete)
+    return [caseCountLine(groups[0]), ...under(groups[0]), ...rest()];
+  const pointer = incomplete ? T2().inFull("") : batchPointer(groups.flat());
+  if (groups.length === 1)
+    return [`${countText(groups[0], true)}; ${pointer}.`, ...under(groups[0]), ...rest()];
+  return [...groups.flatMap((g) => [countText(g, true), ...under(g)]), `${pointer}.`, ...rest()];
+}
+function countsWithShown(counted, shown) {
+  const asCount = shown.filter((s) => caseOf(s.frame) && !addressedToMine(s.frame));
+  const lines = shown.filter((s) => !asCount.includes(s));
+  const all = [...counted, ...asCount.map((s) => s.frame).filter((f) => !counted.includes(f))];
+  if (!all.length) return lines.map((s) => s.text(true));
+  const extra = lines.map((s) => s.frame).filter((f) => caseOf(f) && !all.includes(f));
+  return underCounts([...all, ...extra], lines);
 }
 function closingOf(frame) {
   const n2 = closedQuestion(frame);
@@ -1568,18 +1606,6 @@ function countText(frames, withCursor) {
   const n2 = frames.length - gone;
   return T2().count(head, n2, mineN) + (gone ? T2().supersededLines(gone) : "") + frames.map(closingOf).join("") + (cursor ? ` · realm=${JSON.stringify(cursor.realm)}, since=${cursor.since}` : "");
 }
-function caseCountLines(frames, incomplete = false) {
-  const groups = casesOf(frames).filter((group) => caseOf(group[0]));
-  if (!groups.length) return [];
-  if (!compactCounts()) return groups.map((group) => legacyCountLine(group, incomplete));
-  if (groups.length === 1 && !incomplete) return [caseCountLine(groups[0])];
-  const counts = groups.map((group) => countText(group, true));
-  const pointer = incomplete ? T2().inFull("") : batchPointer(groups.flat());
-  return groups.length === 1 ? [`${counts[0]}; ${pointer}.`] : [...counts, `${pointer}.`];
-}
-function batchHead(frames) {
-  return caseCountLines(frames).join("\n");
-}
 function cursorOf(frames) {
   const first = frames[0];
   const c = first && caseOf(first);
@@ -1604,6 +1630,37 @@ function batchPointer(frames) {
   );
 }
 
+// js/shared/stalebatch.ts
+var STALE_BURST_KEEP = 20;
+var BODY_CAP = 800;
+var shownOf = (frames, body) => body.shown.map((i) => frames[i]).filter((f) => !!f);
+function batchBodyText(frames, body, riding = []) {
+  const shown = shownOf(frames, body);
+  const bodies = underCounts([...riding, ...shown], textShown(shown, BODY_CAP), body.incomplete);
+  return `${body.head}
+
+${bodies.join("\n\n")}`;
+}
+function ridesIn(riding, frames, body) {
+  const cases = new Set(shownOf(frames, body).map(caseKey).filter(Boolean));
+  return riding.some((f) => cases.has(caseKey(f)));
+}
+function staleBatch(all, has, riding = []) {
+  const { shown: frames, kept: kept2, keys } = splitBatch(all, STALE_BURST_KEEP, has);
+  const count = kept2.length;
+  if (!count) return { text: "", keys };
+  const body = {
+    head: words(STALE).head(count, frames.length),
+    shown: frames.map((f) => all.indexOf(f)),
+    incomplete: count > frames.length
+  };
+  return { text: batchBodyText(all, body, ridingOf(riding, frames, has)), keys, body };
+}
+function ridingOf(riding, frames, has) {
+  const own = new Set(frames.flatMap((f) => deliveryKeys(f)));
+  return riding.filter((f) => !frames.includes(f) && !eventIn(f, (k) => has(k) || own.has(k)));
+}
+
 // js/bridge/backlog.ts
 var BACKLOG_MS = Number(process.env[envName("BRIDGE_BACKLOG_MS")]) || 1500;
 
@@ -1614,26 +1671,6 @@ var B = scoped(() => /* @__PURE__ */ new Map());
 
 // js/bridge/roomstack.ts
 var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
-
-// js/shared/stalebatch.ts
-var STALE_BURST_KEEP = 20;
-var BODY_CAP = 800;
-function staleBatch(all, has) {
-  const { shown: frames, kept: kept2, keys } = splitBatch(all, STALE_BURST_KEEP, has);
-  const count = kept2.length;
-  if (!count) return { text: "", keys };
-  const bodies = [
-    ...caseCountLines(frames, count > frames.length),
-    ...frames.filter((f) => addressedToMine(f)).map((f) => {
-      const t = frameToText(f, JSON.stringify(f));
-      return [...t].length > BODY_CAP ? [...t].slice(0, BODY_CAP).join("") + "…" : t;
-    })
-  ];
-  const head = words(STALE).head(count, frames.length);
-  return { text: `${head}
-
-${bodies.join("\n\n")}`, keys };
-}
 
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -1826,14 +1863,16 @@ function separateGraphBatch(ev) {
     (f) => !isGraphInbox(f)
   );
   const graphMarks2 = new Set(graph.flatMap((f) => deliveryKeys(f)));
-  const text = !other.length ? "" : ev.kind === "stale" ? staleBatch(other, () => false).text : [batchHead(other), ...batchLines(other)].filter(Boolean).join("\n");
+  const text = !other.length ? "" : ev.kind === "stale" ? staleBatch(other, () => false).text : batchText(other);
   return {
     graph,
     rest: {
       ...ev,
       frames: other,
       marks: ev.marks?.filter((key) => !graphMarks2.has(key)),
-      text
+      text,
+      body: void 0
+      // its indexes point into the frames before the split
     }
   };
 }
@@ -1869,18 +1908,21 @@ function setupChannel(pi) {
     for (const k of keys ?? []) marks.add(k);
     for (const old of marks) if (marks.size > 500) marks.delete(old);
   }
-  function flushAsides() {
+  function takeAsides() {
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
     const unit = aside.splice(0);
     const out2 = splitBatch(unit, Infinity, (k) => marks.has(k));
     aside.push(...unit.filter(isGraphInbox));
-    const got = out2.kept.filter((f) => !isGraphInbox(f));
+    return out2.kept.filter((f) => !isGraphInbox(f));
+  }
+  function flushAsides() {
+    const got = takeAsides();
     if (!got.length) return;
     pi.sendMessage(
       {
         customType: LOGGERS.channel,
-        content: markFrame([batchHead(got), ...batchLines(got)].join("\n")),
+        content: markFrame(batchText(got)),
         display: true,
         details: { count: got.map((f) => f.id ?? null) }
       },
@@ -1899,7 +1941,7 @@ function setupChannel(pi) {
     return {
       message: {
         customType: LOGGERS.channel,
-        content: markFrame([batchHead(out2.kept), ...batchLines(out2.kept)].join("\n")),
+        content: markFrame(batchText(out2.kept)),
         display: true,
         details: { graphInbox: true, receipt: token }
       }
@@ -1919,10 +1961,15 @@ function setupChannel(pi) {
     graphHandoff = null;
   });
   function sendBatch(ev) {
+    const frames = ev.frames ?? [];
+    const gathered = aside.filter((f) => !isGraphInbox(f));
+    const got = ev.body && ridesIn(gathered, frames, ev.body) ? takeAsides() : [];
     pi.sendMessage(
       {
         customType: LOGGERS.channel,
-        content: markFrame(ev.text ?? ""),
+        content: markFrame(
+          ev.body && got.length ? batchBodyText(frames, ev.body, got) : ev.text ?? ""
+        ),
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true }
       },
@@ -2002,12 +2049,19 @@ function setupChannel(pi) {
           return;
         }
         noteText(deliveryKeys(frame));
-        flushAsides();
+        const own = frame && caseKey(frame);
+        const ride = !!own && aside.some((f) => !isGraphInbox(f) && caseKey(f) === own);
+        if (!ride) flushAsides();
+        const got = ride ? takeAsides() : [];
+        const text = frame ? countsWithShown(got, [
+          ...batchShown(got),
+          { frame, text: (w) => frameToText(frame, raw, w) }
+        ]).join("\n") : raw;
         const later = byKind(frame) && stackOf(frame) === "batch";
         pi.sendMessage(
           {
             customType: LOGGERS.channel,
-            content: markFrame(frameToText(frame, raw)),
+            content: markFrame(text),
             display: true,
             details: frame ?? { raw }
           },
