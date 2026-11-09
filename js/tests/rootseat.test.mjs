@@ -15,7 +15,7 @@ import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { GLOBAL_PREFIX, ROOT_SEAT } from "../delivery/index.ts";
+import { GLOBAL_PREFIX, ROOT_SEAT, tool } from "../delivery/index.ts";
 import { createHalts } from "../opencode/halts.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import {
@@ -696,7 +696,7 @@ function unmarkedBridge(project) {
   return watchedBridge(project, BRIDGE_UNDER_TEST, true).path;
 }
 
-/** A bridge behind a proxy noting each stand mark the plugin receives, optionally cut first. */
+/** A bridge behind a proxy noting the mark of each stand reply the plugin receives, optionally cut first. */
 function watchedBridge(project, bridge, cut) {
   const proxy = join(project, `${cut ? "unmarked" : "watched"}-bridge.mjs`);
   const log = join(project, `${cut ? "unmarked" : "watched"}-marks.jsonl`);
@@ -708,13 +708,22 @@ import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 const p = spawn(process.execPath, [${JSON.stringify(bridge)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
-process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+p.stderr.pipe(process.stderr);
+const stands = new Set();
+createInterface({ input: process.stdin }).on('line', line => {
+  try {
+    const m = JSON.parse(line);
+    if (m.method === 'tools/call' && m.params?.name === ${JSON.stringify(tool("stand"))}) stands.add(m.id);
+  } catch {}
+  p.stdin.write(line + '\\n');
+}).on('close', () => p.stdin.end());
 createInterface({ input: p.stdout }).on('line', line => {
   const m = JSON.parse(line);
   const sc = m.result?.structuredContent;
   if (sc && ${cut}) delete sc.fresh;
-  if (sc && ('fresh' in sc || sc.action === 'register'))
-    appendFileSync(${JSON.stringify(log)}, JSON.stringify({ fresh: sc.fresh ?? null }) + '\\n');
+  // Noted before it is passed on: a mark in the log is a reply already on its way to the plugin.
+  if (stands.delete(m.id))
+    appendFileSync(${JSON.stringify(log)}, JSON.stringify({ fresh: sc?.fresh ?? null }) + '\\n');
   process.stdout.write(JSON.stringify(m) + '\\n');
 });
 for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
@@ -756,7 +765,12 @@ for (const bridge of ["мосте выпуска", "мосте ветки", "м�
           s.fake.state.calls.some(
             (c) => c.name === "iskron_channel" && c.arguments.action === "register",
           );
-        await until(() => registered() && heardSeats(s.fake).length === 0, "мост попытки закрыт");
+        // The stand reply has passed the proxy: before it, register with no socket heard yet
+        // looks like a closed bridge.
+        await until(
+          () => registered() && watched.marks().length > 0 && heardSeats(s.fake).length === 0,
+          "ответ stand дошёл до плагина, мост попытки закрыт",
+        );
         const name = placeArgs(s.fake, "connect")[0];
         assert.ok(name, JSON.stringify(s.fake.state.calls));
         const marked = watched.marks().includes(true);
