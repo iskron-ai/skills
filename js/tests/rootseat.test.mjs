@@ -15,7 +15,7 @@ import { readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { GLOBAL_PREFIX, ROOT_SEAT } from "../delivery/index.ts";
+import { GLOBAL_PREFIX, ROOT_SEAT, tool } from "../delivery/index.ts";
 import { createHalts } from "../opencode/halts.ts";
 import { OPENCODE_CLIENT } from "../shared/clients.ts";
 import {
@@ -693,57 +693,108 @@ for (const end of [
 
 /** The bridge under test with its fresh mark cut: claim-capable, yet silent about freshness. */
 function unmarkedBridge(project) {
-  const proxy = join(project, "unmarked-bridge.mjs");
+  return watchedBridge(project, BRIDGE_UNDER_TEST, true).path;
+}
+
+/** A bridge behind a proxy noting the mark of each stand reply the plugin receives, optionally cut first. */
+function watchedBridge(project, bridge, cut) {
+  const proxy = join(project, `${cut ? "unmarked" : "watched"}-bridge.mjs`);
+  const log = join(project, `${cut ? "unmarked" : "watched"}-marks.jsonl`);
+  writeFileSync(log, "");
   writeFileSync(
     proxy,
     `
 import { spawn } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-const p = spawn(process.execPath, [${JSON.stringify(BRIDGE_UNDER_TEST)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
-process.stdin.pipe(p.stdin); p.stderr.pipe(process.stderr);
+const p = spawn(process.execPath, [${JSON.stringify(bridge)}, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'pipe'] });
+p.stderr.pipe(process.stderr);
+const stands = new Set();
+createInterface({ input: process.stdin }).on('line', line => {
+  try {
+    const m = JSON.parse(line);
+    if (m.method === 'tools/call' && m.params?.name === ${JSON.stringify(tool("stand"))}) stands.add(m.id);
+  } catch {}
+  p.stdin.write(line + '\\n');
+}).on('close', () => p.stdin.end());
 createInterface({ input: p.stdout }).on('line', line => {
   const m = JSON.parse(line);
-  if (m.result?.structuredContent) delete m.result.structuredContent.fresh;
+  const sc = m.result?.structuredContent;
+  if (sc && ${cut}) delete sc.fresh;
+  // Noted before it is passed on: a mark in the log is a reply already on its way to the plugin.
+  if (stands.delete(m.id))
+    appendFileSync(${JSON.stringify(log)}, JSON.stringify({ fresh: sc?.fresh ?? null }) + '\\n');
   process.stdout.write(JSON.stringify(m) + '\\n');
 });
 for (const s of ['SIGTERM', 'SIGINT']) process.on(s, () => p.kill(s));
 p.on('exit', c => process.exit(c ?? 0));
 `,
   );
-  return proxy;
+  const marks = () =>
+    readFileSync(log, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l).fresh);
+  return { path: proxy, marks };
 }
 
-test(
-  "spawned_for на мосте выпуска: remove во время connect не снимает недоказанное место claim",
-  T,
-  async (t) => {
-    const s = await stage(t);
-    await s.fake.control({ connect_delay_ms: 1400 });
-    const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_PATH: RELEASED_BRIDGE });
-    try {
-      oc.create("root", { emit: false });
-      oc.priorContext("root", () => []);
-      const turn = oc.turn("root", `${INITIAL_LINE}\nпривет`).catch((e) => e);
-      await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
-      oc.remove("root");
-      await turn;
-      const registered = () =>
-        s.fake.state.calls.some(
-          (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+// The promise holds on any bridge: a claim's seat is revoked exactly when the bridge marked it fresh.
+for (const bridge of ["мосте выпуска", "мосте ветки", "мосте без отметки"])
+  test(
+    `spawned_for на ${bridge}: remove во время connect снимает место claim лишь по отметке`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      // The claim is confirmed: a refused one is the bridge's own cleanup, not the plugin's.
+      s.fake.state.structured = true;
+      s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+      await s.fake.control({ connect_delay_ms: 1400 });
+      const watched =
+        bridge === "мосте выпуска"
+          ? watchedBridge(s.project, RELEASED_BRIDGE, false)
+          : watchedBridge(s.project, BRIDGE_UNDER_TEST, bridge === "мосте без отметки");
+      const oc = await rootPlugin(s, s.project, { ISKRON_BRIDGE_PATH: watched.path });
+      try {
+        oc.create("root", { emit: false });
+        oc.priorContext("root", () => []);
+        const turn = oc.turn("root", `${INITIAL_LINE}\nпривет`).catch((e) => e);
+        await until(() => s.fake.state.counts.connect_asked > 0, "connect ушёл");
+        oc.remove("root");
+        await turn;
+        const registered = () =>
+          s.fake.state.calls.some(
+            (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+          );
+        // The stand reply has passed the proxy: before it, register with no socket heard yet
+        // looks like a closed bridge.
+        await until(
+          () => registered() && watched.marks().length > 0 && heardSeats(s.fake).length === 0,
+          "ответ stand дошёл до плагина, мост попытки закрыт",
         );
-      await until(() => registered() && heardSeats(s.fake).length === 0, "мост попытки закрыт");
-      const name = placeArgs(s.fake, "connect")[0];
-      assert.ok(name, JSON.stringify(s.fake.state.calls));
-      const revokes = s.fake.state.calls.filter(
-        (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
-      );
-      assert.deepEqual(revokes, [], "a claim's seat without the mark is not proven own");
-      assert.equal(s.fake.state.places.has(`931:${name}`), true);
-    } finally {
-      await oc.stop();
-    }
-  },
-);
+        const name = placeArgs(s.fake, "connect")[0];
+        assert.ok(name, JSON.stringify(s.fake.state.calls));
+        const marked = watched.marks().includes(true);
+        if (bridge === "мосте ветки") assert.ok(marked, JSON.stringify(watched.marks()));
+        const revokes = () =>
+          s.fake.state.calls.filter(
+            (c) => c.name === "iskron_channel" && c.arguments.action === "revoke",
+          );
+        if (marked) {
+          await until(() => revokes().length > 0, "доказанно своё свежее место снято");
+          assert.deepEqual(
+            revokes().map((c) => c.arguments.standing),
+            [name],
+          );
+          assert.equal(s.fake.state.places.has(`931:${name}`), false);
+        } else {
+          assert.deepEqual(revokes(), [], "a claim's seat without the mark is not proven own");
+          assert.equal(s.fake.state.places.has(`931:${name}`), true);
+        }
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
 
 for (const language of ["ru", "en"])
   test(
