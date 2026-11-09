@@ -32,6 +32,7 @@ export function startRow(v: unknown, realm: string): Row {
     model: text(a.model),
     harness: text(a.harness),
     launcher: text(a.launcher),
+    author: text(x.author),
   };
 }
 export function stopRow(v: unknown, realms: readonly string[]): Row | null {

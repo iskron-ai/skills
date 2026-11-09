@@ -2,7 +2,8 @@
 // №4050): which orchestrator answers which `launcher` value of a role invite, with what harnesses
 // and models, how many raised at once; checkouts come from Orca, an optional map overrides. They
 // live in the human's own graph "mind" as nodes with attribute slice:orchestra, body — one JSON
-// object; the daemon reads them under its own key. A description naming another host is someone
+// object; the daemon reads them under its own key, whose account (the "me" tool's whoami) is the one
+// whose calls are own — another account's only when the description lists it in callers. A description naming another host is someone
 // else's; one without a host answers any leading machine; a broken one raises nothing, aloud.
 import { hostname } from "node:os";
 import { isAbsolute } from "node:path";
@@ -23,8 +24,12 @@ export interface Launcher {
   harnesses: Record<string, HarnessOffer>;
   /** Optional: overrides Orca's own project setups for its keys. */
   checkouts: Record<string, string>;
+  /** Optional: other accounts (handles, lower case, no @) whose calls this launcher answers. */
+  callers: string[];
 }
 export interface Launchers {
+  /** The account the daemon's key belongs to (handle, lower case, no @) — its calls are own. */
+  account: string;
   /** This machine's launchers by their selector. */
   own: Map<string, Launcher>;
   /** Selectors described for other hosts: the host named — said aloud, for a host that names
@@ -36,6 +41,7 @@ export interface Launchers {
 
 const SLICE = "slice:orchestra";
 const LIMIT = 50;
+const HANDLE = /^@[^\s:@/]+$/;
 
 const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 
@@ -73,6 +79,9 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
     if (!str(path) || !isAbsolute(path)) return { code: "checkouts_invalid", launcher };
     checkouts[repo] = path;
   }
+  const callers = d.callers ?? [];
+  if (!Array.isArray(callers) || !callers.every((h) => str(h) && HANDLE.test(h.trim())))
+    return { code: "callers_invalid", launcher };
   return {
     launcher,
     host: str(d.host) ? d.host.trim() : null,
@@ -80,16 +89,29 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
     limit: d.limit as number,
     harnesses,
     checkouts,
+    callers: (callers as string[]).map((h) => h.trim().slice(1).toLowerCase()),
   };
+}
+
+/** The account of a seat address @handle or @handle:name, lower case; anything else — null. */
+export function accountOf(address: unknown): string | null {
+  if (typeof address !== "string") return null;
+  const m = /^@([^\s:@/]+)(?::\S*)?$/.exec(address.trim());
+  return m ? m[1].toLowerCase() : null;
 }
 
 /** The descriptions as they lie in mind; a failed read throws — the tact raises nothing. */
 export async function readLaunchers(serverUrl: string, token: string): Promise<Launchers> {
   const s = mcpSession(serverUrl, token, "orchestra");
-  const out: Launchers = { own: new Map(), elsewhere: new Map(), refused: [] };
+  const out: Launchers = { account: "", own: new Map(), elsewhere: new Map(), refused: [] };
   const here = hostname().toLowerCase();
   try {
     await s.open();
+    // The key's own identity, as the server names it: «… handle @name …» (live 09.11.2026).
+    const me = await s.call(tool("me"), { action: "whoami" });
+    const handle = /\bhandle @([^\s:@/()·]+)/.exec(me)?.[1];
+    if (!handle) throw new Error("account_unknown");
+    out.account = handle.toLowerCase();
     const found = await s.call(tool("search"), {
       realm: "mind",
       q: "",

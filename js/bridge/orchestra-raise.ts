@@ -1,6 +1,7 @@
 // The raising half of the tact (graph @nks/nks-dev, nodes #5042, #7517, #9968–#9970, #4920;
 // decisions of case №4050): a start row of a complete demands snapshot is raised only when its
-// invite's attrs name one of this machine's launchers, a harness the launcher offers and the
+// invite's author is the daemon's own account or one the launcher's description names in
+// callers (№4050 [22]–[23]), its attrs name one of this machine's launchers, a harness the launcher offers and the
 // adapter knows (its name is Orca's --agent), and a model the launcher allows; the checkout is
 // the description's own for that repository, else exactly one ready local Orca setup of the
 // project whose remote is the invite's repository (#4518). Anything else is an outcome said
@@ -11,7 +12,7 @@ import { existsSync, statSync } from "node:fs";
 
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import type { Launcher, Launchers } from "./orchestra-launchers.ts";
+import { accountOf, type Launcher, type Launchers } from "./orchestra-launchers.ts";
 import {
   type CheckoutOf,
   launchArgv,
@@ -40,6 +41,9 @@ function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | n
     const host = ls.elsewhere.get(launcher);
     return host ? `host_elsewhere (${host})` : "launcher_unknown";
   }
+  const caller = accountOf(row.author);
+  if (!caller) return "caller_unknown";
+  if (caller !== ls.account && !own.callers.includes(caller)) return "caller_not_allowed";
   const harness = text(row.harness);
   if (!harness) return "harness_missing";
   const offer = own.harnesses[harness];

@@ -245,6 +245,9 @@ export async function startFakeNks(opts = {}) {
     // и срез agents,ways в iskron_search(realm="mind"); { refuse: "проза" } — отказ этого поиска;
     // null — readiness без признака.
     mind: opts.mind ?? null,
+    // Ответ iskron_me(action="whoami") — форма живого сервера 09.11.2026; строка — подмена.
+    whoami:
+      opts.whoami ?? "Вызывающая идентичность: @tester · handle @tester (tester@probe.example)",
     // Каждый tools/call как пришёл, ДО отсева по схеме: что мост ПОСЛАЛ,
     // судят здесь, а не по тому, что фейк принял.
     calls: [],
@@ -2083,21 +2086,23 @@ export async function startFakeNks(opts = {}) {
             extra,
           );
         const text =
-          msg.params.name === "iskron_me"
-            ? "Готовность @tester (Tester)\nпризнаки (1):\n" +
-              (m
-                ? `  personal_mind «Личная память» — ${m.missing ? "missing" : "present"} · scope: person · ready: ${m.missing ? "нет" : "да"}\n`
-                : "")
-            : rules.length
-              ? `Найдено ${rules.length} узлов:\n` +
-                rules
-                  .map(
-                    (r) =>
-                      r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
-                  )
-                  .join("\n") +
-                `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
-              : "Ничего не найдено.";
+          msg.params.name === "iskron_me" && msg.params.arguments?.action === "whoami"
+            ? st.whoami
+            : msg.params.name === "iskron_me"
+              ? "Готовность @tester (Tester)\nпризнаки (1):\n" +
+                (m
+                  ? `  personal_mind «Личная память» — ${m.missing ? "missing" : "present"} · scope: person · ready: ${m.missing ? "нет" : "да"}\n`
+                  : "")
+              : rules.length
+                ? `Найдено ${rules.length} узлов:\n` +
+                  rules
+                    .map(
+                      (r) =>
+                        r.row ?? `  📌 ${r.name} (#${r.seq}, phenomenon, Pt/Va/Ad, v1) — ${r.text}`,
+                    )
+                    .join("\n") +
+                  `\n\n↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#${rules[0].seq}")`
+                : "Ничего не найдено.";
         return json(
           res,
           200,

@@ -71,11 +71,13 @@ const orcaProjects = (checkout) => ({
   ],
 });
 
-const invite = (entry, attrs, repository = REPO) => ({
+/** author — the caller's seat as the invites door carries it (#4951); the fake's account is
+ * @tester, so the default call is the machine's own. */
+const invite = (entry, attrs, repository = REPO, author = "@tester:lead") => ({
   entry_id: entry,
   room_id: ROOM,
   karta_seq: 931,
-  author: "@alari:lead",
+  author,
   at: "2026-11-09T10:00:00Z",
   payload: { holon: { seq: 4057, repository } },
   attrs,
@@ -95,7 +97,7 @@ const signal = (i, entry, rooms, seat = "seat-raised") => ({
 });
 
 /** A leading daemon: flag on, the fake's api beside a hold record, a substitute orca on PATH. */
-async function leading(t, { descriptions, projects, env = {}, admitted = true } = {}) {
+async function leading(t, { descriptions, projects, env = {}, admitted = true, whoami } = {}) {
   // Short: the daemon's sockets live under it, and a Unix socket path is capped near 104 bytes.
   const dir = mkdtempSync(join(tmpdir(), "iskron-or-"));
   const checkout = join(dir, "checkout");
@@ -103,6 +105,7 @@ async function leading(t, { descriptions, projects, env = {}, admitted = true } 
   const fake = await startFakeNks({
     pat: "probe-pat",
     mind: { orchestra: descriptions?.(checkout) ?? [describe()] },
+    whoami,
   });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
@@ -325,6 +328,54 @@ test("raise: a description of another machine is not raised here, its host said 
   // A host naming no machine would raise nowhere in silence: every machine names the host it read.
   assert.match(r.out, /invite 1: host_elsewhere \(another-host\)/, r.out);
   assert.match(r.out, /#78 in mind: description_not_json/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
+test("raise: only the machine's own account calls — a foreign or authorless call is refused aloud", async (t) => {
+  const o = await leading(t);
+  await o.queue([
+    invite(1, GOOD),
+    invite(2, GOOD, REPO, "@tester"),
+    invite(3, GOOD, REPO, "@stranger:lead"),
+    invite(4, GOOD, REPO, null),
+    invite(5, GOOD, REPO, "tester:lead"),
+  ]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: launched/, r.out);
+  assert.match(r.out, /invite 3: caller_not_allowed/, r.out);
+  assert.match(r.out, /invite 4: caller_unknown/, r.out);
+  assert.match(r.out, /invite 5: caller_unknown/, r.out);
+  assert.equal(o.launches().length, 2);
+});
+
+test("raise: a caller named in the description's callers is raised, others still refused", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { callers: ["@Stranger"] } })],
+  });
+  await o.queue([invite(1, GOOD, REPO, "@stranger:lead"), invite(2, GOOD, REPO, "@other:lead")]);
+  const r = await o.step();
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: caller_not_allowed/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
+test("raise: a malformed callers list is a broken description, raising nothing", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { callers: "@stranger" } })],
+  });
+  await o.queue([invite(1, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /probe-mac in mind: callers_invalid/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
+test("raise: the machine's account unknown — nothing is raised, said aloud", async (t) => {
+  const o = await leading(t, { whoami: "Вызывающая идентичность: неизвестна" });
+  await o.queue([invite(1, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /account_unknown/, r.out);
   assert.equal(o.launches().length, 0);
 });
 
