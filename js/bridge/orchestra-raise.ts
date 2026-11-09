@@ -33,7 +33,7 @@ const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ?
 
 /** Why this row is not raised here, or null. Another host's launcher is said with the host it
  * names — a host matching no machine would otherwise raise nowhere in silence. */
-function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | null {
+export function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | null {
   const launcher = text(row.launcher);
   if (!launcher) return "launcher_missing";
   const own = ls.own.get(launcher);
@@ -63,7 +63,7 @@ function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | n
 }
 
 /** The checkout: the description's own key first, else Orca's single ready local setup. */
-function checkoutFor(
+export function checkoutFor(
   own: Launcher,
   repository: string,
   orca: CheckoutOf,
@@ -79,7 +79,7 @@ function checkoutFor(
 /** The raised root seats itself only by its checkout's cover (opencode/rootseat.ts): without one
  * naming the call's graph and role the harness can neither stand nor be stopped (№4050 [56]).
  * A short rN of the cover goes by the realm list. */
-async function coverRefusal(
+export async function coverRefusal(
   worktree: string,
   realm: string,
   karta: number,

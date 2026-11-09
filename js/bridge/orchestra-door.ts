@@ -15,7 +15,9 @@ import type { Demands } from "./orchestra-demands.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
-export type OrchestraOp = "on" | "off" | "status" | "step" | "demands";
+export type OrchestraOp = "on" | "off" | "status" | "step" | "plan" | "demands";
+const OPS: readonly string[] = ["on", "off", "status", "step", "plan", "demands"];
+export const isOrchestraOp = (op: string): op is OrchestraOp => OPS.includes(op);
 export interface OrchestraAnswer {
   ok: boolean;
   said: string;
@@ -59,7 +61,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       const realms = Array.isArray(msg.realms)
         ? msg.realms.filter((x): x is string => typeof x === "string")
         : [];
-      if (op !== "on" && op !== "off" && op !== "status" && op !== "step" && op !== "demands") {
+      if (!isOrchestraOp(op)) {
         socket.end(JSON.stringify({ ok: false, said: w().unknownOp(op) }) + "\n");
         return;
       }

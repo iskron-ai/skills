@@ -19,6 +19,7 @@ import {
   type OrchestraServe,
 } from "./orchestra-door.ts";
 import { leadAct } from "./orchestra-lead.ts";
+import { planTact } from "./orchestra-plan.ts";
 import { stepTact, tactStateOf } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
@@ -162,6 +163,20 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
       return { ok: true, said: w().off() };
     }
     if (op === "step") return step(gone);
+    if (op === "plan") {
+      const flag = readOrchestraFlag(authDir);
+      const boundary = [
+        ...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? []), ...realms]),
+      ];
+      return planTact(
+        authDir,
+        net?.base() ?? "",
+        net?.token() ?? null,
+        net?.mcp?.() ?? "",
+        realms.length ? realms : boundary,
+        boundary,
+      );
+    }
     const flag = readOrchestraFlag(authDir);
     const tact = tactStateOf(authDir);
     const lines = Object.entries(tact.realms).map(([realm, t]) =>

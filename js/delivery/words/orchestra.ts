@@ -55,12 +55,24 @@ export interface OrchestraWords {
   leadOrdersUnread: (why: string) => string;
   /** Бриф поднимаемого агента после строки spawned_for. */
   brief: (realm: string, karta: number, room: string, invite: number) => string;
+  /** Сухой такт: rows — строки по зовам через перевод строки (может быть пуст). */
+  plan: (rows: string) => string;
+  /** Сухой такт: зов был бы поднят этой командой. */
+  planLaunch: (argv: string) => string;
+  /** Сухой такт: зов был бы отказан этим кодом. */
+  planRefuse: (code: string) => string;
+  /** Сухой такт: зов уже в реестре в этом состоянии. */
+  planAlready: (state: string) => string;
+  /** Сухой такт: копию назвала бы Orca при запуске — сейчас её не спрашивают. */
+  planCheckout: (repository: string) => string;
+  /** Сухой такт: место брифа в argv. */
+  planBrief: () => string;
 }
 
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status|step|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "использование: orchestra <on|off|status|step [--dry-run]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
     doorSilent: () =>
@@ -109,10 +121,17 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по первой строке. ` +
       `Заново не регистрируйся. До работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
       "Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
+    plan: (rows) =>
+      `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
+    planLaunch: (argv) => `поднял бы: ${argv}`,
+    planRefuse: (code) => `отказал бы: ${code}`,
+    planAlready: (state) => `уже в реестре: ${state}`,
+    planCheckout: (repository) => `<копия Orca для ${repository}>`,
+    planBrief: () => "<бриф>",
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status|step|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "usage: orchestra <on|off|status|step [--dry-run]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",
     doorSilent: () =>
@@ -162,5 +181,12 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the first line. ` +
       `Do not register again. Before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
       "Read the case assignment and its acceptance criteria; do not invent a task.",
+    plan: (rows) =>
+      `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
+    planLaunch: (argv) => `would launch: ${argv}`,
+    planRefuse: (code) => `would refuse: ${code}`,
+    planAlready: (state) => `already in the registry: ${state}`,
+    planCheckout: (repository) => `<orca checkout of ${repository}>`,
+    planBrief: () => "<brief>",
   },
 };

@@ -561,6 +561,54 @@ test("raise: the daemon's own timer leads — no step is asked", async (t) => {
   assert.equal(o.launches().length, 1, "the timer raised the agent by itself");
 });
 
+test("dry run: says what one tact would raise or refuse, and touches nothing — no orca, no cursor, no registry, no order", async (t) => {
+  const o = await leading(t, {
+    descriptions: (checkout) => [describe({ body: { checkouts: { [REPO]: checkout } } })],
+  });
+  await o.queue(
+    [
+      invite(9, GOOD),
+      invite(2, { ...GOOD, launcher: "nobody" }),
+      invite(5, GOOD, "github.com/probe/two"),
+    ],
+    [signal(1, 42, [ROOM], "seat-foreign")],
+  );
+  const run = join(o.dir, "run");
+  const before = ["orchestra-cursors.json", "orchestra-runs.json", "orchestra-orders.json"].map(
+    (f) => existsSync(join(run, f)),
+  );
+  const r = await cli(o.dir, ["step", "--dry-run"]);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /dry run/i, r.out);
+  assert.match(
+    r.out,
+    new RegExp(
+      `invite 9: would launch: orca agent launch --agent opencode --worktree path:${o.checkout} --model anthropic/claude-opus-5-5 --prompt <brief> --json`,
+    ),
+    r.out,
+  );
+  assert.match(r.out, /invite 2: would refuse: launcher_unknown/, r.out);
+  // No map for this repository: Orca would name the checkout at launch — not asked now.
+  assert.match(
+    r.out,
+    /invite 5: would launch: .*--worktree path:<orca checkout of github\.com\/probe\/two>/,
+    r.out,
+  );
+  assert.equal(o.launches().length + o.closes().length, 0, "orca was not called");
+  assert.ok(!existsSync(join(o.dir, "orca.log")), "not even for its version");
+  assert.deepEqual(
+    ["orchestra-cursors.json", "orchestra-runs.json", "orchestra-orders.json"].map((f) =>
+      existsSync(join(run, f)),
+    ),
+    before,
+    "no cursor, registry or orders cursor written",
+  );
+  assert.equal(o.fake.state.orders.human.length, 0, "no stop order");
+  // The real tact after it starts from the same place: invite 9 is launched now.
+  const real = await o.step();
+  assert.match(real.out, /invite 9: launched/, real.out);
+});
+
 test("quench: our seat's empty composition after it sat gets one composition_empty stop order", async (t) => {
   const o = await leading(t);
   await o.queue([invite(9, GOOD)]);
