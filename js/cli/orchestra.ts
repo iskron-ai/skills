@@ -13,6 +13,8 @@ import { setLang, words } from "../shared/lang.ts";
 import { defaultAuthDir } from "../shared/standings.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
+/** How long a manual tact is waited for — a ceiling for a daemon that never answers. */
+const TACT_WAIT_MS = 15 * 60_000;
 
 /** The flag's value, taken out of args. */
 function take(args: string[], flag: string): string | undefined {
@@ -63,7 +65,15 @@ export async function runOrchestra(argv: string[]): Promise<void> {
     return fail(w().usage().trimEnd());
   const op: OrchestraOp = dry >= 0 ? "plan" : named;
   parseArgs(["--auth-dir", authDir, ...args.filter((a) => a !== named)]);
-  const slow = op === "demands" || op === "plan" || describes;
+  const slow = op === "demands" || describes;
+  // A tact reads every graph, asks the server and mind and may launch for minutes, queued behind
+  // the timer's own: a manual step and its dry run wait for the outcome, not the door's 5 s.
+  const tact = op === "step" || op === "plan";
+  const wait = tact
+    ? Number(process.env[envName("ORCHESTRA_STEP_WAIT_MS")]) || TACT_WAIT_MS
+    : slow
+      ? 120_000
+      : 5_000;
   // Typed at a terminal, `on` is the human's consent itself; an agent's shell runs it on pipes
   // and gives none (bridge/orchestra-flag.ts).
   const consent = op === "on" && !!process.stdin.isTTY && !!process.stdout.isTTY;
@@ -73,7 +83,7 @@ export async function runOrchestra(argv: string[]): Promise<void> {
       : {}),
     ...(consent ? { consent } : {}),
   };
-  const answer = await orchestraAsk(authDir, op, realms, slow ? 120_000 : 5_000, extra);
+  const answer = await orchestraAsk(authDir, op, realms, wait, extra);
   if (answer.demands) {
     process.stdout.write(`${JSON.stringify(answer.demands)}\n`);
     if (!answer.ok) process.exitCode = 1;

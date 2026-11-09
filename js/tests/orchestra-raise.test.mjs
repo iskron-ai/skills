@@ -35,6 +35,9 @@ function cli(dir, args, env = {}) {
   });
 }
 
+/** A caller that gives up after 5 s — a manual step otherwise waits for the tact's outcome. */
+const GIVE_UP = { ISKRON_ORCHESTRA_STEP_WAIT_MS: "5000" };
+
 const describe = (over = {}) => ({
   seq: over.seq ?? 77,
   body: JSON.stringify({
@@ -521,7 +524,7 @@ test("raise: the host is this machine's name in any letter case", async (t) => {
 test("raise: the caller gone mid-tact — no further launch, no cursor moves (#8202)", async (t) => {
   const o = await leading(t, { env: { FAKE_ORCA_DELAY_MS: "6000" } });
   await o.queue([invite(1, GOOD), invite(2, GOOD)]);
-  const r = await o.step();
+  const r = await cli(o.dir, ["step"], GIVE_UP);
   assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
   // Past the first launch's answer and what a second launch would take.
   await new Promise((done) => setTimeout(done, 9_000));
@@ -602,9 +605,16 @@ test("consent: on typed at a terminal admits the orchestrator in the living daem
   const r = await o.step();
   assert.doesNotMatch(r.out, /has not admitted/, r.out);
   assert.match(r.out, /invite 9: launched/, r.out);
-  // A later piped on (adding a graph) keeps the consent given at the terminal.
+  // A later piped on adding a graph is enabling there: refused (#7514); the consent given at
+  // the terminal stays, and a piped on of the graph already named keeps it.
   const more = await cli(o.dir, ["on", "--realm", "@probe/more"]);
-  assert.equal(more.code, 0, more.err);
+  assert.equal(more.code, 1, more.out);
+  const same = await cli(o.dir, ["on", "--realm", REALM]);
+  assert.equal(same.code, 0, same.err);
+  assert.equal(
+    JSON.parse(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8")).consent?.by,
+    "terminal",
+  );
   const off = await cli(o.dir, ["off"]);
   assert.equal(off.code, 0, off.err);
   assert.equal(
@@ -775,7 +785,7 @@ test("quench: the caller gone during the re-check — no stop order after it (#8
       },
     },
   });
-  const r = await o.step();
+  const r = await cli(o.dir, ["step"], GIVE_UP);
   assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
   assert.equal(o.fake.state.raisedHeld, 1, "the re-check was on hold when the client left");
   // The daemon has served a later ask: the closed socket of the gone caller is seen by now.
@@ -805,8 +815,8 @@ test("quench: a raised seat that never joined within the window is a failed laun
 });
 
 /** Our seat sat and its composition emptied; the stop answers `answer`, an open order lies. */
-async function stopping(t, answer, order) {
-  const o = await leading(t);
+async function stopping(t, answer, order, env = {}) {
+  const o = await leading(t, { env });
   await o.queue([invite(9, GOOD)]);
   await o.step();
   await o.queue([], [signal(1, 9, [ROOM])]);
@@ -839,6 +849,56 @@ test("quench: a stop answered without an id ends when no open order is left for 
   assert.equal(closed.status, 200);
   await o.step();
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+});
+
+/** The agent's bridge answers the order with `state`, as it closes it. */
+const ack = (o, order, state) =>
+  fetch(`${o.fake.base}/api/me/orders/${order}/ack`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer probe-pat",
+      "content-type": "application/json",
+      "user-agent": "iskron-bridge/0.0.0",
+    },
+    body: JSON.stringify({ state }),
+  });
+
+// A closed order that did not carry the stop out (#7522): the agent may still live — the run
+// stays stopping and its tab open until the window passes, then frees its slot, tab untouched.
+test("quench: our stop closed failed keeps the run stopping, its tab open, until the window", async (t) => {
+  const window = 6000;
+  const o = await stopping(t, { status: 201, body: { id: "ord-f" } }, "ord-f", {
+    ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
+  });
+  const since = Date.now();
+  assert.equal((await ack(o, "ord-f", "failed")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", r.out);
+  assert.equal(o.closes().length, 0, "a failed stop closes no tab");
+  await new Promise((done) => setTimeout(done, Math.max(0, window + 500 - (Date.now() - since))));
+  const late = await o.step();
+  assert.equal(late.code, 0, late.err + late.out);
+  assert.match(late.out, /invite 9: stop_failed, terminal_left_open/, late.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
+});
+
+test("quench: someone else's stop closed refused does not end our run nor close its tab", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    stop_order: { id: "ord-n", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  o.fake.state.orders.list.get("ord-n").state = "refused";
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_refused_elsewhere/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  assert.equal(o.closes().length, 0);
 });
 
 test("quench: a stopping run whose graph left the boundary ends when its order closes, not before", async (t) => {
@@ -966,7 +1026,12 @@ test("quench: a stop on demand of a seat not yet in the registry is read again o
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
   const cursor = () =>
     JSON.parse(readFileSync(join(o.dir, "run", "orchestra-orders.json"), "utf8")).since;
-  assert.equal(cursor(), 1, "no unseated run left: the cursor passes the order");
+  // No unseated run is left, but the order is still open: it is read again for its outcome.
+  assert.equal(cursor(), 0, "an open order of our stopping run holds the cursor");
+  assert.equal((await ack(o, "ord-e", "stopped")).status, 200);
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.equal(cursor(), 1, "the order closed: the cursor passes it");
 });
 
 // Review of №4050 [105] п.4: a tab is closed only by the handle of the Orca runtime the launch

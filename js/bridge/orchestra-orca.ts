@@ -131,9 +131,10 @@ export function launchArgv(
   ];
 }
 
-/** The terminal handle of a launch answer: `outcome.handle` of a terminal launch under result or
- * result.launch, `agentTerminalHandle` of an older host — the form agent-context 1.4.242 declares,
- * no launch answer observed. Anything else — no handle. */
+/** The terminal handle of a launch answer: `result.outcome.handle` of a terminal launch — the
+ * answer observed on 1.4.242 (the launch of 09.11, case №4040; graph @nks/nks-dev, #9966);
+ * under result.launch, or `agentTerminalHandle` of an older host — forms agent-context declares,
+ * kept unobserved. Anything else — no handle. */
 export function launchHandle(out: string): string | undefined {
   try {
     const r = (JSON.parse(out) as { result?: Record<string, unknown> }).result ?? {};
@@ -149,7 +150,8 @@ export function launchHandle(out: string): string | undefined {
   return undefined;
 }
 
-/** The Orca runtime that answered: `_meta.runtimeId`, on every 1.4.242 answer observed (№4050 [74]). */
+/** The Orca runtime that answered: `_meta.runtimeId`, on every 1.4.242 answer observed — launch
+ * included (№4050 [74]; #9966). */
 function runtimeOf(out: string): string | undefined {
   try {
     const id = (JSON.parse(out) as { _meta?: { runtimeId?: unknown } })._meta?.runtimeId;

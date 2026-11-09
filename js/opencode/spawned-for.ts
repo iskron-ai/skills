@@ -8,6 +8,9 @@ import { spawnAdmission, type SpawnStart } from "./spawn-admission.ts";
 const targetOf = (args: Record<string, unknown>): string =>
   `${String(args.realm)}#${String(args.karta).replace(/^#/, "")}`;
 
+// A stand that does more than register: it must reach the bridge even on a held seat.
+const STAND_ACTS = ["status", "room", "room_karta", "take", "mute_siblings", "repeat_knock"];
+
 const takenWord = (e: SpawnStart | undefined): string | null =>
   e?.pair && e.claimed && e.realm && !e.told
     ? words(SPAWNED_FOR).taken(e.realm, e.pair.room, e.pair.invite)
@@ -101,13 +104,15 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
         !entry?.target || entry.target === target ? entry?.pair : undefined,
       );
       if (!pair) return;
-      if (holding && entry?.claimed && entry.place && entry.pair && sameSpawn(pair, entry.pair))
+      if (holding && entry?.claimed && entry.place && entry.pair && sameSpawn(pair, entry.pair)) {
+        if (name === tool("stand") && STAND_ACTS.some((k) => Object.hasOwn(args, k))) return;
         return words(SPAWNED_FOR).held(
           entry.place,
           entry.realm ?? String(args.realm),
           pair.room,
           pair.invite,
         );
+      }
       if (entry && !entry.target) entry.target = target;
       args.spawned_for = pair;
     },

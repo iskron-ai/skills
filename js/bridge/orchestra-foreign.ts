@@ -2,8 +2,10 @@
 // №4050 [90]): a person or another agent orders our seat to stop — not the orchestrator. The
 // seat's own bridge carries the order out; the tact learns it from the account's orders
 // (GET /me/orders, every state, from the daemon's cursor): an order on a live run's seat that
-// is not the run's own makes it stopping (settleStops ends it when the order closes), a closed
-// one ends it at once — then closeEnded closes its terminal and its limit slot is free. The
+// is not the run's own makes it stopping (settleStops ends it when the order closes `stopped`), a
+// carried-out one ends it at once — then closeEnded closes its terminal and its limit slot is
+// free; any other closed outcome keeps it stopping (#7522). The order of a stopping run is read
+// again until it closes, so its outcome is known. The
 // raised tape says no revoke, and an open-only read misses an order carried out between tacts.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,12 +52,15 @@ export async function foreignStops(
   const said: string[] = [];
   const fresh = new Set<Run>();
   const bySeat = new Map<string, Run>();
+  // Stopping runs wait for their order's closed state: the cursor holds before an open one.
+  const stopping = new Map<string, Run>();
   let unseated = false;
   for (const r of Object.values(runs))
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);
       else unseated = true;
-    }
+    } else if (r.state === "stopping" && !r.stop_outcome)
+      stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
   const seen = new Set(Object.values(runs).map((r) => r.standing_id));
   let since = readSince(authDir);
   let held: number | undefined;
@@ -74,19 +79,41 @@ export async function foreignStops(
         const seat = String(v.standing_id ?? "");
         const run = bySeat.get(seat);
         const id = typeof v.id === "string" ? v.id : "";
+        const state = String(v.state);
+        const open = OPEN.has(state);
         if (!run && unseated && seat && !seen.has(seat)) held ??= since;
+        const own = stopping.get(`o:${id}`) ?? stopping.get(`s:${seat}`);
+        if (!run && own) {
+          if (open) held ??= since;
+          else {
+            own.order_id ??= id;
+            own.stop_outcome = state;
+          }
+          continue;
+        }
         if (!run || !id || id === run.order_id) continue;
         bySeat.delete(seat);
         run.order_id = id;
-        const open = OPEN.has(String(v.state));
-        run.state = open ? "stopping" : "ended";
-        if (open) fresh.add(run);
+        // Only a carried-out stop ends the run; a closed order of another outcome keeps it
+        // stopping until its window passes (settleStops, #7522).
+        const done = state === "stopped";
+        run.state = done ? "ended" : "stopping";
+        if (!done) run.stopping_at = new Date().toISOString();
+        if (!open && !done) run.stop_outcome = state;
+        if (open) {
+          fresh.add(run);
+          held ??= since;
+        }
         said.push(
           w().leadRow(
             run.realm,
             run.room,
             run.invite,
-            open ? "stop_ordered_elsewhere" : "stopped_elsewhere",
+            open
+              ? "stop_ordered_elsewhere"
+              : done
+                ? "stopped_elsewhere"
+                : `stop_${state}_elsewhere`,
           ),
         );
       }
