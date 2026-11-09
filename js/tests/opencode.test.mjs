@@ -1410,6 +1410,37 @@ test("a stale burst is one prompt into the holder's session, bodies included", a
   }
 });
 
+// №4050 [74] (в): a stale batch of withdrawn calls asks nothing — it wakes no turn.
+test("a stale batch of a withdrawn invite and its withdrawal wakes no turn", async () => {
+  const b = bridgeEnv("stale-calls");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-calls");
+    const room = { id: "c0ffee00-0000-4000-8000-000000000002", seq: 2, realm: "@p/q" };
+    const line = (entry_id, kind) => ({ entry_id, kind, key: "invite:role-1", fields: {} });
+    const frames = [
+      { type: "message", id: "f5", room, event_kind: "room.invite", line: line(5, "invite") },
+      { type: "message", id: "f8", room, event_kind: "room.withdraw", line: line(8, "withdraw") },
+    ];
+    const file = `${b.events}.${pidOf(b.log)}`;
+    appendFileSync(file, event("stale", { frames, text: "Лежалых кадров: 2\n\nзовёт; отозвано" }));
+    // The next batch is the probe's fence: events are taken in order.
+    appendFileSync(
+      file,
+      event("stale", { frames: [{ id: "s2" }], text: "Лежалых кадров: 1\n\nзабор" }),
+    );
+    await until(() => rec.prompts.some((p) => p.text.includes("забор")), "the fence prompt");
+    assert.deepEqual(
+      rec.prompts.map((p) => p.text),
+      ["Лежалых кадров: 1\n\nзабор"],
+      "the withdrawn call woke nothing",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("an eviction is loud in OpenCode: a prompt into the holder's session — the bridge stands beside by itself, take=true by the own-name rule", async () => {
   const b = bridgeEnv("evicted");
   const rec = await plugin(b.env);

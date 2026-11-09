@@ -28,6 +28,7 @@ import { sliceBy } from "./mindslice.ts";
 import { annotate } from "./notice.ts";
 import { createOnboardStart } from "./onboardstart.ts";
 import { createPulseFeed } from "./pulse.ts";
+import { quietCalls } from "./quiet-calls.ts";
 import { createRites } from "./rites.ts";
 import { createRootSeats } from "./rootseat.ts";
 import { startWords, watchCover } from "./rootseat-start.ts";
@@ -137,7 +138,9 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       },
     );
     ch = c0;
-    onChannel = (s, p, c) => c0.onEvent(s, p, c);
+    // A stale call that asks nothing of the session wakes no turn (quiet-calls.ts).
+    onChannel = (s, p: any, c) =>
+      c0.onEvent(s, p?.data ? { ...p, data: quietCalls(p.data, !!s && spawnStarts.has(s)) } : p, c);
   } catch (e) {
     say(W.channelDown((e as Error).message), "error");
   }
@@ -277,7 +280,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           }
           if (spawnStarts.has(sid)) half.finishSeat(sid);
           const ready = hookContext.take(sid, req.messages);
-          for (const text of ready.words) req.system.push({ type: "text", text });
+          // A word laid by two prompts of one request goes into it once (#9654).
+          for (const text of new Set(ready.words)) req.system.push({ type: "text", text });
           spawnStarts.delivered(sid, ready.words);
           // Counts wake no turn; take them only when their own root actually requests a model.
           if (ready.ride)

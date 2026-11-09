@@ -138,6 +138,25 @@ test("spawned_for: the taken word lost with its request reaches the next one", T
   }
 });
 
+// №4050 [71] item 3, #9654: two prompts laid before one request each carry the taken word —
+// the request carries it once.
+test("spawned_for: two prompts of one request carry the taken word once", T, async (t) => {
+  const s = await stage(t);
+  s.fake.state.structured = true;
+  s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("spawn-root", { emit: false });
+    const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+    const first = await oc.promptLost("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+    const r = await oc.turn("spawn-root", "again", () => [], [first]);
+    const join = `${tool("case")}(action="join"`;
+    assert.equal(r.system.split(join).length - 1, 1, board(r, oc));
+  } finally {
+    await oc.stop();
+  }
+});
+
 // №4050 [55]: the model of a raised root stood again with the pair its root had already claimed —
 // a second register, a refused echo, and every later prompt refused. The session that holds the
 // pair answers that stand itself: no second seat, the session keeps working.
