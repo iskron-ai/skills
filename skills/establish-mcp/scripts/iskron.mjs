@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // js/delivery/contract.ts
-var CONTRACT_SUPPORT = { minimum: 39, target: 40 };
+var CONTRACT_SUPPORT = { minimum: 39, target: 41 };
 var CONTRACT_WORDS = {
   ru: {
     unsupported: (n, target) => `Контракт ${n} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
@@ -196,7 +196,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "7.36.1";
+var VERSION = "7.36.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
