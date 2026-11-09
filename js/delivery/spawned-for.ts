@@ -20,6 +20,8 @@ export const SPAWNED_FOR = {
       "Основание запуска: номер приглашения внутри дела и UUID дела. Регистрация должна подтвердить ту же пару; отказ не обходится другим именем или take.",
     taken: (realm: string, room: string, invite: number) =>
       `Тебя взяли по зову ${invite} дела ${room} в графе ${realm}: регистрация подтвердила пару. До любой работы войди в это дело — ${tool("case")}(action="join", realm="${realm}", room="${room}") — и прочти его постановку; не вошёл — не работай, скажи почему.`,
+    held: (place: string, realm: string, room: string, invite: number) =>
+      `Эта сессия уже стоит на месте ${place} по зову ${invite} дела ${room}: пара подтверждена, второе место не регистрирую. Войди в дело — ${tool("case")}(action="join", realm="${realm}", room="${room}") — до работы.`,
   },
   en: {
     invalid: () =>
@@ -38,6 +40,8 @@ export const SPAWNED_FOR = {
       "Launch basis: the invitation number within its case and the case UUID. Register must confirm the same pair; do not bypass a refusal with another name or take.",
     taken: (realm: string, room: string, invite: number) =>
       `You were taken for invite ${invite} of case ${room} in graph ${realm}: register confirmed the pair. Before any work join that case — ${tool("case")}(action="join", realm="${realm}", room="${room}") — and read its assignment; not joined — do not work, say why.`,
+    held: (place: string, realm: string, room: string, invite: number) =>
+      `This session already stands on place ${place} for invite ${invite} of case ${room}: the pair is confirmed, no second place is registered. Join the case — ${tool("case")}(action="join", realm="${realm}", room="${room}") — before any work.`,
   },
 };
 

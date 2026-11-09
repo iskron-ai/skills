@@ -27,6 +27,31 @@ test("a claim without a realm string: no taken word, never «undefined»", async
   }
 });
 
+// №4050 [55]: a failed re-registration after the confirmed claim refuses that call only.
+test("after the confirmed claim a failed register again does not shut the session", async () => {
+  const starts = await claimed({ realm: "@nks/nks-dev" });
+  assert.throws(() =>
+    starts.verify("s", { action: "register", name: "other", spawned_for: pair }, { isError: true }),
+  );
+  assert.doesNotThrow(() => starts.guard("s"));
+  assert.doesNotThrow(() => starts.apply("s", "iskron_case", { action: "join" }));
+});
+
+// The same pair asked again by the session that holds it: answered without the wire.
+test("a stand again with the held pair is answered by the session's own seat", async () => {
+  const starts = await claimed({ realm: "@nks/nks-dev", karta: "931" });
+  const args = { realm: "@nks/nks-dev", karta: "931", spawned_for: pair };
+  const word = starts.apply("s", "iskron_stand", args);
+  assert.ok(typeof word === "string" && word.includes("@alari:proba"), String(word));
+  assert.ok(word.includes(pair.room), word);
+  const inherited = starts.apply("s", "iskron_stand", { realm: "@nks/nks-dev", karta: "931" });
+  assert.equal(inherited, word);
+  const other = { invite: 8, room: pair.room };
+  assert.throws(() =>
+    starts.apply("s", "iskron_stand", { realm: "@nks/nks-dev", karta: "931", spawned_for: other }),
+  );
+});
+
 test("a claim with its realm names that graph", async () => {
   const word = (await claimed({ realm: "@nks/nks-dev" })).taken("s");
   assert.ok(word?.includes("@nks/nks-dev") && word.includes(pair.room), word ?? "(none)");

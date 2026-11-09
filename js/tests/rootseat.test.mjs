@@ -138,6 +138,43 @@ test("spawned_for: the taken word lost with its request reaches the next one", T
   }
 });
 
+// №4050 [55]: the model of a raised root stood again with the pair its root had already claimed —
+// a second register, a refused echo, and every later prompt refused. The session that holds the
+// pair answers that stand itself: no second seat, the session keeps working.
+test(
+  "spawned_for: a stand again with the pair the root already holds takes no second seat",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("spawn-root", { emit: false });
+      const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+      const regs = () =>
+        s.fake.state.calls.filter(
+          (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+        ).length;
+      const r = await oc.turn("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`, () => [
+        { tool: tool("stand"), input: { realm: "@nks/nks-dev", karta: "931", spawned_for: pair } },
+        { tool: tool("stand"), input: { realm: "@nks/nks-dev", karta: "#931" } },
+      ]);
+      const before = regs();
+      assert.equal(before, 1, "the root's own claim only");
+      for (const c of r.calls) {
+        assert.equal(c.error, undefined, `${JSON.stringify(c)}\n${oc.said()}`);
+        assert.ok(String(c.content).includes(pair.room), String(c.content));
+      }
+      const next = await oc.turn("spawn-root", "next");
+      assert.ok(next.prompt === "next", "the session still works");
+      assert.equal(regs(), before, "no second register");
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
 const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
 for (const mode of [
   "fresh",

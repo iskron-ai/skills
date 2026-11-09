@@ -2,8 +2,11 @@
 // Session-local, never the server process's environment (graph @nks/nks-dev, #9959).
 import { SPAWNED_FOR, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import { mergeSpawn, parseSpawn, spawnReceipt } from "../shared/spawned-for.ts";
+import { mergeSpawn, parseSpawn, sameSpawn, spawnReceipt } from "../shared/spawned-for.ts";
 import { spawnAdmission, type SpawnStart } from "./spawn-admission.ts";
+
+const targetOf = (args: Record<string, unknown>): string =>
+  `${String(args.realm)}#${String(args.karta).replace(/^#/, "")}`;
 
 const takenWord = (e: SpawnStart | undefined): string | null =>
   e?.pair && e.claimed && e.realm && !e.told
@@ -43,16 +46,19 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
       const name =
         r?.structuredContent?.place?.name ??
         (typeof args.name === "string" ? args.name : undefined);
-      if (
-        r?.isError ||
-        !spawnReceipt(r?.structuredContent, parseSpawn(args.spawned_for), { name })
-      ) {
+      const receipt = r?.isError
+        ? null
+        : spawnReceipt(r?.structuredContent, parseSpawn(args.spawned_for), { name });
+      if (!receipt) {
         const error = new Error(words(SPAWNED_FOR).echo());
-        if (entry) entry.error = error;
+        // After the confirmed claim a failed registration again refuses this call only (№4050 [55]).
+        if (entry && !entry.claimed) entry.error = error;
         throw error;
       }
-      if (entry) {
+      if (entry && !entry.claimed) {
         entry.claimed = true;
+        entry.place = receipt.standing;
+        entry.target ??= targetOf(args);
         // No graph named — no word, never one naming «undefined».
         entry.realm = typeof args.realm === "string" && args.realm ? args.realm : undefined;
       }
@@ -68,7 +74,16 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
       if (e && word && sent.includes(word)) e.told = true;
     },
     prompt: spawnAdmission(starts, readContext),
-    apply(session: string, name: string, args: Record<string, unknown>) {
+    /**
+     * The pair onto a taking call; a word instead of the call when this session's seat already
+     * holds that pair (`holding` — its bridge still holds a seat): no second registration.
+     */
+    apply(
+      session: string,
+      name: string,
+      args: Record<string, unknown>,
+      holding = true,
+    ): string | undefined {
       const entry = starts.get(session);
       if (entry?.error) throw entry.error;
       if (!(
@@ -77,7 +92,7 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
       ))
         return;
       if (entry?.pending) throw new Error(words(SPAWNED_FOR).initial());
-      const target = `${String(args.realm)}#${String(args.karta).replace(/^#/, "")}`;
+      const target = targetOf(args);
       const explicit = Object.hasOwn(args, "spawned_for")
         ? parseSpawn(args.spawned_for)
         : undefined;
@@ -86,6 +101,13 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
         !entry?.target || entry.target === target ? entry?.pair : undefined,
       );
       if (!pair) return;
+      if (holding && entry?.claimed && entry.place && entry.pair && sameSpawn(pair, entry.pair))
+        return words(SPAWNED_FOR).held(
+          entry.place,
+          entry.realm ?? String(args.realm),
+          pair.room,
+          pair.invite,
+        );
       if (entry && !entry.target) entry.target = target;
       args.spawned_for = pair;
     },

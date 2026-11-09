@@ -173,7 +173,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       closed,
       // No channel half — no interrupt: the order's stop is refused, not reported executed.
       (s, signal) => (ch ? ch.halted(s, signal) : Promise.resolve(CHANNEL_DOWN)),
-      (s, name, args) => spawnStarts.apply(s, name, args),
+      (s, name, args, holding) => spawnStarts.apply(s, name, args, holding),
       (s) => spawnStarts.has(s),
       (s, args, result) => spawnStarts.verify(s, args, result),
     );
