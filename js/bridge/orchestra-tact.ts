@@ -9,8 +9,8 @@
 // serves (GET /realms, short_id → @owner/slug), and one the list does not know refuses the tact
 // with the boundary named incomplete — a live place's graph never vanishes by its record's
 // spelling (#8202, word [27] of №1260). A failed read is not an empty composition: the whole
-// tact is refused, no cursor moves, no stop order goes out (#8202). Taking an invite
-// (register with spawned_for) and the extinguishing arrive with the raising slice, not here.
+// tact is refused, no cursor moves, no stop order goes out (#8202). Raising and extinguishing
+// act on the reads before the cursors move — orchestra-lead.ts, handed in as `act`.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -39,7 +39,11 @@ const cursorsFile = (authDir: string): string =>
 
 interface TactState {
   realms: Record<string, { cursor: string | null; at: string; invites: number; signals: number }>;
+  /** The last tact's leading outcomes — raising and extinguishing — as said. */
+  lead?: string;
 }
+/** The leading half of a tact (orchestra-lead.ts): acts on the reads before the cursors move. */
+export type TactAct = (reads: TactRead[], boundary: string[]) => Promise<string[]>;
 function readTactState(authDir: string): TactState {
   try {
     const f = JSON.parse(readFileSync(cursorsFile(authDir), "utf8")) as TactState;
@@ -96,6 +100,22 @@ async function resolveRealms(
   return { realms: [...new Set(out)] };
 }
 
+/** The raised tape of one realm from a cursor — the re-check before an end reads it too. */
+export async function readTape(
+  base: string,
+  token: string,
+  realm: string,
+  since: string | null,
+): Promise<Record<string, unknown>[]> {
+  const q = new URLSearchParams({ limit: String(LIMIT) });
+  if (since) q.set("since", since);
+  const tape = itemsOf(
+    await getJson(base, token, `/realms/${encodeURIComponent(realm)}/raised?${q}`),
+  );
+  if (!tape) throw new Error("raised: not a list");
+  return tape as Record<string, unknown>[];
+}
+
 /** One realm's both reads; any failure throws — the caller refuses the whole tact. */
 async function readRealm(
   base: string,
@@ -147,6 +167,7 @@ export async function stepTact(
   token: string | null,
   realms: string[],
   gone?: { gone: boolean },
+  act?: TactAct,
 ): Promise<OrchestraAnswer> {
   if (!base) return { ok: false, said: w().stepNoApi() };
   let boundary = [...new Set(realms)];
@@ -176,6 +197,8 @@ export async function stepTact(
     }
   }
   if (gone?.gone) return { ok: false, said: w().stepGone() };
+  const lead = act ? await act(reads, boundary) : [];
+  state.lead = lead.join("; ");
   const at = new Date().toISOString();
   for (const r of reads)
     state.realms[r.realm] = {
@@ -192,10 +215,11 @@ export async function stepTact(
   }
   return {
     ok: true,
-    said: w().step(
-      reads
-        .map((r) => w().tactRealm(r.realm, r.invites, r.signals.length, causesOf(r.signals)))
-        .join("; "),
-    ),
+    said:
+      w().step(
+        reads
+          .map((r) => w().tactRealm(r.realm, r.invites, r.signals.length, causesOf(r.signals)))
+          .join("; "),
+      ) + (state.lead ? `\n${w().lead(state.lead)}` : ""),
   };
 }

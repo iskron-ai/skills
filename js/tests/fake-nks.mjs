@@ -557,6 +557,11 @@ export async function startFakeNks(opts = {}) {
       const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
       const items = signals.slice(start, start + limit);
       const cursor = items.length ? items[items.length - 1].cursor : (since ?? "0.0");
+      // late: сигналы, что лягут на ленту сразу после этого чтения — гонка перепроверки (#8203).
+      if (state?.late) {
+        state.signals = [...signals, ...state.late];
+        delete state.late;
+      }
       return json(res, 200, { items, cursor, numbering: "case" });
     }
 
@@ -2029,6 +2034,36 @@ export async function startFakeNks(opts = {}) {
       }
       // Личный граф (#9817) — формы живого сервера 07.11.2026: признак personal_mind readiness
       // и строки iskron_search с фрагментом описания.
+      // Описания запускателей оркестратора в mind (дело №4050): st.mind.orchestra = [{seq, body}] —
+      // поиск по attrs_filter slice:orchestra и сырое тело iskron_look(raw); refuseOrchestra — отказ поиска.
+      const a0 = msg.params?.arguments ?? {};
+      if (
+        msg.method === "tools/call" &&
+        a0.realm === "mind" &&
+        ((msg.params.name === "iskron_search" && a0.attrs_filter === "slice:orchestra") ||
+          (msg.params.name === "iskron_look" && a0.raw === true))
+      ) {
+        const list = st.mind?.orchestra ?? [];
+        const refuse = msg.params.name === "iskron_search" && st.mind?.refuseOrchestra;
+        const seq = String(a0.node_id ?? "").replace(/^#/, "");
+        const text =
+          msg.params.name === "iskron_search"
+            ? list.length
+              ? `Найдено ${list.length} узлов:\n` +
+                list.map((d) => `  🚀 Запускатель (#${d.seq}, phenomenon, Pt/Va/Ad, v1)`).join("\n")
+              : "Ничего не найдено."
+            : (list.find((d) => String(d.seq) === seq)?.body ?? "");
+        return json(
+          res,
+          200,
+          {
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { ...(refuse ? { isError: true } : {}), content: [{ type: "text", text }] },
+          },
+          extra,
+        );
+      }
       const mindCall =
         msg.method === "tools/call" &&
         (msg.params?.name === "iskron_me" ||

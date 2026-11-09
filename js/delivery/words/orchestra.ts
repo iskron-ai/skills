@@ -38,6 +38,20 @@ export interface OrchestraWords {
   stepGone: () => string;
   /** Строка status о последнем такте графа: исход, курсор и когда. */
   tactOut: (realm: string, invites: number, signals: number, cursor: string, at: string) => string;
+  /** lines — исходы ведения такта (подъём и погашение) через «; ». */
+  lead: (lines: string) => string;
+  /** Исход по одному зову: граф, номер зова в деле и код исхода (коды — слова api и моста). */
+  leadRow: (realm: string, invite: number, code: string) => string;
+  /** Флаг лежит, а согласия машины в среде демона нет — ни подъёма, ни погашения. */
+  leadNotAdmitted: () => string;
+  /** Снимок требований неполон — по нему ничего не поднимается и не гасится. */
+  leadIncomplete: (errors: string) => string;
+  /** Описания запускателей в mind не прочитаны — подъёма нет. */
+  leadNoLaunchers: (why: string) => string;
+  /** Описание запускателя в mind не годится — по нему ничего не поднимается. */
+  leadDescription: (what: string, code: string) => string;
+  /** Бриф поднимаемого агента после строки spawned_for. */
+  brief: (realm: string, karta: number, room: string, invite: number) => string;
 }
 
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
@@ -77,6 +91,20 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       "такт не коммитится: спрашивавший ушёл до конца такта — его отказ уже прозвучал, курсоры не двинуты",
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: приглашений ${invites}, сигналов ${signals}, курсор ${cursor || "—"} (${at})`,
+    lead: (lines) => `ведение: ${lines}`,
+    leadRow: (realm, invite, code) => `${realm} зов ${invite}: ${code}`,
+    leadNotAdmitted: () =>
+      "флаг лежит, но машина не допустила оркестратора (ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
+    leadIncomplete: (errors) =>
+      `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
+    leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
+    leadDescription: (what, code) =>
+      `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
+    brief: (realm, karta, room, invite) =>
+      `start ${realm} ${karta} дело ${room}\n` +
+      `Тебя поднял оркестратор по зову ${invite} этого дела. Место встаёт со spawned_for из первой строки; ` +
+      "подтверди взятие и войди в дело до работы. Отказ взятия (зов уже взят, место под другим зовом, зов закрыт) — " +
+      "не работай и не обходи его другим именем. Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
   },
   en: {
     usage: () =>
@@ -114,5 +142,20 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       "the tact commits nothing: the caller left before its end — the refusal has already been spoken, no cursor moved",
     tactOut: (realm, invites, signals, cursor, at) =>
       `${realm}: invites ${invites}, signals ${signals}, cursor ${cursor || "—"} (${at})`,
+    lead: (lines) => `leading: ${lines}`,
+    leadRow: (realm, invite, code) => `${realm} invite ${invite}: ${code}`,
+    leadNotAdmitted: () =>
+      "the flag lies, but the machine has not admitted the orchestrator (ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
+    leadIncomplete: (errors) =>
+      `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
+    leadNoLaunchers: (why) =>
+      `the launcher descriptions in mind did not read (${why}) — nothing is raised`,
+    leadDescription: (what, code) =>
+      `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
+    brief: (realm, karta, room, invite) =>
+      `start ${realm} ${karta} case ${room}\n` +
+      `The orchestrator raised you for invite ${invite} of this case. Your seat stands with the spawned_for of the first line; ` +
+      "confirm the claim and join the case before any work. A refused claim (the invite already taken, the seat under another invite, the invite closed) — " +
+      "do not work and do not get around it under another name. Read the case assignment and its acceptance criteria; do not invent a task.",
   },
 };
