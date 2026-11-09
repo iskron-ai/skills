@@ -561,6 +561,45 @@ test("raise: the daemon's own timer leads — no step is asked", async (t) => {
   assert.equal(o.launches().length, 1, "the timer raised the agent by itself");
 });
 
+const adds = (o) => o.fake.state.calls.filter((c) => c.name === "iskron_add_phenomenon");
+
+test("on --launcher: the description is written once in mind; the next on takes it as it lies", async (t) => {
+  const o = await leading(t, { descriptions: () => [] });
+  const on = (more) => cli(o.dir, ["on", "--realm", REALM, "--launcher", "probe-new", ...more]);
+  const first = await on(["--model", "m/one", "--model", "m/two", "--limit", "3", "--host", "box"]);
+  assert.equal(first.code, 0, first.err + first.out);
+  assert.match(first.out, /description of launcher probe-new written/, first.out);
+  const [add, ...more] = adds(o);
+  assert.equal(more.length, 0, "one write");
+  assert.equal(add.arguments.realm, "mind");
+  assert.deepEqual(add.arguments.attrs, { slice: "orchestra" });
+  assert.deepEqual(JSON.parse(add.arguments.description), {
+    launcher: "probe-new",
+    host: "box",
+    adapter: "orca",
+    limit: 3,
+    harnesses: { opencode: { models: ["m/one", "m/two"] } },
+  });
+  const again = await on(["--model", "m/other"]);
+  assert.equal(again.code, 0, again.err + again.out);
+  assert.match(again.out, /launcher probe-new: the existing description is taken/, again.out);
+  assert.equal(adds(o).length, 1, "an existing description is never written again");
+});
+
+test("on --launcher: an existing description is not touched; a new one without --model is refused, the flag unmoved", async (t) => {
+  const o = await leading(t);
+  const kept = await cli(o.dir, ["on", "--launcher", "probe-mac", "--model", "x/y"]);
+  assert.equal(kept.code, 0, kept.err + kept.out);
+  assert.match(kept.out, /launcher probe-mac: the existing description is taken/, kept.out);
+  assert.equal(adds(o).length, 0);
+  await cli(o.dir, ["off"]);
+  const bare = await cli(o.dir, ["on", "--launcher", "probe-bare"]);
+  assert.equal(bare.code, 1, bare.out);
+  assert.match(bare.err, /--model/, bare.err);
+  assert.equal(adds(o).length, 0);
+  assert.equal(JSON.parse(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8")).on, false);
+});
+
 test("dry run: says what one tact would raise or refuse, and touches nothing — no orca, no cursor, no registry, no order", async (t) => {
   const o = await leading(t, {
     descriptions: (checkout) => [describe({ body: { checkouts: { [REPO]: checkout } } })],

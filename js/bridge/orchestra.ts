@@ -13,6 +13,7 @@ import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { readDemands } from "./orchestra-demands.ts";
+import { ensureLauncher, launcherSpecOf } from "./orchestra-describe.ts";
 import {
   listenOrchestraDoor,
   type OrchestraAnswer,
@@ -132,7 +133,7 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
         : undefined;
     return stepTact(authDir, base, token, boundary, gone, act);
   };
-  return async (op, realms, gone) => {
+  return async (op, realms, gone, extra) => {
     if (op === "demands") {
       const flag = readOrchestraFlag(authDir);
       const boundary = [...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? [])])];
@@ -151,11 +152,20 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
       // refuses it aloud instead of storing a boundary the tact cannot walk (#8202).
       const short = realms.filter((r) => /^r\d+$/i.test(r.trim()));
       if (short.length) return { ok: false, said: w().onShortRealm(short.join(", ")) };
+      // The launcher named with on is described first: a refusal leaves the flag unmoved.
+      const spec = launcherSpecOf(extra?.launcher);
+      let described = "";
+      if (spec)
+        try {
+          described = await ensureLauncher(net?.mcp?.() ?? "", net?.token() ?? null, spec);
+        } catch (e) {
+          return { ok: false, said: (e as Error).message };
+        }
       const prior = readOrchestraFlag(authDir);
       const named = [...new Set([...(prior?.on ? prior.realms : []), ...realms])];
       writeOrchestraFlag(authDir, { on: true, realms: named });
       net?.changed?.();
-      return { ok: true, said: w().on(named.join(", ")) };
+      return { ok: true, said: [described, w().on(named.join(", "))].filter(Boolean).join("\n") };
     }
     if (op === "off") {
       writeOrchestraFlag(authDir, { on: false, realms: [] });

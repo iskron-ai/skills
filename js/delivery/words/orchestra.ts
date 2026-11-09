@@ -67,12 +67,25 @@ export interface OrchestraWords {
   planCheckout: (repository: string) => string;
   /** Сухой такт: место брифа в argv. */
   planBrief: () => string;
+  /** on --launcher: описание записано в mind (seq — номер узла, может быть пуст). */
+  describeWritten: (launcher: string, seq: string) => string;
+  /** on --launcher: описание этого запускателя уже лежит — взято как есть. */
+  describeTaken: (launcher: string, seq: string) => string;
+  /** on --launcher: нового описания без моделей не пишут — флаг не двинут. */
+  describeNoModel: (launcher: string) => string;
+  /** on --launcher: описание не прочитано или не записано — флаг не двинут. */
+  describeFailed: (launcher: string, why: string) => string;
+  /** Имя узла описания в mind. */
+  describeName: (launcher: string) => string;
+  /** reasoning записи описания. */
+  describeReason: () => string;
 }
 
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status|step [--dry-run]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "использование: orchestra <on|off|status|step [--dry-run]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "              orchestra on --launcher <имя> [--model <id>]… [--limit N] [--host <машина>] — описание запускателя в mind, если его нет\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
     doorSilent: () =>
@@ -128,10 +141,21 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planAlready: (state) => `уже в реестре: ${state}`,
     planCheckout: (repository) => `<копия Orca для ${repository}>`,
     planBrief: () => "<бриф>",
+    describeWritten: (launcher, seq) =>
+      `описание запускателя ${launcher} записано в mind${seq ? ` (#${seq})` : ""}`,
+    describeTaken: (launcher, seq) =>
+      `запускатель ${launcher}: взято существующее описание в mind (${seq}), не тронуто — правится там же`,
+    describeNoModel: (launcher) =>
+      `описания запускателя ${launcher} в mind нет, а без --model его не записать — назовите модели (--model <id>, можно несколько); флаг не двинут`,
+    describeFailed: (launcher, why) =>
+      `описание запускателя ${launcher} не прочитано или не записано (${why}) — флаг не двинут`,
+    describeName: (launcher) => `🚀 Запускатель агентов ${launcher}`,
+    describeReason: () => "человек включил автоподъём командой orchestra on --launcher",
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status|step [--dry-run]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n",
+      "usage: orchestra <on|off|status|step [--dry-run]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "       orchestra on --launcher <name> [--model <id>]… [--limit N] [--host <machine>] — describes the launcher in mind unless one lies there\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",
     doorSilent: () =>
@@ -188,5 +212,15 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planAlready: (state) => `already in the registry: ${state}`,
     planCheckout: (repository) => `<orca checkout of ${repository}>`,
     planBrief: () => "<brief>",
+    describeWritten: (launcher, seq) =>
+      `the description of launcher ${launcher} written in mind${seq ? ` (#${seq})` : ""}`,
+    describeTaken: (launcher, seq) =>
+      `launcher ${launcher}: the existing description is taken from mind (${seq}), untouched — edit it there`,
+    describeNoModel: (launcher) =>
+      `no description of launcher ${launcher} in mind, and none is written without --model — name the models (--model <id>, any number); the flag is not moved`,
+    describeFailed: (launcher, why) =>
+      `the description of launcher ${launcher} did not read or write (${why}) — the flag is not moved`,
+    describeName: (launcher) => `🚀 Agent launcher ${launcher}`,
+    describeReason: () => "the human switched raising on with orchestra on --launcher",
   },
 };

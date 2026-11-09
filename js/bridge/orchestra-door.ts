@@ -29,7 +29,12 @@ export type OrchestraServe = (
   op: OrchestraOp,
   realms: string[],
   gone?: { gone: boolean },
+  extra?: OrchestraExtra,
 ) => Promise<OrchestraAnswer>;
+/** What `on` may carry beside the realms: the launcher to describe (orchestra-describe.ts). */
+export interface OrchestraExtra {
+  launcher?: unknown;
+}
 
 /**
  * The daemon's local entrance. A connection is one request line `{op, realms}` and one answer
@@ -51,7 +56,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       if (nl < 0) return;
       const line = buf.slice(0, nl);
       buf = "";
-      let msg: { op?: unknown; realms?: unknown } = {};
+      let msg: { op?: unknown; realms?: unknown; launcher?: unknown } = {};
       try {
         msg = JSON.parse(line) as typeof msg;
       } catch {
@@ -71,7 +76,7 @@ export async function listenOrchestraDoor(authDir: string, serve: OrchestraServe
       socket.on("close", () => {
         gone.gone = true;
       });
-      void serve(op, realms, gone)
+      void serve(op, realms, gone, { launcher: msg.launcher })
         .then((a) => socket.end(JSON.stringify(a) + "\n"))
         .catch((e: Error) =>
           socket.end(JSON.stringify({ ok: false, said: w().doorError(e.message) }) + "\n"),
@@ -92,6 +97,7 @@ export function orchestraAsk(
   op: OrchestraOp,
   realms: string[],
   timeoutMs = 5_000,
+  extra: OrchestraExtra = {},
 ): Promise<OrchestraAnswer> {
   return new Promise((resolve) => {
     let settled = false;
@@ -104,7 +110,7 @@ export function orchestraAsk(
     const socket = connect(orchestraDoorPath(authDir, false));
     socket.setTimeout(timeoutMs, () => done({ ok: false, said: w().doorSilent() }));
     socket.on("error", () => done({ ok: false, said: w().noDaemon() }));
-    socket.on("connect", () => socket.write(JSON.stringify({ op, realms }) + "\n"));
+    socket.on("connect", () => socket.write(JSON.stringify({ op, realms, ...extra }) + "\n"));
     let buf = "";
     socket.on("data", (c) => {
       buf += c;

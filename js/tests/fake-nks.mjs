@@ -2051,6 +2051,26 @@ export async function startFakeNks(opts = {}) {
       // Описания запускателей оркестратора в mind (дело №4050): st.mind.orchestra = [{seq, body}] —
       // поиск по attrs_filter slice:orchestra и сырое тело iskron_look(raw); refuseOrchestra — отказ поиска.
       const a0 = msg.params?.arguments ?? {};
+      // Запись описания в mind (`orchestra on --launcher`): феномен с attrs slice:orchestra
+      // ложится в st.mind.orchestra и виден следующему поиску.
+      if (
+        msg.method === "tools/call" &&
+        msg.params.name === "iskron_add_phenomenon" &&
+        a0.realm === "mind" &&
+        a0.attrs?.slice === "orchestra"
+      ) {
+        st.mind ??= {};
+        st.mind.orchestra ??= [];
+        const seq = 900 + st.mind.orchestra.length;
+        st.mind.orchestra.push({ seq, body: String(a0.description ?? "") });
+        const text = `Создан феномен ${a0.name} (#${seq}, phenomenon, v1)`;
+        return json(
+          res,
+          200,
+          { jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text }] } },
+          extra,
+        );
+      }
       if (
         msg.method === "tools/call" &&
         a0.realm === "mind" &&
