@@ -1,16 +1,24 @@
 // The raising half of the tact (graph @nks/nks-dev, nodes #5042, #7517, #9968–#9970, #4920;
 // decisions of case №4050): a start row of a complete demands snapshot is raised only when its
 // invite's attrs name one of this machine's launchers, a harness the launcher offers and the
-// adapter knows, and a model the launcher allows; the checkout is the launcher's explicit one.
-// Anything else is an outcome said aloud, nothing launched. The invite is taken by the raised
-// agent's own registration with spawned_for (its first brief line) — not here; the registry
-// row is written before the launch, so a crash never launches twice.
+// adapter knows (its name is Orca's --agent), and a model the launcher allows; the checkout is
+// the description's own for that repository, else exactly one ready local Orca setup of the
+// project whose remote is the invite's repository (#4518). Anything else is an outcome said
+// aloud, nothing launched. The invite is taken by the raised agent's own registration with
+// spawned_for (its first brief line) — not here; the registry row is written before the launch,
+// so a crash never launches twice.
 import { existsSync, statSync } from "node:fs";
 
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
-import type { Launchers } from "./orchestra-launchers.ts";
-import { launchArgv, orcaLaunch, orcaReady } from "./orchestra-orca.ts";
+import type { Launcher, Launchers } from "./orchestra-launchers.ts";
+import {
+  type CheckoutOf,
+  launchArgv,
+  orcaCheckouts,
+  orcaLaunch,
+  orcaReady,
+} from "./orchestra-orca.ts";
 import { LIVE, type Run, runKey, writeRuns } from "./orchestra-runs.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
@@ -38,15 +46,26 @@ function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | n
   const model = text(row.model);
   if (!model) return "model_missing";
   if (!offer.models.includes(model)) return "model_not_offered";
-  const repository = text(row.repository);
-  const worktree = repository ? own.checkouts[repository] : undefined;
-  if (!worktree) return "no_checkout";
-  if (!existsSync(worktree) || !statSync(worktree).isDirectory()) return "checkout_absent";
+  if (!text(row.repository)) return "no_checkout";
   const live = Object.values(runs).filter(
     (r) => r.launcher === launcher && LIVE.includes(r.state),
   ).length;
   if (live >= own.limit) return "limit_reached";
   return null;
+}
+
+/** The checkout: the description's own key first, else Orca's single ready local setup. */
+function checkoutFor(
+  own: Launcher,
+  repository: string,
+  orca: CheckoutOf,
+): string | { code: string } {
+  const named = own.checkouts[repository];
+  const got = named ? { path: named } : orca(repository);
+  if ("code" in got) return got;
+  if (!existsSync(got.path) || !statSync(got.path).isDirectory())
+    return { code: "checkout_absent" };
+  return got.path;
 }
 
 /** Raise what the snapshot asks of this machine; the outcomes as words, one per row said. */
@@ -58,6 +77,7 @@ export async function raiseRows(
 ): Promise<string[]> {
   const said: string[] = [];
   let ready: string | null | undefined;
+  let orca: CheckoutOf | string | undefined;
   for (const row of start) {
     const realm = String(row.realm);
     const room = String(row.room);
@@ -76,17 +96,27 @@ export async function raiseRows(
       continue;
     }
     const own = ls.own.get(String(row.launcher).trim())!;
-    const harness = String(row.harness).trim();
+    const repository = String(row.repository).trim();
+    orca = orca === undefined ? await orcaCheckouts() : orca;
+    const worktree = checkoutFor(
+      own,
+      repository,
+      typeof orca === "string" ? () => ({ code: orca as string }) : orca,
+    );
+    if (typeof worktree !== "string") {
+      said.push(w().leadRow(realm, invite, worktree.code));
+      continue;
+    }
     const run: Run = {
       realm,
       room,
       invite,
       karta: Number(row.karta),
       launcher: own.launcher,
-      harness,
+      harness: String(row.harness).trim(),
       model: String(row.model).trim(),
-      repository: String(row.repository).trim(),
-      worktree: own.checkouts[String(row.repository).trim()],
+      repository,
+      worktree,
       state: "launched",
       at: new Date().toISOString(),
     };
@@ -96,9 +126,7 @@ export async function raiseRows(
     const prompt =
       `spawned_for: ${JSON.stringify({ invite, room })}\n` +
       w().brief(realm, run.karta, room, invite);
-    const got = await orcaLaunch(
-      launchArgv(own.harnesses[harness].agent, run.worktree, run.model, prompt),
-    );
+    const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
     if (got.outcome === "failed") {
       run.state = "refused";
       run.why = got.why;

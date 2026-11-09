@@ -1,26 +1,27 @@
 // The human's launcher descriptions (graph @nks/nks-dev, nodes #5042, #4920; decision of case
 // №4050): which orchestrator answers which `launcher` value of a role invite, with what harnesses
-// and models, how many raised at once and where each repository's checkout lies. They live in
-// the human's own graph "mind" as nodes with attribute slice:orchestra, body — one JSON object;
-// the daemon reads them under its own key. A description of another machine is someone else's;
-// a broken one raises nothing and is said aloud.
+// and models, how many raised at once; checkouts come from Orca, an optional map overrides. They
+// live in the human's own graph "mind" as nodes with attribute slice:orchestra, body — one JSON
+// object; the daemon reads them under its own key. A description naming another host is someone
+// else's; one without a host answers any leading machine; a broken one raises nothing, aloud.
 import { hostname } from "node:os";
 import { isAbsolute } from "node:path";
 
 import { tool } from "../delivery/index.ts";
 import { mcpSession } from "../shared/mcpsession.ts";
 
+/** The harness's name is Orca's --agent value itself (case №4050 [8]). */
 export interface HarnessOffer {
-  /** The adapter's own name of the harness (Orca's --agent). */
-  agent: string;
   models: string[];
 }
 export interface Launcher {
   launcher: string;
-  host: string;
+  /** Absent — the description answers any machine of the account leading with this launcher. */
+  host: string | null;
   adapter: "orca";
   limit: number;
   harnesses: Record<string, HarnessOffer>;
+  /** Optional: overrides Orca's own project setups for its keys. */
   checkouts: Record<string, string>;
 }
 export interface Launchers {
@@ -49,7 +50,8 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
   const d = (v ?? {}) as Record<string, unknown>;
   if (!str(d.launcher) || d.launcher.length > 64) return { code: "launcher_missing" };
   const launcher = d.launcher.trim();
-  if (!str(d.host)) return { code: "host_missing", launcher };
+  if (d.host !== undefined && d.host !== null && !str(d.host))
+    return { code: "host_invalid", launcher };
   if (d.adapter !== "orca") return { code: "adapter_unsupported", launcher };
   if (!Number.isSafeInteger(d.limit) || (d.limit as number) < 0)
     return { code: "limit_missing", launcher };
@@ -59,12 +61,9 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
     return { code: "harnesses_missing", launcher };
   for (const [name, o] of Object.entries(h as Record<string, unknown>)) {
     const x = (o ?? {}) as Record<string, unknown>;
-    if (!str(x.agent) || !Array.isArray(x.models) || !x.models.every(str))
+    if (!Array.isArray(x.models) || !x.models.every(str))
       return { code: "harness_invalid", launcher };
-    harnesses[name] = {
-      agent: x.agent.trim(),
-      models: (x.models as string[]).map((m) => m.trim()),
-    };
+    harnesses[name] = { models: (x.models as string[]).map((m) => m.trim()) };
   }
   const checkouts: Record<string, string> = {};
   const c = d.checkouts ?? {};
@@ -75,7 +74,7 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
   }
   return {
     launcher,
-    host: d.host.trim(),
+    host: str(d.host) ? d.host.trim() : null,
     adapter: "orca",
     limit: d.limit as number,
     harnesses,
@@ -106,7 +105,7 @@ export async function readLaunchers(serverUrl: string, token: string): Promise<L
         continue;
       }
       out.known.add(l.launcher);
-      if (l.host === hostname()) mine.push(l);
+      if (l.host === null || l.host === hostname()) mine.push(l);
     }
     for (const l of mine) {
       if (mine.filter((x) => x.launcher === l.launcher).length > 1) {

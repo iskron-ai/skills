@@ -36,16 +36,39 @@ function cli(dir, args, env = {}) {
 }
 
 const describe = (over = {}) => ({
-  seq: 77,
+  seq: over.seq ?? 77,
   body: JSON.stringify({
     launcher: "probe-mac",
     host: hostname(),
     adapter: "orca",
     limit: 2,
-    harnesses: { opencode: { agent: "opencode", models: ["anthropic/claude-opus-5-5"] } },
-    checkouts: { [REPO]: over.checkout },
+    harnesses: { opencode: { models: ["anthropic/claude-opus-5-5"] } },
     ...over.body,
   }),
+});
+
+/** Orca's own projects as 1.4.242 prints them: the probe repository has one ready local setup. */
+const orcaProjects = (checkout) => ({
+  projects: [
+    {
+      id: "p-one",
+      name: "one",
+      gitRemoteIdentity: { canonicalKey: REPO, remoteUrl: `git@github.com:probe/one.git` },
+    },
+    {
+      id: "p-two",
+      name: "one", // the same name, another repository: names never decide
+      gitRemoteIdentity: {
+        canonicalKey: "github.com/other/one",
+        remoteUrl: "https://github.com/other/one.git",
+      },
+    },
+  ],
+  setups: [
+    { projectId: "p-one", path: checkout, setupState: "ready", hostId: "local" },
+    { projectId: "p-one", path: "/remote/one", setupState: "ready", hostId: "ssh-box" },
+    { projectId: "p-two", path: "/elsewhere/one", setupState: "ready", hostId: "local" },
+  ],
 });
 
 const invite = (entry, attrs, repository = REPO) => ({
@@ -72,14 +95,14 @@ const signal = (i, entry, rooms, seat = "seat-raised") => ({
 });
 
 /** A leading daemon: flag on, the fake's api beside a hold record, a substitute orca on PATH. */
-async function leading(t, { descriptions, env = {}, admitted = true } = {}) {
+async function leading(t, { descriptions, projects, env = {}, admitted = true } = {}) {
   // Short: the daemon's sockets live under it, and a Unix socket path is capped near 104 bytes.
   const dir = mkdtempSync(join(tmpdir(), "iskron-or-"));
   const checkout = join(dir, "checkout");
   mkdirSync(checkout);
   const fake = await startFakeNks({
     pat: "probe-pat",
-    mind: { orchestra: descriptions?.(checkout) ?? [describe({ checkout })] },
+    mind: { orchestra: descriptions?.(checkout) ?? [describe()] },
   });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
@@ -102,6 +125,8 @@ async function leading(t, { descriptions, env = {}, admitted = true } = {}) {
     mode: 0o755,
   });
   const log = join(dir, "orca.log");
+  const laid = join(dir, "orca-projects.json");
+  writeFileSync(laid, JSON.stringify((projects ?? orcaProjects)(checkout)));
   const denv = {
     ...process.env,
     ISKRON_BRIDGE_NO_UPDATE: "1",
@@ -110,6 +135,7 @@ async function leading(t, { descriptions, env = {}, admitted = true } = {}) {
     ISKRON_BRIDGE_LANG: "en", // the tact's words are the daemon's
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_ORCA_LOG: log,
+    FAKE_ORCA_PROJECTS: laid,
     ...(admitted ? { ISKRON_ORCHESTRA: "1" } : {}),
     ...env,
   };
@@ -212,14 +238,10 @@ test("raise: without a matching launcher, harness, model or checkout nothing is 
 
 test("raise: an offered harness the adapter does not know is refused, not launched", async (t) => {
   const o = await leading(t, {
-    descriptions: (checkout) => [
+    descriptions: () => [
       describe({
-        checkout,
         body: {
-          harnesses: {
-            opencode: { agent: "opencode", models: [GOOD.model] },
-            codex: { agent: "codex", models: [GOOD.model] },
-          },
+          harnesses: { opencode: { models: [GOOD.model] }, codex: { models: [GOOD.model] } },
         },
       }),
     ],
@@ -230,9 +252,58 @@ test("raise: an offered harness the adapter does not know is refused, not launch
   assert.equal(o.launches().length, 0);
 });
 
+test("raise: the checkout comes from Orca's own projects — the remote decides, the name never", async (t) => {
+  const o = await leading(t, {
+    projects: (checkout) => ({
+      projects: [
+        {
+          id: "p-url",
+          name: "x",
+          gitRemoteIdentity: { remoteUrl: "https://github.com/probe/one.git" },
+        },
+        { id: "p-name", name: "one", gitRemoteIdentity: { canonicalKey: "github.com/x/one" } },
+      ],
+      setups: [
+        { projectId: "p-url", path: checkout, setupState: "ready", hostId: "local" },
+        { projectId: "p-url", path: "/half", setupState: "pending", hostId: "local" },
+        { projectId: "p-name", path: "/by-name", setupState: "ready", hostId: "local" },
+      ],
+    }),
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches()[0][5], `path:${o.checkout}`);
+});
+
+test("raise: two ready local setups of the repository — ambiguous, nothing launched", async (t) => {
+  const o = await leading(t, {
+    projects: (checkout) => {
+      const p = orcaProjects(checkout);
+      p.setups.push({ projectId: "p-one", path: tmpdir(), setupState: "ready", hostId: "local" });
+      return p;
+    },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: ambiguous_checkout/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
+test("raise: the description's own checkout overrides Orca for its key; no host answers any machine", async (t) => {
+  const own = mkdtempSync(join(tmpdir(), "iskron-co-"));
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { host: undefined, checkouts: { [REPO]: own } } })],
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches()[0][5], `path:${own}`);
+});
+
 test("raise: the description's limit holds — the second invite waits", async (t) => {
   const o = await leading(t, {
-    descriptions: (checkout) => [describe({ checkout, body: { limit: 1 } })],
+    descriptions: () => [describe({ body: { limit: 1 } })],
   });
   await o.queue([invite(1, GOOD), invite(2, GOOD)]);
   const r = await o.step();
@@ -243,8 +314,8 @@ test("raise: the description's limit holds — the second invite waits", async (
 
 test("raise: a description of another machine is not ours; a broken one is said aloud", async (t) => {
   const o = await leading(t, {
-    descriptions: (checkout) => [
-      describe({ checkout, body: { launcher: "elsewhere", host: "another-host" } }),
+    descriptions: () => [
+      describe({ body: { launcher: "elsewhere", host: "another-host" } }),
       { seq: 78, body: "not json at all" },
     ],
   });

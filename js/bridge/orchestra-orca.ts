@@ -47,6 +47,69 @@ export async function orcaReady(): Promise<string | null> {
   return "orca_schema_unverified";
 }
 
+/** A remote url in the repository form of #4518: host/org/repo, no scheme, user or .git. */
+export function remoteKey(url: string): string {
+  let u = url.trim();
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(u);
+  u = u.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^[^@/]+@/, "");
+  if (!scheme) u = u.replace(/^([^/:]+):/, "$1/");
+  return u.replace(/\/+$/, "").replace(/\.git$/, "");
+}
+
+/** The checkout of a repository by Orca's own projects: exactly one ready local setup. */
+export type CheckoutOf = (repository: string) => { path: string } | { code: string };
+
+/** Orca's projects and setups as 1.4.242 prints them (case №4050 [8]); a code when unreadable. */
+export async function orcaCheckouts(): Promise<CheckoutOf | string> {
+  const list = await run(["project", "list", "--json"], 10_000);
+  const setups = await run(["project", "setups", "--json"], 10_000);
+  type Project = {
+    id?: unknown;
+    gitRemoteIdentity?: { canonicalKey?: unknown; remoteUrl?: unknown };
+  };
+  type Setup = { projectId?: unknown; path?: unknown; setupState?: unknown; hostId?: unknown };
+  let projects: Project[];
+  let ready: Setup[];
+  try {
+    if (list.code !== 0 || setups.code !== 0) throw new Error();
+    projects = (JSON.parse(list.out) as { result: { projects: Project[] } }).result.projects;
+    ready = (JSON.parse(setups.out) as { result: { setups: Setup[] } }).result.setups;
+    if (!Array.isArray(projects) || !Array.isArray(ready)) throw new Error();
+  } catch {
+    return "orca_projects_unreadable";
+  }
+  return (repository) => {
+    const ids = new Set(
+      projects
+        .filter((p) => {
+          const g = p.gitRemoteIdentity ?? {};
+          return (
+            g.canonicalKey === repository ||
+            (typeof g.remoteUrl === "string" && remoteKey(g.remoteUrl) === repository)
+          );
+        })
+        .map((p) => p.id),
+    );
+    const paths = [
+      ...new Set(
+        ready
+          .filter(
+            (s) =>
+              ids.has(s.projectId) &&
+              s.setupState === "ready" &&
+              s.hostId === "local" &&
+              typeof s.path === "string" &&
+              s.path,
+          )
+          .map((s) => s.path as string),
+      ),
+    ];
+    if (!paths.length) return { code: "no_checkout" };
+    if (paths.length > 1) return { code: "ambiguous_checkout" };
+    return { path: paths[0] };
+  };
+}
+
 export function launchArgv(
   agent: string,
   worktree: string,
