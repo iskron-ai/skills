@@ -5,7 +5,7 @@
 // is not the run's own makes it stopping (settleStops ends it when the order closes `stopped`), a
 // carried-out one ends it at once — then closeEnded closes its terminal and its limit slot is
 // free; any other closed outcome keeps it stopping (#7522). The order of a stopping run is read
-// again until it closes, so its outcome is known. The
+// again until it closes or the run's window passes, so its outcome is known. The
 // raised tape says no revoke, and an open-only read misses an order carried out between tacts.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,12 +14,19 @@ import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
+import { stopLapsed } from "./orchestra-quench.ts";
 import type { Run } from "./orchestra-runs.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 const LIMIT = 200;
 const MAX_PAGES = 50;
 const OPEN = new Set(["issued", "accepted"]);
+/** The api's clock may run behind the daemon's: an order issued this much before our stop is ours. */
+const SKEW_MS = 60_000;
+
+/** A seat's order may be the one our id-less stop put only if issued since that stop. */
+const sinceStop = (r: Run, v: Record<string, unknown>): boolean =>
+  Date.parse(String(v.issued_at ?? "")) >= Date.parse(r.stopping_at ?? r.at) - SKEW_MS;
 
 const cursorFile = (authDir: string): string => join(seamRunDir(authDir), "orchestra-orders.json");
 
@@ -59,7 +66,7 @@ export async function foreignStops(
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);
       else unseated = true;
-    } else if (r.state === "stopping" && !r.stop_outcome)
+    } else if (r.state === "stopping" && !r.stop_outcome && !stopLapsed(r))
       stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
   const seen = new Set(Object.values(runs).map((r) => r.standing_id));
   let since = readSince(authDir);
@@ -82,7 +89,10 @@ export async function foreignStops(
         const state = String(v.state);
         const open = OPEN.has(state);
         if (!run && unseated && seat && !seen.has(seat)) held ??= since;
-        const own = stopping.get(`o:${id}`) ?? stopping.get(`s:${seat}`);
+        const bySeatOnly = stopping.get(`s:${seat}`);
+        const own =
+          stopping.get(`o:${id}`) ??
+          (bySeatOnly && sinceStop(bySeatOnly, v) ? bySeatOnly : undefined);
         if (!run && own) {
           if (open) held ??= since;
           else {

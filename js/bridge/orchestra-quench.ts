@@ -17,6 +17,9 @@ const w = (): OrchestraWords => words(ORCHESTRA);
 const TIMEOUT_MS = 10_000;
 /** No seat this long after the launch — the claim went elsewhere or never came (#7523). */
 const RAISE_WINDOW_MS = Number(process.env[envName("ORCHESTRA_RAISE_WINDOW_MS")]) || 15 * 60_000;
+/** A stopping run's window from its stop has passed — whatever its order says (#7522). */
+export const stopLapsed = (r: Run, now = Date.now()): boolean =>
+  now - Date.parse(r.stopping_at ?? r.at) > RAISE_WINDOW_MS;
 
 type Signal = Record<string, unknown>;
 type Close = (handle: string, runtime: string) => Promise<string>;
@@ -111,7 +114,8 @@ export async function closeEnded(
  * A closed order of another outcome (failed, refused, unknown — or one never read) did not
  * carry the stop out: the agent may still live, so the run stays stopping until its window
  * passes, then frees its slot with its tab left open and said so — the branch of the agent that
- * did not answer the stop (graph @nks/nks-dev, #7522); the tab is never closed on it.
+ * did not answer the stop (graph @nks/nks-dev, #7522); the tab is never closed on it. An order
+ * still open past the window (never taken) ends the run the same way, as stop_unanswered.
  */
 export function settleStops(
   runs: Record<string, Run>,
@@ -124,17 +128,16 @@ export function settleStops(
   const seats = new Set(open.map((s) => s.standing_id));
   for (const r of Object.values(runs)) {
     if (r.state !== "stopping" || fresh.has(r)) continue;
-    if (r.order_id ? orders.has(r.order_id) : seats.has(r.standing_id ?? "")) continue;
-    if (r.stop_outcome === "stopped") {
+    const unanswered = r.order_id ? orders.has(r.order_id) : seats.has(r.standing_id ?? "");
+    if (!unanswered && r.stop_outcome === "stopped") {
       r.state = "ended";
       continue;
     }
-    if (now - Date.parse(r.stopping_at ?? r.at) <= RAISE_WINDOW_MS) continue;
+    if (!stopLapsed(r, now)) continue;
     r.state = "ended";
     r.closed = "terminal_left_open";
-    said.push(
-      w().leadRow(r.realm, r.room, r.invite, `stop_${r.stop_outcome ?? "unknown"}, ${r.closed}`),
-    );
+    const outcome = unanswered ? "unanswered" : (r.stop_outcome ?? "unknown");
+    said.push(w().leadRow(r.realm, r.room, r.invite, `stop_${outcome}, ${r.closed}`));
   }
   return said;
 }

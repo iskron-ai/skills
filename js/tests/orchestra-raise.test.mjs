@@ -884,6 +884,51 @@ test("quench: our stop closed failed keeps the run stopping, its tab open, until
   assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
 });
 
+// Review of PR #724 п.3: an order left issued for good holds neither the slot nor the orders
+// cursor past the window — the run ends said so, its tab untouched (#7522).
+test("quench: our stop left open past the window ends the run, its tab open, the cursor passing", async (t) => {
+  const window = 6000;
+  const o = await stopping(t, { status: 201, body: { id: "ord-i" } }, "ord-i", {
+    ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
+  });
+  const since = Date.now();
+  const cursor = () =>
+    JSON.parse(readFileSync(join(o.dir, "run", "orchestra-orders.json"), "utf8")).since;
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", r.out);
+  assert.equal(cursor(), 0, "within the window the open order is read again");
+  await new Promise((done) => setTimeout(done, Math.max(0, window + 500 - (Date.now() - since))));
+  const late = await o.step();
+  assert.equal(late.code, 0, late.err + late.out);
+  assert.match(late.out, /invite 9: stop_unanswered, terminal_left_open/, late.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
+  assert.equal(cursor(), 1, "the lapsed order no longer holds the cursor");
+});
+
+// Review of PR #724 п.4: a stop answered without an id is matched by its seat — never by an
+// older closed order of that seat read again behind a held cursor.
+test("quench: a stop without an id is not matched by an older closed order of its seat", async (t) => {
+  const o = await stopping(t, { status: 201, body: {} }, "ord-y");
+  await o.fake.control({
+    stop_order: { id: "ord-old", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  const old = o.fake.state.orders.list.get("ord-old");
+  old.state = "failed";
+  old.issued_at = new Date(Date.now() - 3_600_000).toISOString();
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  const run = () => o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run().state, "stopping", r.out);
+  assert.equal(run().order_id, undefined, "the old order is not the run's");
+  assert.equal(run().stop_outcome, undefined, "nor its outcome");
+  assert.equal((await ack(o, "ord-y", "stopped")).status, 200);
+  const after = await o.step();
+  assert.equal(after.code, 0, after.err + after.out);
+  assert.equal(run().state, "ended", after.out);
+});
+
 test("quench: someone else's stop closed refused does not end our run nor close its tab", async (t) => {
   const o = await leading(t);
   await o.queue([invite(9, GOOD)]);

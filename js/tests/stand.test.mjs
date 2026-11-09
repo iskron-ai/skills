@@ -350,6 +350,35 @@ for (const repeat of ["stand again", "session rotation"])
     for (const reg of regs().slice(before)) assert.deepEqual(reg.spawned_for, SPAWN);
   });
 
+// The OpenCode plugin lets take:true on the held pair through without the pair (#9959): the
+// bridge's own basis keeps the seat the orchestrator raised — its address, id and spawned_for.
+test("spawned_for take:true on the held seat keeps the seat, its id and its pair", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const seat = (r) => r.result?.structuredContent?.seats?.[0];
+  const args = { realm: "@nks/nks-dev", karta: "931", name: "spawn-take" };
+  const first = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, spawned_for: SPAWN },
+  });
+  assert.ok(!first.result?.isError, textOf(first));
+  const before = sentToChannel(fake).length;
+  const took = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { ...args, take: true },
+  });
+  assert.ok(!took.error && !took.result?.isError, textOf(took));
+  assert.equal(seat(took)?.standing, seat(first)?.standing, textOf(took));
+  assert.ok(seat(first)?.seat_id, JSON.stringify(first.result?.structuredContent));
+  assert.equal(seat(took)?.seat_id, seat(first)?.seat_id, textOf(took));
+  const regs = sentToChannel(fake)
+    .slice(before)
+    .filter((a) => a.action === "register");
+  assert.ok(regs.length > 0, "take registers again");
+  for (const reg of regs) assert.deepEqual(reg.spawned_for, SPAWN);
+});
+
 // A passing refusal of the replay is the hour's, not the seat's (standing.ts): the bridge registers
 // again before the next call. The same must hold for a seat taken with spawned_for; the run
 // without the pair is the control that the fake's refusal itself passes.
