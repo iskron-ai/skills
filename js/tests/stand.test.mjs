@@ -110,6 +110,260 @@ const textOf = (reply) => (reply.result?.content ?? []).map((c) => c.text ?? "")
 const sentToChannel = (fake) =>
   fake.state.calls.filter((c) => c.name === "iskron_channel").map((c) => c.arguments);
 
+const SPAWN = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+for (const kind of [
+  "foreign only",
+  "foreign pair",
+  "same name foreign owner",
+  "contradictory address",
+  "duplicate own",
+  "root only",
+  "wrong action",
+  "missing identity",
+  "own among others",
+])
+  test(`spawned_for receipt selects own seat: ${kind}`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    fake.state.registerFields = (a, seatId) => {
+      const own = { seat_id: seatId, standing: `@tester:${a.name}`, spawned_for: SPAWN };
+      const foreign = { seat_id: "foreign-seat", standing: "@other:foreign", spawned_for: SPAWN };
+      const out = { action: "register", seats: [own] };
+      if (kind === "foreign only") out.seats = [foreign];
+      if (kind === "foreign pair")
+        out.seats = [{ ...own, spawned_for: { ...SPAWN, invite: 8 } }, foreign];
+      if (kind === "same name foreign owner")
+        out.seats = [{ ...foreign, standing: `@other:${a.name}` }];
+      if (kind === "contradictory address") out.seats = [{ ...own, standing: "@other:foreign" }];
+      if (kind === "duplicate own") out.seats = [own, own];
+      if (kind === "root only") {
+        delete own.spawned_for;
+        out.spawned_for = SPAWN;
+      }
+      if (kind === "wrong action") out.action = "connect";
+      if (kind === "missing identity") out.seats = [{ spawned_for: SPAWN }];
+      if (kind === "own among others") out.seats = [foreign, own];
+      return out;
+    };
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "@nks/nks-dev", karta: "931", name: "receipt-probe", spawned_for: SPAWN },
+    });
+    assert.equal(!!(r.error || r.result?.isError), kind !== "own among others", textOf(r));
+  });
+for (const env of [
+  "",
+  "null",
+  "[]",
+  "7",
+  "bad json",
+  "{}",
+  `{"invite":7,"invite":7,"room":"${SPAWN.room}"}`,
+  JSON.stringify({ ...SPAWN, invite: 8 }),
+])
+  test(`spawned_for invalid/conflicting environment ${env} refuses before connect/register`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS, { ISKRON_SPAWNED_FOR: env });
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "@nks/nks-dev",
+        karta: "931",
+        name: "bad-env",
+        spawned_for: SPAWN,
+      },
+    });
+    assert.ok(r.error || r.result?.isError, textOf(r));
+    assert.equal(
+      sentToChannel(fake).filter((a) => ["connect", "register"].includes(a.action)).length,
+      0,
+    );
+  });
+
+for (const rule of [
+  "spawned_for_claimed",
+  "spawned_for_held",
+  "spawned_for_unknown",
+  "cursor_before_renumbering",
+  "missing_echo",
+])
+  test(`spawned_for ${rule}: no retry or success, new own seat removed`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    if (rule !== "missing_echo") {
+      fake.state.futureArgs.iskron_channel = ["spawned_for"];
+      fake.state.registerRefuseNext = [
+        { text: rule, status: rule.includes("claimed") || rule.includes("held") ? 409 : 422, rule },
+      ];
+    }
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "@nks/nks-dev",
+        karta: "931",
+        name: "claim-loser",
+        spawned_for: SPAWN,
+      },
+    });
+    assert.ok(r.error || r.result?.isError, textOf(r));
+    const sent = sentToChannel(fake);
+    assert.equal(sent.filter((a) => a.action === "connect").length, 1);
+    assert.equal(sent.filter((a) => a.action === "register").length, 1);
+    assert.equal(sent.filter((a) => a.action === "revoke").length, 1);
+    assert.equal(sent.find((a) => a.action === "revoke").standing, "claim-loser");
+    const work = await bridge.call("tools/call", {
+      name: "iskron_add_phenomenon",
+      arguments: { realm: "@nks/nks-dev", name: "must not work after claim refusal" },
+    });
+    assert.ok(work.error || work.result?.isError);
+    assert.equal(fake.state.calls.filter((c) => c.name === "iskron_add_phenomenon").length, 0);
+  });
+
+test("spawned_for raw register receives explicit pair and raw connect refuses before wire", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const connected = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: {
+      action: "connect",
+      realm: "@nks/nks-dev",
+      karta: "931",
+      name: "raw-spawn",
+      spawned_for: SPAWN,
+    },
+  });
+  assert.ok(connected.error || connected.result?.isError);
+  assert.match(textOf(connected), /iskron_stand/);
+  assert.equal(sentToChannel(fake).filter((a) => a.action === "connect").length, 0);
+  await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "raw-spawn" },
+  });
+  const r = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: {
+      action: "register",
+      realm: "@nks/nks-dev",
+      karta: "931",
+      name: "raw-spawn",
+      spawned_for: SPAWN,
+    },
+  });
+  assert.ok(!r.error && !r.result?.isError, textOf(r));
+  assert.deepEqual(
+    sentToChannel(fake)
+      .filter((a) => a.action === "register")
+      .at(-1).spawned_for,
+    SPAWN,
+  );
+});
+
+test("spawned_for identical sources allowed, not inherited by another graph/role", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS, {
+    ISKRON_SPAWNED_FOR: JSON.stringify(SPAWN),
+  });
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: {
+      realm: "@nks/nks-dev",
+      karta: "931",
+      name: "same-sources",
+      spawned_for: SPAWN,
+    },
+  });
+  assert.ok(!r.error && !r.result?.isError, textOf(r));
+  assert.deepEqual(r.result.structuredContent.seats[0].spawned_for, SPAWN);
+  await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: {
+      realm: "@nks/other",
+      karta: "932",
+      name: "other-target",
+    },
+  });
+  assert.ok(
+    sentToChannel(fake)
+      .filter((a) => a.realm === "@nks/other")
+      .every((a) => !a.spawned_for),
+  );
+});
+for (const source of ["explicit", "env"])
+  test(`spawned_for ${source}: register carries the pair, connect does not`, async (t) => {
+    const { bridge, fake } = await ready(
+      t,
+      ASKS_FIELDS,
+      source === "env" ? { ISKRON_SPAWNED_FOR: JSON.stringify(SPAWN) } : {},
+    );
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "@nks/nks-dev",
+        karta: "931",
+        name: `spawn-${source}`,
+        ...(source === "explicit" ? { spawned_for: SPAWN } : {}),
+      },
+    });
+    assert.ok(!r.error && !r.result?.isError, textOf(r));
+    const sent = sentToChannel(fake);
+    assert.deepEqual(sent.find((a) => a.action === "register")?.spawned_for, SPAWN);
+    assert.equal(sent.find((a) => a.action === "connect")?.spawned_for, undefined);
+  });
+
+for (const value of [
+  7,
+  null,
+  [],
+  {},
+  { invite: 1 },
+  { ...SPAWN, invite: 0 },
+  { ...SPAWN, invite: -1 },
+  { ...SPAWN, invite: 1.5 },
+  { ...SPAWN, invite: Number.MAX_SAFE_INTEGER + 1 },
+  { ...SPAWN, invite: "7" },
+  { ...SPAWN, room: "3952" },
+])
+  test(`spawned_for rejects invalid explicit pair ${JSON.stringify(value)} before seating`, async (t) => {
+    const { bridge, fake } = await ready(t);
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "@nks/nks-dev",
+        karta: "931",
+        name: "invalid-spawn",
+        spawned_for: value,
+      },
+    });
+    assert.ok(r.error || r.result?.isError, textOf(r));
+    assert.equal(
+      sentToChannel(fake).filter((a) => ["connect", "register"].includes(a.action)).length,
+      0,
+    );
+  });
+
+for (const invite of [1, Number.MAX_SAFE_INTEGER])
+  test(`spawned_for safe integer boundary ${invite} is accepted`, async (t) => {
+    const { bridge, fake } = await ready(t, ASKS_FIELDS);
+    fake.state.structured = true;
+    fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const pair = { ...SPAWN, invite };
+    const r = await bridge.call("tools/call", {
+      name: "iskron_stand",
+      arguments: {
+        realm: "@nks/nks-dev",
+        karta: "931",
+        name: "spawn-boundary",
+        spawned_for: pair,
+      },
+    });
+    assert.ok(!r.error && !r.result?.isError, textOf(r));
+    assert.deepEqual(r.result.structuredContent.seats[0].spawned_for, pair);
+  });
+
 async function ready(t, init = INIT, env = {}) {
   const fake = await startFakeNks({ pat: PAT });
   const dir = mkdtempSync(join(tmpdir(), "iskron-stand-"));

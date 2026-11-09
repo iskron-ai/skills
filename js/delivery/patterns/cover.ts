@@ -25,7 +25,8 @@ export const COVER = {
       /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
       roleQuotes: ["«", "»"],
       /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
-      stamp: /\(iskronify:\s*контракт\s*`?\d+`?\s*,\s*штамп/,
+      stamp: /\(iskronify:\s*контракт\s*`?(\d+)`?\s*,\s*штамп/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*контракт\s*`?(\d+)`?(?=\s*[,—)])/m,
     },
     en: {
       graph: "Graph",
@@ -33,7 +34,8 @@ export const COVER = {
       role: "Agent role",
       /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
       roleQuotes: ['"', '"'],
-      stamp: /\(iskronify:\s*contract\s*`?\d+`?\s*,\s*stamp/,
+      stamp: /\(iskronify:\s*contract\s*`?(\d+)`?\s*,\s*stamp/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*contract\s*`?(\d+)`?(?=\s*[,—)])/m,
     },
   },
   /**

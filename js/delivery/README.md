@@ -9,7 +9,10 @@
 
 Файлы:
 
+- `spawned-for.ts` — имя переменной окружения, схема пары и слова отказов основания запуска (#9959); разбор — `../shared/spawned-for.ts`.
+
 - `index.ts` — набор экспортов слоя (контракт с ядром), по пути файла.
+- `contract.ts` — собственные пороги поддержки выравнивания и слова предупреждения (`CONTRACT_SUPPORT`, `CONTRACT_WORDS`, #9786); ядро читает их через index, номера соседней поставки не знает.
 - `version.ts` — `VERSION` (штампует release-please, `release-please-config.json`), `BUILD_MARK` и `CHANNEL_MARK`. Форма строки `export const CHANNEL_MARK: string = "<BUILD_MARK>:dev";` — часть контракта: `js/build.mjs` находит её регулярным выражением и в сборке выпуска заменяет `:dev` на `:release`.
 - `product.ts` — `PRODUCT` и выводимое из него: переменные окружения (`ENV_PREFIX`, `envName`), имя моста и дом (`BRIDGE_NAME`, `HOME_DIR`, `HOME_BRIDGE_FILE`), префиксы сокетов, pipes и реестров процесса (`RUNTIME_PREFIX`, `GLOBAL_PREFIX`), раскладка набора (`BRIDGE_SKILL`, `BRIDGE_FILE`, `SKILL_STAMP_MASK` — маска отпечатка набора `*/<файл>` или `*/**`, `PLUGIN_FILE`, `PLUGIN_COPY_FILE`, `SKILL_SET`), распознавание установки (`PLUGIN_NAME`, `SUB_ENTRY_PREFIX`, `CONNECTOR_PATTERN`), имена клиентов MCP (`CLIENTS`), адреса сервера (`SERVER_URLS`, `DEFAULT_SERVER_URL`).
 - `lang.ts` — языки поставки (`LANGS`, `Lang`), умолчание (`DEFAULT_LANG`) и правило языка по адресу сервера (`langOfServer`); язык сессии и выбор слова (`words`) держит ядро `shared/lang.ts`.
