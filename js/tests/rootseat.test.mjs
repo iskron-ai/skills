@@ -118,6 +118,26 @@ test(
   },
 );
 
+// #10043: the taken word counts as told only once it went into a model request — a prompt whose
+// request never left (a later hook failed, the turn was cut) leaves it for the next request.
+test("spawned_for: the taken word lost with its request reaches the next one", T, async (t) => {
+  const s = await stage(t);
+  s.fake.state.structured = true;
+  s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  const oc = await rootPlugin(s, s.project);
+  try {
+    oc.create("spawn-root", { emit: false });
+    const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
+    await oc.promptLost("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+    const r = await oc.turn("spawn-root", "again");
+    assert.ok(r.told.includes(pair.room), board(r, oc));
+    const after = await oc.turn("spawn-root", "next");
+    assert.ok(!after.told.includes(pair.room), "told once it went into a request");
+  } finally {
+    await oc.stop();
+  }
+});
+
 const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
 for (const mode of [
   "fresh",

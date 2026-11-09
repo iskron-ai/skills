@@ -5,6 +5,11 @@ import { words } from "../shared/lang.ts";
 import { mergeSpawn, parseSpawn, spawnReceipt } from "../shared/spawned-for.ts";
 import { spawnAdmission, type SpawnStart } from "./spawn-admission.ts";
 
+const takenWord = (e: SpawnStart | undefined): string | null =>
+  e?.pair && e.claimed && e.realm && !e.told
+    ? words(SPAWNED_FOR).taken(e.realm, e.pair.room, e.pair.invite)
+    : null;
+
 export function createSpawnStarts(readContext: (session: string) => Promise<unknown>) {
   const starts = new Map<string, SpawnStart>();
   return {
@@ -48,15 +53,19 @@ export function createSpawnStarts(readContext: (session: string) => Promise<unkn
       }
       if (entry) {
         entry.claimed = true;
-        entry.realm = String(args.realm);
+        // No graph named — no word, never one naming «undefined».
+        entry.realm = typeof args.realm === "string" && args.realm ? args.realm : undefined;
       }
     },
-    /** Once, after the confirmed claim: the case the seat was taken for — join it before work. */
+    /** After the confirmed claim, until delivered: the case the seat was taken for — join it before work. */
     taken(session: string): string | null {
+      return takenWord(starts.get(session));
+    },
+    /** The word went into a model request: told, not before — a lost request leaves it for the next. */
+    delivered(session: string, sent: readonly string[]) {
       const e = starts.get(session);
-      if (!e?.pair || !e.claimed || !e.realm || e.told) return null;
-      e.told = true;
-      return words(SPAWNED_FOR).taken(e.realm, e.pair.room, e.pair.invite);
+      const word = takenWord(e);
+      if (e && word && sent.includes(word)) e.told = true;
     },
     prompt: spawnAdmission(starts, readContext),
     apply(session: string, name: string, args: Record<string, unknown>) {

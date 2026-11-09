@@ -261,6 +261,14 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
       const system = req.system.map((p) => p.text).join("\n");
       return system ? `${text}\n${system}` : text;
     },
+    /** Только prompt-хуки: запрос модели не ушёл (хук упал позже, ход прерван). */
+    async promptLost(sessionID, text) {
+      const p = { sessionID, messageID: `msg-${++seq}`, prompt: { text }, delivery: "queue" };
+      for (const cb of hooks.prompt ?? []) await cb(p);
+      const prior = contexts.get(sessionID);
+      if (prior === undefined || Array.isArray(prior))
+        contexts.set(sessionID, [...(prior ?? []), { id: p.messageID, type: "user", text }]);
+    },
     tools: () => tools.list,
     /** Тул сессии отработал (модель записала файл write или shell): хуки tool.execute.after. */
     async toolAfter(sessionID, tool, input = {}) {

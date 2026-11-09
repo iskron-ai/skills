@@ -278,6 +278,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           if (spawnStarts.has(sid)) half.finishSeat(sid);
           const ready = hookContext.take(sid, req.messages);
           for (const text of ready.words) req.system.push({ type: "text", text });
+          spawnStarts.delivered(sid, ready.words);
           // Counts wake no turn; take them only when their own root actually requests a model.
           if (ready.ride)
             ch?.ride(sid, (counts) => req.system.push({ type: "text", text: markFrame(counts) }));
