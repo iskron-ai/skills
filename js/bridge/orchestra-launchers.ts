@@ -27,8 +27,9 @@ export interface Launcher {
 export interface Launchers {
   /** This machine's launchers by their selector. */
   own: Map<string, Launcher>;
-  /** Every selector some description names — another machine's included. */
-  known: Set<string>;
+  /** Selectors described for other hosts: the host named — said aloud, for a host that names
+   * no machine raises nowhere. */
+  elsewhere: Map<string, string>;
   /** Descriptions that raise nothing: the selector (or node) and the code. */
   refused: { what: string; code: string }[];
 }
@@ -85,7 +86,8 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
 /** The descriptions as they lie in mind; a failed read throws — the tact raises nothing. */
 export async function readLaunchers(serverUrl: string, token: string): Promise<Launchers> {
   const s = mcpSession(serverUrl, token, "orchestra");
-  const out: Launchers = { own: new Map(), known: new Set(), refused: [] };
+  const out: Launchers = { own: new Map(), elsewhere: new Map(), refused: [] };
+  const here = hostname().toLowerCase();
   try {
     await s.open();
     const found = await s.call(tool("search"), {
@@ -100,12 +102,12 @@ export async function readLaunchers(serverUrl: string, token: string): Promise<L
       const body = await s.call(tool("look"), { realm: "mind", node_id: `#${seq}`, raw: true });
       const l = parseLauncher(body);
       if ("code" in l) {
-        if (l.launcher) out.known.add(l.launcher);
         out.refused.push({ what: l.launcher ?? `#${seq}`, code: l.code });
         continue;
       }
-      out.known.add(l.launcher);
-      if (l.host === null || l.host === hostname()) mine.push(l);
+      // Host names are case-insensitive: the human writes what the machine shows, in any case.
+      if (l.host === null || l.host.toLowerCase() === here) mine.push(l);
+      else out.elsewhere.set(l.launcher, l.host);
     }
     for (const l of mine) {
       if (mine.filter((x) => x.launcher === l.launcher).length > 1) {

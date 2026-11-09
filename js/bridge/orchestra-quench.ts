@@ -64,10 +64,22 @@ export function expireLaunches(runs: Record<string, Run>, now = Date.now()): str
   return said;
 }
 
-/** A stopping run whose order is no longer open (complete snapshot) has ended. */
-export function settleStops(runs: Record<string, Run>, openOrders: Set<string>): void {
-  for (const r of Object.values(runs))
-    if (r.state === "stopping" && r.order_id && !openOrders.has(r.order_id)) r.state = "ended";
+/**
+ * A stopping run whose order is no longer open (complete snapshot) has ended; a stop answered
+ * without an id is tracked by its seat. The snapshot reads orders of the boundary's graphs
+ * only — a run of a graph outside it is not settled by its order's absence.
+ */
+export function settleStops(
+  runs: Record<string, Run>,
+  open: Record<string, unknown>[],
+  boundary: string[],
+): void {
+  const orders = new Set(open.map((s) => String(s.order_id)));
+  const seats = new Set(open.map((s) => String(s.standing_id)));
+  for (const r of Object.values(runs)) {
+    if (r.state !== "stopping" || !boundary.includes(r.realm)) continue;
+    if (r.order_id ? !orders.has(r.order_id) : !seats.has(r.standing_id ?? "")) r.state = "ended";
+  }
 }
 
 async function order(base: string, token: string, r: Run, key: string) {
@@ -89,20 +101,29 @@ async function order(base: string, token: string, r: Run, key: string) {
 }
 
 /**
- * Extinguish our raised seats whose composition is empty. `reread(realm)` reads the tape again
- * from the fresh cursor — the re-check before the end (#8203); a failed re-read orders nothing.
+ * Extinguish our raised seats whose composition is empty — after they sat in a case, or never
+ * having joined one within the window from the launch (a failed launch, #9970). `reread(realm)`
+ * reads the tape again from the fresh cursor — the re-check before the end (#8203); a failed
+ * re-read orders nothing. A caller gone (#8202) stops it before the next order.
  */
 export async function quench(
   base: string,
   token: string,
   runs: Record<string, Run>,
   reread: (realm: string) => Promise<Signal[]>,
+  gone?: { gone: boolean },
+  now = Date.now(),
 ): Promise<string[]> {
   const said: string[] = [];
   const due = Object.entries(runs).filter(
-    ([, r]) => r.state === "raised" && r.sat && r.rooms === 0 && r.standing_id,
+    ([, r]) =>
+      r.state === "raised" &&
+      r.rooms === 0 &&
+      r.standing_id &&
+      (r.sat || now - Date.parse(r.at) > RAISE_WINDOW_MS),
   );
   for (const [key, r] of due) {
+    if (gone?.gone) break;
     try {
       foldTape(r.realm, await reread(r.realm), runs);
       if (r.rooms !== 0) {
@@ -110,14 +131,16 @@ export async function quench(
         continue;
       }
       const got = await order(base, token, r, key);
+      // Never sat within the window: the launch failed (#9970) — said so before the stop's outcome.
+      const why = r.sat ? "" : "no_join, ";
       if (got.status >= 200 && got.status < 300) {
         r.state = "stopping";
-        r.order_id = got.id;
-        said.push(w().leadRow(r.realm, r.invite, "stop_ordered"));
+        if (got.id) r.order_id = got.id;
+        said.push(w().leadRow(r.realm, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
         r.state = "ended";
-        said.push(w().leadRow(r.realm, r.invite, "seat_gone"));
-      } else said.push(w().leadRow(r.realm, r.invite, `stop_refused_${got.status}`));
+        said.push(w().leadRow(r.realm, r.invite, `${why}seat_gone`));
+      } else said.push(w().leadRow(r.realm, r.invite, `${why}stop_refused_${got.status}`));
     } catch (e) {
       said.push(w().leadRow(r.realm, r.invite, `stop_unsent (${(e as Error).message})`));
     }

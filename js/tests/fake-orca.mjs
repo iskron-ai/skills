@@ -1,7 +1,7 @@
 // A substitute Orca CLI for the orchestrator's probes (graph @nks/nks-dev, node #9966): answers
 // --version and agent-context --json as 1.4.242 declared them, and records every other argv as a
-// JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT
-// change the version and the launch's exit code. The real `orca agent launch` is never run.
+// JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT,
+// FAKE_ORCA_DELAY_MS change the version, the launch's exit code and how long it takes. The real `orca agent launch` is never run.
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -25,6 +25,9 @@ if (args[0] === "project" && (args[1] === "list" || args[1] === "setups")) {
   process.exit(0);
 }
 appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+// FAKE_ORCA_DELAY_MS: the launch is recorded at once and answers this much later.
+const delay = Number(process.env.FAKE_ORCA_DELAY_MS ?? 0);
+if (delay) await new Promise((r) => setTimeout(r, delay));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 if (code === 0) process.stdout.write(JSON.stringify({ ok: true, agent: "fake" }) + "\n");
 process.exit(code);

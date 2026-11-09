@@ -312,7 +312,7 @@ test("raise: the description's limit holds — the second invite waits", async (
   assert.equal(o.launches().length, 1);
 });
 
-test("raise: a description of another machine is not ours; a broken one is said aloud", async (t) => {
+test("raise: a description of another machine is not raised here, its host said aloud; a broken one too", async (t) => {
   const o = await leading(t, {
     descriptions: () => [
       describe({ body: { launcher: "elsewhere", host: "another-host" } }),
@@ -322,9 +322,38 @@ test("raise: a description of another machine is not ours; a broken one is said 
   await o.queue([invite(1, { ...GOOD, launcher: "elsewhere" })]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
-  assert.doesNotMatch(r.out, /invite 1:/, "another machine's invite is not ours to refuse");
+  // A host naming no machine would raise nowhere in silence: every machine names the host it read.
+  assert.match(r.out, /invite 1: host_elsewhere \(another-host\)/, r.out);
   assert.match(r.out, /#78 in mind: description_not_json/, r.out);
   assert.equal(o.launches().length, 0);
+});
+
+test("raise: the host is this machine's name in any letter case", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => {
+      const h = hostname();
+      return [
+        describe({ body: { host: h.toLowerCase() !== h ? h.toLowerCase() : h.toUpperCase() } }),
+      ];
+    },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
+test("raise: the caller gone mid-tact — no further launch, no cursor moves (#8202)", async (t) => {
+  const o = await leading(t, { env: { FAKE_ORCA_DELAY_MS: "6000" } });
+  await o.queue([invite(1, GOOD), invite(2, GOOD)]);
+  const r = await o.step();
+  assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
+  // Past the first launch's answer and what a second launch would take.
+  await new Promise((done) => setTimeout(done, 9_000));
+  assert.equal(o.launches().length, 1, "no launch after the caller left");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|1`].state, "launched", "the launch done is registered");
+  const cursors = JSON.parse(readFileSync(join(o.dir, "run", "orchestra-cursors.json"), "utf8"));
+  assert.equal(cursors.realms[REALM], undefined, "no cursor moved after the caller left");
 });
 
 test("raise: an unobserved orca version launches nothing", async (t) => {
@@ -410,6 +439,71 @@ test("quench: a membership landing after the read cancels the end — the re-che
   assert.match(r.out, /invite 9: composition_changed/, r.out);
   assert.equal(o.fake.state.orders.human.length, 0, "no stop order on a fresh membership");
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
+test("quench: a raised seat that never joined within the window is a failed launch — stopped (#9970)", async (t) => {
+  const o = await leading(t, { env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500" } });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await new Promise((done) => setTimeout(done, 2_000));
+  await o.queue([], [signal(1, 9, [])]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /invite 9: no_join/, r.out);
+  const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
+  assert.equal(stops.length, 1, JSON.stringify(o.fake.state.orders.human));
+  assert.equal(stops[0].id, "seat-raised");
+  assert.equal(stops[0].body.reason_code, "composition_empty");
+});
+
+/** Our seat sat and its composition emptied; the stop answers `answer`, an open order lies. */
+async function stopping(t, answer, order) {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    orders_stop_answer: answer,
+    stop_order: { id: order, standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: stop_ordered/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+  return o;
+}
+
+test("quench: a stop answered without an id ends when no open order is left for the seat", async (t) => {
+  const o = await stopping(t, { status: 201, body: {} }, "ord-x");
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", "its order is still open");
+  const closed = await fetch(`${o.fake.base}/api/me/orders/ord-x/ack`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer probe-pat",
+      "content-type": "application/json",
+      "user-agent": "iskron-bridge/0.0.0",
+    },
+    body: JSON.stringify({ state: "stopped" }),
+  });
+  assert.equal(closed.status, 200);
+  await o.step();
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+});
+
+test("quench: a stopping run whose graph left the boundary is not ended by the order's absence", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-b" } }, "ord-b");
+  const other = "@probe/other";
+  writeFileSync(
+    join(o.dir, "run", "orchestra.json"),
+    JSON.stringify({ on: true, realms: [other] }),
+  );
+  const hold = join(o.dir, "standings", "probe-1.hold");
+  writeFileSync(hold, JSON.stringify({ ...JSON.parse(readFileSync(hold, "utf8")), realm: other }));
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", "its order was not read");
 });
 
 test("quench: a seat the orchestrator did not launch is never stopped", async (t) => {

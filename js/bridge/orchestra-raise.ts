@@ -28,7 +28,8 @@ const ADAPTER_HARNESSES = new Set(["opencode"]);
 type Row = Record<string, unknown>;
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-/** Why this row is not raised, or null — or "other": another machine's launcher, not ours to say. */
+/** Why this row is not raised here, or null. Another host's launcher is said with the host it
+ * names — a host matching no machine would otherwise raise nowhere in silence. */
 function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | null {
   const launcher = text(row.launcher);
   if (!launcher) return "launcher_missing";
@@ -36,7 +37,8 @@ function refusal(row: Row, ls: Launchers, runs: Record<string, Run>): string | n
   if (!own) {
     const broken = ls.refused.find((r) => r.what === launcher);
     if (broken) return broken.code;
-    return ls.known.has(launcher) ? "other" : "launcher_unknown";
+    const host = ls.elsewhere.get(launcher);
+    return host ? `host_elsewhere (${host})` : "launcher_unknown";
   }
   const harness = text(row.harness);
   if (!harness) return "harness_missing";
@@ -74,18 +76,20 @@ export async function raiseRows(
   start: Row[],
   ls: Launchers,
   runs: Record<string, Run>,
+  gone?: { gone: boolean },
 ): Promise<string[]> {
   const said: string[] = [];
   let ready: string | null | undefined;
   let orca: CheckoutOf | string | undefined;
   for (const row of start) {
+    // The caller left (#8202): no launch after its refusal was spoken.
+    if (gone?.gone) break;
     const realm = String(row.realm);
     const room = String(row.room);
     const invite = Number(row.invite);
     const key = runKey(realm, room, invite);
     if (runs[key]) continue;
     const why = refusal(row, ls, runs);
-    if (why === "other") continue;
     if (why) {
       said.push(w().leadRow(realm, invite, why));
       continue;
@@ -107,6 +111,7 @@ export async function raiseRows(
       said.push(w().leadRow(realm, invite, worktree.code));
       continue;
     }
+    if (gone?.gone) break;
     const run: Run = {
       realm,
       room,

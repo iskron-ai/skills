@@ -21,7 +21,7 @@ export function leadAct(
   mcpUrl: string,
   admitted: boolean,
 ): TactAct {
-  return async (reads, boundary) => {
+  return async (reads, boundary, gone) => {
     if (!admitted) return [w().leadNotAdmitted()];
     const runs = readRuns(authDir);
     for (const r of reads) foldTape(r.realm, r.signals as Record<string, unknown>[], runs);
@@ -34,14 +34,19 @@ export function leadAct(
         );
         return said;
       }
-      settleStops(runs, new Set(demands.stop.map((s) => String(s.order_id))));
+      settleStops(runs, demands.stop, boundary);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(
-        ...(await quench(base, token, runs, (realm) =>
-          readTape(base, token, realm, cursorOf(realm)),
+        ...(await quench(
+          base,
+          token,
+          runs,
+          (realm) => readTape(base, token, realm, cursorOf(realm)),
+          gone,
         )),
       );
+      if (gone?.gone) return said;
       let launchers;
       try {
         launchers = await readLaunchers(mcpUrl, token);
@@ -50,7 +55,7 @@ export function leadAct(
         return said;
       }
       for (const r of launchers.refused) said.push(w().leadDescription(r.what, r.code));
-      said.push(...(await raiseRows(authDir, demands.start, launchers, runs)));
+      said.push(...(await raiseRows(authDir, demands.start, launchers, runs, gone)));
       return said;
     } finally {
       writeRuns(authDir, runs);

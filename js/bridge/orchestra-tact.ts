@@ -42,8 +42,13 @@ interface TactState {
   /** The last tact's leading outcomes — raising and extinguishing — as said. */
   lead?: string;
 }
-/** The leading half of a tact (orchestra-lead.ts): acts on the reads before the cursors move. */
-export type TactAct = (reads: TactRead[], boundary: string[]) => Promise<string[]>;
+/** The leading half of a tact (orchestra-lead.ts): acts on the reads before the cursors move;
+ * a caller gone mid-act stops it before its next launch or stop order (#8202). */
+export type TactAct = (
+  reads: TactRead[],
+  boundary: string[],
+  gone?: { gone: boolean },
+) => Promise<string[]>;
 function readTactState(authDir: string): TactState {
   try {
     const f = JSON.parse(readFileSync(cursorsFile(authDir), "utf8")) as TactState;
@@ -197,22 +202,26 @@ export async function stepTact(
     }
   }
   if (gone?.gone) return { ok: false, said: w().stepGone() };
-  const lead = act ? await act(reads, boundary) : [];
+  const lead = act ? await act(reads, boundary, gone) : [];
   state.lead = lead.join("; ");
+  // Left during the act: what it did stays said for status, the cursors stay where they lay.
+  const left = gone?.gone === true;
   const at = new Date().toISOString();
-  for (const r of reads)
-    state.realms[r.realm] = {
-      cursor: r.cursor,
-      at,
-      invites: r.invites,
-      signals: r.signals.length,
-    };
+  if (!left)
+    for (const r of reads)
+      state.realms[r.realm] = {
+        cursor: r.cursor,
+        at,
+        invites: r.invites,
+        signals: r.signals.length,
+      };
   try {
     mkdirSync(seamRunDir(authDir), { recursive: true, mode: 0o700 });
     writeFileSync(cursorsFile(authDir), JSON.stringify(state) + "\n", { mode: 0o600 });
   } catch (e) {
     return { ok: false, said: w().doorError((e as Error).message) };
   }
+  if (left) return { ok: false, said: w().stepGone() };
   return {
     ok: true,
     said:
