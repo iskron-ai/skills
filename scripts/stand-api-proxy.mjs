@@ -26,9 +26,10 @@
 // connection's TCP open (not its 101) and close with the bytes left unread is logged too, and a text frame that is not JSON or a compressed
 // one (the api offers no compression) as such, unread: a missing tick is a reading only within an
 // observed connection with no such line.
-// --req-log F — every request that reaches the proxy, HTTP and the WebSocket upgrade, as one JSON
-// line {t, method, path, ua}: the path the api is asked, its query cut off and a segment that looks
-// like a token masked (nks_chw_*** — a socket token; *** — any other), and the User-Agent as sent
+// --req-log F — every request under /api, HTTP and the WebSocket upgrade, as one JSON line {t,
+// method, path, ua}; a request outside /api is answered 404 or dropped and not logged. The path
+// the api is asked, its query cut off, the segment after /channel/ws/ and /channel/status/ and any
+// other that looks like a token masked (nks_chw_*** — a socket token; *** — any other), and the User-Agent as sent
 // (null — none). No other header, no query, no body: credentials never reach the log.
 import { appendFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -87,20 +88,28 @@ async function diskState(id) {
 }
 
 const strip = (url) => (url.startsWith("/api/") ? url.slice(4) : url === "/api" ? "/" : null);
-// A path segment that carries a credential: a socket token nks_chw_… (its kind prefix kept) or
-// any long run of letters and digits that is not a UUID.
+// A path segment that carries a credential: the one after /channel/ws/ or /channel/status/ by its
+// place, whatever its letters; a socket token nks_chw_… (its kind prefix kept); any long run of
+// letters and digits that is not a UUID.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const maskSeg = (s) => {
+const maskSeg = (s, secret) => {
   const nks = /^(nks_(?:[a-z]+_)?)./i.exec(s);
   if (nks) return `${nks[1]}***`;
+  if (secret && s) return "***";
   if (s.length >= 20 && !UUID.test(s) && /\d/.test(s) && /[a-z]/i.test(s)) return "***";
   return s;
+};
+const maskPath = (path) => {
+  const segs = path.split("?")[0].split("/");
+  return segs
+    .map((s, i) => maskSeg(s, i >= 2 && segs[i - 2] === "channel" && (segs[i - 1] === "ws" || segs[i - 1] === "status")))
+    .join("/");
 };
 const noteReq = (req, path) =>
   reqLog &&
   appendFileSync(
     reqLog,
-    JSON.stringify({ t: Date.now(), method: req.method, path: path.split("?")[0].split("/").map(maskSeg).join("/"), ua: req.headers["user-agent"] ?? null }) + "\n",
+    JSON.stringify({ t: Date.now(), method: req.method, path: maskPath(path), ua: req.headers["user-agent"] ?? null }) + "\n",
   );
 
 const server = http.createServer((req, res) => {
