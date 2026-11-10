@@ -144,10 +144,13 @@ export async function raiseRows(
         said.push(w().leadRow(realm, room, invite, turn));
         continue;
       }
-      // Orca's projects changed: read again; a clone it did not register is said, kept.
+      // Orca's projects changed: read again; a clone it did not register, or Orca unreadable
+      // now, is said and kept as clone_unregistered.
       orca = await orcaCheckouts();
       worktree = find();
-      const lost = typeof worktree !== "string" && worktree.code === "no_checkout";
+      const lost =
+        typeof orca === "string" ||
+        (typeof worktree !== "string" && worktree.code === "no_checkout");
       const why = cloneTaken(authDir, repository, spec, !lost);
       if (why) worktree = { code: why };
     }

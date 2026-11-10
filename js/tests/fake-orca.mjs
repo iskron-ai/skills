@@ -3,7 +3,14 @@
 // JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT,
 // FAKE_ORCA_DELAY_MS change the version, the launch's exit code and how long it takes. The real `orca agent launch` is never run.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const args = process.argv.slice(2);
@@ -71,12 +78,23 @@ if (args[0] === "project" && args[1] === "setup-clone") {
     });
     writeFileSync(lay, JSON.stringify(all));
   }
+  writeFileSync(`${process.env.FAKE_ORCA_LOG}.cloned`, "");
   process.stdout.write(JSON.stringify({ ok: true, result: {} }) + "\n");
   process.exit(0);
 }
 // project list / setups — the form observed on 1.4.242 (case №4050 [8]); FAKE_ORCA_PROJECTS —
 // a JSON file {projects: [...], setups: [...]} laid by the probe; none — empty lists.
+// FAKE_ORCA_FAIL_AFTER_CLONE=N — the N-th read (list and setups) after a clone fails once (exit 5).
 if (args[0] === "project" && (args[1] === "list" || args[1] === "setups")) {
+  const cloned = `${process.env.FAKE_ORCA_LOG}.cloned`;
+  const nth = Number(process.env.FAKE_ORCA_FAIL_AFTER_CLONE ?? 0);
+  if (nth && existsSync(cloned)) {
+    const seen = Number(readFileSync(cloned, "utf8") || 0);
+    if (args[1] === "setups")
+      if (seen + 1 === nth) unlinkSync(cloned);
+      else writeFileSync(cloned, String(seen + 1));
+    if (seen + 1 === nth) process.exit(5);
+  }
   const lay = process.env.FAKE_ORCA_PROJECTS;
   const all = lay && existsSync(lay) ? JSON.parse(readFileSync(lay, "utf8")) : {};
   const result =
@@ -88,6 +106,9 @@ appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
 // FAKE_ORCA_DELAY_MS: the launch is recorded at once and answers this much later.
 const delay = Number(process.env.FAKE_ORCA_DELAY_MS ?? 0);
 if (delay) await new Promise((r) => setTimeout(r, delay));
+// FAKE_ORCA_HOLD: a file — the launch answers only once the probe removes it.
+const hold = process.env.FAKE_ORCA_HOLD;
+while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 // The launch answer's form by agent-context 1.4.242 (outcome.kind, outcome.handle), not an
 // observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal show and close

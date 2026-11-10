@@ -1,10 +1,13 @@
 // The clone's run (graph @nks/nks-dev, node #10078, its retry-and-time paragraph; case №4206): the tact
 // starts it in the daemon's background with a registry row `cloning` and goes on — quenching
 // and expiry never wait for git; a later tact finds the outcome and raises. A failed clone is
-// kept by repository and not tried again until the launcher description changes. Git never
-// asks (GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never); a timeout kills the clone's whole
-// process group; its output is never read. A clone left by a former daemon is no clone: its
-// half-written folder, if any, refuses as destination_exists — the human sorts it.
+// kept by repository and not tried again until the launcher description changes; a timeout
+// is such a failure — no second clone into the same folder. GIT_TERMINAL_PROMPT=0,
+// GCM_INTERACTIVE=never and killing the process group guard the orca CLI's own children only:
+// the CLI is a client of Orca's runtime (answers carry _meta.runtimeId, #9966), so git most
+// likely runs in the runtime, outside this group and its env — the timeout then ends the
+// client alone; not a guarantee, unobserved live. The output is never read. A cloning row
+// without this daemon's clone (off, restart, update) is clone_interrupted, kept as a failure.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -21,7 +24,8 @@ const CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 600_000;
 export const specOf = (launcher: unknown): string =>
   createHash("sha256").update(JSON.stringify(launcher)).digest("hex").slice(0, 16);
 
-/** The clone as one process group, its output unread; a timeout kills the whole group. */
+/** The orca client as one process group, its output unread; a timeout kills the group —
+ * git, if it runs in Orca's runtime, is not in it. */
 function cloneRun(argv: string[], ms: number): Promise<number | string> {
   return new Promise((resolve) => {
     const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
@@ -61,8 +65,12 @@ export async function cloneTurn(
   repository: string,
   gone?: { gone: boolean },
 ): Promise<string> {
-  const row = readClones(authDir)[repository];
+  let row = readClones(authDir)[repository];
   if (row?.state === "cloning" && inflight.has(repository)) return "cloning";
+  if (row?.state === "cloning") {
+    row = { ...row, state: "failed", why: "clone_interrupted" };
+    writeClone(authDir, repository, row);
+  }
   if (row?.state === "cloned") return "cloned";
   if (row?.state === "failed" && row.spec === spec) {
     if (row.told) return `clone_failed_before (${row.why})`;
@@ -93,7 +101,7 @@ export async function cloneTurn(
         why ? { state: "failed", at, spec, why } : { state: "cloned", at, spec },
       );
     } catch {
-      /* the registry unwritable: the row stays cloning with no clone in flight — tried again */
+      /* the registry unwritable: the row stays cloning with no clone in flight — interrupted */
     }
   });
   return "cloning";

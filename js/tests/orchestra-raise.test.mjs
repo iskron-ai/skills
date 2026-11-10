@@ -4,7 +4,7 @@
 // substitute `orca` on the daemon's PATH that records argv instead of launching.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -574,21 +574,27 @@ test("raise: the daemon's own timer leads — no step is asked", async (t) => {
 });
 
 test("raise: the timer skips its tact while the last one runs — no chain of tacts behind a slow one", async (t) => {
-  const o = await leading(t, {
-    env: { ISKRON_ORCHESTRA_TACT_MS: "250", FAKE_ORCA_DELAY_MS: "5000" },
-  });
+  const dir = mkdtempSync(join(tmpdir(), "iskron-hold-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const hold = join(dir, "hold");
+  writeFileSync(hold, "");
+  const o = await leading(t, { env: { ISKRON_ORCHESTRA_TACT_MS: "100", FAKE_ORCA_HOLD: hold } });
   await o.queue([invite(9, GOOD)]);
   const until = Date.now() + 15_000;
   while (!o.launches().length && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
-  // Reads of the queues reaching the server: one tact's worth went before the launch.
-  const reads = () => o.fake.state.counts.orchestra_reads;
-  const one = reads();
-  // The slow launch answers 5 s after it was recorded; count what reads the second after it.
-  await new Promise((r) => setTimeout(r, 4_500));
-  const held = reads();
+  assert.equal(o.launches().length, 1, "the timer's tact reached the launch");
+  // The tact is held at the launch while the timer ticks many times over.
   await new Promise((r) => setTimeout(r, 1_500));
-  const tacts = (reads() - held) / one;
-  assert.ok(tacts <= 7, `${tacts} tacts within ~1 s of the slow one: they were queued`);
+  // Off: no tact begins after the hold; then the held tact goes on and ends.
+  assert.equal((await cli(o.dir, ["off"])).code, 0);
+  rmSync(hold);
+  // A step queues behind every tact begun before it: its answer — they all ended.
+  await o.step();
+  const journal = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
+  const at = journal.findIndex((l) => /orchestra tact: .*invite 9: launched/.test(l));
+  assert.ok(at >= 0, journal.join("\n"));
+  const behind = journal.slice(at + 1).filter((l) => /orchestra tact/.test(l));
+  assert.deepEqual(behind, [], "tacts were queued behind the held one");
 });
 
 /** The CLI as a human types it at a terminal: under a pseudo-terminal of `script`, its words
@@ -1336,7 +1342,7 @@ test("clone: the clone does not hold the tact — it runs in the background, sai
   assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
 });
 
-test("clone: a timeout ends the clone's whole process group; output beyond any buffer is no failure", async (t) => {
+test("clone: a timeout ends the orca client's whole process group; output beyond any buffer is no failure", async (t) => {
   const o = await cloning(t, {
     env: { FAKE_ORCA_CLONE_HANG: "1", ISKRON_ORCHESTRA_CLONE_MS: "1500" },
   });
@@ -1396,6 +1402,36 @@ test("clone: cloned but not registered by Orca — clone_failed (clone_unregiste
   assert.match(again.out, /invite 9: clone_failed_before \(clone_unregistered\)/, again.out);
   assert.equal(clones(o).length, 1, "cloned once");
   assert.equal(o.launches().length, 0);
+});
+
+test("clone: Orca unreadable right after the clone — the row stays clone_unregistered, not destination_exists", async (t) => {
+  const o = await cloning(t, {
+    // The tact's first read sees no checkout; the read after the clone's outcome fails.
+    env: { FAKE_ORCA_CLONE_UNREGISTERED: "1", FAKE_ORCA_FAIL_AFTER_CLONE: "2" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_unregistered\)/, r.out);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_unregistered\)/, again.out);
+  assert.equal(clones(o).length, 1, "cloned once");
+});
+
+test("clone: a cloning row left by a former daemon is clone_interrupted, remembered — no second clone", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
+  await o.queue([invite(9, GOOD)]);
+  await stepThrough(o);
+  // The row as a daemon gone mid-clone leaves it: cloning, with no clone of this daemon's.
+  const f = join(o.dir, "run", "orchestra-runs.json");
+  const reg = JSON.parse(readFileSync(f, "utf8"));
+  const { spec, at } = reg.clones[REPO];
+  reg.clones[REPO] = { state: "cloning", at, spec };
+  writeFileSync(f, JSON.stringify(reg));
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_interrupted\)/, r.out);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_interrupted\)/, again.out);
+  assert.equal(clones(o).length, 1, "not cloned a second time");
 });
 
 test("clone: broken clone fields break the description, raising nothing", async (t) => {
