@@ -56,7 +56,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "7.38.0";
+var VERSION = "7.38.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -124,8 +124,21 @@ var TAKE = {
 };
 
 // js/delivery/words/frame-text.ts
+function clockNotice(lang2, kind2, f) {
+  const ru = lang2 === "ru";
+  const unknown = ru ? "неизвестно" : "unknown";
+  const flag = (v) => v === null ? unknown : v ? ru ? "да" : "yes" : ru ? "нет" : "no";
+  const head = kind2 === "card_unanswered" ? ru ? "карточка без ответа" : "unanswered card" : ru ? "срок строки" : "line due";
+  const ref = `${ru ? "дело" : "case"} №${f.room ?? unknown} (id: ${f.roomId ?? unknown}, ${ru ? "граф" : "realm"}: ${f.realm ?? unknown}) [${f.entry ?? unknown}], ${ru ? "ключ" : "key"}: ${f.key ?? unknown}`;
+  const who = `${kind2 === "card_unanswered" ? ru ? "адресат" : "recipient" : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${ru ? "роль" : "role"}: ${f.karta ?? unknown})`;
+  const facts = kind2 === "card_unanswered" ? `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}` : `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`;
+  return `${head}: ${ref}; ${who}; ${facts}`;
+}
 var FRAME_TEXT = {
   ru: {
+    clockNotice: (kind2, facts) => clockNotice("ru", kind2, facts),
+    cardRepeat: (n2) => `повтор карточки: ${n2 ?? "номер неизвестен"}`,
+    openCards: (count, oldest, malformed = false) => `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -147,6 +160,9 @@ var FRAME_TEXT = {
     ].filter(Boolean).join(", ")}`
   },
   en: {
+    clockNotice: (kind2, facts) => clockNotice("en", kind2, facts),
+    cardRepeat: (n2) => `card repeat: ${n2 ?? "number unknown"}`,
+    openCards: (count, oldest, malformed = false) => `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,
@@ -185,13 +201,13 @@ var LAUNCH = {
     notSeated: (why, no, join4) => `Искрон: не встал — ${why}. Только спутником запустившего: его место есть — iskron_stand с satellite_of, затем дело №${no}: ${join4}; нет — он занимает место и перезапускает тебя. Пока без графа, итог запустившему.`,
     ownSeat: () => "своим местом",
     notEntered: (place, no, why) => `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
-    entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`
+    entered: (place, no) => `Искрон: встал ${place}, вошёл в дело №${no}: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.`
   },
   en: {
     notSeated: (why, no, join4) => `Iskron: launch line — not seated: ${why}. A subagent takes only a satellite of its launcher's seat: if the launcher holds one, repeat iskron_stand and enter case №${no}: ${join4}; if not, the launcher takes a seat and launches you again; until then the work goes without the graph, the result as a word to the launcher.`,
     ownSeat: () => "in a seat of its own",
     notEntered: (place, no, why) => `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
-    entered: (place, no) => `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`
+    entered: (place, no) => `Iskron: seated ${place}, entered case №${no}: restate the brief by say with to the launcher and in_reply_to the assignment; unknown address — read the participants. Progress and outcome — line by your key, no duplicate say.`
   }
 };
 
@@ -277,12 +293,12 @@ var PLUGIN = {
     relistFailed: (message) => `Искрон: список тулов после смены на сервере не перечитан — ${message}`,
     listening: () => "Искрон: канал слушает",
     dead: (code) => String(code) === "4002" ? "Искрон: канал закрыт кодом 4002 — место погасло по простою. Вернуть его — iskron_stand тем же именем." : `Искрон: канал закрыт кодом ${code}, токен мёртв. iskron_channel(action="connect"), затем register тем же именем; сокет возьмёт мост.`,
-    stopped: (text) => `Искрон: ${text}`,
+    stopped: (text2) => `Искрон: ${text2}`,
     stoppedTurn: (stopped) => `${stopped}. Встать снова — только если человек велит, явным iskron_stand.`,
     stoppedAny: () => "Искрон: место снято — ты остановлен: работу кончи, место не занимай",
     evicted: (code) => `Искрон: канал закрыт кодом ${code}, место у другого. Мост встаёт рядом на имя.N со слухом; жди исхода. Место и команду сторожа — iskron_stand тем же вызовом. take=true — только словом человека; восстановление — скилл standing.`,
     alive: (version) => `Искрон: сокет рвут, а служба отвечает (${version}) — мост держит место и переоткрывает реже; не пройдёт — спроси о токене.`,
-    note: (text) => `Искрон: ${text}`
+    note: (text2) => `Искрон: ${text2}`
   },
   en: {
     noBridge: (tried) => "Iskron: the bridge was not found — there will be no iskron_* tools in this session. Looked in: " + tried + ". Set ISKRON_BRIDGE_PATH or install the bridge with the establish-mcp skill.",
@@ -292,12 +308,12 @@ var PLUGIN = {
     relistFailed: (message) => `Iskron: the tool list was not reread after the change on the server — ${message}`,
     listening: () => "Iskron: the channel is listening",
     dead: (code) => String(code) === "4002" ? "Iskron: the channel was closed with code 4002 — the seat went out after idling. To return it — iskron_stand with the same name." : `Iskron: the channel was closed with code ${code} — the token is dead. Call iskron_channel(action="connect"), then register with the same name: the bridge takes the new socket from the answer itself, no restart needed.`,
-    stopped: (text) => `Iskron: ${text}`,
+    stopped: (text2) => `Iskron: ${text2}`,
     stoppedTurn: (stopped) => `${stopped}. This word stands while the seat is taken off; if the human tells you to stand again — stand by an explicit iskron_stand call, and the word goes.`,
     stoppedAny: () => "Iskron: the seat was taken off — you are stopped: end the work, do not take the seat",
     evicted: (code) => `Iskron: the channel was closed with code ${code} — the seat was taken, another holder is listening. The bridge stands beside as name.N with hearing itself — its own seat, the other one is not taken over; the outcome comes next, iskron_stand with the same call tells the seat and the watchdog command. Evicting that session (take=true): ${TAKE.en.rule()}.`,
     alive: (version) => `Iskron: the socket keeps being cut while the service answers (${version}) — the bridge holds the seat and reopens less often; if it fails, ask about the token.`,
-    note: (text) => `Iskron: ${text}`
+    note: (text2) => `Iskron: ${text2}`
   }
 };
 
@@ -337,7 +353,7 @@ var ROOM = {
     nodeUndeleted: (seq, name, reasoning) => `узел #${seq} ${name} восстановлен${reasoning}`,
     link: (room, rel) => `дело связано с №${room} (${rel})`,
     auto: (code, room) => `запись платформы ${code} о деле №${room}`,
-    unknown: (kind) => `род ${kind} мосту неизвестен`,
+    unknown: (kind2) => `род ${kind2} мосту неизвестен`,
     case: (room) => `№${room}`,
     replyTo: (id) => `в ответ на [${id}]`,
     stale: () => "лежалый",
@@ -347,7 +363,7 @@ var ROOM = {
     whoSibling: (karta) => `брат по роли #${karta}`,
     whoPlatform: () => "платформа — побудка",
     whoGraph: () => "событие графа",
-    legacy: (kind, stack) => `род ${kind}${stack ? `, стопка ${stack}` : ""}`
+    legacy: (kind2, stack) => `род ${kind2}${stack ? `, стопка ${stack}` : ""}`
   },
   en: {
     said: (author) => `message from ${author}`,
@@ -378,7 +394,7 @@ var ROOM = {
     nodeUndeleted: (seq, name, reasoning) => `node #${seq} ${name} restored${reasoning}`,
     link: (room, rel) => `case linked to case №${room} (${rel})`,
     auto: (code, room) => `platform record ${code} about case №${room}`,
-    unknown: (kind) => `kind ${kind} is unknown to the bridge`,
+    unknown: (kind2) => `kind ${kind2} is unknown to the bridge`,
     case: (room) => `case №${room}`,
     replyTo: (id) => `in reply to [${id}]`,
     stale: () => "stale",
@@ -388,7 +404,7 @@ var ROOM = {
     whoSibling: (karta) => `sibling of role #${karta}`,
     whoPlatform: () => "platform — a wake-up",
     whoGraph: () => "graph event",
-    legacy: (kind, stack) => `kind ${kind}${stack ? ` · ${stack}` : ""}`
+    legacy: (kind2, stack) => `kind ${kind2}${stack ? ` · ${stack}` : ""}`
   }
 };
 var ROOM_AUTO = {
@@ -533,8 +549,8 @@ function resolve2() {
   const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
   if (fromEnv) return langOfServer(fromEnv);
   try {
-    const text = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
-    if (text) return langOfServer(text);
+    const text2 = readFileSync(join2(authDirFromEnv(), "server"), "utf8").trim();
+    if (text2) return langOfServer(text2);
   } catch {
   }
   return DEFAULT_LANG;
@@ -550,8 +566,8 @@ import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 import { fileURLToPath } from "node:url";
-var releaseBuildIn = (text) => text.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
-var devBuildIn = (text) => text.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
+var releaseBuildIn = (text2) => text2.includes(`"${[BUILD_MARK, "release"].join(":")}"`);
+var devBuildIn = (text2) => text2.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync2(fileURLToPath(selfUrl));
@@ -561,9 +577,9 @@ function buildOf(selfUrl) {
   }
 }
 var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
-function versionIn(text) {
-  for (const [, name] of text.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text);
+function versionIn(text2) {
+  for (const [, name] of text2.matchAll(MARK_LITERAL)) if (name !== BUILD_MARK) return null;
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text2);
   return m ? m[1] : null;
 }
 
@@ -687,8 +703,8 @@ var byMe = (frame) => {
 };
 var askFromPerson = (frame) => {
   const line = obj(frame.line);
-  const kind = str(line.kind);
-  const asking = ASK_KINDS.has(kind) || kind === "progress" && !!str(obj(line.fields).withdraws);
+  const kind2 = str(line.kind);
+  const asking = ASK_KINDS.has(kind2) || kind2 === "progress" && !!str(obj(line.fields).withdraws);
   return asking && classifyOrigin(frame) === "human";
 };
 function askedMine(frame, fields) {
@@ -713,27 +729,27 @@ function formOf(fields) {
   }).join(", ");
   return W3.choice(need(options));
 }
-function askValues(kind, line, fields) {
-  if (kind !== "ask")
+function askValues(kind2, line, fields) {
+  if (kind2 !== "ask")
     return { reply: [str(fields.choice), quote(str(line.done))].filter(Boolean).join("; ") };
   const W3 = words(ASK);
   const to = toOf(fields);
   const k = obj(to.karta);
   const seat = addresseeOf(to.standing);
   const place = seat?.addr[0] ?? seat?.label ?? "";
-  const rec3 = obj(fields.recommendation);
+  const rec4 = obj(fields.recommendation);
   return {
     to: str(k.name) || (str(k.seq) ? `#${str(k.seq)}` : ""),
     to_place: place ? W3.place(need(place)) : "",
     form: formOf(fields),
-    advice: str(rec3.option) || str(rec3.why) ? W3.advice(need(str(rec3.option) || "—"), opt(" — ", rec3.why)) : ""
+    advice: str(rec4.option) || str(rec4.why) ? W3.advice(need(str(rec4.option) || "—"), opt(" — ", rec4.why)) : ""
   };
 }
-function askText(kind, cause, v) {
+function askText(kind2, cause, v) {
   const W3 = words(ASK);
   const invite = cause ? pick(INVITE_CAUSES, cause) : void 0;
   if (invite) return W3[invite](need(v.who), need(v.standing));
-  if (kind === "progress" && str(v.withdraws))
+  if (kind2 === "progress" && str(v.withdraws))
     return W3.withdrawn(
       need(v.withdraws),
       need(v.key),
@@ -741,7 +757,7 @@ function askText(kind, cause, v) {
       need(v.verdict),
       need(v.author)
     );
-  if (kind === "ask")
+  if (kind2 === "ask")
     return W3.ask(
       need(v.author),
       need(v.to),
@@ -751,8 +767,8 @@ function askText(kind, cause, v) {
       opt("; ", v.form),
       opt("; ", v.advice)
     );
-  if (kind === "answer") return W3.answer(need(v.author), need(v.refers_to), need(v.reply));
-  if (kind === "ack") return W3.ack(need(v.refers_to), opt(": ", v.reply), need(v.author));
+  if (kind2 === "answer") return W3.answer(need(v.author), need(v.refers_to), need(v.reply));
+  if (kind2 === "ack") return W3.ack(need(v.refers_to), opt(": ", v.reply), need(v.author));
   return void 0;
 }
 
@@ -776,9 +792,9 @@ function openOn(store, frame) {
   return out2;
 }
 var namedOf = (frame) => {
-  const kind = kindOf(frame);
-  if (kind === "progress") return str(obj(lineOf(frame).fields).withdraws);
-  if (kind === "answer") return str(lineOf(frame).refers_to) || str(frame.in_reply_to);
+  const kind2 = kindOf(frame);
+  if (kind2 === "progress") return str(obj(lineOf(frame).fields).withdraws);
+  if (kind2 === "answer") return str(lineOf(frame).refers_to) || str(frame.in_reply_to);
   return "";
 };
 var isOpen = (store, frame, n2) => {
@@ -787,30 +803,30 @@ var isOpen = (store, frame, n2) => {
 };
 function closesMine(store, frame) {
   if (byMe(frame) || !str(lineOf(frame).key)) return "";
-  const kind = kindOf(frame);
-  if (kind === "progress" || kind === "answer") {
+  const kind2 = kindOf(frame);
+  if (kind2 === "progress" || kind2 === "answer") {
     const n2 = namedOf(frame);
     return isOpen(store, frame, n2) ? n2 : "";
   }
-  if (kind !== "ask" || askedMine(frame, obj(lineOf(frame).fields))) return "";
+  if (kind2 !== "ask" || askedMine(frame, obj(lineOf(frame).fields))) return "";
   return openOn(store, frame).at(-1) ?? "";
 }
 function noteAsk(store, frame) {
   if (!str(lineOf(frame).key)) return;
-  const kind = kindOf(frame);
+  const kind2 = kindOf(frame);
   const fields = obj(lineOf(frame).fields);
   const base = `${baseOf(frame)}#`;
-  if (kind === "ask" && askedMine(frame, fields)) {
+  if (kind2 === "ask" && askedMine(frame, fields)) {
     const own = numOf(frame);
     if (store.has(`${base}${own}`)) return;
     for (const n2 of openOn(store, frame)) store.add(`off:${base}${n2}`);
     store.add(`${base}${own}`);
     return;
   }
-  if (kind === "progress" || kind === "answer" && !byMe(frame)) {
+  if (kind2 === "progress" || kind2 === "answer" && !byMe(frame)) {
     const n2 = namedOf(frame);
     if (isOpen(store, frame, n2)) store.add(`off:${base}${n2}`);
-  } else if ((kind === "ack" || kind === "ask") && !byMe(frame))
+  } else if ((kind2 === "ack" || kind2 === "ask") && !byMe(frame))
     for (const n2 of openOn(store, frame)) store.add(`off:${base}${n2}`);
 }
 var ASKS_KEPT = 512;
@@ -880,20 +896,20 @@ function whoOf(fields) {
   const ka = obj(fields.karta);
   return str(st.standing) || str(st.name) || str(ka.name);
 }
-function kindText(kind, v, f, pending, aborted) {
+function kindText(kind2, v, f, pending, aborted) {
   const W3 = words(ROOM);
   const n2 = (k) => need(v[k]);
   const lapsed = obj(obj(f.line).author).kind === "platform";
   if (pending) return W3.saidPending(n2("author"));
   if (aborted) return lapsed ? W3.bodyLapsed(n2("refers_to")) : W3.bodyAborted(n2("refers_to"));
-  if (kind === "auto")
+  if (kind2 === "auto")
     return pick(words(ROOM_AUTO), str(v.code))?.(n2("room")) ?? W3.auto(n2("code"), n2("room"));
-  const ask = askText(kind, str(v.cause), v);
+  const ask = askText(kind2, str(v.cause), v);
   if (ask !== void 0) return ask;
   const reasoning = opt("; ", v.reasoning);
-  const op = kind === "node" ? pick(NODE_OPS, str(v.op)) : void 0;
+  const op = kind2 === "node" ? pick(NODE_OPS, str(v.op)) : void 0;
   if (op) return W3[op](n2("seq"), n2("name"), reasoning);
-  switch (kind) {
+  switch (kind2) {
     case "said":
       return W3.said(n2("author"));
     case "body":
@@ -933,18 +949,18 @@ function roomKind(frame) {
   const f = frame;
   const ek = f.event_kind;
   if (typeof ek !== "string" || !ek.startsWith("room.")) return null;
-  const kind = ek.slice(5);
+  const kind2 = ek.slice(5);
   const line = obj(f.line);
   const fields = obj(line.fields);
   const key = str(line.key);
   const node = obj(fields.node);
-  const cause = kind === "invite" ? str(fields.cause) : "";
+  const cause = kind2 === "invite" ? str(fields.cause) : "";
   const authorName = authorOf(
-    kind === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
+    kind2 === "body" && Object.keys(obj(f.in_reply_to_from)).length ? f.in_reply_to_from : line.author
   );
   const byWhom = (frame.origin ?? classifyOrigin(frame)) === "human" ? `${authorName} (${words(ROOM).whoHuman("")})` : authorName;
   const values = {
-    kind,
+    kind: kind2,
     cause,
     author: byWhom,
     key,
@@ -960,9 +976,9 @@ function roomKind(frame) {
     // Observed live: the invite key carries the id, the invitee's name is in the line fields (standing/karta with name).
     // Joined and left — fields.standing (a timed-out leave is written by the platform, api 0.89.6), else the author;
     // a role call by cause — fields.karta (graph @nks/nks-dev, node #6870).
-    who: kind === "joined" || kind === "left" ? whoOf({ standing: fields.standing }) || byWhom : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
+    who: kind2 === "joined" || kind2 === "left" ? whoOf({ standing: fields.standing }) || byWhom : (cause ? whoOf({ karta: fields.karta }) : whoOf(fields)) || after(key, "invite:"),
     standing: str(fields.gone_standing) || addresseeOf(fields.gone_standing)?.label,
-    ...ASK_KINDS.has(kind) ? askValues(kind, line, fields) : {},
+    ...ASK_KINDS.has(kind2) ? askValues(kind2, line, fields) : {},
     room: roomOf(fields.room) || after(key, "link:"),
     rel: pick(words(ROOM_REL), str(fields.rel))?.() ?? fields.rel,
     code: fields.code,
@@ -971,29 +987,29 @@ function roomKind(frame) {
     name: node.name,
     realm: node.realm,
     // A node delta's reasoning is the record's body, not a field (graph @nks/nks-dev, node #6070).
-    reasoning: kind === "node" ? line.done || f.body : void 0,
+    reasoning: kind2 === "node" ? line.done || f.body : void 0,
     withdraws: fields.withdraws,
     // Observed on the wire (#5893 §4.2, case №1010 [8]): line.fields.after_ack.
     after_ack: fields.after_ack === true
   };
   const W3 = words(ROOM);
-  const rule = RULES[kind];
+  const rule = RULES[kind2];
   const author = str(values.author);
   if (!rule)
     return {
-      kind,
+      kind: kind2,
       rule: "batch",
-      words: W3.unknown(need(kind)),
+      words: W3.unknown(need(kind2)),
       author,
       phase: null,
       known: false
     };
-  const word2 = kind === "said" || kind === "body";
+  const word2 = kind2 === "said" || kind2 === "body";
   const withheld = word2 && f.body_withheld === true;
   const named2 = word2 ? wordSeats(f) : [];
   const to = word2 ? named2.map(addresseeOf).find(Boolean) ?? (withheld ? { addr: ["?"], label: "?" } : null) : null;
   if (to && (withheld || seatIs(f, ...named2) === false)) {
-    const counts = kind === "said";
+    const counts = kind2 === "said";
     const pair = JSON.stringify([roomOf(f.room), authorName, to.addr[0]]);
     const id = need(counts ? values.entry_id : values.refers_to);
     const by = need(values.author);
@@ -1001,24 +1017,24 @@ function roomKind(frame) {
     const run = (n2) => n2 === 0 ? W3.asideBody(by, addressee, id) : n2 > 1 ? W3.asideRun(by, addressee, W3.messages(n2), id) : W3.aside(by, addressee, id);
     const aside = { pair, counts, run };
     const words2 = run(counts ? 1 : 0);
-    return { kind, rule: "batch", words: words2, author, phase: null, known: true, aside };
+    return { kind: kind2, rule: "batch", words: words2, author, phase: null, known: true, aside };
   }
-  const pending = kind === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
-  const aborted = kind === "body" && fields.aborted === true;
-  let text = kindText(kind, values, f, pending, aborted);
-  if (kind === "closing") {
+  const pending = kind2 === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
+  const aborted = kind2 === "body" && fields.aborted === true;
+  let text2 = kindText(kind2, values, f, pending, aborted);
+  if (kind2 === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    text += "; " + (mayI ? W3.closingMay(need(values.entry_id)) : W3.closingNot());
+    text2 += "; " + (mayI ? W3.closingMay(need(values.entry_id)) : W3.closingNot());
   }
   const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending ? "pending" : aborted ? "aborted" : null;
-  const bodyInWords = !!str(line.done) && (ASK_KINDS.has(kind) || kind === "progress" || kind === "node");
+  const bodyInWords = !!str(line.done) && (ASK_KINDS.has(kind2) || kind2 === "progress" || kind2 === "node");
   return {
-    kind,
+    kind: kind2,
     rule: phase ? "batch" : stack,
-    words: text,
+    words: text2,
     author,
     bodyInWords,
     phase,
@@ -1029,25 +1045,25 @@ var byKind = (frame) => roomKind(frame) !== null;
 var stackOf = (frame) => roomKind(frame)?.rule ?? (frame?.stack === "defer" ? "batch" : "interrupt");
 
 // js/shared/seats.ts
-function seatsOf(f, kind) {
+function seatsOf(f, kind2) {
   const to = obj(obj(obj(f.line).fields).to);
-  if (kind === "said" || kind === "body") return wordSeats(f);
+  if (kind2 === "said" || kind2 === "body") return wordSeats(f);
   return [
-    kind === "ask" ? to.standing : ASK_KINDS.has(kind) || kind === "retract" ? to : null,
+    kind2 === "ask" ? to.standing : ASK_KINDS.has(kind2) || kind2 === "retract" ? to : null,
     f.addressee
   ];
 }
-function seatOf(frame, kind) {
+function seatOf(frame, kind2) {
   const f = frame;
-  if (kind === "ask" && byMe(f)) return false;
-  return seatIs(f, ...seatsOf(f, kind));
+  if (kind2 === "ask" && byMe(f)) return false;
+  return seatIs(f, ...seatsOf(f, kind2));
 }
 var named = (v) => typeof v === "string" ? !!v : Object.keys(obj(v)).length > 0;
-function namesAddress(f, kind) {
+function namesAddress(f, kind2) {
   const fields = obj(obj(f.line).fields);
-  const to = kind === "ask" ? obj(fields.to).standing : fields.to;
+  const to = kind2 === "ask" ? obj(fields.to).standing : fields.to;
   if (named(to) || named(f.addressee)) return true;
-  return (kind === "invite" || kind === "withdraw") && (named(fields.standing) || named(fields.karta));
+  return (kind2 === "invite" || kind2 === "withdraw") && (named(fields.standing) || named(fields.karta));
 }
 
 // js/shared/addressed.ts
@@ -1251,10 +1267,10 @@ function canWrite(s) {
   return !!s && !deadStreams.has(s) && !s.destroyed && s.writable !== false;
 }
 var backlogged = /* @__PURE__ */ new WeakSet();
-function writeTo(s, text) {
+function writeTo(s, text2) {
   if (!canWrite(s)) return false;
   try {
-    const fit = s.write(text);
+    const fit = s.write(text2);
     if (!fit && !backlogged.has(s)) s.once("drain", () => backlogged.delete(s));
     if (fit) backlogged.delete(s);
     else backlogged.add(s);
@@ -1378,6 +1394,110 @@ var state = scoped(() => ({
 }));
 var reinit = scoped(() => ({ inFlight: null }));
 
+// js/shared/clock-notices.ts
+var rec = (v) => v && typeof v === "object" && !Array.isArray(v) ? v : {};
+var text = (v) => typeof v === "string" && v.length > 0 && v.length <= 256 && [...v].every((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) !== 127) ? v : null;
+var number = (v) => typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null;
+var bool = (v) => typeof v === "boolean" ? v : null;
+var timestamp = (v) => {
+  const s = text(v);
+  return s && /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+    s
+  ) && Number.isFinite(Date.parse(s)) && (/* @__PURE__ */ new Date(`${s.slice(0, 10)}T00:00:00Z`)).toISOString().slice(0, 10) === s.slice(0, 10) ? s : null;
+};
+function kind(frame) {
+  const p = frame.provenance;
+  return frame.type === "message" && p?.via === "platform" && p.auth === "none" && (p.notice === "card_unanswered" || p.notice === "line_due") ? p.notice : null;
+}
+function dataOf(frame, notice) {
+  const d = rec(frame.provenance?.notice_data);
+  const r = rec(d.room);
+  const who = rec(notice === "card_unanswered" ? d.to : d.holder);
+  const seat = {
+    standing_id: text(who.standing_id),
+    standing: text(who.standing),
+    karta_seq: number(who.karta_seq)
+  };
+  return {
+    room: { id: text(r.id), number: number(r.number), realm: text(r.realm) },
+    entry_id: number(d.entry_id),
+    key: text(d.key),
+    ...notice === "card_unanswered" ? {
+      to: seat,
+      listening: bool(d.listening),
+      last_act_at: timestamp(d.last_act_at),
+      role_called: bool(d.role_called)
+    } : { holder: seat, due_at: timestamp(d.due_at), escalated: bool(d.escalated) }
+  };
+}
+function clockNoticeFrame(frame) {
+  const notice = kind(frame);
+  if (!notice) return frame;
+  return {
+    ...frame,
+    body: "",
+    provenance: { ...frame.provenance, notice_data: dataOf(frame, notice) }
+  };
+}
+function clockNoticeText(frame) {
+  const notice = kind(frame);
+  if (!notice) return "";
+  const d = dataOf(frame, notice);
+  const seat = "to" in d ? d.to : d.holder;
+  return words(FRAME_TEXT).clockNotice(notice, {
+    room: d.room.number,
+    roomId: d.room.id,
+    realm: d.room.realm,
+    entry: d.entry_id,
+    key: d.key,
+    standing: seat?.standing ?? null,
+    standingId: seat?.standing_id ?? null,
+    karta: seat?.karta_seq ?? null,
+    listening: "listening" in d ? d.listening : null,
+    lastAct: "last_act_at" in d ? d.last_act_at : null,
+    roleCalled: "role_called" in d ? d.role_called : null,
+    due: "due_at" in d ? d.due_at : null,
+    escalated: "escalated" in d ? d.escalated : null
+  });
+}
+
+// js/shared/open-cards.ts
+var repeatNumber = (n2) => typeof n2 === "number" && Number.isSafeInteger(n2) && n2 > 0 ? n2 : null;
+function cardFrame(frame) {
+  if (!frame) return null;
+  frame = clockNoticeFrame(frame);
+  const checked = {};
+  if (Object.hasOwn(frame, "my_open_cards")) checked.my_open_cards = openCards(frame.my_open_cards);
+  if (Object.hasOwn(frame, "repeat")) checked.repeat = frame.repeat === true;
+  if (Object.hasOwn(frame, "repeat_n")) checked.repeat_n = repeatNumber(frame.repeat_n);
+  return Object.keys(checked).length ? { ...frame, ...checked } : frame;
+}
+var cardRepeatText = (frame) => {
+  if (frame.repeat !== true) return "";
+  return words(FRAME_TEXT).cardRepeat(repeatNumber(frame.repeat_n));
+};
+function openCards(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const { count, oldest_at: at } = value;
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return null;
+  if (count === 0) return at === null ? { count, oldest_at: null } : null;
+  if (typeof at !== "string" || at.length > 64 || !/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,9})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(
+    at
+  ) || !Number.isFinite(Date.parse(at)) || (/* @__PURE__ */ new Date(`${at.slice(0, 10)}T00:00:00Z`)).toISOString().slice(0, 10) !== at.slice(0, 10))
+    return null;
+  return { count, oldest_at: at };
+}
+var openCardsText = (frame) => {
+  const value = frame.my_open_cards;
+  const cards = openCards(value);
+  return words(FRAME_TEXT).openCards(
+    cards?.count ?? null,
+    cards?.oldest_at ?? null,
+    value !== void 0 && cards === null
+  );
+};
+var cardsIn = (frames) => frames.length ? openCardsText(frames[frames.length - 1]) : "";
+
 // js/shared/frame-format.ts
 var COMPACT_COUNTS_CAPABILITY = "compact-counts";
 var COMPACT_COUNTS = { [COMPACT_COUNTS_CAPABILITY]: { version: 1 } };
@@ -1385,17 +1505,17 @@ var format = scoped(() => ({ compact: true }));
 var compactCounts = () => format.compact;
 
 // js/shared/keyfold.ts
-var rec = (v) => v && typeof v === "object" ? v : {};
+var rec2 = (v) => v && typeof v === "object" ? v : {};
 var idOf = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 function superseded(frames) {
   const last = /* @__PURE__ */ new Map();
   const out2 = /* @__PURE__ */ new Set();
   frames.forEach((f, i) => {
     const r = f;
-    const line = rec(r.line);
+    const line = rec2(r.line);
     const key = typeof line.key === "string" ? line.key : "";
     if (line.kind !== "progress" || !key || line.verdict === "bad" || addressedToMine(f)) return;
-    const k = `${idOf(rec(r.room).id) || idOf(rec(r.room).seq)}|${key}`;
+    const k = `${idOf(rec2(r.room).id) || idOf(rec2(r.room).seq)}|${key}`;
     const e = Number(r.entry_id ?? line.entry_id);
     const at = Number.isFinite(e) ? e : i;
     const was = last.get(k);
@@ -1412,7 +1532,7 @@ function superseded(frames) {
 var W = () => words(ROOM);
 var T2 = () => words(FRAME_TEXT);
 var CAPTION_REPLY = /* @__PURE__ */ new Set(["body", "answer", "ack", "retract"]);
-var rec2 = (v) => v && typeof v === "object" ? v : {};
+var rec3 = (v) => v && typeof v === "object" ? v : {};
 var idOf2 = (v) => typeof v === "number" || typeof v === "string" && v ? String(v) : "";
 var ZACHIN = 40;
 function groupKey(f) {
@@ -1431,7 +1551,7 @@ function casesOf(frames) {
 }
 function caseOf(frame) {
   const f = frame;
-  const room = rec2(f.room);
+  const room = rec3(f.room);
   const n2 = idOf2(room.seq) || idOf2(room.id);
   if (!n2) return null;
   const z = typeof room.zachin === "string" ? [...room.zachin.trim()] : [];
@@ -1469,15 +1589,17 @@ function tail(frame, withReply) {
   const to = idOf2(f.in_reply_to) || idOf2(frame.provenance?.in_reply_to);
   if (withReply && to) parts.push(W().replyTo(need(to)));
   if (frame.stale === true) parts.push(W().stale());
+  const repeat = cardRepeatText(frame);
+  if (repeat) parts.push(repeat);
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
     parts.push(W().bodyRead(need(frame.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";
 }
-var markFrame = (text) => `${FRAME_MARK} ${text}`;
+var markFrame = (text2) => `${FRAME_MARK} ${text2}`;
 function humanWordReply(frame, origin2) {
   if (origin2 !== "human") return "";
   const f = frame;
-  const p = rec2(frame.provenance);
+  const p = rec3(frame.provenance);
   const karta = idOf2(p.from_karta_seq) || idOf2(p.user_karta_seq);
   const missing = {
     realm: !idOf2(f.realm),
@@ -1488,15 +1610,24 @@ function humanWordReply(frame, origin2) {
   return Object.values(missing).every((x) => !x) ? T2().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame.id)) : T2().noReplyAddress(missing);
 }
 function frameToText(frame, raw, withCase = true) {
+  const text2 = frameText(frame, raw, withCase);
+  if (!frame || !withCase) return text2;
+  const cards = openCardsText(frame);
+  return text2.split("\n").includes(cards) ? text2 : `${text2}
+${cards}`;
+}
+function frameText(frame, raw, withCase) {
   if (!frame) return raw;
+  const notice = clockNoticeText(frame);
+  if (notice) return notice;
   const f = frame;
   const origin2 = frame.origin ?? classifyOrigin(frame);
-  const text = textOf(frame);
+  const text2 = textOf(frame);
   const c = caseOf(frame);
   if (c) {
     if (!addressedToMine(frame)) return caseCountLine([frame]);
     const rk = roomKind(frame);
-    const line = rec2(f.line);
+    const line = rec3(f.line);
     const entry = idOf2(f.entry_id) || idOf2(line.entry_id);
     const words2 = rk ? rk.words : W().legacy(need(f.kind), typeof f.stack === "string" ? f.stack : "");
     const author = rk?.author && !words2.includes(rk.author) ? rk.author : "";
@@ -1506,11 +1637,11 @@ function frameToText(frame, raw, withCase = true) {
     const label = [withCase ? caseHead(frame, true) : "", entry ? `[${entry}]` : ""];
     const head = `${[...label.filter(Boolean), words2].join(" ")}${by ? ` — ${by}` : ""}${tail(frame, withReply)}`;
     const lines2 = [head];
-    if (text && !words2.includes(text.trim())) lines2.push(text);
+    if (text2 && !words2.includes(text2.trim())) lines2.push(text2);
     return lines2.join("\n");
   }
   const lines = [`${whoOf2(frame, true) || "?"}${tail(frame, true)}`];
-  if (text) lines.push(text);
+  if (text2) lines.push(text2);
   const reply = humanWordReply(frame, origin2);
   if (reply) lines.push(reply);
   if (isLifeCheck(frame)) lines.push(T2().lifeCheckSeat(warnedSeat(frame)), T2().lifeCheckReply());
@@ -1518,24 +1649,26 @@ function frameToText(frame, raw, withCase = true) {
 }
 var warnedSeat = (frame) => typeof frame.to_standing === "string" ? frame.to_standing.replace(/^.*:/, "") : "";
 function batchLine(frame, run, withZachin = true, withCase = true) {
+  const notice = clockNoticeText(frame);
+  if (notice) return notice;
   const f = frame;
   const rk = roomKind(frame);
   const head = withCase ? caseHead(frame, withZachin) : "";
   const pre = head ? `${head} ` : "";
   if (rk?.aside) return pre + (run === void 0 ? rk.words : rk.aside.run(run));
-  const line = rec2(f.line);
+  const line = rec3(f.line);
   const e = f.entry_id ?? line.entry_id ?? f.id;
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
   const words2 = (rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?")).replace(/\s+/g, " ").trim();
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
-  const text = textOf(frame).replace(/\s+/g, " ").trim();
-  const dup = !!text && words2.includes(text);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text && !dup ? `: ${text}` : ""}`;
+  const text2 = textOf(frame).replace(/\s+/g, " ").trim();
+  const dup = !!text2 && words2.includes(text2);
+  return `${pre}[${entry}] ${words2}${author}${tail(frame, !rk || !CAPTION_REPLY.has(rk.kind))}${text2 && !dup ? `: ${text2}` : ""}`;
 }
 function batchShown(frames) {
   const seen = /* @__PURE__ */ new Set();
   return frames.flatMap((f) => {
-    if (!addressedToMine(f)) return [];
+    if (f.type === "hello" || !addressedToMine(f)) return [];
     const key = caseKey(f);
     const first = !seen.has(key);
     seen.add(key);
@@ -1545,12 +1678,20 @@ function batchShown(frames) {
 var textShown = (frames, cap) => frames.filter((f) => addressedToMine(f)).map((f) => ({
   frame: f,
   text: (withCase) => {
-    const t = [...frameToText(f, JSON.stringify(f), withCase)];
+    const t = [...frameText(f, JSON.stringify(f), withCase)];
     return t.length > cap ? t.slice(0, cap).join("") + "…" : t.join("");
   }
 }));
 var batchText = (counted, frames = counted) => underCounts(counted, batchShown(frames)).join("\n");
-function underCounts(counted, shown, incomplete = false) {
+function underCounts(counted, shown, incomplete = false, cardFrames = [
+  ...counted,
+  ...shown.map((s) => s.frame).filter((f) => !counted.includes(f))
+]) {
+  const lines = groupedCounts(counted, shown, incomplete);
+  const cards = cardsIn(cardFrames);
+  return cards && !lines.some((line) => line.split("\n").includes(cards)) ? [...lines, cards] : lines;
+}
+function groupedCounts(counted, shown, incomplete) {
   const groups = casesOf(counted).filter((group) => caseOf(group[0]));
   const placed = /* @__PURE__ */ new Set();
   const under = (group) => {
@@ -1580,9 +1721,9 @@ function closingOf(frame) {
   const n2 = closedQuestion(frame);
   if (!n2) return "";
   const rk = roomKind(frame);
-  const to = rec2(rec2(rec2(rec2(frame).line).fields).to);
+  const to = rec3(rec3(rec3(rec3(frame).line).fields).to);
   if (rk?.kind !== "ask") return T2().askAnswered(n2, need(rk?.author));
-  const seat = addresseeOf(to.standing)?.label || idOf2(rec2(to.karta).name);
+  const seat = addresseeOf(to.standing)?.label || idOf2(rec3(to.karta).name);
   return T2().askMoved(n2, need(seat));
 }
 function caseCountLine(frames) {
@@ -1610,8 +1751,8 @@ function cursorOf(frames) {
   const first = frames[0];
   const c = first && caseOf(first);
   if (!c?.realm) return null;
-  const room = rec2(first.room);
-  const entries = frames.map((f) => idOf2(f.entry_id ?? rec2(f.line).entry_id));
+  const room = rec3(first.room);
+  const entries = frames.map((f) => idOf2(f.entry_id ?? rec3(f.line).entry_id));
   if (entries.some((e) => !e || !Number.isSafeInteger(Number(e)) || Number(e) < 1)) return null;
   return {
     realm: c.realm,
@@ -1633,10 +1774,15 @@ function batchPointer(frames) {
 // js/shared/stalebatch.ts
 var STALE_BURST_KEEP = 20;
 var BODY_CAP = 800;
-var shownOf = (frames, body) => body.shown.map((i) => frames[i]).filter((f) => !!f);
+var shownOf = (frames, body) => body.shown.filter((i) => Number.isSafeInteger(i) && i >= 0).map((i) => frames[i]).filter((f) => f?.type === "message");
 function batchBodyText(frames, body, riding = []) {
   const shown = shownOf(frames, body);
-  const bodies = underCounts([...riding, ...shown], textShown(shown, BODY_CAP), body.incomplete);
+  const bodies = underCounts(
+    [...riding, ...shown],
+    textShown(shown, BODY_CAP),
+    body.incomplete,
+    frames
+  );
   return `${body.head}
 
 ${bodies.join("\n\n")}`;
@@ -1761,8 +1907,8 @@ function inTurn(url, fn, open = false) {
 var TRIMMED = "trimmed_to_limit";
 var LIMIT = 64;
 var obj2 = (v) => v && typeof v === "object" ? v : {};
-function trimToWord(text, max) {
-  const chars = [...text];
+function trimToWord(text2, max) {
+  const chars = [...text2];
   const head = chars.slice(0, max - 1).join("");
   const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
   return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
@@ -1782,7 +1928,7 @@ function acceptedIn(body, sent) {
   return { doing, trimmed: { doing, message } };
 }
 var late = () => words(STATUS_POST).noAnswer(words(STATUS_POST).late());
-async function postStatus(url, text, until, standingId) {
+async function postStatus(url, text2, until, standingId) {
   const left = until - Date.now();
   if (left <= 0) return { ok: false, body: late() };
   const signal = AbortSignal.timeout(left);
@@ -1790,7 +1936,7 @@ async function postStatus(url, text, until, standingId) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(
-      typeof standingId === "string" ? { text, standing_id: standingId } : { text }
+      typeof standingId === "string" ? { text: text2, standing_id: standingId } : { text: text2 }
     ),
     signal
   });
@@ -1807,10 +1953,10 @@ async function postStatus(url, text, until, standingId) {
   if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
   if (!res.ok)
     return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
-  return { ok: true, body, ...acceptedIn(body, text) };
+  return { ok: true, body, ...acceptedIn(body, text2) };
 }
 onFellBack(
-  (url, text, standingId) => inTurn(url, () => postStatus(url, text, Date.now() + 5e3, standingId), true).then((st) => {
+  (url, text2, standingId) => inTurn(url, () => postStatus(url, text2, Date.now() + 5e3, standingId), true).then((st) => {
     if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
   })
 );
@@ -1863,14 +2009,14 @@ function separateGraphBatch(ev) {
     (f) => !isGraphInbox(f)
   );
   const graphMarks2 = new Set(graph.flatMap((f) => deliveryKeys(f)));
-  const text = !other.length ? "" : ev.kind === "stale" ? staleBatch(other, () => false).text : batchText(other);
+  const text2 = !other.length ? "" : ev.kind === "stale" ? staleBatch(other, () => false).text : batchText(other);
   return {
     graph,
     rest: {
       ...ev,
       frames: other,
       marks: ev.marks?.filter((key) => !graphMarks2.has(key)),
-      text,
+      text: text2,
       body: void 0
       // its indexes point into the frames before the split
     }
@@ -1893,14 +2039,15 @@ function setupChannel(pi) {
     aside.splice(0);
     graphHandoff = null;
   });
-  function loud(text, fatal = true) {
-    if (ctxRef?.hasUI) ctxRef.ui.notify(text, fatal ? "error" : "warning");
+  function loud(text2, fatal = true) {
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text2, fatal ? "error" : "warning");
     pi.sendMessage(
-      { customType: LOGGERS.channel, content: markFrame(text), display: true, details: { fatal } },
+      { customType: LOGGERS.channel, content: markFrame(text2), display: true, details: { fatal } },
       { triggerTurn: true, deliverAs: "steer" }
     );
   }
   const aside = [];
+  const contextOnly = (f) => isGraphInbox(f) || f.type === "hello";
   let graphHandoff = null;
   let asideTimer = null;
   const marks = /* @__PURE__ */ new Set();
@@ -1913,8 +2060,8 @@ function setupChannel(pi) {
     asideTimer = null;
     const unit = aside.splice(0);
     const out2 = splitBatch(unit, Infinity, (k) => marks.has(k));
-    aside.push(...unit.filter(isGraphInbox));
-    return out2.kept.filter((f) => !isGraphInbox(f));
+    aside.push(...unit.filter(contextOnly));
+    return out2.kept.filter((f) => !contextOnly(f));
   }
   function flushAsides() {
     const got = takeAsides();
@@ -1930,7 +2077,7 @@ function setupChannel(pi) {
     );
   }
   pi.on("before_agent_start", async () => {
-    if (halted || !aside.some(isGraphInbox)) return;
+    if (halted || !aside.some(contextOnly)) return;
     if (asideTimer) clearTimeout(asideTimer);
     asideTimer = null;
     const unit = [...aside];
@@ -1968,7 +2115,7 @@ function setupChannel(pi) {
       {
         customType: LOGGERS.channel,
         content: markFrame(
-          ev.body && got.length ? batchBodyText(frames, ev.body, got) : ev.text ?? ""
+          Array.isArray(ev.frames) && ev.body ? batchBodyText(frames, ev.body, got) : ev.text ?? ""
         ),
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true }
@@ -2000,7 +2147,7 @@ function setupChannel(pi) {
   }
   pi.on("agent_end", async () => releaseTact());
   let halted = false;
-  function stopped(text) {
+  function stopped(text2) {
     halted = true;
     graphHandoff = null;
     if (tactPoll) clearInterval(tactPoll);
@@ -2010,11 +2157,11 @@ function setupChannel(pi) {
     asideTimer = null;
     aside.splice(0);
     if (ctxRef?.isIdle?.() === false) ctxRef.abort?.();
-    if (ctxRef?.hasUI) ctxRef.ui.notify(text, "error");
+    if (ctxRef?.hasUI) ctxRef.ui.notify(text2, "error");
     pi.sendMessage(
       {
         customType: LOGGERS.channel,
-        content: markFrame(text),
+        content: markFrame(text2),
         display: true,
         details: { stopped: true }
       },
@@ -2028,16 +2175,23 @@ function setupChannel(pi) {
     if (halted && ev.kind !== "stopped") return;
     switch (ev.kind) {
       case "frame": {
-        const frame = ev.frame ?? null;
+        const frame = cardFrame(ev.frame ?? null);
         carryGraphMarks(frame, ev.marks);
         carryGraphReceipt(frame, ev.seen, authDirFromEnv());
         const raw = ev.raw ?? "";
         if (frame?.type === "hello") {
+          for (let i = aside.length - 1; i >= 0; i--)
+            if (aside[i].type === "hello") aside.splice(i, 1);
+          aside.push(frame);
           if (ctxRef?.hasUI) ctxRef.ui.setStatus?.(PRODUCT, P.listening());
           return;
         }
         if (frame?.type === "status") return;
         if (frame && eventIn(frame, (k) => marks.has(k))) return;
+        if (frame?.type === "message") {
+          for (let i = aside.length - 1; i >= 0; i--)
+            if (aside[i].type === "hello") aside.splice(i, 1);
+        }
         if (isGraphInbox(frame)) {
           aside.push(frame);
           return;
@@ -2053,7 +2207,7 @@ function setupChannel(pi) {
         const ride = !!own && aside.some((f) => !isGraphInbox(f) && caseKey(f) === own);
         if (!ride) flushAsides();
         const got = ride ? takeAsides() : [];
-        const text = frame ? countsWithShown(got, [
+        const text2 = frame ? countsWithShown(got, [
           ...batchShown(got),
           { frame, text: (w) => frameToText(frame, raw, w) }
         ]).join("\n") : raw;
@@ -2061,7 +2215,7 @@ function setupChannel(pi) {
         pi.sendMessage(
           {
             customType: LOGGERS.channel,
-            content: markFrame(text),
+            content: markFrame(text2),
             display: true,
             details: frame ?? { raw }
           },
@@ -2313,31 +2467,31 @@ function resultToContent(result) {
 }
 
 // js/shared/mindslice.ts
-function sliceIn(text) {
+function sliceIn(text2) {
   for (const lang2 of LANGS) {
     const mark = MIND_SLICE[lang2].mark();
-    if (text.startsWith(mark)) return text;
-    const at = text.indexOf(`
+    if (text2.startsWith(mark)) return text2;
+    const at = text2.indexOf(`
 ${mark}`);
-    if (at >= 0) return text.slice(at + 1);
+    if (at >= 0) return text2.slice(at + 1);
   }
   return null;
 }
 
 // js/shared/launch.ts
 var LINE = LAUNCH_LINE;
-function parseLaunch(text) {
-  const [, realm, karta, no, of] = LINE.exec(text) ?? [];
+function parseLaunch(text2) {
+  const [, realm, karta, no, of] = LINE.exec(text2) ?? [];
   return realm && karta && no ? { realm, karta, no, of: of ?? null } : null;
 }
-function withWord(text, word2) {
-  const m = LINE.exec(text);
-  if (!m) return `${text}
+function withWord(text2, word2) {
+  const m = LINE.exec(text2);
+  if (!m) return `${text2}
 ${word2}`;
-  const nl = text.indexOf("\n", m.index);
-  return nl < 0 ? `${text}
-${word2}` : `${text.slice(0, nl)}
-${word2}${text.slice(nl)}`;
+  const nl = text2.indexOf("\n", m.index);
+  return nl < 0 ? `${text2}
+${word2}` : `${text2.slice(0, nl)}
+${word2}${text2.slice(nl)}`;
 }
 async function enterCase(l, call, satelliteOf, placeName) {
   const W3 = words(LAUNCH);
@@ -2654,9 +2808,9 @@ var AUTH_POLL_MS = Number(process.env[envName("MCP_AUTH_POLL_MS")] || 3e3);
 var AUTH_PENDING = /authorization required/i;
 var PROTOCOL = "2025-06-18";
 function textOrThrow(name, result) {
-  const text = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
-  if (result?.isError) throw new Error(text || words(PLUGIN).refusalNoText(name));
-  return text;
+  const text2 = resultToContent(result).map((c) => c.type === "text" ? c.text : "[image]").join("\n");
+  if (result?.isError) throw new Error(text2 || words(PLUGIN).refusalNoText(name));
+  return text2;
 }
 async function hostEnv() {
   const env = {};

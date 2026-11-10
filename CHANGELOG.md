@@ -1,5 +1,19 @@
 # Changelog
 
+## [7.38.1](https://github.com/iskron-ai/skills/compare/v7.38.0...v7.38.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* align case reporting and deputy role instructions ([7f973ac](https://github.com/iskron-ai/skills/commit/7f973ac7a45b4bb12467f852938a67d9d28eae1a))
+* align role summary with deputy case binding ([dc0da88](https://github.com/iskron-ai/skills/commit/dc0da889741e13c8f9e4a7a0f8698ed617ba260d))
+* clarify review ownership and delegated case limits ([42bead0](https://github.com/iskron-ai/skills/commit/42bead0339f110c84beedc6a630cb483a648b044))
+* **orchestra:** runtime_timeout of the orca client is a clone still running ([#732](https://github.com/iskron-ai/skills/issues/732)) ([a70c349](https://github.com/iskron-ai/skills/commit/a70c34911bf4e13eb50f832e6a8387b3a08a6c05))
+* record work progress as ledger lines and address receipts ([#730](https://github.com/iskron-ai/skills/issues/730)) ([6999ff7](https://github.com/iskron-ai/skills/commit/6999ff71133c4be4eef9d7f883b0b5faac3ce114))
+* render the latest card snapshot once in clipped batches ([86a1055](https://github.com/iskron-ai/skills/commit/86a10551d8ff3d8c841ac900b7548b645ee31f88))
+* resolve release review findings in batches and skill text ([9d1566e](https://github.com/iskron-ai/skills/commit/9d1566e48f69e960b549bae37909dd84fdded270))
+* separate delegated work key from open card ([df0cd24](https://github.com/iskron-ai/skills/commit/df0cd24c0576a73489f713e807ca6a6d99bf2644))
+
 ## [7.38.0](https://github.com/iskron-ai/skills/compare/v7.37.0...v7.38.0) (2026-11-10)
 
 
