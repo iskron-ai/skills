@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "sha256": "39501e822d43f84419b1ebf3879bf8b4fa1ce03f36e393ca4e51db2603cbd49e",
+  "files": [
+    "scene.json",
+    "oracle.json",
+    "protocol.mjs",
+    "guard.mjs",
+    "reader.mjs",
+    "controls.json",
+    "preflight.mjs",
+    "stub-child.mjs",
+    "instrument.test.mjs",
+    "README.md",
+    "../stand-mcp-ledger.mjs",
+    "outcome-rule.json",
+    "score.mjs",
+    "score-schema.mjs",
+    "score.test.mjs"
+  ],
+  "limits": {
+    "runsPerArm": 3,
+    "runs": 9,
+    "input": 3000000,
+    "output": 80000,
+    "totalInput": 30000000
+  },
+  "arms": {
+    "current": {
+      "NKS_ROOM_OUTCOME_NODE": "off",
+      "NKS_ROOM_HEARD_WRITES": "off"
+    },
+    "door": {
+      "NKS_ROOM_OUTCOME_NODE": "enforce",
+      "NKS_ROOM_HEARD_WRITES": "off"
+    },
+    "audibility": {
+      "NKS_ROOM_OUTCOME_NODE": "shadow",
+      "NKS_ROOM_HEARD_WRITES": "enforce"
+    }
+  },
+  "decisions": 12,
+  "modelCalls": 0,
+  "liveReady": false,
+  "unresolved": [
+    "LAB modes and negative samples",
+    "reader case denial plus no bypass",
+    "real-model cost boundary",
+    "script/seed adapter and raw server+bridge ledger",
+    "final integrated guard+score freeze",
+    "parent launch permission"
+  ]
+}
