@@ -31,7 +31,7 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
     restand: (karta, name, realm) =>
       ` Первым ходом вызови iskron_stand(realm="${realm}", karta="${role(karta, "<роль>")}", name="${name}") без take: место остаётся, ответ несёт правила человека.`,
     returned: (sessionID) =>
-      `Искрон: слово о роли после сжатия положено в первый запрос сессии ${sessionID}`,
+      `Искрон: слово о роли после сжатия вложено в system текущего запроса сессии ${sessionID}`,
   },
   en: {
     keep: (karta, name, realm) =>
@@ -50,6 +50,6 @@ export const COMPACTION: Readonly<Record<Lang, CompactionWords>> = {
     restand: (karta, name, realm) =>
       ` As the first move call iskron_stand(realm="${realm}", karta="${role(karta, "<role>")}", name="${name}") without take: the seat stays, and its answer carries the human's rules.`,
     returned: (sessionID) =>
-      `Iskron: the role word after the compaction was laid into the first request of session ${sessionID}`,
+      `Iskron: the role word after the compaction was inserted into the current request's system for session ${sessionID}`,
   },
 };
