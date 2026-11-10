@@ -82,14 +82,19 @@ export async function planTact(
       worktree = got;
     } else if (got.code === ORCA) {
       worktree = w().planCheckout(repository);
-      // Whether Orca knows the repository is not asked: the clone is said as conditional.
+      // Whether Orca knows the repository is not asked: the clone is said as conditional. A
+      // clone refused here takes no limit slot — the tact would launch nothing for it.
       if (own.clone) {
         const kept = clones[repository];
         const c = cloneTarget(own.clone, repository);
         if (kept?.state === "cloning") say(w().planNoClone("cloning"));
-        else if (kept?.state === "failed" && kept.spec === specOf(own))
+        else if (kept?.state === "failed" && kept.spec === specOf(own)) {
           say(w().planNoClone(`clone_failed_before (${kept.why})`));
-        else say("code" in c ? w().planNoClone(c.code) : w().planClone(c.url, c.destination));
+          continue;
+        } else if ("code" in c) {
+          say(w().planNoClone(c.code));
+          continue;
+        } else say(w().planClone(c.url, c.destination));
       }
     } else {
       say(w().planRefuse(got.code));

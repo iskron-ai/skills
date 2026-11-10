@@ -2,16 +2,14 @@
 // starts it in the daemon's background with a registry row `cloning` and goes on — quenching
 // and expiry never wait for git; a later tact finds the outcome and raises. A failed clone is
 // kept by repository and not tried again until the launcher description changes; a timeout
-// is such a failure — no second clone into the same folder. GIT_TERMINAL_PROMPT=0,
-// GCM_INTERACTIVE=never and killing the process group guard the orca CLI's own children only:
-// the CLI is a client of Orca's runtime (answers carry _meta.runtimeId, #9966), so git most
-// likely runs in the runtime, outside this group and its env — the timeout then ends the
-// client alone; not a guarantee, unobserved live. The output is never read. A cloning row
-// without this daemon's clone (off, restart, update) is clone_interrupted, kept as a failure.
+// is such a failure — no second clone into the same folder. git runs in Orca's runtime, not
+// under the orca client (seen live, case №4221): the timeout ends the client only, Orca may
+// still finish the clone, and a later tact then finds the checkout. The output is never read.
+// A cloning row without this daemon's clone (off, restart, update) is clone_interrupted, kept
+// as a failure.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
 
 import { envName } from "../delivery/index.ts";
 import { cloneArgv, cloneDeclared, type ClonePolicy, cloneTarget } from "./orchestra-clone.ts";
@@ -24,22 +22,14 @@ const CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 600_000;
 export const specOf = (launcher: unknown): string =>
   createHash("sha256").update(JSON.stringify(launcher)).digest("hex").slice(0, 16);
 
-/** The orca client as one process group, its output unread; a timeout kills the group —
- * git, if it runs in Orca's runtime, is not in it. */
+/** The orca client, its output unread; a timeout ends the client, not Orca's git. */
 function cloneRun(argv: string[], ms: number): Promise<number | string> {
   return new Promise((resolve) => {
-    const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" };
-    const group = process.platform !== "win32";
-    const child = spawn("orca", argv, { detached: group, stdio: "ignore", windowsHide: true, env });
+    const child = spawn("orca", argv, { stdio: "ignore", windowsHide: true });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      try {
-        if (group && child.pid) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        child.kill("SIGKILL");
-      }
+      child.kill("SIGKILL");
     }, ms);
     const done = (code: number | string): void => {
       clearTimeout(timer);
@@ -81,15 +71,18 @@ export async function cloneTurn(
   const target = cloneTarget(policy, repository);
   if ("code" in target) return target.code;
   if (!(await cloneDeclared())) return "clone_failed (orca_schema_unverified)";
+  let parent: string;
   try {
-    mkdirSync(dirname(target.destination), { recursive: true });
+    mkdirSync(target.parent, { recursive: true });
+    // Canonical, case included: Orca keeps the path as given, its worktrees go by git's.
+    parent = realpathSync.native(target.parent);
   } catch {
     return "clone_failed (clone_root_unwritable)";
   }
   if (gone?.gone) return "gone";
   inflight.add(repository);
   writeClone(authDir, repository, { state: "cloning", at: new Date().toISOString(), spec });
-  void cloneRun(cloneArgv(target.url, target.destination), CLONE_MS).then((code) => {
+  void cloneRun(cloneArgv(target.project, target.url, parent), CLONE_MS).then((code) => {
     inflight.delete(repository);
     const why =
       code === 0 ? undefined : code === "timeout" ? "clone_timeout" : `clone_exit_${code}`;
