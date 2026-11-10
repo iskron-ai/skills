@@ -147,6 +147,16 @@ test("no wake word: the turn spoke, a human spoke, another task woke it, no text
   );
   const hello = 'слушаю стояние k--931--r5\n{"type":"hello","pending":0}';
   assert.equal(stop([...armed, notice("bx1", hello), said("слушаю?")]), null, "hello");
+  for (const cards of [
+    "карточек без ответа: неизвестно",
+    "карточек без ответа: 0",
+    "карточек без ответа: 2; старшая с 2026-11-10T12:00:00Z",
+  ])
+    assert.equal(
+      stop([...armed, notice("bx1", `${hello}\n${cards}`), said("слушаю?")]),
+      null,
+      "hello card context is not a work frame",
+    );
   const expired = "[Monitor expired after 30m with 9 events delivered. Re-arm it]";
   assert.equal(stop([...armed, notice("bx1", expired), said("перевзвёл?")]), null, "expiry");
   const backfill = `${hello}\nДело №5: слово [3]`;

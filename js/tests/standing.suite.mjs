@@ -3999,6 +3999,28 @@ const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) 
 /** Слово мне со стопкой прерывания — адресованное будит; счёт ждавших идёт перед ним (#6574). */
 const nudge = (fake, id = 999) => sendRoom(fake, { ...said("interrupt", id), addressee: ME });
 
+for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
+  test(`${sub} prints the server card snapshot through the shared renderer`, async (t) => {
+    const { fake, dir, key } = await connected(t);
+    await waitFor(() => fake.state.ws.size === 1, "the socket");
+    const extra = sub === "watchdog-codex" ? await codexDoor(t) : {};
+    const wd = runClient(sub, dir, key, 15_000, extra);
+    t.after(async () => {
+      wd.proc.kill("SIGKILL");
+      await wd.done;
+    });
+    await waitFor(() => /слушаю стояние/.test(wd.out + wd.err), "the watchdog to attach");
+    const f = answer(991, 990, ME, {});
+    f.my_open_cards = { count: 2, oldest_at: "2026-11-10T12:00:00Z" };
+    f.line.done = "cards-watch-body";
+    f.body = f.line.done;
+    await sendRoom(fake, f);
+    const output = () =>
+      extra.CODEX_HOME ? readFileSync(join(extra.CODEX_HOME, "door.log"), "utf8") : wd.out;
+    await waitFor(() => output().includes("cards-watch-body"), "the carrier body");
+    assert.match(output(), /карточек без ответа: 2; старшая с 2026-11-10T12:00:00Z/);
+  });
+
 test("the built bridge renders a person's answer with one author, reference and body", async (t) => {
   const { fake, dir, key } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
@@ -5760,7 +5782,8 @@ test("a human word right after a case batch goes out alone under Monitor: a paus
     `the batch went first:\n${wd.out}`,
   );
   const before = lines[first].at - lines[first - 1].at;
-  const after = lines[reply + 1].at - lines[reply].at;
+  assert.equal(lines[reply + 1].s, "карточек без ответа: неизвестно");
+  const after = lines[reply + 2].at - lines[reply + 1].at;
   assert.ok(before >= 250, `a pause before the human word: ${before} ms\n${wd.out}`);
   assert.ok(after >= 250, `a pause after the human word: ${after} ms\n${wd.out}`);
   // A human's word in a case with stack defer does not wait for the batch window.
