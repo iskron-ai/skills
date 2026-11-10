@@ -3,7 +3,50 @@
 import type { Lang } from "../lang.ts";
 import { tool } from "../protocol.ts";
 
+export interface ClockNoticeFacts {
+  room: number | null;
+  roomId: string | null;
+  realm: string | null;
+  entry: number | null;
+  key: string | null;
+  standing: string | null;
+  standingId: string | null;
+  karta: number | null;
+  listening: boolean | null;
+  lastAct: string | null;
+  roleCalled: boolean | null;
+  due: string | null;
+  escalated: boolean | null;
+}
+
+function clockNotice(
+  lang: Lang,
+  kind: "card_unanswered" | "line_due",
+  f: ClockNoticeFacts,
+): string {
+  const ru = lang === "ru";
+  const unknown = ru ? "неизвестно" : "unknown";
+  const flag = (v: boolean | null) =>
+    v === null ? unknown : v ? (ru ? "да" : "yes") : ru ? "нет" : "no";
+  const head =
+    kind === "card_unanswered"
+      ? ru
+        ? "карточка без ответа"
+        : "unanswered card"
+      : ru
+        ? "срок строки"
+        : "line due";
+  const ref = `${ru ? "дело" : "case"} №${f.room ?? unknown} (id: ${f.roomId ?? unknown}, ${ru ? "граф" : "realm"}: ${f.realm ?? unknown}) [${f.entry ?? unknown}], ${ru ? "ключ" : "key"}: ${f.key ?? unknown}`;
+  const who = `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${ru ? "роль" : "role"}: ${f.karta ?? unknown})`;
+  const facts =
+    kind === "card_unanswered"
+      ? `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}`
+      : `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`;
+  return `${head}: ${ref}; ${who}; ${facts}`;
+}
+
 export interface FrameTextWords {
+  clockNotice: (kind: "card_unanswered" | "line_due", facts: ClockNoticeFacts) => string;
   cardRepeat: (n: number | null) => string;
   openCards: (count: number | null, oldest: string | null, malformed?: boolean) => string;
   /**
@@ -53,6 +96,7 @@ export interface FrameTextWords {
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
   ru: {
+    clockNotice: (kind, facts) => clockNotice("ru", kind, facts),
     cardRepeat: (n) => `повтор карточки: ${n ?? "номер неизвестен"}`,
     openCards: (count, oldest, malformed = false) =>
       `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
@@ -82,6 +126,7 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
         .join(", ")}`,
   },
   en: {
+    clockNotice: (kind, facts) => clockNotice("en", kind, facts),
     cardRepeat: (n) => `card repeat: ${n ?? "number unknown"}`,
     openCards: (count, oldest, malformed = false) =>
       `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
