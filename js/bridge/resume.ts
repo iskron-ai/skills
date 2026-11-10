@@ -345,9 +345,9 @@ export function holdFromEnv(): void {
   if (url) holdStanding(url, envOf(envName("CHANNEL_STATUS"))?.trim() || null);
 }
 
-const reply = (msg: JsonRpcMessage, result: unknown): JsonRpcMessage => {
+const reply = async (msg: JsonRpcMessage, result: unknown): Promise<JsonRpcMessage> => {
   const r = result as { resumed?: boolean; holding?: boolean; word?: string } | null;
-  const notice = r?.resumed ? skillCatchupNotice() : null;
+  const notice = r?.resumed ? await skillCatchupNotice() : null;
   return {
     jsonrpc: "2.0",
     id: msg.id,
