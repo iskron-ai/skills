@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.37.0](https://github.com/iskron-ai/skills/compare/v7.36.2...v7.37.0) (2026-11-09)
+
+
+### Features
+
+* **bridge:** orchestrator raises by launcher attrs through orca and stops empty compositions ([#716](https://github.com/iskron-ai/skills/issues/716)) ([6412e67](https://github.com/iskron-ai/skills/commit/6412e67efc67ec12f79fd2da9977b90803f66411))
+
+
+### Bug Fixes
+
+* release 7.37.0 findings — invite boundary, orchestrator consent and stops ([#724](https://github.com/iskron-ai/skills/issues/724)) ([ec46903](https://github.com/iskron-ai/skills/commit/ec469035496fc6f98a00a71016914843540c9f41))
+
 ## [7.36.2](https://github.com/iskron-ai/skills/compare/v7.36.1...v7.36.2) (2026-11-09)
 
 
