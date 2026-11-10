@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.38.0](https://github.com/iskron-ai/skills/compare/v7.37.0...v7.38.0) (2026-11-10)
+
+
+### Features
+
+* **orchestra:** clone an unknown repository through Orca by the launcher's allow list ([#727](https://github.com/iskron-ai/skills/issues/727)) ([1abbfae](https://github.com/iskron-ai/skills/commit/1abbfae79e99b31742548970e08da906f50ba9c6))
+
+
+### Bug Fixes
+
+* 7.38.0 body findings — repository on the invite's holon, clone only on no_checkout, orca_schema_unverified named ([#728](https://github.com/iskron-ai/skills/issues/728)) ([d965446](https://github.com/iskron-ai/skills/commit/d96544671372a2491d48e44368a3967d51c8aa08))
+* one home for the clone credential norm — establish-mcp points to minding's launcher reference ([#731](https://github.com/iskron-ai/skills/issues/731)) ([75f7952](https://github.com/iskron-ai/skills/commit/75f795295029a8e99e06a171b433250cb4b3d5e3))
+* orchestra clone in the form Orca 1.4.242 answers ([#729](https://github.com/iskron-ai/skills/issues/729)) ([4dde7b3](https://github.com/iskron-ai/skills/commit/4dde7b34d5be7b88096d20c67680bbe1a955b867))
+* post-7.37.0 body findings and live-run reality rows ([#725](https://github.com/iskron-ai/skills/issues/725)) ([5966609](https://github.com/iskron-ai/skills/commit/59666099d13c3d541b92e72ea3182b7aa339ab3f))
+
 ## [7.37.0](https://github.com/iskron-ai/skills/compare/v7.36.2...v7.37.0) (2026-11-09)
 
 
