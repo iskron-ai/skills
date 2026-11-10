@@ -8,8 +8,9 @@ import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { BUILT_PLUGIN } from "./built.mjs";
 import { delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
 
 const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
@@ -63,6 +64,145 @@ const compactionEvent = (type, sessionID, id, seq) => ({
 const words = (text) => text.split("контекст сжат").length - 1;
 const inboxWords = (rec, s) =>
   rec.synthetics.filter((x) => x.sessionID === s && ROLE_WORD.test(x.text));
+
+// Expose the unminified bundle's real factory on a sandbox copy. Only the doors are
+// substituted: the production slice catches network errors, so rejection needs this seam.
+const factoryCopy = join(SANDBOX, "compaction-doors.mjs");
+writeFileSync(
+  factoryCopy,
+  readFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, "utf8") +
+    "\nexport { createCompaction };\n",
+);
+const { createCompaction } = await import(pathToFileURL(factoryCopy).href);
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+};
+function recovery(slice = () => null) {
+  const state = { place: PLACE, closed: false, said: [] };
+  const c = createCompaction({
+    placeOf: () => state.place,
+    closed: () => state.closed,
+    slice,
+    say: (text) => state.said.push(text),
+  });
+  const req = () => ({ sessionID: "recovery", system: [] });
+  c.instruct(req());
+  return { c, state, req, text: (r) => r.system.map((p) => p.text).join("\n") };
+}
+
+test("pending recovery survives a temporarily missing seat", async () => {
+  const { c, state, req, text } = recovery();
+  state.place = null;
+  const missing = req();
+  await c.tell(missing);
+  assert.equal(text(missing), "");
+  state.place = PLACE;
+  const back = req();
+  await c.tell(back);
+  assert.equal(words(text(back)), 1);
+  const again = req();
+  await c.tell(again);
+  assert.equal(text(again), "");
+});
+
+test("a rejected slice leaves no partial system and retries with a fresh read", async () => {
+  const first = deferred();
+  let reads = 0;
+  const { c, req, text } = recovery(() =>
+    ++reads === 1 ? first.promise : Promise.resolve("RULES"),
+  );
+  const failed = req();
+  const attempt = c.tell(failed);
+  first.reject(new Error("slice refused"));
+  await assert.rejects(attempt, /slice refused/);
+  assert.equal(text(failed), "");
+  const retry = req();
+  await c.tell(retry);
+  assert.equal(reads, 2);
+  assert.equal(words(text(retry)), 1);
+  assert.match(text(retry), /RULES/);
+  const again = req();
+  await c.tell(again);
+  assert.equal(text(again), "");
+});
+
+for (const cancel of ["failed", "forget", "stop"]) {
+  test(`${cancel} during slice wait cancels the pending generation`, async () => {
+    const rules = deferred();
+    const { c, state, req, text } = recovery(() => rules.promise);
+    const waiting = req();
+    const attempt = c.tell(waiting);
+    if (cancel === "failed")
+      c.onEvent({ type: "session.compaction.failed", data: { sessionID: "recovery" } });
+    else if (cancel === "forget") c.forget("recovery");
+    else state.closed = true;
+    rules.resolve("RULES");
+    await attempt;
+    assert.equal(text(waiting), "");
+    assert.deepEqual(state.said, []);
+    state.closed = false;
+    const again = req();
+    await c.tell(again);
+    assert.equal(text(again), "");
+  });
+}
+
+test("concurrent contexts commit a complete role and slice once", async () => {
+  const rules = deferred();
+  const { c, req, text } = recovery(() => rules.promise);
+  const a = req();
+  const b = req();
+  const attempts = [c.tell(a), c.tell(b)];
+  assert.equal(text(a), "", "no partial role while the slice is pending");
+  assert.equal(text(b), "");
+  rules.resolve("RULES");
+  await Promise.all(attempts);
+  assert.equal(words(text(a)) + words(text(b)), 1);
+  assert.match(text(a) || text(b), /RULES/);
+  const again = req();
+  await c.tell(again);
+  assert.equal(text(again), "");
+});
+
+test("seat loss during slice wait defers the complete return", async () => {
+  const rules = deferred();
+  const { c, state, req, text } = recovery(() => rules.promise);
+  const waiting = req();
+  const attempt = c.tell(waiting);
+  state.place = null;
+  rules.resolve("RULES");
+  await attempt;
+  assert.equal(text(waiting), "");
+  state.place = PLACE;
+  const retry = req();
+  await c.tell(retry);
+  assert.equal(words(text(retry)), 1);
+  assert.match(text(retry), /RULES/);
+});
+
+test("a cancelled generation cannot consume a new compaction's return", async () => {
+  const old = deferred();
+  let reads = 0;
+  const { c, req, text } = recovery(() => (++reads === 1 ? old.promise : Promise.resolve("NEW")));
+  const waiting = req();
+  const attempt = c.tell(waiting);
+  c.forget("recovery");
+  c.instruct(req());
+  old.resolve("OLD");
+  await attempt;
+  assert.equal(text(waiting), "");
+  const next = req();
+  await c.tell(next);
+  assert.equal(words(text(next)), 1);
+  assert.match(text(next), /NEW/);
+  assert.doesNotMatch(text(next), /OLD/);
+});
 
 test("a seated session: the first request after the compaction carries one word in its system, the compaction request none", async () => {
   const { rec, events, pids } = await standUp("compact-seated", ["s-c"]);
@@ -154,5 +294,54 @@ test("a session stopped by its owner gets neither the order nor the word after i
     );
   } finally {
     await rec.stop();
+  }
+});
+
+test("stop then held before context cancels only the stopped session's generation", async () => {
+  const { rec, events, pids } = await standUp("compact-stop-return", ["s-return", "s-live"]);
+  try {
+    await holds(rec, events, pids[0], "k-return");
+    await holds(rec, events, pids[1], "k-live");
+    await system(rec, "compaction", "s-return");
+    await system(rec, "compaction", "s-live");
+    appendFileSync(
+      `${events}.${pids[0]}`,
+      event("stopped", { code: 4001, key: "k-return", text: "STOP_RECOVERY" }),
+    );
+    await until(() => rec.interrupts.length === 1, "the stop's interrupt");
+    await holds(rec, events, pids[0], "k-return-again");
+    assert.equal(
+      words(await system(rec, "context", "s-return")),
+      0,
+      "old generation stays cancelled",
+    );
+    assert.equal(
+      words(await system(rec, "context", "s-live")),
+      1,
+      "the live neighbour keeps its return",
+    );
+    await system(rec, "compaction", "s-return");
+    assert.equal(words(await system(rec, "context", "s-return")), 1, "a new generation can return");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("the stop callback is safe before the compaction factory is initialized", async () => {
+  const copy = join(SANDBOX, "iskron.js");
+  const original = readFileSync(copy, "utf8");
+  const at = "const compaction = createCompaction({";
+  assert.ok(original.includes(at), "the unminified bundle retains the initialization seam");
+  // Invoke the real registered cancellation closure at its earliest active initialization gap.
+  // No other production statement changes; the sandbox copy is restored before the next test.
+  writeFileSync(copy, original.replace(at, `cancelContext();\n  ${at}`));
+  let rec;
+  try {
+    ({ rec } = await standUp("compact-early-stop", []));
+    assert.ok(rec.hooks.context?.length, "setup reached context registration without a TDZ error");
+    assert.doesNotMatch(rec.said(), /before initialization|ReferenceError/);
+  } finally {
+    await rec?.stop();
+    writeFileSync(copy, original);
   }
 });
