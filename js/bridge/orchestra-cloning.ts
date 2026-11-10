@@ -7,7 +7,7 @@
 // still finish the clone, and a later tact then finds the checkout. The client's own pairing
 // wait is a minute (case №4221, #10137): its runtime_timeout is no failure — the row stays
 // cloning in Orca's runtime until the checkout is found or the clone's window ends
-// (clone_timeout). Of the output only the last JSON line's error code is read, never said.
+// (clone_timeout). Of the output only the answer's error code is read, never said.
 // A checkout found lifts the repository's row, a remembered failure included. A cloning row
 // without this daemon's clone (off, restart, update) and not in Orca's runtime is
 // clone_interrupted, kept as a failure.
@@ -17,7 +17,7 @@ import { mkdirSync, realpathSync } from "node:fs";
 
 import { envName } from "../delivery/index.ts";
 import { cloneArgv, cloneDeclared, type ClonePolicy, cloneTarget } from "./orchestra-clone.ts";
-import { readClones, writeClone } from "./orchestra-runs.ts";
+import { type CloneRow, readClones, writeClone } from "./orchestra-runs.ts";
 
 /** A clone takes longer than a launch: a large repository over a slow line. */
 const CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 600_000;
@@ -26,14 +26,17 @@ const CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 600_000;
 export const specOf = (launcher: unknown): string =>
   createHash("sha256").update(JSON.stringify(launcher)).digest("hex").slice(0, 16);
 
-/** The tail of the client's output kept: its answer is the last line. */
+/** The tail of the client's output kept: a refusal is far shorter. */
 const TAIL = 64 * 1024;
 
-/** The error code of the client's last JSON line, or null; nothing else of it is kept. */
+/** After the client's exit its output is awaited this long — a child of it may hold the pipe. */
+const DRAIN_MS = 2_000;
+
+/** The error code of the client's answer, or null; nothing else of it is kept. The answer is
+ * the whole stdout, indented over many lines (#9966). */
 function answerCode(out: string): string | null {
-  const last = out.trim().split("\n").pop() ?? "";
   try {
-    const code = (JSON.parse(last) as { error?: { code?: unknown } }).error?.code;
+    const code = (JSON.parse(out) as { error?: { code?: unknown } }).error?.code;
     return typeof code === "string" ? code : null;
   } catch {
     return null;
@@ -52,20 +55,35 @@ function cloneRun(argv: string[], ms: number): Promise<number | string> {
       out = (out + c.toString("utf8")).slice(-TAIL);
     });
     let timedOut = false;
+    let drain: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
     }, ms);
+    let ended = false;
     const done = (code: number | string): void => {
+      if (ended) return;
+      ended = true;
       clearTimeout(timer);
+      clearTimeout(drain);
+      child.stdout.destroy();
       if (timedOut) return resolve("timeout");
       resolve(code !== 0 && answerCode(out) === "runtime_timeout" ? "runtime_timeout" : code);
     };
     child.once("error", (e: NodeJS.ErrnoException) => done(e.code ?? 1));
-    // close, not exit: the answer is read to its end.
+    // close reads the answer to its end; exit bounds the wait — a child of the client that
+    // inherited stdout never closes it, and the clone would stay in flight for good.
     child.once("close", (code, signal) => done(code ?? signal ?? 1));
+    child.once("exit", (code, signal) => {
+      if (timedOut) done(code ?? signal ?? 1);
+      else drain = setTimeout(() => done(code ?? signal ?? 1), DRAIN_MS);
+    });
   });
 }
+
+/** A row left to Orca's runtime (runtime_timeout) whose clone's window has run out. */
+export const runtimeOver = (row: CloneRow): boolean =>
+  row.state === "cloning" && row.runtime === true && Date.now() - Date.parse(row.at) >= CLONE_MS;
 
 /** Clones this daemon runs now: a cloning row without one here is a former daemon's. */
 const inflight = new Set<string>();
@@ -85,7 +103,7 @@ export async function cloneTurn(
   let row = readClones(authDir)[repository];
   if (inflight.has(repository)) return "cloning";
   if (row?.state === "cloning" && row.runtime) {
-    if (Date.now() - Date.parse(row.at) < CLONE_MS) return "cloning";
+    if (!runtimeOver(row)) return "cloning";
     row = { state: "failed", at: new Date().toISOString(), spec: row.spec, why: "clone_timeout" };
     writeClone(authDir, repository, row);
   }

@@ -1426,6 +1426,31 @@ test("clone: a timeout is clone_timeout; output beyond any buffer is no failure"
   assert.match(n.out, /invite 9: launched/, n.out);
 });
 
+test("clone: a timeout ends the clone even while a child of the client holds its stdout", async (t) => {
+  const heir = join(mkdtempSync(join(tmpdir(), "iskron-heir-")), "pid");
+  t.after(() => {
+    try {
+      process.kill(Number(readFileSync(heir, "utf8")));
+    } catch {
+      /* gone already */
+    }
+    rmSync(dirname(heir), { recursive: true, force: true });
+  });
+  const o = await cloning(t, {
+    env: {
+      FAKE_ORCA_CLONE_HANG: "1",
+      FAKE_ORCA_CLONE_HEIR: heir,
+      ISKRON_ORCHESTRA_CLONE_MS: "1500",
+    },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await new Promise((r) => setTimeout(r, 3000));
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_timeout\)/, r.out);
+  assert.notEqual(o.cloneRows()[REPO]?.state, "cloning");
+});
+
 /** Until the clone's client has answered — the fake's setup-clone is logged at its start. */
 async function until(check, ms = 20_000) {
   const end = Date.now() + ms;
@@ -1468,6 +1493,13 @@ test("clone: runtime_timeout and no copy within the clone's window — clone_tim
   await o.step();
   await until(clientDone(o));
   await new Promise((r) => setTimeout(r, 2500));
+  // A dry run says of the row what the tact will.
+  const dry = await cli(o.dir, ["step", "--dry-run"], { ISKRON_ORCHESTRA_CLONE_MS: "2000" });
+  assert.match(
+    dry.out,
+    /invite 9: if Orca has no checkout — clone_failed \(clone_timeout\)/,
+    dry.out,
+  );
   const r = await o.step();
   assert.match(r.out, /invite 9: clone_failed \(clone_timeout\)/, r.out);
   const again = await o.step();

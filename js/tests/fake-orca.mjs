@@ -51,10 +51,17 @@ if (args[0] === "agent-context") {
 // both outputs; else FAKE_ORCA_CLONE_COVER is the clone's AGENTS.md and — unless
 // FAKE_ORCA_CLONE_UNREGISTERED=1 — a ready local setup at the path as given joins the laid
 // projects. FAKE_ORCA_CLONE_DELAY_MS — it answers this much later; FAKE_ORCA_CLONE_HANG=1 — it
-// never answers; FAKE_ORCA_CLONE_NOISE=1 — it prints more than any buffer would hold.
+// never answers; FAKE_ORCA_CLONE_NOISE=1 — it prints more than any buffer would hold;
+// FAKE_ORCA_CLONE_HEIR=<file> — a child of it holds its stdout a minute, its pid in <file>.
 // FAKE_ORCA_CLONE_RUNTIME_TIMEOUT=<file> — the client's pairing wait runs out (case №4221): it
 // answers runtime_timeout with exit 1 at once, and Orca's runtime — a detached copy of this
 // fake — finishes the clone once the probe removes <file>; "never" — it never finishes it.
+// A refusal as 1.4.242 prints it (#9966): indented JSON on stdout, stderr empty, exit 1.
+const refuse = (code, message) => {
+  const answer = { id: "local", ok: false, error: { code, message }, _meta: { runtimeId: null } };
+  process.stdout.write(JSON.stringify(answer, null, 2) + "\n");
+  process.exit(1);
+};
 if (args[0] === "project" && args[1] === "setup-clone") {
   const inRuntime = process.env.FAKE_ORCA_IN_RUNTIME === "1";
   if (!inRuntime) appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
@@ -67,21 +74,20 @@ if (args[0] === "project" && args[1] === "setup-clone") {
         stdio: "ignore",
         env: { ...process.env, FAKE_ORCA_IN_RUNTIME: "1" },
       }).unref();
-    process.stdout.write(
-      JSON.stringify({
-        ok: false,
-        error: { code: "runtime_timeout", message: "Timed out waiting for the Orca runtime." },
-      }) + "\n",
-    );
-    process.exit(1);
+    refuse("runtime_timeout", "Timed out waiting for the Orca runtime.");
   }
   const flag = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : "");
-  const refuse = (code, message) => {
-    process.stdout.write(JSON.stringify({ ok: false, error: { code, message } }) + "\n");
-    process.exit(1);
-  };
   for (const f of ["project", "host", "url", "destination"])
     if (!flag(f)) refuse("invalid_argument", `Missing required --${f}`);
+  const heir = process.env.FAKE_ORCA_CLONE_HEIR;
+  if (heir) {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
+      detached: true,
+      stdio: ["ignore", "inherit", "ignore"],
+    });
+    writeFileSync(heir, String(child.pid));
+    child.unref();
+  }
   if (process.env.FAKE_ORCA_CLONE_HANG === "1") await new Promise((r) => setTimeout(r, 120_000));
   const wait = Number(process.env.FAKE_ORCA_CLONE_DELAY_MS ?? 0);
   if (wait) await new Promise((r) => setTimeout(r, wait));
