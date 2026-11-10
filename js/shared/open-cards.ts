@@ -1,6 +1,7 @@
 // Server-owned snapshot, never a local count or clock (graph @nks/nks-dev, #10167).
 import { FRAME_TEXT } from "../delivery/index.ts";
 import type { Frame } from "./channel.ts";
+import { clockNoticeFrame } from "./clock-notices.ts";
 import { words } from "./lang.ts";
 
 export interface OpenCards {
@@ -14,6 +15,7 @@ const repeatNumber = (n: unknown): number | null =>
 /** Strip untrusted card fields even when the reader is paired with an older bridge. */
 export function cardFrame(frame: Frame | null): Frame | null {
   if (!frame) return null;
+  frame = clockNoticeFrame(frame);
   const checked: Record<string, unknown> = {};
   if (Object.hasOwn(frame, "my_open_cards")) checked.my_open_cards = openCards(frame.my_open_cards);
   if (Object.hasOwn(frame, "repeat")) checked.repeat = frame.repeat === true;

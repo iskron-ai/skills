@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 
 import { quiet } from "../shared/quietframe.ts";
 import { BUILT_BRIDGE } from "./built.mjs";
+import { clockNotice } from "./clock-notices.mjs";
 import { startFakeCodex } from "./fake-codex.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
@@ -3998,6 +3999,29 @@ part("rooms");
 const sendRoom = (fake, frame) => fake.control({ ws_send: JSON.stringify(frame) });
 /** Слово мне со стопкой прерывания — адресованное будит; счёт ждавших идёт перед ним (#6574). */
 const nudge = (fake, id = 999) => sendRoom(fake, { ...said("interrupt", id), addressee: ME });
+
+for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
+  for (const kind of ["card_unanswered", "line_due"])
+    test(`${sub} prints clock notice ${kind} through the built bridge`, async (t) => {
+      const { fake, dir, key } = await connected(t);
+      await waitFor(() => fake.state.ws.size === 1, "the socket");
+      const extra = sub === "watchdog-codex" ? await codexDoor(t) : {};
+      const wd = runClient(sub, dir, key, 15_000, extra);
+      t.after(async () => {
+        wd.proc.kill("SIGKILL");
+        await wd.done;
+      });
+      await waitFor(() => /слушаю стояние/.test(wd.out + wd.err), "the watchdog to attach");
+      await sendRoom(fake, clockNotice(kind));
+      const output = () =>
+        extra.CODEX_HOME ? readFileSync(join(extra.CODEX_HOME, "door.log"), "utf8") : wd.out;
+      await waitFor(() => output().includes("clock-key"), "the clock notice facts");
+      // The terminal wraps long lines; the facts survive that formatting too.
+      const text = output().replace(/\s+/g, " ");
+      for (const fact of ["4330", "[41]", "@h:recipient", "163"])
+        assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+    });
 
 for (const sub of ["watchdog", "watchdog-exit", "watchdog-codex"])
   test(`${sub} prints the server card snapshot through the shared renderer`, async (t) => {

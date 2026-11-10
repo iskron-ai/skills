@@ -1,6 +1,7 @@
 import { FRAME_MARK, FRAME_TEXT, ROOM } from "../delivery/index.ts";
 import { addressedToMine, closedQuestion } from "./addressed.ts";
 import { classifyOrigin, type Frame, type FrameOrigin } from "./channel.ts";
+import { clockNoticeText } from "./clock-notices.ts";
 import { compactCounts } from "./frame-format.ts";
 import { superseded } from "./keyfold.ts";
 import { words as wordsOf } from "./lang.ts";
@@ -144,6 +145,8 @@ export function frameToText(frame: Frame | null | undefined, raw: string, withCa
 
 function frameText(frame: Frame | null | undefined, raw: string, withCase: boolean): string {
   if (!frame) return raw;
+  const notice = clockNoticeText(frame);
+  if (notice) return notice;
   const f = frame as Rec;
   const origin = frame.origin ?? classifyOrigin(frame);
   const text = textOf(frame);
@@ -191,6 +194,8 @@ export const warnedSeat = (frame: Frame): string =>
  * withCase false — under its case's count, which names the case (underCounts, #9654).
  */
 export function batchLine(frame: Frame, run?: number, withZachin = true, withCase = true): string {
+  const notice = clockNoticeText(frame);
+  if (notice) return notice;
   const f = frame as Rec;
   const rk = roomKind(frame);
   const head = withCase ? caseHead(frame, withZachin) : "";

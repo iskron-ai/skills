@@ -50,6 +50,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_EXTENSION } from "./built.mjs";
+import { clockNotice } from "./clock-notices.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   ack,
@@ -1059,6 +1060,29 @@ test("pi hello carries server card context without raising a turn or accumulatin
     await rec.stop();
   }
 });
+
+for (const kind of ["card_unanswered", "line_due"])
+  test(`pi clock notice ${kind} is sanitized in text and details from an older bridge`, async () => {
+    const { events, env } = eventsEnv(`clock-invalid-${kind}`);
+    const rec = await session(env);
+    try {
+      const f = clockNotice(kind, {
+        entry_id: { secret: "SECRET-CLOCK" },
+        key: { secret: "SECRET-CLOCK" },
+        due_at: "SECRET-CLOCK",
+        last_act_at: "SECRET-CLOCK",
+        extra: "SECRET-CLOCK",
+      });
+      f.body = { secret: "SECRET-CLOCK" };
+      push(events, frame(f));
+      await delay(250);
+      assert.equal(rec.messages.length, 1);
+      assert.match(rec.messages[0].msg.content, /4330/);
+      assert.doesNotMatch(JSON.stringify(rec.messages), /SECRET-CLOCK|\[object Object\]/);
+    } finally {
+      await rec.stop();
+    }
+  });
 
 test("pi card envelope is sanitized in message details even with an older bridge", async () => {
   const { events, env } = eventsEnv("cards-invalid");

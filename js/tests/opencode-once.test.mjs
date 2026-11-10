@@ -10,6 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { BATCH_MS, delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
+import { clockNotice } from "./clock-notices.mjs";
 import {
   ack,
   addressed,
@@ -74,6 +75,36 @@ const word = roomFrame("said", {
   envelope: { addressee: ME },
   body: "ТЕЛО-СЛОВА-201",
 });
+
+for (const [kind, variant, data] of [
+  ["card_unanswered", "seat", {}],
+  [
+    "card_unanswered",
+    "role",
+    {
+      to: { standing_id: null, standing: null, karta_seq: 163 },
+      listening: null,
+      last_act_at: null,
+    },
+  ],
+  ["line_due", "holder", {}],
+  ["line_due", "escalated", { escalated: true }],
+])
+  test(`clock notice ${kind}/${variant} crosses existing message dispatch in the built plugin`, async () => {
+    const { rec, prompt } = await seated(`clock-${kind}-${variant}`, `s-clock-${kind}-${variant}`);
+    try {
+      const text = await prompt(clockNotice(kind, data));
+      for (const fact of ["4330", "[41]", "clock-key", "163"])
+        assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+      if (variant !== "role") assert.match(text, /@h:recipient/);
+      if (kind === "line_due")
+        assert.match(text, new RegExp(`передано постановщику: ${data.escalated ? "да" : "нет"}`));
+      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+      assert.match(await prompt(word), /ТЕЛО-СЛОВА-201/);
+    } finally {
+      await rec.stop();
+    }
+  });
 
 // #10167 v9: a server snapshot is context, not a locally counted event or clock.
 for (const [name, snapshot, expected] of [
