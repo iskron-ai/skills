@@ -113,6 +113,22 @@ test("hello card context wakes nothing and rides the next context admission", as
     await rec.stop();
   }
 });
+
+test("an intentional card repeat with a new frame id retains its entry and names the server repeat number", async () => {
+  const { rec, prompt } = await seated("cards-repeat", "s-cards-repeat");
+  try {
+    const original = { ...ask(801), id: "card-original" };
+    assert.equal(original.event_id, undefined, "card frames have no graph event identity");
+    await prompt(original);
+    const repeated = { ...original, id: "card-repeat-1", repeat: true, repeat_n: 1 };
+    const text = await prompt(repeated);
+    assert.match(text, /\[801\]/);
+    assert.match(text, /повтор карточки: 1/);
+    assert.match(text, /Выкатывать сегодня\?/);
+  } finally {
+    await rec.stop();
+  }
+});
 // A record to the seat that piles (its kind's rule is batch), with a count riding beside it.
 for (const [kind, frame, facts] of [
   ["word", word, ["[201]", "ТЕЛО-СЛОВА-201", "@aleksei:probe"]],
