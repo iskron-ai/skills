@@ -8455,7 +8455,7 @@ test("a child session whose first prompt is a launch line with a case stands as 
       "You are a subagent spawned by another session.\n" +
         "start @nks/nks-dev #48 дело №77\n" +
         "Бриф: почини мост.\n" +
-        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.",
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.",
     );
   } finally {
     await rec.stop();
@@ -8543,7 +8543,7 @@ test("on an English server (*.ai) the launch line reads «case №N» and the wo
     assert.equal(
       read,
       "start r5 #48 case №77 from @me:lead\n" +
-        "Iskron: seated host.repo.opus-5.sub-1, entered case №77 — retell the brief as your first message in the case.",
+        "Iskron: seated host.repo.opus-5.sub-1, entered case №77: restate the brief by say with to the launcher and in_reply_to the assignment; unknown address — read the participants. Progress and outcome — line by your key, no duplicate say.",
     );
     assert.deepEqual(
       sentCalls(calls)

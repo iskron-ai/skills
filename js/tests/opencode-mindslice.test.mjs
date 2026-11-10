@@ -75,7 +75,7 @@ test("a launched child reads the human's rules from its own stand answer, under 
     const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
     assert.ok(
       read.endsWith(
-        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.\n" +
           BLOCK,
       ),
       read,

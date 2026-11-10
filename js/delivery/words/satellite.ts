@@ -60,7 +60,7 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
     listen: (ttl) =>
       `[iskron-bridge] Место-спутник: сторожа не взводи — место живёт прогоном субагента и подписывает его записи; ` +
       `с концом прогона мост уходит с места сам, канал гаснет окном простоя ${ttl} с. ` +
-      `Первый ход — вход в дело, названное постановкой, и пересказ постановки первым словом в нём.`,
+      `Войди в дело постановки; пересказ — say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.`,
   },
   en: {
     empty: () => "empty",
@@ -96,6 +96,6 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
     listen: (ttl) =>
       `[iskron-bridge] Satellite seat: do not arm a watchdog — the seat lives by the subagent's run and signs its records; ` +
       `when the run ends the bridge leaves the seat itself, the channel dies after the ${ttl} s idle window. ` +
-      `The first move — enter the case the brief names and retell the brief as your first message in it.`,
+      `Enter the case the brief names; restate by say with to the launcher and in_reply_to the assignment; unknown address — read the participants. Progress and outcome — line by your key, no duplicate say.`,
   },
 };

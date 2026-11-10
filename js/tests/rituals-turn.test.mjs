@@ -96,7 +96,8 @@ test("a frame's turn ending with text and no word laid: go on with the wake word
   const out = stop(turn);
   assert.equal(out?.decision, "block", JSON.stringify(out));
   assert.match(out.reason, WAKE);
-  assert.match(out.reason, /iskron_case ask/);
+  assert.match(out.reason, /iskron_case line/);
+  assert.match(out.reason, /человеку ask/);
   assert.equal(stop(turn, { stop_hook_active: true }), null, "the turn it woke is not woken again");
 });
 
@@ -154,6 +155,25 @@ test("no wake word: the turn spoke, a human spoke, another task woke it, no text
   assert.equal(stop(tail), null, "the turn ended on a call, not text");
   const limit = { ...said("You've hit your limit", "stop_sequence"), isApiErrorMessage: true };
   assert.equal(stop([...armed, frame, limit]), null, "the harness's error is no word");
+});
+
+test("a ledger result answers the frame's turn without a duplicate message (#10107)", () => {
+  const frame = notice("bx1", "Дело №5: слово [3]");
+  const text = `Результат: ${"проверено на носителе. ".repeat(20)}`;
+  const line = called("ledger", CASE, {
+    action: "line",
+    room: "5",
+    key: "probe",
+    done: "Проверил носитель",
+    verdict: "ok",
+  });
+  assert.equal(stop([...armed, frame, line, result("ledger", "ok"), said(text)]), null);
+  const read = called("read", CASE, { action: "read", room: "5" });
+  assert.equal(
+    stop([...armed, frame, read, result("read", "case"), said(text)])?.decision,
+    "block",
+    "reading the ledger does not answer the turn",
+  );
 });
 
 test("the cover's rituals field: without `turn` the word keeps silent, with it or without the field it speaks", () => {

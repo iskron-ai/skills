@@ -845,7 +845,7 @@ test("a first prompt «start … дело №N от <seat>» stands as that seat
     assert.equal(
       read,
       "start @nks/nks-dev #48 дело №77 от @me:host.repo\n" +
-        "Искрон: встал @me:host.repo.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Искрон: встал @me:host.repo.sub-1, вошёл в дело №77: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.\n" +
         "Бриф: почини.",
     );
   } finally {
