@@ -61,8 +61,9 @@ export function rideWith(got: Frame[], frame: Frame | null, raw: string): string
 export function ridersInBatch(p: Riders | undefined, ev: ChannelEvent): string {
   const frames = ev.frames ?? [];
   const waiting = p?.riders.filter((f) => !isGraphInbox(f)) ?? [];
-  if (!p || !ev.body || !ridesIn(waiting, frames, ev.body)) return ev.text ?? "";
-  return batchBodyText(frames, ev.body, takeRiders(p, false).kept);
+  if (!Array.isArray(ev.frames) || !ev.body) return ev.text ?? "";
+  const riding = p && ridesIn(waiting, frames, ev.body) ? takeRiders(p, false).kept : [];
+  return batchBodyText(frames, ev.body, riding);
 }
 
 /** Pending graph text suppresses its counted case copy before either is handed out. */

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { batchLine, batchText, frameToText } from "../shared/frame-text.ts";
-import { cardFrame } from "../shared/open-cards.ts";
 import { setLang } from "../shared/lang.ts";
+import { cardFrame } from "../shared/open-cards.ts";
 import { clockNotice } from "./clock-notices.mjs";
 
 for (const kind of ["card_unanswered", "line_due"])

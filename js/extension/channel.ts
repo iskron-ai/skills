@@ -154,7 +154,9 @@ export function setupChannel(pi: ExtensionAPI): (params: any) => void {
       {
         customType: LOGGERS.channel,
         content: markFrame(
-          ev.body && got.length ? batchBodyText(frames, ev.body, got) : (ev.text ?? ""),
+          Array.isArray(ev.frames) && ev.body
+            ? batchBodyText(frames, ev.body, got)
+            : (ev.text ?? ""),
         ),
         display: true,
         details: ev.kind === "stale" ? { stale: true } : { backlog: true },

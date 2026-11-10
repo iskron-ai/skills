@@ -50,7 +50,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { FRAME_MARK } from "../delivery/protocol.ts";
 import { BUILT_BRIDGE, BUILT_EXTENSION } from "./built.mjs";
-import { clockNotice } from "./clock-notices.mjs";
+import { clockNotice, legacyClockBatch } from "./clock-notices.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
 import {
   ack,
@@ -1638,6 +1638,57 @@ test("a gathered count and a word to me of the same case are one message naming 
 });
 
 // #9654: пачка stale/backlog поверх ждущего счёта того же дела — один выход, дело названо раз.
+for (const kind of ["stale", "backlog"])
+  for (const riding of [false, true])
+    test(`legacy clock batch ${kind} riding=${riding} is rebuilt by the built pi extension`, async () => {
+      const { events, env } = eventsEnv(`clock-batch-${kind}-${riding}`);
+      const rec = await session({ ...env, ISKRON_PI_ASIDE_MS: 300 });
+      try {
+        if (riding) push(events, frame(addressed(81)));
+        const neighbour = { ...said("interrupt", 87), addressee: ME, body: "CLOCK-NEIGHBOUR" };
+        push(events, legacyClockBatch(kind, neighbour));
+        const deadline = Date.now() + 5000;
+        while (!rec.messages.length && Date.now() < deadline) await delay(50);
+        await delay(700);
+        assert.equal(rec.messages.length, 1);
+        const text = rec.messages[0].msg.content;
+        for (const fact of [
+          "BATCH-HEAD",
+          "4330",
+          "[41]",
+          "clock-key",
+          "@h:recipient",
+          "2026-11-10T12:05:00Z",
+          "2026-11-10T12:00:00Z",
+          "CLOCK-NEIGHBOUR",
+        ])
+          assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+        assert.match(text, /передано постановщику: да/);
+        assert.match(text, new RegExp(`записей ${riding ? 2 : 1}, тебе 1`));
+        assert.doesNotMatch(
+          JSON.stringify(rec.messages),
+          /RAW-|OLD-TEXT|SERVER-BODY|UNSHOWN-BODY|\[object Object\]/,
+        );
+        assert.ok(text.indexOf("срок строки") < text.indexOf("карточка без ответа"), text);
+      } finally {
+        await rec.stop();
+      }
+    });
+
+for (const kind of ["stale", "backlog"])
+  test(`legacy clock batch ${kind} without structure retains the pi text fallback`, async () => {
+    const { events, env } = eventsEnv(`clock-fallback-${kind}`);
+    const rec = await session(env);
+    try {
+      push(events, { kind, text: "LEGACY-TEXT-ONLY" });
+      await delay(350);
+      assert.equal(rec.messages.length, 1);
+      assert.match(rec.messages[0].msg.content, /LEGACY-TEXT-ONLY/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
 for (const kind of ["stale", "backlog"]) {
   test(`a gathered count rides in a ${kind} batch of its case: one message naming the case once`, async () => {
     const word = { ...said("interrupt", 87), addressee: ME };
