@@ -1,6 +1,7 @@
 // Слой поставки (граф @nks/nks-dev, узел #6809): ядро js/ берёт отсюда всё, чем
 // поставка отличается, — этим одним путём. Порядок — по пути файла: язык, формы
 // прозы сервера (patterns/), имя продукта, протокол, версия, слова (words/).
+export { CONTEXT_DOOR, CONTEXT_GATE, ROLE_SKILLS } from "./context-gate.ts";
 export { CONTRACT_SUPPORT, CONTRACT_WORDS } from "./contract.ts";
 export { DEFAULT_LANG, type Lang, langOfServer, LANGS } from "./lang.ts";
 export { BOARD_FORM, BOARD_HEADER } from "./patterns/board.ts";

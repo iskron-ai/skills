@@ -2172,7 +2172,10 @@ export async function startFakeNks(opts = {}) {
         const n = String(msg.params.arguments?.node_id ?? "").replace(/^#/, "");
         st.counts.look = (st.counts.look ?? 0) + 1;
         const t = st.kartaTypes[n] ?? "能";
-        const text = `👤 Роль #${n} (#${n}, karta ${t}, v1)\n  Проявлен как: ${t}`;
+        const skills = st.kartaSkills?.[n];
+        const text =
+          `👤 Роль #${n} (#${n}, karta ${t}, v1)\n  Проявлен как: ${t}` +
+          (typeof skills === "string" ? `\n\n  АТРИБУТЫ:\n  skills: ${skills}` : "");
         return json(
           res,
           200,
