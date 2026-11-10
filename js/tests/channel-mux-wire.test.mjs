@@ -14,9 +14,34 @@ import {
   waitFor,
   withMux,
 } from "./mux-kit.mjs";
+import { ask } from "./room-frames.mjs";
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
+
+test("a deliberate repeat keeps the card entry but a new frame id; a network duplicate stays quenched", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "repeat-wire" }), "stands");
+    const channel_id = channelOf(fake, "repeat-wire");
+    await muxCarrying(fake, mux, [channel_id]);
+    const original = { ...ask(41), channel_id, id: "clock-card-original" };
+    assert.equal(original.event_id, undefined);
+    mux.push(original);
+    await waitFor("the original card", () => a.heard("clock-card-original"));
+    const repeated = { ...original, id: "clock-card-repeat", repeat: true, repeat_n: 1 };
+    mux.push(repeated);
+    await waitFor("the intentional repeat", () => a.heard("clock-card-repeat"));
+    mux.push(repeated);
+    await sleep(300);
+    assert.equal(a.heard("clock-card-original"), 1);
+    assert.equal(
+      a.heard("clock-card-repeat"),
+      1,
+      "a new id survives; the same id is not delivered twice",
+    );
+  });
+});
 
 test("card envelopes are sanitized before delivery and do not become event identities", async () => {
   await withMux(async ({ fake, mux, session }) => {

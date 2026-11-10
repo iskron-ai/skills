@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { batchText, frameToText } from "../shared/frame-text.ts";
-import { cardFrame, openCards, openCardsText } from "../shared/open-cards.ts";
+import { cardFrame, cardRepeatText, openCards, openCardsText } from "../shared/open-cards.ts";
 import { quiet } from "../shared/quietframe.ts";
 import { ME, roomFrame } from "./room-frames.mjs";
 
@@ -92,5 +92,17 @@ test("card context is quiet by itself and does not disguise an addressed body", 
     const line = openCardsText({ my_open_cards });
     assert.equal(quiet(line), true, line);
     assert.equal(quiet(`addressed word\n${line}`), false);
+  }
+});
+
+test("repeat numbers come only from the server and invalid values never reach text or details", () => {
+  assert.equal(cardRepeatText({}), "");
+  assert.equal(cardRepeatText({ repeat: false, repeat_n: 1 }), "");
+  assert.equal(cardRepeatText({ repeat: true, repeat_n: 1 }), "повтор карточки: 1");
+  for (const repeat_n of [undefined, null, 0, -1, 1.5, "SECRET", {}, Number.MAX_SAFE_INTEGER + 1]) {
+    const f = { repeat: true, repeat_n };
+    assert.equal(cardRepeatText(f), "повтор карточки: номер неизвестен");
+    assert.equal(cardFrame(f).repeat_n, null);
+    assert.doesNotMatch(JSON.stringify(cardFrame(f)), /SECRET/);
   }
 });

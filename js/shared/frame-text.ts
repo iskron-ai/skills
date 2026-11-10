@@ -4,7 +4,7 @@ import { classifyOrigin, type Frame, type FrameOrigin } from "./channel.ts";
 import { compactCounts } from "./frame-format.ts";
 import { superseded } from "./keyfold.ts";
 import { words as wordsOf } from "./lang.ts";
-import { cardsIn, openCardsText } from "./open-cards.ts";
+import { cardRepeatText, cardsIn, openCardsText } from "./open-cards.ts";
 import { addresseeOf, need, opt } from "./room-fields.ts";
 import { roomKind } from "./room-kinds.ts";
 import { isLifeCheck } from "./seen.ts";
@@ -91,6 +91,8 @@ function tail(frame: Frame, withReply: boolean): string {
   const to = idOf(f.in_reply_to) || idOf(frame.provenance?.in_reply_to);
   if (withReply && to) parts.push(W().replyTo(need(to)));
   if (frame.stale === true) parts.push(W().stale());
+  const repeat = cardRepeatText(frame);
+  if (repeat) parts.push(repeat);
   if (typeof frame.body_read === "string" && frame.body_read !== "history")
     parts.push(W().bodyRead(need(frame.body_read)));
   return parts.length ? `, ${parts.join(", ")}` : "";

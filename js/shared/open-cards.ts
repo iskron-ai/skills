@@ -8,11 +8,24 @@ export interface OpenCards {
   oldest_at: string | null;
 }
 
-/** Strip untrusted snapshot data even when the reader is paired with an older bridge. */
-export const cardFrame = (frame: Frame | null): Frame | null =>
-  frame && Object.hasOwn(frame, "my_open_cards")
-    ? { ...frame, my_open_cards: openCards(frame.my_open_cards) }
-    : frame;
+const repeatNumber = (n: unknown): number | null =>
+  typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : null;
+
+/** Strip untrusted card fields even when the reader is paired with an older bridge. */
+export function cardFrame(frame: Frame | null): Frame | null {
+  if (!frame) return null;
+  const checked: Record<string, unknown> = {};
+  if (Object.hasOwn(frame, "my_open_cards")) checked.my_open_cards = openCards(frame.my_open_cards);
+  if (Object.hasOwn(frame, "repeat")) checked.repeat = frame.repeat === true;
+  if (Object.hasOwn(frame, "repeat_n")) checked.repeat_n = repeatNumber(frame.repeat_n);
+  return Object.keys(checked).length ? { ...frame, ...checked } : frame;
+}
+
+/** This is the server's repeat marker, not a local retry count (#10167 v13). */
+export const cardRepeatText = (frame: Frame): string => {
+  if (frame.repeat !== true) return "";
+  return words(FRAME_TEXT).cardRepeat(repeatNumber(frame.repeat_n));
+};
 
 /** Accept only the known wire shape; never echo malformed server data. */
 export function openCards(value: unknown): OpenCards | null {
