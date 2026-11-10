@@ -34,3 +34,16 @@ export const clockNotice = (notice = "card_unanswered", data = {}) => ({
   },
   body: "SERVER-BODY-NOT-A-SOURCE-OF-FACTS",
 });
+
+export const legacyClockBatch = (kind, neighbour) => ({
+  kind,
+  frames: [
+    clockNotice(),
+    neighbour,
+    clockNotice("line_due", { escalated: true }),
+    { type: "future-frame", id: "unknown", body: { raw: "RAW-UNKNOWN-TYPE" } },
+    { type: "message", id: "unshown", body: "UNSHOWN-BODY" },
+  ],
+  body: { head: "BATCH-HEAD", shown: [2, 1, 0, 3], incomplete: true },
+  text: 'OLD-TEXT-RAW-BODY {"raw":"RAW-LEGACY-BODY"}',
+});

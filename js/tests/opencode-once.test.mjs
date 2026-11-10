@@ -9,8 +9,8 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { clockNotice, legacyClockBatch } from "./clock-notices.mjs";
 import { BATCH_MS, delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
-import { clockNotice } from "./clock-notices.mjs";
 import {
   ack,
   addressed,
@@ -107,6 +107,52 @@ for (const [kind, variant, data] of [
   });
 
 // #10167 v9: a server snapshot is context, not a locally counted event or clock.
+for (const kind of ["stale", "backlog"])
+  for (const riding of [false, true])
+    test(`legacy clock batch ${kind} riding=${riding} is rebuilt by the built plugin`, async () => {
+      const { rec, ride, send } = await seated(
+        `clock-batch-${kind}-${riding}`,
+        `s-clock-batch-${kind}-${riding}`,
+      );
+      try {
+        if (riding) await ride(progress(45, "riding-clock"));
+        send(kind, legacyClockBatch(kind, word));
+        await until(() => rec.prompts.length > 0, "the structural clock batch");
+        await delay(BATCH_MS * 3);
+        assert.equal(rec.prompts.length, 1);
+        const text = rec.prompts[0].text;
+        for (const fact of [
+          "BATCH-HEAD",
+          "4330",
+          "[41]",
+          "clock-key",
+          "@h:recipient",
+          "2026-11-10T12:05:00Z",
+          "2026-11-10T12:00:00Z",
+          "ТЕЛО-СЛОВА-201",
+        ])
+          assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+        assert.match(text, /передано постановщику: да/);
+        assert.match(text, new RegExp(`записей ${riding ? 2 : 1}, тебе 1`));
+        assert.doesNotMatch(text, /RAW-|OLD-TEXT|SERVER-BODY|UNSHOWN-BODY|\[object Object\]/);
+        assert.ok(text.indexOf("срок строки") < text.indexOf("карточка без ответа"), text);
+      } finally {
+        await rec.stop();
+      }
+    });
+
+for (const kind of ["stale", "backlog"])
+  test(`legacy clock batch ${kind} without structure retains the text fallback`, async () => {
+    const { rec, send } = await seated(`clock-fallback-${kind}`, `s-clock-fallback-${kind}`);
+    try {
+      send(kind, { text: "LEGACY-TEXT-ONLY" });
+      await until(() => rec.prompts.length > 0, "the legacy text");
+      assert.match(rec.prompts[0].text, /LEGACY-TEXT-ONLY/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
 for (const [name, snapshot, expected] of [
   ["zero", { count: 0, oldest_at: null }, /карточек без ответа: 0/],
   [
