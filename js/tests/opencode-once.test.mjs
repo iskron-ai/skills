@@ -74,6 +74,45 @@ const word = roomFrame("said", {
   envelope: { addressee: ME },
   body: "ТЕЛО-СЛОВА-201",
 });
+
+// #10167 v9: a server snapshot is context, not a locally counted event or clock.
+for (const [name, snapshot, expected] of [
+  ["zero", { count: 0, oldest_at: null }, /карточек без ответа: 0/],
+  [
+    "positive",
+    { count: 2, oldest_at: "2026-11-10T12:00:00Z" },
+    /карточек без ответа: 2.*2026-11-10T12:00:00Z/,
+  ],
+  ["omitted", undefined, /карточек без ответа: неизвестно/],
+  ["malformed", { count: "SECRET", oldest_at: "SECRET" }, /карточек без ответа: неизвестно/],
+])
+  test(`server card envelope ${name} is rendered without inferring a count`, async () => {
+    const { rec, prompt } = await seated(`cards-${name}`, `s-cards-${name}`);
+    try {
+      const frame = { ...word, id: `cards-${name}`, my_open_cards: snapshot };
+      const text = await prompt(frame);
+      assert.match(text, expected);
+      assert.doesNotMatch(text, /SECRET/);
+      assert.match(text, /ТЕЛО-СЛОВА-201/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+test("hello card context wakes nothing and rides the next context admission", async () => {
+  const { rec, ride } = await seated("cards-hello", "s-cards-hello");
+  try {
+    const hello = { type: "hello", my_open_cards: { count: 2, oldest_at: "2026-11-10T12:00:00Z" } };
+    await ride(hello);
+    await ride(hello);
+    await rec.promptRaw("s-cards-hello", "go");
+    const text = await rec.context("s-cards-hello");
+    assert.match(text, /карточек без ответа: 2.*2026-11-10T12:00:00Z/);
+    assert.equal(times(text, "карточек без ответа"), 1);
+  } finally {
+    await rec.stop();
+  }
+});
 // A record to the seat that piles (its kind's rule is batch), with a count riding beside it.
 for (const [kind, frame, facts] of [
   ["word", word, ["[201]", "ТЕЛО-СЛОВА-201", "@aleksei:probe"]],
@@ -98,7 +137,8 @@ test("a pile of several records to the seat puts each under the one count", asyn
     const text = await prompt(progress(44, "k-44"), word, ask(202), ack(203, 150, ME));
     once(text, LABEL, "[201]", "[202]", "[203]");
     assert.match(text, /^№7 «Стенд»: записей 4, тебе 3; /, text);
-    for (const line of text.split("\n").slice(1)) assert.match(line, /^\[20[123]\] /, text);
+    for (const line of text.split("\n").slice(1, -1)) assert.match(line, /^\[20[123]\] /, text);
+    assert.equal(text.split("\n").at(-1), "карточек без ответа: неизвестно");
   } finally {
     await rec.stop();
   }
@@ -108,7 +148,8 @@ test("a person's answer alone is one short line, every fact once", async () => {
   const { rec, prompt } = await seated("once-answer", "s-answer");
   try {
     const text = await prompt(answer(204, 202));
-    assert.equal(text.split("\n").length, 1, text);
+    assert.equal(text.split("\n").length, 2, text);
+    assert.equal(text.split("\n")[1], "карточек без ответа: неизвестно");
     once(text, LABEL, "[204]", "[202]", "после обеда", "@dmitry:phone");
   } finally {
     await rec.stop();
@@ -187,7 +228,8 @@ for (const kind of ["stale", "backlog"])
       assert.match(text, /№7 «Стенд»: записей 2, тебе 1; /, text);
       once(text, LABEL, "[82]");
       const next = await prompt(answer(204, 202));
-      assert.equal(next.split("\n").length, 1, `the case again in the next prompt:\n${next}`);
+      assert.equal(next.split("\n").length, 2, `the case again in the next prompt:\n${next}`);
+      assert.equal(next.split("\n")[1], "карточек без ответа: неизвестно");
     } finally {
       await rec.stop();
     }

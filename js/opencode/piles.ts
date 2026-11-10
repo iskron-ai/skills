@@ -7,7 +7,7 @@ import { batchShown, batchText, countsWithShown, frameToText } from "../shared/f
 import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { receiptGraph } from "../shared/graph-receipt.ts";
 import { roomKind, stackOf } from "../shared/room-kinds.ts";
-import { eventKeyOf, splitBatch } from "../shared/seen.ts";
+import { eventIn, eventKeyOf, splitBatch } from "../shared/seen.ts";
 import { batchBodyText, ridesIn } from "../shared/stalebatch.ts";
 
 /** Addressing precedes stack; graph inbox text waits for next-turn context. */
@@ -29,6 +29,25 @@ interface Riders {
   riders: Frame[];
   held: Frame[];
   marks: Set<string>;
+}
+
+export interface Pile extends Riders {
+  session: string | null;
+  child: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  /** The prompt in the session queue, not taken yet; inbox null — still in flight. */
+  pending: { session: string; inbox: string | null; at: number } | null;
+}
+
+/** A server hello snapshot or graph inbox waits for context, without a pile timer. */
+export function carryContextFrame(p: Riders, frame: Frame): boolean {
+  if (frame.type === "hello") {
+    p.riders = [...p.riders.filter((f) => f.type !== "hello"), frame];
+    return true;
+  }
+  if (!isGraphInbox(frame)) return false;
+  if (!eventIn(frame, (k) => p.marks.has(k))) p.riders.push(frame);
+  return true;
 }
 
 /** Riding counts before a frame given as text; the frame stands under its case's count (#9654). */

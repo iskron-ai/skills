@@ -32,7 +32,7 @@ const reply = (kind = "answer", body = "Feeds") => ({
 
 test("a batch without case records does not point to case history or mine", () => {
   const frame = graphPosed();
-  assert.deepEqual(caseCountLines([frame]), []);
+  assert.deepEqual(caseCountLines([frame]), ["карточек без ответа: неизвестно"]);
   assert(!staleBatch([frame], () => false).text.includes("iskron_case("));
 });
 
@@ -60,7 +60,12 @@ test("a person's answer names its author, reference and body once", () => {
     assert.equal(occurrences(render, "Feeds"), 1, render);
     assert(!render.includes(" — человек"), render);
     assert(!render.includes(`(${HUMAN.standing})`), render);
-    assert.equal(render.split("\n").length, 1, render);
+    const lines = render.split("\n");
+    assert.equal(
+      lines.filter((line) => line !== "карточек без ответа: неизвестно").length,
+      1,
+      render,
+    );
   }
 });
 

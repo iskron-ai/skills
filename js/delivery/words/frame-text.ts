@@ -4,6 +4,7 @@ import type { Lang } from "../lang.ts";
 import { tool } from "../protocol.ts";
 
 export interface FrameTextWords {
+  openCards: (count: number | null, oldest: string | null, malformed?: boolean) => string;
   /**
    * Куда вести за не вошедшим и пропавшим: дела места — журнала канала у сервера нет
    * (граф @nks/nks-dev, узел #7636).
@@ -51,6 +52,8 @@ export interface FrameTextWords {
 
 export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
   ru: {
+    openCards: (count, oldest, malformed = false) =>
+      `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -77,6 +80,8 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
         .join(", ")}`,
   },
   en: {
+    openCards: (count, oldest, malformed = false) =>
+      `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,

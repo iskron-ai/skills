@@ -1026,13 +1026,57 @@ test("service frames raise no turn, a work frame does", async () => {
     assert.equal(opts.deliverAs, "steer");
     assert.equal(msg.customType, "iskron-channel");
     // Who speaks is read off provenance, never off the body; the frame is short (#6081).
-    assert.match(msg.content, /^svatantra\nпосмотри ветку$/);
+    assert.match(msg.content, /^svatantra\nпосмотри ветку\nкарточек без ответа: неизвестно$/);
     assert.equal(msg.marked, true, "the frame carries the delivery's mark (#6815 item 3)");
 
     push(events, { kind: "frame", raw: "не JSON вовсе", frame: null });
     await delay(250);
     assert.equal(rec.messages.length, 2, "неразобранный кадр потерян");
     assert.match(rec.messages[1].msg.content, /не JSON вовсе/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("pi hello carries server card context without raising a turn or accumulating repeats", async () => {
+  const { events, env } = eventsEnv("cards-hello");
+  const rec = await session(env);
+  try {
+    const hello = { type: "hello", my_open_cards: { count: 2, oldest_at: "2026-11-10T12:00:00Z" } };
+    push(events, frame(hello));
+    push(events, frame(hello));
+    await delay(250);
+    assert.equal(rec.messages.length, 0);
+    const replies = [];
+    for (const fn of rec.handlers.get("before_agent_start") ?? []) {
+      const r = await fn({});
+      if (r?.message) replies.push(r.message);
+    }
+    const text = replies.map((m) => m.content).join("\n");
+    assert.match(text, /карточек без ответа: 2.*2026-11-10T12:00:00Z/);
+    assert.equal(text.split("карточек без ответа").length - 1, 1);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("pi card envelope is sanitized in message details even with an older bridge", async () => {
+  const { events, env } = eventsEnv("cards-invalid");
+  const rec = await session(env);
+  try {
+    push(
+      events,
+      frame({
+        type: "message",
+        id: "cards-invalid",
+        body: "cards-safe-body",
+        my_open_cards: { count: "SECRET-CARD", oldest_at: "SECRET-CARD" },
+      }),
+    );
+    await delay(250);
+    assert.equal(rec.messages.length, 1);
+    assert.match(rec.messages[0].msg.content, /неизвестно \(неверное my_open_cards\)/);
+    assert.doesNotMatch(JSON.stringify(rec.messages), /SECRET-CARD/);
   } finally {
     await rec.stop();
   }
@@ -1068,7 +1112,7 @@ test("a life check in pi: the platform's text and the way to answer, raising an 
     );
     assert.ok(
       msg.content.endsWith(
-        "\nОтветь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.",
+        "\nОтветь действием: обнови занятость — iskron_stand(realm, status=<чем занят>) — или скажи в деле.\nкарточек без ответа: неизвестно",
       ),
       msg.content,
     );
@@ -1548,13 +1592,13 @@ test("(а) an addressed word not to me with stack interrupt neither steers nor w
   assert.equal(got.length, 1);
   assert.equal(got[0].deliverAs, "nextTurn", "a word not to me waits for the next turn");
   assert.equal(got[0].triggerTurn, false, "a word not to me does not wake");
-  assert.equal(got[0].text, countOf(1, 79));
+  assert.equal(got[0].text, countOf(1, 79) + "\nкарточек без ответа: неизвестно");
 });
 
 test("(а2) an addressed word whose addressee has left the case (addressee_left) stays its addressee's: a count, no text", async () => {
   const got = await asideMessages("aside-left", [addressedLeft(89)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.equal(got[0].text, countOf(1, 88));
+  assert.equal(got[0].text, countOf(1, 88) + "\nкарточек без ответа: неизвестно");
   assert.doesNotMatch(got[0].text, /явное слово 89/);
 });
 
@@ -1710,7 +1754,11 @@ test("progress lines of one key fold into the last: the count names the supersed
   // #9654: the gathered count rides in the word's message, the word under it.
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.match(got[0].text, /^№7 «Стенд»: записей 3, тебе 1, сменённых строк ключа 2; /);
-  assert.match(got[0].text, /\n\[48\] [^\n]*\nтайное слово 48$/, "the word to me whole");
+  assert.match(
+    got[0].text,
+    /\n\[48\] [^\n]*\nтайное слово 48\nкарточек без ответа: неизвестно$/,
+    "the word to me whole",
+  );
 });
 
 // Одно событие — инбоксом роли и записью дела с event_id конверта (#6563): копия дела,
@@ -1731,7 +1779,7 @@ test("(б) three addressed words of one pair in a row are one count «запис
     1,
   );
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.equal(got[0].text, countOf(3, 80));
+  assert.equal(got[0].text, countOf(3, 80) + "\nкарточек без ответа: неизвестно");
 });
 
 test("(в) an addressed word to me with stack interrupt steers at once and whole; the count before it goes first", async () => {
@@ -1740,7 +1788,10 @@ test("(в) an addressed word to me with stack interrupt steers at once and whole
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.ok(got[0].text.startsWith(countOf(2, 85).replace("тебе 0", "тебе 1")), got[0].text);
   assert.equal(got[0].deliverAs, "steer", "the word to me steers");
-  assert.match(got[0].text, /\n\[87\] слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
+  assert.match(
+    got[0].text,
+    /\n\[87\] слово от @aleksei:probe[^\n]*\nтайное слово 87\nкарточек без ответа: неизвестно$/,
+  );
   assert.doesNotMatch(got[0].text, /ответ:/, "delivery does not ask for an answer");
 });
 
@@ -1748,7 +1799,7 @@ test("(г) a word without an addressee between two asides is not to me either: o
   const frames = [addressed(90, BORIS, "defer"), said("defer", 91), addressed(92, BORIS, "defer")];
   const got = await asideMessages("aside-plain", frames, 1);
   assert.equal(got.length, 1, JSON.stringify(got));
-  assert.equal(got[0].text, countOf(3, 89));
+  assert.equal(got[0].text, countOf(3, 89) + "\nкарточек без ответа: неизвестно");
   assert.doesNotMatch(got[0].text, /слово со стопкой defer/);
 });
 
@@ -1757,14 +1808,14 @@ test("(д) an addressed word not to me in flight and then its body with stack in
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
   assert.equal(got[0].triggerTurn, false);
-  assert.equal(got[0].text, countOf(2, 93));
+  assert.equal(got[0].text, countOf(2, 93) + "\nкарточек без ответа: неизвестно");
 });
 
 test("(е) a word whose body the platform withheld (body_withheld) is not to me: a count, no wake", async () => {
   const got = await asideMessages("aside-withheld", [withheld(96)], 1);
   assert.equal(got.length, 1, JSON.stringify(got));
   assert.equal(got[0].deliverAs, "nextTurn");
-  assert.equal(got[0].text, countOf(1, 95));
+  assert.equal(got[0].text, countOf(1, 95) + "\nкарточек без ответа: неизвестно");
 });
 
 // A short frame (#6081, the owner's word): a case frame is 1–3 lines — case, entry,
@@ -1804,7 +1855,7 @@ test("room kinds: an auto record about a child case is a count for the next turn
     assert.equal(rec.messages.length, 1, "the auto frame raises a message");
     assert.equal(rec.messages[0].opts.deliverAs, "nextTurn", "a child closing does not interrupt");
     const text = rec.messages[0].msg.content;
-    assert.equal(text, countOf(1, 79));
+    assert.equal(text, countOf(1, 79) + "\nкарточек без ответа: неизвестно");
     assert.doesNotMatch(text, /дочернее дело №12 закрыто/);
   } finally {
     await rec.stop();
@@ -1833,9 +1884,12 @@ test("room kinds: a said in flight, bodies and aborts not to me are one count; t
     await delay(400);
     assert.equal(rec.messages.length, 2, JSON.stringify(rec.messages));
     assert.equal(rec.messages[0].opts.deliverAs, "nextTurn");
-    assert.equal(rec.messages[0].msg.content, countOf(5, 53));
+    assert.equal(rec.messages[0].msg.content, countOf(5, 53) + "\nкарточек без ответа: неизвестно");
     assert.equal(rec.messages[1].opts.deliverAs, "steer");
-    assert.match(rec.messages[1].msg.content, /\nтекст моего слова$/);
+    assert.match(
+      rec.messages[1].msg.content,
+      /\nтекст моего слова\nкарточек без ответа: неизвестно$/,
+    );
   } finally {
     await rec.stop();
   }
