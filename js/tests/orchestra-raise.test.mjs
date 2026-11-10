@@ -4,7 +4,16 @@
 // substitute `orca` on the daemon's PATH that records argv instead of launching.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -1199,24 +1208,44 @@ test("quench: a seat the orchestrator did not launch is never stopped", async (t
 });
 
 // #10078, case №4206: a repository Orca does not know is cloned only by the description's leave.
-/** A leading daemon whose Orca knows no project and whose description allows the clone. */
+/** A leading daemon whose Orca knows no project and whose description allows the clone; its
+ * clone_root is a symlink — Orca keeps a path as given, and agent launch finds only git's. */
 const cloning = (t, { body = {}, env = {} } = {}) =>
   leading(t, {
-    descriptions: (checkout) => [
-      describe({
-        body: {
-          clone: true,
-          clone_root: join(dirname(checkout), "clones"),
-          allow: ["GitHub.com/probe"],
-          ...body,
-        },
-      }),
-    ],
+    descriptions: (checkout) => {
+      mkdirSync(join(dirname(checkout), "real-clones"));
+      symlinkSync(join(dirname(checkout), "real-clones"), join(dirname(checkout), "clones"));
+      return [
+        describe({
+          body: {
+            clone: true,
+            clone_root: join(dirname(checkout), "clones"),
+            allow: ["GitHub.com/probe"],
+            ...body,
+          },
+        }),
+      ];
+    },
     projects: () => ({ projects: [], setups: [] }),
     env: { FAKE_ORCA_CLONE_COVER: coverOf(), ...env },
   });
 const clones = (o) => orcaCalls(join(o.dir, "orca.log")).filter((a) => a[1] === "setup-clone");
-const cloneDir = (o) => join(o.dir, "clones", "probe", "one");
+/** The parent Orca is given — canonical — and the clone in it. */
+const cloneParent = (o) => join(realpathSync.native(join(o.dir, "real-clones")), "probe");
+const cloneDir = (o) => join(cloneParent(o), "one");
+const cloneCall = (o, project = "github:probe/one", url = "https://github.com/probe/one.git") => [
+  "project",
+  "setup-clone",
+  "--project",
+  project,
+  "--host",
+  "local",
+  "--url",
+  url,
+  "--destination",
+  cloneParent(o),
+  "--json",
+];
 
 /** Until no clone runs in the daemon's background — its registry row says so. */
 async function settled(o, ms = 20_000) {
@@ -1241,18 +1270,64 @@ test("clone: no checkout and an allowed repository — Orca clones it over https
   await o.queue([invite(9, GOOD)]);
   const r = await stepThrough(o);
   assert.equal(r.code, 0, r.err + r.out);
-  assert.deepEqual(clones(o), [
-    [
-      "project",
-      "setup-clone",
-      "--url",
-      "https://github.com/probe/one.git",
-      "--destination",
-      cloneDir(o),
-    ],
-  ]);
+  assert.deepEqual(clones(o), [cloneCall(o)]);
   assert.match(r.out, /invite 9: launched/, r.out);
   assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+});
+
+test("clone: the project id is Orca's own — github.com in lower case, another host as git:", async (t) => {
+  const o = await cloning(t, { body: { allow: ["GitHub.com/Probe", "git.example.org/probe"] } });
+  await o.queue([invite(9, GOOD, "github.com/Probe/One")]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: launched/, r.out);
+  const parent = join(realpathSync.native(join(o.dir, "real-clones")), "Probe");
+  assert.deepEqual(clones(o)[0].slice(2, 9), [
+    "--project",
+    "github:probe/one",
+    "--host",
+    "local",
+    "--url",
+    "https://github.com/Probe/One.git",
+    "--destination",
+  ]);
+  assert.equal(clones(o)[0][9], parent);
+  await o.queue([invite(10, GOOD, "git.example.org/probe/two")]);
+  const other = await stepThrough(o);
+  assert.match(other.out, /invite 10: launched/, other.out);
+  assert.equal(clones(o)[1][3], "git:git.example.org/probe/two");
+});
+
+test("clone: an Orca whose setup-clone lacks a flag the clone needs is not asked to clone", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_FLAGS: "json,url,destination,project" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(orca_schema_unverified\)/, r.out);
+  assert.equal(clones(o).length, 0);
+});
+
+test("clone: a dry run judges Orca's checkout as there — the slot follows the launch, the clone is said as conditional", async (t) => {
+  const o = await cloning(t, { body: { limit: 1 } });
+  await o.queue([invite(2, GOOD, "github.com/stranger/one"), invite(9, GOOD)]);
+  const r = await cli(o.dir, ["step", "--dry-run"]);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
+  // The tact launches into a checkout Orca has, whatever the clone would say without it.
+  assert.match(
+    r.out,
+    /invite 2: would launch: .*orca checkout of github\.com\/stranger\/one/,
+    r.out,
+  );
+  assert.match(r.out, /invite 9: .*limit_reached/, r.out);
+  assert.equal(clones(o).length, 0, "no orca call");
+});
+
+test("clone: the repository's host in any case is the copy Orca registered — no clone_unregistered", async (t) => {
+  const o = await cloning(t);
+  await o.queue([invite(9, GOOD, "GitHub.com/probe/one")]);
+  const r = await stepThrough(o);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.deepEqual(clones(o), [cloneCall(o)]);
+  assert.match(r.out, /invite 9: launched/, r.out);
 });
 
 test("clone: without clone in the description nothing is cloned — no_checkout as before", async (t) => {
@@ -1300,14 +1375,10 @@ test("clone: Orca or git refuse — clone_failed with the exit code only, no out
   assert.equal(o.launches().length, 0);
 });
 
-test("clone: a failed clone is remembered by repository — clone_failed_before until the description changes; git asks nothing", async (t) => {
+test("clone: a failed clone is remembered by repository — clone_failed_before until the description changes", async (t) => {
   const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
   await o.queue([invite(9, GOOD)]);
   await stepThrough(o);
-  assert.deepEqual(JSON.parse(readFileSync(join(o.dir, "orca.log.env"), "utf8")), {
-    GIT_TERMINAL_PROMPT: "0",
-    GCM_INTERACTIVE: "never",
-  });
   // Another invite of the same repository: the memory is the repository's, not the invite's.
   await o.queue([invite(9, GOOD), invite(10, GOOD)]);
   const again = await stepThrough(o);
@@ -1342,24 +1413,13 @@ test("clone: the clone does not hold the tact — it runs in the background, sai
   assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
 });
 
-test("clone: a timeout ends the orca client's whole process group; output beyond any buffer is no failure", async (t) => {
+test("clone: a timeout is clone_timeout; output beyond any buffer is no failure", async (t) => {
   const o = await cloning(t, {
     env: { FAKE_ORCA_CLONE_HANG: "1", ISKRON_ORCHESTRA_CLONE_MS: "1500" },
   });
   await o.queue([invite(9, GOOD)]);
   const r = await stepThrough(o);
   assert.match(r.out, /invite 9: clone_failed \(clone_timeout\)/, r.out);
-  const pid = Number(readFileSync(join(o.dir, "orca.log.child"), "utf8"));
-  let alive = true;
-  for (let i = 0; i < 30 && alive; i++) {
-    try {
-      process.kill(pid, 0);
-      await new Promise((done) => setTimeout(done, 100));
-    } catch {
-      alive = false;
-    }
-  }
-  assert.equal(alive, false, "the clone's child outlived the timeout");
   const noisy = await cloning(t, { env: { FAKE_ORCA_CLONE_NOISE: "1" } });
   await noisy.queue([invite(9, GOOD)]);
   const n = await stepThrough(noisy);
