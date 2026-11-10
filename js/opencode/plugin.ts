@@ -208,9 +208,9 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   );
   const started = startWords(rootSeats, (s) => onboard.prompt(s), closed);
   // The human's rules by the session's own bridge (mindslice.ts, #9817); no seat — none.
-  const rulesOf = (s: string): Promise<string> | null => {
+  const rulesOf = (s: string, strict = false): Promise<string> | null => {
     const bridge = half.bridgeOf(s);
-    return bridge ? sliceBy(bridge) : null;
+    return bridge ? sliceBy(bridge, { strict }) : null;
   };
   const hookContext = createHookContext(closed);
   cancelContext = () => {
@@ -261,7 +261,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   const compaction = createCompaction({
     placeOf: (s) => half.held(s)?.place ?? null,
     closed,
-    slice: rulesOf,
+    slice: (s) => rulesOf(s, true),
     say,
   });
   cancelCompaction = () => compaction.sweep();
