@@ -3,6 +3,7 @@ import { type SpawnedFor } from "../shared/spawned-for.ts";
 import { claimReceipt } from "./claimseat.ts";
 import { heldKey } from "./hold.ts";
 import { seatProof } from "./seatproof.ts";
+import { skillCatchupNotice } from "./skillcatchup.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 export function standAnswer(
@@ -15,6 +16,7 @@ export function standAnswer(
 ): JsonRpcMessage {
   const proof = seatProof(heldKey(realm));
   const receipt = basis ? claimReceipt(proof.place ?? {}) : undefined;
+  const notice = isError ? null : skillCatchupNotice();
   return {
     jsonrpc: "2.0",
     id: msg.id,
@@ -29,7 +31,7 @@ export function standAnswer(
               ...(basis ? { action: "register", seats: receipt ? [receipt] : [] } : {}),
             },
           }),
-      content: [{ type: "text", text: lines.join("\n") }],
+      content: [{ type: "text", text: [...(notice ? [notice] : []), ...lines].join("\n") }],
     },
   };
 }

@@ -120,6 +120,7 @@ export { RUN_END, type RunEndWords } from "./words/runend.ts";
 export { SATELLITE, type SatelliteWords } from "./words/satellite.ts";
 export { SAT_PROBE, type SatProbeWords } from "./words/satprobe.ts";
 export { type Kin, SEPARATE, type SeparateWords } from "./words/separate.ts";
+export { SKILL_CATCHUP } from "./words/skillcatchup.ts";
 export { STALE, type StaleWords } from "./words/stalebatch.ts";
 export { STAND, type StandWords } from "./words/stand.ts";
 export { STANDING, type StandingWords } from "./words/standing.ts";
