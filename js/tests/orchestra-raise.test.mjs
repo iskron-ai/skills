@@ -1426,6 +1426,87 @@ test("clone: a timeout is clone_timeout; output beyond any buffer is no failure"
   assert.match(n.out, /invite 9: launched/, n.out);
 });
 
+/** Until the clone's client has answered — the fake's setup-clone is logged at its start. */
+async function until(check, ms = 20_000) {
+  const end = Date.now() + ms;
+  while (!check() && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+}
+const clientDone = (o) => () => {
+  const row = o.cloneRows()[REPO];
+  return clones(o).length > 0 && (!row || row.state !== "cloning" || row.runtime === true);
+};
+
+test("clone: Orca's client gives up waiting (runtime_timeout) — still cloning, the copy Orca finishes is launched", async (t) => {
+  // Orca's runtime finishes the clone once this file is gone.
+  const hold = join(mkdtempSync(join(tmpdir(), "iskron-rt-")), "hold");
+  writeFileSync(hold, "");
+  t.after(() => rmSync(dirname(hold), { recursive: true, force: true }));
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_RUNTIME_TIMEOUT: hold } });
+  await o.queue([invite(9, GOOD)]);
+  const first = await o.step();
+  assert.match(first.out, /invite 9: cloning/, first.out);
+  await until(clientDone(o));
+  const during = await o.step();
+  assert.match(during.out, /invite 9: cloning/, during.out);
+  assert.doesNotMatch(during.out, /clone_failed/, during.out);
+  const st = await cli(o.dir, ["status"]);
+  assert.match(st.out, /clone github\.com\/probe\/one: cloning/, st.out);
+  rmSync(hold);
+  await until(() => existsSync(join(o.dir, "orca.log.cloned")));
+  const after = await o.step();
+  assert.match(after.out, /invite 9: launched/, after.out);
+  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+  assert.equal(clones(o).length, 1, "cloned once");
+  assert.equal(o.cloneRows()[REPO], undefined, "the clone's row is done");
+});
+
+test("clone: runtime_timeout and no copy within the clone's window — clone_timeout, remembered", async (t) => {
+  const o = await cloning(t, {
+    env: { FAKE_ORCA_CLONE_RUNTIME_TIMEOUT: "never", ISKRON_ORCHESTRA_CLONE_MS: "2000" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await until(clientDone(o));
+  await new Promise((r) => setTimeout(r, 2500));
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_timeout\)/, r.out);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_timeout\)/, again.out);
+  assert.equal(clones(o).length, 1, "not cloned again");
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: a copy found after a failed clone lifts the repository's remembered failure", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_exit_1\)/, r.out);
+  // Orca's runtime registered the copy after all.
+  mkdirSync(cloneDir(o), { recursive: true });
+  cover(cloneDir(o));
+  writeFileSync(
+    join(o.dir, "orca-projects.json"),
+    JSON.stringify({
+      projects: [
+        {
+          id: "github:probe/one",
+          gitRemoteIdentity: { remoteUrl: "https://github.com/probe/one.git" },
+        },
+      ],
+      setups: [
+        { projectId: "github:probe/one", path: cloneDir(o), setupState: "ready", hostId: "local" },
+      ],
+    }),
+  );
+  await o.queue([invite(10, GOOD)]);
+  const found = await o.step();
+  assert.match(found.out, /invite 10: launched/, found.out);
+  assert.doesNotMatch(found.out, /clone_failed/, found.out);
+  assert.equal(o.cloneRows()[REPO], undefined, "the remembered failure is lifted");
+  const st = await cli(o.dir, ["status"]);
+  assert.doesNotMatch(st.out, /clone github\.com\/probe\/one: failed/, st.out);
+});
+
 test("clone: the caller gone before the clone starts — no clone after it (#8202)", async (t) => {
   const o = await cloning(t, { env: { FAKE_ORCA_CONTEXT_DELAY_MS: "3000" } });
   await o.queue([invite(9, GOOD)]);

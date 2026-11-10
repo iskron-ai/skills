@@ -2,6 +2,7 @@
 // --version and agent-context --json as 1.4.242 declared them, and records every other argv as a
 // JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT,
 // FAKE_ORCA_DELAY_MS change the version, the launch's exit code and how long it takes. The real `orca agent launch` is never run.
+import { spawn } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
@@ -51,8 +52,29 @@ if (args[0] === "agent-context") {
 // FAKE_ORCA_CLONE_UNREGISTERED=1 — a ready local setup at the path as given joins the laid
 // projects. FAKE_ORCA_CLONE_DELAY_MS — it answers this much later; FAKE_ORCA_CLONE_HANG=1 — it
 // never answers; FAKE_ORCA_CLONE_NOISE=1 — it prints more than any buffer would hold.
+// FAKE_ORCA_CLONE_RUNTIME_TIMEOUT=<file> — the client's pairing wait runs out (case №4221): it
+// answers runtime_timeout with exit 1 at once, and Orca's runtime — a detached copy of this
+// fake — finishes the clone once the probe removes <file>; "never" — it never finishes it.
 if (args[0] === "project" && args[1] === "setup-clone") {
-  appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+  const inRuntime = process.env.FAKE_ORCA_IN_RUNTIME === "1";
+  if (!inRuntime) appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+  const late = process.env.FAKE_ORCA_CLONE_RUNTIME_TIMEOUT;
+  if (late && inRuntime) while (existsSync(late)) await new Promise((r) => setTimeout(r, 50));
+  if (late && !inRuntime) {
+    if (late !== "never")
+      spawn(process.execPath, [process.argv[1], ...args], {
+        detached: true,
+        stdio: "ignore",
+        env: { ...process.env, FAKE_ORCA_IN_RUNTIME: "1" },
+      }).unref();
+    process.stdout.write(
+      JSON.stringify({
+        ok: false,
+        error: { code: "runtime_timeout", message: "Timed out waiting for the Orca runtime." },
+      }) + "\n",
+    );
+    process.exit(1);
+  }
   const flag = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : "");
   const refuse = (code, message) => {
     process.stdout.write(JSON.stringify({ ok: false, error: { code, message } }) + "\n");

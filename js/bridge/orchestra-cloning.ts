@@ -4,9 +4,13 @@
 // kept by repository and not tried again until the launcher description changes; a timeout
 // is such a failure — no second clone into the same folder. git runs in Orca's runtime, not
 // under the orca client (seen live, case №4221): the timeout ends the client only, Orca may
-// still finish the clone, and a later tact then finds the checkout. The output is never read.
-// A cloning row without this daemon's clone (off, restart, update) is clone_interrupted, kept
-// as a failure.
+// still finish the clone, and a later tact then finds the checkout. The client's own pairing
+// wait is a minute (case №4221, #10137): its runtime_timeout is no failure — the row stays
+// cloning in Orca's runtime until the checkout is found or the clone's window ends
+// (clone_timeout). Of the output only the last JSON line's error code is read, never said.
+// A checkout found lifts the repository's row, a remembered failure included. A cloning row
+// without this daemon's clone (off, restart, update) and not in Orca's runtime is
+// clone_interrupted, kept as a failure.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
@@ -22,10 +26,31 @@ const CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 600_000;
 export const specOf = (launcher: unknown): string =>
   createHash("sha256").update(JSON.stringify(launcher)).digest("hex").slice(0, 16);
 
-/** The orca client, its output unread; a timeout ends the client, not Orca's git. */
+/** The tail of the client's output kept: its answer is the last line. */
+const TAIL = 64 * 1024;
+
+/** The error code of the client's last JSON line, or null; nothing else of it is kept. */
+function answerCode(out: string): string | null {
+  const last = out.trim().split("\n").pop() ?? "";
+  try {
+    const code = (JSON.parse(last) as { error?: { code?: unknown } }).error?.code;
+    return typeof code === "string" ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The orca client; a timeout ends the client, not Orca's git. */
 function cloneRun(argv: string[], ms: number): Promise<number | string> {
   return new Promise((resolve) => {
-    const child = spawn("orca", argv, { stdio: "ignore", windowsHide: true });
+    const child = spawn("orca", argv, {
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    let out = "";
+    child.stdout.on("data", (c: Buffer) => {
+      out = (out + c.toString("utf8")).slice(-TAIL);
+    });
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -33,10 +58,12 @@ function cloneRun(argv: string[], ms: number): Promise<number | string> {
     }, ms);
     const done = (code: number | string): void => {
       clearTimeout(timer);
-      resolve(timedOut ? "timeout" : code);
+      if (timedOut) return resolve("timeout");
+      resolve(code !== 0 && answerCode(out) === "runtime_timeout" ? "runtime_timeout" : code);
     };
     child.once("error", (e: NodeJS.ErrnoException) => done(e.code ?? 1));
-    child.once("exit", (code, signal) => done(code ?? signal ?? 1));
+    // close, not exit: the answer is read to its end.
+    child.once("close", (code, signal) => done(code ?? signal ?? 1));
   });
 }
 
@@ -56,7 +83,12 @@ export async function cloneTurn(
   gone?: { gone: boolean },
 ): Promise<string> {
   let row = readClones(authDir)[repository];
-  if (row?.state === "cloning" && inflight.has(repository)) return "cloning";
+  if (inflight.has(repository)) return "cloning";
+  if (row?.state === "cloning" && row.runtime) {
+    if (Date.now() - Date.parse(row.at) < CLONE_MS) return "cloning";
+    row = { state: "failed", at: new Date().toISOString(), spec: row.spec, why: "clone_timeout" };
+    writeClone(authDir, repository, row);
+  }
   if (row?.state === "cloning") {
     row = { ...row, state: "failed", why: "clone_interrupted" };
     writeClone(authDir, repository, row);
@@ -81,23 +113,35 @@ export async function cloneTurn(
   }
   if (gone?.gone) return "gone";
   inflight.add(repository);
-  writeClone(authDir, repository, { state: "cloning", at: new Date().toISOString(), spec });
+  const started = new Date().toISOString();
+  writeClone(authDir, repository, { state: "cloning", at: started, spec });
   void cloneRun(cloneArgv(target.project, target.url, parent), CLONE_MS).then((code) => {
     inflight.delete(repository);
     const why =
       code === 0 ? undefined : code === "timeout" ? "clone_timeout" : `clone_exit_${code}`;
     const at = new Date().toISOString();
+    // The row may be gone already — a tact found the checkout while the client still waited.
+    if (!readClones(authDir)[repository]) return;
     try {
       writeClone(
         authDir,
         repository,
-        why ? { state: "failed", at, spec, why } : { state: "cloned", at, spec },
+        code === "runtime_timeout"
+          ? { state: "cloning", at: started, spec, runtime: true }
+          : why
+            ? { state: "failed", at, spec, why }
+            : { state: "cloned", at, spec },
       );
     } catch {
       /* the registry unwritable: the row stays cloning with no clone in flight — interrupted */
     }
   });
   return "cloning";
+}
+
+/** A checkout of the repository found: its clone row, whatever it says, is lifted (#10137). */
+export function cloneFound(authDir: string, repository: string): void {
+  if (readClones(authDir)[repository]) writeClone(authDir, repository, null);
 }
 
 /** The cloned repository found as Orca's checkout — its row is done; not found — kept failed. */
