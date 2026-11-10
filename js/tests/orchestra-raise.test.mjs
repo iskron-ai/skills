@@ -4,7 +4,7 @@
 // substitute `orca` on the daemon's PATH that records argv instead of launching.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -195,6 +195,11 @@ async function leading(
     runs: () => {
       const f = join(dir, "run", "orchestra-runs.json");
       return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")).runs : {};
+    },
+    /** The registry's clone rows by repository. */
+    cloneRows: () => {
+      const f = join(dir, "run", "orchestra-runs.json");
+      return (existsSync(f) && JSON.parse(readFileSync(f, "utf8")).clones) || {};
     },
     queue: (invites, signals = []) =>
       fake.control({ orchestra: { realms: { [REALM]: { invites, signals } } } }),
@@ -566,6 +571,30 @@ test("raise: the daemon's own timer leads — no step is asked", async (t) => {
   const until = Date.now() + 15_000;
   while (!o.launches().length && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
   assert.equal(o.launches().length, 1, "the timer raised the agent by itself");
+});
+
+test("raise: the timer skips its tact while the last one runs — no chain of tacts behind a slow one", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "iskron-hold-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const hold = join(dir, "hold");
+  writeFileSync(hold, "");
+  const o = await leading(t, { env: { ISKRON_ORCHESTRA_TACT_MS: "100", FAKE_ORCA_HOLD: hold } });
+  await o.queue([invite(9, GOOD)]);
+  const until = Date.now() + 15_000;
+  while (!o.launches().length && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(o.launches().length, 1, "the timer's tact reached the launch");
+  // The tact is held at the launch while the timer ticks many times over.
+  await new Promise((r) => setTimeout(r, 1_500));
+  // Off: no tact begins after the hold; then the held tact goes on and ends.
+  assert.equal((await cli(o.dir, ["off"])).code, 0);
+  rmSync(hold);
+  // A step queues behind every tact begun before it: its answer — they all ended.
+  await o.step();
+  const journal = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
+  const at = journal.findIndex((l) => /orchestra tact: .*invite 9: launched/.test(l));
+  assert.ok(at >= 0, journal.join("\n"));
+  const behind = journal.slice(at + 1).filter((l) => /orchestra tact/.test(l));
+  assert.deepEqual(behind, [], "tacts were queued behind the held one");
 });
 
 /** The CLI as a human types it at a terminal: under a pseudo-terminal of `script`, its words
@@ -1167,4 +1196,280 @@ test("quench: a seat the orchestrator did not launch is never stopped", async (t
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
   assert.equal(o.fake.state.orders.human.length, 0);
+});
+
+// #10078, case №4206: a repository Orca does not know is cloned only by the description's leave.
+/** A leading daemon whose Orca knows no project and whose description allows the clone. */
+const cloning = (t, { body = {}, env = {} } = {}) =>
+  leading(t, {
+    descriptions: (checkout) => [
+      describe({
+        body: {
+          clone: true,
+          clone_root: join(dirname(checkout), "clones"),
+          allow: ["GitHub.com/probe"],
+          ...body,
+        },
+      }),
+    ],
+    projects: () => ({ projects: [], setups: [] }),
+    env: { FAKE_ORCA_CLONE_COVER: coverOf(), ...env },
+  });
+const clones = (o) => orcaCalls(join(o.dir, "orca.log")).filter((a) => a[1] === "setup-clone");
+const cloneDir = (o) => join(o.dir, "clones", "probe", "one");
+
+/** Until no clone runs in the daemon's background — its registry row says so. */
+async function settled(o, ms = 20_000) {
+  const until = Date.now() + ms;
+  while (Object.values(o.cloneRows()).some((r) => r.state === "cloning") && Date.now() < until)
+    await new Promise((r) => setTimeout(r, 100));
+}
+/** A step, the clone it may start in the background, and the step that takes up its outcome. */
+async function stepThrough(o) {
+  const first = await o.step();
+  await settled(o);
+  const second = await o.step();
+  return {
+    code: first.code || second.code,
+    out: first.out + second.out,
+    err: first.err + second.err,
+  };
+}
+
+test("clone: no checkout and an allowed repository — Orca clones it over https, then it is launched there", async (t) => {
+  const o = await cloning(t);
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.deepEqual(clones(o), [
+    [
+      "project",
+      "setup-clone",
+      "--url",
+      "https://github.com/probe/one.git",
+      "--destination",
+      cloneDir(o),
+    ],
+  ]);
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+});
+
+test("clone: without clone in the description nothing is cloned — no_checkout as before", async (t) => {
+  const o = await leading(t, { projects: () => ({ projects: [], setups: [] }) });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_checkout/, r.out);
+  assert.equal(clones(o).length, 0);
+});
+
+test("clone: outside allow, no repository, an odd form or a taken folder — clone_refused, no call", async (t) => {
+  const o = await cloning(t);
+  mkdirSync(join(o.dir, "clones", "probe", "taken"), { recursive: true });
+  await o.queue([
+    invite(1, GOOD, "github.com/stranger/one"),
+    invite(2, GOOD, "github.com/probex/one"),
+    invite(3, GOOD, null),
+    invite(4, GOOD, "gitlab.com/probe/sub/one"),
+    invite(5, GOOD, "github.com/probe/taken"),
+    invite(6, GOOD, "github.com/probe/.."),
+  ]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  for (const [n, why] of [
+    [1, "not_allowed"],
+    [2, "not_allowed"],
+    [3, "no_repository"],
+    [4, "repository_form"],
+    [5, "destination_exists"],
+    [6, "repository_form"],
+  ])
+    assert.match(r.out, new RegExp(`invite ${n}: clone_refused \\(${why}\\)`), r.out);
+  assert.equal(clones(o).length, 0, "Orca was not asked to clone");
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: Orca or git refuse — clone_failed with the exit code only, no output repeated", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_exit_128\)/, r.out);
+  assert.doesNotMatch(r.out + r.err, /SECRET/, "the clone's output never leaves");
+  const st = await cli(o.dir, ["status"]);
+  assert.doesNotMatch(st.out + st.err, /SECRET/);
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: a failed clone is remembered by repository — clone_failed_before until the description changes; git asks nothing", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
+  await o.queue([invite(9, GOOD)]);
+  await stepThrough(o);
+  assert.deepEqual(JSON.parse(readFileSync(join(o.dir, "orca.log.env"), "utf8")), {
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+  });
+  // Another invite of the same repository: the memory is the repository's, not the invite's.
+  await o.queue([invite(9, GOOD), invite(10, GOOD)]);
+  const again = await stepThrough(o);
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_exit_128\)/, again.out);
+  assert.match(again.out, /invite 10: clone_failed_before \(clone_exit_128\)/, again.out);
+  assert.equal(clones(o).length, 1, "not cloned again");
+  const st = await cli(o.dir, ["status"]);
+  assert.match(st.out, /clone github\.com\/probe\/one: failed \(clone_exit_128\)/, st.out);
+  // The human changed the description: the clone is tried once more.
+  const d = o.fake.state.mind.orchestra[0];
+  d.body = JSON.stringify({ ...JSON.parse(d.body), limit: 3 });
+  await stepThrough(o);
+  assert.equal(clones(o).length, 2, "a changed description clones again");
+});
+
+test("clone: the clone does not hold the tact — it runs in the background, said by step and status", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_DELAY_MS: "6000" } });
+  await o.queue([invite(9, GOOD)]);
+  const at = Date.now();
+  const r = await o.step();
+  assert.ok(Date.now() - at < 4000, `the step waited for the clone: ${Date.now() - at} ms`);
+  assert.match(r.out, /invite 9: cloning/, r.out);
+  const st = await cli(o.dir, ["status"]);
+  assert.match(st.out, /clone github\.com\/probe\/one: cloning/, st.out);
+  const during = await o.step();
+  assert.match(during.out, /invite 9: cloning/, during.out);
+  assert.equal(clones(o).length, 1, "one clone in flight, not a second");
+  assert.equal(o.launches().length, 0);
+  await settled(o);
+  const after = await o.step();
+  assert.match(after.out, /invite 9: launched/, after.out);
+  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+});
+
+test("clone: a timeout ends the orca client's whole process group; output beyond any buffer is no failure", async (t) => {
+  const o = await cloning(t, {
+    env: { FAKE_ORCA_CLONE_HANG: "1", ISKRON_ORCHESTRA_CLONE_MS: "1500" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_timeout\)/, r.out);
+  const pid = Number(readFileSync(join(o.dir, "orca.log.child"), "utf8"));
+  let alive = true;
+  for (let i = 0; i < 30 && alive; i++) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((done) => setTimeout(done, 100));
+    } catch {
+      alive = false;
+    }
+  }
+  assert.equal(alive, false, "the clone's child outlived the timeout");
+  const noisy = await cloning(t, { env: { FAKE_ORCA_CLONE_NOISE: "1" } });
+  await noisy.queue([invite(9, GOOD)]);
+  const n = await stepThrough(noisy);
+  assert.match(n.out, /invite 9: launched/, n.out);
+});
+
+test("clone: the caller gone before the clone starts — no clone after it (#8202)", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CONTEXT_DELAY_MS: "3000" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await cli(o.dir, ["step"], GIVE_UP);
+  assert.notEqual(r.code, 0, "the client gave up inside its ceiling — a refusal");
+  await new Promise((done) => setTimeout(done, 5_000));
+  assert.equal(clones(o).length, 0, "no clone started after the caller left");
+});
+
+test("clone: an Orca not declaring setup-clone is not asked to clone", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_NO_CLONE: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(orca_schema_unverified\)/, r.out);
+  assert.equal(clones(o).length, 0);
+});
+
+test("clone: the cloned repository without the cover is not launched and stays on disk", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_COVER: "" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: checkout_uncovered/, r.out);
+  assert.equal(o.launches().length, 0);
+  assert.ok(existsSync(cloneDir(o)), "the clone is not removed");
+});
+
+test("clone: cloned but not registered by Orca — clone_failed (clone_unregistered), kept; the next tact does not clone over it", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_UNREGISTERED: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_unregistered\)/, r.out);
+  assert.ok(existsSync(cloneDir(o)));
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_unregistered\)/, again.out);
+  assert.equal(clones(o).length, 1, "cloned once");
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: Orca unreadable right after the clone — the row stays clone_unregistered, not destination_exists", async (t) => {
+  const o = await cloning(t, {
+    // The tact's first read sees no checkout; the read after the clone's outcome fails.
+    env: { FAKE_ORCA_CLONE_UNREGISTERED: "1", FAKE_ORCA_FAIL_AFTER_CLONE: "2" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await stepThrough(o);
+  assert.match(r.out, /invite 9: clone_failed \(clone_unregistered\)/, r.out);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_unregistered\)/, again.out);
+  assert.equal(clones(o).length, 1, "cloned once");
+});
+
+test("clone: a cloning row left by a former daemon is clone_interrupted, remembered — no second clone", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
+  await o.queue([invite(9, GOOD)]);
+  await stepThrough(o);
+  // The row as a daemon gone mid-clone leaves it: cloning, with no clone of this daemon's.
+  const f = join(o.dir, "run", "orchestra-runs.json");
+  const reg = JSON.parse(readFileSync(f, "utf8"));
+  const { spec, at } = reg.clones[REPO];
+  reg.clones[REPO] = { state: "cloning", at, spec };
+  writeFileSync(f, JSON.stringify(reg));
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_interrupted\)/, r.out);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_failed_before \(clone_interrupted\)/, again.out);
+  assert.equal(clones(o).length, 1, "not cloned a second time");
+});
+
+test("clone: broken clone fields break the description, raising nothing", async (t) => {
+  for (const [body, code] of [
+    [{ clone: "yes" }, "clone_invalid"],
+    [{ clone_root: undefined }, "clone_root_invalid"],
+    [{ clone_root: "relative/dir" }, "clone_root_invalid"],
+    [{ allow: "github.com/probe" }, "allow_invalid"],
+    [{ allow: ["github.com"] }, "allow_invalid"],
+    [{ allow: [] }, "allow_invalid"],
+  ]) {
+    const o = await cloning(t, { body });
+    await o.queue([invite(9, GOOD)]);
+    const r = await o.step();
+    assert.match(
+      r.out,
+      new RegExp(`probe-mac in mind: ${code}`),
+      `${JSON.stringify(body)}\n${r.out}`,
+    );
+    assert.equal(clones(o).length + o.launches().length, 0);
+  }
+});
+
+test("clone: dry run says what it would clone, ~ in clone_root expanded, and calls no Orca", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-home-"));
+  const o = await cloning(t, { body: { clone_root: "~/src" }, env: { HOME: home } });
+  await o.queue([invite(9, GOOD), invite(2, GOOD, "github.com/stranger/one")]);
+  const r = await cli(o.dir, ["step", "--dry-run"]);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(
+    r.out,
+    new RegExp(
+      `invite 9: if Orca has no checkout — would clone https://github\\.com/probe/one\\.git into ${join(home, "src", "probe", "one")}`,
+    ),
+    r.out,
+  );
+  assert.match(r.out, /invite 9: would launch: /, r.out);
+  assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
+  assert.ok(!existsSync(join(o.dir, "orca.log")), "orca was not called");
+  assert.ok(!existsSync(join(home, "src")), "nothing made on disk");
 });

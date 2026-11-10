@@ -8,7 +8,10 @@ import { execFile } from "node:child_process";
 export const ORCA_VERSION = "1.4.242";
 const FLAGS = ["agent", "worktree", "model", "prompt", "json"];
 
-function run(args: string[], timeoutMs: number): Promise<{ code: number | string; out: string }> {
+export function run(
+  args: string[],
+  timeoutMs: number,
+): Promise<{ code: number | string; out: string }> {
   return new Promise((resolve) => {
     execFile(
       "orca",
