@@ -135,8 +135,21 @@ var TAKE = {
 };
 
 // js/delivery/words/frame-text.ts
+function clockNotice(lang2, kind, f) {
+  const ru = lang2 === "ru";
+  const unknown = ru ? "неизвестно" : "unknown";
+  const flag = (v) => v === null ? unknown : v ? ru ? "да" : "yes" : ru ? "нет" : "no";
+  const head2 = kind === "card_unanswered" ? ru ? "карточка без ответа" : "unanswered card" : ru ? "срок строки" : "line due";
+  const ref = `${ru ? "дело" : "case"} №${f.room ?? unknown} (id: ${f.roomId ?? unknown}, ${ru ? "граф" : "realm"}: ${f.realm ?? unknown}) [${f.entry ?? unknown}], ${ru ? "ключ" : "key"}: ${f.key ?? unknown}`;
+  const who = `${kind === "card_unanswered" ? ru ? "адресат" : "recipient" : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${ru ? "роль" : "role"}: ${f.karta ?? unknown})`;
+  const facts = kind === "card_unanswered" ? `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}` : `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`;
+  return `${head2}: ${ref}; ${who}; ${facts}`;
+}
 var FRAME_TEXT = {
   ru: {
+    clockNotice: (kind, facts) => clockNotice("ru", kind, facts),
+    cardRepeat: (n) => `повтор карточки: ${n ?? "номер неизвестен"}`,
+    openCards: (count, oldest, malformed = false) => `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -158,6 +171,9 @@ var FRAME_TEXT = {
     ].filter(Boolean).join(", ")}`
   },
   en: {
+    clockNotice: (kind, facts) => clockNotice("en", kind, facts),
+    cardRepeat: (n) => `card repeat: ${n ?? "number unknown"}`,
+    openCards: (count, oldest, malformed = false) => `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,
@@ -433,11 +449,11 @@ var TURNED_EN = `${TWO_ENTRIES_EN} Otherwise ${TAKE_PATH_EN}.`;
 // js/delivery/words/turn.ts
 var TURN = {
   ru: {
-    wake: () => `${FRAME_MARK} человека в консоли нет: вопрос — ${tool("case")} ask в деле; отчёт — say в деле или ${tool("channel")} send на его место. Нечего передать — ход кончен, без текста.`,
+    wake: () => `${FRAME_MARK} человека в консоли нет: ход и исход — ${tool("case")} line по ключу; say с to — за ответом или действием; человеку ask или ответ на его вопрос. Нечего передать — ход кончен, без текста.`,
     notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`
   },
   en: {
-    wake: () => `${FRAME_MARK} no human at the console — a question as an ask card in the case, a report as a word in the case or by the channel to their seat (${tool("case")} ask/say, ${tool("channel")} send). Nothing to say to anyone — the turn is over, no text needed.`,
+    wake: () => `${FRAME_MARK} no human at the console: progress and outcome — ${tool("case")} line by key; say with to for a reply or action; to the human — ask or answer their question. Nothing to pass on — the turn is over, no text needed.`,
     notLaid: (session, why) => `the turn's end word did not enter session ${session}: ${why}`
   }
 };
@@ -967,7 +983,7 @@ function merged(c) {
 // js/shared/turnend.ts
 var TURN_RITE = "turn";
 var SPEAKING = /* @__PURE__ */ new Map([
-  [tool("case"), /* @__PURE__ */ new Set(["ask", "say", "answer", "talk"])],
+  [tool("case"), /* @__PURE__ */ new Set(["ask", "say", "answer", "talk", "line"])],
   [tool("channel"), /* @__PURE__ */ new Set(["send"])]
 ]);
 function speaks(name, input) {
@@ -1111,10 +1127,22 @@ function compact(lang2) {
 var COMPACT = new RegExp(
   `^(?:${LANGS.flatMap(head).join("|")})?(?:${LANGS.map(compact).join("|")})$`
 );
+var CARDS = new RegExp(
+  `(?:${LANGS.flatMap((lang2) => {
+    const T = FRAME_TEXT[lang2];
+    return [
+      esc(flat(T.openCards(null, null))),
+      esc(flat(T.openCards(null, null, true))),
+      esc(flat(T.openCards(N, null))).replace(NUM, String.raw`\d+`),
+      esc(flat(T.openCards(N, ARGS))).replace(NUM, String.raw`\d+`).replace(ARGS, String.raw`[0-9T:.+Z-]+`)
+    ];
+  }).join("|")})$`
+);
 function quiet(text2) {
   const t = flat(text2);
   const body = t.startsWith(FRAME_MARK) ? t.slice(FRAME_MARK.length) : t;
-  return QUIET2.test(body) || COMPACT.test(body);
+  const withoutCards = body.replace(CARDS, "");
+  return withoutCards !== body && !withoutCards || QUIET2.test(withoutCards) || COMPACT.test(withoutCards);
 }
 
 // js/cli/turnread.ts
@@ -1122,7 +1150,7 @@ var WATCH = /\bwatchdog(?:-exit)?\b/;
 var EXITS = /\bwatchdog-exit\b/;
 var NOTICE = /^\s*<task-notification>/;
 var OWN = [...LANGS.map((l) => WATCHDOG[l].listening("").trim()), "[Monitor "];
-var ownEvent = (event) => event.split("\n").map((l) => l.trim()).filter(Boolean).every((l) => OWN.some((p) => l.startsWith(p)) || /^\{.*"type":"hello"/.test(l));
+var ownEvent = (event) => event.split("\n").map((l) => l.trim()).filter(Boolean).every((l) => OWN.some((p) => l.startsWith(p)) || /^\{.*"type":"hello"/.test(l) || quiet(l));
 var blocks = (e) => {
   const c = e.message?.content;
   return typeof c === "string" ? [{ type: "text", text: c }] : Array.isArray(c) ? c : [];
