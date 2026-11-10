@@ -57,8 +57,10 @@ if (args[0] === "agent-context") {
 // answers runtime_timeout with exit 1 at once, and Orca's runtime — a detached copy of this
 // fake — finishes the clone once the probe removes <file>; "never" — it never finishes it.
 // A refusal as 1.4.242 prints it (#9966): indented JSON on stdout, stderr empty, exit 1.
+// FAKE_ORCA_CLONE_BANNER=1 — a line that is no JSON comes before the answer on stdout.
 const refuse = (code, message) => {
   const answer = { id: "local", ok: false, error: { code, message }, _meta: { runtimeId: null } };
+  if (process.env.FAKE_ORCA_CLONE_BANNER === "1") process.stdout.write("warning: a newer Orca\n");
   process.stdout.write(JSON.stringify(answer, null, 2) + "\n");
   process.exit(1);
 };
@@ -81,7 +83,13 @@ if (args[0] === "project" && args[1] === "setup-clone") {
     if (!flag(f)) refuse("invalid_argument", `Missing required --${f}`);
   const heir = process.env.FAKE_ORCA_CLONE_HEIR;
   if (heir) {
-    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], {
+    // FAKE_ORCA_CLONE_HEIR_WRITES=1: three seconds on the heir writes to the held stdout a while,
+    // then marks <file>.alive — a write the reader refused (EPIPE) kills it first.
+    const writes =
+      "setTimeout(() => { const t = setInterval(() => process.stdout.write('x\\n'), 50);" +
+      " setTimeout(() => { clearInterval(t); require('fs').writeFileSync(process.argv[1] + '.alive', ''); }, 2000); }, 3000);";
+    const script = `${process.env.FAKE_ORCA_CLONE_HEIR_WRITES === "1" ? writes : ""} setTimeout(() => {}, 60_000);`;
+    const child = spawn(process.execPath, ["-e", script, heir], {
       detached: true,
       stdio: ["ignore", "inherit", "ignore"],
     });

@@ -33,14 +33,20 @@ const TAIL = 64 * 1024;
 const DRAIN_MS = 2_000;
 
 /** The error code of the client's answer, or null; nothing else of it is kept. The answer is
- * the whole stdout, indented over many lines (#9966). */
+ * the whole stdout, indented over many lines (#9966); a line before it that is no JSON is
+ * passed over — the answer is the last object opened at a line's start that parses to the end. */
 function answerCode(out: string): string | null {
-  try {
-    const code = (JSON.parse(out) as { error?: { code?: unknown } }).error?.code;
-    return typeof code === "string" ? code : null;
-  } catch {
-    return null;
+  for (let at = out.length; at > 0;) {
+    at = out.lastIndexOf("\n{", at - 1);
+    const from = at < 0 ? 0 : at + 1;
+    try {
+      const code = (JSON.parse(out.slice(from)) as { error?: { code?: unknown } }).error?.code;
+      return typeof code === "string" ? code : null;
+    } catch {
+      if (from === 0) return null;
+    }
   }
+  return null;
 }
 
 /** The orca client; a timeout ends the client, not Orca's git. */
@@ -51,9 +57,10 @@ function cloneRun(argv: string[], ms: number): Promise<number | string> {
       windowsHide: true,
     });
     let out = "";
-    child.stdout.on("data", (c: Buffer) => {
+    const keep = (c: Buffer): void => {
       out = (out + c.toString("utf8")).slice(-TAIL);
-    });
+    };
+    child.stdout.on("data", keep);
     let timedOut = false;
     let drain: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
@@ -66,7 +73,8 @@ function cloneRun(argv: string[], ms: number): Promise<number | string> {
       ended = true;
       clearTimeout(timer);
       clearTimeout(drain);
-      child.stdout.destroy();
+      // Read on and drop: a child that still holds the pipe neither blocks on it nor meets EPIPE.
+      child.stdout.off("data", keep).resume();
       if (timedOut) return resolve("timeout");
       resolve(code !== 0 && answerCode(out) === "runtime_timeout" ? "runtime_timeout" : code);
     };
@@ -75,8 +83,10 @@ function cloneRun(argv: string[], ms: number): Promise<number | string> {
     // inherited stdout never closes it, and the clone would stay in flight for good.
     child.once("close", (code, signal) => done(code ?? signal ?? 1));
     child.once("exit", (code, signal) => {
-      if (timedOut) done(code ?? signal ?? 1);
-      else drain = setTimeout(() => done(code ?? signal ?? 1), DRAIN_MS);
+      if (timedOut) return done(code ?? signal ?? 1);
+      // The client answered within the window: the drain after it is no timeout.
+      clearTimeout(timer);
+      drain = setTimeout(() => done(code ?? signal ?? 1), DRAIN_MS);
     });
   });
 }
