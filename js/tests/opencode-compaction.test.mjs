@@ -4,6 +4,8 @@
 // once per compaction, none after session.compaction.failed, only for a session whose bridge
 // holds a seat, none for a stopped one. Fake bridge, stand-in context (opencode-kit.mjs);
 // ISKRON_OPENCODE_PLUGIN aims it at any copy.
+import "./opencode-compaction-read.mjs";
+
 import assert from "node:assert/strict";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -26,6 +28,8 @@ async function standUp(name, sessions) {
   const events = join(SANDBOX, `${name}.events`);
   const reply = join(SANDBOX, `${name}.reply`);
   for (const f of [log, events, reply]) writeFileSync(f, "");
+  // Recovery needs a proven result, not the fake bridge's generic "ok" readiness.
+  writeFileSync(`${reply}.iskron_me`, "  personal_mind «Личная память» — missing");
   const rec = await plugin({
     ISKRON_BRIDGE_PATH: FAKE_BRIDGE,
     FB_LOG: log,
