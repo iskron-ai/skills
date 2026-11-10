@@ -2,12 +2,13 @@
 // --version and agent-context --json as 1.4.242 declared them, and records every other argv as a
 // JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT,
 // FAKE_ORCA_DELAY_MS change the version, the launch's exit code and how long it takes. The real `orca agent launch` is never run.
-import { spawn } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -23,34 +24,43 @@ if (args[0] === "agent-context") {
   const slow = Number(process.env.FAKE_ORCA_CONTEXT_DELAY_MS ?? 0);
   if (slow) await new Promise((r) => setTimeout(r, slow));
   const flags = ["agent", "worktree", "prompt", "model", "effort", "surface", "focus", "json"];
-  const clone = ["url", "destination", "project", "host", "display-name"];
+  // setup-clone's flags as 1.4.242 declares them; FAKE_ORCA_CLONE_FLAGS — another list.
+  const clone = process.env.FAKE_ORCA_CLONE_FLAGS?.split(",") ?? [
+    "help",
+    "json",
+    "pairing-code",
+    "environment",
+    "project",
+    "host",
+    "url",
+    "destination",
+    "display-name",
+  ];
   const commands = [{ command: "agent launch", flags }];
   if (process.env.FAKE_ORCA_NO_CLONE !== "1")
     commands.push({ command: "project setup-clone", flags: clone });
   process.stdout.write(JSON.stringify({ commands }) + "\n");
   process.exit(0);
 }
-// project setup-clone (declared by agent-context 1.4.242, #9966; its answer unobserved): recorded,
-// then FAKE_ORCA_CLONE_EXIT fails it with a secret on both outputs; else the destination is made,
-// FAKE_ORCA_CLONE_COVER is its AGENTS.md, and — unless FAKE_ORCA_CLONE_UNREGISTERED=1 — a ready
-// local setup of the url joins the laid projects. Its git environment lies in FAKE_ORCA_LOG.env;
-// FAKE_ORCA_CLONE_DELAY_MS — it answers this much later; FAKE_ORCA_CLONE_HANG=1 — it starts a
-// child of its own (its pid in FAKE_ORCA_LOG.child) and never answers, as a git stuck on the
-// network; FAKE_ORCA_CLONE_NOISE=1 — it prints more than any buffer would hold, then succeeds.
+// project setup-clone in the forms 1.4.242 answered (case №4221): recorded; a missing --project,
+// --host, --url or --destination — invalid_argument before any clone; --destination is the
+// parent, the clone lands in <destination>/<repo of the url>, taken — refused; a --project other
+// than the id Orca derives from the url (github.com lower case, else git:<host>/<path>) — refused
+// after the clone, the folder left unregistered. FAKE_ORCA_CLONE_EXIT fails it with a secret on
+// both outputs; else FAKE_ORCA_CLONE_COVER is the clone's AGENTS.md and — unless
+// FAKE_ORCA_CLONE_UNREGISTERED=1 — a ready local setup at the path as given joins the laid
+// projects. FAKE_ORCA_CLONE_DELAY_MS — it answers this much later; FAKE_ORCA_CLONE_HANG=1 — it
+// never answers; FAKE_ORCA_CLONE_NOISE=1 — it prints more than any buffer would hold.
 if (args[0] === "project" && args[1] === "setup-clone") {
   appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
-  const { GIT_TERMINAL_PROMPT, GCM_INTERACTIVE } = process.env;
-  writeFileSync(
-    `${process.env.FAKE_ORCA_LOG}.env`,
-    JSON.stringify({ GIT_TERMINAL_PROMPT, GCM_INTERACTIVE }),
-  );
-  if (process.env.FAKE_ORCA_CLONE_HANG === "1") {
-    const git = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], {
-      stdio: "ignore",
-    });
-    writeFileSync(`${process.env.FAKE_ORCA_LOG}.child`, String(git.pid));
-    await new Promise((r) => setTimeout(r, 120_000));
-  }
+  const flag = (name) => (args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : "");
+  const refuse = (code, message) => {
+    process.stdout.write(JSON.stringify({ ok: false, error: { code, message } }) + "\n");
+    process.exit(1);
+  };
+  for (const f of ["project", "host", "url", "destination"])
+    if (!flag(f)) refuse("invalid_argument", `Missing required --${f}`);
+  if (process.env.FAKE_ORCA_CLONE_HANG === "1") await new Promise((r) => setTimeout(r, 120_000));
   const wait = Number(process.env.FAKE_ORCA_CLONE_DELAY_MS ?? 0);
   if (wait) await new Promise((r) => setTimeout(r, wait));
   if (process.env.FAKE_ORCA_CLONE_NOISE === "1")
@@ -61,20 +71,37 @@ if (args[0] === "project" && args[1] === "setup-clone") {
     process.stderr.write("fatal: SECRET-TOKEN\n");
     process.exit(fail);
   }
-  const url = args[args.indexOf("--url") + 1];
-  const dest = args[args.indexOf("--destination") + 1];
+  const url = flag("url");
+  const [host, ...path] = url
+    .replace(/^[a-z]+:\/\//, "")
+    .replace(/\.git$/, "")
+    .split("/");
+  const bare = host.replace(/:\d+$/, "");
+  const id =
+    bare === "github.com"
+      ? `github:${path.join("/")}`.toLowerCase()
+      : `git:${bare}/${path.join("/")}`;
+  const dest = join(flag("destination"), path.at(-1));
+  if (existsSync(dest) && readdirSync(dest).length)
+    refuse("runtime_error", `Clone failed: Destination already exists and is not empty: ${dest}.`);
   mkdirSync(dest, { recursive: true });
   if (process.env.FAKE_ORCA_CLONE_COVER)
     writeFileSync(join(dest, "AGENTS.md"), process.env.FAKE_ORCA_CLONE_COVER);
+  if (flag("project") !== id)
+    refuse(
+      "runtime_error",
+      `Imported folder resolves to project "${id}", not the selected project "${flag("project")}".`,
+    );
   const lay = process.env.FAKE_ORCA_PROJECTS;
   if (lay && process.env.FAKE_ORCA_CLONE_UNREGISTERED !== "1") {
     const all = existsSync(lay) ? JSON.parse(readFileSync(lay, "utf8")) : {};
-    (all.projects ??= []).push({ id: "p-clone", gitRemoteIdentity: { remoteUrl: url } });
+    (all.projects ??= []).push({ id, gitRemoteIdentity: { remoteUrl: url } });
     (all.setups ??= []).push({
-      projectId: "p-clone",
+      projectId: id,
       path: dest,
       setupState: "ready",
       hostId: "local",
+      setupMethod: "cloned",
     });
     writeFileSync(lay, JSON.stringify(all));
   }
@@ -103,6 +130,20 @@ if (args[0] === "project" && (args[1] === "list" || args[1] === "setups")) {
   process.exit(0);
 }
 appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+// A clone registered at a path git does not name (a symlink, another case) is no worktree to
+// agent launch on 1.4.242 (case №4221): selector_not_found.
+if (args[0] === "agent" && args.includes("--worktree")) {
+  const at = args[args.indexOf("--worktree") + 1].replace(/^path:/, "");
+  const lay = process.env.FAKE_ORCA_PROJECTS;
+  const all = lay && existsSync(lay) ? JSON.parse(readFileSync(lay, "utf8")) : {};
+  const cloned = (all.setups ?? []).some((s) => s.setupMethod === "cloned" && s.path === at);
+  if (cloned && realpathSync.native(at) !== at) {
+    process.stdout.write(
+      JSON.stringify({ ok: false, error: { code: "selector_not_found" } }) + "\n",
+    );
+    process.exit(1);
+  }
+}
 // FAKE_ORCA_DELAY_MS: the launch is recorded at once and answers this much later.
 const delay = Number(process.env.FAKE_ORCA_DELAY_MS ?? 0);
 if (delay) await new Promise((r) => setTimeout(r, delay));

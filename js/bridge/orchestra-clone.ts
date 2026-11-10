@@ -3,6 +3,9 @@
 // lists the call's host/org in allow. The url is https of the invite's repository host/org/repo;
 // the folder is <clone_root>/<org>/<repo> and is never overwritten; the clone is Orca's own
 // `project setup-clone`, one argv array, the machine's git credentials — the bridge holds none.
+// Its form as Orca 1.4.242 answered (case №4221): --project is the id Orca derives from the
+// remote (refused after the clone otherwise), --host local, --destination the parent folder,
+// given canonical — a path Orca keeps as typed is not found as a worktree by `agent launch`.
 // It runs in the daemon's background, not inside the tact (orchestra-cloning.ts).
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -45,19 +48,32 @@ export function parseClone(d: Record<string, unknown>): ClonePolicy | null | { c
 export function cloneTarget(
   policy: ClonePolicy,
   repository: string,
-): { url: string; destination: string } | { code: string } {
+): { url: string; project: string; parent: string; destination: string } | { code: string } {
   const parts = repository.split("/");
   if (parts.length !== 3 || !parts.every((p) => SEGMENT.test(p) && p !== "." && p !== ".."))
     return { code: "clone_refused (repository_form)" };
-  const [host, org, repo] = parts;
-  if (!policy.allow.includes(hostLower(`${host}/${org}`)))
-    return { code: "clone_refused (not_allowed)" };
-  const destination = join(policy.root, org, repo);
+  const [rawHost, org, repo] = parts;
+  const host = rawHost.toLowerCase();
+  if (!policy.allow.includes(`${host}/${org}`)) return { code: "clone_refused (not_allowed)" };
+  const parent = join(policy.root, org);
+  const destination = join(parent, repo);
   if (existsSync(destination)) return { code: "clone_refused (destination_exists)" };
-  return { url: `https://${host}/${org}/${repo}.git`, destination };
+  return {
+    url: `https://${host}/${org}/${repo}.git`,
+    project: projectId(host, org, repo),
+    parent,
+    destination,
+  };
 }
 
-/** The installed Orca declares setup-clone with the flags used (#9966). */
+/** The project id Orca 1.4.242 derives from the remote: github.com in lower case, any other
+ * host as git:<host>/<org>/<repo> with the case kept (case №4221). */
+export const projectId = (host: string, org: string, repo: string): string =>
+  host === "github.com" ? `github:${org}/${repo}`.toLowerCase() : `git:${host}/${org}/${repo}`;
+
+const CLONE_FLAGS = ["project", "host", "url", "destination", "json"];
+
+/** The installed Orca declares setup-clone with every flag used (#9966). */
 export async function cloneDeclared(): Promise<boolean> {
   const ctx = await run(["agent-context", "--json"], 10_000);
   try {
@@ -65,12 +81,25 @@ export async function cloneDeclared(): Promise<boolean> {
       commands?: { command?: string; flags?: string[] }[];
     };
     const c = schema.commands?.find((x) => x.command === "project setup-clone");
-    return ctx.code === 0 && !!c && ["url", "destination"].every((f) => c.flags?.includes(f));
+    return ctx.code === 0 && !!c && CLONE_FLAGS.every((f) => c.flags?.includes(f));
   } catch {
     return false;
   }
 }
 
-export function cloneArgv(url: string, destination: string): string[] {
-  return ["project", "setup-clone", "--url", url, "--destination", destination];
+/** Orca clones into <parent>/<repo>; parent is canonical (realpath) by the caller. */
+export function cloneArgv(project: string, url: string, parent: string): string[] {
+  return [
+    "project",
+    "setup-clone",
+    "--project",
+    project,
+    "--host",
+    "local",
+    "--url",
+    url,
+    "--destination",
+    parent,
+    "--json",
+  ];
 }
