@@ -34,7 +34,12 @@ export function batchBodyText(
   riding: Frame[] = [],
 ): string {
   const shown = shownOf(frames, body);
-  const bodies = underCounts([...riding, ...shown], textShown(shown, BODY_CAP), body.incomplete);
+  const bodies = underCounts(
+    [...riding, ...shown],
+    textShown(shown, BODY_CAP),
+    body.incomplete,
+    frames,
+  );
   return `${body.head}\n\n${bodies.join("\n\n")}`;
 }
 

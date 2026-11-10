@@ -59,5 +59,5 @@ export const openCardsText = (frame: Frame): string => {
 };
 
 /** The latest envelope in this output wins; it does not become a delivery event. */
-export const cardsIn = (frames: Frame[]): string =>
+export const cardsIn = (frames: readonly Frame[]): string =>
   frames.length ? openCardsText(frames[frames.length - 1]) : "";
