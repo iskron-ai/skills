@@ -173,9 +173,17 @@ test("the shared frame text of a life check: the platform's text, then the way t
   const { frameToText } = await import("../shared/frame-text.ts");
   const ru = frameToText(life(), "");
   assert.match(ru, /\n8 ч нет твоего действия\. Если не обновишь статус, будешь погашен\.\n/);
-  assert.ok(ru.endsWith(`\nПредупреждено место: место не названо платформой.\n${REPLY_RU}`), ru);
+  assert.ok(
+    ru.endsWith(
+      `\nПредупреждено место: место не названо платформой.\n${REPLY_RU}\nкарточек без ответа: неизвестно`,
+    ),
+    ru,
+  );
   const named = frameToText(life("life-3", { to_standing: "@alari:o.sub-2" }), "");
-  assert.ok(named.endsWith(`\nПредупреждено место: o.sub-2.\n${REPLY_RU}`), named);
+  assert.ok(
+    named.endsWith(`\nПредупреждено место: o.sub-2.\n${REPLY_RU}\nкарточек без ответа: неизвестно`),
+    named,
+  );
   const other = frameToText({ ...life(), provenance: { via: "platform" } }, "");
   assert.ok(!other.includes("Ответь действием"), "another platform frame names a way to answer");
   const { FRAME_TEXT } = await import("../delivery/index.ts");

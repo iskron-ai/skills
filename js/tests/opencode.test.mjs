@@ -911,7 +911,7 @@ test("each root session gets its own bridge, and a frame goes to the session who
     );
     assert.match(
       to["s-a"],
-      /^роль #1226 \(@alari:telegram-bot\)\nдля первой$/,
+      /^роль #1226 \(@alari:telegram-bot\)\nдля первой\nкарточек без ответа: неизвестно$/,
       "who speaks and the text once — short (#6081); delivery asks no answer (#6574)",
     );
   } finally {
@@ -8455,7 +8455,7 @@ test("a child session whose first prompt is a launch line with a case stands as 
       "You are a subagent spawned by another session.\n" +
         "start @nks/nks-dev #48 дело №77\n" +
         "Бриф: почини мост.\n" +
-        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.",
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.",
     );
   } finally {
     await rec.stop();
@@ -8543,7 +8543,7 @@ test("on an English server (*.ai) the launch line reads «case №N» and the wo
     assert.equal(
       read,
       "start r5 #48 case №77 from @me:lead\n" +
-        "Iskron: seated host.repo.opus-5.sub-1, entered case №77 — retell the brief as your first message in the case.",
+        "Iskron: seated host.repo.opus-5.sub-1, entered case №77: restate the brief by say with to the launcher and in_reply_to the assignment; unknown address — read the participants. Progress and outcome — line by your key, no duplicate say.",
     );
     assert.deepEqual(
       sentCalls(calls)
@@ -8893,7 +8893,7 @@ test("a dead child bridge is replaced by a fresh child bridge that resumes the c
 /** Строка счёта дела проб без адресованных месту (#6574). */
 const countOf = (n, since, zachin = "Стенд") =>
   `№7 «${zachin}»: записей ${n}, тебе 0; ` +
-  `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).`;
+  `целиком — iskron_case(realm="nks-dev", action="history", room=7, since=${since}).\nкарточек без ответа: неизвестно`;
 
 test("a room frame to me reaches the agent short: case, entry, words, who, no answer call; a word to all queues as a count, a platform record with no author is the platform's", async () => {
   const b = bridgeEnv("room");
@@ -8926,7 +8926,7 @@ test("a room frame to me reaches the agent short: case, entry, words, who, no an
     assert.equal(rec.prompts[1].delivery, "steer", "closed steers into the running turn");
     assert.match(
       rec.prompts[1].text,
-      /^№7 «Стенд» \[42\] дело закрыто: consensus — платформа$/,
+      /^№7 «Стенд» \[42\] дело закрыто: consensus — платформа\nкарточек без ответа: неизвестно$/,
       "a room record without an author is the platform speaking, and waits no answer",
     );
 
@@ -9035,7 +9035,7 @@ test("room kinds: closing steers a busy agent despite stack=defer and says who m
     assert.match(p1.text, /^№7 «Стенд» \[50\] /, "the case and the entry lead");
     assert.match(
       p1.text,
-      /\nсделано, см\. 41$/,
+      /\nсделано, см\. 41\nкарточек без ответа: неизвестно$/,
       "the body passes through once, closing waits no say",
     );
 
@@ -9235,7 +9235,11 @@ test("room kinds: a said in flight, bodies and aborts not to me prompt nothing a
     assert.equal(loudP.delivery, "steer", "body of a word to me with stack=interrupt steers");
     assert.match(loudP.text, /^№7 «Стенд»: записей 3, тебе 1; [^\n]*since=53\)\.\n/);
     assert.match(loudP.text, /\n\[61\] текст слова \[60\] от @aleksei:probe/);
-    assert.match(loudP.text, /\nтекст моего слова$/, "the word's text passes through whole");
+    assert.match(
+      loudP.text,
+      /\nтекст моего слова\nкарточек без ответа: неизвестно$/,
+      "the word's text passes through whole",
+    );
     assert.doesNotMatch(
       loudP.text,
       /текст второй фазы/,
@@ -9544,7 +9548,7 @@ test("a person's word with from_person and no user_karta_seq steers as a person'
   assert.equal(prompts.length, 1, JSON.stringify(prompts.map((p) => p.text)));
   assert.equal(prompts[0].delivery, "steer");
   assert.match(prompts[0].text, /^№7 «Стенд» \[110\] слово от @dmitry:phone \(человек\)\n/);
-  assert.match(prompts[0].text, /СЛОВО-ЧЕЛОВЕКА-110$/);
+  assert.match(prompts[0].text, /СЛОВО-ЧЕЛОВЕКА-110\nкарточек без ответа: неизвестно$/);
   assert.match(prompts.rode, /записей 1, тебе 0/);
   assert.doesNotMatch(prompts.rode, /СЛОВО-ЧЕЛОВЕКА-111/);
 });
@@ -9597,7 +9601,11 @@ test("progress lines of one key fold into the last: the count names the supersed
   const frames = [progress(44), progress(45), progress(46), bad, addressed(48, ME)];
   const prompts = await asidePrompts("fold", frames, 1);
   assert.equal(prompts.length, 1, "only the word to me prompts");
-  assert.match(prompts[0].text, /тайное слово 48$/, "the word to me whole");
+  assert.match(
+    prompts[0].text,
+    /тайное слово 48\nкарточек без ответа: неизвестно$/,
+    "the word to me whole",
+  );
   assert.match(prompts.rode, /^ход\n\n№7 «Стенд»: записей 2, тебе 0, сменённых строк ключа 2; /);
 });
 
@@ -9625,7 +9633,10 @@ test("(в) an addressed word to me with stack interrupt steers at once and whole
   const prompts = await asidePrompts("aside-mine", [addressed(86), addressed(87, ME)], 1);
   assert.equal(prompts.length, 1, "only the word to me prompts");
   assert.equal(prompts[0].delivery, "steer");
-  assert.match(prompts[0].text, /слово от @aleksei:probe[^\n]*\nтайное слово 87$/);
+  assert.match(
+    prompts[0].text,
+    /слово от @aleksei:probe[^\n]*\nтайное слово 87\nкарточек без ответа: неизвестно$/,
+  );
   assert.equal(prompts.rode, `ход\n\n${countOf(1, 85)}`);
 });
 
@@ -9669,7 +9680,11 @@ test("(ж) the body of a reply to me and of an important word comes as text; the
   const text = prompts[0].text;
   assert.match(text, /^№7 «Стенд»: записей 5, тебе 4; /, text);
   assert.match(text, /\n\[55\] текст слова \[54\] [^\n]*: ответ мне второй фазой\n/, text);
-  assert.match(text, /\n\[57\] текст слова \[56\] [^\n]*: важное тело 56$/, text);
+  assert.match(
+    text,
+    /\n\[57\] текст слова \[56\] [^\n]*: важное тело 56\nкарточек без ответа: неизвестно$/,
+    text,
+  );
   assert.doesNotMatch(text, /моё тело 58/, text);
 });
 
@@ -9697,7 +9712,8 @@ test("a lone case frame to me is short: a said's text once, no JSON, «in reply 
   const batch = prompts.find((p) => p.delivery === "queue").text.split("\n");
   assert.match(batch[0], /^№7 «Стенд»: записей 3, тебе 1; /);
   assert.match(batch[1], /^\[86\] слово от @aleksei:probe/);
-  assert.equal(batch.length, 2, batch.join("\n"));
+  assert.equal(batch.length, 3, batch.join("\n"));
+  assert.equal(batch[2], "карточек без ответа: неизвестно");
   assert.ok(!batch.join("\n").includes("пробы зелёные"), batch.join("\n"));
 });
 
@@ -9723,11 +9739,15 @@ test("a direct word and a human word amid a case burst steer apart and whole; th
     assert.equal(steered.length, 2, "neither word waits in the case queue");
     assert.match(
       steered[0].text,
-      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа$/,
+      /^роль #48 \(@alari:sosed\)\nпрямое слово соседа\nкарточек без ответа: неизвестно$/,
       "the direct word goes whole and short: who and the text, no answer call (#6574)",
     );
     assert.match(steered[1].text, /^№7 «Стенд» \[230\] слово от @aleksei:probe \(человек\)\n/);
-    assert.match(steered[1].text, /\nслово со стопкой defer$/, "the human word goes whole");
+    assert.match(
+      steered[1].text,
+      /\nслово со стопкой defer\nкарточек без ответа: неизвестно$/,
+      "the human word goes whole",
+    );
     assert.equal(
       await rec.prompt("s-direct", "ход"),
       `ход\n\n${countOf(10, 210)}`,
@@ -9776,7 +9796,8 @@ test("a person's direct word carries a full send under its text; a missing addre
     const byWord = (marker) => {
       const got = rec.prompts.find((p) => p.text.includes(marker));
       assert.ok(got, `${marker} lost:\n${JSON.stringify(rec.prompts.map((p) => p.text))}`);
-      return got.text;
+      assert.match(got.text, /\nкарточек без ответа: неизвестно$/);
+      return got.text.replace(/\nкарточек без ответа: неизвестно$/, "");
     };
     assert.equal(
       rec.prompts.every((p) => p.delivery === "steer"),
@@ -9823,7 +9844,7 @@ test("a lone interrupting case frame still steers at once and whole", async () =
     assert.equal(rec.prompts.length, 1);
     assert.equal(rec.prompts[0].delivery, "steer");
     assert.match(rec.prompts[0].text, /^№7 «Стенд» \[50\] ведущий /, "the case and the entry lead");
-    assert.match(rec.prompts[0].text, /\nсделано, см\. 41$/);
+    assert.match(rec.prompts[0].text, /\nсделано, см\. 41\nкарточек без ответа: неизвестно$/);
   } finally {
     await rec.stop();
   }
@@ -9855,10 +9876,11 @@ test("while the burst prompt waits in the session's queue, new case frames wait 
     const held = rec.prompts[1].text.split("\n");
     assert.match(held[0], /^№7 «Стенд»: записей 3, тебе 3; [^\n]*since=242\)\.$/);
     assert.deepEqual(
-      held.slice(1).map((l) => /\[(\d+)\]/.exec(l)?.[1]),
+      held.slice(1, -1).map((l) => /\[(\d+)\]/.exec(l)?.[1]),
       ["243", "244", "245"],
       "every held frame enters the prompt that goes, none twice",
     );
+    assert.equal(held.at(-1), "карточек без ответа: неизвестно");
   } finally {
     await rec.stop();
   }

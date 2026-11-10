@@ -41,7 +41,9 @@ const auth = join(run, "auth");
 const config = join(home, ".config/opencode");
 const CONTEXT = Number(process.env.PROBE_CONTEXT || 60000);
 const fake = await startFakeNks({ pat: PAT });
-await fake.control({ richTools: true, structured: true, connect_delay_ms: 700 });
+// A confirmed empty personal graph (#9817): this probe observes the successful return path.
+// Unknown readiness is a read failure, covered by opencode-compaction-read.mjs.
+await fake.control({ richTools: true, structured: true, connect_delay_ms: 700, mind: { rules: [] } });
 const wire = [];
 let primaries = 0;
 let release;

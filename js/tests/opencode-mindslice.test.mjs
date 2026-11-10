@@ -75,7 +75,7 @@ test("a launched child reads the human's rules from its own stand answer, under 
     const read = await rec.prompt("child", "start @nks/nks-dev #48 дело №77\nБриф: почини мост.");
     assert.ok(
       read.endsWith(
-        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77 — первым словом перескажи бриф в деле.\n" +
+        "Искрон: встал host.repo.opus-5.sub-1, вошёл в дело №77: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.\n" +
           BLOCK,
       ),
       read,
@@ -151,3 +151,54 @@ test(
     }
   },
 );
+
+test("the plugin uses strict production reads only for compaction and retries a refused read", async () => {
+  const { files, env } = lay("compact-refused");
+  writeFileSync(`${files.reply}.iskron_me`, "__ERROR__READ_REFUSED");
+  writeFileSync(`${files.reply}.iskron_search`, SEARCH);
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    await rec.call("iskron_channel", { action: "connect" }, "s-refused");
+    const pid = Number(readFileSync(files.log, "utf8").trim().split(/\s+/)[1]);
+    appendFileSync(
+      `${files.events}.${pid}`,
+      JSON.stringify({ kind: "held", automatic: false, key: "k-refused", place: PLACE }) + "\n",
+    );
+    await until(() => rec.said().includes("мост держит стояние k-refused"), "held");
+    const run = async (hook, req) => {
+      for (const cb of rec.hooks[hook] ?? []) await cb(req);
+    };
+    await run("compaction", { sessionID: "s-refused", system: [] });
+    const first = { sessionID: "s-refused", system: [], messages: [] };
+    await assert.rejects(run("context", first), /READ_REFUSED/);
+    assert.deepEqual(first.system, []);
+    writeFileSync(`${files.reply}.iskron_me`, READINESS);
+    const retry = { sessionID: "s-refused", system: [], messages: [] };
+    await run("context", retry);
+    assert.ok(retry.system.some((p) => p.text.includes(BLOCK)));
+    assert.deepEqual(
+      sent(files.calls)
+        .filter((c) => c.name !== "iskron_channel")
+        .map((c) => c.name),
+      ["iskron_me", "iskron_me", "iskron_search"],
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a root start keeps a refused production mind read as a soft diagnostic", async (t) => {
+  const s = await setup(t);
+  const project = realpathSync(s.cwd);
+  writeAgents(project);
+  await s.fake.control({ mind: { refuse: "READ_REFUSED" } });
+  const oc = await rootPlugin(s, project);
+  try {
+    oc.create("soft-root");
+    const r = await oc.turn("soft-root", "go");
+    assert.ok(r.system.includes(W.unread("READ_REFUSED")), `${r.system}\n${oc.said()}`);
+  } finally {
+    await oc.stop();
+  }
+});

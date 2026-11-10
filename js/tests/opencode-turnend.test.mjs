@@ -78,7 +78,8 @@ test("a frame's turn ending with text and no word laid: one wake word, none for 
     assert.equal(w[0].marked, true, "under the delivery's mark");
     assert.equal(w[0].delivery, "queue");
     assert.match(w[0].text, /ask/);
-    assert.match(w[0].text, /iskron_channel send/);
+    assert.match(w[0].text, /iskron_case line/);
+    assert.match(w[0].text, /say с to/);
     await turn(rec, "s-t", { text: "всё ещё в консоль?" });
     assert.equal(wakes(rec, "s-t").length, 1, "the woken turn is not woken again");
     emit(rec, "session.idle", "s-t");
@@ -183,6 +184,7 @@ test("no wake word: the turn spoke, a human spoke, it ended without text or fail
       { action: "ask", room: "1" },
       { action: "say", room: "1" },
       { action: "answer", room: "1" },
+      { action: "line", room: "1", key: "probe", done: "Проверил", verdict: "ok" },
     ]) {
       await say(`кадр ${input.action}`);
       await turn(rec, "s-q", { calls: [["iskron_case", input]] });
