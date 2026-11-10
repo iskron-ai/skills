@@ -84,7 +84,7 @@ async function fixture(client, installed, source, plugin, fn, target = version) 
 }
 
 for (const [client, plugin, command] of [
-  ["opencode-iskron", false, "npx skills add iskron-ai/skills"],
+  ["opencode-iskron", false, "npx skills add https://github.com/iskron-ai/skills/tree/"],
   ["pi-iskron", false, "pi update git:github.com/iskron-ai/skills"],
   ["claude-code", true, "/plugin marketplace update iskron"],
   ["codex-mcp-client", true, "codex plugin marketplace upgrade iskron"],
@@ -108,6 +108,15 @@ test("skills catchup: fork refuses canonical updater and names source", async ()
     const first = text(response).split("\n")[0];
     assert.match(first, /SKILLS BEHIND.*someone\/fork.*not updated/);
     assert.ok(!first.includes("npx skills add iskron-ai/skills"), first);
+  });
+});
+
+test("skills catchup: a forked plugin is not told to replace itself with the canonical plugin", async () => {
+  await fixture("claude-code", "0.1.0", "someone/fork", true, async ({ response }) => {
+    const first = text(response).split("\n")[0];
+    assert.match(first, /source ownership is not proven/);
+    assert.ok(!first.includes("/plugin marketplace update iskron"), first);
+    assert.match(first, /doctor/);
   });
 });
 

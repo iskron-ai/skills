@@ -6,17 +6,17 @@ import { seatProof } from "./seatproof.ts";
 import { skillCatchupNotice } from "./skillcatchup.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-export function standAnswer(
+export async function standAnswer(
   msg: JsonRpcMessage,
   lines: string[],
   realm: string,
   basis: SpawnedFor | undefined,
   isError: boolean,
   fresh = false,
-): JsonRpcMessage {
+): Promise<JsonRpcMessage> {
   const proof = seatProof(heldKey(realm));
   const receipt = basis ? claimReceipt(proof.place ?? {}) : undefined;
-  const notice = isError ? null : skillCatchupNotice();
+  const notice = isError ? null : await skillCatchupNotice();
   return {
     jsonrpc: "2.0",
     id: msg.id,
