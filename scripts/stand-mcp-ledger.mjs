@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 const UPSTREAM = "https://nks.lab.mirari.ru/mcp-iskron";
 const HOP = new Set(["host", "connection", "content-length", "transfer-encoding", "keep-alive", "upgrade", "proxy-authenticate", "proxy-authorization", "te", "trailer"]);
 // fetch injection is for offline tests only; the CLI has no upstream override.
-export function createLedger({ record, fetchImpl = fetch }) {
+export function createLedger({ record, fetchImpl = fetch, authorizeRequest }) {
   const controllers = new Set();
   const server = http.createServer(async (req, res) => {
     if (req.url !== "/mcp-iskron") { res.writeHead(404).end(); return; }
@@ -20,6 +20,18 @@ export function createLedger({ record, fetchImpl = fetch }) {
       const parts = [];
       for await (const chunk of req) parts.push(chunk);
       const body = Buffer.concat(parts);
+      // Optional reader boundary. Reject before forwarding; parse failures fail closed.
+      // This gates this HTTP path only, not a client's alternate network or filesystem paths.
+      if (authorizeRequest) {
+        let request;
+        try { request = JSON.parse(body.toString()); } catch {}
+        if (!authorizeRequest(request)) {
+          res.writeHead(403, { "content-type": "application/json" });
+          res.end(JSON.stringify({ jsonrpc: "2.0", id: request?.id ?? null,
+            error: { code: -32003, message: "reader graph-only boundary" } }));
+          return;
+        }
+      }
       let initialize = false;
       try { initialize = JSON.parse(body.toString()).method === "initialize"; } catch {}
       const headers = new Headers();

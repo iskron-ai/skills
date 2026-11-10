@@ -1,0 +1,22 @@
+{
+  "source":"@nks/nks-dev #10087 v8, #10134 v8; API 0.180.0 on isolated LAB required, not yet observed",
+  "arms": {
+    "current":{"NKS_ROOM_OUTCOME_NODE":"off","NKS_ROOM_HEARD_WRITES":"off"},
+    "door":{"NKS_ROOM_OUTCOME_NODE":"enforce","NKS_ROOM_HEARD_WRITES":"off"},
+    "audibility":{"NKS_ROOM_OUTCOME_NODE":"shadow","NKS_ROOM_HEARD_WRITES":"enforce"}
+  },
+  "samples":[
+    {"id":"mode","do":"Read GET /schema rooms.arms, startup line and nks_room_arm_mode; record raw bytes and effective modes","expect":"Exact modes for the selected arm. Unknown/missing/mismatch stops; no inference from the subject's report."},
+    {"id":"door-negative","do":"Agent line verdict=ok without nodes/cites/no_node","expect":{"current":"accepted","door":"422 room_outcome_needs_node","audibility":"accepted with room_outcome_without_node warning"}},
+    {"id":"door-own","do":"Outcome nodes=[own node and exact own/satellite-authored version]","expect":"accepted; event author attested, otherwise record node_author_unattested and do not claim own-author enforcement"},
+    {"id":"door-foreign","do":"Outcome cites=[foreign node and current version]; repeat with stale version","expect":{"door":"fresh accepted; stale 422 cited_version_stale","audibility":"stale warned, not refused"}},
+    {"id":"door-forged-own","do":"Outcome nodes=[attested other seat's version, not own/satellite]","expect":{"door":"422 node_not_edited_by_seat","audibility":"warning, not refusal"}},
+    {"id":"audibility-long","do":"Agent said text is exactly 601 characters; same text as human, then agent text exactly 600 characters","expect":{"current":"all accepted","door":"all accepted (non-outcome said)","audibility":"601 agent 422 text_too_long; human accepted; 600 agent accepted when proportion reset"}},
+    {"id":"audibility-proportion","do":"After graph write in room, same seat says 4 short non-outcome words with no node/ask/answer between","expect":{"current":"four accepted","door":"four accepted","audibility":"first three accepted; fourth 422 room_words_outpace_graph"}},
+    {"id":"audibility-addressed","do":"Agent graph write with in_room, bound to another listening seat, awaits <=200 chars; tap recipient raw frame before client rendering","expect":{"current":"to/awaits discarded; no addressed write-as-word","door":"to/awaits discarded; no addressed write-as-word","audibility":"recipient gets node-update frame containing exact node/version/to/awaits and stack=interrupt; receipt is not an inference from write success"}},
+    {"id":"audibility-bad-address","do":"Graph write addresses nonexistent or other-realm seat","expect":{"audibility":"422 room_addressee_unknown"}},
+    {"id":"reader-denial","do":"From reader's actual credentials and actual allowed client path, read own graph then attempt case read/history; attempt direct alternate path","expect":"Graph read succeeds, all case access denied by permission/network/process boundary, no fallback credentials or reachable direct API. Local policy tests alone do not pass this sample."},
+    {"id":"guard","do":"Independent supervisor kills only its synthetic child before third loopback POST; attempt real-model basis","expect":"2 synthetic POSTs, child SIGKILL, third never posted; real-model basis refused before any POST. Synthetic success does not permit real-model launch."}
+  ],
+  "evidence":"Every sample pending on LAB. Fixtures and unit assertions are not observed server outcomes. Raw server+bridge records required, no report-derived counts. No sample spends any of the 9 model slots."
+}
