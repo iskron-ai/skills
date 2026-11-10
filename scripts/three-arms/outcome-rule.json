@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "source": "@nks/nks-dev #10139 v8; case 4370 [32], [34], [43]; case 4375 [11]",
+  "implementation": "score.mjs",
+  "scope": "Offline calculation of an explicit anonymized cold evidence packet; no live collection or judging",
+  "survival": "k out of 12: occurred decisions judged found-with-node with a versioned node; missing decisions never survive",
+  "whole": "Completed, at most two missing decisions; stopped or infrastructure-invalid slots excluded, never silently retried; three slots per arm",
+  "aggregation": "Median k over whole runs, lower of two; spread max(k)-min(k); fewer than two whole runs cannot compare",
+  "pair": "Absolute delta of median k and r=max(spreads); r>delta indistinguishable; delta>=3 and r<=1 selects greater survival",
+  "secondary": "Otherwise median calls/12 and median total traversals over whole runs, WORSE (larger) of two whole runs; call improvement at least 20%, traversal improvement at least one; winner improves one without losing the other, survival cannot be lower; equality/conflict indistinguishable",
+  "selection": "A selected arm must win both its pairs; otherwise report all pairs without selecting",
+  "satellite": "Frozen allowed choices unchanged; realized choice and reasoning extracted only from the case journal before judging reader responses, never from graph writes or agent reports",
+  "boundaries": "Percentage of larger calls (100 to 80); denominator always 12, never surviving decisions; 0/0 equal, zero vs positive better (100%), no division by zero; no worse means neither raw secondary median increases",
+  "pending": ["Parent integrates guard before final launch freeze; this freeze is intermediate only"]
+}

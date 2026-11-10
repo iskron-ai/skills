@@ -28,7 +28,8 @@ export function digest(parts) {
 
 export function loadPackage() {
   const names = ["scene.json", "oracle.json", "protocol.mjs", "guard.mjs", "reader.mjs", "controls.json",
-    "preflight.mjs", "stub-child.mjs", "instrument.test.mjs", "README.md", "../stand-mcp-ledger.mjs"];
+    "preflight.mjs", "stub-child.mjs", "instrument.test.mjs", "README.md", "../stand-mcp-ledger.mjs",
+    "outcome-rule.json", "score.mjs", "score-schema.mjs", "score.test.mjs"];
   const parts = names.map((name) => [name, readFileSync(new URL(name, import.meta.url))]);
   const scene = JSON.parse(parts[0][1]);
   const oracle = JSON.parse(parts[1][1]);
