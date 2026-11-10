@@ -14,9 +14,68 @@ import {
   waitFor,
   withMux,
 } from "./mux-kit.mjs";
+import { ask } from "./room-frames.mjs";
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
+
+test("a deliberate repeat keeps the card entry but a new frame id; a network duplicate stays quenched", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "repeat-wire" }), "stands");
+    const channel_id = channelOf(fake, "repeat-wire");
+    await muxCarrying(fake, mux, [channel_id]);
+    const original = { ...ask(41), channel_id, id: "clock-card-original" };
+    assert.equal(original.event_id, undefined);
+    mux.push(original);
+    await waitFor("the original card", () => a.heard("clock-card-original"));
+    const repeated = { ...original, id: "clock-card-repeat", repeat: true, repeat_n: 1 };
+    mux.push(repeated);
+    await waitFor("the intentional repeat", () => a.heard("clock-card-repeat"));
+    mux.push(repeated);
+    await sleep(300);
+    assert.equal(a.heard("clock-card-original"), 1);
+    assert.equal(
+      a.heard("clock-card-repeat"),
+      1,
+      "a new id survives; the same id is not delivered twice",
+    );
+  });
+});
+
+test("card envelopes are sanitized before delivery and do not become event identities", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const a = await session();
+    ok(await a.stand({ realm: REALM, karta: 931, name: "cards-wire" }), "stands");
+    const channel_id = channelOf(fake, "cards-wire");
+    await muxCarrying(fake, mux, [channel_id]);
+    const frame = (id, my_open_cards) => ({
+      type: "message",
+      channel_id,
+      id,
+      body: id,
+      my_open_cards,
+      provenance: { from_standing: "@sender:probe", from_karta_seq: 9 },
+    });
+    const cards = { count: 2, oldest_at: "2026-11-10T12:00:00Z" };
+    mux.push(frame("cards-wire-one", cards));
+    await waitFor("first card carrier", () => a.heard("cards-wire-one"));
+    mux.push(frame("cards-wire-one", cards));
+    mux.push(frame("cards-wire-two", cards));
+    await waitFor("distinct carrier with the same snapshot", () => a.heard("cards-wire-two"));
+    await sleep(300);
+    assert.equal(a.heard("cards-wire-one"), 1, "same event wakes once");
+    assert.equal(a.heard("cards-wire-two"), 1, "snapshot equality does not drop another event");
+    mux.push(frame("cards-wire-invalid", { count: "SECRET-CARDS", oldest_at: "SECRET-CARDS" }));
+    await waitFor("malformed snapshot carrier", () => a.heard("cards-wire-invalid"));
+    assert.equal(
+      a.heard("SECRET-CARDS"),
+      0,
+      "neither raw nor structured notification leaks invalid values",
+    );
+    assert.ok(a.frames.some((f) => JSON.stringify(f).includes('"my_open_cards":null')));
+  });
+});
 
 test("a frame without channel_id: a line in the journal, the connection lives", async () => {
   await withMux(async ({ fake, mux, session, journal }) => {

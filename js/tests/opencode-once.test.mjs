@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { clockNotice, legacyClockBatch } from "./clock-notices.mjs";
 import { BATCH_MS, delay, plugin, SANDBOX, until } from "./opencode-kit.mjs";
 import {
   ack,
@@ -74,6 +75,137 @@ const word = roomFrame("said", {
   envelope: { addressee: ME },
   body: "ТЕЛО-СЛОВА-201",
 });
+
+for (const [kind, variant, data] of [
+  ["card_unanswered", "seat", {}],
+  [
+    "card_unanswered",
+    "role",
+    {
+      to: { standing_id: null, standing: null, karta_seq: 163 },
+      listening: null,
+      last_act_at: null,
+    },
+  ],
+  ["line_due", "holder", {}],
+  ["line_due", "escalated", { escalated: true }],
+])
+  test(`clock notice ${kind}/${variant} crosses existing message dispatch in the built plugin`, async () => {
+    const { rec, prompt } = await seated(`clock-${kind}-${variant}`, `s-clock-${kind}-${variant}`);
+    try {
+      const text = await prompt(clockNotice(kind, data));
+      for (const fact of ["4330", "[41]", "clock-key", "163"])
+        assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+      if (variant !== "role") assert.match(text, /@h:recipient/);
+      if (kind === "line_due")
+        assert.match(text, new RegExp(`передано постановщику: ${data.escalated ? "да" : "нет"}`));
+      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+      assert.match(await prompt(word), /ТЕЛО-СЛОВА-201/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+// #10167 v9: a server snapshot is context, not a locally counted event or clock.
+for (const kind of ["stale", "backlog"])
+  for (const riding of [false, true])
+    test(`legacy clock batch ${kind} riding=${riding} is rebuilt by the built plugin`, async () => {
+      const { rec, ride, send } = await seated(
+        `clock-batch-${kind}-${riding}`,
+        `s-clock-batch-${kind}-${riding}`,
+      );
+      try {
+        if (riding) await ride(progress(45, "riding-clock"));
+        send(kind, legacyClockBatch(kind, word));
+        await until(() => rec.prompts.length > 0, "the structural clock batch");
+        await delay(BATCH_MS * 3);
+        assert.equal(rec.prompts.length, 1);
+        const text = rec.prompts[0].text;
+        for (const fact of [
+          "BATCH-HEAD",
+          "4330",
+          "[41]",
+          "clock-key",
+          "@h:recipient",
+          "2026-11-10T12:05:00Z",
+          "2026-11-10T12:00:00Z",
+          "ТЕЛО-СЛОВА-201",
+        ])
+          assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+        assert.match(text, /передано постановщику: да/);
+        assert.match(text, new RegExp(`записей ${riding ? 2 : 1}, тебе 1`));
+        assert.doesNotMatch(text, /RAW-|OLD-TEXT|SERVER-BODY|UNSHOWN-BODY|\[object Object\]/);
+        assert.ok(text.indexOf("срок строки") < text.indexOf("карточка без ответа"), text);
+      } finally {
+        await rec.stop();
+      }
+    });
+
+for (const kind of ["stale", "backlog"])
+  test(`legacy clock batch ${kind} without structure retains the text fallback`, async () => {
+    const { rec, send } = await seated(`clock-fallback-${kind}`, `s-clock-fallback-${kind}`);
+    try {
+      send(kind, { text: "LEGACY-TEXT-ONLY" });
+      await until(() => rec.prompts.length > 0, "the legacy text");
+      assert.match(rec.prompts[0].text, /LEGACY-TEXT-ONLY/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+for (const [name, snapshot, expected] of [
+  ["zero", { count: 0, oldest_at: null }, /карточек без ответа: 0/],
+  [
+    "positive",
+    { count: 2, oldest_at: "2026-11-10T12:00:00Z" },
+    /карточек без ответа: 2.*2026-11-10T12:00:00Z/,
+  ],
+  ["omitted", undefined, /карточек без ответа: неизвестно/],
+  ["malformed", { count: "SECRET", oldest_at: "SECRET" }, /карточек без ответа: неизвестно/],
+])
+  test(`server card envelope ${name} is rendered without inferring a count`, async () => {
+    const { rec, prompt } = await seated(`cards-${name}`, `s-cards-${name}`);
+    try {
+      const frame = { ...word, id: `cards-${name}`, my_open_cards: snapshot };
+      const text = await prompt(frame);
+      assert.match(text, expected);
+      assert.doesNotMatch(text, /SECRET/);
+      assert.match(text, /ТЕЛО-СЛОВА-201/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+test("hello card context wakes nothing and rides the next context admission", async () => {
+  const { rec, ride } = await seated("cards-hello", "s-cards-hello");
+  try {
+    const hello = { type: "hello", my_open_cards: { count: 2, oldest_at: "2026-11-10T12:00:00Z" } };
+    await ride(hello);
+    await ride(hello);
+    await rec.promptRaw("s-cards-hello", "go");
+    const text = await rec.context("s-cards-hello");
+    assert.match(text, /карточек без ответа: 2.*2026-11-10T12:00:00Z/);
+    assert.equal(times(text, "карточек без ответа"), 1);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("an intentional card repeat with a new frame id retains its entry and names the server repeat number", async () => {
+  const { rec, prompt } = await seated("cards-repeat", "s-cards-repeat");
+  try {
+    const original = { ...ask(801), id: "card-original" };
+    assert.equal(original.event_id, undefined, "card frames have no graph event identity");
+    await prompt(original);
+    const repeated = { ...original, id: "card-repeat-1", repeat: true, repeat_n: 1 };
+    const text = await prompt(repeated);
+    assert.match(text, /\[801\]/);
+    assert.match(text, /повтор карточки: 1/);
+    assert.match(text, /Выкатывать сегодня\?/);
+  } finally {
+    await rec.stop();
+  }
+});
 // A record to the seat that piles (its kind's rule is batch), with a count riding beside it.
 for (const [kind, frame, facts] of [
   ["word", word, ["[201]", "ТЕЛО-СЛОВА-201", "@aleksei:probe"]],
@@ -98,7 +230,8 @@ test("a pile of several records to the seat puts each under the one count", asyn
     const text = await prompt(progress(44, "k-44"), word, ask(202), ack(203, 150, ME));
     once(text, LABEL, "[201]", "[202]", "[203]");
     assert.match(text, /^№7 «Стенд»: записей 4, тебе 3; /, text);
-    for (const line of text.split("\n").slice(1)) assert.match(line, /^\[20[123]\] /, text);
+    for (const line of text.split("\n").slice(1, -1)) assert.match(line, /^\[20[123]\] /, text);
+    assert.equal(text.split("\n").at(-1), "карточек без ответа: неизвестно");
   } finally {
     await rec.stop();
   }
@@ -108,7 +241,8 @@ test("a person's answer alone is one short line, every fact once", async () => {
   const { rec, prompt } = await seated("once-answer", "s-answer");
   try {
     const text = await prompt(answer(204, 202));
-    assert.equal(text.split("\n").length, 1, text);
+    assert.equal(text.split("\n").length, 2, text);
+    assert.equal(text.split("\n")[1], "карточек без ответа: неизвестно");
     once(text, LABEL, "[204]", "[202]", "после обеда", "@dmitry:phone");
   } finally {
     await rec.stop();
@@ -187,7 +321,8 @@ for (const kind of ["stale", "backlog"])
       assert.match(text, /№7 «Стенд»: записей 2, тебе 1; /, text);
       once(text, LABEL, "[82]");
       const next = await prompt(answer(204, 202));
-      assert.equal(next.split("\n").length, 1, `the case again in the next prompt:\n${next}`);
+      assert.equal(next.split("\n").length, 2, `the case again in the next prompt:\n${next}`);
+      assert.equal(next.split("\n")[1], "карточек без ответа: неизвестно");
     } finally {
       await rec.stop();
     }

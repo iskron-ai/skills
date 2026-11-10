@@ -7,7 +7,7 @@ import { build } from "esbuild";
 
 // Execute the source words in isolation: no shared dev build, sockets or private memory.
 // prettier-ignore
-const modules = ["prepare", "rites", "compaction", "turn", "launch", "rootseat", "plugin", "leads", "backlog", "stalebatch", "opencode", "opencode-keep", "watchdog", "onboardstart"];
+const modules = ["prepare", "rites", "compaction", "turn", "launch", "satellite", "rootseat", "plugin", "leads", "backlog", "stalebatch", "opencode", "opencode-keep", "watchdog", "onboardstart"];
 const { outputFiles } = await build({
   stdin: {
     contents: modules.map((m) => `export * from './js/delivery/words/${m}.ts';`).join("\n"),
@@ -49,7 +49,7 @@ const cases = [
   ["COMPACTION.keep", ["931", "agent", "r5"], 200, [/#931/, /agent/, /r5/, /мост/, /дел/, /номер/, /iskron/]],
   ["COMPACTION.back", ["931", "agent", "r5"], 260, [/#931/, /agent/, /r5/, /мост/, /iskron/, /recall/]],
   ["COMPACTION.bare", [], 200, [/iskron/, /recall/]],
-  ["TURN.wake", [], 190, [/ask/, /iskron_case/, /iskron_channel/, /ход кончен/]],
+  ["TURN.wake", [], 190, [/ask/, /iskron_case/, /line/, /say с to/, /ход кончен/]],
   ["LAUNCH.notSeated", ["отказ", "3494", "iskron_case(realm, action=join)"], 280, [/спутник/, /запустивш/, /iskron_stand/, /3494/, /action=join/, /без графа/]],
   ["ROOT_SEAT.seated", ["agent", "931", "r5", "AGENTS.md"], 200, [/agent/, /931/, /r5/, /подписаны/, /предварительное/, /без take/]],
   ["ROOT_SEAT.ownSeated", ["agent", "931", "r5", "AGENTS.md"], 160, [/своим/, /agent/, /подписаны/, /take/]],
@@ -86,6 +86,17 @@ for (const [name, args, limit, required] of cases) {
   });
 }
 
+test("launch and satellite words address the receipt and keep progress in lines", () => {
+  for (const lang of ["ru", "en"])
+    for (const text of [
+      words.LAUNCH[lang].entered("agent", "3494"),
+      words.SATELLITE[lang].listen(60),
+    ]) {
+      for (const field of [/say/, /\bto\b/, /in_reply_to/, /line/]) assert.match(text, field);
+      assert.doesNotMatch(text, /первым словом|first message/);
+    }
+});
+
 test("guard sample matches the executable source word", () => {
   const sample = readFileSync("skills/iskronify/references/hooks.md", "utf8");
   assert.ok(sample.includes(words.PREPARE.ru.guard("<Граф>", "<Раздел персистентности>")));
@@ -108,7 +119,7 @@ test("optional addresses and sections are not invented; counts keep their branch
   assert.doesNotMatch(words.PREPARE.ru.guard("r5", null), /Правила персистентности|undefined/);
   assert.doesNotMatch(words.RITES.ru.merge(), /#|«|undefined/);
   assert.match(words.COMPACTION.ru.back("", "agent", "r5"), /<роль>/);
-  assert.match(words.LAUNCH.ru.entered("agent", "3494"), /agent.*3494.*первым словом.*бриф.*деле/);
+  assert.match(words.LAUNCH.ru.entered("agent", "3494"), /agent.*3494.*бриф.*say.*to.*in_reply_to/);
   assert.match(words.PLUGIN.ru.dead(4002), /4002.*просто[юя].*iskron_stand/);
   assert.equal(words.BACKLOG.ru.head(1, 0, 1, 0), "Побудка: кадров 1.");
   assert.equal(words.STALE.ru.head(1, 1), "Лежалых кадров: 1.");

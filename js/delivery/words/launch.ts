@@ -19,7 +19,7 @@ export const LAUNCH: Readonly<Record<Lang, LaunchWords>> = {
     notEntered: (place, no, why) =>
       `Искрон: встал ${place}; в дело №${no} не вошёл — ${why}. Место остаётся.`,
     entered: (place, no) =>
-      `Искрон: встал ${place}, вошёл в дело №${no} — первым словом перескажи бриф в деле.`,
+      `Искрон: встал ${place}, вошёл в дело №${no}: перескажи бриф через say с to запустившему и in_reply_to на поручение; адрес неизвестен — прочти участников. Ход и исход — line своего ключа, без дубля say.`,
   },
   en: {
     notSeated: (why, no, join) =>
@@ -29,6 +29,6 @@ export const LAUNCH: Readonly<Record<Lang, LaunchWords>> = {
     notEntered: (place, no, why) =>
       `Iskron: seated ${place}; did not enter case №${no} — ${why}. The seat stays.`,
     entered: (place, no) =>
-      `Iskron: seated ${place}, entered case №${no} — retell the brief as your first message in the case.`,
+      `Iskron: seated ${place}, entered case №${no}: restate the brief by say with to the launcher and in_reply_to the assignment; unknown address — read the participants. Progress and outcome — line by your key, no duplicate say.`,
   },
 };
