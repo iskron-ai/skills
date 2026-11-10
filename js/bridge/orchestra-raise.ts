@@ -6,7 +6,8 @@
 // the description's own for that repository, else exactly one ready local Orca setup of the
 // project whose remote is the invite's repository (#4518), and its cover names the call's graph
 // and role — the raised root seats itself by it (№4050 [56]); no checkout and a description
-// that allows it — Orca clones the repository first (orchestra-clone.ts, #10078). Anything
+// that allows it — Orca clones the repository in the background, a later tact raises it
+// (orchestra-clone.ts, #10078). Anything
 // else is an outcome said aloud, nothing launched. The invite is taken by the raised agent's own registration with
 // spawned_for (its first brief line) — not here; the registry row is written before the launch,
 // so a crash never launches twice.
@@ -15,7 +16,7 @@ import { existsSync, statSync } from "node:fs";
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { readCover } from "../shared/cover.ts";
 import { words } from "../shared/lang.ts";
-import { orcaClone } from "./orchestra-clone.ts";
+import { cloneTaken, cloneTurn, specOf } from "./orchestra-cloning.ts";
 import { accountOf, type Launcher, type Launchers } from "./orchestra-launchers.ts";
 import {
   type CheckoutOf,
@@ -136,16 +137,19 @@ export async function raiseRows(
       );
     let worktree = find();
     if (typeof worktree !== "string" && worktree.code === "no_checkout" && own.clone) {
-      const failed = await orcaClone(own.clone, repository);
-      if (failed) {
-        said.push(w().leadRow(realm, room, invite, failed));
+      const spec = specOf(own);
+      const turn = await cloneTurn(authDir, own.clone, spec, repository, gone);
+      if (turn === "gone") break;
+      if (turn !== "cloned") {
+        said.push(w().leadRow(realm, room, invite, turn));
         continue;
       }
       // Orca's projects changed: read again; a clone it did not register is said, kept.
       orca = await orcaCheckouts();
       worktree = find();
-      if (typeof worktree !== "string" && worktree.code === "no_checkout")
-        worktree = { code: "clone_failed (clone_unregistered)" };
+      const lost = typeof worktree !== "string" && worktree.code === "no_checkout";
+      const why = cloneTaken(authDir, repository, spec, !lost);
+      if (why) worktree = { code: why };
     }
     if (typeof worktree !== "string") {
       said.push(w().leadRow(realm, room, invite, worktree.code));

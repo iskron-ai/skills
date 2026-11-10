@@ -3,10 +3,10 @@
 // lists the call's host/org in allow. The url is https of the invite's repository host/org/repo;
 // the folder is <clone_root>/<org>/<repo> and is never overwritten; the clone is Orca's own
 // `project setup-clone`, one argv array, the machine's git credentials — the bridge holds none.
-// Its output is never repeated: a failure is its exit code only.
-import { existsSync, mkdirSync } from "node:fs";
+// It runs in the daemon's background, not inside the tact (orchestra-cloning.ts).
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { run } from "./orchestra-orca.ts";
 
@@ -18,8 +18,6 @@ export interface ClonePolicy {
 
 const ALLOW = /^[^\s/:@]+\/[^\s/:@]+$/;
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
-/** A clone takes longer than a launch: a large repository over a slow line. */
-const CLONE_MS = 600_000;
 
 const hostLower = (hostOrg: string): string => {
   const [host, org] = hostOrg.split("/");
@@ -60,7 +58,7 @@ export function cloneTarget(
 }
 
 /** The installed Orca declares setup-clone with the flags used (#9966). */
-async function cloneDeclared(): Promise<boolean> {
+export async function cloneDeclared(): Promise<boolean> {
   const ctx = await run(["agent-context", "--json"], 10_000);
   try {
     const schema = JSON.parse(ctx.out) as {
@@ -75,19 +73,4 @@ async function cloneDeclared(): Promise<boolean> {
 
 export function cloneArgv(url: string, destination: string): string[] {
   return ["project", "setup-clone", "--url", url, "--destination", destination];
-}
-
-/** Clone through Orca; null — cloned, a code otherwise. */
-export async function orcaClone(policy: ClonePolicy, repository: string): Promise<string | null> {
-  const target = cloneTarget(policy, repository);
-  if ("code" in target) return target.code;
-  if (!(await cloneDeclared())) return "clone_failed (orca_schema_unverified)";
-  try {
-    mkdirSync(dirname(target.destination), { recursive: true });
-  } catch {
-    return "clone_failed (clone_root_unwritable)";
-  }
-  const r = await run(cloneArgv(target.url, target.destination), CLONE_MS);
-  if (r.code === 0) return null;
-  return `clone_failed (${r.code === "timeout" ? "clone_timeout" : `clone_exit_${r.code}`})`;
 }
