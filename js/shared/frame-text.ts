@@ -252,14 +252,14 @@ export function batchShown(frames: Frame[]): Shown[] {
   });
 }
 
-/** Addressed records as their whole text (frameToText), cut at `cap` characters: stale and wake-up batches. */
+/** Addressed bodies without per-envelope card context, cut at `cap`: stale and wake-up batches. */
 export const textShown = (frames: Frame[], cap: number): Shown[] =>
   frames
     .filter((f) => addressedToMine(f))
     .map((f) => ({
       frame: f,
       text: (withCase: boolean) => {
-        const t = [...frameToText(f, JSON.stringify(f), withCase)];
+        const t = [...frameText(f, JSON.stringify(f), withCase)];
         return t.length > cap ? t.slice(0, cap).join("") + "…" : t.join("");
       },
     }));
@@ -272,13 +272,19 @@ export const batchText = (counted: Frame[], frames: Frame[] = counted): string =
  * Count lines with the shown records under their case's count (#9654): a case is named
  * once, in its count — its records carry no number or opening. A shown record whose case
  * is not counted keeps its label and follows the counts.
+ * `cardFrames` selects snapshot context independently of the counted or shown records.
  */
-export function underCounts(counted: Frame[], shown: Shown[], incomplete = false): string[] {
-  const lines = groupedCounts(counted, shown, incomplete);
-  const cards = cardsIn([
+export function underCounts(
+  counted: Frame[],
+  shown: Shown[],
+  incomplete = false,
+  cardFrames: readonly Frame[] = [
     ...counted,
     ...shown.map((s) => s.frame).filter((f) => !counted.includes(f)),
-  ]);
+  ],
+): string[] {
+  const lines = groupedCounts(counted, shown, incomplete);
+  const cards = cardsIn(cardFrames);
   return cards && !lines.some((line) => line.split("\n").includes(cards))
     ? [...lines, cards]
     : lines;

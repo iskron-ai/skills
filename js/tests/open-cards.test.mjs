@@ -1,10 +1,120 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { build } from "esbuild";
+
 import { batchText, frameToText } from "../shared/frame-text.ts";
 import { cardFrame, cardRepeatText, openCards, openCardsText } from "../shared/open-cards.ts";
 import { quiet } from "../shared/quietframe.ts";
 import { ME, roomFrame } from "./room-frames.mjs";
+
+// Exercise the canonical batch door bundled as in the pi/OpenCode artifacts.
+const { outputFiles } = await build({
+  entryPoints: [new URL("../shared/stalebatch.ts", import.meta.url).pathname],
+  bundle: true,
+  write: false,
+  platform: "node",
+  format: "esm",
+});
+const { staleBatch, batchBodyText } = await import(
+  `data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString("base64")}`
+);
+
+test("clipped batches use only the last input snapshot, not shown bodies or riders", () => {
+  for (const last of [{ count: 0, oldest_at: null }, undefined, { count: "SECRET" }]) {
+    const frames = Array.from({ length: 21 }, (_, i) => ({
+      type: "message",
+      id: `snapshot-${i}`,
+      body: `body-${i}-end`,
+      my_open_cards: i === 20 ? last : { count: 2, oldest_at: "2026-11-10T12:00:00Z" },
+    }));
+    const expected = openCardsText(frames[20]);
+    const result = staleBatch(frames, () => false);
+    assert.deepEqual(
+      result.body.shown,
+      Array.from({ length: 20 }, (_, i) => i),
+    );
+    assert.equal(result.body.incomplete, true);
+    assert.equal(result.keys.length, 21, "receipts still cover the entire input");
+    const rider = roomFrame("progress", {
+      envelope: { my_open_cards: { count: 9, oldest_at: "2026-11-10T12:00:00Z" } },
+    });
+    for (const text of [
+      result.text,
+      batchBodyText(frames, { head: "selected", shown: [3, 1], incomplete: true }, [rider]),
+    ]) {
+      assert.equal(text.split("карточек без ответа").length - 1, 1, text);
+      assert.ok(text.endsWith(expected), text);
+      assert.doesNotMatch(text, /SECRET|body-20-end/);
+    }
+    const selected = batchBodyText(
+      frames,
+      {
+        head: "selected",
+        shown: [3, 1],
+        incomplete: true,
+      },
+      [rider],
+    );
+    assert.ok(selected.indexOf("body-3-end") < selected.indexOf("body-1-end"));
+    assert.doesNotMatch(selected, /body-0-end/);
+    assert.match(selected, /№7/);
+    assert.match(selected, /action="mine"/);
+  }
+});
+
+test("batch snapshot suppression keeps notice facts, ordinary bodies and case counts", () => {
+  const snapshot = { count: 2, oldest_at: "2026-11-10T12:00:00Z" };
+  const ordinary = {
+    type: "message",
+    id: "ordinary",
+    body: "ordinary-body",
+    my_open_cards: snapshot,
+  };
+  const notice = {
+    type: "message",
+    id: "notice",
+    my_open_cards: snapshot,
+    provenance: {
+      via: "platform",
+      auth: "none",
+      notice: "line_due",
+      notice_data: {
+        room: { id: "r-1", number: 7, realm: "nks-dev" },
+        key: "notice-key",
+        due_at: "2026-11-10T12:00:00Z",
+        escalated: false,
+        holder: { standing: ME, karta_seq: 931 },
+      },
+    },
+  };
+  const record = roomFrame("said", {
+    body: "case-body",
+    envelope: { addressee: ME, my_open_cards: snapshot },
+  });
+  const last = {
+    type: "message",
+    id: "hidden",
+    body: "hidden-body",
+    my_open_cards: { count: 0, oldest_at: null },
+  };
+  const text = batchBodyText(
+    [ordinary, notice, record, last],
+    {
+      head: "selected",
+      shown: [0, 1, 2],
+      incomplete: true,
+    },
+    [roomFrame("progress")],
+  );
+  assert.match(text, /ordinary-body/);
+  assert.match(text, /notice-key/);
+  assert.match(text, /case-body/);
+  assert.match(text, /записей 2/);
+  assert.doesNotMatch(text, /hidden-body/);
+  assert.equal(text.split("карточек без ответа").length - 1, 1, text);
+  assert.ok(text.endsWith(openCardsText(last)), text);
+});
 
 test("server card counts require a coherent count and timestamp, not coercion or raw text", () => {
   const raw = {
