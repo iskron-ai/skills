@@ -121,7 +121,8 @@ node ~/.iskron-bridge/iskron-bridge.mjs update
 - `account_unknown` — мост не узнал свою учётку: такт ничего не поднимает;
 - `host_elsewhere (<машина>)` — запускатель описан для другой машины: зов ждёт её оркестратора, либо поправь `host` в описании;
 - `harness_unsupported` — харнес не поднимается этим путём (сейчас только `opencode`);
-- `no_checkout`, `ambiguous_checkout`, `checkout_absent` — у холона нет `repository`, или Orca не знает ровно одной готовой локальной копии проекта, или каталога нет: владелец Orca настраивает проект либо кладёт карту `checkouts` в описание;
+- `no_checkout`, `ambiguous_checkout`, `checkout_absent` — у холона нет `repository`, или Orca не знает ровно одной готовой локальной копии проекта, или каталога нет: владелец Orca настраивает проект либо кладёт карту `checkouts` в описание (или разрешает клон полями `clone`, `clone_root`, `allow` — **minding**);
+- `clone_refused (…)`, `clone_failed (…)` — клон не разрешён: адрес вне `allow`, у холона нет `repository` или он не вида хост/орг/репо, папка уже есть (её не перезаписывают — разбери сам); либо Orca или git отказали (`clone_exit_N`, `clone_timeout` — часто приватный репозиторий без доступа машины), Orca не знает `setup-clone` или склонировала, но не зарегистрировала (`clone_unregistered`). Склонированное не удаляется;
 - `checkout_uncovered`, `checkout_other_seat`, `checkout_cover_unresolved` — в копии нет обложки `AGENTS.md`, обложка называет другой граф или роль, чем зов, либо её `rN` не нашёлся в списке графов: поднятый агент садится только по обложке, поэтому запуска нет. Копию выравнивает **iskronify**;
 - `limit_reached` — запущено сколько разрешено, зов ждёт следующего такта;
 - `orca_version_unverified`, `orca_schema_unverified` — Orca не той версии или её команды не те, что знает мост: такт ничего не запускает;

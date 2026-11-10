@@ -65,6 +65,10 @@ export interface OrchestraWords {
   planAlready: (state: string) => string;
   /** Сухой такт: копию назвала бы Orca при запуске — сейчас её не спрашивают. */
   planCheckout: (repository: string) => string;
+  /** Сухой такт: не будь у Orca копии, склонировал бы этот адрес в этот каталог. */
+  planClone: (url: string, destination: string) => string;
+  /** Сухой такт: не будь у Orca копии, клон отказан этим кодом. */
+  planNoClone: (code: string) => string;
   /** Сухой такт: место брифа в argv. */
   planBrief: () => string;
   /** on --launcher: описание записано в mind (seq — номер узла, может быть пуст; holon — холон работы с агентами, пусто — корень). */
@@ -142,6 +146,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planRefuse: (code) => `отказал бы: ${code}`,
     planAlready: (state) => `уже в реестре: ${state}`,
     planCheckout: (repository) => `<копия Orca для ${repository}>`,
+    planClone: (url, destination) =>
+      `если у Orca нет копии — склонировал бы ${url} в ${destination}`,
+    planNoClone: (code) => `если у Orca нет копии — ${code}`,
     planBrief: () => "<бриф>",
     describeWritten: (launcher, seq, holon) =>
       `описание запускателя ${launcher} записано в mind${seq ? ` (#${seq})` : ""}` +
@@ -218,6 +225,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     planRefuse: (code) => `would refuse: ${code}`,
     planAlready: (state) => `already in the registry: ${state}`,
     planCheckout: (repository) => `<orca checkout of ${repository}>`,
+    planClone: (url, destination) =>
+      `if Orca has no checkout — would clone ${url} into ${destination}`,
+    planNoClone: (code) => `if Orca has no checkout — ${code}`,
     planBrief: () => "<brief>",
     describeWritten: (launcher, seq, holon) =>
       `the description of launcher ${launcher} written in mind${seq ? ` (#${seq})` : ""}` +

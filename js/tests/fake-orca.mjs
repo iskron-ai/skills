@@ -2,7 +2,8 @@
 // --version and agent-context --json as 1.4.242 declared them, and records every other argv as a
 // JSON line in FAKE_ORCA_LOG instead of launching anything. FAKE_ORCA_VERSION, FAKE_ORCA_EXIT,
 // FAKE_ORCA_DELAY_MS change the version, the launch's exit code and how long it takes. The real `orca agent launch` is never run.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
@@ -11,7 +12,43 @@ if (args[0] === "--version") {
 }
 if (args[0] === "agent-context") {
   const flags = ["agent", "worktree", "prompt", "model", "effort", "surface", "focus", "json"];
-  process.stdout.write(JSON.stringify({ commands: [{ command: "agent launch", flags }] }) + "\n");
+  const clone = ["url", "destination", "project", "host", "display-name"];
+  const commands = [{ command: "agent launch", flags }];
+  if (process.env.FAKE_ORCA_NO_CLONE !== "1")
+    commands.push({ command: "project setup-clone", flags: clone });
+  process.stdout.write(JSON.stringify({ commands }) + "\n");
+  process.exit(0);
+}
+// project setup-clone (declared by agent-context 1.4.242, #9966; its answer unobserved): recorded,
+// then FAKE_ORCA_CLONE_EXIT fails it with a secret on both outputs; else the destination is made,
+// FAKE_ORCA_CLONE_COVER is its AGENTS.md, and — unless FAKE_ORCA_CLONE_UNREGISTERED=1 — a ready
+// local setup of the url joins the laid projects.
+if (args[0] === "project" && args[1] === "setup-clone") {
+  appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+  const fail = Number(process.env.FAKE_ORCA_CLONE_EXIT ?? 0);
+  if (fail) {
+    process.stdout.write("fatal: https://user:SECRET-TOKEN@host failed\n");
+    process.stderr.write("fatal: SECRET-TOKEN\n");
+    process.exit(fail);
+  }
+  const url = args[args.indexOf("--url") + 1];
+  const dest = args[args.indexOf("--destination") + 1];
+  mkdirSync(dest, { recursive: true });
+  if (process.env.FAKE_ORCA_CLONE_COVER)
+    writeFileSync(join(dest, "AGENTS.md"), process.env.FAKE_ORCA_CLONE_COVER);
+  const lay = process.env.FAKE_ORCA_PROJECTS;
+  if (lay && process.env.FAKE_ORCA_CLONE_UNREGISTERED !== "1") {
+    const all = existsSync(lay) ? JSON.parse(readFileSync(lay, "utf8")) : {};
+    (all.projects ??= []).push({ id: "p-clone", gitRemoteIdentity: { remoteUrl: url } });
+    (all.setups ??= []).push({
+      projectId: "p-clone",
+      path: dest,
+      setupState: "ready",
+      hostId: "local",
+    });
+    writeFileSync(lay, JSON.stringify(all));
+  }
+  process.stdout.write(JSON.stringify({ ok: true, result: {} }) + "\n");
   process.exit(0);
 }
 // project list / setups — the form observed on 1.4.242 (case №4050 [8]); FAKE_ORCA_PROJECTS —

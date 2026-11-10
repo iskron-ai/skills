@@ -1168,3 +1168,156 @@ test("quench: a seat the orchestrator did not launch is never stopped", async (t
   assert.equal(r.code, 0, r.err);
   assert.equal(o.fake.state.orders.human.length, 0);
 });
+
+// #10078, case №4206: a repository Orca does not know is cloned only by the description's leave.
+/** A leading daemon whose Orca knows no project and whose description allows the clone. */
+const cloning = (t, { body = {}, env = {} } = {}) =>
+  leading(t, {
+    descriptions: (checkout) => [
+      describe({
+        body: {
+          clone: true,
+          clone_root: join(dirname(checkout), "clones"),
+          allow: ["GitHub.com/probe"],
+          ...body,
+        },
+      }),
+    ],
+    projects: () => ({ projects: [], setups: [] }),
+    env: { FAKE_ORCA_CLONE_COVER: coverOf(), ...env },
+  });
+const clones = (o) => orcaCalls(join(o.dir, "orca.log")).filter((a) => a[1] === "setup-clone");
+const cloneDir = (o) => join(o.dir, "clones", "probe", "one");
+
+test("clone: no checkout and an allowed repository — Orca clones it over https, then it is launched there", async (t) => {
+  const o = await cloning(t);
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.deepEqual(clones(o), [
+    [
+      "project",
+      "setup-clone",
+      "--url",
+      "https://github.com/probe/one.git",
+      "--destination",
+      cloneDir(o),
+    ],
+  ]);
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+});
+
+test("clone: without clone in the description nothing is cloned — no_checkout as before", async (t) => {
+  const o = await leading(t, { projects: () => ({ projects: [], setups: [] }) });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_checkout/, r.out);
+  assert.equal(clones(o).length, 0);
+});
+
+test("clone: outside allow, no repository, an odd form or a taken folder — clone_refused, no call", async (t) => {
+  const o = await cloning(t);
+  mkdirSync(join(o.dir, "clones", "probe", "taken"), { recursive: true });
+  await o.queue([
+    invite(1, GOOD, "github.com/stranger/one"),
+    invite(2, GOOD, "github.com/probex/one"),
+    invite(3, GOOD, null),
+    invite(4, GOOD, "gitlab.com/probe/sub/one"),
+    invite(5, GOOD, "github.com/probe/taken"),
+    invite(6, GOOD, "github.com/probe/.."),
+  ]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  for (const [n, why] of [
+    [1, "not_allowed"],
+    [2, "not_allowed"],
+    [3, "no_repository"],
+    [4, "repository_form"],
+    [5, "destination_exists"],
+    [6, "repository_form"],
+  ])
+    assert.match(r.out, new RegExp(`invite ${n}: clone_refused \\(${why}\\)`), r.out);
+  assert.equal(clones(o).length, 0, "Orca was not asked to clone");
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: Orca or git refuse — clone_failed with the exit code only, no output repeated", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_EXIT: "128" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_exit_128\)/, r.out);
+  assert.doesNotMatch(r.out + r.err, /SECRET/, "the clone's output never leaves");
+  const st = await cli(o.dir, ["status"]);
+  assert.doesNotMatch(st.out + st.err, /SECRET/);
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: an Orca not declaring setup-clone is not asked to clone", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_NO_CLONE: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(orca_schema_unverified\)/, r.out);
+  assert.equal(clones(o).length, 0);
+});
+
+test("clone: the cloned repository without the cover is not launched and stays on disk", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_COVER: "" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: checkout_uncovered/, r.out);
+  assert.equal(o.launches().length, 0);
+  assert.ok(existsSync(cloneDir(o)), "the clone is not removed");
+});
+
+test("clone: cloned but not registered by Orca — clone_failed (clone_unregistered), kept; the next tact does not clone over it", async (t) => {
+  const o = await cloning(t, { env: { FAKE_ORCA_CLONE_UNREGISTERED: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: clone_failed \(clone_unregistered\)/, r.out);
+  assert.ok(existsSync(cloneDir(o)));
+  const again = await o.step();
+  assert.match(again.out, /invite 9: clone_refused \(destination_exists\)/, again.out);
+  assert.equal(clones(o).length, 1, "cloned once");
+  assert.equal(o.launches().length, 0);
+});
+
+test("clone: broken clone fields break the description, raising nothing", async (t) => {
+  for (const [body, code] of [
+    [{ clone: "yes" }, "clone_invalid"],
+    [{ clone_root: undefined }, "clone_root_invalid"],
+    [{ clone_root: "relative/dir" }, "clone_root_invalid"],
+    [{ allow: "github.com/probe" }, "allow_invalid"],
+    [{ allow: ["github.com"] }, "allow_invalid"],
+    [{ allow: [] }, "allow_invalid"],
+  ]) {
+    const o = await cloning(t, { body });
+    await o.queue([invite(9, GOOD)]);
+    const r = await o.step();
+    assert.match(
+      r.out,
+      new RegExp(`probe-mac in mind: ${code}`),
+      `${JSON.stringify(body)}\n${r.out}`,
+    );
+    assert.equal(clones(o).length + o.launches().length, 0);
+  }
+});
+
+test("clone: dry run says what it would clone, ~ in clone_root expanded, and calls no Orca", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-home-"));
+  const o = await cloning(t, { body: { clone_root: "~/src" }, env: { HOME: home } });
+  await o.queue([invite(9, GOOD), invite(2, GOOD, "github.com/stranger/one")]);
+  const r = await cli(o.dir, ["step", "--dry-run"]);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(
+    r.out,
+    new RegExp(
+      `invite 9: if Orca has no checkout — would clone https://github\\.com/probe/one\\.git into ${join(home, "src", "probe", "one")}`,
+    ),
+    r.out,
+  );
+  assert.match(r.out, /invite 9: would launch: /, r.out);
+  assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
+  assert.ok(!existsSync(join(o.dir, "orca.log")), "orca was not called");
+  assert.ok(!existsSync(join(home, "src")), "nothing made on disk");
+});

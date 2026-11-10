@@ -7,6 +7,7 @@
 // needed: it is the look before switching on.
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import { cloneTarget } from "./orchestra-clone.ts";
 import { readDemands } from "./orchestra-demands.ts";
 import type { OrchestraAnswer } from "./orchestra-door.ts";
 import { type Launchers, readLaunchers } from "./orchestra-launchers.ts";
@@ -77,8 +78,14 @@ export async function planTact(
         continue;
       }
       worktree = got;
-    } else if (got.code === ORCA) worktree = w().planCheckout(repository);
-    else {
+    } else if (got.code === ORCA) {
+      worktree = w().planCheckout(repository);
+      // Whether Orca knows the repository is not asked: the clone is said as conditional.
+      if (own.clone) {
+        const c = cloneTarget(own.clone, repository);
+        say("code" in c ? w().planNoClone(c.code) : w().planClone(c.url, c.destination));
+      }
+    } else {
       say(w().planRefuse(got.code));
       continue;
     }
