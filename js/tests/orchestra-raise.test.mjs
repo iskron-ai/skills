@@ -1305,14 +1305,29 @@ test("clone: an Orca whose setup-clone lacks a flag the clone needs is not asked
   assert.equal(clones(o).length, 0);
 });
 
-test("clone: a dry run gives no limit slot to a call whose clone it refuses", async (t) => {
+test("clone: a dry run judges Orca's checkout as there — the slot follows the launch, the clone is said as conditional", async (t) => {
   const o = await cloning(t, { body: { limit: 1 } });
   await o.queue([invite(2, GOOD, "github.com/stranger/one"), invite(9, GOOD)]);
   const r = await cli(o.dir, ["step", "--dry-run"]);
   assert.equal(r.code, 0, r.err + r.out);
   assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
-  assert.doesNotMatch(r.out, /invite 9: .*limit_reached/, r.out);
-  assert.match(r.out, /invite 9: would launch: /, r.out);
+  // The tact launches into a checkout Orca has, whatever the clone would say without it.
+  assert.match(
+    r.out,
+    /invite 2: would launch: .*orca checkout of github\.com\/stranger\/one/,
+    r.out,
+  );
+  assert.match(r.out, /invite 9: .*limit_reached/, r.out);
+  assert.equal(clones(o).length, 0, "no orca call");
+});
+
+test("clone: the repository's host in any case is the copy Orca registered — no clone_unregistered", async (t) => {
+  const o = await cloning(t);
+  await o.queue([invite(9, GOOD, "GitHub.com/probe/one")]);
+  const r = await stepThrough(o);
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.deepEqual(clones(o), [cloneCall(o)]);
+  assert.match(r.out, /invite 9: launched/, r.out);
 });
 
 test("clone: without clone in the description nothing is cloned — no_checkout as before", async (t) => {
