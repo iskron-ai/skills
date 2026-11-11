@@ -28,6 +28,11 @@ async function fixture(client, installed, source, plugin, fn, target = version) 
   mkdirSync(join(root, "establish-mcp", "scripts"), { recursive: true });
   writeFileSync(script, `const VERSION = "${installed}";`);
   writeFileSync(lock, JSON.stringify({ skills: { "establish-mcp": { source } } }));
+  if (plugin === "sibling-manifests")
+    for (const name of [".claude-plugin", ".codex-plugin"]) {
+      mkdirSync(join(root, "..", name), { recursive: true });
+      writeFileSync(join(root, "..", name, "plugin.json"), "{}");
+    }
   const before = [readFileSync(script, "utf8"), readFileSync(lock, "utf8")];
   const fake = await startFakeNks({ pat: "status-pat" });
   const child = spawn(NODE, [bridge, "daemon", "--auth-dir", join(dir, "auth")], {
@@ -45,7 +50,7 @@ async function fixture(client, installed, source, plugin, fn, target = version) 
     });
     hello.env.ISKRON_SKILLS_ROOT = root;
     hello.env.ISKRON_BRIDGE_LANG = "en";
-    hello.env.CLAUDE_PLUGIN_ROOT = plugin ? join(root, "..") : "";
+    hello.env.CLAUDE_PLUGIN_ROOT = plugin === true ? join(root, "..") : "";
     link = await connectSeam(seamSocketPath(join(dir, "auth")), hello, 3000);
     await rpc(
       link,
@@ -86,10 +91,11 @@ async function fixture(client, installed, source, plugin, fn, target = version) 
 for (const [client, plugin, command] of [
   ["opencode-iskron", false, "npx skills add https://github.com/iskron-ai/skills/tree/"],
   ["pi-iskron", false, "pi update git:github.com/iskron-ai/skills"],
+  ["pi-iskron", "sibling-manifests", "pi update git:github.com/iskron-ai/skills"],
   ["claude-code", true, "/plugin marketplace update iskron"],
   ["codex-mcp-client", true, "codex plugin marketplace upgrade iskron"],
 ])
-  test(`skills catchup: first line names stale set and ${client} command`, async () => {
+  test(`skills catchup: first line names stale set and ${client} command (${plugin})`, async () => {
     await fixture(client, "0.1.0", "iskron-ai/skills", plugin, async ({ response, link }) => {
       const first = text(response).split("\n")[0];
       assert.match(first, /SKILLS BEHIND/);

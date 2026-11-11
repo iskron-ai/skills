@@ -6,6 +6,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { assertExternalTmpdir } from "./tmpdir-guard.mjs";
+
+assertExternalTmpdir();
+
 /** Корень рабочей копии: в dev-дереве нет SKILL.md — набор скиллов пробы берут отсюда. */
 export const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const BUILT = process.env.ISKRON_BUILT_DIR || join(REPO, "dist", "dev");
