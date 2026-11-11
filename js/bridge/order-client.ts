@@ -1,0 +1,47 @@
+// The second LOCAL phase of a full stop (#9256): only a fresh interrupt-confirmed plugin
+// receipt can reach a launch this bridge proves own. Historical terminal acks never enter here.
+import { isHaltPhase } from "../shared/halt-phase.ts";
+import { CFG } from "./config.ts";
+import { H } from "./holdstate.ts";
+import { orcaCloseObserved } from "./orca-stop.ts";
+import { LIVE, readRuns, type Run } from "./orchestra-runs.ts";
+import { state } from "./transport.ts";
+
+const identity = (r: Run): string =>
+  JSON.stringify([r.realm, r.room, r.invite, r.standing_id, r.terminal, r.runtime, r.harness]);
+
+/** Capture before stopAgent forgets the main seat, then recheck before every irreversible act. */
+export function boundStop(standing: string): (code: string | null) => Promise<string | null> {
+  const realm = state.standing?.realm;
+  const runs = Object.entries(readRuns(CFG.authDir)).filter(
+    ([, r]) =>
+      r.realm === realm &&
+      r.standing_id === standing &&
+      r.harness === "opencode" &&
+      !!r.terminal &&
+      !!r.runtime &&
+      LIVE.includes(r.state),
+  );
+  const found = runs.length === 1 ? runs[0] : undefined;
+  const expected = found ? identity(found[1]) : null;
+  const generation = H.stopped.n + 1;
+  return async (code) => {
+    // These codes are issued only AFTER interrupt and dropping wakes. Archive has its own ceiling. It is not
+    // permission to close on another failure, nor an interpretation of an old halt_confirmed.
+    if (!isHaltPhase(code) || !found) return code;
+    const [key, r] = found;
+    if (!r.terminal || !r.runtime) return "client_unbound";
+    const current = (): boolean => {
+      const latest = readRuns(CFG.authDir)[key];
+      return (
+        H.stopped.n === generation &&
+        state.standing === null &&
+        !!latest &&
+        LIVE.includes(latest.state) &&
+        identity(latest) === expected
+      );
+    };
+    if (!current()) return "stop_superseded";
+    return orcaCloseObserved(r.terminal, r.runtime, current);
+  };
+}

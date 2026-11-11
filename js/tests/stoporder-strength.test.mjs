@@ -6,6 +6,8 @@
 //
 // ISKRON_BRIDGE_PATH aims the probe at any copy of the bridge.
 import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
@@ -105,6 +107,140 @@ test("failed keeps the harness's code (unknown — stoporder-outcome.test.mjs)",
   assert.deepEqual(states(fake, "ord-fl"), ["accepted", "failed"]);
   assert.equal(allAcks(fake, "ord-fl").at(-1).reason_code, "interrupt_refused");
 });
+
+for (const mode of [
+  "exit",
+  "no_archive",
+  "unobserved",
+  "foreign",
+  "archive_refused",
+  "runtime_changed",
+  "stand_again",
+])
+  test(`scoped Orca stop: archive phase ${mode}`, async (t) => {
+    const env = await setup(t);
+    const bin = join(env.dir, "bin");
+    mkdirSync(bin);
+    const cli = new URL("./fake-orca.mjs", import.meta.url).pathname;
+    writeFileSync(join(bin, "orca"), `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`, {
+      mode: 0o755,
+    });
+    const old = {
+      PATH: process.env.PATH,
+      FAKE_ORCA_LOG: process.env.FAKE_ORCA_LOG,
+      FAKE_ORCA_WAIT_HOLD: process.env.FAKE_ORCA_WAIT_HOLD,
+      FAKE_ORCA_WAIT_EXIT: process.env.FAKE_ORCA_WAIT_EXIT,
+    };
+    const gate = join(env.dir, "wait-held");
+    writeFileSync(gate, "");
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    process.env.FAKE_ORCA_LOG = join(env.dir, "orca.log");
+    process.env.FAKE_ORCA_WAIT_HOLD = gate;
+    process.env.FAKE_ORCA_WAIT_EXIT = mode === "unobserved" ? "0" : "1";
+    t.after(() => {
+      for (const [k, v] of Object.entries(old)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+    const b = await env.up(undefined, HALTS);
+    await stand(b, { realm: NKS, karta: 931, name: "orca-scoped" });
+    await until(() => seatId(env.fake, NKS, "orca-scoped"), "own seat");
+    const id = seatId(env.fake, NKS, "orca-scoped");
+    mkdirSync(join(env.dir, "run"), { recursive: true });
+    writeFileSync(
+      join(env.dir, "run/orchestra-runs.json"),
+      JSON.stringify({
+        runs: {
+          own: {
+            realm: NKS,
+            room: "room-own",
+            invite: 5,
+            karta: 931,
+            launcher: "own",
+            harness: "opencode",
+            model: "unused",
+            repository: "local",
+            worktree: env.dir,
+            terminal: "term_owned",
+            runtime: mode === "runtime_changed" ? "rt_previous" : "rt_fake",
+            standing_id: mode === "foreign" ? "another-standing" : id,
+            state: "raised",
+            at: new Date().toISOString(),
+          },
+        },
+      }),
+    );
+    await env.fake.control({ stop_order: { id: "ord-orca", standing_id: id } });
+    await until(() => stoppedBy(b, "ord-orca"), "stop naming current order");
+    if (mode === "stand_again") await stand(b, { realm: NKS, karta: 931, name: "stood-again" });
+    await b.call("iskron/halted", {
+      order: "ord-orca",
+      ok: false,
+      code:
+        mode === "archive_refused"
+          ? mode
+          : mode === "no_archive"
+            ? "interrupt_confirmed_archive_unconfirmed"
+            : "client_unbound",
+    });
+    const argv = () => {
+      try {
+        return readFileSync(process.env.FAKE_ORCA_LOG, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map(JSON.parse);
+      } catch {
+        return [];
+      }
+    };
+    try {
+      if (!["exit", "no_archive", "unobserved"].includes(mode)) {
+        await until(() => states(env.fake, "ord-orca").includes("failed"), "specific refusal");
+        const reason = {
+          foreign: "client_unbound",
+          archive_refused: "archive_refused",
+          runtime_changed: "terminal_binding_unconfirmed",
+          stand_again: "stop_superseded",
+        }[mode];
+        assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, reason);
+        assert.equal(
+          argv().filter((a) => a[1] === "close").length,
+          0,
+          "unproven or superseded client never closed",
+        );
+        return;
+      }
+      await until(() => argv().some((a) => a[1] === "wait"), "observing own terminal exit");
+      assert.deepEqual(
+        states(env.fake, "ord-orca"),
+        ["accepted"],
+        "no terminal ack while exit is unobserved",
+      );
+      unlinkSync(gate);
+      await until(
+        () => states(env.fake, "ord-orca").includes(mode === "unobserved" ? "failed" : "stopped"),
+        "terminal ack",
+      );
+      if (mode === "unobserved")
+        assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "client_exit_unconfirmed");
+      if (mode === "no_archive")
+        assert.equal(
+          allAcks(env.fake, "ord-orca").at(-1).reason_code,
+          "client_exited_archive_unconfirmed",
+        );
+      assert.equal(argv().filter((a) => a[1] === "close").length, 1);
+      assert.ok(
+        argv().every((a) => a[0] === "terminal" && a[3] === "term_owned"),
+        "only proven handle addressed",
+      );
+    } finally {
+      try {
+        unlinkSync(gate);
+      } catch {}
+    }
+  });
 
 test("attrs.stop of the main seat without halts: agent, word — beside the rest of attrs", async (t) => {
   const { fake } = await standing(t);

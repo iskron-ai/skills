@@ -194,14 +194,36 @@ const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 const handle = process.env.FAKE_ORCA_HANDLE ?? "term_fake";
 const rtFile = process.env.FAKE_ORCA_RUNTIME_FILE;
 const runtime = rtFile && existsSync(rtFile) ? readFileSync(rtFile, "utf8").trim() : "rt_fake";
+if (args[0] === "terminal" && args[1] === "wait") {
+  const hold = process.env.FAKE_ORCA_WAIT_HOLD;
+  while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
+}
 const answer = {
   ok: true,
   result:
     args[0] === "agent"
       ? { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } }
       : args[1] === "show"
-        ? { terminal: { handle: args[3] } }
-        : {},
+        ? {
+            terminal: {
+              handle: args[3],
+              incarnationId: "inc_fake",
+              connected: false,
+              writable: false,
+            },
+          }
+        : args[1] === "close"
+          ? { close: { handle: args[3], ptyKilled: true } }
+          : args[1] === "wait"
+            ? {
+                wait: {
+                  handle: args[3],
+                  condition: "exit",
+                  satisfied: process.env.FAKE_ORCA_WAIT_EXIT !== "0",
+                  status: process.env.FAKE_ORCA_WAIT_EXIT === "0" ? "running" : "exited",
+                },
+              }
+            : {},
   ...(runtime ? { _meta: { runtimeId: runtime } } : {}),
 };
 if (code === 0) process.stdout.write(JSON.stringify(answer) + "\n");
