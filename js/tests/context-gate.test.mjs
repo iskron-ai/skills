@@ -7,7 +7,12 @@ import { setup, stand, textOf, until, write } from "./ownseat-kit.mjs";
 
 test("context gate: a fill collapse refuses writes, not reads or help, until recovery", async (t) => {
   const { up, fake } = await setup(t);
+  fake.state.tools = ["iskron_case", "iskron_arrow"].map((name) => ({
+    name,
+    inputSchema: { type: "object", properties: { action: { type: "string" } } },
+  }));
   const b = await up(undefined, {}, [], { name: "opencode-iskron", version: "2.0.4" });
+  await b.call("tools/list");
   assert.ok((await stand(b, { realm: "nks-dev", karta: "931", name: "context-gate" })).result);
   await usage(b, 150000);
   assert.ok(!(await write(b)).result?.isError, "before a collapse writing is unchanged");
@@ -20,11 +25,16 @@ test("context gate: a fill collapse refuses writes, not reads or help, until rec
     ["iskron_look", { realm: "nks-dev", node_id: "931" }],
     ["iskron_case", { action: "read", room: "1", realm: "nks-dev" }],
     ["iskron_case", { action: "?" }],
+    ["iskron_arrow", { action: "?" }],
   ]) {
     const read = await b.call("tools/call", { name, arguments: args });
     assert.doesNotMatch(textOf(read), /контекст сжат|context.*compact/i);
   }
   assert.equal((await write(b)).result?.isError, true, "reading did not lift the mark");
+  assert.ok(
+    fake.state.calls.some((c) => c.name === "iskron_arrow"),
+    "declared help reached MCP",
+  );
   const registers = () => fake.state.placeArgs.filter((p) => p.action === "register").length;
   const beforeConfirmation = registers();
   const confirmed = await stand(b, { realm: "nks-dev", context_restored: true });

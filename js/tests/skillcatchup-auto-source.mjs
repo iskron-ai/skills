@@ -29,6 +29,9 @@ export async function autoSource(mode, beforeTree) {
     if (mode === "unsafe")
       tree.push({ path: "skills/../SKILL.md", type: "blob", mode: "100644", sha });
     if (mode === "duplicate") tree.push(tree[1]);
+    if (mode === "outside-skills")
+      for (const path of ["SKILL.md", "home/example/SKILL.md"])
+        tree.push({ path, type: "blob", mode: "100644", sha: blob("outside delivery") });
     res.end(JSON.stringify({ sha, truncated: mode === "truncated", tree }));
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

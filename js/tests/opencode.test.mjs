@@ -1997,7 +1997,7 @@ test("usage events reach the holding session's bridge as iskron/usage, with the 
       output: 100,
       cache_read: 50000,
       cache_write: 1000,
-      model: "m1",
+      model: "p/m1",
       context: 51900,
       window: 200000,
     });
@@ -8130,14 +8130,14 @@ test("usage: a child's spend reaches its own bridge at its end, before the bridg
       output: 15,
       cache_read: 100,
       cache_write: 1,
-      model: "m-child",
+      model: "p/m-child",
     });
     rec.emit({ type: "session.execution.succeeded", data: { sessionID: "root" } });
     await until(() => usageCalls().some((c) => c.pid === rootPid), "the root's snapshot");
     const root = usageCalls().filter((c) => c.pid === rootPid);
     assert.deepEqual(
       root.map((c) => [c.arguments.input, c.arguments.model]),
-      [[1000, "m-root"]],
+      [[1000, "p/m-root"]],
       "the root's place gets the root's numbers only",
     );
   } finally {

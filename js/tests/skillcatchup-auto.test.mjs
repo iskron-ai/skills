@@ -25,6 +25,15 @@ test("skills catchup auto: all explicit owned names at exact SHA, never all agen
   });
 });
 
+test("skills catchup auto: SKILL.md outside skills never enters the delivery inventory", async () => {
+  await autoFixture("outside-skills", async ({ text, calls, names }) => {
+    assert.match(text.split("\n")[0], /SKILLS UPDATED/);
+    const add = calls().find((args) => args.includes("add"));
+    assert.ok(add, JSON.stringify(calls()));
+    assert.deepEqual(add.slice(add.indexOf("--skill") + 1, add.indexOf("--agent")), names);
+  });
+});
+
 for (const mode of [
   "foreign",
   "symlink",
