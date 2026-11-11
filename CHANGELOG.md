@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.39.0](https://github.com/iskron-ai/skills/compare/v7.38.1...v7.39.0) (2026-11-11)
+
+
+### Features
+
+* gate context writes and catch up stale skill sets ([5510d28](https://github.com/iskron-ai/skills/commit/5510d2842a4757240a6e316d9f7b8cddfdbd002d))
+
+
+### Bug Fixes
+
+* correct context recovery and skill catchup guards ([#737](https://github.com/iskron-ai/skills/issues/737)) ([19152f3](https://github.com/iskron-ai/skills/commit/19152f3fc7d1f3e2546e86523e9bdfd51bf8df52))
+
 ## [7.38.1](https://github.com/iskron-ai/skills/compare/v7.38.0...v7.38.1) (2026-11-10)
 
 
