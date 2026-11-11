@@ -6,6 +6,9 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { seamRunDir } from "../shared/seam-entrance.ts";
+import { mergeRuns, rememberRuns, runIdentity } from "./orchestra-runs-delta.ts";
+
+export { runIdentity } from "./orchestra-runs-delta.ts";
 
 export type RunState =
   | "launched" // the adapter ran; no seat seen yet
@@ -95,20 +98,8 @@ function writeFile(
   renameSync(tmp, file(authDir));
 }
 
-export const readRuns = (authDir: string): Record<string, Run> => readFile(authDir).runs;
-
-/** A replacement launch at the same key must never inherit another client's close. */
-export const runIdentity = (r: Run): string =>
-  JSON.stringify([
-    r.realm,
-    r.room,
-    r.invite,
-    r.standing_id,
-    r.terminal,
-    r.runtime,
-    r.harness,
-    r.at,
-  ]);
+export const readRuns = (authDir: string): Record<string, Run> =>
+  rememberRuns(authDir, readFile(authDir).runs);
 
 /** The local stop may finish while a tact awaits the API: its observed close is monotonic. */
 export function syncClosed(runs: Record<string, Run>, latest: Record<string, Run>): void {
@@ -131,7 +122,8 @@ export function recordRunClosed(authDir: string, key: string, expected: Run): bo
 export function writeRuns(authDir: string, runs: Record<string, Run>): void {
   const f = readFile(authDir);
   syncClosed(runs, f.runs);
-  writeFile(authDir, { runs, clones: f.clones });
+  writeFile(authDir, { runs: mergeRuns(authDir, runs, f.runs), clones: f.clones });
+  rememberRuns(authDir, runs, true);
 }
 
 export const readClones = (authDir: string): Record<string, CloneRow> => readFile(authDir).clones;
