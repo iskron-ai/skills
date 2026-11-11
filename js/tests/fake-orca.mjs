@@ -207,7 +207,11 @@ const answer = {
         ? {
             terminal: {
               handle: args[3],
-              incarnationId: "inc_fake",
+              incarnationId:
+                process.env.FAKE_ORCA_EXIT_INCARNATION &&
+                readFileSync(process.env.FAKE_ORCA_LOG, "utf8").includes('"wait"')
+                  ? process.env.FAKE_ORCA_EXIT_INCARNATION
+                  : "inc_fake",
               connected: false,
               writable: false,
             },

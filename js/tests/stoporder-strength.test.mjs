@@ -10,6 +10,8 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { closeEnded } from "../bridge/orchestra-quench.ts";
+import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { saidKind, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 import { NKS, orderOnDisk, pause, seatId, standing, states } from "./stoporder-kit.mjs";
 
@@ -112,6 +114,8 @@ for (const mode of [
   "exit",
   "no_archive",
   "unobserved",
+  "incarnation_changed",
+  "run_replaced",
   "foreign",
   "archive_refused",
   "runtime_changed",
@@ -130,6 +134,7 @@ for (const mode of [
       FAKE_ORCA_LOG: process.env.FAKE_ORCA_LOG,
       FAKE_ORCA_WAIT_HOLD: process.env.FAKE_ORCA_WAIT_HOLD,
       FAKE_ORCA_WAIT_EXIT: process.env.FAKE_ORCA_WAIT_EXIT,
+      FAKE_ORCA_EXIT_INCARNATION: process.env.FAKE_ORCA_EXIT_INCARNATION,
     };
     const gate = join(env.dir, "wait-held");
     writeFileSync(gate, "");
@@ -137,6 +142,7 @@ for (const mode of [
     process.env.FAKE_ORCA_LOG = join(env.dir, "orca.log");
     process.env.FAKE_ORCA_WAIT_HOLD = gate;
     process.env.FAKE_ORCA_WAIT_EXIT = mode === "unobserved" ? "0" : "1";
+    process.env.FAKE_ORCA_EXIT_INCARNATION = mode === "incarnation_changed" ? "inc_foreign" : "";
     t.after(() => {
       for (const [k, v] of Object.entries(old)) {
         if (v === undefined) delete process.env[k];
@@ -171,6 +177,11 @@ for (const mode of [
         },
       }),
     );
+    const closedAtAck = [];
+    env.fake.state.orders.onAck = (order, ack) => {
+      if (order === "ord-orca" && ack.state !== "accepted")
+        closedAtAck.push(readRuns(env.dir).own.closed);
+    };
     await env.fake.control({ stop_order: { id: "ord-orca", standing_id: id } });
     await until(() => stoppedBy(b, "ord-orca"), "stop naming current order");
     if (mode === "stand_again") await stand(b, { realm: NKS, karta: 931, name: "stood-again" });
@@ -196,7 +207,9 @@ for (const mode of [
       }
     };
     try {
-      if (!["exit", "no_archive", "unobserved"].includes(mode)) {
+      if (
+        !["exit", "no_archive", "unobserved", "incarnation_changed", "run_replaced"].includes(mode)
+      ) {
         await until(() => states(env.fake, "ord-orca").includes("failed"), "specific refusal");
         const reason = {
           foreign: "client_unbound",
@@ -210,6 +223,7 @@ for (const mode of [
           0,
           "unproven or superseded client never closed",
         );
+        assert.equal(readRuns(env.dir).own.closed, undefined);
         return;
       }
       await until(() => argv().some((a) => a[1] === "wait"), "observing own terminal exit");
@@ -218,19 +232,58 @@ for (const mode of [
         ["accepted"],
         "no terminal ack while exit is unobserved",
       );
+      const stale = readRuns(env.dir);
+      const registry = join(env.dir, "run/orchestra-runs.json");
+      const concurrent = JSON.parse(readFileSync(registry, "utf8"));
+      concurrent.runs.neighbour = { ...concurrent.runs.own, standing_id: "neighbour" };
+      concurrent.runs.own.rooms = 2;
+      if (mode === "run_replaced") concurrent.runs.own.terminal = "term_replacement";
+      concurrent.clones = { local: { state: "cloned", at: "kept", spec: "kept" } };
+      writeFileSync(registry, JSON.stringify(concurrent));
       unlinkSync(gate);
+      const success = mode === "exit" || mode === "no_archive";
       await until(
-        () => states(env.fake, "ord-orca").includes(mode === "unobserved" ? "failed" : "stopped"),
+        () => states(env.fake, "ord-orca").includes(success ? "stopped" : "failed"),
         "terminal ack",
       );
       if (mode === "unobserved")
         assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "client_exit_unconfirmed");
+      if (mode === "incarnation_changed")
+        assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "terminal_exit_unconfirmed");
+      if (mode === "run_replaced")
+        assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "stop_superseded");
       if (mode === "no_archive")
         assert.equal(
           allAcks(env.fake, "ord-orca").at(-1).reason_code,
           "client_exited_archive_unconfirmed",
         );
       assert.equal(argv().filter((a) => a[1] === "close").length, 1);
+      const reloaded = readRuns(env.dir);
+      assert.equal(reloaded.own.rooms, 2, "parallel edits to the exact run survive");
+      assert.deepEqual(reloaded.neighbour, concurrent.runs.neighbour, "neighbour is untouched");
+      assert.deepEqual(JSON.parse(readFileSync(registry, "utf8")).clones, concurrent.clones);
+      assert.equal(
+        reloaded.own.closed,
+        success ? "client_exited" : undefined,
+        "only an observed exit is durable before the terminal ack",
+      );
+      assert.deepEqual([...new Set(closedAtAck)], [success ? "client_exited" : undefined]);
+      if (success) {
+        writeRuns(env.dir, { ...reloaded, own: stale.own });
+        assert.equal(
+          readRuns(env.dir).own.closed,
+          "client_exited",
+          "a stale tact cannot erase close",
+        );
+        reloaded.own.state = "ended";
+        writeRuns(env.dir, reloaded);
+        let repeated = 0;
+        await closeEnded(readRuns(env.dir), undefined, async () => {
+          repeated++;
+          return "closed_again";
+        });
+        assert.equal(repeated, 0, "reload and the next tact never close the same client twice");
+      }
       assert.ok(
         argv().every((a) => a[0] === "terminal" && a[3] === "term_owned"),
         "only proven handle addressed",

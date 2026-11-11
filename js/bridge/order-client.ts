@@ -4,11 +4,8 @@ import { isHaltPhase } from "../shared/halt-phase.ts";
 import { CFG } from "./config.ts";
 import { H } from "./holdstate.ts";
 import { orcaCloseObserved } from "./orca-stop.ts";
-import { LIVE, readRuns, type Run } from "./orchestra-runs.ts";
+import { LIVE, readRuns, recordRunClosed, runIdentity } from "./orchestra-runs.ts";
 import { state } from "./transport.ts";
-
-const identity = (r: Run): string =>
-  JSON.stringify([r.realm, r.room, r.invite, r.standing_id, r.terminal, r.runtime, r.harness]);
 
 /** Capture before stopAgent forgets the main seat, then recheck before every irreversible act. */
 export function boundStop(standing: string): (code: string | null) => Promise<string | null> {
@@ -23,7 +20,7 @@ export function boundStop(standing: string): (code: string | null) => Promise<st
       LIVE.includes(r.state),
   );
   const found = runs.length === 1 ? runs[0] : undefined;
-  const expected = found ? identity(found[1]) : null;
+  const expected = found ? runIdentity(found[1]) : null;
   const generation = H.stopped.n + 1;
   return async (code) => {
     // These codes are issued only AFTER interrupt and dropping wakes. Archive has its own ceiling. It is not
@@ -38,10 +35,12 @@ export function boundStop(standing: string): (code: string | null) => Promise<st
         state.standing === null &&
         !!latest &&
         LIVE.includes(latest.state) &&
-        identity(latest) === expected
+        runIdentity(latest) === expected
       );
     };
     if (!current()) return "stop_superseded";
-    return orcaCloseObserved(r.terminal, r.runtime, current);
+    const outcome = await orcaCloseObserved(r.terminal, r.runtime, current);
+    if (outcome !== null) return outcome;
+    return recordRunClosed(CFG.authDir, key, r) ? null : "stop_superseded";
   };
 }

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 const out=process.argv[2];
+const orderId=process.argv[3];
+assert.ok(orderId,'usage: check-stop-scoped.mjs OUTPUT_DIR TARGET_ORDER_ID');
 const base=JSON.parse(readFileSync(join(out,'control.json'))).url;
 const call=async(path,body)=>{const r=await fetch(base+path,{method:'POST',body:JSON.stringify(body||{})});assert.equal(r.status,200);return r.json();};
 const status=await call('/status');
@@ -20,7 +22,8 @@ test('session archive observed in saved API state',!!capture.state.time?.archive
 test('history retained',capture.history.some(m=>m.type==='user'&&m.text==='LOCAL4532 axis3-stop reply OK'),{messages:capture.history.length});
 test('neighbour and own shared serve survived',status.serveAlive&&alive(neighbour),{serveAlive:status.serveAlive,neighbour,alive:alive(neighbour)});
 test('stopped hold did not return',!status.holds.some(h=>h.session===client.id),{session:client.id});
-test('successful terminal ack follows accepted',status.acks.some((a,i)=>a.state==='stopped'&&status.acks.slice(0,i).some(b=>b.id===a.id&&b.state==='accepted')),status.acks);
+const acks=status.acks.filter(a=>a.id===orderId);
+test('successful terminal ack follows accepted',acks.some((a,i)=>a.state==='stopped'&&acks.slice(0,i).some(b=>b.state==='accepted')),{order_id:orderId,acks});
 const result={at:new Date().toISOString(),verdict:checks.every(c=>c.ok)?'provisional':'contradicted',checks,freeze:JSON.parse(readFileSync(join(out,'freeze.json'))),ceiling:'Only explicit --session genuine client, LOCAL scripted NKS/provider, no model. Original bare-TUI goal remains separate RED. Cold acceptance belongs to parent.'};
 writeFileSync(join(out,'scoped3-evidence.json'),JSON.stringify(result,null,2));
 console.log(JSON.stringify(result,null,2));
