@@ -95,6 +95,11 @@ for (const [client, plugin, command] of [
       assert.match(first, /SKILLS BEHIND/);
       assert.ok(first.includes("0.1.0") && first.includes(version), first);
       assert.ok(first.includes(command), first);
+      if (client === "opencode-iskron") {
+        assert.doesNotMatch(first, /--list\b/, "the suggested move must install, not list");
+        assert.ok(first.includes("--skill '*' --agent opencode --global"), first);
+        assert.doesNotMatch(first, /--all\b/);
+      }
       assert.match(first, /not updated/);
       const key = response.result.structuredContent.key;
       const returned = await rpc(link, "iskron/resume", { key }, 3);

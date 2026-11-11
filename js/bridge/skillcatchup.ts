@@ -75,7 +75,9 @@ export async function skillCatchupNotice(): Promise<string | null> {
         : moves.claude
       : client === PI_CLIENT
         ? moves.pi
-        : `npx skills add https://github.com/${SKILL_SET}/tree/v${VERSION} --list`;
+        : client === OPENCODE_CLIENT
+          ? `npx skills add https://github.com/${SKILL_SET}/tree/v${VERSION} --skill '*' --agent opencode --global`
+          : moves.flat;
   const reason = diagnostic ? "ownership" : plugin ? "plugin" : patchOnly ? "patch" : "manifest";
   return words(SKILL_CATCHUP).notice(
     root,
