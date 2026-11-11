@@ -187,6 +187,51 @@ async function handshake(b, init = b.init ?? INIT) {
 }
 const stand = (b, args) => b.request("tools/call", { name: "iskron_stand", arguments: args });
 
+test("context gate: help schemas belong to each session in the same daemon", async () => {
+  await withFake(async ({ fake, bridge }) => {
+    const init = { ...INIT, clientInfo: { name: "opencode-iskron", version: "2.0.4" } };
+    const a = bridge({}, [], init);
+    const b = bridge({}, [], init);
+    await handshake(a);
+    await handshake(b);
+    for (const [client, name] of [
+      [a, "schema-a"],
+      [b, "schema-b"],
+    ]) {
+      await stand(client, { realm: "nks-dev", karta: "931", name });
+      await client.request("iskron/usage", { context: 100000, window: 200000, model: "p/m" });
+      await client.request("iskron/usage", { context: 10000, window: 200000, model: "p/m" });
+    }
+    fake.state.tools = [
+      {
+        name: "iskron_arrow",
+        inputSchema: { type: "object", properties: { action: { type: "string" } } },
+      },
+    ];
+    await a.request("tools/list");
+    const help = (client) =>
+      client.request("tools/call", {
+        name: "iskron_arrow",
+        arguments: { action: "?" },
+      });
+    assert.doesNotMatch(textOf(await help(a)), /контекст сжат|context.*compact/i);
+    assert.match(
+      textOf(await help(b)),
+      /контекст сжат|context.*compact/i,
+      "another session's observed schema is not help authority",
+    );
+    fake.state.tools = [];
+    await b.request("tools/list");
+    assert.doesNotMatch(
+      textOf(await help(a)),
+      /контекст сжат|context.*compact/i,
+      "another session's replacement list cannot erase this session's schema",
+    );
+    assert.equal(daemonPidIn(a.stderr)[0], daemonPidIn(b.stderr)[0]);
+    assert.ok(daemonPidIn(a.stderr)[0], "both clients used an actual common daemon");
+  });
+});
+
 test("spawned_for daemon reads each session environment, never the first thin process for all sessions", async () => {
   await withFake(async ({ fake, bridge }) => {
     fake.state.structured = true;
