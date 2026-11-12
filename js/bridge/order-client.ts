@@ -39,7 +39,13 @@ export function boundStop(standing: string): (code: string | null) => Promise<st
       );
     };
     if (!current()) return "stop_superseded";
-    const outcome = await orcaCloseObserved(r.terminal, r.runtime, current);
+    const latest = readRuns(CFG.authDir)[key];
+    if (latest?.exec?.exit && latest.closed === "client_exited") return null;
+    if (r.exec && !r.exec.incarnation) return "client_unbound";
+    const expectedClient = r.exec?.incarnation
+      ? { incarnation: r.exec.incarnation, worktree: r.worktree }
+      : undefined;
+    const outcome = await orcaCloseObserved(r.terminal, r.runtime, current, expectedClient);
     if (outcome !== null) return outcome;
     if (!recordRunClosed(CFG.authDir, key, r)) return "stop_superseded";
     return current() ? null : "stop_superseded";

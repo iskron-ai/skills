@@ -6,7 +6,13 @@ interface Reply {
   ok?: boolean;
   _meta?: { runtimeId?: string };
   result?: {
-    terminal?: { handle?: string; incarnationId?: string; connected?: boolean; writable?: boolean };
+    terminal?: {
+      handle?: string;
+      incarnationId?: string;
+      worktreePath?: string;
+      connected?: boolean;
+      writable?: boolean;
+    };
     close?: { handle?: string; ptyKilled?: boolean };
     wait?: { handle?: string; condition?: string; satisfied?: boolean; status?: string };
   };
@@ -23,6 +29,7 @@ export async function orcaCloseObserved(
   handle: string,
   runtime: string,
   current: () => boolean,
+  expected?: { incarnation: string; worktree: string },
 ): Promise<string | null> {
   const version = await run(["--version"], 5_000);
   if (version.code !== 0 || version.out.trim() !== ORCA_VERSION) return "orca_version_unverified";
@@ -34,6 +41,11 @@ export async function orcaCloseObserved(
   const t = before.result?.terminal;
   if (!before.ok || before._meta?.runtimeId !== runtime || t?.handle !== handle || !t.incarnationId)
     return "terminal_binding_unconfirmed";
+  if (
+    expected &&
+    (t.incarnationId !== expected.incarnation || t.worktreePath !== expected.worktree)
+  )
+    return "terminal_binding_changed";
   if (!current()) return "stop_superseded";
   const close = await run(["terminal", "close", "--terminal", handle, "--json"], 5_000);
   const closed = parse(close.out);

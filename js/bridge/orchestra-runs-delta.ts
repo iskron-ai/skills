@@ -22,6 +22,12 @@ export const runIdentity = (r: Run): string =>
     r.runtime,
     r.harness,
     r.at,
+    r.exec?.attempt,
+    r.exec?.session,
+    r.exec?.incarnation,
+    r.exec
+      ? [r.karta, r.launcher, r.model, r.repository, r.worktree, r.exec.server, r.exec.model]
+      : undefined,
   ]);
 
 /** Plain, untracked records still mean explicit replacement; readRuns snapshots mean a delta. */
@@ -48,10 +54,31 @@ export function mergeRuns(authDir: string, runs: Runs, latest: Runs): Runs {
     for (const field of new Set([...Object.keys(before), ...Object.keys(after)])) {
       const k = field as keyof Run;
       if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
+      if (k === "exec" && before.exec && after.exec && current.exec) {
+        const exec = { ...current.exec };
+        for (const field of new Set([...Object.keys(before.exec), ...Object.keys(after.exec)])) {
+          const f = field as keyof NonNullable<Run["exec"]>;
+          if (JSON.stringify(before.exec[f]) !== JSON.stringify(after.exec[f])) {
+            if (after.exec[f] === undefined) delete exec[f];
+            else Object.assign(exec, { [f]: after.exec[f] });
+          }
+        }
+        row.exec = exec;
+        continue;
+      }
       if (after[k] === undefined) delete row[k];
       else Object.assign(row, { [k]: after[k] });
     }
-    if (runIdentity(after) !== runIdentity(before)) delete row.closed;
+    const firstSeat =
+      !!before.exec &&
+      !!after.exec &&
+      !before.standing_id &&
+      after.standing_id &&
+      runIdentity({ ...after, standing_id: undefined }) === runIdentity(before);
+    if (!firstSeat && runIdentity(after) !== runIdentity(before)) {
+      delete row.closed;
+      if (row.exec) delete row.exec.exit;
+    }
     merged[key] = row;
   }
   return merged;
