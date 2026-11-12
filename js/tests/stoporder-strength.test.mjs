@@ -120,6 +120,7 @@ for (const mode of [
   "archive_refused",
   "runtime_changed",
   "stand_again",
+  "stand_after_close",
 ])
   test(`scoped Orca stop: archive phase ${mode}`, async (t) => {
     const env = await setup(t);
@@ -208,7 +209,14 @@ for (const mode of [
     };
     try {
       if (
-        !["exit", "no_archive", "unobserved", "incarnation_changed", "run_replaced"].includes(mode)
+        ![
+          "exit",
+          "no_archive",
+          "unobserved",
+          "incarnation_changed",
+          "run_replaced",
+          "stand_after_close",
+        ].includes(mode)
       ) {
         await until(() => states(env.fake, "ord-orca").includes("failed"), "specific refusal");
         const reason = {
@@ -240,8 +248,11 @@ for (const mode of [
       if (mode === "run_replaced") concurrent.runs.own.terminal = "term_replacement";
       concurrent.clones = { local: { state: "cloned", at: "kept", spec: "kept" } };
       writeFileSync(registry, JSON.stringify(concurrent));
+      if (mode === "stand_after_close")
+        await stand(b, { realm: NKS, karta: 931, name: "stood-after-close" });
       unlinkSync(gate);
       const success = mode === "exit" || mode === "no_archive";
+      const observedExit = success || mode === "stand_after_close";
       await until(
         () => states(env.fake, "ord-orca").includes(success ? "stopped" : "failed"),
         "terminal ack",
@@ -251,6 +262,8 @@ for (const mode of [
       if (mode === "incarnation_changed")
         assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "terminal_exit_unconfirmed");
       if (mode === "run_replaced")
+        assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "stop_superseded");
+      if (mode === "stand_after_close")
         assert.equal(allAcks(env.fake, "ord-orca").at(-1).reason_code, "stop_superseded");
       if (mode === "no_archive")
         assert.equal(
@@ -264,11 +277,11 @@ for (const mode of [
       assert.deepEqual(JSON.parse(readFileSync(registry, "utf8")).clones, concurrent.clones);
       assert.equal(
         reloaded.own.closed,
-        success ? "client_exited" : undefined,
+        observedExit ? "client_exited" : undefined,
         "only an observed exit is durable before the terminal ack",
       );
-      assert.deepEqual([...new Set(closedAtAck)], [success ? "client_exited" : undefined]);
-      if (success) {
+      assert.deepEqual([...new Set(closedAtAck)], [observedExit ? "client_exited" : undefined]);
+      if (observedExit) {
         writeRuns(env.dir, { ...reloaded, own: stale.own });
         assert.equal(
           readRuns(env.dir).own.closed,

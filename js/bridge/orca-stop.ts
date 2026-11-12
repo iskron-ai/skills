@@ -72,5 +72,7 @@ export async function orcaCloseObserved(
     a.writable !== false
   )
     return "terminal_exit_unconfirmed";
-  return current() ? null : "stop_superseded";
+  // The exact client's exit is a fact even if a newer seat superseded the order while waiting.
+  // The caller records that fact before it separately decides whether this order may succeed.
+  return null;
 }

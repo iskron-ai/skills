@@ -41,6 +41,7 @@ export function boundStop(standing: string): (code: string | null) => Promise<st
     if (!current()) return "stop_superseded";
     const outcome = await orcaCloseObserved(r.terminal, r.runtime, current);
     if (outcome !== null) return outcome;
-    return recordRunClosed(CFG.authDir, key, r) ? null : "stop_superseded";
+    if (!recordRunClosed(CFG.authDir, key, r)) return "stop_superseded";
+    return current() ? null : "stop_superseded";
   };
 }
