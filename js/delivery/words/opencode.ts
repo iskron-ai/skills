@@ -113,8 +113,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     statusBridge: (path) => `мост: ${path}`,
     statusLoginPending: (open, elsewhere) =>
       `вход: НЕ ВЫПОЛНЕН — ${open}. ` + `Адрес локальный: ${elsewhere} (скилл establish-mcp).`,
-    openInBrowser: (url) => `открой в браузере ${url}`,
-    finishInBrowser: () => "заверши вход в браузере",
+    openInBrowser: (url) => `откройте в браузере ${url}`,
+    finishInBrowser: () => "завершите вход в браузере",
     statusLoginDone: () => "вход: есть, сервер отвечает",
     statusLoginWaiting: () => "вход: мост ещё не ответил (рукопожатие идёт)",
     statusTools: (n, source) => `тулов iskron_*: ${n} (${source})`,
@@ -163,8 +163,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     sessionLeftOpen: (id, why) =>
       `Искрон: сессия ${id} остановлена, но её окно осталось открытым — ${why ?? "клиента этой сессии плагину не найти"}; закройте его в OpenCode`,
     clientClosed: (id, pid) => `Искрон: сессия ${id} остановлена, её клиент закрыт (pid ${pid})`,
-    held: (key) => `Искрон: мост держит стояние ${key}`,
-    released: (key, text) => `Искрон: мост отпустил стояние ${key} — ${text}`,
+    held: (key) => `Искрон: мост держит место ${key}`,
+    released: (key, text) => `Искрон: мост отпустил место ${key} — ${text}`,
     endUnrevoked: (seats) =>
       `Искрон: сессия удалена, но её место не снято (${seats}) — запись держания оставлена; мост машины повторит снятие после окна, иначе место уйдёт сроком платформы`,
     endUnconfirmed: (seats) =>
@@ -256,8 +256,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     sessionLeftOpen: (id, why) =>
       `Iskron: session ${id} is stopped but its window is left open — ${why ?? "the plugin finds no client of this session"}; close it in OpenCode`,
     clientClosed: (id, pid) => `Iskron: session ${id} is stopped, its client closed (pid ${pid})`,
-    held: (key) => `Iskron: the bridge holds the standing ${key}`,
-    released: (key, text) => `Iskron: the bridge released the standing ${key} — ${text}`,
+    held: (key) => `Iskron: the bridge holds the seat ${key}`,
+    released: (key, text) => `Iskron: the bridge released the seat ${key} — ${text}`,
     endUnrevoked: (seats) =>
       `Iskron: the session is deleted but its seat is not revoked (${seats}) — the hold record is kept; the machine's bridge repeats the revoke after the window, else the seat goes by the platform's term`,
     endUnconfirmed: (seats) =>

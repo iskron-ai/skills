@@ -4,9 +4,9 @@ import { test } from "node:test";
 import { CONTRACT_SUPPORT } from "../delivery/contract.ts";
 import { contractOf, contractWarning } from "../shared/covercontract.ts";
 
-test("the role-routing template correction targets contract 41 without dropping 39", () => {
-  assert.deepEqual(CONTRACT_SUPPORT, { minimum: 39, target: 41 });
-  assert.match(contractWarning({ kind: "known", contract: 38 }), /до 41;/);
+test("the blocking-question prohibition targets contract 42 without dropping 39", () => {
+  assert.deepEqual(CONTRACT_SUPPORT, { minimum: 39, target: 42 });
+  assert.match(contractWarning({ kind: "known", contract: 38 }), /до 42;/);
 });
 
 const block = (fields) => `---\niskron:\n${fields}\n---\n# x\n`;

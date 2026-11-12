@@ -12,7 +12,7 @@ import { foreignStops } from "./orchestra-foreign.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
-import { readRuns, writeRuns } from "./orchestra-runs.ts";
+import { readRuns, syncClosed, writeRuns } from "./orchestra-runs.ts";
 import { readTape, realmCanon, type TactAct, type TactRead } from "./orchestra-tact.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
@@ -64,6 +64,7 @@ export function leadAct(
           gone,
         )),
       );
+      syncClosed(runs, readRuns(authDir));
       said.push(...(await closeEnded(runs, gone)));
       if (gone?.gone) return said;
       let launchers;

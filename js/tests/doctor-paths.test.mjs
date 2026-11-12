@@ -164,7 +164,7 @@ test("doctor: the bridge entry's command not in PATH is a finding with the absol
     assert.match(r.out, /НАДО: Codex iskron@iskron: команда «node» не найдена/, r.out);
     assert.match(r.out, /плагинной записи Codex абсолютного пути не вписать/, r.out);
     assert.doesNotMatch(r.out, /codex mcp add/, r.out);
-    assert.match(r.out, /выключи запись плагина plugin:iskron:iskron в \/mcp/, r.out);
+    assert.match(r.out, /выключите запись плагина plugin:iskron:iskron в \/mcp/, r.out);
     assert.match(
       r.out,
       /НАДО: Claude Code iskron@iskron: команда «node» не найдена в PATH этой оболочки .*spawn ENOENT/,

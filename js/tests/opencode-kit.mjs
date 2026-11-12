@@ -49,11 +49,11 @@ export const stopMarks = () => {
 // ── the context the plugin is handed ─────────────────────────────────────────
 
 /** A replayable registry: every transform callback re-runs on reload, as in OpenCode. */
-function registry() {
+function registry(initial = []) {
   const transforms = [];
   let current = new Map();
   const replay = () => {
-    const m = new Map();
+    const m = new Map(initial.map((d) => [d.name, d]));
     const editor = {
       add: (d) => m.set(d.name, d),
       remove: (id) => m.delete(id),
@@ -84,6 +84,7 @@ function fakeCtx({
   app = { name: "opencode", version: "2.0.18-probe", channel: "latest" },
   location = undefined, // ctx.location — the location this instance is loaded for
   faults = {}, // the session API's failures a probe asks for (keepalive)
+  initialTools = [],
 } = {}) {
   const prompts = [];
   const synthetics = [];
@@ -92,7 +93,7 @@ function fakeCtx({
   const moves = [];
   const archives = [];
   const hooks = {};
-  const tools = registry();
+  const tools = registry(initialTools);
   const commands = registry();
   const queue = [];
   let wake = null;
@@ -154,9 +155,15 @@ function fakeCtx({
             },
           }),
       // An update — the stopped session's archive (#9256, OpenCode 2.2); updateFails — it throws.
+      // archiveNoop — a successful call that does not persist archive (the observed host ceiling).
       update: async (o) => {
         archives.push(o);
+        await faults.updateGate;
         if (faults.updateFails) throw new Error("update refused");
+        if (faults.archiveNoop && o.archived) return;
+        const session = sessions.find((s) => s.id === o.sessionID);
+        if (session)
+          session.time = { ...session.time, archived: o.archived ? Date.now() : undefined };
       },
       // A move — the twin's wake of an unloaded spelling (twins.ts); moveFails — it throws.
       move: async (o) => {
@@ -360,6 +367,10 @@ export async function plugin(env = {}, ctxOpts = {}) {
     globalThis.__iskronStopIds?.clear();
     globalThis.__iskronStopWords?.clear();
     globalThis.__iskronStopAlone?.clear();
+    globalThis.__iskronStopFull?.clear();
+    globalThis.__iskronArchivedStops?.clear();
+    globalThis.__iskronArchiveQueue?.turns.clear();
+    globalThis.__iskronArchiveQueue?.updating.clear();
   }
   const def = await loadPlugin(env);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");

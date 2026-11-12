@@ -195,7 +195,7 @@ test("чужие записи хуков и прочие ключи settings.jso
   );
   prepare(dir, ADDR);
   const s = settings(dir);
-  assert.deepEqual(s.permissions, { allow: ["Bash(make:*)"] });
+  assert.deepEqual(s.permissions, { allow: ["Bash(make:*)"], deny: ["AskUserQuestion"] });
   assert.deepEqual(commands(s, "SessionStart"), ["echo other"]);
   assert.deepEqual(commands(s, "PreToolUse")[0], "echo other");
   assert.equal(commands(s, "PreToolUse").length, 2);
@@ -410,7 +410,12 @@ test("поле rituals: стоит как стояло; guard выключен �
   const { out } = prepare(dir, [...ADDR, "--contract", "39", "--stamp", "2026-11-03"]);
   assert.match(read(dir, "AGENTS.md"), /^ {2}rituals: start mege$/m);
   assert.equal(coverBlock(read(dir, "AGENTS.md"), "iskron").get("contract"), "39");
-  assert.ok(!existsSync(join(dir, ".claude/settings.json")), "guard выключен — не пишется");
+  assert.equal(settings(dir).hooks, undefined, "guard выключен — не пишется");
+  assert.deepEqual(
+    settings(dir).permissions.deny,
+    ["AskUserQuestion"],
+    "запрет опросника не ритуал",
+  );
   const why = out.left.find((x) => x.item === "cover.rituals")?.why ?? "";
   assert.match(why, /'mege'/);
   assert.doesNotMatch(why, /'start'/);

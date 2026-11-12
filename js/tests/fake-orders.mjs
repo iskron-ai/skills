@@ -160,6 +160,8 @@ export async function ordersRoute(st, req, res, p, { json, body, wsFrame }) {
   const m = /^\/api\/me\/orders\/([^/]+)\/ack$/.exec(p);
   if (!m || req.method !== "POST") return false;
   const ask = JSON.parse((await body(req)) || "{}");
+  // In-process probe observer: witness durable state when the ack reaches the API, not later.
+  st.orders.onAck?.(decodeURIComponent(m[1]), ask);
   // orders_ack_delay {state: ms}: the answer of that state is taken (and logged) so much later.
   const delay = st.orders.ackDelay[ask.state];
   if (delay) await new Promise((r) => setTimeout(r, delay));

@@ -41,7 +41,7 @@ async function seated(name, s, ctxOpts = {}, dir = "/work/t") {
   const pid = Number(readFileSync(log, "utf8").trim().split("\n")[0].split(/\s+/)[1]);
   const mine = `${events}.${pid}`;
   appendFileSync(mine, event("held", { key: `${name}--931--nks-dev` }));
-  await until(() => rec.said().includes(`мост держит стояние ${name}--931--nks-dev`), "held");
+  await until(() => rec.said().includes(`мост держит место ${name}--931--nks-dev`), "held");
   const say = async (body) => {
     const n = rec.prompts.length;
     appendFileSync(mine, event("frame", { frame: frame(body), raw: "" }));

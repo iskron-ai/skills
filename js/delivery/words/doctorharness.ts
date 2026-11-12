@@ -36,11 +36,11 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
   ru: {
     launchFix: (harness, entry, node, bridge) => {
       const abs = node ?? "<абсолютный путь к node: command -v node>";
-      const shell = "запускай харнесс из оболочки, где node находится";
+      const shell = "запускайте харнесс из оболочки, где node находится";
       const alt =
         harness === "codex"
           ? "плагинной записи Codex абсолютного пути не вписать, а вторая запись рядом дала бы два моста"
-          : `либо запись с абсолютным путём к node, от PATH не зависящая: ${entry ? `claude mcp remove "${entry}" --scope user, затем ` : ""}claude mcp add --scope user "${entry ?? "iskron-bridge"}" -- ${abs} "${bridge}"${entry ? "" : " — и выключи запись плагина plugin:iskron:iskron в /mcp, чтобы мост был один"}; путь привязан к этой установке node — сменишь её, перепиши запись`;
+          : `либо запись с абсолютным путём к node, от PATH не зависящая: ${entry ? `claude mcp remove "${entry}" --scope user, затем ` : ""}claude mcp add --scope user "${entry ?? "iskron-bridge"}" -- ${abs} "${bridge}"${entry ? "" : " — и выключите запись плагина plugin:iskron:iskron в /mcp, чтобы мост был один"}; путь привязан к этой установке node — смените её — перепишите запись`;
       return `    ход: ${shell}; ${alt}`;
     },
     launchNotFound: (who, cmd, absolute) =>
@@ -52,10 +52,10 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     openCodeRuntime: () =>
       "OpenCode: мост плагина бежит на рантайме самого OpenCode — от node в PATH не зависит",
     secondPath: (where, name, url, remove) =>
-      `${where}: запись «${name}» ведёт ${url} напрямую по http, мимо моста — второй путь к тому же серверу: тулы двоятся, записи этого пути уходят без места. Путь к графу один — мост → убери её: ${remove}`,
-    deleteFrom: (file) => `удали её из ${file}`,
+      `${where}: запись «${name}» ведёт ${url} напрямую по http, мимо моста — второй путь к тому же серверу: тулы двоятся, записи этого пути уходят без места. Путь к графу один — мост → уберите её: ${remove}`,
+    deleteFrom: (file) => `удалите её из ${file}`,
     connector: (name, file) =>
-      `Claude Code: коннектор «${name}» в истории подключений (${file}, claudeAiMcpEverConnected; строка останется и после снятия) — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом, а адреса коннектора на диске нет. Если он стоит и ведёт на сервер графа — это второй путь мимо моста → убери его в claude.ai (Настройки → Коннекторы) или выключи в Claude Code (/mcp)`,
+      `Claude Code: коннектор «${name}» в истории подключений (${file}, claudeAiMcpEverConnected; строка останется и после снятия) — коннекторы claude.ai приходят в каждую сессию Claude Code рядом с мостом, а адреса коннектора на диске нет. Если он стоит и ведёт на сервер графа — это второй путь мимо моста → уберите его в claude.ai (Настройки → Коннекторы) или выключите в Claude Code (/mcp)`,
     skillsOtherChannel: (pi) =>
       `тем каналом, которым набор ставили (pi — ${pi}; порядок — SETUP.md, раздел «Обновление»)`,
     skillsNone: () =>
@@ -66,16 +66,16 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     skillsBelowRelease: (release) =>
       `НИЖЕ релиза v${release}, вровень с мостом: отстала поставка целиком (мост — подкоманда update)`,
     skillsBehind: (root, v, why, how) =>
-      `скиллы: ${root} — v${v}, ${why} → обнови набор: ${how}; затем новая сессия`,
+      `скиллы: ${root} — v${v}, ${why} → обновите набор: ${how}; затем новая сессия`,
     ocUnreadable: (file) => `OpenCode: ${file} не читается`,
     ocDisabled: (name, file) =>
       `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон, но выключена — не в игре`,
     ocBridge: (name, file, path) =>
-      `OpenCode: запись mcp «${name}» в ${file} зовёт ${path} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
+      `OpenCode: запись mcp «${name}» в ${file} зовёт ${path} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда удалите её из этого файла вручную: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
     ocHttp: (name, file) =>
-      `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http, мимо моста — её тулы namespaced, стояния канала у неё нет, и записи уходят без места. Путь к графу один — мост, его приносит плагин поставки. Убери её из этого файла руками: у opencode mcp есть list, add, auth, logout — команды remove нет`,
+      `OpenCode: запись mcp «${name}» в ${file} ведёт Искрон напрямую по http, мимо моста — её тулы namespaced, места на канале у неё нет, и записи уходят без места. Путь к графу один — мост, его приносит плагин поставки. Удалите её из этого файла вручную: у opencode mcp есть list, add, auth, logout — команды remove нет`,
     ocNone: (unreadable, cwd) =>
-      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — смотри строки выше)` : ""} — смотрел вверх от ${cwd}, глобальный слой и переменные; запись в другом дереве этим не проверена, позови doctor из каталога проекта`,
+      `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — см. строки выше)` : ""} — смотрел вверх от ${cwd}, глобальный слой и переменные; запись в другом дереве этим не проверена, запустите doctor из каталога проекта`,
   },
   en: {
     launchFix: (harness, entry, node, bridge) => {
@@ -119,7 +119,7 @@ export const HARNESS: Readonly<Record<Lang, HarnessWords>> = {
     ocBridge: (name, file, path) =>
       `OpenCode: the mcp entry "${name}" in ${file} calls ${path} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
     ocHttp: (name, file) =>
-      `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http, around the bridge — its tools are namespaced, it has no channel standing, and its writes go out without a seat. The one path to the graph is the bridge, brought by the delivery plugin. Remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command`,
+      `OpenCode: the mcp entry "${name}" in ${file} leads to Iskron directly over http, around the bridge — its tools are namespaced, it has no seat on the channel, and its writes go out without a seat. The one path to the graph is the bridge, brought by the delivery plugin. Remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command`,
     ocNone: (unreadable, cwd) =>
       `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${cwd}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`,
   },
