@@ -18,13 +18,22 @@ import { join } from "node:path";
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
   process.stdout.write(`${process.env.FAKE_ORCA_VERSION ?? "1.4.242"}\n`);
-  process.exit(0);
+  process.exit(Number(process.env.FAKE_ORCA_VERSION_EXIT ?? 0));
 }
 if (args[0] === "agent-context") {
   // FAKE_ORCA_CONTEXT_DELAY_MS: the schema answers this much later — a tact slow before a clone.
   const slow = Number(process.env.FAKE_ORCA_CONTEXT_DELAY_MS ?? 0);
   if (slow) await new Promise((r) => setTimeout(r, slow));
-  const flags = ["agent", "worktree", "prompt", "model", "effort", "surface", "focus", "json"];
+  const flags = process.env.FAKE_ORCA_LAUNCH_FLAGS?.split(",") ?? [
+    "agent",
+    "worktree",
+    "prompt",
+    "model",
+    "effort",
+    "surface",
+    "focus",
+    "json",
+  ];
   // setup-clone's flags as 1.4.242 declares them; FAKE_ORCA_CLONE_FLAGS — another list.
   const clone = process.env.FAKE_ORCA_CLONE_FLAGS?.split(",") ?? [
     "help",
