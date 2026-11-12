@@ -48,7 +48,7 @@ async function standUp(name, sessions) {
 /** The session's bridge said «held» with its seat. */
 async function holds(rec, events, pid, key) {
   appendFileSync(`${events}.${pid}`, event("held", { key, place: PLACE }));
-  await until(() => rec.said().includes(`мост держит стояние ${key}`), `held ${key}`);
+  await until(() => rec.said().includes(`мост держит место ${key}`), `held ${key}`);
 }
 
 /** A request as OpenCode's `hook` gets it ("compaction" or "context"); returns its system text. */

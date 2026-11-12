@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "deny": ["AskUserQuestion"],
     "allow": [
       "mcp__iskron__iskron_orient",
       "mcp__iskron__iskron_look",

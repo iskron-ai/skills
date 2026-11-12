@@ -94,7 +94,7 @@ export const DOCTOR: Readonly<Record<Lang, DoctorWords>> = {
     homeSame: (home) => `домашняя копия: ${home} — та же сборка, что и этот файл`,
     homeDiffers: (home, v, hash, selfPath) => {
       const fix = selfPath
-        ? `обнови её из поставки: cp "${selfPath}" ${home}`
+        ? `обновите её из поставки: cp "${selfPath}" ${home}`
         : "этот файл не читается";
       return `домашняя копия: ${home} — v${v}+${hash}, ДРУГИЕ байты: ${fix}`;
     },
@@ -112,10 +112,9 @@ export const DOCTOR: Readonly<Record<Lang, DoctorWords>> = {
     grantPat: (source) => `грант: личный токен (PAT) из ${source} — OAuth не используется`,
     patCheckFailed: (why) => `  проверить не вышло: ${why}`,
     patRejected: () =>
-      "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпусти новый на странице токенов графа",
+      "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпустите новый на странице токенов графа",
     patAccepted: (status) => `  токен принят сервером (HTTP ${status})`,
-    patOther: (status) =>
-      `  сервер ответил HTTP ${status} — не отказ токена, смотри строку «сервер»`,
+    patOther: (status) => `  сервер ответил HTTP ${status} — не отказ токена, см. строку «сервер»`,
     patStore: (path) => `  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`,
     grant: (path) => `грант: ${path}`,
     noStore: () => "  хранилища нет — мост ещё ни разу не входил на этот сервер",
@@ -161,7 +160,7 @@ export const DOCTOR: Readonly<Record<Lang, DoctorWords>> = {
       `OpenCode: плагин ${copy} стоит; рядом с этим файлом поставки плагина нет, сверить не с чем`,
     ocSame: (copy) => `OpenCode: плагин ${copy} — та же сборка, что в поставке`,
     ocDiffers: (copy, packaged) =>
-      `OpenCode: плагин ${copy} — ДРУГИЕ байты, обнови из поставки: cp "${packaged}" ${copy}`,
+      `OpenCode: плагин ${copy} — ДРУГИЕ байты, обновите из поставки: cp "${packaged}" ${copy}`,
     codexHome: (h) => `Codex: дом ${h}`,
     codexDoorOpen: (door) => `Codex: дверь app-server открыта (${door})`,
     codexDoorNever: () =>

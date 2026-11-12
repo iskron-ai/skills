@@ -77,10 +77,10 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     noRemove: (title) =>
       `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${title}» не удаляются и копятся дочерними у места; продление идёт`,
     cap: (max, title) =>
-      `Искрон: неудалённых служебных сессий продления больше ${max} — старшие больше не повторяю, удали дочерние «${title}» руками`,
+      `Искрон: неудалённых служебных сессий продления больше ${max} — старшие больше не повторяю, удалите дочерние «${title}» вручную`,
     notCreated: (message) => `Искрон: каталог не продлён — служебная сессия не создана: ${message}`,
     noId: (answer, title) =>
-      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удали её руками`,
+      `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удалите её вручную`,
     notRemoved: (id) =>
       `Искрон: каталог продлён, служебная сессия ${id} не удалена — повторю на следующем такте`,
     tickFailed: (message) => `Искрон: такт продления каталога сорвался — ${message}`,
@@ -118,8 +118,8 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     needLoginError: (open, elsewhere) =>
       `Искрон: нужен вход в граф — ${open} и повтори вызов. ` +
       `Адрес локальный для машины OpenCode: ${elsewhere} (скилл establish-mcp).`,
-    openAndFinish: (url) => `открой ${url} и заверши его`,
-    finishItInBrowser: () => "заверши его в браузере",
+    openAndFinish: (url) => `откройте ${url} и завершите вход`,
+    finishItInBrowser: () => "завершите вход в браузере",
     needLogin: (open, elsewhere) =>
       `Искрон: нужен вход — ${open}; ` +
       `адрес локальный: ${elsewhere}. ` +
@@ -203,8 +203,8 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     needLoginError: (open, elsewhere) =>
       `Iskron: sign-in to the graph is needed — ${open} and repeat the call. ` +
       `The address is local to the OpenCode machine: ${elsewhere} (the establish-mcp skill).`,
-    openAndFinish: (url) => `open ${url} and finish it`,
-    finishItInBrowser: () => "finish it in the browser",
+    openAndFinish: (url) => `open ${url} and complete sign-in`,
+    finishItInBrowser: () => "complete sign-in in the browser",
     needLogin: (open, elsewhere) =>
       `Iskron: sign-in needed — ${open}; ` +
       `the address is local: ${elsewhere}. ` +

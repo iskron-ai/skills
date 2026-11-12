@@ -1,6 +1,18 @@
 {
   "description": "Onboarding invitation at session start in a repository not yet aligned for the agent; the role's way back after a context compaction; the session rituals — start, push, merge — by the repository's cover; at a turn's end, a frame's turn that left its word in the console is woken once",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'PreToolUse',permissionDecision:'deny',permissionDecisionReason:'Use a case ask card, not AskUserQuestion.'}}))\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup",

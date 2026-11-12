@@ -103,7 +103,7 @@ test("a seated session after a compaction reads the human's rules in the first r
       `${files.events}.${pid}`,
       JSON.stringify({ kind: "held", automatic: false, key: "k-m", place: PLACE }) + "\n",
     );
-    await until(() => rec.said().includes("мост держит стояние k-m"), "held");
+    await until(() => rec.said().includes("мост держит место k-m"), "held");
     const system = async (hook) => {
       const req = { sessionID: "s-m", system: [], messages: [], tools: {}, options: {} };
       for (const cb of rec.hooks[hook] ?? []) await cb(req);
@@ -165,7 +165,7 @@ test("the plugin uses strict production reads only for compaction and retries a 
       `${files.events}.${pid}`,
       JSON.stringify({ kind: "held", automatic: false, key: "k-refused", place: PLACE }) + "\n",
     );
-    await until(() => rec.said().includes("мост держит стояние k-refused"), "held");
+    await until(() => rec.said().includes("мост держит место k-refused"), "held");
     const run = async (hook, req) => {
       for (const cb of rec.hooks[hook] ?? []) await cb(req);
     };

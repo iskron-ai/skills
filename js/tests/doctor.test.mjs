@@ -371,7 +371,7 @@ test("doctor tells the bridge entry from the http entry and reads jsonc with com
     );
     assert.match(
       r.out,
-      /«прямой».*Путь к графу один — мост.*Убери/,
+      /«прямой».*Путь к графу один — мост.*Удалите/,
       `the http entry must be ordered away — the one path is the bridge: ${r.out}`,
     );
     assert.doesNotMatch(r.out, /законен/, `no http path is legitimate: ${r.out}`);
@@ -613,8 +613,8 @@ test("doctor: role files sharing one bridge entry name are named, each with its 
       /имя записи «iskron-sub» делят 2 файла/,
       `a shared name must be named: ${r.out}`,
     );
-    assert.match(r.out, /переименуй запись в этом файле: iskron-sub-reader/, r.out);
-    assert.match(r.out, /переименуй запись в этом файле: iskron-sub-worker/, r.out);
+    assert.match(r.out, /переименуйте запись в этом файле: iskron-sub-reader/, r.out);
+    assert.match(r.out, /переименуйте запись в этом файле: iskron-sub-worker/, r.out);
     assert.doesNotMatch(
       r.out,
       /«iskron-sub-verifier» делят/,
@@ -906,7 +906,7 @@ for (const [what, stub, expect] of [
       "  if (m.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32001, message: 'нужен вход: откройте http://127.0.0.1:1/login?k=dead' } }) + '\\n');",
       "});",
     ].join("\n"),
-    /НАДО: проба «iskron-sub-worker»: initialize — спутник не вошёл: грант машины мёртв или отозван → войди: вызови любой тул iskron_\*/,
+    /НАДО: проба «iskron-sub-worker»: initialize — спутник не вошёл: грант машины мёртв или отозван → войдите: вызовите любой тул iskron_\*/,
   ],
 ]) {
   test(`doctor: ${what} in the satellite probe is a finding, and the file is not in order`, async () => {

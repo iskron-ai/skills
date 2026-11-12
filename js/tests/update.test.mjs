@@ -595,7 +595,11 @@ test("update: fetches the release on demand and reports what was laid where", as
   );
   assert.match(r.out, /положено: .*iskron-bridge\.mjs/, r.out);
   assert.match(r.out, /положено: .*SETUP\.md/, r.out);
-  assert.match(r.out, /прочти его и исполни/, "the report hands the fresh installer to the agent");
+  assert.match(
+    r.out,
+    /прочтите его и выполните/,
+    "the report hands the fresh installer to the agent",
+  );
   assert.equal(versionIn(readFileSync(h.bridgePath, "utf8")), NEWER);
   assert.ok(existsSync(join(authDir, "SETUP.md")));
 });
@@ -639,7 +643,7 @@ test("update: a secondary rate limit (retry-after while the hourly budget remain
   assert.equal(r.code, 1, r.out + r.err);
   assert.match(r.out, /вторичный лимит API GitHub/, r.out);
   assert.match(r.out, /сброс \S+ \(через 2 мин\)/, r.out);
-  assert.match(r.out, /— лимит GitHub; повтори после сброса/, r.out);
+  assert.match(r.out, /— лимит GitHub; повторите после сброса/, r.out);
   assert.ok(!/сеть или GitHub/.test(r.out), `no blame on the network: ${r.out}`);
 });
 

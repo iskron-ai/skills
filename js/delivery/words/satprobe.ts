@@ -23,28 +23,28 @@ export interface SatProbeWords {
 export const SAT_PROBE: Readonly<Record<Lang, SatProbeWords>> = {
   ru: {
     loginAdvice: () =>
-      "войди: вызови любой тул iskron_* в основной сессии и открой ссылку входа из его ответа (или положи личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повтори doctor",
+      "войдите: вызовите любой тул iskron_* в основной сессии и откройте ссылку входа из его ответа (или положите личный токен в ~/.iskron-bridge/token — скилл establish-mcp), потом повторите doctor",
     exited: (code) => `вышел с кодом ${code}`,
     refusalLogin: (label, what, advice) =>
       `проба «${label}»: ${what} — спутник не вошёл: грант машины мёртв или отозван → ${advice}`,
     refusal: (label, what, msg) =>
-      `проба «${label}»: ${what} вернул отказ: ${msg} → сделай, что велит отказ, и повтори doctor`,
+      `проба «${label}»: ${what} вернул отказ: ${msg} → выполните указания отказа и повторите doctor`,
     silent: (secs) => `молчит ${secs}s`,
     oldFlag: (flag) =>
       ` — похоже, домашний мост старше флага ${flag} → node ~/.iskron-bridge/iskron-bridge.mjs update`,
-    runByHand: () => " → запусти эту команду руками и прочти, что она пишет в stderr",
+    runByHand: () => " → запустите эту команду вручную и прочтите, что она пишет в stderr",
     noInit: (label, why, stderrNote, old) =>
       `проба «${label}»: мост не ответил на initialize (${why}${stderrNote})${old}`,
     noList: (label, name, version, exited) =>
-      `проба «${label}»: initialize ответил (${name} v${version}), tools/list — нет (${exited ?? "молчит"}) → запусти команду руками и прочти её stderr`,
+      `проба «${label}»: initialize ответил (${name} v${version}), tools/list — нет (${exited ?? "молчит"}) → запустите команду вручную и прочтите её stderr`,
     answered: (label, name, version, tools) =>
       `проба «${label}»: мост ответил — ${name} v${version}, тулов ${tools}`,
     schema: (tool, bad) =>
-      `тул ${tool}: схема несёт ${bad} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): скажи имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и жди его обновления, затем повтори doctor`,
+      `тул ${tool}: схема несёт ${bad} на верхнем уровне — сервер отдаёт схему, которую API Anthropic отвергнет («input_schema does not support oneOf, allOf, or anyOf at the top level»), и падает весь прогон субагента, не один этот тул → чинит это сервер, не файл агента и не мост (мост отдаёт схему как есть): сообщите имя тула оператору сервера MCP — тому, кто держит адрес из строки «сервер» выше, — и дождитесь его обновления, затем повторите doctor`,
     winKilled: (label, secs) =>
-      `проба «${label}»: мост не ушёл по закрытому stdin за ${secs}s — снят принудительно → повтори doctor; если он менял токен, вход может понадобиться заново`,
+      `проба «${label}»: мост не ушёл по закрытому stdin за ${secs}s — снят принудительно → повторите doctor; если он менял токен, вход может понадобиться заново`,
     sigKilled: (label, secs) =>
-      `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${secs}s — снят SIGKILL → повтори doctor; если он менял токен, вход может понадобиться заново`,
+      `проба «${label}»: мост не ушёл ни по закрытому stdin, ни по SIGTERM за ${secs}s — снят SIGKILL → повторите doctor; если он менял токен, вход может понадобиться заново`,
   },
   en: {
     loginAdvice: () =>

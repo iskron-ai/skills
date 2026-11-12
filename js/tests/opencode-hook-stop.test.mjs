@@ -60,7 +60,7 @@ async function setup(name) {
   const send = (kind, extra) => appendFileSync(`${events}.${pid}`, event(kind, extra));
   const resume = async (key) => {
     send("held", { automatic: false, key, place });
-    await until(() => rec.said().includes(`мост держит стояние ${key}`), key);
+    await until(() => rec.said().includes(`мост держит место ${key}`), key);
   };
   await resume("initial");
   const command = async (session, id) => {
