@@ -1,5 +1,14 @@
 # Changelog
 
+## [7.39.1](https://github.com/iskron-ai/skills/compare/v7.39.0...v7.39.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* admit Orca by capabilities instead of a pinned version ([#742](https://github.com/iskron-ai/skills/issues/742)) ([5294860](https://github.com/iskron-ai/skills/commit/52948607228cf462f43f05544175cf60f4edecc9))
+* defer companion case management to its host method ([#741](https://github.com/iskron-ai/skills/issues/741)) ([fbd04f9](https://github.com/iskron-ai/skills/commit/fbd04f9276a2e1627adba9287cb9b3cd7feedf95))
+* require squash when merging release PRs ([#738](https://github.com/iskron-ai/skills/issues/738)) ([b086e6e](https://github.com/iskron-ai/skills/commit/b086e6e657f3a478f18c119b5e9b414ef59b2add))
+
 ## [7.39.0](https://github.com/iskron-ai/skills/compare/v7.38.1...v7.39.0) (2026-11-11)
 
 
