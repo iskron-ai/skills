@@ -100,7 +100,7 @@ test("skills catchup auto: enabled updates still do not write for patch-only lag
   });
 });
 
-test("skills catchup auto: minor lag catches up even with a larger installed patch", async () => {
+test("skills catchup auto: major/minor lag catches up even with a larger installed patch", async () => {
   await autoFixture("minor", async ({ text }) =>
     assert.match(text.split("\n")[0], /SKILLS UPDATED/),
   );
