@@ -1,5 +1,5 @@
 // Wait has no incarnation field: both separate shows must match the saved client (#9966).
-import { ORCA_VERSION, run } from "./orchestra-orca.ts";
+import { run } from "./orchestra-orca.ts";
 import type { Run } from "./orchestra-runs.ts";
 
 interface Reply {
@@ -26,8 +26,6 @@ const parse = (s: string): Reply => {
 };
 export async function execExited(r: Run): Promise<boolean> {
   if (!r.exec?.session || !r.exec.incarnation || !r.terminal || !r.runtime) return false;
-  const version = await run(["--version"], 5_000);
-  if (version.code !== 0 || version.out.trim() !== ORCA_VERSION) return false;
   const show = async (): Promise<Reply> => {
     const got = await run(["terminal", "show", "--terminal", r.terminal!, "--json"], 5_000);
     return got.code === 0 ? parse(got.out) : {};

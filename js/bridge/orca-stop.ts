@@ -1,6 +1,6 @@
 // Observed Orca 1.4.242 post-close surface (#9966, #9256; case 4542): terminal show
 // remains readable, and wait --for exit reports the outcome. CLI close exit0 alone is not it.
-import { ORCA_VERSION, run } from "./orchestra-orca.ts";
+import { run } from "./orchestra-orca.ts";
 
 interface Reply {
   ok?: boolean;
@@ -31,8 +31,6 @@ export async function orcaCloseObserved(
   current: () => boolean,
   expected?: { incarnation: string; worktree: string },
 ): Promise<string | null> {
-  const version = await run(["--version"], 5_000);
-  if (version.code !== 0 || version.out.trim() !== ORCA_VERSION) return "orca_version_unverified";
   const show = async (): Promise<Reply> => {
     const r = await run(["terminal", "show", "--terminal", handle, "--json"], 5_000);
     return r.code === 0 ? parse(r.out) : {};
