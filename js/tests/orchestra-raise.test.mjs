@@ -548,12 +548,31 @@ test("raise: the caller gone mid-tact — no further launch, no cursor moves (#8
   assert.equal(cursors.realms[REALM], undefined, "no cursor moved after the caller left");
 });
 
-test("raise: an unobserved orca version launches nothing", async (t) => {
+test("raise: another orca version with the required capabilities launches", async (t) => {
   const o = await leading(t, { env: { FAKE_ORCA_VERSION: "1.5.0" } });
   await o.queue([invite(9, GOOD)]);
   const r = await o.step();
-  assert.match(r.out, /invite 9: orca_version_unverified/, r.out);
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.match(r.out, /Orca 1\.5\.0/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
+test("raise: another orca version without a required flag launches nothing", async (t) => {
+  const o = await leading(t, {
+    env: { FAKE_ORCA_VERSION: "1.5.0", FAKE_ORCA_LAUNCH_FLAGS: "agent,worktree,model,json" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: orca_schema_unverified/, r.out);
   assert.equal(o.launches().length, 0);
+});
+
+test("raise: unreadable version metadata does not override supported capabilities", async (t) => {
+  const o = await leading(t, { env: { FAKE_ORCA_VERSION_EXIT: "1" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.equal(o.launches().length, 1);
 });
 
 test("raise: a failed launch is a refused run, not retried", async (t) => {
