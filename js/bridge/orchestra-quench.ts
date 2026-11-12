@@ -114,7 +114,9 @@ export async function quench(
         if (got.id) r.order_id = got.id;
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
-        r.state = "ended";
+        // A missing seat proves neither exec exit nor durable suppression (#9256).
+        // Keep the live Run available to the exact-client observer.
+        if (!r.exec) r.state = "ended";
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
       } else said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_refused_${got.status}`));
     } catch (e) {

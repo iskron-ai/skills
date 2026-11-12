@@ -92,6 +92,7 @@ export async function prepareExec(path: string, api: ApiCall = execApi): Promise
     if (!Array.isArray(context) || context.length !== 0) throw new Error("exec_session_not_empty");
     r.phase = "prompt-sent";
     saveReceipt(path, r);
+    // HTTP admission: graph @nks/nks-dev #10461; acceptance is not native claim/join.
     const accepted = data(
       await api(r.server, "post", `/api/session/${r.session}/prompt`, { text: r.prompt }),
     );

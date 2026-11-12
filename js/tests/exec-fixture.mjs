@@ -48,6 +48,8 @@ export async function execFixture(t) {
     const phase = row.exec ? JSON.parse(readFileSync(row.exec.receipt)).phase : undefined;
     calls.push({ method: req.method, path: req.url, payload, phase });
     let answer;
+    // HTTP shape: graph @nks/nks-dev #10461 (2.2.7 API-only admission).
+    // This fake does not witness scheduled execution, native MCP claim/join or quit.
     if (req.url === "/api/info") answer = { version: "2.2.7", hostname: hostname() };
     else if (req.url === "/api/session" && req.method === "POST") {
       session = { id: "ses_fake", model: payload.model, location: payload.location };

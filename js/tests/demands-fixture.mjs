@@ -28,7 +28,7 @@ export function command(dir, args) {
   });
 }
 
-export async function fixture(reply, realms = ["@probe/one", "@probe/two"]) {
+export async function fixture(reply, realms = ["@probe/one", "@probe/two"], env = {}) {
   const calls = [];
   const server = createServer((req, res) => {
     calls.push({ method: req.method, path: req.url });
@@ -59,7 +59,12 @@ export async function fixture(reply, realms = ["@probe/one", "@probe/two"]) {
     ),
   );
   const daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], {
-    env: { ...process.env, ISKRON_BRIDGE_NO_UPDATE: "1", ISKRON_BRIDGE_DAEMON_IDLE_MS: "60000" },
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_DAEMON_IDLE_MS: "60000",
+      ...env,
+    },
     stdio: "ignore",
   });
   const close = async () => {
