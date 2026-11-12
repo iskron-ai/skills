@@ -1168,6 +1168,102 @@ for (const busy of [true, false])
     }
   });
 
+test("scoped stop: taking a seat off leaves history and client passive without archive", async () => {
+  const b = bridgeEnv("passive-seat");
+  const rec = await plugin(b.env, { app: { name: "opencode", version: "2.2.7" } });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "passive-seat");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("stopped", { key: "k", text: "removed" }));
+    await until(() => rec.interrupts.length === 1, "interrupt");
+    await delay(1500);
+    assert.deepEqual(rec.archives, [], "seat removal must not archive or close the client");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: { type: "message", id: "late", body: "late" } }),
+    );
+    await delay(200);
+    assert.equal(rec.prompts.length, 0, "late frame must not revive the stopped session");
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("scoped stop: terminal ack waits for archive and reports archive refusal", async () => {
+  const calls = join(SANDBOX, "scoped-archive.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("scoped-archive", { FB_CALLS: calls });
+  let open;
+  const updateGate = new Promise((r) => (open = r));
+  const rec = await plugin(b.env, {
+    app: { name: "opencode", version: "2.2.7" },
+    sessions: [{ id: "scoped-archive", time: {} }],
+    faults: { updateGate, updateFails: true },
+  });
+  const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "scoped-archive");
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("stopped", { key: "k", text: "stop", order: "scoped" }),
+    );
+    await until(() => rec.archives.length === 1, "archive request");
+    await delay(200);
+    assert.equal(halted().length, 0, "interrupt alone is not a full-stop confirmation");
+    open();
+    await until(() => halted().length === 1, "failed terminal ack");
+    assert.deepEqual(halted()[0].arguments, {
+      order: "scoped",
+      ok: false,
+      code: "interrupt_confirmed_archive_refused",
+    });
+  } finally {
+    open();
+    await rec.stop();
+  }
+});
+
+test("scoped stop: stand in another instance cancels only the pending archive generation", async () => {
+  const sid = "scoped-cross-instance";
+  const sessions = [{ id: sid, time: {} }];
+  let open;
+  const gate = new Promise((r) => (open = r));
+  const a = bridgeEnv("scoped-cross-A"),
+    b = bridgeEnv("scoped-cross-B");
+  const app = { name: "opencode", version: "2.2.7" };
+  const A = await plugin(a.env, { app, sessions, faults: { updateGate: gate } });
+  const B = await plugin(b.env, { app, sessions, keepMarker: true });
+  try {
+    await serverTools(A);
+    await serverTools(B);
+    await A.call("iskron_channel", { action: "connect" }, sid);
+    await B.call("iskron_channel", { action: "connect" }, sid);
+    appendFileSync(
+      `${a.events}.${pidOf(a.log)}`,
+      event("stopped", { order: "cross-stop", key: "a", text: "stop" }),
+    );
+    await until(() => A.archives.length === 1, "old archive in flight");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "b" }));
+    await until(() => /мост держит стояние b/.test(B.said()), "new explicit stand");
+    open();
+    await until(
+      () => B.archives.some((a) => a.archived === false),
+      "unarchive queued by the other instance",
+    );
+    await delay(100);
+    assert.equal(
+      sessions[0].time.archived,
+      undefined,
+      "late archive must not overwrite the new stand",
+    );
+  } finally {
+    open();
+    await B.stop();
+    await A.stop();
+  }
+});
+
 // #9256: a stopped agent's session closes in the harness, not only its turn — archived on
 // OpenCode 2.2 on (not removed: its journal stays readable), out of the archive on an explicit
 // stand; an older host or a refused archive is said to the human: the session is left open.
@@ -1176,10 +1272,11 @@ for (const [host, faults] of [
   ["2.2.1", { updateFails: true }],
   ["2.0.18-probe", {}],
 ])
-  test(`the owner's stop on OpenCode ${host}${faults.updateFails ? " refusing the archive" : ""} ${host === "2.2.1" && !faults.updateFails ? "archives the session, the stand takes it out" : "says the session is left open"}`, async () => {
+  test(`the full stop on OpenCode ${host}${faults.updateFails ? " refusing the archive" : ""} ${host === "2.2.1" && !faults.updateFails ? "archives the session, the stand takes it out" : "says the session is left open"}`, async () => {
     const b = bridgeEnv(`stopped-archive-${host}-${!!faults.updateFails}`);
     const rec = await plugin(b.env, {
       app: { name: "opencode", version: host, channel: "latest" },
+      sessions: [{ id: "s-arch", time: {} }],
       faults,
     });
     try {
@@ -1187,7 +1284,10 @@ for (const [host, faults] of [
       await rec.call("iskron_channel", { action: "connect" }, "s-arch");
       const pid = pidOf(b.log);
       const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
-      appendFileSync(`${b.events}.${pid}`, event("stopped", { code: 4001, key: "k", text }));
+      appendFileSync(
+        `${b.events}.${pid}`,
+        event("stopped", { order: "archive-order", key: "k", text }),
+      );
       await until(() => rec.interrupts.length === 1, "the interrupt of the session's turn");
       if (host === "2.2.1" && !faults.updateFails) {
         await until(() => rec.archives.length === 1, "the archive of the stopped session");
@@ -1205,7 +1305,7 @@ for (const [host, faults] of [
           () => /сессия s-arch остановлена, но её окно осталось открытым/.test(rec.said()),
           "the word of the open session",
         );
-        if (faults.updateFails) assert.match(rec.said(), /осталось открытым — update refused/);
+        if (faults.updateFails) assert.match(rec.said(), /осталось открытым — archive_refused/);
         else assert.equal(rec.archives.length, 0, "an older host is not asked to archive");
       }
     } finally {
@@ -1224,8 +1324,88 @@ const standIn = () => {
   writeFileSync(script, "setTimeout(() => {}, 60000);\n");
   return script;
 };
+for (const mode of ["exit", "ignore", "stand", "unreadable"])
+  test(`scoped stop: full terminal ack observes bound client ${mode}`, async () => {
+    const sid = `scoped-client-${mode}`;
+    const script = standIn();
+    const oldPath = process.env.PATH;
+    if (mode === "ignore")
+      writeFileSync(script, "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000);\n");
+    if (mode === "unreadable") {
+      const marker = join(dirname(script), "signalled");
+      writeFileSync(
+        script,
+        `process.on('SIGTERM',()=>require('node:fs').writeFileSync(${JSON.stringify(marker)},''));setTimeout(()=>{},60000);\n`,
+      );
+      writeFileSync(
+        join(dirname(script), "ps"),
+        `#!/bin/sh\nif [ -f '${marker}' ]; then echo observation-denied >&2; exit 2; fi\nexec /bin/ps "$@"\n`,
+        { mode: 0o755 },
+      );
+      process.env.PATH = dirname(script) + ":" + oldPath;
+    }
+    const client = spawn(process.execPath, [script, "--session", sid], { stdio: "ignore" });
+    const neighbour = spawn(process.execPath, [script, "--session", sid + "-other"], {
+      stdio: "ignore",
+    });
+    const calls = join(SANDBOX, sid + ".calls");
+    writeFileSync(calls, "");
+    const b = bridgeEnv(sid, { FB_CALLS: calls });
+    let open;
+    const updateGate = mode === "stand" ? new Promise((r) => (open = r)) : undefined;
+    const sessions = [{ id: sid, time: {} }];
+    const rec = await plugin(b.env, {
+      app: { name: "opencode", version: "2.2.7" },
+      sessions,
+      faults: { updateGate },
+    });
+    const halted = () => callsIn(calls).filter((c) => c.name === "iskron/halted");
+    try {
+      await serverTools(rec);
+      await rec.call("iskron_channel", { action: "connect" }, sid);
+      const events = `${b.events}.${pidOf(b.log)}`;
+      appendFileSync(events, event("stopped", { key: "k", text: "stop", order: sid }));
+      await until(() => rec.archives.length === 1, "archive started");
+      assert.equal(halted().length, 0, "no terminal ack before archive and exit");
+      if (mode === "stand") {
+        appendFileSync(events, event("held", { key: "k" }));
+        await delay(100);
+        open();
+      }
+      await until(() => halted().length === 1, "terminal ack", 10000);
+      assert.deepEqual(
+        halted()[0].arguments,
+        mode === "exit"
+          ? { order: sid, ok: true }
+          : {
+              order: sid,
+              ok: false,
+              code: mode === "stand" ? "stop_superseded" : "client_exit_unconfirmed",
+            },
+      );
+      if (mode === "exit") {
+        await until(() => client.signalCode !== null, "actual child exit");
+        assert.equal(client.signalCode, "SIGTERM");
+      } else {
+        assert.equal(client.signalCode, null, "no false exit or superseded kill");
+        if (mode === "stand") {
+          await until(() => rec.archives.length === 2, "serialized unarchive");
+          await delay(1200);
+          assert.equal(sessions[0].time.archived, undefined);
+          assert.equal(client.signalCode, null, "old pending close stays cancelled");
+        }
+      }
+      assert.equal(neighbour.signalCode, null, "other session is untouched");
+    } finally {
+      open?.();
+      client.kill("SIGKILL");
+      neighbour.kill("SIGKILL");
+      await rec.stop();
+      process.env.PATH = oldPath;
+    }
+  });
 for (const how of ["tui", "run", "stand again"])
-  test(`the owner's stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : how === "run" ? "the standalone run" : "not when the session stands again within the pause"}`, async () => {
+  test(`the full stop closes the session's client — ${how === "tui" ? "a TUI opened with --session" : how === "run" ? "the standalone run" : "not when the session stands again within the pause"}`, async () => {
     const sid = `s-client-${how.replace(/ /g, "-")}`;
     const opencode = standIn();
     const client = spawn(
@@ -1249,6 +1429,7 @@ for (const how of ["tui", "run", "stand again"])
     );
     const rec = await plugin(b.env, {
       app: { name: "opencode", version: "2.2.1", channel: "latest" },
+      sessions: [{ id: sid, time: {} }],
     });
     try {
       await serverTools(rec);
@@ -1256,7 +1437,7 @@ for (const how of ["tui", "run", "stand again"])
       const text = "место proba снято (человеком) — ты остановлен: работу кончи, место не занимай";
       appendFileSync(
         `${b.events}.${pidOf(b.log)}`,
-        event("stopped", { code: 4001, key: "k", text }),
+        event("stopped", { order: "client-order", key: "k", text }),
       );
       if (how === "stand again") {
         await until(() => rec.archives.length === 1, "the archive of the stopped session");
@@ -1273,6 +1454,7 @@ for (const how of ["tui", "run", "stand again"])
           "SIGTERM",
           "the client takes SIGTERM",
         );
+        await until(() => /клиент закрыт/.test(rec.said()), "observed client exit word");
         assert.match(
           rec.said(),
           new RegExp(`сессия ${sid} остановлена, её клиент закрыт \\(pid ${client.pid}\\)`),
@@ -1351,7 +1533,7 @@ for (const refused of [false, true])
         halted()[0].arguments,
         refused
           ? { order: "ord-9", ok: false, code: "interrupt_refused" }
-          : { order: "ord-9", ok: true },
+          : { order: "ord-9", ok: false, code: "interrupt_confirmed_archive_missing" },
       );
       if (refused) assert.equal(rec.interrupts.length, 3, "the refusal is final after the tries");
     } finally {
@@ -5319,7 +5501,11 @@ test("a stop order to a lead's satellite seat is confirmed by its bridge before 
     );
     open();
     await until(() => named("iskron/halted").length === 1, "the confirmation", 8000);
-    assert.deepEqual(named("iskron/halted")[0].arguments, { order: "ord-sat", ok: true });
+    assert.deepEqual(named("iskron/halted")[0].arguments, {
+      order: "ord-sat",
+      ok: false,
+      code: "interrupt_confirmed_archive_missing",
+    });
     assert.equal(named("iskron/halted")[0].pid, childPid, "by the lead's own bridge");
     await until(() => !alive(childPid), "the lead's bridge down after the confirmation", 8000);
   } finally {
@@ -5427,7 +5613,7 @@ for (const refused of [false, true])
         halted()[0].arguments,
         refused
           ? { order: "ord-two", ok: false, code: "interrupt_refused" }
-          : { order: "ord-two", ok: true },
+          : { order: "ord-two", ok: false, code: "interrupt_confirmed_archive_missing" },
       );
       assert.equal(halted()[0].pid, rootPid, "by the root's bridge");
       if (refused)
@@ -5489,7 +5675,11 @@ test("a stop order's confirmation waits for a child born while it waits", async 
     );
     openLate();
     await until(() => halted().length === 1, "the confirmation", 8000);
-    assert.deepEqual(halted()[0].arguments, { order: "ord-late", ok: true });
+    assert.deepEqual(halted()[0].arguments, {
+      order: "ord-late",
+      ok: false,
+      code: "interrupt_confirmed_archive_missing",
+    });
   } finally {
     openChild();
     openLate?.();

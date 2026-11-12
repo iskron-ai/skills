@@ -156,7 +156,11 @@ function fakeCtx({
       // An update — the stopped session's archive (#9256, OpenCode 2.2); updateFails — it throws.
       update: async (o) => {
         archives.push(o);
+        await faults.updateGate;
         if (faults.updateFails) throw new Error("update refused");
+        const session = sessions.find((s) => s.id === o.sessionID);
+        if (session)
+          session.time = { ...session.time, archived: o.archived ? Date.now() : undefined };
       },
       // A move — the twin's wake of an unloaded spelling (twins.ts); moveFails — it throws.
       move: async (o) => {
@@ -360,6 +364,10 @@ export async function plugin(env = {}, ctxOpts = {}) {
     globalThis.__iskronStopIds?.clear();
     globalThis.__iskronStopWords?.clear();
     globalThis.__iskronStopAlone?.clear();
+    globalThis.__iskronStopFull?.clear();
+    globalThis.__iskronArchivedStops?.clear();
+    globalThis.__iskronArchiveQueue?.turns.clear();
+    globalThis.__iskronArchiveQueue?.updating.clear();
   }
   const def = await loadPlugin(env);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
