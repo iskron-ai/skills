@@ -59,7 +59,9 @@ export function prepareAutoSet(dir, mode) {
     mode === "resume" || mode === "patch" || mode === "fresh-dangling"
       ? version
       : mode === "minor"
-        ? `${major}.${minor - 1}.999`
+        ? minor > 0
+          ? `${major}.${minor - 1}.999`
+          : `${major - 1}.999.999`
         : "0.1.0";
   writeFileSync(
     join(root, "establish-mcp", "scripts", "iskron.mjs"),

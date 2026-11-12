@@ -1,5 +1,16 @@
 # Changelog
 
+## [8.0.0](https://github.com/iskron-ai/skills/compare/v7.39.1...v8.0.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* unify owned exec lifecycle and graph-led work ([#744](https://github.com/iskron-ai/skills/issues/744))
+
+### Features
+
+* unify owned exec lifecycle and graph-led work ([#744](https://github.com/iskron-ai/skills/issues/744)) ([768c0cf](https://github.com/iskron-ai/skills/commit/768c0cf345c2dbf9097bf95db47fea61079b0b86))
+
 ## [7.39.1](https://github.com/iskron-ai/skills/compare/v7.39.0...v7.39.1) (2026-11-12)
 
 
