@@ -141,7 +141,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadOrdersUnread: (why) =>
       `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
     brief: (realm, karta, room, invite) =>
-      `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по первой строке. ` +
+      `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по паре spawned_for. ` +
       `Заново не регистрируйся. До работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
       "Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
     plan: (rows) =>
@@ -222,7 +222,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadOrdersUnread: (why) =>
       `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
     brief: (realm, karta, room, invite) =>
-      `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the first line. ` +
+      `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the spawned_for pair. ` +
       `Do not register again. Before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
       "Read the case assignment and its acceptance criteria; do not invent a task.",
     plan: (rows) =>

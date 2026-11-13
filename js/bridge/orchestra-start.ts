@@ -55,8 +55,10 @@ export async function startRun(
     writeRuns(authDir, runs);
     return run.why;
   }
+  // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
+  // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
   const prompt =
-    `spawned_for: ${JSON.stringify({ invite: run.invite, room: run.room })}\n` +
+    `spawned_for: ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
     words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
   const exec = own.harnesses[run.harness].exec;
   if (exec) {
@@ -81,6 +83,8 @@ export async function startRun(
   const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
   if (got.handle) run.terminal = got.handle;
   if (got.runtime) run.runtime = got.runtime;
+  if (got.prompt) run.prompt = got.prompt;
+  if (got.receipt) run.receipt = got.receipt;
   run.state = got.outcome === "ok" ? "launched" : "ambiguity";
   if (got.outcome === "failed") {
     run.why = got.why;

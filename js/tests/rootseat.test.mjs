@@ -414,6 +414,63 @@ test("spawned_for firstline claim refusal aborts before model work", T, async (t
   }
 });
 
+// #9959 v16, #9969 v12: the orchestrator submits the pair and the brief on one line — a
+// multi-line --prompt the terminal turns into a paste that is never sent. The plugin of the
+// same delivery admits the one-line form exactly as the two-line one (#9959).
+test(
+  "spawned_for one-line: the pair seats the root and the same-line remainder reaches the session",
+  T,
+  async (t) => {
+    const s = await stage(t);
+    s.fake.state.structured = true;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("one-line", { emit: false });
+      const text = `${INITIAL_LINE} start work by the one-line brief`;
+      const r = await oc.turn("one-line", text);
+      const regs = s.fake.state.calls.filter(
+        (c) => c.name === "iskron_channel" && c.arguments.action === "register",
+      );
+      assert.ok(regs.length, board(r, oc));
+      assert.deepEqual(regs[0].arguments.spawned_for, {
+        invite: 7,
+        room: "70efab85-1f3b-46a2-a279-c9e806a9b371",
+      });
+      assert.ok(r.told.includes("70efab85-1f3b-46a2-a279-c9e806a9b371"), board(r, oc));
+      // The remainder stays the session's own words: the pair line never edits them, and the
+      // session keeps working after it.
+      assert.equal(r.prompt, text);
+      const next = await oc.turn("one-line", "next");
+      assert.equal(next.prompt, "next");
+    } finally {
+      await oc.stop();
+    }
+  },
+);
+
+for (const [why, text] of [
+  ["no space after the object", `${INITIAL_LINE}x`],
+  ["space and no remainder", `${INITIAL_LINE} `],
+])
+  test(`spawned_for one-line refuses a broken remainder: ${why}`, T, async (t) => {
+    const s = await stage(t);
+    const oc = await rootPlugin(s, s.project);
+    try {
+      oc.create("bad-one-line", { emit: false });
+      await assert.rejects(oc.turn("bad-one-line", text), /spawned_for/);
+      assert.equal(
+        s.fake.state.calls.filter(
+          (c) =>
+            c.name === "iskron_channel" && ["connect", "register"].includes(c.arguments.action),
+        ).length,
+        0,
+      );
+    } finally {
+      await oc.stop();
+    }
+  });
+
 test(
   "spawned_for is only the first user prompt first line, not shared across roots or children",
   T,

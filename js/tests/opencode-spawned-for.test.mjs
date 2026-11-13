@@ -75,3 +75,29 @@ test("a claim with its realm names that graph", async () => {
   const word = (await claimed({ realm: "@nks/nks-dev" })).taken("s");
   assert.ok(word?.includes("@nks/nks-dev") && word.includes(pair.room), word ?? "(none)");
 });
+
+// #9959 v16, #9969 v12: the orchestrator submits the pair and the brief on one line — a
+// multi-line --prompt the terminal turns into a paste that is never sent. The plugin of the
+// same delivery admits the one-line form exactly as the two-line one.
+test("the one-line form seats the pair and hands the session the same-line remainder", async () => {
+  const starts = createSpawnStarts(async () => []);
+  const one = await starts.prompt(
+    "s1",
+    `spawned_for: ${JSON.stringify(pair)} brief after the pair`,
+    "m1",
+  );
+  assert.equal(one, "brief after the pair");
+  const two = await starts.prompt("s2", `spawned_for: ${JSON.stringify(pair)}\nbrief line`, "m2");
+  assert.equal(two, "brief line");
+  for (const s of ["s1", "s2"]) assert.ok(starts.has(s), s);
+});
+
+for (const [why, text] of [
+  ["no space after the object", `spawned_for: ${JSON.stringify(pair)}x`],
+  ["space and no remainder", `spawned_for: ${JSON.stringify(pair)} `],
+])
+  test(`the one-line form refuses a broken remainder: ${why}`, async () => {
+    const starts = createSpawnStarts(async () => []);
+    await assert.rejects(starts.prompt("s", text, "m"), /spawned_for/);
+    assert.ok(!starts.has("s"));
+  });

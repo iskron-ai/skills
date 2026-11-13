@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { plan } from "../../scripts/orca-demands-plan.mjs";
+import { firstLineSpawn } from "../shared/spawned-for.ts";
 
 // Observed Orca 1.4.242: `orca --version` and `orca agent-context --json`.
 // graph @nks/nks-dev #9966; agent launch example declares --worktree path:/projects/myapp.
@@ -36,19 +37,18 @@ test("Orca recipe only plans argv and never claims a launch or a spawned_for bin
   assert.ok(!out.plans[0].argv.includes("--dry-run"), "Orca launch has no such flag");
 });
 
-test("Orca plan carries the complete claim in the first prompt line", () => {
+test("Orca plan carries the complete claim opening the one-line prompt", () => {
   const out = plan(snapshot, mapping, schema, "1.4.242");
   const argv = out.plans[0].argv;
   const prompt = argv[argv.indexOf("--prompt") + 1];
-  const first = prompt.split("\n")[0];
-  assert.ok(first.startsWith("spawned_for: "));
-  assert.deepEqual(JSON.parse(first.slice("spawned_for: ".length)), {
-    invite: row.invite,
-    room: row.room,
-  });
-  // No start line and no second stand: the root already took the seat by the first line.
-  assert.doesNotMatch(prompt, /^start |[Cc]onfirm|iskron_stand/m, prompt);
-  assert.ok(prompt.includes(`room="${row.room}")`), prompt);
+  // One line (#9969): a multi-line --prompt the terminal turns into a paste that is never sent.
+  assert.ok(!/[\r\n]/.test(prompt), prompt);
+  const spawn = firstLineSpawn(prompt);
+  assert.deepEqual(spawn?.pair, { invite: row.invite, room: row.room });
+  assert.ok(spawn.rest.length > 0, "the brief follows on the same line");
+  // No start line and no second stand: the root already took the seat by the spawned_for pair.
+  assert.doesNotMatch(spawn.rest, /(^|\s)start |[Cc]onfirm|iskron_stand/, spawn.rest);
+  assert.ok(spawn.rest.includes(`room="${row.room}")`), spawn.rest);
   assert.equal(out.launch_verified, false);
 });
 

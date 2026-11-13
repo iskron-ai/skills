@@ -257,26 +257,60 @@ test("raise: an invite naming this machine's launcher is launched once through o
     "anthropic/claude-opus-5-5",
   ]);
   const prompt = argv[argv.indexOf("--prompt") + 1];
-  assert.equal(prompt.split("\n")[0], `spawned_for: {"invite":9,"room":"${ROOM}"}`);
+  // One line (#9969 v12): the pair opens the line, the brief follows through a space — a
+  // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
+  assert.ok(prompt.startsWith(`spawned_for: {"invite":9,"room":"${ROOM}"} `), prompt);
+  assert.ok(!/[\r\n]/.test(prompt), `the brief is one line: ${JSON.stringify(prompt)}`);
   // The brief names graph, role and case, and the join before work (#10043).
   assert.ok(
     prompt.includes(`iskron_case(action="join", realm="${REALM}", room="${ROOM}")`),
     prompt,
   );
   assert.match(prompt, /role #931/);
-  // The root took the seat by the first line (№4050 [55]): no start line, no word to stand or
-  // confirm the claim again — a second registration of the same pair.
-  assert.doesNotMatch(prompt, /^start /m, prompt);
+  // The root took the seat by the spawned_for pair (№4050 [55]): no start line, no word to
+  // stand or confirm the claim again — a second registration of the same pair.
+  assert.doesNotMatch(prompt, /(^|\s)start /);
   assert.doesNotMatch(prompt, /confirm the claim|iskron_stand/, prompt);
   assert.match(prompt, /already taken/, prompt);
   assert.equal(argv.at(-1), "--json");
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "launched");
+  // The launch answer's own words, a safe short projection (#9966 v18, #9969 v12).
+  assert.deepEqual(run.prompt, { delivery: "submit", outcome: "handed-to-terminal" });
+  assert.deepEqual(run.receipt, { mode: "terminal", reason: "requested" });
   // The invite still stands (the agent has not joined yet): no second agent for it.
   const again = await o.step();
   assert.equal(again.code, 0, again.err);
   assert.equal(o.launches().length, 1, "a registered invite is never launched again");
 });
+
+// #9966 v18, #9969 v12: a launch is accepted only when the answer says the one-line prompt
+// was submitted (delivery "submit", outcome "handed-to-terminal" — the only pair observed).
+// Anything else is ambiguity with the observed words kept in the Run — never a second agent.
+for (const [name, env, prompt] of [
+  ["no prompt field", { FAKE_ORCA_PROMPT_DELIVERY: "none" }, undefined],
+  [
+    "delivery not submit",
+    { FAKE_ORCA_PROMPT_DELIVERY: "queue" },
+    { delivery: "queue", outcome: "handed-to-terminal" },
+  ],
+])
+  test(`raise: a launch answer without a submit receipt stays ambiguous: ${name}`, async (t) => {
+    const o = await leading(t, { env });
+    await o.queue([invite(10, GOOD)]);
+    const first = await o.step();
+    assert.equal(first.code, 0, first.err + first.out);
+    assert.match(first.out, /invite 10: prompt_not_submitted/, first.out);
+    const run = o.runs()[`${REALM}|${ROOM}|10`];
+    assert.equal(run.state, "ambiguity", JSON.stringify(run));
+    assert.equal(run.why, "prompt_not_submitted");
+    assert.deepEqual(run.prompt, prompt);
+    // The ambiguous launch keeps its occupied limit: no ended, no tree removal, no repeat.
+    const again = await o.step();
+    assert.equal(again.code, 0, again.err);
+    assert.equal(o.launches().length, 1, "an ambiguous launch is never repeated");
+    assert.equal(o.runs()[`${REALM}|${ROOM}|10`].state, "ambiguity");
+  });
 
 test("raise: without a matching launcher, harness, model or checkout nothing is launched and the refusal is said", async (t) => {
   const o = await leading(t);

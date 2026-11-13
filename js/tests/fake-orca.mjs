@@ -200,10 +200,34 @@ const hold = process.env.FAKE_ORCA_HOLD;
 while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 // The launch answer's form by agent-context 1.4.242 (outcome.kind, outcome.handle), not an
-// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal show and close
-// answer ok. Every answer carries _meta.runtimeId as 1.4.242 did (№4050 [74]): the content of
-// FAKE_ORCA_RUNTIME_FILE (a restarted Orca), else rt_fake; "" in the file — no _meta.
+// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. The prompt and receipt
+// words observed on 1.4.257 for a one-line --prompt (#9966): prompt {delivery: submit,
+// outcome: handed-to-terminal} and receipt {mode: terminal, preferred: terminal, reason:
+// requested, detail} — the launch is submitted only in this shape. FAKE_ORCA_PROMPT_DELIVERY
+// (default submit; "none" — no prompt field) and FAKE_ORCA_PROMPT_OUTCOME change or drop the
+// prompt words; FAKE_ORCA_RECEIPT_MODE and FAKE_ORCA_RECEIPT_REASON — the receipt's.
+// terminal show and close answer ok. Every answer carries _meta.runtimeId as 1.4.242 did
+// (№4050 [74]): the content of FAKE_ORCA_RUNTIME_FILE (a restarted Orca), else rt_fake; ""
+// in the file — no _meta.
 const handle = process.env.FAKE_ORCA_HANDLE ?? "term_fake";
+const delivery = process.env.FAKE_ORCA_PROMPT_DELIVERY ?? "submit";
+const promptWords =
+  delivery === "none"
+    ? {}
+    : {
+        prompt: {
+          delivery,
+          outcome: process.env.FAKE_ORCA_PROMPT_OUTCOME ?? "handed-to-terminal",
+        },
+      };
+const receiptWords = {
+  receipt: {
+    mode: process.env.FAKE_ORCA_RECEIPT_MODE ?? "terminal",
+    preferred: "terminal",
+    reason: process.env.FAKE_ORCA_RECEIPT_REASON ?? "requested",
+    detail: "surface terminal requested by the caller",
+  },
+};
 const rtFile = process.env.FAKE_ORCA_RUNTIME_FILE;
 const runtime = rtFile && existsSync(rtFile) ? readFileSync(rtFile, "utf8").trim() : "rt_fake";
 if (args[0] === "terminal" && args[1] === "wait") {
@@ -214,7 +238,11 @@ const answer = {
   ok: true,
   result:
     args[0] === "agent"
-      ? { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } }
+      ? {
+          outcome: handle ? { kind: "terminal", handle } : { kind: "chat" },
+          ...promptWords,
+          ...receiptWords,
+        }
       : args[1] === "show"
         ? {
             terminal: {
