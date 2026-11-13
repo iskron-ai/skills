@@ -8,7 +8,7 @@ import { readRuns } from "../bridge/orchestra-runs.ts";
 import { execFixture } from "./exec-fixture.mjs";
 
 const brief =
-  'spawned_for: {"room":"room","invite":1}\nquotes: \' " $HOME `not-a-command`\nsecond line';
+  'iskron/spawned_for: {"room":"room","invite":1}\nquotes: \' " $HOME `not-a-command`\nsecond line';
 const launch = (f) => launchExec(f.auth, f.runs, f.key, f.host, f.spec, brief, f.bridge);
 test("one integrated API brief → exec session → durable exit → ordinary stop, no close", async (t) => {
   const f = await execFixture(t);

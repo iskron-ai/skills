@@ -71,6 +71,32 @@ codex plugin add iskron@iskron
 
 Плагин из той же поставки (форма OpenCode 2 — `default export {id, setup(ctx)}`, без импортов): тулы `iskron_*` под своими именами, кадры живого канала промптом в сессию, стояние держит мост, каждый скилл — команда палитры `/`. После плоской установки скиллов (npx, ниже) скопируй два файла из скилла `establish-mcp` — мост в `~/.iskron-bridge/iskron-bridge.mjs` и `scripts/opencode-plugin.js` в `~/.config/opencode/plugins/iskron.js`; команды — в `SETUP.md`, ветка OpenCode. Мост принимает и личный токен доступа вместо OAuth (`~/.iskron-bridge/token` или `ISKRON_BRIDGE_TOKEN`) — для безголовых машин и харнессов, чей OAuth не доходит; адрес входа OAuth локальный для машины OpenCode, с другой — `ssh -L`.
 
+#### Облачная установка из версионного архива
+
+Дополнительный канал следующих выпусков — `https://github.com/iskron-ai/skills/releases/download/v<ver>/iskron-opencode-<ver>.tgz`. Архив содержит ровно три файла: `package.json`, плагин `index.js`, мост `iskron.mjs`; без зависимостей, install-скриптов и скиллов. Скиллы при необходимости устанавливаются отдельно, как ниже. Публикации этого канала в npm пока нет; прежняя самообновляемая установка копией остаётся.
+
+Выбери конкретный выпуск, у которого есть этот asset, и подставь его версию ссылкой прямо в `plugins` `opencode.json` проекта — версионной (не `/latest/`), без query и fragment:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["https://github.com/iskron-ai/skills/releases/download/vX.Y.Z/iskron-opencode-X.Y.Z.tgz"]
+}
+```
+
+Не добавляй одновременно копию этого плагина в `plugins/`. Версию выбирает URL архива, не домашний мост. Node на машине агента не требуется — мост исполняет Bun OpenCode.
+
+Окружению **процесса сервера OpenCode** передай:
+
+```sh
+export ISKRON_BRIDGE_URL=https://mcp.iskron.ru
+export ISKRON_BRIDGE_NO_UPDATE=1
+export ISKRON_BRIDGE_NO_BROWSER=1
+# ISKRON_BRIDGE_TOKEN — личный PAT, переданный окружением/хранилищем секретов.
+```
+
+`ISKRON_BRIDGE_URL` — адрес MCP-сервера графа (`https://mcp.iskron.ru`), не имя графа (`r5` сюда не подходит). Токен не записывай в `opencode.json` или репозиторий. Не задавай `ISKRON_BRIDGE_PATH`, если нужен мост из архива: явный путь старше соседнего `iskron.mjs`, затем идёт домашняя копия. Для независимого канала можно выделить `ISKRON_BRIDGE_AUTH_DIR` вне пакета плагина; не дели обновляемый OAuth-грант с другой независимо выбранной версией моста.
+
 ### Pi
 
 ```sh

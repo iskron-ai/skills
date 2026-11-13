@@ -1,5 +1,5 @@
 // Both adapters consume the same admitted row and brief; only explicit exec selects the new one.
-import { ORCHESTRA } from "../delivery/index.ts";
+import { ORCHESTRA, SPAWN_LINE } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { launchExec } from "./exec-launch.ts";
 import type { Launcher } from "./orchestra-launchers.ts";
@@ -7,6 +7,10 @@ import { launchArgv, orcaLaunch, run as orcaRun } from "./orchestra-orca.ts";
 import { coverRefusal } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
+
+/** Observed on OpenCode 2.2.7 under Orca: a 439-character line was pasted unsent, ~230 were
+ * sent (#9966) — the ordinary launch refuses a longer line rather than paste it. */
+export const BRIEF_MAX = 220;
 
 export async function startRun(
   authDir: string,
@@ -32,6 +36,13 @@ export async function startRun(
     state: "preparing",
     at: new Date().toISOString(),
   };
+  // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
+  // multi-line or long --prompt the terminal turns into a paste that is never sent (#9966 v18).
+  const prompt =
+    `${SPAWN_LINE} ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
+    words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
+  const exec = own.harnesses[run.harness].exec;
+  if (!exec && prompt.length > BRIEF_MAX) return "brief_too_long";
   runs[key] = run;
   let treeWhy: string | null;
   try {
@@ -55,10 +66,6 @@ export async function startRun(
     writeRuns(authDir, runs);
     return run.why;
   }
-  const prompt =
-    `spawned_for: ${JSON.stringify({ invite: run.invite, room: run.room })}\n` +
-    words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
-  const exec = own.harnesses[run.harness].exec;
   if (exec) {
     let outcome: string;
     try {
@@ -81,6 +88,8 @@ export async function startRun(
   const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
   if (got.handle) run.terminal = got.handle;
   if (got.runtime) run.runtime = got.runtime;
+  if (got.prompt) run.prompt = got.prompt;
+  if (got.receipt) run.receipt = got.receipt;
   run.state = got.outcome === "ok" ? "launched" : "ambiguity";
   if (got.outcome === "failed") {
     run.why = got.why;

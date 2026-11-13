@@ -26,7 +26,8 @@ export function spawnAdmission(
 ) {
   return async (session: string, text: string, message: string): Promise<string> => {
     if (text.startsWith(FRAME_MARK)) return text;
-    const pair = firstLineSpawn(text);
+    const spawn = firstLineSpawn(text);
+    const pair = spawn?.pair;
     let entry = starts.get(session);
     if (!pair) {
       await entry?.pending?.catch(() => {});
@@ -36,7 +37,9 @@ export function spawnAdmission(
     const initialError = () => new Error(words(SPAWNED_FOR).initial());
     if (entry?.error) throw entry.error;
     if (entry && !entry.pair) throw initialError();
-    const stripped = () => text.slice(text.indexOf("\n") + 1);
+    // The session keeps the prompt without its pair line: the lines below, or the same
+    // line's remainder in the one-line form (#9959 v16, #9969 v12).
+    const stripped = () => (spawn ? spawn.rest : text);
     const compare = (own: SpawnStart) => {
       try {
         mergeSpawn(own.pair, pair);

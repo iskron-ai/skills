@@ -257,26 +257,60 @@ test("raise: an invite naming this machine's launcher is launched once through o
     "anthropic/claude-opus-5-5",
   ]);
   const prompt = argv[argv.indexOf("--prompt") + 1];
-  assert.equal(prompt.split("\n")[0], `spawned_for: {"invite":9,"room":"${ROOM}"}`);
-  // The brief names graph, role and case, and the join before work (#10043).
+  // One line (#9969 v12): the pair opens the line, the brief follows through a space — a
+  // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
+  assert.ok(prompt.startsWith(`iskron/spawned_for: {"invite":9,"room":"${ROOM}"} `), prompt);
+  assert.ok(!/[\r\n]/.test(prompt), `the brief is one line: ${JSON.stringify(prompt)}`);
+  // The brief is the join before work (#10043); the plugin tells the taken word itself.
   assert.ok(
     prompt.includes(`iskron_case(action="join", realm="${REALM}", room="${ROOM}")`),
     prompt,
   );
-  assert.match(prompt, /role #931/);
-  // The root took the seat by the first line (№4050 [55]): no start line, no word to stand or
-  // confirm the claim again — a second registration of the same pair.
-  assert.doesNotMatch(prompt, /^start /m, prompt);
+  // The root took the seat by the spawned_for pair (№4050 [55]): no start line, no word to
+  // stand or confirm the claim again — a second registration of the same pair.
+  assert.doesNotMatch(prompt, /(^|\s)start /);
   assert.doesNotMatch(prompt, /confirm the claim|iskron_stand/, prompt);
-  assert.match(prompt, /already taken/, prompt);
+  // A 439-character line arrived as an unsent paste, ~230 were sent (#9966): keep it short.
+  assert.ok(prompt.length <= 220, `${prompt.length}: ${prompt}`);
   assert.equal(argv.at(-1), "--json");
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "launched");
+  // The launch answer's own words, a safe short projection (#9966 v18, #9969 v12).
+  assert.deepEqual(run.prompt, { delivery: "submit", outcome: "handed-to-terminal" });
+  assert.deepEqual(run.receipt, { mode: "terminal", reason: "requested" });
   // The invite still stands (the agent has not joined yet): no second agent for it.
   const again = await o.step();
   assert.equal(again.code, 0, again.err);
   assert.equal(o.launches().length, 1, "a registered invite is never launched again");
 });
+
+// #9966 v18, #9969 v12: a launch is accepted only when the answer says the one-line prompt
+// was submitted (delivery "submit", outcome "handed-to-terminal" — the only pair observed).
+// Anything else is ambiguity with the observed words kept in the Run — never a second agent.
+for (const [name, env, prompt] of [
+  ["no prompt field", { FAKE_ORCA_PROMPT_DELIVERY: "none" }, undefined],
+  [
+    "delivery not submit",
+    { FAKE_ORCA_PROMPT_DELIVERY: "queue" },
+    { delivery: "queue", outcome: "handed-to-terminal" },
+  ],
+])
+  test(`raise: a launch answer without a submit receipt stays ambiguous: ${name}`, async (t) => {
+    const o = await leading(t, { env });
+    await o.queue([invite(10, GOOD)]);
+    const first = await o.step();
+    assert.equal(first.code, 0, first.err + first.out);
+    assert.match(first.out, /invite 10: prompt_not_submitted/, first.out);
+    const run = o.runs()[`${REALM}|${ROOM}|10`];
+    assert.equal(run.state, "ambiguity", JSON.stringify(run));
+    assert.equal(run.why, "prompt_not_submitted");
+    assert.deepEqual(run.prompt, prompt);
+    // The ambiguous launch keeps its occupied limit: no ended, no tree removal, no repeat.
+    const again = await o.step();
+    assert.equal(again.code, 0, again.err);
+    assert.equal(o.launches().length, 1, "an ambiguous launch is never repeated");
+    assert.equal(o.runs()[`${REALM}|${ROOM}|10`].state, "ambiguity");
+  });
 
 test("raise: without a matching launcher, harness, model or checkout nothing is launched and the refusal is said", async (t) => {
   const o = await leading(t);
@@ -1271,8 +1305,10 @@ const ack = (o, order, state) =>
 // stays stopping and its tab open until the window passes, then frees its slot, tab untouched.
 test("quench: a failed stop retains its runtime and tree past the window", async (t) => {
   const window = 6000;
+  // The agent may live: its terminal is not seen to exit (an exited one ends on a failed stop).
   const o = await stopping(t, { status: 201, body: { id: "ord-f" } }, "ord-f", {
     ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
+    FAKE_ORCA_WAIT_EXIT: "0",
   });
   const since = Date.now();
   assert.equal((await ack(o, "ord-f", "failed")).status, 200);

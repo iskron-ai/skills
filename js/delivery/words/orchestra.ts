@@ -140,10 +140,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
     leadOrdersUnread: (why) =>
       `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
-    brief: (realm, karta, room, invite) =>
-      `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по первой строке. ` +
-      `Заново не регистрируйся. До работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
-      "Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
+    // Short: a long line reaches the terminal as a paste that is never sent (#9966).
+    brief: (realm, _karta, room) =>
+      `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
     planLaunch: (argv) => `поднял бы: ${argv}`,
@@ -221,10 +220,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
     leadOrdersUnread: (why) =>
       `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
-    brief: (realm, karta, room, invite) =>
-      `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the first line. ` +
-      `Do not register again. Before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
-      "Read the case assignment and its acceptance criteria; do not invent a task.",
+    // Short: a long line reaches the terminal as a paste that is never sent (#9966).
+    brief: (realm, _karta, room) =>
+      `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
     planLaunch: (argv) => `would launch: ${argv}`,

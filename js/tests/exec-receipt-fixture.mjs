@@ -28,7 +28,7 @@ export function receiptFixture(t) {
     row,
     "http://127.0.0.1:1234",
     { providerID: "fake", id: "fake" },
-    'spawned_for: {"room":"room","invite":1}\nbrief',
+    'iskron/spawned_for: {"room":"room","invite":1}\nbrief',
   );
   return { root, row, path: row.exec.receipt };
 }
