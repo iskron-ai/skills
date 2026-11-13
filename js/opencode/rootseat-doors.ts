@@ -16,7 +16,7 @@ export interface RootSeatDoors {
   halted(session: string): boolean;
   seat(session: string, realm: string, karta: string, cancelled: () => boolean): Promise<Seating>;
   /** The role a launch was raised for in its home (#10598), seated instead of the cover's. */
-  role(session: string): string | undefined;
+  role?(session: string): string | undefined;
   cancel(session: string): void;
   release(session: string): Promise<void>;
   finished(session: string): void;

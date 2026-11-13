@@ -14,7 +14,7 @@ export interface Launcher {
   harnesses: Record<string, HarnessOffer>;
   checkouts: Record<string, string>;
   /** `<graph>#<role>` → the checkout that role is raised in, whatever its cover's role. */
-  homes: Record<string, string>;
+  homes?: Record<string, string>;
   callers: string[];
   clone: ClonePolicy | null;
 }

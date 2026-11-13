@@ -8,7 +8,7 @@ import type { CheckoutOf } from "./orchestra-orca.ts";
 /** The checkout the description names as this graph's role's home (#10598): the call raises
  * there, and the seat takes the call's role, not the cover's. */
 export const homeOf = (own: Launcher, realm: string, karta: number): string | undefined =>
-  own.homes[`${realm}#${karta}`];
+  own.homes?.[`${realm}#${karta}`];
 
 export function checkoutFor(
   own: Launcher,

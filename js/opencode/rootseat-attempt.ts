@@ -47,7 +47,7 @@ export function attempt(session: string, x: AttemptDoors, expect?: string): Atte
       x.arm(session, where, cover.why, sig);
       return no(realignWord(cover.why));
     }
-    const karta = d.role(session) ?? cover.karta;
+    const karta = d.role?.(session) ?? cover.karta;
     const before = x.line.at;
     const turn = before.then(() => {
       if (cancelled()) return { cancelled: true } as const;
