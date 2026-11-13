@@ -5,7 +5,7 @@ import { launchExec } from "./exec-launch.ts";
 import type { Launcher } from "./orchestra-launchers.ts";
 import { launchArgv, orcaLaunch, run as orcaRun } from "./orchestra-orca.ts";
 import { orcaSeesTree } from "./orchestra-orca-seen.ts";
-import { coverRefusal } from "./orchestra-raise-gates.ts";
+import { coverRefusal, homeOf } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
 import { dropUnlaunched } from "./orchestra-tree-drop.ts";
@@ -40,8 +40,12 @@ export async function startRun(
   };
   // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
   // multi-line or long --prompt the terminal turns into a paste that is never sent (#9966 v18).
+  // A role raised in its home by the description names itself: the seat takes it, not the
+  // cover's role (#10598).
+  const home = !!homeOf(own, run.realm, run.karta);
+  const pair = { invite: run.invite, room: run.room, ...(home ? { karta: run.karta } : {}) };
   const prompt =
-    `${SPAWN_LINE} ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
+    `${SPAWN_LINE} ${JSON.stringify(pair)} ` +
     words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
   const exec = own.harnesses[run.harness].exec;
   if (!exec && prompt.length > BRIEF_MAX) return "brief_too_long";
@@ -61,7 +65,7 @@ export async function startRun(
     }
     return treeWhy;
   }
-  const uncovered = await coverRefusal(run.worktree, run.realm, run.karta, canon);
+  const uncovered = await coverRefusal(run.worktree, run.realm, run.karta, canon, home);
   if (uncovered || gone?.gone) {
     run.state = "ambiguity";
     run.why = uncovered ?? "caller_gone_before_launch";
