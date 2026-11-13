@@ -1,19 +1,27 @@
 // Mechanical denial, not an instruction to the model (#10397).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
-import { BUILT_BRIDGE, REPO } from "./built.mjs";
+import { BUILT_BRIDGE, BUILT_PLUGIN, REPO } from "./built.mjs";
 
 const scratch = mkdtempSync(join(tmpdir(), "blocking-question-"));
 after(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 const bridge = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
-const run = (args) =>
+const run = (args, env = {}) =>
   spawnSync(process.execPath, [bridge, ...args], {
     encoding: "utf8",
     input: "",
@@ -23,7 +31,9 @@ const run = (args) =>
       HOME: scratch,
       ISKRON_BRIDGE_AUTH_DIR: join(scratch, "auth"),
       ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_NO_BROWSER: "1",
       ISKRON_BRIDGE_TOKEN: "",
+      ...env,
     },
   });
 
@@ -123,6 +133,30 @@ test("check-rituals: prepared layers pass, removing either project guard fails",
   writeFileSync(cc, before);
   writeFileSync(join(dir, ".opencode/opencode.json"), "{}");
   assert.equal(check().status, 1);
+});
+
+test("question audit never starts the plugin's adjacent bridge", () => {
+  const dir = join(scratch, "adjacent-audit");
+  const config = join(scratch, "adjacent-config");
+  const plugins = join(config, "plugins");
+  const marker = join(scratch, "adjacent-started");
+  mkdirSync(dir);
+  mkdirSync(plugins, { recursive: true });
+  spawnSync("git", ["init", "-q", dir]);
+  run(["prepare", "--dir", dir, "--graph", "r7", "--holon", "12", "--agent-role", "34", "--json"]);
+  writeFileSync(
+    join(dir, "AGENTS.md"),
+    readFileSync(join(dir, "AGENTS.md"), "utf8") +
+      "\nBlocking question / AskUserQuestion tools are forbidden; use a case ask card.\n",
+  );
+  copyFileSync(process.env.ISKRON_OPENCODE_PLUGIN || BUILT_PLUGIN, join(plugins, "iskron.js"));
+  writeFileSync(
+    join(plugins, "iskron.mjs"),
+    `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started');`,
+  );
+  const result = run(["check-rituals", "--json", dir], { OPENCODE_CONFIG_DIR: config });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(existsSync(marker), false, "auditing hooks must not start a colocated bridge");
 });
 
 test("prepare: JSONC at the target layer is named, never overwritten or partly applied", () => {
