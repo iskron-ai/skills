@@ -709,6 +709,54 @@ test("raise: the description's own checkout overrides Orca for its key; no host 
   assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
 });
 
+// #10598: a role whose checkout's cover names another role (the chief of staff in methodology)
+// is raised there only by the description's home, and the launch names the role for the seat.
+test("raise: a home in the description raises its role in a checkout covered for another", async (t) => {
+  const own = mkdtempSync(join(tmpdir(), "iskron-home-"));
+  t.after(() => rmSync(own, { recursive: true, force: true }));
+  cover(own, coverOf(REALM, 932));
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { homes: { [`${REALM}#931`]: own } } })],
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  const argv = o.launches()[0];
+  const prompt = argv[argv.indexOf("--prompt") + 1];
+  assert.ok(
+    prompt.startsWith(`iskron/spawned_for: {"invite":9,"room":"${ROOM}","karta":931} `),
+    prompt,
+  );
+  assert.ok(
+    o.runs()[`${REALM}|${ROOM}|9`].worktree.startsWith(join(realpathSync(own), ".worktrees")),
+  );
+});
+
+test("raise: a home of another role leaves the cover's refusal standing", async (t) => {
+  const own = mkdtempSync(join(tmpdir(), "iskron-home-"));
+  t.after(() => rmSync(own, { recursive: true, force: true }));
+  cover(own, coverOf(REALM, 932));
+  const o = await leading(t, {
+    descriptions: () => [
+      describe({ body: { checkouts: { [REPO]: own }, homes: { [`${REALM}#933`]: own } } }),
+    ],
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: checkout_other_seat/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
+test("raise: a broken home breaks the description", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { homes: { [`${REALM}#931`]: "relative/path" } } })],
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /homes_invalid/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
 // №4050 [56]: a checkout without the cover raised a harness that could not stand — nor be stopped.
 test("raise: a checkout without the cover of the call's graph and role launches nothing", async (t) => {
   for (const [covered, code] of [
