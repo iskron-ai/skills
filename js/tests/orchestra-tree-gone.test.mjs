@@ -1,6 +1,7 @@
 // #10603: a raised agent removed the tree its own terminal lived in; Orca closed the terminal and
 // shows it orphaned with an empty path. The exact exit is still the run's own — its slot frees.
-// The answers below are the shape Orca 1.4.258 printed for such a terminal (13.11.2026).
+// The answers below are the shape Orca 1.4.258 printed for such a terminal (graph @nks/nks-dev,
+// node #9966).
 import "./built.mjs";
 
 import assert from "node:assert/strict";

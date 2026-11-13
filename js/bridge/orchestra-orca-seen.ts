@@ -26,7 +26,9 @@ const shown = (out: string): unknown => {
 export async function orcaSeesTree(path: string): Promise<string | null> {
   const until = Date.now() + budget();
   for (;;) {
-    const r = await run(["worktree", "show", "--worktree", `path:${path}`, "--json"], 10_000);
+    // One answer never outlasts the whole wait.
+    const left = Math.max(1_000, Math.min(10_000, until - Date.now()));
+    const r = await run(["worktree", "show", "--worktree", `path:${path}`, "--json"], left);
     if (r.code === 0 && shown(r.out) === path) return null;
     if (Date.now() + PAUSE_MS > until) return "orca_tree_unseen";
     await new Promise((resolve) => setTimeout(resolve, PAUSE_MS));

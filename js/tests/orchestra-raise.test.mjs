@@ -979,6 +979,22 @@ test("raise: a tree Orca never shows is not launched in", async (t) => {
   assert.equal(o.launches().length, 0, "nothing launched");
 });
 
+test("raise: a slow Orca does not stretch the wait for the tree past its budget", async (t) => {
+  const o = await leading(t, {
+    env: {
+      FAKE_ORCA_TREE_UNSEEN: "never",
+      FAKE_ORCA_TREE_SHOW_DELAY_MS: "20000",
+      ISKRON_ORCA_TREE_WAIT_MS: "1500",
+    },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const at = Date.now();
+  const r = await o.step();
+  assert.match(r.out, /invite 9: orca_tree_unseen/, r.out);
+  assert.ok(Date.now() - at < 8_000, `waited ${Date.now() - at} ms`);
+  assert.equal(o.launches().length, 0);
+});
+
 test("raise: Orca's refusal of a launch is kept by its code", async (t) => {
   const o = await leading(t, { env: { FAKE_ORCA_REFUSE: "selector_not_found" } });
   await o.queue([invite(9, GOOD)]);
