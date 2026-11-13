@@ -104,6 +104,7 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       r.state = "ended";
       r.why = "stop_failed_after_exit";
       writeRuns(authDir, runs);
+      await cleanupEndedTrees(authDir, runs);
       continue;
     }
     const before = runIdentity(r);

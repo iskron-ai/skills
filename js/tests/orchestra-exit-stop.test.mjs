@@ -4,6 +4,7 @@
 import "./built.mjs";
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
@@ -90,6 +91,8 @@ test("exit stop: a failed order of a tree run whose exact terminal exited ends i
   assert.equal(readRuns(f.auth).own.state, "ended");
   assert.equal(readRuns(f.auth).own.why, "stop_failed_after_exit");
   assert.equal(a.stops.length, 0, "the order path already ran; no second stop");
+  assert.equal(readRuns(f.auth).own.tree.state, "removed", "the clean tree of a gone client goes");
+  assert.equal(existsSync(f.row.worktree), false);
 
   const g = await exited(t, null);
   Object.assign(g.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });

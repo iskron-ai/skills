@@ -13,6 +13,11 @@ import {
   treeContent,
 } from "./orchestra-tree-check.ts";
 
+/** The client is over: the stop said stopped, or it failed after the exact terminal exited (Orca
+ * may refuse closing a tab that then exits, #9966). */
+const clientGone = (r: Run): boolean =>
+  r.stop_outcome === "stopped" || r.why === "stop_failed_after_exit";
+
 export async function cleanupTree(
   authDir: string,
   runs: Record<string, Run>,
@@ -23,12 +28,7 @@ export async function cleanupTree(
     t = r.tree;
   if (!t || t.state === "removed") return null;
   if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
-  if (
-    r.state !== "ended" ||
-    r.stop_outcome !== "stopped" ||
-    r.closed !== "client_exited" ||
-    !t.exit
-  )
+  if (r.state !== "ended" || !clientGone(r) || r.closed !== "client_exited" || !t.exit)
     return "tree_client_unverified";
   const identity = runIdentity(r);
   const current = () => {
@@ -37,7 +37,7 @@ export async function cleanupTree(
       !!latest &&
       runIdentity(latest) === identity &&
       latest.state === "ended" &&
-      latest.stop_outcome === "stopped" &&
+      clientGone(latest) &&
       latest.closed === "client_exited"
     );
   };
