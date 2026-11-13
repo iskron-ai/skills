@@ -16,7 +16,7 @@ import {
 } from "./orchestra-tree-check.ts";
 
 export const LOCK_REASON =
-  "orchestra: a raised agent's terminal lives here; its orchestrator frees it";
+  "do not remove or unlock: the agent raised here dies with this tree; its orchestrator frees it after the agent ends";
 
 export async function prepareTree(
   authDir: string,
