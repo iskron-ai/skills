@@ -13,7 +13,8 @@ import { readDemands } from "./orchestra-demands.ts";
 import type { OrchestraAnswer } from "./orchestra-door.ts";
 import { type Launchers, readLaunchers } from "./orchestra-launchers.ts";
 import { launchArgv } from "./orchestra-orca.ts";
-import { checkoutFor, coverRefusal, refusal } from "./orchestra-raise.ts";
+import { checkoutFor, coverRefusal } from "./orchestra-raise.ts";
+import { resolveInvite } from "./orchestra-resolve.ts";
 import { readClones, readRuns, runKey } from "./orchestra-runs.ts";
 import { realmCanon } from "./orchestra-tact.ts";
 
@@ -53,7 +54,8 @@ export async function planTact(
   const runs = structuredClone(readRuns(authDir));
   const clones = readClones(authDir);
   const rows = ls.refused.map((r) => w().leadDescription(r.what, r.code));
-  for (const row of demands.start) {
+  for (const source of demands.start) {
+    let row = source;
     const realm = String(row.realm);
     const room = String(row.room);
     const invite = Number(row.invite);
@@ -64,12 +66,13 @@ export async function planTact(
       say(w().planAlready(had.state));
       continue;
     }
-    const why = refusal(row, ls, runs);
-    const own = ls.own.get(String(row.launcher).trim());
-    if (why || !own) {
-      say(w().planRefuse(why ?? "launcher_unknown"));
+    const resolved = resolveInvite(row, ls, runs);
+    if ("code" in resolved) {
+      say(w().planRefuse(resolved.code));
       continue;
     }
+    row = resolved.row;
+    const own = resolved.own;
     const repository = String(row.repository).trim();
     const got = checkoutFor(own, repository, () => ({ code: ORCA }));
     let worktree: string;

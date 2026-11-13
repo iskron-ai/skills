@@ -154,6 +154,11 @@ async function leading(
   writeFileSync(join(bin, "orca"), `#!/bin/sh\nexec "${NODE}" "${FAKE_ORCA}" "$@"\n`, {
     mode: 0o755,
   });
+  writeFileSync(
+    join(bin, "ssh"),
+    `#!${NODE}\nconst fs = require('node:fs');\nfs.appendFileSync(process.env.FAKE_SSH_LOG, JSON.stringify(process.argv.slice(2))+'\\n');\nprocess.stdout.write(process.env.FAKE_SSH_OUT || 'hostname github.com\\nidentityfile SECRET\\n');\nprocess.exit(Number(process.env.FAKE_SSH_EXIT || 0));\n`,
+    { mode: 0o755 },
+  );
   const log = join(dir, "orca.log");
   const laid = join(dir, "orca-projects.json");
   writeFileSync(laid, JSON.stringify((projects ?? orcaProjects)(checkout)));
@@ -165,6 +170,7 @@ async function leading(
     ISKRON_BRIDGE_LANG: "en", // the tact's words are the daemon's
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_ORCA_LOG: log,
+    FAKE_SSH_LOG: join(dir, "ssh.log"),
     FAKE_ORCA_PROJECTS: laid,
     FAKE_ORCA_RUNTIME_FILE: join(dir, "orca-runtime"),
     ...(admitted ? { ISKRON_ORCHESTRA: "1" } : {}),
@@ -184,6 +190,7 @@ async function leading(
       await ended;
     }
     await fake.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
   for (let i = 0; ; i++) {
     const r = await cli(dir, ["status"]);
@@ -260,29 +267,169 @@ test("raise: an invite naming this machine's launcher is launched once through o
 test("raise: without a matching launcher, harness, model or checkout nothing is launched and the refusal is said", async (t) => {
   const o = await leading(t);
   await o.queue([
-    invite(1, {}),
+    invite(1, { ...GOOD, launcher: "" }),
     invite(2, { ...GOOD, launcher: "nobody" }),
     invite(3, { ...GOOD, harness: "claude" }),
     invite(4, { ...GOOD, model: "other/model" }),
     invite(5, GOOD, "github.com/probe/unmapped"),
     invite(6, GOOD, null),
-    invite(7, { launcher: "probe-mac", model: GOOD.model }),
+    invite(7, { ...GOOD, harness: "" }),
   ]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
   for (const [n, code] of [
-    [1, "launcher_missing"],
+    [1, "launcher_unknown"],
     [2, "launcher_unknown"],
     [3, "harness_not_offered"],
     [4, "model_not_offered"],
     [5, "no_checkout"],
     [6, "no_checkout"],
-    [7, "harness_missing"],
+    [7, "harness_not_offered"],
   ])
     assert.match(r.out, new RegExp(`invite ${n}: ${code}`), r.out);
   assert.equal(o.launches().length, 0, "nothing was launched");
   const st = await cli(o.dir, ["status"]);
-  assert.match(st.out, /leading: .*launcher_missing/, st.out);
+  assert.match(st.out, /leading: .*launcher_unknown/, st.out);
+});
+
+test("defaults: plain and partial invites resolve identically in dry-run and actual registry without writes to mind", async (t) => {
+  const o = await leading(t, {
+    descriptions: (checkout) => [describe({ body: { limit: 8, checkouts: { [REPO]: checkout } } })],
+  });
+  const attrs = [
+    {},
+    { launcher: null, harness: null, model: null },
+    { launcher: GOOD.launcher },
+    { harness: GOOD.harness },
+    { model: GOOD.model },
+    { launcher: GOOD.launcher, model: GOOD.model },
+  ];
+  await o.queue(attrs.map((a, n) => invite(n + 1, a)));
+  const dry = await cli(o.dir, ["step", "--dry-run"]);
+  for (let n = 1; n <= attrs.length; n++)
+    assert.match(
+      dry.out,
+      new RegExp(`invite ${n}: would launch: .*--agent opencode .*--model ${GOOD.model}`),
+      dry.out,
+    );
+  assert.equal(o.launches().length, 0);
+  assert.deepEqual(o.runs(), {});
+  const actual = await o.step();
+  for (let n = 1; n <= attrs.length; n++) {
+    assert.match(actual.out, new RegExp(`invite ${n}: launched`), actual.out);
+    const run = o.runs()[`${REALM}|${ROOM}|${n}`];
+    for (const k of ["launcher", "harness", "model"]) assert.equal(run[k], GOOD[k]);
+  }
+  assert.equal(o.launches().length, attrs.length);
+  assert.equal(adds(o).length, 0);
+  assert.doesNotMatch(dry.out + actual.out, /callers|checkouts|identityfile|SECRET/);
+});
+
+test("defaults: ambiguity, explicit unknown, forbidden caller and foreign host fail closed", async (t) => {
+  for (const [descriptions, attrs, author, code] of [
+    [
+      [describe(), describe({ seq: 78, body: { launcher: "other" } })],
+      {},
+      "@tester",
+      "launcher_ambiguous",
+    ],
+    [
+      [describe({ body: { harnesses: { opencode: { models: [GOOD.model, "other"] } } } })],
+      {},
+      "@tester",
+      "model_ambiguous",
+    ],
+    [[describe()], { launcher: "unknown" }, "@tester", "launcher_unknown"],
+    [[describe()], { harness: "unknown" }, "@tester", "harness_not_offered"],
+    [[describe()], { model: "unknown" }, "@tester", "model_not_offered"],
+    [[describe()], { ...GOOD, launcher: "unknown" }, "@tester", "launcher_unknown"],
+    [[describe()], { ...GOOD, harness: "unknown" }, "@tester", "harness_not_offered"],
+    [[describe()], { ...GOOD, model: "unknown" }, "@tester", "model_not_offered"],
+    [[describe({ body: { limit: 0 } })], {}, "@tester", "limit_reached"],
+    [[describe()], {}, "@stranger", "caller_not_allowed"],
+    [[describe({ body: { host: "foreign-host" } })], {}, "@tester", "launcher_missing"],
+  ]) {
+    const o = await leading(t, { descriptions: () => descriptions });
+    await o.queue([invite(1, attrs, REPO, author)]);
+    for (const args of [["step", "--dry-run"], ["step"]]) {
+      const r = await cli(o.dir, args);
+      assert.match(r.out, new RegExp(`invite 1: (would refuse: )?${code}`), r.out);
+    }
+    assert.equal(o.launches().length, 0);
+  }
+});
+
+test("defaults: caller permission and explicit model narrow launchers without bypassing the local host or limit", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [
+      describe({
+        body: {
+          limit: 1,
+          callers: ["@friend"],
+          harnesses: { opencode: { models: [GOOD.model] }, codex: { models: [GOOD.model] } },
+        },
+      }),
+      describe({
+        seq: 78,
+        body: { launcher: "other", harnesses: { opencode: { models: ["other/model"] } } },
+      }),
+      describe({ seq: 79, body: { launcher: "foreign", host: "foreign-host" } }),
+    ],
+  });
+  await o.queue([
+    invite(1, {}, REPO, "@friend"),
+    invite(2, { model: GOOD.model }),
+    invite(3, { launcher: "foreign" }),
+  ]);
+  for (const args of [["step", "--dry-run"], ["step"]]) {
+    const r = await cli(o.dir, args);
+    assert.match(r.out, /invite 1: (would launch:|launched)/, r.out);
+    assert.match(r.out, /invite 2: (would refuse: )?limit_reached/, r.out);
+    assert.match(r.out, /invite 3: (would refuse: )?host_elsewhere/, r.out);
+    assert.doesNotMatch(r.out, /foreign-host|callers|SECRET/);
+  }
+  assert.equal(o.launches().length, 1);
+});
+
+test("SSH alias: actual remote hostname comes only from ssh -G; repository path and failures stay closed", async (t) => {
+  for (const [remoteUrl, sshOut, sshExit, succeeds] of [
+    ["git@github-probe:probe/one.git", "hostname github.com\nidentityfile SECRET\n", "0", true],
+    ["ssh://another-user@github-probe/probe/one.git", "hostname github.com\n", "0", true],
+    ["git@github-probe:other/one.git", "hostname github.com\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname other.example\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname github.com\n", "1", false],
+    ["git@github-probe:probe/one.git", "identityfile SECRET\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname github.com\nhostname other.example\n", "0", false],
+    ["https://github-probe/probe/one.git", "hostname github.com\n", "0", false],
+  ]) {
+    const o = await leading(t, {
+      env: { FAKE_SSH_OUT: sshOut, FAKE_SSH_EXIT: sshExit },
+      projects: (checkout) => ({
+        projects: [
+          {
+            id: "alias",
+            gitRemoteIdentity: {
+              canonicalKey: "github-probe/probe/one",
+              remoteUrl,
+            },
+          },
+        ],
+        setups: [{ projectId: "alias", path: checkout, setupState: "ready", hostId: "local" }],
+      }),
+    });
+    await o.queue([invite(1, GOOD)]);
+    const r = await o.step();
+    assert.equal(o.launches().length, succeeds ? 1 : 0, r.out);
+    assert.doesNotMatch(r.out, /identityfile|SECRET/);
+    const log = join(o.dir, "ssh.log");
+    if (remoteUrl.startsWith("https:")) assert.equal(existsSync(log), false);
+    else {
+      const calls = readFileSync(log, "utf8").trim().split("\n").map(JSON.parse);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], "-G");
+      assert.ok(calls[0].includes("github-probe"), JSON.stringify(calls));
+    }
+  }
 });
 
 test("raise: an offered harness the adapter does not know is refused, not launched", async (t) => {
@@ -441,7 +588,7 @@ test("raise: the description's limit holds — the second invite waits", async (
   assert.equal(o.launches().length, 1);
 });
 
-test("raise: a description of another machine is not raised here, its host said aloud; a broken one too", async (t) => {
+test("raise: a description of another machine is refused without its private host; a broken one too", async (t) => {
   const o = await leading(t, {
     descriptions: () => [
       describe({ body: { launcher: "elsewhere", host: "another-host" } }),
@@ -451,8 +598,8 @@ test("raise: a description of another machine is not raised here, its host said 
   await o.queue([invite(1, { ...GOOD, launcher: "elsewhere" })]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
-  // A host naming no machine would raise nowhere in silence: every machine names the host it read.
-  assert.match(r.out, /invite 1: host_elsewhere \(another-host\)/, r.out);
+  assert.match(r.out, /invite 1: host_elsewhere/, r.out);
+  assert.doesNotMatch(r.out, /another-host/);
   assert.match(r.out, /#78 in mind: description_not_json/, r.out);
   assert.equal(o.launches().length, 0);
 });

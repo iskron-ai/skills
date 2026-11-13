@@ -4,15 +4,18 @@
 // `orca` is found on the daemon's PATH.
 import { execFile } from "node:child_process";
 
+import { sshRepository } from "./orchestra-remote.ts";
+
 const FLAGS = ["agent", "worktree", "model", "prompt", "json"];
 
 export function run(
   args: string[],
   timeoutMs: number,
+  command: "orca" | "ssh" = "orca",
 ): Promise<{ code: number | string; out: string }> {
   return new Promise((resolve) => {
     execFile(
-      "orca",
+      command,
       args,
       { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
       (err, stdout) => {
@@ -85,18 +88,37 @@ export async function orcaCheckouts(): Promise<CheckoutOf | string> {
   } catch {
     return "orca_projects_unreadable";
   }
+  const identities = await Promise.all(
+    projects.map(async (p) => {
+      const g = p.gitRemoteIdentity ?? {};
+      const remote = typeof g.remoteUrl === "string" ? await sshRepository(g.remoteUrl, run) : null;
+      return { project: p, remote };
+    }),
+  );
   return (repository) => {
     const want = hostFolded(repository);
+    const unresolved = identities.find(({ project, remote }) => {
+      const url = project.gitRemoteIdentity?.remoteUrl;
+      return (
+        remote &&
+        typeof remote !== "string" &&
+        typeof url === "string" &&
+        remoteKey(url).split("/").slice(1).join("/") === repository.split("/").slice(1).join("/")
+      );
+    });
+    if (unresolved && typeof unresolved.remote === "object" && unresolved.remote)
+      return unresolved.remote;
     const ids = new Set(
-      projects
-        .filter((p) => {
+      identities
+        .filter(({ project: p, remote }) => {
+          if (remote !== null) return typeof remote === "string" && hostFolded(remote) === want;
           const g = p.gitRemoteIdentity ?? {};
           return (
             (typeof g.canonicalKey === "string" && hostFolded(g.canonicalKey) === want) ||
             (typeof g.remoteUrl === "string" && hostFolded(remoteKey(g.remoteUrl)) === want)
           );
         })
-        .map((p) => p.id),
+        .map(({ project: p }) => p.id),
     );
     const paths = [
       ...new Set(
