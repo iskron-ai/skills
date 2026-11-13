@@ -17,7 +17,9 @@ export const exitClientId = (r: Run): string =>
 export function execPending(authDir: string): boolean {
   try {
     return Object.values(readRuns(authDir)).some(
-      (r) => !!(r.exec || r.tree) && LIVE.includes(r.state),
+      (r) =>
+        (!!(r.exec || r.tree) && LIVE.includes(r.state)) ||
+        (r.state === "ended" && r.tree?.state === "ready"),
     );
   } catch {
     return true;
@@ -51,6 +53,7 @@ export async function observeExec(
       writeRuns(authDir, runs);
     }
   }
+  await cleanupEndedTrees(authDir, readRuns(authDir));
   if (!base || !token) return;
   runs = readRuns(authDir);
   const realms = [
