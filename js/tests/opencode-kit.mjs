@@ -333,10 +333,10 @@ const ENV_KEYS = [
 ];
 
 let seq = 0;
-async function loadPlugin(env = {}) {
+async function loadPlugin(env = {}, file = COPY) {
   for (const k of ENV_KEYS) delete process.env[k];
   for (const [k, v] of Object.entries(env)) process.env[k] = String(v);
-  return (await import(`${pathToFileURL(COPY).href}?n=${++seq}`)).default;
+  return (await import(`${pathToFileURL(file).href}?n=${++seq}`)).default;
 }
 
 // The plugin speaks to the human through the service's stderr: the probe
@@ -372,7 +372,7 @@ export async function plugin(env = {}, ctxOpts = {}) {
     globalThis.__iskronArchiveQueue?.turns.clear();
     globalThis.__iskronArchiveQueue?.updating.clear();
   }
-  const def = await loadPlugin(env);
+  const def = await loadPlugin(env, ctxOpts.pluginFile);
   assert.equal(def.id, "iskron", "the default export must be a definition with an id");
   const rec = fakeCtx(ctxOpts);
   const restore = captureStderr(rec.stderr);
