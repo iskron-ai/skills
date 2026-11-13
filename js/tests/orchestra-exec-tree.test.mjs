@@ -31,12 +31,7 @@ async function startFixture(t, change = () => {}) {
   git("-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "commit", "-m", "fixture");
   git("update-ref", "refs/remotes/origin/main", "HEAD");
   const row = { ...f.runs[f.key] };
-  const own = {
-    launcher: "own",
-    host: f.host,
-    harnesses: { opencode: { exec: f.spec } },
-    homes: {},
-  };
+  const own = { launcher: "own", host: f.host, harnesses: { opencode: { exec: f.spec } } };
   const previousBridge = process.argv[1];
   let outcome;
   try {

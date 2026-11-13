@@ -141,7 +141,7 @@ test("exit stop: an ended seat after exit frees the slot and the clean tree goes
 
 test("brief: a line past the paste limit is refused before any tree or run", async () => {
   const runs = {};
-  const own = { launcher: "orca", harnesses: { opencode: { models: ["m"] } }, homes: {} };
+  const own = { launcher: "orca", harnesses: { opencode: { models: ["m"] } } };
   const row = {
     realm: `@${"x".repeat(200)}/graph`,
     room: "201b813e-a41d-42c7-b869-a70e032c85e8",
