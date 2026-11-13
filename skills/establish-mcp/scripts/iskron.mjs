@@ -233,7 +233,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.2.0";
+var VERSION = "8.2.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1764,10 +1764,10 @@ var SEPARATE = {
 // js/delivery/words/skillcatchup.ts
 var SKILL_CATCHUP = {
   en: {
-    gate: (root, installed, target, path, reason) => `SKILLS DELIVERY BLOCKED: ${JSON.stringify(root)} installed v${installed}, bridge v${target}; writer gate exists: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}not updated successfully (completion is unconfirmed). First confirm that the updater process group for this HOME has stopped and that the gate belongs to this catch-up. Release the gate only after a complete pinned post-read (ref/source/stamp and every blob), never merely a fresh bridge version or exit 0. npx may outlive a SIGKILLed bridge daemon; repeating stand does not repair this gate. Automatic deletion and bypass are forbidden.`,
-    failed: (root, installed, target, error, command) => `SKILLS BEHIND: ${JSON.stringify(root)} v${installed} < bridge v${target}; ${JSON.stringify(error)}; not updated successfully (partial own files may remain). Next command: ${command}.`,
-    updated: (root, installed, target, sha2, stamp, removed) => `SKILLS UPDATED: ${JSON.stringify(root)} v${installed} → v${target}, source SHA ${sha2}, stamp ${stamp}; reread the entry and role skills now. Names absent from this release (left installed): ${JSON.stringify(removed)}. Disk installation is not loaded context.`,
-    notice: (root, source, installed, target, reason, command) => `SKILLS BEHIND: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed} < bridge v${target}; ${{
+    gate: (root, installed2, target, path, reason) => `SKILLS DELIVERY BLOCKED: ${JSON.stringify(root)} installed v${installed2}, bridge v${target}; writer gate exists: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}not updated successfully (completion is unconfirmed). First confirm that the updater process group for this HOME has stopped and that the gate belongs to this catch-up. Release the gate only after a complete pinned post-read (ref/source/stamp and every blob), never merely a fresh bridge version or exit 0. npx may outlive a SIGKILLed bridge daemon; repeating stand does not repair this gate. Automatic deletion and bypass are forbidden.`,
+    failed: (root, installed2, target, error, command) => `SKILLS BEHIND: ${JSON.stringify(root)} v${installed2} < bridge v${target}; ${JSON.stringify(error)}; not updated successfully (partial own files may remain). Next command: ${command}.`,
+    updated: (root, installed2, target, sha2, stamp, removed) => `SKILLS UPDATED: ${JSON.stringify(root)} v${installed2} → v${target}, source SHA ${sha2}, stamp ${stamp}; reread the entry and role skills now. Names absent from this release (left installed): ${JSON.stringify(removed)}. Disk installation is not loaded context.`,
+    notice: (root, source, installed2, target, reason, command) => `SKILLS BEHIND: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed2} < bridge v${target}; ${{
       patch: "patch-only lag: notification only",
       plugin: "the harness owns plugin delivery",
       ownership: "source ownership is not proven",
@@ -1775,10 +1775,10 @@ var SKILL_CATCHUP = {
     }[reason]}; not updated. Next command: ${command}. After updating, reread the entry and role skills; disk installation is not loaded context.`
   },
   ru: {
-    gate: (root, installed, target, path, reason) => `ДОСТАВКА СКИЛЛОВ ЗАБЛОКИРОВАНА: ${JSON.stringify(root)} установлен v${installed}, мост v${target}; найдена блокировка записи: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}обновление не подтверждено. Сначала подтверди, что группа процессов updater для этого HOME остановлена и что блокировка относится к этому догону. Снять её можно лишь после полного повторного чтения закреплённого набора (ref/source/stamp и байты всех файлов), не по свежей версии моста или exit 0. npx может пережить SIGKILL демона моста; повтор стояния не снимает блокировку. Автоматическое удаление и обход запрещены.`,
-    failed: (root, installed, target, error, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} v${installed} < мост v${target}; ${JSON.stringify(error)}; обновление не подтверждено (свои файлы могли измениться частично). Следующая команда: ${command}.`,
-    updated: (root, installed, target, sha2, stamp, removed) => `СКИЛЛЫ ОБНОВЛЕНЫ: ${JSON.stringify(root)} v${installed} → v${target}, SHA источника ${sha2}, штамп ${stamp}; перечитай дверь и скилл роли сейчас. Снятые из выпуска имена (оставлены на диске): ${JSON.stringify(removed)}. Установка на диске не означает загрузку в контекст.`,
-    notice: (root, source, installed, target, reason, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed} < мост v${target}; ${{
+    gate: (root, installed2, target, path, reason) => `ДОСТАВКА СКИЛЛОВ ЗАБЛОКИРОВАНА: ${JSON.stringify(root)} установлен v${installed2}, мост v${target}; найдена блокировка записи: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}обновление не подтверждено. Сначала подтверди, что группа процессов updater для этого HOME остановлена и что блокировка относится к этому догону. Снять её можно лишь после полного повторного чтения закреплённого набора (ref/source/stamp и байты всех файлов), не по свежей версии моста или exit 0. npx может пережить SIGKILL демона моста; повтор стояния не снимает блокировку. Автоматическое удаление и обход запрещены.`,
+    failed: (root, installed2, target, error, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} v${installed2} < мост v${target}; ${JSON.stringify(error)}; обновление не подтверждено (свои файлы могли измениться частично). Следующая команда: ${command}.`,
+    updated: (root, installed2, target, sha2, stamp, removed) => `СКИЛЛЫ ОБНОВЛЕНЫ: ${JSON.stringify(root)} v${installed2} → v${target}, SHA источника ${sha2}, штамп ${stamp}; перечитай дверь и скилл роли сейчас. Снятые из выпуска имена (оставлены на диске): ${JSON.stringify(removed)}. Установка на диске не означает загрузку в контекст.`,
+    notice: (root, source, installed2, target, reason, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed2} < мост v${target}; ${{
       patch: "отставание только на правку: лишь уведомление",
       plugin: "плагин доставляет сам харнес",
       ownership: "владение источником не доказано",
@@ -3097,7 +3097,7 @@ function safeSnapshot(v) {
     sessions: list(raw.sessions).map((v2) => {
       const s2 = record(v2);
       const skills = safeSkills(s2.skills);
-      const installed = safeSkills(s2.installed_skills);
+      const installed2 = safeSkills(s2.installed_skills);
       return {
         local_id: text(s2.local_id),
         thin_pid: number(s2.thin_pid),
@@ -3109,7 +3109,7 @@ function safeSnapshot(v) {
         ...typeof s2.server === "string" && s2.server ? { server: s2.server } : {},
         ...typeof s2.api === "string" && s2.api ? { api: s2.api } : {},
         ...skills ? { skills } : {},
-        ...installed ? { installed_skills: installed } : {},
+        ...installed2 ? { installed_skills: installed2 } : {},
         ...typeof s2.skills_mismatch === "boolean" ? { skills_mismatch: s2.skills_mismatch } : {},
         places: list(s2.places).map(safePlace)
       };
@@ -12651,47 +12651,47 @@ function startFreshnessWatch(authDir, serverUrl, tell2 = tellNotice, onChecked =
 // js/bridge/skillcatchup.ts
 async function skillCatchupNotice() {
   const root = skillsRoot();
-  const installed = skillsAttr();
+  const installed2 = skillsAttr();
   const candidate = root || envOf(SKILLS_ROOT_ENV)?.trim();
   const globalRoot = join24(homedir10(), ".agents", "skills");
   const gate = join24(globalRoot, "..", ".skill-catchup.lock");
   if (candidate && resolve8(candidate) === globalRoot) {
     try {
       lstatSync5(gate);
-      return words(SKILL_CATCHUP).gate(globalRoot, installed.version, VERSION, gate);
+      return words(SKILL_CATCHUP).gate(globalRoot, installed2.version, VERSION, gate);
     } catch (e) {
       if (e.code !== "ENOENT")
         return words(SKILL_CATCHUP).gate(
           globalRoot,
-          installed.version,
+          installed2.version,
           VERSION,
           gate,
           "gate_state_unreadable"
         );
     }
   }
-  const before = parseVersion(installed.version);
+  const before = parseVersion(installed2.version);
   const target = parseVersion(VERSION);
-  if (!root || !before || !target || compareVersions(installed.version, VERSION) >= 0) return null;
+  if (!root || !before || !target || compareVersions(installed2.version, VERSION) >= 0) return null;
   const client = harnessName();
   const moves = skillMoves();
   const plugin = client !== PI_CLIENT && (!!envOf("CLAUDE_PLUGIN_ROOT") || existsSync9(join24(root, "..", ".claude-plugin", "plugin.json")) || existsSync9(join24(root, "..", ".codex-plugin", "plugin.json")));
   const item = skillLock(root, envOf("XDG_STATE_HOME"))?.[BRIDGE_SKILL];
   const source = item?.source;
-  const conflict = installed.name !== SKILL_SET || conflictingSkillSource(item);
+  const conflict = installed2.name !== SKILL_SET || conflictingSkillSource(item);
   const own = !conflict && source === SKILL_SET;
   const pi = client === PI_CLIENT && !conflict && ownPiGitSource(root);
   const patchOnly = before[0] === target[0] && before[1] === target[1];
   const probe = !!process.env[envName("BRIDGE_RELEASES_URL")]?.trim();
   if (own && !plugin && !patchOnly && client === OPENCODE_CLIENT && process.platform !== "win32" && !updatesDisabled() && (releaseBuild() || probe) && (isProductionServer(CFG.serverUrl) || probe))
-    return updateFlatSkills(root, installed.version);
+    return updateFlatSkills(root, installed2.version);
   const diagnostic = conflict || !own && !plugin && !pi;
   const command = diagnostic ? `node ${JSON.stringify(currentScope().origin?.path || process.argv[1])} doctor` : plugin ? client.includes("codex") ? moves.codex : moves.claude : client === PI_CLIENT ? moves.pi : client === OPENCODE_CLIENT ? `npx skills add https://github.com/${SKILL_SET}/tree/v${VERSION} --skill '*' --agent opencode --global` : moves.flat;
   const reason = diagnostic ? "ownership" : plugin ? "plugin" : patchOnly ? "patch" : "manifest";
   return words(SKILL_CATCHUP).notice(
     root,
-    installed.name,
-    installed.version,
+    installed2.name,
+    installed2.version,
     VERSION,
     reason,
     command
@@ -16553,7 +16553,7 @@ function resolveInvite(source, ls, runs) {
     return { code: models.length ? "model_ambiguous" : "model_missing" };
   const model = missing(source.model) ? models[0] : text5(source.model) ?? "";
   if (!models.includes(model)) return { code: "model_not_offered" };
-  if (!text5(source.repository))
+  if (!text5(source.repository) && !homeOf(own, String(source.realm), Number(source.karta)))
     return { code: own.clone ? "clone_refused (no_repository)" : "no_checkout" };
   const live2 = Object.values(runs).filter(
     (r) => r.launcher === own.launcher && LIVE.includes(r.state)
@@ -16827,7 +16827,7 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       said2.push(w5().leadRow(realm, room, invite, "exec_runtime_unverified"));
       continue;
     }
-    const repository = String(row.repository).trim();
+    const repository = String(row.repository ?? "").trim();
     const home = homeOf(own, realm, Number(row.karta));
     orca = orca === void 0 ? await orcaCheckouts() : orca;
     const find = () => checkoutFor(
@@ -17222,7 +17222,7 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
     }
     row = resolved.row;
     const own = resolved.own;
-    const repository = String(row.repository).trim();
+    const repository = String(row.repository ?? "").trim();
     const home = homeOf(own, realm, Number(row.karta));
     const got = checkoutFor(own, repository, () => ({ code: ORCA }), home);
     if (typeof got === "string") {
@@ -19548,16 +19548,16 @@ function openIn(io, origin2, scope) {
 // js/bridge/snapshot.ts
 function sessionSnapshot(local_id, engine, thin_pid, attached, build) {
   const inspect = () => {
-    const installed = skillsAttr();
+    const installed2 = skillsAttr();
     const declared = state.standing ? announcedSkills(state.standing) : void 0;
-    const differs = (skills) => !!skills && JSON.stringify(skills) !== JSON.stringify(installed);
+    const differs = (skills) => !!skills && JSON.stringify(skills) !== JSON.stringify(installed2);
     return {
       local_id,
       thin_pid,
       attached,
       build,
       skills: declared,
-      installed_skills: installed,
+      installed_skills: installed2,
       skills_mismatch: differs(declared),
       cwd: engine.origin?.cwd ?? "",
       server: CFG.serverUrl,
@@ -23668,9 +23668,22 @@ function json2(path) {
     return null;
   }
 }
+function installed() {
+  const reg = json2(join58(homedir21(), ".claude", "plugins", "installed_plugins.json"))?.plugins;
+  if (!object3(reg)) return null;
+  for (const [key3, installs] of Object.entries(reg))
+    if (PLUGIN_KEY_RE.test(key3) && Array.isArray(installs))
+      for (const i of installs) {
+        const at3 = object3(i) && typeof i.installPath === "string" ? i.installPath : "";
+        if (at3 && existsSync28(join58(at3, "hooks/hooks.json"))) return join58(at3, "hooks/hooks.json");
+      }
+  return null;
+}
 function manifest() {
   if (process.env.CLAUDE_PLUGIN_ROOT)
     return join58(process.env.CLAUDE_PLUGIN_ROOT, "hooks/hooks.json");
+  const reg = installed();
+  if (reg) return reg;
   for (let dir2 = dirname21(SELF2); ; ) {
     const path = join58(dir2, "hooks/hooks.json");
     if (existsSync28(path)) return path;
