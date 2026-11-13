@@ -188,7 +188,9 @@ if (args[0] === "worktree" && args[1] === "show") {
   if (slow) await new Promise((r) => setTimeout(r, slow));
   const unseen = process.env.FAKE_ORCA_TREE_UNSEEN ?? "0";
   const seen = readFileSync(shows, "utf8").trim().split("\n").length;
-  if (unseen === "never" || seen <= Number(unseen))
+  // FAKE_ORCA_TREE_HIDE=<file> — every answer is selector_not_found while the file stands.
+  const hide = process.env.FAKE_ORCA_TREE_HIDE;
+  if (unseen === "never" || seen <= Number(unseen) || (hide && existsSync(hide)))
     refuse("selector_not_found", "selector_not_found");
   const path = args[args.indexOf("--worktree") + 1].replace(/^path:/, "");
   process.stdout.write(JSON.stringify({ ok: true, result: { worktree: { path } } }) + "\n");

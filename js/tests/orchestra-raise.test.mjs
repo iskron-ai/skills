@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -967,16 +968,29 @@ test("raise: the launch waits until Orca shows the new tree", async (t) => {
   assert.equal(o.launches().length, 1);
 });
 
-test("raise: a tree Orca never shows is not launched in", async (t) => {
+// The clean review of PR #754: an unseen tree held its call and a limit slot for good.
+test("raise: a tree Orca never shows is not launched in, freed, and the call is raised later", async (t) => {
+  const hide = join(mkdtempSync(join(tmpdir(), "iskron-hide-")), "hide");
+  writeFileSync(hide, "");
+  t.after(() => rmSync(dirname(hide), { recursive: true, force: true }));
   const o = await leading(t, {
-    env: { FAKE_ORCA_TREE_UNSEEN: "never", ISKRON_ORCA_TREE_WAIT_MS: "800" },
+    env: { FAKE_ORCA_TREE_HIDE: hide, ISKRON_ORCA_TREE_WAIT_MS: "800" },
   });
   await o.queue([invite(9, GOOD)]);
   const r = await o.step();
-  assert.match(r.out, /invite 9: orca_tree_unseen/, r.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity");
+  assert.match(r.out, /invite 9: orca_tree_unseen, retry/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`], undefined, "no row holds the slot");
   assert.ok(shows(o).length >= 2, "asked more than once");
   assert.equal(o.launches().length, 0, "nothing launched");
+  assert.ok(
+    !existsSync(join(o.checkout, ".worktrees")) ||
+      readdirSync(join(o.checkout, ".worktrees")).length === 0,
+    "the tree is gone",
+  );
+  rmSync(hide);
+  const again = await o.step();
+  assert.match(again.out, /invite 9: launched/, again.out);
+  assert.equal(o.launches().length, 1);
 });
 
 test("raise: a slow Orca does not stretch the wait for the tree past its budget", async (t) => {

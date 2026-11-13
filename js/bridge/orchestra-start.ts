@@ -8,6 +8,7 @@ import { orcaSeesTree } from "./orchestra-orca-seen.ts";
 import { coverRefusal } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
+import { dropUnlaunched } from "./orchestra-tree-drop.ts";
 
 /** Observed on OpenCode 2.2.7 under Orca: a 439-character line was pasted unsent, ~230 were
  * sent (#9966) — the ordinary launch refuses a longer line rather than paste it. */
@@ -88,10 +89,14 @@ export async function startRun(
   writeRuns(authDir, runs);
   const unseen = await orcaSeesTree(run.worktree);
   if (unseen || gone?.gone) {
+    const why = unseen ?? "caller_gone_before_launch";
+    // Nothing was launched: the tree and the row go, and a later tact raises the call again.
+    const kept = await dropUnlaunched(authDir, runs, key);
+    if (!kept) return `${why}, retry`;
     run.state = "ambiguity";
-    run.why = unseen ?? "caller_gone_before_launch";
+    run.why = kept;
     writeRuns(authDir, runs);
-    return run.why;
+    return `${why}, ${kept}`;
   }
   const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
   if (got.handle) run.terminal = got.handle;
