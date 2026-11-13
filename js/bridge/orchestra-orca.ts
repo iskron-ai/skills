@@ -4,6 +4,7 @@
 // `orca` is found on the daemon's PATH.
 import { execFile } from "node:child_process";
 
+import { answerCode, safeCode } from "./orchestra-orca-answer.ts";
 import { sshRepository } from "./orchestra-remote.ts";
 
 const FLAGS = ["agent", "worktree", "model", "prompt", "surface", "json"];
@@ -260,7 +261,9 @@ export async function orcaLaunch(argv: string[]): Promise<
     };
   }
   if (r.code === "timeout") return { outcome: "ambiguous", why: "launch_timeout" };
-  return { outcome: "failed", why: `launch_exit_${r.code}` };
+  // Orca's own refusal names its code (#10598); a bare exit stays a bare exit.
+  const code = safeCode(answerCode(r.out));
+  return { outcome: "failed", why: code ? `launch_refused_${code}` : `launch_exit_${r.code}` };
 }
 
 /**

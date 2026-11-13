@@ -10,7 +10,7 @@ import { execPending, observeExec } from "../bridge/exec-exit.ts";
 import { orchestraLeading, orchestraServe } from "../bridge/orchestra.ts";
 import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { orchestraStatus } from "../bridge/orchestra-status.ts";
-import { prepareTree } from "../bridge/orchestra-tree.ts";
+import { LOCK_REASON, prepareTree } from "../bridge/orchestra-tree.ts";
 import { git } from "../bridge/orchestra-tree-check.ts";
 import { cleanupTree } from "../bridge/orchestra-tree-clean.ts";
 import { command, fixture, stopped } from "./tree-fixture.mjs";
@@ -31,7 +31,16 @@ test("tree: durable intent precedes detached add; source refs and dirty files ne
       const intent = readRuns(f.auth).own.tree;
       assert.equal(intent.state, "creating");
       assert.equal(intent.baseOID, f.base);
-      assert.deepEqual(args, ["worktree", "add", "--detach", intent.path, f.base]);
+      assert.deepEqual(args, [
+        "worktree",
+        "add",
+        "--lock",
+        "--reason",
+        LOCK_REASON,
+        "--detach",
+        intent.path,
+        f.base,
+      ]);
     }
     return git(cwd, args, timeout);
   };
@@ -55,6 +64,20 @@ test("tree: durable intent precedes detached add; source refs and dirty files ne
   );
   assert.equal(command(f.source, "rev-parse", "HEAD"), f.base);
   assert.equal(existsSync(hookMarker), false, "repository checkout hooks cannot mutate the source");
+});
+
+// #10603: a raised agent removed the tree its own terminal lived in, and Orca closed it.
+test("tree: another's plain remove or prune refuses the live tree; the orchestrator's cleanup frees it", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  const other = await git(f.source, ["worktree", "remove", "--", f.row.worktree]);
+  assert.notEqual(other.code, 0, "a plain remove refuses a locked tree");
+  await git(f.source, ["worktree", "prune"]);
+  assert.equal(existsSync(f.row.worktree), true);
+  stopped(f);
+  assert.equal(await cleanupTree(f.auth, f.runs, "own"), null);
+  assert.equal(existsSync(f.row.worktree), false);
+  assert.equal(f.row.tree.state, "removed");
 });
 
 test("tree: an add with unknown outcome never repeats or permits cleanup", async (t) => {

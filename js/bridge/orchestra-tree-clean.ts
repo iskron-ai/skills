@@ -92,6 +92,9 @@ export async function cleanupTree(
     if (!current()) return "tree_superseded";
     t.state = "removing";
     writeRuns(authDir, runs);
+    // Its own lock (orchestra-tree.ts) holds off every other remover; a tree of an older bridge
+    // has none, and its refused unlock changes nothing — the remove below decides.
+    await execute(t.source, ["worktree", "unlock", "--", t.path], 10_000);
     const removed = await execute(t.source, ["worktree", "remove", "--", t.path], 30_000);
     if (removed.code !== 0 || existsSync(t.path) || existsSync(t.identity.gitDir))
       return retain("tree_remove_unverified");
