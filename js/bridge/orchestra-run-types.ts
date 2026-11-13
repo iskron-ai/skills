@@ -42,4 +42,6 @@ export interface Run {
   order_id?: string;
   stopping_at?: string;
   stop_outcome?: string;
+  /** A failed order after the exact terminal exited was replaced once by the exit stop. */
+  restop?: boolean;
 }

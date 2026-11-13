@@ -61,6 +61,7 @@ test("Orca recipe refuses incomplete, ambiguous, unmapped and schema-incompatibl
     [snapshot, mapping, { commands: [] }],
     [{ ...snapshot, start: [row, row] }, mapping, schema],
     [{ ...snapshot, start: [{ ...row, room: "3951" }] }, mapping, schema],
+    [{ ...snapshot, start: [{ ...row, realm: `@${"x".repeat(200)}/graph` }] }, mapping, schema],
   ])
     assert.throws(() => plan(s, m, c, "1.4.242"));
 });

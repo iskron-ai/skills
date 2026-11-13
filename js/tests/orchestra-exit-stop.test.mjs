@@ -41,7 +41,12 @@ async function api(t, answer) {
 async function exited(t, closed = "client_exited") {
   const f = fixture(t);
   assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
-  Object.assign(f.row, { state: "raised", standing_id: "seat", ...(closed && { closed }) });
+  Object.assign(f.row, {
+    state: "raised",
+    standing_id: "seat",
+    harness: "opencode",
+    ...(closed && { closed }),
+  });
   f.row.tree.exit = "observed-exit";
   writeRuns(f.auth, f.runs);
   return f;
@@ -85,23 +90,43 @@ test("exit stop: an ended seat (410 standing_already_ended) ends the exited tree
   assert.equal(LIVE.includes(own.state), false);
 });
 
-test("exit stop: a failed order of a tree run whose exact terminal exited ends it; without the exit it stays", async (t) => {
+test("exit stop: a failed order after the exit stops once more and ends only on an ended seat", async (t) => {
   const f = await exited(t);
-  const a = await api(t, () => [500, {}]);
+  const a = await api(t, () => [410, { errors: [{ rule: "standing_already_ended" }] }]);
   Object.assign(f.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });
   writeRuns(f.auth, f.runs);
   await observeExec(f.auth, a.url, "synthetic");
+  assert.equal(a.stops.length, 1, "one stop by the exit reason replaces the failed order");
   assert.equal(readRuns(f.auth).own.state, "ended");
-  assert.equal(readRuns(f.auth).own.why, "stop_failed_after_exit");
-  assert.equal(a.stops.length, 0, "the order path already ran; no second stop");
+  assert.equal(readRuns(f.auth).own.why, "seat_gone_after_exit");
   assert.equal(readRuns(f.auth).own.tree.state, "removed", "the clean tree of a gone client goes");
   assert.equal(existsSync(f.row.worktree), false);
+
+  // The seat is not proven over: the slot and the tree stay.
+  const h = await exited(t);
+  const b = await api(t, () => [500, {}]);
+  Object.assign(h.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });
+  writeRuns(h.auth, h.runs);
+  await observeExec(h.auth, b.url, "synthetic");
+  assert.equal(readRuns(h.auth).own.state, "stopping");
+  assert.equal(readRuns(h.auth).own.tree.state, "ready");
 
   const g = await exited(t, null);
   Object.assign(g.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });
   writeRuns(g.auth, g.runs);
   await observeExec(g.auth, a.url, "synthetic");
   assert.equal(readRuns(g.auth).own.state, "stopping");
+});
+
+test("exit stop: another harness's exited tree run does not end on a 410", async (t) => {
+  const f = await exited(t);
+  f.row.harness = "claude";
+  writeRuns(f.auth, f.runs);
+  const a = await api(t, () => [410, { errors: [{ rule: "standing_already_ended" }] }]);
+  await observeExec(f.auth, a.url, "synthetic");
+  const own = readRuns(f.auth).own;
+  assert.notEqual(own.state, "ended");
+  assert.equal(own.why, "exec_suppression_unverified");
 });
 
 test("exit stop: an ended seat after exit frees the slot and the clean tree goes", async (t) => {

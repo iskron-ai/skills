@@ -5,6 +5,9 @@ import { readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 
+// The ordinary launch's limit (js/bridge/orchestra-start.ts BRIEF_MAX, #9966).
+const BRIEF_MAX = 220;
+
 function text(x) {
   if (typeof x !== "string" || !x.trim() || /[\r\n\0]/.test(x)) throw new Error("invalid text");
   return x.trim();
@@ -40,8 +43,8 @@ export function plan(snapshot, mappings, schema, version) {
       // terminal turns into a paste that is never sent (#9966). The root takes the seat by the
       // spawned_for pair; the brief never asks for a second stand (№4050 [55]).
       const prompt = `iskron/spawned_for: ${JSON.stringify(spawnedFor)} ` +
-        `Already taken for invite ${row.invite}, role #${row.karta}: ` +
-        `iskron_case(action="join", realm="${realm}", room="${room}") first.`;
+        `First: iskron_case(action="join", realm="${realm}", room="${room}").`;
+      if (prompt.length > BRIEF_MAX) throw new Error("the one-line brief is past the paste limit");
       return {
         repository, spawned_for: spawnedFor,
         command: "orca",

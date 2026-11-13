@@ -81,6 +81,9 @@ interface StopAnswer {
   errors?: { rule?: unknown }[];
 }
 const ruleOf = (b: StopAnswer): unknown => b.errors?.[0]?.rule;
+/** An ordinary tree run of OpenCode: its terminal holds its own process with the embedded server,
+ * so the exact terminal's exit leaves nothing to wake (#9256). */
+const ownProcess = (r: Run): boolean => !!r.tree && !r.exec && r.harness === "opencode";
 
 async function finishExits(authDir: string, base: string, token: string): Promise<void> {
   const runs = readRuns(authDir);
@@ -98,14 +101,12 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       await cleanupEndedTrees(authDir, runs);
       continue;
     }
-    // A failed stop of a tree run whose exact terminal exited (Orca may refuse the close of a
-    // tab that then exits, #9966): the client is gone, the slot is free; the tree stays.
-    if (r.stop_outcome === "failed" && r.tree && !r.exec && r.closed === "client_exited") {
-      r.state = "ended";
-      r.why = "stop_failed_after_exit";
-      writeRuns(authDir, runs);
-      await cleanupEndedTrees(authDir, runs);
-      continue;
+    // A failed order after the exact terminal exited (Orca may refuse closing a tab that then
+    // exits, #9966) proves no ended seat: stop once more by the exit reason (#9256).
+    if (r.stop_outcome === "failed" && ownProcess(r) && r.closed === "client_exited" && !r.restop) {
+      r.restop = true;
+      delete r.order_id;
+      delete r.stop_outcome;
     }
     const before = runIdentity(r);
     if (r.order_id) continue; // the ordinary order path owns halt/drop/interrupt and its ack
@@ -136,7 +137,7 @@ async function finishExits(authDir: string, base: string, token: string): Promis
         r.order_id = body.id;
         r.state = "stopping";
         r.stopping_at = new Date().toISOString();
-      } else if (res.status === 410 && r.tree && !r.exec) {
+      } else if (res.status === 410 && ownProcess(r)) {
         // The exact terminal exited and the seat is over: nobody is left to wake (#9256).
         r.state = "ended";
         r.why = "seat_gone_after_exit";
