@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Real OpenCode loader; fixture PAT/MCP only. Never inherits the caller's environment.
+// Modes: default fixture HTTP tgz; --directory unpacked local package; --url <http(s) specifier>
+// (the release HTTPS link; the loader fetches it, this script never does).
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -15,6 +17,10 @@ import { sse } from "./rootseat-realign-run.mjs";
 
 const out = resolve(process.argv[2]);
 assert.ok(!existsSync(out), "use a fresh carrier directory");
+const urlAt = process.argv.indexOf("--url");
+const remote = urlAt === -1 ? null : process.argv[urlAt + 1];
+assert.ok(!remote || !process.argv.includes("--directory"), "--url and --directory are exclusive");
+assert.ok(!remote || /^https?:\/\//.test(remote), "--url needs an http(s) plugin specifier");
 mkdirSync(out, { recursive: true });
 const home = join(out, "home"), cwd = join(out, "project"), bin = join(out, "bin");
 const config = join(home, ".config/opencode");
@@ -24,21 +30,24 @@ const opencode = execFileSync("which", ["opencode"], { encoding: "utf8" }).trim(
 symlinkSync(opencode, join(bin, "opencode"));
 const version = JSON.parse(readFileSync(join(REPO, ".claude-plugin/plugin.json"))).version;
 const archive = packOpencode({ out, built: BUILT, tag: `v${version}` });
-const packageBase = join(cwd, ".plugins", `iskron-${version}`);
-mkdirSync(packageBase, { recursive: true });
-execFileSync("tar", ["-xzf", archive, "-C", packageBase]);
+let packageBase = null;
+if (!remote) {
+  packageBase = join(cwd, ".plugins", `iskron-${version}`);
+  mkdirSync(packageBase, { recursive: true });
+  execFileSync("tar", ["-xzf", archive, "-C", packageBase]);
+}
 const fake = await startFakeNks({ pat: PAT, tools: [{ name: "iskron_me", description: "Fixture identity", inputSchema: {
   type: "object", properties: { action: { type: "string", enum: ["whoami"] } }, required: ["action"],
 } }] });
 await fake.control({ richTools: true, structured: true });
-const asset = createServer((req, res) => {
+const asset = remote ? null : createServer((req, res) => {
   if (req.url !== `/v${version}/iskron-opencode-${version}.tgz`) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { "Content-Type": "application/octet-stream" });
   res.end(readFileSync(archive));
 });
-await new Promise((r) => asset.listen(0, "127.0.0.1", r));
-const specifier = process.argv.includes("--directory") ? `./.plugins/iskron-${version}/package` :
-  `http://127.0.0.1:${asset.address().port}/v${version}/iskron-opencode-${version}.tgz`;
+if (asset) await new Promise((r) => asset.listen(0, "127.0.0.1", r));
+const specifier = remote ?? (process.argv.includes("--directory") ? `./.plugins/iskron-${version}/package` :
+  `http://127.0.0.1:${asset.address().port}/v${version}/iskron-opencode-${version}.tgz`);
 const wire = [];
 let called = false;
 const provider = createServer(async (req, res) => {
@@ -113,13 +122,13 @@ try {
   for (let i = 0; i < 40 && !wire.some((w) => JSON.stringify(w.messages).includes("tester@probe.example")); i++) await new Promise((r) => setTimeout(r, 250));
   assert.ok(wire.some((w) => JSON.stringify(w.messages).includes("tester@probe.example")), "whoami response absent from provider wire");
   assert.equal(existsSync(join(home, ".iskron-bridge/iskron-bridge.mjs")), false);
-  const hashes = Object.fromEntries([archive, join(packageBase, "package/index.js"), join(packageBase, "package/iskron.mjs")].map((p) => [p, createHash("sha256").update(readFileSync(p)).digest("hex")]));
-  const result = { verdict: "PASS", specifier, hashes, opencode: execFileSync(opencode, ["--version"], { env, encoding: "utf8" }).trim(), ceiling: "fixture MCP/PAT and scripted provider, not a real graph", nodeOnPath: false };
+  const hashes = Object.fromEntries((remote ? [archive] : [archive, join(packageBase, "package/index.js"), join(packageBase, "package/iskron.mjs")]).map((p) => [p, createHash("sha256").update(readFileSync(p)).digest("hex")]));
+  const result = { verdict: "PASS", specifier, hashes, opencode: execFileSync(opencode, ["--version"], { env, encoding: "utf8" }).trim(), ceiling: `${remote ? "remote URL specifier fetched by the loader; " : ""}fixture MCP/PAT and scripted provider, not a real graph`, nodeOnPath: false };
   writeFileSync(join(out, "outcome.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 } finally {
   if (serve && serve.exitCode === null) { serve.kill("SIGTERM"); await new Promise((r) => serve.once("exit", r)); }
   await fake.stop();
-  await new Promise((r) => asset.close(r));
+  if (asset) await new Promise((r) => asset.close(r));
   await new Promise((r) => provider.close(r));
 }
