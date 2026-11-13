@@ -39,7 +39,7 @@ export function plan(snapshot, mappings, schema, version) {
       // The pair and a short brief on one line (#9969): a multi-line or long --prompt the
       // terminal turns into a paste that is never sent (#9966). The root takes the seat by the
       // spawned_for pair; the brief never asks for a second stand (№4050 [55]).
-      const prompt = `spawned_for: ${JSON.stringify(spawnedFor)} ` +
+      const prompt = `iskron/spawned_for: ${JSON.stringify(spawnedFor)} ` +
         `Already taken for invite ${row.invite}, role #${row.karta}: ` +
         `iskron_case(action="join", realm="${realm}", room="${room}") first.`;
       return {

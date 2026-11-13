@@ -1,5 +1,5 @@
 // Both adapters consume the same admitted row and brief; only explicit exec selects the new one.
-import { ORCHESTRA } from "../delivery/index.ts";
+import { ORCHESTRA, SPAWN_LINE } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { launchExec } from "./exec-launch.ts";
 import type { Launcher } from "./orchestra-launchers.ts";
@@ -58,7 +58,7 @@ export async function startRun(
   // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
   // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
   const prompt =
-    `spawned_for: ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
+    `${SPAWN_LINE} ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
     words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
   const exec = own.harnesses[run.harness].exec;
   if (exec) {

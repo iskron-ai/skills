@@ -73,7 +73,7 @@ test(
     try {
       oc.create("spawn-root", { emit: false });
       const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
-      const text = `spawned_for: ${JSON.stringify(pair)}\nstart @nks/nks-dev #931 дело №3952`;
+      const text = `iskron/spawned_for: ${JSON.stringify(pair)}\nstart @nks/nks-dev #931 дело №3952`;
       await oc.turn("spawn-root", text);
       assert.deepEqual(oc.contextCalls, ["spawn-root"]);
       const calls = s.fake.state.calls.filter((c) => c.name === "iskron_channel");
@@ -104,7 +104,7 @@ test(
       oc.create("spawn-root", { emit: false });
       oc.create("plain-root", { emit: false });
       const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
-      const r = await oc.turn("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+      const r = await oc.turn("spawn-root", `iskron/spawned_for: ${JSON.stringify(pair)}\nhello`);
       assert.ok(r.told.includes(pair.room), board(r, oc));
       assert.match(r.told, /invite 7|зову 7/, board(r, oc));
       assert.ok(r.told.includes(`${tool("case")}(action="join"`), board(r, oc));
@@ -128,7 +128,7 @@ test("spawned_for: the taken word lost with its request reaches the next one", T
   try {
     oc.create("spawn-root", { emit: false });
     const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
-    await oc.promptLost("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+    await oc.promptLost("spawn-root", `iskron/spawned_for: ${JSON.stringify(pair)}\nhello`);
     const r = await oc.turn("spawn-root", "again");
     assert.ok(r.told.includes(pair.room), board(r, oc));
     const after = await oc.turn("spawn-root", "next");
@@ -148,7 +148,10 @@ test("spawned_for: two prompts of one request carry the taken word once", T, asy
   try {
     oc.create("spawn-root", { emit: false });
     const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
-    const first = await oc.promptLost("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`);
+    const first = await oc.promptLost(
+      "spawn-root",
+      `iskron/spawned_for: ${JSON.stringify(pair)}\nhello`,
+    );
     const r = await oc.turn("spawn-root", "again", () => [], [first]);
     const join = `${tool("case")}(action="join"`;
     assert.equal(r.system.split(join).length - 1, 1, board(r, oc));
@@ -175,10 +178,17 @@ test(
         s.fake.state.calls.filter(
           (c) => c.name === "iskron_channel" && c.arguments.action === "register",
         ).length;
-      const r = await oc.turn("spawn-root", `spawned_for: ${JSON.stringify(pair)}\nhello`, () => [
-        { tool: tool("stand"), input: { realm: "@nks/nks-dev", karta: "931", spawned_for: pair } },
-        { tool: tool("stand"), input: { realm: "@nks/nks-dev", karta: "#931" } },
-      ]);
+      const r = await oc.turn(
+        "spawn-root",
+        `iskron/spawned_for: ${JSON.stringify(pair)}\nhello`,
+        () => [
+          {
+            tool: tool("stand"),
+            input: { realm: "@nks/nks-dev", karta: "931", spawned_for: pair },
+          },
+          { tool: tool("stand"), input: { realm: "@nks/nks-dev", karta: "#931" } },
+        ],
+      );
       const before = regs();
       assert.equal(before, 1, "the root's own claim only");
       for (const c of r.calls) {
@@ -194,7 +204,8 @@ test(
   },
 );
 
-const INITIAL_LINE = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
+const INITIAL_LINE =
+  'iskron/spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
 for (const mode of [
   "fresh",
   "old explicit",
@@ -357,10 +368,10 @@ for (const same of [true, false])
   });
 
 for (const line of [
-  "spawned_for: 7",
-  "spawned_for: broken",
-  "spawned_for: {}",
-  'spawned_for: {"invite":7,"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}',
+  "iskron/spawned_for: 7",
+  "iskron/spawned_for: broken",
+  "iskron/spawned_for: {}",
+  'iskron/spawned_for: {"invite":7,"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}',
 ])
   test(`spawned_for firstline invalid refuses before any seat: ${line}`, T, async (t) => {
     const s = await stage(t);
@@ -394,7 +405,7 @@ test("spawned_for firstline claim refusal aborts before model work", T, async (t
     await assert.rejects(
       oc.turn(
         "loser",
-        'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}\nhello',
+        'iskron/spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}\nhello',
         () => {
           worked = true;
           return [];
@@ -483,7 +494,7 @@ test(
       oc.create("one", { emit: false });
       oc.create("two", { emit: false });
       oc.create("kid", { parentID: "one", emit: false });
-      const line = 'spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
+      const line = 'iskron/spawned_for: {"invite":7,"room":"70efab85-1f3b-46a2-a279-c9e806a9b371"}';
       await oc.turn("one", `${line}\nhello`);
       const n = s.fake.state.calls.length;
       await oc.turn("two", `hello\n${line}`);

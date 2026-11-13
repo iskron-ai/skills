@@ -259,7 +259,7 @@ test("raise: an invite naming this machine's launcher is launched once through o
   const prompt = argv[argv.indexOf("--prompt") + 1];
   // One line (#9969 v12): the pair opens the line, the brief follows through a space — a
   // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
-  assert.ok(prompt.startsWith(`spawned_for: {"invite":9,"room":"${ROOM}"} `), prompt);
+  assert.ok(prompt.startsWith(`iskron/spawned_for: {"invite":9,"room":"${ROOM}"} `), prompt);
   assert.ok(!/[\r\n]/.test(prompt), `the brief is one line: ${JSON.stringify(prompt)}`);
   // The brief names graph, role and case, and the join before work (#10043).
   assert.ok(

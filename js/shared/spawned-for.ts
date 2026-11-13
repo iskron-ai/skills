@@ -1,5 +1,5 @@
 // Launch identity, not a case number (graph @nks/nks-dev, #9959, #6576).
-import { SPAWNED_FOR } from "../delivery/index.ts";
+import { SPAWN_LINE, SPAWNED_FOR } from "../delivery/index.ts";
 import { words } from "./lang.ts";
 
 export interface SpawnedFor {
@@ -60,8 +60,9 @@ export interface FirstLineSpawn {
  */
 export function firstLineSpawn(text: string): FirstLineSpawn | undefined {
   const first = text.split(/\r?\n/, 1)[0];
-  if (!first.startsWith("spawned_for:")) return undefined;
-  const body = first.slice("spawned_for:".length);
+  // Only this delivery's mark: another delivery's plugin in the same harness leaves it be.
+  if (!first.startsWith(SPAWN_LINE)) return undefined;
+  const body = first.slice(SPAWN_LINE.length);
   const at = body.indexOf("{");
   if (at < 0 || body.slice(0, at).trim() !== "") return invalid();
   let end = -1;
