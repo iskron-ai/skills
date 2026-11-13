@@ -26,7 +26,8 @@ export function execPending(authDir: string): boolean {
   } // preserve a corrupt registry for recovery, never reinterpret it as empty
 }
 
-/** Process exit is persisted before networking. Neither 410 nor timeout is suppression proof. */
+/** Process exit is persisted before networking. For an exec client neither 410 nor timeout is
+ * suppression proof; a tree run whose exact terminal exited ends on 410. */
 export async function observeExec(
   authDir: string,
   base: string,
@@ -75,6 +76,12 @@ export async function observeExec(
   }
 }
 
+interface StopAnswer {
+  id?: unknown;
+  errors?: { rule?: unknown }[];
+}
+const ruleOf = (b: StopAnswer): unknown => b.errors?.[0]?.rule;
+
 async function finishExits(authDir: string, base: string, token: string): Promise<void> {
   const runs = readRuns(authDir);
   for (const [key, r] of Object.entries(runs)) {
@@ -96,23 +103,39 @@ async function finishExits(authDir: string, base: string, token: string): Promis
     try {
       const latest = readRuns(authDir)[key];
       if (!latest || runIdentity(latest) !== before) continue;
-      const res = await namedFetch(`${base}/standings/${encodeURIComponent(r.standing_id)}/stop`, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "x-nks-realm": r.realm,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ reason_code: "client_exited", client_id: exitClientId(r) }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const body = (await res.json().catch(() => ({}))) as { id?: unknown };
+      const seat = r.standing_id;
+      const stop = (reason_code: string) =>
+        namedFetch(`${base}/standings/${encodeURIComponent(seat)}/stop`, {
+          method: "POST",
+          redirect: "error",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "x-nks-realm": r.realm,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ reason_code, client_id: exitClientId(r) }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      let res = await stop("client_exited");
+      let body = (await res.json().catch(() => ({}))) as StopAnswer;
+      // An API without the client_exited reason refuses it before it looks at the seat (#9969).
+      if (res.status === 422 && ruleOf(body) === "stop_reason_unknown") {
+        res = await stop("other");
+        body = (await res.json().catch(() => ({}))) as StopAnswer;
+      }
       if (res.ok && typeof body.id === "string" && body.id) {
         r.order_id = body.id;
         r.state = "stopping";
         r.stopping_at = new Date().toISOString();
-      } else r.why = res.status === 410 ? "exec_suppression_unverified" : "exec_stop_unconfirmed";
+      } else if (res.status === 410 && r.tree && !r.exec) {
+        // The exact terminal exited and the seat is over: nobody is left to wake (#9256).
+        r.state = "ended";
+        r.why = "seat_gone_after_exit";
+      } else
+        r.why =
+          res.status === 410
+            ? "exec_suppression_unverified"
+            : `exec_stop_unconfirmed_${res.status}`;
     } catch {
       r.why = "exec_stop_unknown";
     }
