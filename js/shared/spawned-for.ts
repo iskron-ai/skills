@@ -121,8 +121,8 @@ export function spawnReceipt(
     !Array.isArray(s.seats)
   )
     return null;
-  if (!identity.seat_id && !identity.standing && (!identity.name || s.seats.length !== 1))
-    return null;
+  // A channel the machine shares lists all its seats: the name must pick exactly one (#8640).
+  if (!identity.seat_id && !identity.standing && !identity.name) return null;
   const seats = s.seats as Record<string, unknown>[];
   if (
     seats.some(
