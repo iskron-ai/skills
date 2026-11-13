@@ -178,7 +178,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.1.0";
+var VERSION = "8.2.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -8081,11 +8081,12 @@ function attempt2(session, x, expect) {
       x.arm(session, where, cover.why, sig);
       return no(realignWord(cover.why));
     }
+    const karta = d.role?.(session) ?? cover.karta;
     const before = x.line.at;
     const turn = before.then(() => {
       if (cancelled()) return { cancelled: true };
       t.begun = true;
-      return d.seat(session, cover.realm, cover.karta, cancelled);
+      return d.seat(session, cover.realm, karta, cancelled);
     });
     x.line.at = before.then(() => Promise.race([turn, pause(ceilingMs())])).catch(() => {
     });
@@ -8095,7 +8096,7 @@ function attempt2(session, x, expect) {
       return no(null);
     }
     if ("error" in r) return no(refusedWord(r.error));
-    return { word: heldWord(r, cover.realm, cover.karta), seated: true };
+    return { word: heldWord(r, cover.realm, karta), seated: true };
   })().catch(async (e) => {
     if (cancelled()) {
       if (t.begun) await d.release(session);
@@ -8235,13 +8236,18 @@ function parseSpawn(value) {
     return invalid();
   return { invite: a.invite, room: a.room.toLowerCase() };
 }
-function spawnJson(text3) {
+function spawnLine(text3, role2) {
   try {
     const keys = [...text3.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
       (m) => JSON.parse(m[1])
     );
     if (keys.length !== new Set(keys).size) return invalid();
-    return parseSpawn(JSON.parse(text3));
+    const v = JSON.parse(text3);
+    if (!role2 || !v || typeof v !== "object" || !Object.hasOwn(v, "karta"))
+      return { pair: parseSpawn(v) };
+    const { karta, ...pair } = v;
+    if (!Number.isSafeInteger(karta) || Number(karta) <= 0) return invalid();
+    return { pair: parseSpawn(pair), karta };
   } catch {
     return invalid();
   }
@@ -8274,18 +8280,19 @@ function firstLineSpawn(text3) {
     }
   }
   if (end < 0) return invalid();
-  const pair = spawnJson(body.slice(at2, end + 1));
+  const { pair, karta } = spawnLine(body.slice(at2, end + 1), true);
+  const role2 = karta === void 0 ? {} : { karta };
   const below = (() => {
     if (text3.length === first.length) return "";
     return text3.slice(first.length + (text3.charCodeAt(first.length) === 10 ? 1 : 2));
   })();
   const after2 = body.slice(end + 1);
-  if (after2 === "") return { pair, rest: below };
+  if (after2 === "") return { pair, rest: below, ...role2 };
   if (after2[0] !== " " && after2[0] !== "	") return invalid();
   const brief2 = after2.replace(/^[ \t]+/, "");
   if (!brief2) return invalid();
   return { pair, rest: below ? `${brief2}
-${below}` : brief2 };
+${below}` : brief2, ...role2 };
 }
 function spawnReceipt(structured, expected, identity) {
   if (!structured || typeof structured !== "object") return null;
@@ -8336,6 +8343,7 @@ function spawnAdmission(starts, readContext) {
     const compare = (own2) => {
       try {
         mergeSpawn(own2.pair, pair);
+        if (own2.karta !== spawn2?.karta) throw new Error(words(SPAWNED_FOR).invalid());
       } catch (e) {
         own2.conflict = true;
         own2.error = e;
@@ -8350,7 +8358,11 @@ function spawnAdmission(starts, readContext) {
       return stripped();
     }
     const fresh = !entry;
-    entry ??= { pair, ids: /* @__PURE__ */ new Set() };
+    entry ??= {
+      pair,
+      ...spawn2.karta === void 0 ? {} : { karta: spawn2.karta },
+      ids: /* @__PURE__ */ new Set()
+    };
     const own = entry;
     starts.set(session, own);
     const proof = Promise.resolve().then(async () => {
@@ -8387,6 +8399,11 @@ function createSpawnStarts(readContext) {
   return {
     has(session) {
       return !!starts.get(session)?.pair;
+    },
+    /** The role the launch named for its home (#10598); none — the cover's. */
+    karta(session) {
+      const k = starts.get(session)?.karta;
+      return k === void 0 ? void 0 : String(k);
     },
     async cleanup(session, release) {
       const entry = starts.get(session);
@@ -8913,6 +8930,7 @@ async function setup(ctx) {
     directoryOf: (s) => sessionDirectory(ctx, s),
     halted: (s) => !ch || stops2.halted(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
+    role: (s) => spawnStarts.karta(s),
     cancel: (s) => half.cancelSeat(s),
     release: (s) => half.releaseSeat(s),
     finished: (s) => {

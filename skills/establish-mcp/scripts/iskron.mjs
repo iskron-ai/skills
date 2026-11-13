@@ -233,7 +233,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.1.0";
+var VERSION = "8.2.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -11100,12 +11100,20 @@ function parseSpawn(value) {
   return { invite: a.invite, room: a.room.toLowerCase() };
 }
 function spawnJson(text7) {
+  return spawnLine(text7, false).pair;
+}
+function spawnLine(text7, role) {
   try {
     const keys = [...text7.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
       (m) => JSON.parse(m[1])
     );
     if (keys.length !== new Set(keys).size) return invalid();
-    return parseSpawn(JSON.parse(text7));
+    const v = JSON.parse(text7);
+    if (!role || !v || typeof v !== "object" || !Object.hasOwn(v, "karta"))
+      return { pair: parseSpawn(v) };
+    const { karta, ...pair } = v;
+    if (!Number.isSafeInteger(karta) || Number(karta) <= 0) return invalid();
+    return { pair: parseSpawn(pair), karta };
   } catch {
     return invalid();
   }
@@ -16073,7 +16081,7 @@ function parseLauncher(raw) {
     const x = o ?? {};
     if (!Array.isArray(x.models) || !x.models.every(str2))
       return { code: "harness_invalid", launcher };
-    harnesses[name2] = { models: x.models.map((m) => m.trim()) };
+    harnesses[name2] = { models: x.models.map((m2) => m2.trim()) };
     if (Object.hasOwn(x, "exec")) {
       const exec = name2 === "opencode" ? parseExec(x.exec, harnesses[name2].models) : null;
       if (!exec) return { code: "exec_invalid", launcher };
@@ -16087,6 +16095,14 @@ function parseLauncher(raw) {
     if (!str2(path) || !isAbsolute5(path)) return { code: "checkouts_invalid", launcher };
     checkouts[repo] = path;
   }
+  const homes = {};
+  const m = d.homes ?? {};
+  if (typeof m !== "object" || Array.isArray(m)) return { code: "homes_invalid", launcher };
+  for (const [role, path] of Object.entries(m)) {
+    if (!/^\S+#[1-9]\d*$/.test(role) || !str2(path) || !isAbsolute5(path))
+      return { code: "homes_invalid", launcher };
+    homes[role] = path;
+  }
   const callers = d.callers ?? [];
   if (!Array.isArray(callers) || !callers.every((h2) => str2(h2) && HANDLE.test(h2.trim())))
     return { code: "callers_invalid", launcher };
@@ -16099,6 +16115,7 @@ function parseLauncher(raw) {
     limit: d.limit,
     harnesses,
     checkouts,
+    homes,
     callers: callers.map((h2) => h2.trim().slice(1).toLowerCase()),
     clone
   };
@@ -16468,18 +16485,19 @@ function readCover(dir2, cover = COVER) {
 }
 
 // js/bridge/orchestra-raise-gates.ts
-function checkoutFor(own, repository, orca) {
-  const named2 = own.checkouts[repository];
+var homeOf = (own, realm, karta) => own.homes?.[`${realm}#${karta}`];
+function checkoutFor(own, repository, orca, home) {
+  const named2 = home ?? own.checkouts[repository];
   const got = named2 ? { path: named2 } : orca(repository);
   if ("code" in got) return got;
   if (!existsSync14(got.path) || !statSync8(got.path).isDirectory())
     return { code: "checkout_absent" };
   return got.path;
 }
-async function coverRefusal(worktree, realm, karta, canon2) {
+async function coverRefusal(worktree, realm, karta, canon2, home = false) {
   const c = readCover(worktree);
   if (!c || "why" in c || "foreign" in c) return "checkout_uncovered";
-  if (Number(c.karta) !== karta) return "checkout_other_seat";
+  if (!home && Number(c.karta) !== karta) return "checkout_other_seat";
   const graph = /^r\d+$/i.test(c.realm) ? await canon2(c.realm) : c.realm;
   if (!graph) return "checkout_cover_unresolved";
   return graph === realm ? null : "checkout_other_seat";
@@ -16690,7 +16708,9 @@ async function startRun(authDir, row, own, repository, worktree, runs, key3, can
     state: "preparing",
     at: (/* @__PURE__ */ new Date()).toISOString()
   };
-  const prompt = `${SPAWN_LINE} ${JSON.stringify({ invite: run3.invite, room: run3.room })} ` + words(ORCHESTRA).brief(run3.realm, run3.karta, run3.room, run3.invite);
+  const home = !!homeOf(own, run3.realm, run3.karta);
+  const pair = { invite: run3.invite, room: run3.room, ...home ? { karta: run3.karta } : {} };
+  const prompt = `${SPAWN_LINE} ${JSON.stringify(pair)} ` + words(ORCHESTRA).brief(run3.realm, run3.karta, run3.room, run3.invite);
   const exec = own.harnesses[run3.harness].exec;
   if (!exec && prompt.length > BRIEF_MAX) return "brief_too_long";
   runs[key3] = run3;
@@ -16709,7 +16729,7 @@ async function startRun(authDir, row, own, repository, worktree, runs, key3, can
     }
     return treeWhy;
   }
-  const uncovered = await coverRefusal(run3.worktree, run3.realm, run3.karta, canon2);
+  const uncovered = await coverRefusal(run3.worktree, run3.realm, run3.karta, canon2, home);
   if (uncovered || gone?.gone) {
     run3.state = "ambiguity";
     run3.why = uncovered ?? "caller_gone_before_launch";
@@ -16808,14 +16828,16 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       continue;
     }
     const repository = String(row.repository).trim();
+    const home = homeOf(own, realm, Number(row.karta));
     orca = orca === void 0 ? await orcaCheckouts() : orca;
     const find = () => checkoutFor(
       own,
       repository,
-      typeof orca === "string" ? () => ({ code: orca }) : orca
+      typeof orca === "string" ? () => ({ code: orca }) : orca,
+      home
     );
     let worktree = find();
-    if (typeof worktree !== "string" && worktree.code === "no_checkout" && own.clone) {
+    if (!home && typeof worktree !== "string" && worktree.code === "no_checkout" && own.clone) {
       const spec = specOf(own);
       const turn = await cloneTurn(authDir, own.clone, spec, repository, gone);
       if (turn === "gone") break;
@@ -16834,7 +16856,7 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       continue;
     }
     cloneFound(authDir, repository);
-    const uncovered = await coverRefusal(worktree, realm, Number(row.karta), canon2);
+    const uncovered = await coverRefusal(worktree, realm, Number(row.karta), canon2, !!home);
     if (uncovered) {
       said2.push(w5().leadRow(realm, room, invite, uncovered));
       continue;
@@ -17201,9 +17223,10 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
     row = resolved.row;
     const own = resolved.own;
     const repository = String(row.repository).trim();
-    const got = checkoutFor(own, repository, () => ({ code: ORCA }));
+    const home = homeOf(own, realm, Number(row.karta));
+    const got = checkoutFor(own, repository, () => ({ code: ORCA }), home);
     if (typeof got === "string") {
-      const uncovered = await coverRefusal(got, realm, Number(row.karta), canon2);
+      const uncovered = await coverRefusal(got, realm, Number(row.karta), canon2, !!home);
       if (uncovered) {
         say3(w8().planRefuse(uncovered));
         continue;

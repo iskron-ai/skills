@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.2.0](https://github.com/iskron-ai/skills/compare/v8.1.0...v8.2.0) (2026-11-13)
+
+
+### Features
+
+* **orchestra:** raise a role in the home the launcher description names ([#756](https://github.com/iskron-ai/skills/issues/756)) ([29275ac](https://github.com/iskron-ai/skills/commit/29275acc84a3c6120eb431427bf7715222f82eb1))
+
 ## [8.1.0](https://github.com/iskron-ai/skills/compare/v8.0.2...v8.1.0) (2026-11-13)
 
 
