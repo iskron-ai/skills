@@ -141,6 +141,7 @@ var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
 var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+var SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var serverProtocol = {
   refusal: "iskron/refusal"
@@ -177,7 +178,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.0.1";
+var VERSION = "8.0.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -2293,6 +2294,7 @@ import {
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join5, resolve as resolve3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
@@ -2559,10 +2561,12 @@ function findBridge() {
   const tried = [];
   const env = process.env[envName("BRIDGE_PATH")]?.trim();
   if (env) tried.push(resolve3(env));
+  tried.push(fileURLToPath2(new URL(`./${BRIDGE_FILE}`, import.meta.url)));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);
+      if (!statSync2(candidate).isFile()) continue;
       return { path: candidate, tried };
     } catch {
     }
@@ -8249,15 +8253,46 @@ function mergeSpawn(...values) {
 }
 function firstLineSpawn(text3) {
   const first = text3.split(/\r?\n/, 1)[0];
-  return first.startsWith("spawned_for:") ? spawnJson(first.slice("spawned_for:".length)) : void 0;
+  if (!first.startsWith(SPAWN_LINE)) return void 0;
+  const body = first.slice(SPAWN_LINE.length);
+  const at2 = body.indexOf("{");
+  if (at2 < 0 || body.slice(0, at2).trim() !== "") return invalid();
+  let end = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = at2; i < body.length; i++) {
+    const ch = body[i];
+    if (escaped) escaped = false;
+    else if (quoted && ch === "\\") escaped = true;
+    else if (quoted) quoted = ch !== '"';
+    else if (ch === '"') quoted = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return invalid();
+  const pair = spawnJson(body.slice(at2, end + 1));
+  const below = (() => {
+    if (text3.length === first.length) return "";
+    return text3.slice(first.length + (text3.charCodeAt(first.length) === 10 ? 1 : 2));
+  })();
+  const after2 = body.slice(end + 1);
+  if (after2 === "") return { pair, rest: below };
+  if (after2[0] !== " " && after2[0] !== "	") return invalid();
+  const brief2 = after2.replace(/^[ \t]+/, "");
+  if (!brief2) return invalid();
+  return { pair, rest: below ? `${brief2}
+${below}` : brief2 };
 }
 function spawnReceipt(structured, expected, identity) {
   if (!structured || typeof structured !== "object") return null;
   const s = structured;
   if (s.action !== "register" || s.incomplete === true || s.dropped !== void 0 && s.dropped !== 0 || !Array.isArray(s.seats))
     return null;
-  if (!identity.seat_id && !identity.standing && (!identity.name || s.seats.length !== 1))
-    return null;
+  if (!identity.seat_id && !identity.standing && !identity.name) return null;
   const seats = s.seats;
   if (seats.some(
     (v2) => !v2 || typeof v2 !== "object" || typeof v2.seat_id !== "string" || !v2.seat_id || typeof v2.standing !== "string" || !/^@[^:]+:.+$/.test(v2.standing)
@@ -8285,7 +8320,8 @@ function spawnReceipt(structured, expected, identity) {
 function spawnAdmission(starts, readContext) {
   return async (session, text3, message) => {
     if (text3.startsWith(FRAME_MARK)) return text3;
-    const pair = firstLineSpawn(text3);
+    const spawn2 = firstLineSpawn(text3);
+    const pair = spawn2?.pair;
     let entry = starts.get(session);
     if (!pair) {
       await entry?.pending?.catch(() => {
@@ -8296,7 +8332,7 @@ function spawnAdmission(starts, readContext) {
     const initialError = () => new Error(words(SPAWNED_FOR).initial());
     if (entry?.error) throw entry.error;
     if (entry && !entry.pair) throw initialError();
-    const stripped = () => text3.slice(text3.indexOf("\n") + 1);
+    const stripped = () => spawn2 ? spawn2.rest : text3;
     const compare = (own2) => {
       try {
         mergeSpawn(own2.pair, pair);
