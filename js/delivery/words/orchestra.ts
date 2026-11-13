@@ -92,7 +92,7 @@ export interface OrchestraWords {
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status|step [--dry-run]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "использование: orchestra <on|off|status|step [--dry-run] [--only UUID/номер]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\nДля --only нужен ровно один --realm; дело задаётся UUID, номер зова — положительным целым.\n" +
       "              orchestra on --launcher <имя> [--model <id>]… [--limit N] [--host <машина>] — описание запускателя в mind, если его нет\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
@@ -172,7 +172,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status|step [--dry-run]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "usage: orchestra <on|off|status|step [--dry-run] [--only UUID/invite]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n--only requires exactly one --realm, a case UUID and a positive invite number.\n" +
       "       orchestra on --launcher <name> [--model <id>]… [--limit N] [--host <machine>] — describes the launcher in mind unless one lies there\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",

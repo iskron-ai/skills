@@ -6,18 +6,30 @@ import { execFile } from "node:child_process";
 
 import { sshRepository } from "./orchestra-remote.ts";
 
-const FLAGS = ["agent", "worktree", "model", "prompt", "json"];
+const FLAGS = ["agent", "worktree", "model", "prompt", "surface", "json"];
 
 export function run(
   args: string[],
   timeoutMs: number,
-  command: "orca" | "ssh" = "orca",
+  command: "orca" | "ssh" | "git" = "orca",
+  cwd?: string,
 ): Promise<{ code: number | string; out: string }> {
   return new Promise((resolve) => {
     execFile(
       command,
       args,
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+      {
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+        cwd,
+        env:
+          command === "git"
+            ? Object.fromEntries(
+                Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+              )
+            : process.env,
+      },
       (err, stdout) => {
         const e = err as (NodeJS.ErrnoException & { killed?: boolean }) | null;
         const code = !e
@@ -155,6 +167,8 @@ export function launchArgv(
     `path:${worktree}`,
     "--model",
     model,
+    "--surface",
+    "terminal",
     "--prompt",
     prompt,
     "--json",

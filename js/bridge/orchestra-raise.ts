@@ -21,6 +21,7 @@ export async function raiseRows(
   ls: Launchers,
   runs: Record<string, Run>,
   canon: (name: string) => Promise<string | null>,
+  role: (row: Row) => Promise<string | null>,
   gone?: { gone: boolean },
 ): Promise<string[]> {
   const said: string[] = [];
@@ -33,6 +34,11 @@ export async function raiseRows(
       invite = Number(source.invite);
     const key = runKey(realm, room, invite);
     if (runs[key]) continue;
+    const roleWhy = await role(source);
+    if (roleWhy) {
+      said.push(w().leadRow(realm, room, invite, roleWhy));
+      continue;
+    }
     const resolved = resolveInvite(source, ls, runs);
     if ("code" in resolved) {
       said.push(w().leadRow(realm, room, invite, resolved.code));
@@ -95,7 +101,7 @@ export async function raiseRows(
         realm,
         room,
         invite,
-        await startRun(authDir, row, own, repository, worktree, runs, key, gone),
+        await startRun(authDir, row, own, repository, worktree, runs, key, canon, gone),
       ),
     );
   }

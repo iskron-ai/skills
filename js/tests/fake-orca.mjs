@@ -15,6 +15,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { initCheckout } from "./git-checkout.mjs";
+
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
   process.stdout.write(`${process.env.FAKE_ORCA_VERSION ?? "1.4.242"}\n`);
@@ -132,6 +134,7 @@ if (args[0] === "project" && args[1] === "setup-clone") {
   mkdirSync(dest, { recursive: true });
   if (process.env.FAKE_ORCA_CLONE_COVER)
     writeFileSync(join(dest, "AGENTS.md"), process.env.FAKE_ORCA_CLONE_COVER);
+  if (process.env.FAKE_ORCA_CLONE_COVER) initCheckout(dest);
   if (flag("project") !== id)
     refuse(
       "runtime_error",
@@ -223,6 +226,15 @@ const answer = {
                   : "inc_fake",
               connected: false,
               writable: false,
+              executionHostId: "local",
+              worktreePath: (() => {
+                const log = readFileSync(process.env.FAKE_ORCA_LOG, "utf8")
+                  .trim()
+                  .split("\n")
+                  .map(JSON.parse);
+                const launch = log.findLast((a) => a[0] === "agent" && a.includes("--worktree"));
+                return launch?.[launch.indexOf("--worktree") + 1]?.replace(/^path:/, "");
+              })(),
             },
           }
         : args[1] === "close"

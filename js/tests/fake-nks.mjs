@@ -538,6 +538,35 @@ export async function startFakeNks(opts = {}) {
     }
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
+    // Flat NodeView from API 0.185.4 (case 4603 [214]), no node/data fallback envelope.
+    const roleNode = /^\/api\/nodes\/(\d+)$/.exec(p);
+    if (roleNode && req.method === "GET") {
+      const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+      if ((!st.pat || bearer !== st.pat) && (!st.access || bearer !== st.access))
+        return json(res, 401, {});
+      if (!req.headers["x-nks-realm"]) return json(res, 400, {});
+      st.roleReads = (st.roleReads ?? 0) + 1;
+      if (st.roleStatus)
+        return json(res, st.roleStatus, {
+          type: "about:blank",
+          title: "Not found",
+          status: st.roleStatus,
+          detail: "unavailable",
+        });
+      return json(
+        res,
+        200,
+        st.roleNode ?? {
+          seq: Number(roleNode[1]),
+          node_type: "karta",
+          is_active: true,
+          manifested_as: "adhikarin",
+          edges: [],
+          neighbors: [],
+        },
+      );
+    }
+
     // Такт-чтение оркестратора (№1225 [23]): invites — стоячая очередь подъёма (#4951),
     // raised — лента сигналов состава от непрозрачного курсора (#6010). Живут под /api,
     // как их выводит apiBase из адреса канала (shared/channel.ts; живая проба 0.130.12:
