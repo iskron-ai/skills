@@ -10219,7 +10219,11 @@ for (const [lang, chosen, label] of [
       let none;
       try {
         none = await plugin({ ISKRON_BRIDGE_PATH: missing, ...chosen });
-        const tried = [missing, join(home, ".iskron-bridge", "iskron-bridge.mjs")].join(", ");
+        const tried = [
+          missing,
+          join(realpathSync(SANDBOX), "iskron.mjs"),
+          join(home, ".iskron-bridge", "iskron-bridge.mjs"),
+        ].join(", ");
         assert.ok(none.said().includes(`[iskron/error] ${say.missing(tried)}\n`), none.said());
         if (lang === "en") assert.doesNotMatch(none.said(), ANY_CYRILLIC, none.said());
       } finally {
