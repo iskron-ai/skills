@@ -7,7 +7,7 @@ const control = JSON.parse(fs.readFileSync(root + '/control.json'));
 const args = process.argv.slice(2);
 fs.appendFileSync(root + '/orca-calls.jsonl', JSON.stringify(args) + '\n');
 const meta = { runtimeId: control.runtime ?? 'runtime' };
-const terminal = () => ({ handle: 'term_own', incarnationId: control.incarnation ?? 'incarnation', worktreePath: root + '/checkout', executionHostId: 'local', hostPlatform: process.platform, connected: !fs.existsSync(root + '/exited'), writable: !fs.existsSync(root + '/exited') });
+const terminal = () => ({ handle: 'term_own', incarnationId: control.incarnation ?? 'incarnation', worktreePath: fs.existsSync(root + '/terminal-path') ? fs.readFileSync(root + '/terminal-path', 'utf8') : root + '/checkout', executionHostId: 'local', hostPlatform: process.platform, connected: !fs.existsSync(root + '/exited'), writable: !fs.existsSync(root + '/exited') });
 let result;
 if (args[0] === '--version') { console.log('1.4.242'); process.exit(0); }
 if (args[0] === 'agent-context') {
@@ -19,6 +19,7 @@ else if (args[0] === 'host') { result = { machineName: 'A custom name, NOT hostn
 else if (args[0] === 'project' && args[1] === 'list') result = { projects: [{ id: 'p', gitRemoteIdentity: { canonicalKey: 'example.test/org/repo' } }] };
 else if (args[0] === 'project' && args[1] === 'setups') result = { setups: [{ projectId: 'p', path: root + '/checkout', setupState: 'ready', hostId: 'local' }] };
 else if (args[0] === 'terminal' && args[1] === 'create') {
+  fs.writeFileSync(root + '/terminal-path', args[args.indexOf('--worktree') + 1].replace(/^path:/, ''));
   if (!control.createUnknown) {
     const p = cp.spawnSync('/bin/sh', ['-c', args[args.indexOf('--command') + 1]], { env: { ...process.env, SYNTHETIC_CONTEXT: 'runtime-only' }, encoding: 'utf8', timeout: 20000 });
     fs.writeFileSync(root + '/helper-result.json', JSON.stringify({ status: p.status, stderr: p.stderr }));

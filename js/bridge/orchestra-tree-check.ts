@@ -1,8 +1,10 @@
 // Read-only Git facts; mutation commands also disable repository hooks for this call (#7517).
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { run } from "./orchestra-orca.ts";
+import { readRuns, type Run, runKey } from "./orchestra-runs.ts";
 import type { RunTree, TreeIdentity } from "./orchestra-tree-types.ts";
 
 export const git = (cwd: string, args: string[], timeout = 10_000) =>
@@ -97,4 +99,44 @@ export async function treeContent(tree: RunTree, execute: Git = git): Promise<st
     "--ignored=matching",
   ]);
   return dirty.code !== 0 ? "tree_status_unverified" : dirty.out ? "tree_dirty_retained" : null;
+}
+
+/** Admit only the durable ready tree of this exact Run, never an arbitrary checkout path. */
+export async function readyTree(
+  authDir: string,
+  key: string,
+  r: Run,
+  source: string,
+): Promise<boolean> {
+  const t = r.tree;
+  if (
+    !t ||
+    t.state !== "ready" ||
+    r.state !== "preparing" ||
+    r.exec ||
+    r.closed ||
+    !t.identity ||
+    !/^[a-f0-9-]{36}$/.test(t.operation) ||
+    !OID.test(t.baseOID) ||
+    key !== runKey(r.realm, r.room, r.invite) ||
+    t.realm !== r.realm ||
+    t.room !== r.room ||
+    t.invite !== r.invite ||
+    t.source !== source ||
+    !directory(source) ||
+    r.worktree !== t.path ||
+    t.path !== join(source, ".worktrees", `orchestra-${t.operation}`)
+  )
+    return false;
+  try {
+    return (
+      (await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) ===
+        t.commonDir &&
+      isDeepStrictEqual(await inspectTree(t), t.identity) &&
+      (await treeContent(t)) === null &&
+      isDeepStrictEqual(readRuns(authDir)[key], r)
+    );
+  } catch {
+    return false;
+  }
 }
