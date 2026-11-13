@@ -948,6 +948,45 @@ test("raise: a failed launch is a refused run, not retried", async (t) => {
   assert.equal(o.launches().length, 1, "no second launch");
 });
 
+// #10598: right after `git worktree add` Orca does not yet show the tree (1.4.258 answered
+// selector_not_found, then the tree two seconds later) — a launch in that gap was refused.
+const shows = (o) => {
+  const f = join(o.dir, "orca.log.shows");
+  return existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").map(JSON.parse) : [];
+};
+
+test("raise: the launch waits until Orca shows the new tree", async (t) => {
+  const o = await leading(t, { env: { FAKE_ORCA_TREE_UNSEEN: "2" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  const asked = shows(o);
+  assert.equal(asked.length, 3, "asked until Orca showed the tree");
+  const path = o.runs()[`${REALM}|${ROOM}|9`].worktree;
+  assert.deepEqual(asked[2], ["worktree", "show", "--worktree", `path:${path}`, "--json"]);
+  assert.equal(o.launches().length, 1);
+});
+
+test("raise: a tree Orca never shows is not launched in", async (t) => {
+  const o = await leading(t, {
+    env: { FAKE_ORCA_TREE_UNSEEN: "never", ISKRON_ORCA_TREE_WAIT_MS: "800" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: orca_tree_unseen/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity");
+  assert.ok(shows(o).length >= 2, "asked more than once");
+  assert.equal(o.launches().length, 0, "nothing launched");
+});
+
+test("raise: Orca's refusal of a launch is kept by its code", async (t) => {
+  const o = await leading(t, { env: { FAKE_ORCA_REFUSE: "selector_not_found" } });
+  await o.queue([invite(9, GOOD)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launch_refused_selector_not_found/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].why, "launch_refused_selector_not_found");
+});
+
 test("raise: without the machine's consent the flag on disk raises nothing", async (t) => {
   const o = await leading(t, { admitted: false });
   await o.queue([invite(9, GOOD)]);

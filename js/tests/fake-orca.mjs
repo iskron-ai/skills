@@ -177,7 +177,23 @@ if (args[0] === "project" && (args[1] === "list" || args[1] === "setups")) {
   process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
   process.exit(0);
 }
+// worktree show — the shape 1.4.258 answered (#10598): the tree at the path as given, kept out
+// of FAKE_ORCA_LOG, each call a line in <log>.shows. FAKE_ORCA_TREE_UNSEEN=N — the first N
+// answer selector_not_found, as right after `git worktree add`; "never" — every one.
+if (args[0] === "worktree" && args[1] === "show") {
+  const shows = `${process.env.FAKE_ORCA_LOG}.shows`;
+  appendFileSync(shows, JSON.stringify(args) + "\n");
+  const unseen = process.env.FAKE_ORCA_TREE_UNSEEN ?? "0";
+  const seen = readFileSync(shows, "utf8").trim().split("\n").length;
+  if (unseen === "never" || seen <= Number(unseen))
+    refuse("selector_not_found", "selector_not_found");
+  const path = args[args.indexOf("--worktree") + 1].replace(/^path:/, "");
+  process.stdout.write(JSON.stringify({ ok: true, result: { worktree: { path } } }) + "\n");
+  process.exit(0);
+}
 appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+// FAKE_ORCA_REFUSE=<code> — the launch is refused as 1.4.258 refuses it (#10598).
+if (args[0] === "agent" && process.env.FAKE_ORCA_REFUSE) refuse(process.env.FAKE_ORCA_REFUSE, "x");
 // A clone registered at a path git does not name (a symlink, another case) is no worktree to
 // agent launch on 1.4.242 (case №4221): selector_not_found.
 if (args[0] === "agent" && args.includes("--worktree")) {

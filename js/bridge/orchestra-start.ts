@@ -4,6 +4,7 @@ import { words } from "../shared/lang.ts";
 import { launchExec } from "./exec-launch.ts";
 import type { Launcher } from "./orchestra-launchers.ts";
 import { launchArgv, orcaLaunch, run as orcaRun } from "./orchestra-orca.ts";
+import { orcaSeesTree } from "./orchestra-orca-seen.ts";
 import { coverRefusal } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
@@ -85,6 +86,13 @@ export async function startRun(
     return outcome;
   }
   writeRuns(authDir, runs);
+  const unseen = await orcaSeesTree(run.worktree);
+  if (unseen || gone?.gone) {
+    run.state = "ambiguity";
+    run.why = unseen ?? "caller_gone_before_launch";
+    writeRuns(authDir, runs);
+    return run.why;
+  }
   const got = await orcaLaunch(launchArgv(run.harness, run.worktree, run.model, prompt));
   if (got.handle) run.terminal = got.handle;
   if (got.runtime) run.runtime = got.runtime;
