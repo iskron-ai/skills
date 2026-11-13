@@ -67,6 +67,7 @@ test-extension: build-js
 	@node scripts/run-tests.mjs js/tests/extension.test.mjs
 
 test-opencode: build-js
+	@node scripts/run-tests.mjs js/tests/opencode-package*.test.mjs
 	@node scripts/run-tests.mjs js/tests/opencode.test.mjs js/tests/opencode-real-bridges.test.mjs js/tests/opencode-siblings.test.mjs js/tests/opencode-lineage-stop.test.mjs js/tests/opencode-compaction.test.mjs js/tests/opencode-mindslice.test.mjs js/tests/opencode-hook-context.test.mjs js/tests/opencode-hook-stop.test.mjs js/tests/opencode-leadend.test.mjs js/tests/opencode-turnend.test.mjs js/tests/opencode-once.test.mjs
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
