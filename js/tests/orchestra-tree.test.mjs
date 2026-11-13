@@ -6,7 +6,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { execPending, observeExec } from "../bridge/exec-exit.ts";
+import { orchestraLeading, orchestraServe } from "../bridge/orchestra.ts";
 import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
+import { orchestraStatus } from "../bridge/orchestra-status.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
 import { git } from "../bridge/orchestra-tree-check.ts";
 import { cleanupTree } from "../bridge/orchestra-tree-clean.ts";
@@ -131,4 +134,54 @@ test("tree: first seat preserves exact exit, replacement incarnation cannot inhe
   writeRuns(f.auth, replaced);
   assert.equal(readRuns(f.auth).own.closed, undefined);
   assert.equal(readRuns(f.auth).own.tree.exit, undefined);
+});
+for (const [base, token] of [
+  ["", null],
+  ["http://127.0.0.1:9", null],
+  ["", "unused"],
+]) {
+  test(`tree: OFF restart recovers pending cleanup without API credentials ${base}/${token}`, async (t) => {
+    const f = fixture(t);
+    assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+    stopped(f);
+    assert.equal(execPending(f.auth), true);
+    assert.equal(orchestraLeading(f.auth), true);
+    assert.match(orchestraStatus(f.auth, []).said, /tree_cleanup_pending/);
+    const serve = orchestraServe(f.auth);
+    await serve("step", []);
+    assert.equal(readRuns(f.auth).own.tree.state, "ready", "OFF step cannot launch or clean");
+    await observeExec(f.auth, base, token);
+    assert.equal(readRuns(f.auth).own.tree.state, "removed");
+    assert.equal(existsSync(f.row.worktree), false);
+    assert.equal(execPending(f.auth), false);
+    assert.equal(orchestraLeading(f.auth), false);
+  });
+}
+
+test("tree: recovery schedules ready only, preserves corrupt registry", (t) => {
+  const f = fixture(t);
+  for (const state of ["ready", "retained", "removed"]) {
+    f.row.state = "ended";
+    f.row.tree = { state, exit: "observed" };
+    f.row.closed = "client_exited";
+    f.row.stop_outcome = "stopped";
+    writeRuns(f.auth, f.runs);
+    assert.equal(execPending(f.auth), state === "ready", state);
+  }
+  const registry = join(f.auth, "run", "orchestra-runs.json");
+  writeFileSync(registry, "{broken");
+  assert.equal(execPending(f.auth), true);
+  assert.throws(() => orchestraStatus(f.auth, []), /registry_unreadable/);
+  assert.equal(readFileSync(registry, "utf8"), "{broken");
+});
+
+test("tree: OFF recovery retains dirty tree once and does not retry it", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  stopped(f);
+  writeFileSync(join(f.row.worktree, "work"), "user data");
+  await observeExec(f.auth, "", null);
+  assert.equal(readRuns(f.auth).own.tree.state, "retained");
+  assert.equal(execPending(f.auth), false);
+  assert.equal(existsSync(f.row.worktree), true);
 });

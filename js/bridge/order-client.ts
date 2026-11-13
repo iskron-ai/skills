@@ -41,7 +41,8 @@ export function boundStop(standing: string): (code: string | null) => Promise<st
     };
     if (!current()) return "stop_superseded";
     const latest = readRuns(CFG.authDir)[key];
-    if (latest?.exec?.exit && latest.closed === "client_exited") return null;
+    if ((latest?.exec?.exit || latest?.tree?.exit) && latest.closed === "client_exited")
+      return null;
     if (r.exec && !r.exec.incarnation) return "client_unbound";
     const incarnation = r.exec?.incarnation ?? r.tree?.incarnation;
     if (r.tree && !incarnation) return "client_unbound";

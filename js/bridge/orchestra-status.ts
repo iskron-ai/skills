@@ -18,13 +18,17 @@ export function orchestraStatus(authDir: string, discovered: string[]): Orchestr
   if (tact.lead) lines.push(w.lead(tact.lead));
   for (const r of Object.values(readRuns(authDir))) {
     if (!r.tree || r.tree.state === "removed") continue;
-    if (r.tree.state === "ready" && r.state !== "ambiguity") continue;
+    if (r.tree.state === "ready" && r.state !== "ambiguity" && r.state !== "ended") continue;
     lines.push(
       w.leadRow(
         r.realm,
         r.room,
         r.invite,
-        r.tree.why ?? r.why ?? `tree_${r.tree.state}_unverified`,
+        r.tree.why ??
+          r.why ??
+          (r.tree.state === "ready" && r.state === "ended"
+            ? "tree_cleanup_pending"
+            : `tree_${r.tree.state}_unverified`),
       ),
     );
   }

@@ -27,6 +27,11 @@ for (const mode of [
   "replaced-incarnation",
   "ambiguous",
   "superseded-after-exit",
+  "exec-exited",
+  "tree-exited",
+  "tree-exit-unconfirmed",
+  "tree-exit-replaced",
+  "tree-exit-superseded",
 ]) {
   test(`own Run alias boundary: ${mode}`, async (t) => {
     const dir = mkdtempSync(join(tmpdir(), "iskron-order-alias-"));
@@ -90,6 +95,13 @@ for (const mode of [
         at: "now",
       };
       if (mode.includes("incarnation")) own.exec = { incarnation: "inc_foreign" };
+      if (mode === "exec-exited") own.exec = { incarnation: "inc_fake", exit: "observed" };
+      if (mode.startsWith("tree-exit")) own.tree = { incarnation: "inc_fake", exit: "observed" };
+      if (
+        mode === "exec-exited" ||
+        (mode.startsWith("tree-exit") && mode !== "tree-exit-unconfirmed")
+      )
+        own.closed = "client_exited";
       const registry = join(dir, "run/orchestra-runs.json");
       const rows = {
         own,
@@ -108,6 +120,11 @@ for (const mode of [
       const finish = boundStop("own-standing");
       H.stopped.n++;
       state.standing = null;
+      if (mode === "tree-exit-replaced") {
+        own.tree.incarnation = "replacement";
+        save();
+      }
+      if (mode === "tree-exit-superseded") H.stopped.n++;
       if (mode.startsWith("replaced-")) {
         if (mode === "replaced-runtime") own.runtime = "rt_replaced";
         else own.exec.incarnation = "inc_replaced";
@@ -120,20 +137,29 @@ for (const mode of [
         H.stopped.n++;
         rmSync(gate);
       }
-      const expected = ["short-run", "short-seat"].includes(mode)
+      const expected = ["short-run", "short-seat", "exec-exited", "tree-exited"].includes(mode)
         ? null
-        : mode.startsWith("replaced-") || mode === "superseded-after-exit"
+        : mode.startsWith("replaced-") ||
+            mode === "superseded-after-exit" ||
+            ["tree-exit-replaced", "tree-exit-superseded"].includes(mode)
           ? "stop_superseded"
           : mode === "foreign-runtime"
             ? "terminal_binding_unconfirmed"
-            : mode === "foreign-incarnation"
+            : mode === "foreign-incarnation" || mode === "tree-exit-unconfirmed"
               ? "terminal_binding_changed"
               : "client_unbound";
       assert.equal(await result, expected);
       const closed = ["short-run", "short-seat", "superseded-after-exit"].includes(mode);
       assert.equal(argv().filter((a) => a[1] === "close").length, closed ? 1 : 0);
       const stored = JSON.parse(readFileSync(registry, "utf8")).runs;
-      assert.equal(stored.own.closed, closed ? "client_exited" : undefined);
+      assert.equal(
+        stored.own.closed,
+        closed ||
+          mode === "exec-exited" ||
+          (mode.startsWith("tree-exit") && mode !== "tree-exit-unconfirmed")
+          ? "client_exited"
+          : undefined,
+      );
       assert.deepEqual(
         stored.neighbour,
         rows.neighbour,
