@@ -98,6 +98,14 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       await cleanupEndedTrees(authDir, runs);
       continue;
     }
+    // A failed stop of a tree run whose exact terminal exited (Orca may refuse the close of a
+    // tab that then exits, #9966): the client is gone, the slot is free; the tree stays.
+    if (r.stop_outcome === "failed" && r.tree && !r.exec && r.closed === "client_exited") {
+      r.state = "ended";
+      r.why = "stop_failed_after_exit";
+      writeRuns(authDir, runs);
+      continue;
+    }
     const before = runIdentity(r);
     if (r.order_id) continue; // the ordinary order path owns halt/drop/interrupt and its ack
     try {

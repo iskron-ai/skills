@@ -34,10 +34,10 @@ async function api(t, answer) {
   return { url: `http://127.0.0.1:${server.address().port}`, stops };
 }
 
-async function exited(t) {
+async function exited(t, closed = "client_exited") {
   const f = fixture(t);
   assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
-  Object.assign(f.row, { state: "raised", standing_id: "seat", closed: "client_exited" });
+  Object.assign(f.row, { state: "raised", standing_id: "seat", ...(closed && { closed }) });
   f.row.tree.exit = "observed-exit";
   writeRuns(f.auth, f.runs);
   return f;
@@ -79,6 +79,23 @@ test("exit stop: an ended seat (410 standing_already_ended) ends the exited tree
   assert.equal(own.state, "ended");
   assert.equal(own.why, "seat_gone_after_exit");
   assert.equal(LIVE.includes(own.state), false);
+});
+
+test("exit stop: a failed order of a tree run whose exact terminal exited ends it; without the exit it stays", async (t) => {
+  const f = await exited(t);
+  const a = await api(t, () => [500, {}]);
+  Object.assign(f.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });
+  writeRuns(f.auth, f.runs);
+  await observeExec(f.auth, a.url, "synthetic");
+  assert.equal(readRuns(f.auth).own.state, "ended");
+  assert.equal(readRuns(f.auth).own.why, "stop_failed_after_exit");
+  assert.equal(a.stops.length, 0, "the order path already ran; no second stop");
+
+  const g = await exited(t, null);
+  Object.assign(g.row, { state: "stopping", order_id: "order", stop_outcome: "failed" });
+  writeRuns(g.auth, g.runs);
+  await observeExec(g.auth, a.url, "synthetic");
+  assert.equal(readRuns(g.auth).own.state, "stopping");
 });
 
 test("exit stop: any other refusal keeps the slot and names its status", async (t) => {

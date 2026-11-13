@@ -271,7 +271,9 @@ test("raise: an invite naming this machine's launcher is launched once through o
   // stand or confirm the claim again — a second registration of the same pair.
   assert.doesNotMatch(prompt, /(^|\s)start /);
   assert.doesNotMatch(prompt, /confirm the claim|iskron_stand/, prompt);
-  assert.match(prompt, /already taken/, prompt);
+  assert.match(prompt, /already taken/i, prompt);
+  // A 439-character line arrived as an unsent paste, ~230 were sent (#9966): keep it short.
+  assert.ok(prompt.length <= 220, `${prompt.length}: ${prompt}`);
   assert.equal(argv.at(-1), "--json");
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "launched");
@@ -1305,8 +1307,10 @@ const ack = (o, order, state) =>
 // stays stopping and its tab open until the window passes, then frees its slot, tab untouched.
 test("quench: a failed stop retains its runtime and tree past the window", async (t) => {
   const window = 6000;
+  // The agent may live: its terminal is not seen to exit (an exited one ends on a failed stop).
   const o = await stopping(t, { status: 201, body: { id: "ord-f" } }, "ord-f", {
     ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
+    FAKE_ORCA_WAIT_EXIT: "0",
   });
   const since = Date.now();
   assert.equal((await ack(o, "ord-f", "failed")).status, 200);
