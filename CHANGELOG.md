@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.0.2](https://github.com/iskron-ai/skills/compare/v8.0.1...v8.0.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* isolate orchestra runs and resolve ordinary calls ([#748](https://github.com/iskron-ai/skills/issues/748)) ([d65337f](https://github.com/iskron-ai/skills/commit/d65337f442b36279b198081c5028d6b244a97569))
+
 ## [8.0.1](https://github.com/iskron-ai/skills/compare/v8.0.0...v8.0.1) (2026-11-13)
 
 
