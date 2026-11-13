@@ -83,7 +83,7 @@ export async function planTact(
     }
     row = resolved.row;
     const own = resolved.own;
-    const repository = String(row.repository).trim();
+    const repository = String(row.repository ?? "").trim();
     const home = homeOf(own, realm, Number(row.karta));
     const got = checkoutFor(own, repository, () => ({ code: ORCA }), home);
     if (typeof got === "string") {

@@ -60,7 +60,7 @@ export async function raiseRows(
       said.push(w().leadRow(realm, room, invite, "exec_runtime_unverified"));
       continue;
     }
-    const repository = String(row.repository).trim();
+    const repository = String(row.repository ?? "").trim();
     const home = homeOf(own, realm, Number(row.karta));
     orca = orca === undefined ? await orcaCheckouts() : orca;
     const find = (): ReturnType<typeof checkoutFor> =>

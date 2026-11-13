@@ -733,6 +733,30 @@ test("raise: a home in the description raises its role in a checkout covered for
   );
 });
 
+// The chief of staff's call carried no repository (its role stewards none): homes was never read.
+test("raise: a home raises its role even when the call names no repository", async (t) => {
+  const own = mkdtempSync(join(tmpdir(), "iskron-home-"));
+  t.after(() => rmSync(own, { recursive: true, force: true }));
+  cover(own, coverOf(REALM, 932));
+  const o = await leading(t, {
+    descriptions: () => [describe({ body: { homes: { [`${REALM}#931`]: own } } })],
+  });
+  await o.queue([invite(9, GOOD, null)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: launched/, r.out);
+  assert.ok(
+    o.runs()[`${REALM}|${ROOM}|9`].worktree.startsWith(join(realpathSync(own), ".worktrees")),
+  );
+});
+
+test("raise: a call with no repository and no home is still no_checkout", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD, null)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_checkout/, r.out);
+  assert.equal(o.launches().length, 0);
+});
+
 test("raise: a home of another role leaves the cover's refusal standing", async (t) => {
   const own = mkdtempSync(join(tmpdir(), "iskron-home-"));
   t.after(() => rmSync(own, { recursive: true, force: true }));
