@@ -16,7 +16,9 @@ import {
 /** The client is over: the stop said stopped, or it failed after the exact terminal exited (Orca
  * may refuse closing a tab that then exits, #9966). */
 const clientGone = (r: Run): boolean =>
-  r.stop_outcome === "stopped" || r.why === "stop_failed_after_exit";
+  r.stop_outcome === "stopped" ||
+  r.why === "stop_failed_after_exit" ||
+  r.why === "seat_gone_after_exit";
 
 export async function cleanupTree(
   authDir: string,

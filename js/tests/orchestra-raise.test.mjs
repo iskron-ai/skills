@@ -261,17 +261,15 @@ test("raise: an invite naming this machine's launcher is launched once through o
   // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
   assert.ok(prompt.startsWith(`iskron/spawned_for: {"invite":9,"room":"${ROOM}"} `), prompt);
   assert.ok(!/[\r\n]/.test(prompt), `the brief is one line: ${JSON.stringify(prompt)}`);
-  // The brief names graph, role and case, and the join before work (#10043).
+  // The brief is the join before work (#10043); the plugin tells the taken word itself.
   assert.ok(
     prompt.includes(`iskron_case(action="join", realm="${REALM}", room="${ROOM}")`),
     prompt,
   );
-  assert.match(prompt, /role #931/);
   // The root took the seat by the spawned_for pair (№4050 [55]): no start line, no word to
   // stand or confirm the claim again — a second registration of the same pair.
   assert.doesNotMatch(prompt, /(^|\s)start /);
   assert.doesNotMatch(prompt, /confirm the claim|iskron_stand/, prompt);
-  assert.match(prompt, /already taken/i, prompt);
   // A 439-character line arrived as an unsent paste, ~230 were sent (#9966): keep it short.
   assert.ok(prompt.length <= 220, `${prompt.length}: ${prompt}`);
   assert.equal(argv.at(-1), "--json");

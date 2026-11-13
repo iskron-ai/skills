@@ -141,8 +141,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadOrdersUnread: (why) =>
       `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
-    brief: (realm, karta, room, invite) =>
-      `Уже взят по зову ${invite}, роль #${karta}: ${tool("case")}(action="join", realm="${realm}", room="${room}") до работы.`,
+    brief: (realm, _karta, room) =>
+      `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
     planLaunch: (argv) => `поднял бы: ${argv}`,
@@ -221,8 +221,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadOrdersUnread: (why) =>
       `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
-    brief: (realm, karta, room, invite) =>
-      `Already taken for invite ${invite}, role #${karta}: ${tool("case")}(action="join", realm="${realm}", room="${room}") first.`,
+    brief: (realm, _karta, room) =>
+      `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
     planLaunch: (argv) => `would launch: ${argv}`,

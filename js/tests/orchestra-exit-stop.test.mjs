@@ -10,7 +10,10 @@ import { test } from "node:test";
 
 import { observeExec } from "../bridge/exec-exit.ts";
 import { LIVE, readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
+import { BRIEF_MAX, startRun } from "../bridge/orchestra-start.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
+import { ORCHESTRA, SPAWN_LINE } from "../delivery/index.ts";
+import { words } from "../shared/lang.ts";
 import { fixture } from "./tree-fixture.mjs";
 
 async function api(t, answer) {
@@ -99,6 +102,44 @@ test("exit stop: a failed order of a tree run whose exact terminal exited ends i
   writeRuns(g.auth, g.runs);
   await observeExec(g.auth, a.url, "synthetic");
   assert.equal(readRuns(g.auth).own.state, "stopping");
+});
+
+test("exit stop: an ended seat after exit frees the slot and the clean tree goes", async (t) => {
+  const f = await exited(t);
+  const a = await api(t, () => [410, { errors: [{ rule: "standing_already_ended" }] }]);
+  await observeExec(f.auth, a.url, "synthetic");
+  const own = readRuns(f.auth).own;
+  assert.equal(own.why, "seat_gone_after_exit");
+  assert.equal(own.tree.state, "removed", "no endless cleanup of a ready tree");
+  assert.equal(existsSync(f.row.worktree), false);
+});
+
+test("brief: a line past the paste limit is refused before any tree or run", async () => {
+  const runs = {};
+  const own = { launcher: "orca", harnesses: { opencode: { models: ["m"] } } };
+  const row = {
+    realm: `@${"x".repeat(200)}/graph`,
+    room: "201b813e-a41d-42c7-b869-a70e032c85e8",
+    invite: 1,
+    karta: 931,
+    harness: "opencode",
+    model: "m",
+  };
+  const why = await startRun("/nonexistent", row, own, "repo", "/nonexistent", runs, "k", null);
+  assert.equal(why, "brief_too_long");
+  assert.deepEqual(runs, {});
+});
+
+test("brief: a long graph and a large invite still fit the limit", () => {
+  const line =
+    `${SPAWN_LINE} ${JSON.stringify({ invite: 999999, room: "201b813e-a41d-42c7-b869-a70e032c85e8" })} ` +
+    words(ORCHESTRA).brief(
+      `@${"o".repeat(20)}/${"g".repeat(20)}`,
+      931,
+      "201b813e-a41d-42c7-b869-a70e032c85e8",
+      999999,
+    );
+  assert.ok(line.length <= BRIEF_MAX, `${line.length}: ${line}`);
 });
 
 test("exit stop: any other refusal keeps the slot and names its status", async (t) => {

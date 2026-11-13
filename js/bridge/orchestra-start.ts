@@ -8,6 +8,10 @@ import { coverRefusal } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
 
+/** Observed on OpenCode 2.2.7 under Orca: a 439-character line was pasted unsent, ~230 were
+ * sent (#9966) — the ordinary launch refuses a longer line rather than paste it. */
+export const BRIEF_MAX = 220;
+
 export async function startRun(
   authDir: string,
   row: Record<string, unknown>,
@@ -32,6 +36,13 @@ export async function startRun(
     state: "preparing",
     at: new Date().toISOString(),
   };
+  // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
+  // multi-line or long --prompt the terminal turns into a paste that is never sent (#9966 v18).
+  const prompt =
+    `${SPAWN_LINE} ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
+    words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
+  const exec = own.harnesses[run.harness].exec;
+  if (!exec && prompt.length > BRIEF_MAX) return "brief_too_long";
   runs[key] = run;
   let treeWhy: string | null;
   try {
@@ -55,12 +66,6 @@ export async function startRun(
     writeRuns(authDir, runs);
     return run.why;
   }
-  // One line (#9969 v12): the pair opens the line and the brief follows through a space — a
-  // multi-line --prompt the terminal turns into a paste that is never sent (#9966 v18).
-  const prompt =
-    `${SPAWN_LINE} ${JSON.stringify({ invite: run.invite, room: run.room })} ` +
-    words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
-  const exec = own.harnesses[run.harness].exec;
   if (exec) {
     let outcome: string;
     try {

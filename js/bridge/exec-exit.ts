@@ -149,5 +149,6 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       r.why = "exec_stop_unknown";
     }
     writeRuns(authDir, runs);
+    if (r.state === "ended") await cleanupEndedTrees(authDir, runs);
   }
 }
