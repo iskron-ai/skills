@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.2.1](https://github.com/iskron-ai/skills/compare/v8.2.0...v8.2.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **check-rituals:** find the Claude plugin's hooks where Claude Code installed it; probe OpenCode replacement outside the repo tree ([#759](https://github.com/iskron-ai/skills/issues/759)) ([df7cd06](https://github.com/iskron-ai/skills/commit/df7cd06c8fc31d9d645f6bd469e8bfa24d90d7a5))
+* **orchestra:** a role with a home is raised even when its call names no repository ([#761](https://github.com/iskron-ai/skills/issues/761)) ([a50a770](https://github.com/iskron-ai/skills/commit/a50a7708f8dae79afb0a789c8acaf9385a7d20de))
+
 ## [8.2.0](https://github.com/iskron-ai/skills/compare/v8.1.0...v8.2.0) (2026-11-13)
 
 
