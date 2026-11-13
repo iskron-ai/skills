@@ -138,3 +138,72 @@ test("prepare: JSONC at the target layer is named, never overwritten or partly a
   assert.throws(() => readFileSync(join(dir, ".claude/settings.json")), /ENOENT/);
   assert.throws(() => readFileSync(join(dir, "AGENTS.md")), /ENOENT/);
 });
+
+for (const kind of ["deny", "missing", "malformed", "shape", "both"])
+  test(`prepare/audit: JSONC ${kind} is read without edits or a sibling JSON`, () => {
+    const dir = join(scratch, `jsonc-${kind}`);
+    mkdirSync(join(dir, ".opencode"), { recursive: true });
+    spawnSync("git", ["init", "-q", dir]);
+    const args = [
+      "prepare",
+      "--dir",
+      dir,
+      "--graph",
+      "r7",
+      "--holon",
+      "12",
+      "--agent-role",
+      "34",
+      "--json",
+    ];
+    run(args);
+    const json = join(dir, ".opencode/opencode.json");
+    const jsonBefore = readFileSync(json, "utf8");
+    if (kind !== "both") rmSync(json);
+    const path = join(dir, ".opencode/opencode.jsonc");
+    const original =
+      kind === "malformed"
+        ? "{ broken"
+        : kind === "shape"
+          ? '{"policies":{}}'
+          : `{\n// preserve https://example.org and trailing commas\n"url":"https://example.org/*x*/",\n"policies":[${kind === "missing" ? "" : '{"action":"tool.use","resource":"question:*","effect":"deny",},'}],\n}\n`;
+    writeFileSync(path, original);
+    writeFileSync(
+      join(dir, "AGENTS.md"),
+      readFileSync(join(dir, "AGENTS.md"), "utf8") +
+        "\nquestion / AskUserQuestion forbidden; case ask\n",
+    );
+    const audit = run(["check-rituals", "--json", dir]);
+    const result = run(args);
+    assert.equal(result.status, kind === "deny" ? 3 : 1, `${result.stdout}\n${result.stderr}`);
+    assert.equal(readFileSync(path, "utf8"), original);
+    if (kind === "both") assert.equal(readFileSync(json, "utf8"), jsonBefore);
+    else assert.throws(() => readFileSync(json), /ENOENT/);
+    assert.equal(audit.status, kind === "deny" ? 0 : 1, `${audit.stdout}\n${audit.stderr}`);
+    const rows = JSON.parse(audit.stdout).filter(
+      (r) => r.layer === "question.project" && r.file.includes("opencode.json"),
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].hole, kind !== "deny");
+    assert.equal(readFileSync(path, "utf8"), original);
+  });
+
+test("check-rituals: accepts an existing JSONC deny without prepare rewriting it", () => {
+  const dir = join(scratch, "jsonc-audit-only");
+  mkdirSync(dir);
+  spawnSync("git", ["init", "-q", dir]);
+  run(["prepare", "--dir", dir, "--graph", "r7", "--holon", "12", "--agent-role", "34", "--json"]);
+  writeFileSync(
+    join(dir, "AGENTS.md"),
+    readFileSync(join(dir, "AGENTS.md"), "utf8") +
+      "\nquestion / AskUserQuestion forbidden; case ask\n",
+  );
+  const path = join(dir, ".opencode/opencode.jsonc");
+  const text =
+    '{/*keep*/"policies":[{"action":"tool.use","resource":"question:*","effect":"deny",},],}\n';
+  rmSync(join(dir, ".opencode/opencode.json"));
+  writeFileSync(path, text);
+  const result = run(["check-rituals", "--json", dir]);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.equal(readFileSync(path, "utf8"), text);
+});
