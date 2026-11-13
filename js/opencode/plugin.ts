@@ -194,7 +194,6 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     directoryOf: (s) => sessionDirectory(ctx, s),
     halted: (s) => !ch || stops.halted(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
-    role: (s) => spawnStarts.karta(s),
     cancel: (s) => half.cancelSeat(s),
     release: (s) => half.releaseSeat(s),
     finished: (s) => {

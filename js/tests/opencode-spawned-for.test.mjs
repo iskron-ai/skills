@@ -96,33 +96,6 @@ test("the one-line form seats the pair and hands the session the same-line remai
   for (const s of ["s1", "s2"]) assert.ok(starts.has(s), s);
 });
 
-// #10598: a role raised in its home by the description names itself on the line — the root
-// seats it, not its cover's role; the register still takes the bare pair.
-test("the line's role is the session's, and the pair stays bare", async () => {
-  const starts = createSpawnStarts(async () => []);
-  const line = `iskron/spawned_for: ${JSON.stringify({ ...pair, karta: 3478 })} brief`;
-  assert.equal(await starts.prompt("s", line, "m1"), "brief");
-  assert.equal(starts.karta("s"), "3478");
-  const args = { realm: "@nks/nks-dev", karta: "3478" };
-  starts.apply("s", "iskron_stand", args);
-  assert.deepEqual(args.spawned_for, pair);
-  const plain = createSpawnStarts(async () => []);
-  await plain.prompt("s", `iskron/spawned_for: ${JSON.stringify(pair)} brief`, "m1");
-  assert.equal(plain.karta("s"), undefined);
-});
-
-for (const [why, karta] of [
-  ["zero", 0],
-  ["a string", "3478"],
-  ["a fraction", 1.5],
-])
-  test(`the line's role must be a role number: ${why}`, async () => {
-    const starts = createSpawnStarts(async () => []);
-    const line = `iskron/spawned_for: ${JSON.stringify({ ...pair, karta })} brief`;
-    await assert.rejects(starts.prompt("s", line, "m"), /spawned_for/);
-    assert.ok(!starts.has("s"));
-  });
-
 // #9959: the line carries this delivery's mark; another delivery's plugin in the same harness
 // (its own mark, or the bare line of an older one) leaves it be — and so does this one.
 test("a pair line without this delivery's mark is ordinary text: no seat, no refusal", async () => {

@@ -90,35 +90,6 @@ test(
   },
 );
 
-// #10598: a role raised in its home names itself on the line — the root seats that role, not the
-// cover's, and the register carries the bare pair.
-test("spawned_for firstline with a role seats that role, not the cover's", T, async (t) => {
-  const s = await stage(t);
-  s.fake.state.structured = true;
-  s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
-  const oc = await rootPlugin(s, s.project);
-  try {
-    oc.create("spawn-root", { emit: false });
-    const pair = { invite: 7, room: "70efab85-1f3b-46a2-a279-c9e806a9b371" };
-    await oc.turn(
-      "spawn-root",
-      `iskron/spawned_for: ${JSON.stringify({ ...pair, karta: 3478 })} hi`,
-    );
-    const calls = s.fake.state.calls.filter((c) => c.name === "iskron_channel");
-    const regs = calls.filter((c) => c.arguments.action === "register");
-    assert.ok(regs.length, JSON.stringify(calls.map((c) => c.arguments)));
-    assert.deepEqual(regs[0].arguments.spawned_for, pair);
-    for (const c of calls.filter((c) => c.arguments.karta !== undefined))
-      assert.equal(
-        String(c.arguments.karta).replace(/^#/, ""),
-        "3478",
-        JSON.stringify(c.arguments),
-      );
-  } finally {
-    await oc.stop();
-  }
-});
-
 // #10043: the first model request names the case the claim took — the delivery's word, not
 // the brief's; a root without the pair hears no such word.
 test(

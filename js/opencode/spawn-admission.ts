@@ -5,8 +5,6 @@ import { firstLineSpawn, mergeSpawn, type SpawnedFor } from "../shared/spawned-f
 
 export interface SpawnStart {
   pair?: SpawnedFor;
-  /** The role the launch was raised for in its home: the root seats it, not the cover's. */
-  karta?: number;
   target?: string;
   error?: Error;
   conflict?: boolean;
@@ -45,7 +43,6 @@ export function spawnAdmission(
     const compare = (own: SpawnStart) => {
       try {
         mergeSpawn(own.pair, pair);
-        if (own.karta !== spawn?.karta) throw new Error(words(SPAWNED_FOR).invalid());
       } catch (e) {
         own.conflict = true;
         own.error = e as Error;
@@ -60,11 +57,7 @@ export function spawnAdmission(
       return stripped();
     }
     const fresh = !entry;
-    entry ??= {
-      pair,
-      ...(spawn.karta === undefined ? {} : { karta: spawn.karta }),
-      ids: new Set(),
-    };
+    entry ??= { pair, ids: new Set() };
     const own = entry;
     starts.set(session, own);
     const proof = Promise.resolve().then(async () => {

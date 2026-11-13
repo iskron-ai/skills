@@ -27,23 +27,12 @@ export function parseSpawn(value: unknown): SpawnedFor {
 }
 
 export function spawnJson(text: string): SpawnedFor {
-  return spawnLine(text, false).pair;
-}
-
-/** The pair, and on the launch's first line only the role it was raised for (#10598): the
- * register takes the pair alone. */
-function spawnLine(text: string, role: boolean): { pair: SpawnedFor; karta?: number } {
   try {
     const keys = [...text.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
       (m) => JSON.parse(m[1]) as string,
     );
     if (keys.length !== new Set(keys).size) return invalid();
-    const v = JSON.parse(text) as Record<string, unknown>;
-    if (!role || !v || typeof v !== "object" || !Object.hasOwn(v, "karta"))
-      return { pair: parseSpawn(v) };
-    const { karta, ...pair } = v;
-    if (!Number.isSafeInteger(karta) || Number(karta) <= 0) return invalid();
-    return { pair: parseSpawn(pair), karta: karta as number };
+    return parseSpawn(JSON.parse(text));
   } catch {
     return invalid();
   }
@@ -59,8 +48,6 @@ export interface FirstLineSpawn {
   pair: SpawnedFor;
   /** The prompt without its pair line: the session's own words (#9959). */
   rest: string;
-  /** The role the launch was raised for in its home, not the cover's (#10598). */
-  karta?: number;
 }
 
 /**
@@ -95,19 +82,18 @@ export function firstLineSpawn(text: string): FirstLineSpawn | undefined {
     }
   }
   if (end < 0) return invalid();
-  const { pair, karta } = spawnLine(body.slice(at, end + 1), true);
-  const role = karta === undefined ? {} : { karta };
+  const pair = spawnJson(body.slice(at, end + 1));
   const below = ((): string => {
     if (text.length === first.length) return "";
     // The separator split(/\r?\n/) consumed: \n, or \r\n.
     return text.slice(first.length + (text.charCodeAt(first.length) === 10 ? 1 : 2));
   })();
   const after = body.slice(end + 1);
-  if (after === "") return { pair, rest: below, ...role };
+  if (after === "") return { pair, rest: below };
   if (after[0] !== " " && after[0] !== "\t") return invalid();
   const brief = after.replace(/^[ \t]+/, "");
   if (!brief) return invalid();
-  return { pair, rest: below ? `${brief}\n${below}` : brief, ...role };
+  return { pair, rest: below ? `${brief}\n${below}` : brief };
 }
 
 export interface SpawnIdentity {
