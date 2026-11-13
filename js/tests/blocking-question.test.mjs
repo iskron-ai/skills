@@ -135,6 +135,48 @@ test("check-rituals: prepared layers pass, removing either project guard fails",
   assert.equal(check().status, 1);
 });
 
+// №4941, №4944: from an ordinary shell (no CLAUDE_PLUGIN_ROOT) the home copy of the bridge has
+// no plugin tree above it — the plugin's hooks are found where Claude Code installed them.
+test("check-rituals: the Claude plugin denial is found by the installed plugins registry", () => {
+  const home = join(scratch, "registry-home");
+  const install = join(home, ".claude/plugins/cache/iskron/iskron/9.9.9");
+  mkdirSync(join(install, "hooks"), { recursive: true });
+  copyFileSync(join(REPO, "hooks/hooks.json"), join(install, "hooks/hooks.json"));
+  writeFileSync(
+    join(home, ".claude/plugins/installed_plugins.json"),
+    JSON.stringify({ plugins: { "iskron@iskron": [{ scope: "user", installPath: install }] } }),
+  );
+  const copy = join(home, ".iskron-bridge/iskron-bridge.mjs");
+  mkdirSync(join(home, ".iskron-bridge"), { recursive: true });
+  copyFileSync(bridge, copy);
+  const dir = join(scratch, "registry-repo");
+  mkdirSync(dir);
+  spawnSync("git", ["init", "-q", dir]);
+  writeFileSync(
+    join(dir, "AGENTS.md"),
+    "---\niskron:\n  graph: r5\n  holon: 1506\n  agent_role: 931\n---\n# Example\n",
+  );
+  const r = spawnSync(process.execPath, [copy, "check-rituals", "--json", dir], {
+    encoding: "utf8",
+    input: "",
+    timeout: 15000,
+    env: {
+      ...process.env,
+      HOME: home,
+      CLAUDE_PLUGIN_ROOT: "",
+      ISKRON_BRIDGE_AUTH_DIR: join(home, "auth"),
+      ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_TOKEN: "",
+    },
+  });
+  const row = JSON.parse(r.stdout).find(
+    (v) => v.layer === "question.plugin" && v.file.endsWith("hooks/hooks.json"),
+  );
+  assert.ok(row, r.stdout + r.stderr);
+  assert.equal(row.file, join(install, "hooks/hooks.json"));
+  assert.equal(row.hole, false, r.stdout);
+});
+
 test("question audit never starts the plugin's adjacent bridge", () => {
   const dir = join(scratch, "adjacent-audit");
   const config = join(scratch, "adjacent-config");
