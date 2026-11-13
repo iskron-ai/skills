@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.1.0](https://github.com/iskron-ai/skills/compare/v8.0.2...v8.1.0) (2026-11-13)
+
+
+### Features
+
+* **iskronify:** contract 43 — the orchestrator tree is no agent's to remove or move ([#757](https://github.com/iskron-ai/skills/issues/757)) ([e4e7a1e](https://github.com/iskron-ai/skills/commit/e4e7a1ecbecea78e485aa9fb0ad974482344de92))
+
+
+### Bug Fixes
+
+* **orchestra:** raise without hands — wait for Orca to see the tree, lock it, free a removed tree's slot ([#754](https://github.com/iskron-ai/skills/issues/754)) ([f2589b0](https://github.com/iskron-ai/skills/commit/f2589b0ef54c84198f0a5b83376bab385e4ebe53))
+
 ## [8.0.2](https://github.com/iskron-ai/skills/compare/v8.0.1...v8.0.2) (2026-11-13)
 
 

@@ -1,5 +1,5 @@
 // js/delivery/contract.ts
-var CONTRACT_SUPPORT = { minimum: 39, target: 42 };
+var CONTRACT_SUPPORT = { minimum: 39, target: 43 };
 var CONTRACT_WORDS = {
   ru: {
     unsupported: (n2, target) => `Контракт ${n2} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
@@ -178,7 +178,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.0.2";
+var VERSION = "8.1.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
