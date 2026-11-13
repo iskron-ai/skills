@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.0.1](https://github.com/iskron-ai/skills/compare/v8.0.0...v8.0.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* scope question guards and preserve verified JSONC policies ([#746](https://github.com/iskron-ai/skills/issues/746)) ([5fdea27](https://github.com/iskron-ai/skills/commit/5fdea27472a24655e9f35d3a421572b4c96921d4))
+
 ## [8.0.0](https://github.com/iskron-ai/skills/compare/v7.39.1...v8.0.0) (2026-11-12)
 
 
