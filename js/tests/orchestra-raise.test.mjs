@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 
 import { BUILT_BRIDGE } from "./built.mjs";
 import { startFakeNks } from "./fake-nks.mjs";
+import { initCheckout } from "./git-checkout.mjs";
 
 const NODE = process.env.ISKRON_NODE || process.execPath;
 const BRIDGE = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
@@ -114,10 +115,23 @@ const orcaCalls = (log) =>
     ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)
     : [];
 
+async function waitEnded(o, invite = 9) {
+  const until = Date.now() + 15_000;
+  while (Date.now() < until) {
+    const r = o.runs()[`${REALM}|${ROOM}|${invite}`];
+    if (r?.state === "ended" && r.tree?.state === "removed") return r;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  assert.fail(`exit/stop/cleanup not observed: ${JSON.stringify(o.runs())}`);
+}
+
 /** The checkout's cover: the raised agent's root seats itself by it (opencode/rootseat.ts). */
 const coverOf = (graph = REALM, role = 931) =>
   `---\niskron:\n  graph: ${graph}\n  holon: 4057\n  agent_role: ${role}\n---\n# probe\n`;
-const cover = (dir, text = coverOf()) => writeFileSync(join(dir, "AGENTS.md"), text);
+const cover = (dir, text = coverOf()) => {
+  writeFileSync(join(dir, "AGENTS.md"), text);
+  initCheckout(dir);
+};
 
 /** A leading daemon: flag on, the fake's api beside a hold record, a substitute orca on PATH. */
 async function leading(
@@ -125,7 +139,7 @@ async function leading(
   { descriptions, projects, env = {}, admitted = true, whoami, covered = coverOf(), holons } = {},
 ) {
   // Short: the daemon's sockets live under it, and a Unix socket path is capped near 104 bytes.
-  const dir = mkdtempSync(join(tmpdir(), "iskron-or-"));
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-or-")));
   const checkout = join(dir, "checkout");
   mkdirSync(checkout);
   if (covered) cover(checkout, covered);
@@ -154,6 +168,11 @@ async function leading(
   writeFileSync(join(bin, "orca"), `#!/bin/sh\nexec "${NODE}" "${FAKE_ORCA}" "$@"\n`, {
     mode: 0o755,
   });
+  writeFileSync(
+    join(bin, "ssh"),
+    `#!${NODE}\nconst fs = require('node:fs');\nfs.appendFileSync(process.env.FAKE_SSH_LOG, JSON.stringify(process.argv.slice(2))+'\\n');\nprocess.stdout.write(process.env.FAKE_SSH_OUT || 'hostname github.com\\nidentityfile SECRET\\n');\nprocess.exit(Number(process.env.FAKE_SSH_EXIT || 0));\n`,
+    { mode: 0o755 },
+  );
   const log = join(dir, "orca.log");
   const laid = join(dir, "orca-projects.json");
   writeFileSync(laid, JSON.stringify((projects ?? orcaProjects)(checkout)));
@@ -165,6 +184,7 @@ async function leading(
     ISKRON_BRIDGE_LANG: "en", // the tact's words are the daemon's
     PATH: `${bin}:${process.env.PATH}`,
     FAKE_ORCA_LOG: log,
+    FAKE_SSH_LOG: join(dir, "ssh.log"),
     FAKE_ORCA_PROJECTS: laid,
     FAKE_ORCA_RUNTIME_FILE: join(dir, "orca-runtime"),
     ...(admitted ? { ISKRON_ORCHESTRA: "1" } : {}),
@@ -184,6 +204,7 @@ async function leading(
       await ended;
     }
     await fake.stop();
+    rmSync(dir, { recursive: true, force: true });
   });
   for (let i = 0; ; i++) {
     const r = await cli(dir, ["status"]);
@@ -231,7 +252,7 @@ test("raise: an invite naming this machine's launcher is launched once through o
     "--agent",
     "opencode",
     "--worktree",
-    `path:${o.checkout}`,
+    `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`,
     "--model",
     "anthropic/claude-opus-5-5",
   ]);
@@ -260,29 +281,332 @@ test("raise: an invite naming this machine's launcher is launched once through o
 test("raise: without a matching launcher, harness, model or checkout nothing is launched and the refusal is said", async (t) => {
   const o = await leading(t);
   await o.queue([
-    invite(1, {}),
+    invite(1, { ...GOOD, launcher: "" }),
     invite(2, { ...GOOD, launcher: "nobody" }),
     invite(3, { ...GOOD, harness: "claude" }),
     invite(4, { ...GOOD, model: "other/model" }),
     invite(5, GOOD, "github.com/probe/unmapped"),
     invite(6, GOOD, null),
-    invite(7, { launcher: "probe-mac", model: GOOD.model }),
+    invite(7, { ...GOOD, harness: "" }),
   ]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
   for (const [n, code] of [
-    [1, "launcher_missing"],
+    [1, "launcher_unknown"],
     [2, "launcher_unknown"],
     [3, "harness_not_offered"],
     [4, "model_not_offered"],
     [5, "no_checkout"],
     [6, "no_checkout"],
-    [7, "harness_missing"],
+    [7, "harness_not_offered"],
   ])
     assert.match(r.out, new RegExp(`invite ${n}: ${code}`), r.out);
   assert.equal(o.launches().length, 0, "nothing was launched");
   const st = await cli(o.dir, ["status"]);
-  assert.match(st.out, /leading: .*launcher_missing/, st.out);
+  assert.match(st.out, /leading: .*launcher_unknown/, st.out);
+});
+
+test("defaults: plain and partial invites resolve identically in dry-run and actual registry without writes to mind", async (t) => {
+  const o = await leading(t, {
+    descriptions: (checkout) => [describe({ body: { limit: 8, checkouts: { [REPO]: checkout } } })],
+  });
+  const attrs = [
+    {},
+    { launcher: null, harness: null, model: null },
+    { launcher: GOOD.launcher },
+    { harness: GOOD.harness },
+    { model: GOOD.model },
+    { launcher: GOOD.launcher, model: GOOD.model },
+  ];
+  await o.queue(attrs.map((a, n) => invite(n + 1, a)));
+  const dry = await cli(o.dir, ["step", "--dry-run"]);
+  for (let n = 1; n <= attrs.length; n++)
+    assert.match(
+      dry.out,
+      new RegExp(`invite ${n}: would launch: .*--agent opencode .*--model ${GOOD.model}`),
+      dry.out,
+    );
+  assert.equal(o.launches().length, 0);
+  assert.deepEqual(o.runs(), {});
+  const actual = await o.step();
+  for (let n = 1; n <= attrs.length; n++) {
+    assert.match(actual.out, new RegExp(`invite ${n}: launched`), actual.out);
+    const run = o.runs()[`${REALM}|${ROOM}|${n}`];
+    for (const k of ["launcher", "harness", "model"]) assert.equal(run[k], GOOD[k]);
+  }
+  assert.equal(o.launches().length, attrs.length);
+  assert.equal(adds(o).length, 0);
+  assert.doesNotMatch(dry.out + actual.out, /callers|checkouts|identityfile|SECRET/);
+});
+
+test("detached tree: ordinary launch never uses the source checkout and records its immutable base", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(1, {})]);
+  const r = await o.step();
+  assert.match(r.out, /invite 1: launched/, r.out);
+  const run = o.runs()[`${REALM}|${ROOM}|1`];
+  assert.notEqual(run.worktree, o.checkout);
+  assert.equal(o.launches()[0][5], `path:${run.worktree}`);
+  assert.match(run.worktree, new RegExp(`^${o.checkout}/\\.worktrees/orchestra-[a-f0-9-]+$`));
+  assert.equal(run.tree.state, "ready");
+  assert.match(run.tree.baseOID, /^[a-f0-9]{40,64}$/);
+  assert.equal(run.tree.source, o.checkout);
+  assert.equal(run.tree.room, ROOM);
+  assert.equal(run.tree.invite, 1);
+});
+
+test("role gate: flat authoritative NodeView permits only adhikarin before any default or launch", async (t) => {
+  const node = {
+    seq: 931,
+    node_type: "karta",
+    is_active: true,
+    manifested_as: "adhikarin",
+    edges: [],
+    neighbors: [],
+  };
+  for (const [over, status, code] of [
+    [{ manifested_as: "svatantra" }, 0, "human_role_not_executable"],
+    [{ manifested_as: "pratibimba" }, 0, "role_not_executable"],
+    [{ manifested_as: "agantuka" }, 0, "role_not_executable"],
+    [{ manifested_as: null }, 0, "role_kind_unknown"],
+    [{ manifested_as: undefined }, 0, "role_kind_unknown"],
+    [{ manifested_as: "future" }, 0, "role_kind_unknown"],
+    [{ node_type: "phenomenon" }, 0, "role_not_karta"],
+    [{ seq: 932 }, 0, "role_unverified"],
+    [{ is_active: false }, 0, "role_inactive"],
+    [{}, 404, "role_unreadable"],
+    [{}, 503, "role_unreadable"],
+  ]) {
+    const o = await leading(t);
+    o.fake.state.roleNode = { ...node, ...over };
+    o.fake.state.roleStatus = status;
+    await o.queue([invite(1, {}), invite(2, GOOD)]);
+    for (const args of [["step", "--dry-run"], ["step"]]) {
+      const r = await cli(o.dir, args);
+      assert.match(r.out, new RegExp(`invite 1: (would refuse: )?${code}`), r.out);
+      assert.match(r.out, new RegExp(`invite 2: (would refuse: )?${code}`), r.out);
+    }
+    assert.equal(
+      o.fake.state.roleReads,
+      4,
+      "one authoritative node read per considered invite per tact",
+    );
+    assert.equal(o.launches().length, 0);
+    assert.deepEqual(o.runs(), {});
+    assert.equal(existsSync(join(o.dir, "orca.log")), false);
+  }
+});
+
+test("only selector: exactly one open invite, no neighbour stops/cleanup/cursors; same dry filtering", async (t) => {
+  const o = await leading(t);
+  const neighbour = {
+    realm: REALM,
+    room: ROOM,
+    invite: 99,
+    state: "launched",
+    at: "2000-01-01T00:00:00Z",
+    terminal: "neighbour",
+    runtime: "rt_fake",
+  };
+  writeFileSync(join(o.dir, "run", "orchestra-runs.json"), JSON.stringify({ runs: { neighbour } }));
+  const cursor = join(o.dir, "run", "orchestra-cursors.json");
+  writeFileSync(cursor, JSON.stringify({ realms: { [REALM]: { cursor: "do-not-move" } } }));
+  const before = readFileSync(cursor, "utf8");
+  await o.queue([invite(1, {}), invite(2, GOOD)], [signal(1, 99, [])]);
+  const args = ["step", "--realm", REALM, "--only", `${ROOM}/2`];
+  const dry = await cli(o.dir, [...args, "--dry-run"]);
+  assert.equal(dry.code, 0, dry.err + dry.out);
+  assert.match(dry.out, /invite 2: would launch:/);
+  assert.doesNotMatch(dry.out, /invite 1:/);
+  assert.equal(o.fake.state.roleReads, 1);
+  const real = await cli(o.dir, args);
+  assert.equal(real.code, 0, real.err + real.out);
+  assert.match(real.out, /invite 2: launched/);
+  assert.equal(o.launches().length, 1);
+  assert.equal(o.fake.state.roleReads, 2);
+  assert.deepEqual(o.runs().neighbour, neighbour);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|1`], undefined);
+  assert.equal(readFileSync(cursor, "utf8"), before);
+  assert.equal(o.closes().length, 0);
+  assert.equal(o.fake.state.orders.human.length, 0);
+});
+
+test("only selector: malformed, duplicate, missing, wrong scope and incomplete snapshot never fall back", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(1, {})]);
+  for (const args of [
+    ["step", "--realm", REALM, "--only"],
+    ["step", "--realm", REALM, "--only", "4867/6"],
+    ["step", "--realm", REALM, "--only", `${ROOM}/0`],
+    ["step", "--realm", REALM, "--only-unknown", `${ROOM}/1`],
+    ["step", "--realm", REALM, "--only", `${ROOM}/1`, "unexpected"],
+    ["step", "--realm", REALM, "--only", `${ROOM}/1`, "--only", `${ROOM}/1`],
+    ["step", "--only", `${ROOM}/1`],
+    ["on", "--realm", REALM, "--only", `${ROOM}/1`],
+    ["step", "--realm", "@nks/foreign", "--only", `${ROOM}/1`],
+    ["step", "--realm", REALM, "--only", `${ROOM}/9`],
+  ]) {
+    const r = await cli(o.dir, args);
+    assert.notEqual(r.code, 0, r.out + r.err);
+  }
+  const args = ["step", "--realm", REALM, "--only", `${ROOM}/1`];
+  await o.queue([invite(1, {}), invite(1, {})]);
+  const duplicate = await cli(o.dir, args);
+  assert.notEqual(duplicate.code, 0);
+  assert.match(duplicate.err, /ambiguous/);
+  await o.queue([]); // closed or withdrawn invites are absent from the authoritative queue
+  assert.notEqual((await cli(o.dir, args)).code, 0);
+  await o.queue([invite(1, {}), { ...invite(2, {}), room_id: null }]);
+  assert.notEqual(
+    (await cli(o.dir, args)).code,
+    0,
+    "a malformed unselected row still makes the full snapshot incomplete",
+  );
+  assert.equal(o.launches().length, 0);
+  assert.deepEqual(o.runs(), {});
+  assert.equal(o.fake.state.roleReads ?? 0, 0);
+});
+
+test("only selector: OFF permits one-shot machine consent only, never persists ON or widens scope", async (t) => {
+  for (const by of ["env", "terminal"]) {
+    const o = await leading(t, { admitted: false });
+    assert.equal((await cli(o.dir, ["off"])).code, 0);
+    await o.queue([invite(1, {}), invite(2, {})]);
+    const args = ["step", "--realm", REALM, "--only", `${ROOM}/1`];
+    const denied = await cli(o.dir, args, { ISKRON_ORCHESTRA: "0" });
+    assert.notEqual(denied.code, 0);
+    assert.equal(o.launches().length, 0);
+    assert.equal(o.fake.state.roleReads ?? 0, 0);
+    const before = readFileSync(join(o.dir, "run", "orchestra.json"), "utf8");
+    const yes =
+      by === "env"
+        ? await cli(o.dir, args, { ISKRON_ORCHESTRA: "1" })
+        : await atTerminal(o.dir, args);
+    assert.equal(yes.code, 0, yes.err + yes.out);
+    assert.equal(o.launches().length, 1);
+    assert.equal(o.launches()[0][o.launches()[0].indexOf("--surface") + 1], "terminal");
+    assert.equal(readFileSync(join(o.dir, "run", "orchestra.json"), "utf8"), before);
+    assert.equal((await cli(o.dir, ["step"])).code, 0, "ordinary OFF step remains idle");
+    assert.equal(o.launches().length, 1);
+  }
+});
+
+test("terminal surface: an Orca schema without surface refuses before creating a tree", async (t) => {
+  const o = await leading(t, {
+    env: { FAKE_ORCA_LAUNCH_FLAGS: "agent,worktree,model,prompt,json" },
+  });
+  await o.queue([invite(1, {})]);
+  const r = await o.step();
+  assert.match(r.out, /orca_schema_unverified/, r.out);
+  assert.equal(o.launches().length, 0);
+  assert.equal(existsSync(join(o.checkout, ".worktrees")), false);
+});
+
+test("defaults: ambiguity, explicit unknown, forbidden caller and foreign host fail closed", async (t) => {
+  for (const [descriptions, attrs, author, code] of [
+    [
+      [describe(), describe({ seq: 78, body: { launcher: "other" } })],
+      {},
+      "@tester",
+      "launcher_ambiguous",
+    ],
+    [
+      [describe({ body: { harnesses: { opencode: { models: [GOOD.model, "other"] } } } })],
+      {},
+      "@tester",
+      "model_ambiguous",
+    ],
+    [[describe()], { launcher: "unknown" }, "@tester", "launcher_unknown"],
+    [[describe()], { harness: "unknown" }, "@tester", "harness_not_offered"],
+    [[describe()], { model: "unknown" }, "@tester", "model_not_offered"],
+    [[describe()], { ...GOOD, launcher: "unknown" }, "@tester", "launcher_unknown"],
+    [[describe()], { ...GOOD, harness: "unknown" }, "@tester", "harness_not_offered"],
+    [[describe()], { ...GOOD, model: "unknown" }, "@tester", "model_not_offered"],
+    [[describe({ body: { limit: 0 } })], {}, "@tester", "limit_reached"],
+    [[describe()], {}, "@stranger", "caller_not_allowed"],
+    [[describe({ body: { host: "foreign-host" } })], {}, "@tester", "launcher_missing"],
+  ]) {
+    const o = await leading(t, { descriptions: () => descriptions });
+    await o.queue([invite(1, attrs, REPO, author)]);
+    for (const args of [["step", "--dry-run"], ["step"]]) {
+      const r = await cli(o.dir, args);
+      assert.match(r.out, new RegExp(`invite 1: (would refuse: )?${code}`), r.out);
+    }
+    assert.equal(o.launches().length, 0);
+  }
+});
+
+test("defaults: caller permission and explicit model narrow launchers without bypassing the local host or limit", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [
+      describe({
+        body: {
+          limit: 1,
+          callers: ["@friend"],
+          harnesses: { opencode: { models: [GOOD.model] }, codex: { models: [GOOD.model] } },
+        },
+      }),
+      describe({
+        seq: 78,
+        body: { launcher: "other", harnesses: { opencode: { models: ["other/model"] } } },
+      }),
+      describe({ seq: 79, body: { launcher: "foreign", host: "foreign-host" } }),
+    ],
+  });
+  await o.queue([
+    invite(1, {}, REPO, "@friend"),
+    invite(2, { model: GOOD.model }),
+    invite(3, { launcher: "foreign" }),
+  ]);
+  for (const args of [["step", "--dry-run"], ["step"]]) {
+    const r = await cli(o.dir, args);
+    assert.match(r.out, /invite 1: (would launch:|launched)/, r.out);
+    assert.match(r.out, /invite 2: (would refuse: )?limit_reached/, r.out);
+    assert.match(r.out, /invite 3: (would refuse: )?host_elsewhere/, r.out);
+    assert.doesNotMatch(r.out, /foreign-host|callers|SECRET/);
+  }
+  assert.equal(o.launches().length, 1);
+});
+
+test("SSH alias: actual remote hostname comes only from ssh -G; repository path and failures stay closed", async (t) => {
+  for (const [remoteUrl, sshOut, sshExit, succeeds] of [
+    ["git@github-probe:probe/one.git", "hostname github.com\nidentityfile SECRET\n", "0", true],
+    ["ssh://another-user@github-probe/probe/one.git", "hostname github.com\n", "0", true],
+    ["git@github-probe:other/one.git", "hostname github.com\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname other.example\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname github.com\n", "1", false],
+    ["git@github-probe:probe/one.git", "identityfile SECRET\n", "0", false],
+    ["git@github-probe:probe/one.git", "hostname github.com\nhostname other.example\n", "0", false],
+    ["https://github-probe/probe/one.git", "hostname github.com\n", "0", false],
+  ]) {
+    const o = await leading(t, {
+      env: { FAKE_SSH_OUT: sshOut, FAKE_SSH_EXIT: sshExit },
+      projects: (checkout) => ({
+        projects: [
+          {
+            id: "alias",
+            gitRemoteIdentity: {
+              canonicalKey: "github-probe/probe/one",
+              remoteUrl,
+            },
+          },
+        ],
+        setups: [{ projectId: "alias", path: checkout, setupState: "ready", hostId: "local" }],
+      }),
+    });
+    await o.queue([invite(1, GOOD)]);
+    const r = await o.step();
+    assert.equal(o.launches().length, succeeds ? 1 : 0, r.out);
+    assert.doesNotMatch(r.out, /identityfile|SECRET/);
+    const log = join(o.dir, "ssh.log");
+    if (remoteUrl.startsWith("https:")) assert.equal(existsSync(log), false);
+    else {
+      const calls = readFileSync(log, "utf8").trim().split("\n").map(JSON.parse);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][0], "-G");
+      assert.ok(calls[0].includes("github-probe"), JSON.stringify(calls));
+    }
+  }
 });
 
 test("raise: an offered harness the adapter does not know is refused, not launched", async (t) => {
@@ -322,7 +646,7 @@ test("raise: the checkout comes from Orca's own projects — the remote decides,
   await o.queue([invite(9, GOOD)]);
   const r = await o.step();
   assert.match(r.out, /invite 9: launched/, r.out);
-  assert.equal(o.launches()[0][5], `path:${o.checkout}`);
+  assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
 });
 
 test("raise: two ready local setups of the repository — ambiguous, nothing launched", async (t) => {
@@ -348,7 +672,7 @@ test("raise: the description's own checkout overrides Orca for its key; no host 
   await o.queue([invite(9, GOOD)]);
   const r = await o.step();
   assert.match(r.out, /invite 9: launched/, r.out);
-  assert.equal(o.launches()[0][5], `path:${own}`);
+  assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
 });
 
 // №4050 [56]: a checkout without the cover raised a harness that could not stand — nor be stopped.
@@ -381,7 +705,7 @@ test("raise: a cover naming the graph by its short form is the call's graph", as
 
 // №4050 [56]: no seat within the window — the terminal the orchestrator opened is closed by its
 // own handle from the launch answer; the cause the harness refused with is not the daemon's to see.
-test("raise: no seat within the window closes our own terminal by its handle", async (t) => {
+test("raise: no seat within the window retains an ambiguous tree and occupied runtime", async (t) => {
   const o = await leading(t, {
     env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe1" },
   });
@@ -391,15 +715,15 @@ test("raise: no seat within the window closes our own terminal by its handle", a
   await new Promise((done) => setTimeout(done, 2_000));
   await o.queue([]);
   const r = await o.step();
-  assert.match(r.out, /invite 9: no_seat \(cause_unseen\), terminal_closed/, r.out);
-  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_probe1", "--json"]]);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "no_seat");
+  assert.match(r.out, /invite 9: tree_no_seat_unverified/, r.out);
+  assert.deepEqual(o.closes(), []);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity");
   await o.step();
-  assert.equal(o.closes().length, 1, "closed once");
+  assert.equal(o.closes().length, 0, "no unverified close");
 });
 
 // №4050 [71] item 2: an incomplete snapshot acts on nothing — not even the expiry's close.
-test("raise: an incomplete snapshot closes no terminal; the next complete one does", async (t) => {
+test("raise: incomplete snapshot does not expire; complete snapshot names unknown exit without closing", async (t) => {
   const o = await leading(t, {
     env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe2" },
   });
@@ -414,8 +738,8 @@ test("raise: an incomplete snapshot closes no terminal; the next complete one do
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "launched");
   await o.queue([]);
   const after = await o.step();
-  assert.match(after.out, /invite 9: no_seat \(cause_unseen\), terminal_closed/, after.out);
-  assert.equal(o.closes().length, 1);
+  assert.match(after.out, /invite 9: tree_no_seat_unverified/, after.out);
+  assert.equal(o.closes().length, 0);
 });
 
 test("raise: no seat and no handle in the launch answer — said, nothing closed", async (t) => {
@@ -423,10 +747,11 @@ test("raise: no seat and no handle in the launch answer — said, nothing closed
     env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "" },
   });
   await o.queue([invite(9, GOOD)]);
-  await o.step();
+  const first = await o.step();
+  assert.match(first.out, /tree_client_binding_unverified/, first.out);
   await new Promise((done) => setTimeout(done, 2_000));
   const r = await o.step();
-  assert.match(r.out, /invite 9: no_seat \(cause_unseen\), no_terminal_handle/, r.out);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity", r.out);
   assert.equal(o.closes().length, 0);
 });
 
@@ -441,7 +766,7 @@ test("raise: the description's limit holds — the second invite waits", async (
   assert.equal(o.launches().length, 1);
 });
 
-test("raise: a description of another machine is not raised here, its host said aloud; a broken one too", async (t) => {
+test("raise: a description of another machine is refused without its private host; a broken one too", async (t) => {
   const o = await leading(t, {
     descriptions: () => [
       describe({ body: { launcher: "elsewhere", host: "another-host" } }),
@@ -451,8 +776,8 @@ test("raise: a description of another machine is not raised here, its host said 
   await o.queue([invite(1, { ...GOOD, launcher: "elsewhere" })]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
-  // A host naming no machine would raise nowhere in silence: every machine names the host it read.
-  assert.match(r.out, /invite 1: host_elsewhere \(another-host\)/, r.out);
+  assert.match(r.out, /invite 1: host_elsewhere/, r.out);
+  assert.doesNotMatch(r.out, /another-host/);
   assert.match(r.out, /#78 in mind: description_not_json/, r.out);
   assert.equal(o.launches().length, 0);
 });
@@ -543,7 +868,11 @@ test("raise: the caller gone mid-tact — no further launch, no cursor moves (#8
   // Past the first launch's answer and what a second launch would take.
   await new Promise((done) => setTimeout(done, 9_000));
   assert.equal(o.launches().length, 1, "no launch after the caller left");
-  assert.equal(o.runs()[`${REALM}|${ROOM}|1`].state, "launched", "the launch done is registered");
+  assert.equal(
+    o.runs()[`${REALM}|${ROOM}|1`].state,
+    "ambiguity",
+    "slow binding reply is unknown, never retried",
+  );
   const cursors = JSON.parse(readFileSync(join(o.dir, "run", "orchestra-cursors.json"), "utf8"));
   assert.equal(cursors.realms[REALM], undefined, "no cursor moved after the caller left");
 });
@@ -580,7 +909,7 @@ test("raise: a failed launch is a refused run, not retried", async (t) => {
   await o.queue([invite(9, GOOD)]);
   const r = await o.step();
   assert.match(r.out, /invite 9: launch_exit_3/, r.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "refused");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity");
   await o.step();
   assert.equal(o.launches().length, 1, "no second launch");
 });
@@ -617,12 +946,22 @@ test("raise: the timer skips its tact while the last one runs — no chain of ta
   assert.equal((await cli(o.dir, ["off"])).code, 0);
   rmSync(hold);
   // A step queues behind every tact begun before it: its answer — they all ended.
-  await o.step();
+  const step = await o.step();
+  assert.equal(step.code, 0, step.err);
+  assert.match(step.out, /the tact is empty/, step.out);
   const journal = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
   const at = journal.findIndex((l) => /orchestra tact: .*invite 9: launched/.test(l));
   assert.ok(at >= 0, journal.join("\n"));
   const behind = journal.slice(at + 1).filter((l) => /orchestra tact/.test(l));
+  // Only automatic tacts are journalled: the explicit barrier step above is not one.
   assert.deepEqual(behind, [], "tacts were queued behind the held one");
+  await new Promise((r) => setTimeout(r, 500));
+  const later = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
+  assert.deepEqual(
+    later.filter((l) => /orchestra tact/.test(l)),
+    journal.filter((l) => /orchestra tact/.test(l)),
+    "OFF must not schedule new automatic tacts for a pending client",
+  );
 });
 
 /** The CLI as a human types it at a terminal: under a pseudo-terminal of `script`, its words
@@ -743,7 +1082,7 @@ test("dry run: says what one tact would raise or refuse, and touches nothing —
   assert.match(
     r.out,
     new RegExp(
-      `invite 9: would launch: orca agent launch --agent opencode --worktree path:${o.checkout} --model anthropic/claude-opus-5-5 --prompt <brief> --json`,
+      `invite 9: would launch: orca agent launch --agent opencode --worktree path:<own detached tree of ${REPO}> --model anthropic/claude-opus-5-5 --surface terminal --prompt <brief> --json`,
     ),
     r.out,
   );
@@ -751,7 +1090,7 @@ test("dry run: says what one tact would raise or refuse, and touches nothing —
   // No map for this repository: Orca would name the checkout at launch — not asked now.
   assert.match(
     r.out,
-    /invite 5: would launch: .*--worktree path:<orca checkout of github\.com\/probe\/two>/,
+    /invite 5: would launch: .*--worktree path:<own detached tree of github\.com\/probe\/two>/,
     r.out,
   );
   assert.equal(o.launches().length + o.closes().length, 0, "orca was not called");
@@ -791,13 +1130,10 @@ test("quench: our seat's empty composition after it sat gets one composition_emp
   assert.match(stops[0].body.client_id, /^orchestra-[0-9a-f]{32}$/);
   // The fake knows no such live seat (410): the seat is gone, the run ended, nothing repeats.
   assert.match(empty.out, /invite 9: seat_gone/, empty.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
-  // The ended run's tab is ours: closed by its handle, once (№4050 [74] (д)).
-  assert.match(empty.out, /invite 9: ended, terminal_closed/, empty.out);
-  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+  assert.equal(o.closes().length, 0, "410 is neither runtime exit nor completed stop");
   await o.step();
-  assert.equal(o.fake.state.orders.human.filter((h) => h.method === "POST").length, 1);
-  assert.equal(o.closes().length, 1, "closed once");
+  assert.equal(o.closes().length, 0, "unknown runtime is never closed or cleaned");
 });
 
 test("quench: a membership landing after the read cancels the end — the re-check reads the tape again", async (t) => {
@@ -857,18 +1193,28 @@ test("quench: the caller gone during the re-check — no stop order after it (#8
 });
 
 test("quench: a raised seat that never joined within the window is a failed launch — stopped (#9970)", async (t) => {
-  const o = await leading(t, { env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500" } });
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_EXIT: "0" },
+  });
   await o.queue([invite(9, GOOD)]);
   await o.step();
-  await new Promise((done) => setTimeout(done, 2_000));
+  // Cross the independent client's exit-observer tick as well as the join window.
+  await new Promise((done) => setTimeout(done, 6_000));
+  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.tree?.exit, undefined, `no_join needs a live client: ${JSON.stringify(run)}`);
   await o.queue([], [signal(1, 9, [])]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /invite 9: no_join/, r.out);
+  assert.match(r.out, /invite 9: no_join/, `${r.out}\n${JSON.stringify(o.runs())}`);
   const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
   assert.equal(stops.length, 1, JSON.stringify(o.fake.state.orders.human));
   assert.equal(stops[0].id, "seat-raised");
   assert.equal(stops[0].body.reason_code, "composition_empty");
+  assert.ok(
+    o.terminals().some((a) => a[1] === "wait"),
+    "the independent exit observer ran",
+  );
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].tree?.exit, undefined, "no fabricated client exit");
 });
 
 /** Our seat sat and its composition emptied; the stop answers `answer`, an open order lies. */
@@ -905,6 +1251,7 @@ test("quench: a stop answered without an id ends when no open order is left for 
   });
   assert.equal(closed.status, 200);
   await o.step();
+  await waitEnded(o);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 
@@ -922,7 +1269,7 @@ const ack = (o, order, state) =>
 
 // A closed order that did not carry the stop out (#7522): the agent may still live — the run
 // stays stopping and its tab open until the window passes, then frees its slot, tab untouched.
-test("quench: our stop closed failed keeps the run stopping, its tab open, until the window", async (t) => {
+test("quench: a failed stop retains its runtime and tree past the window", async (t) => {
   const window = 6000;
   const o = await stopping(t, { status: 201, body: { id: "ord-f" } }, "ord-f", {
     ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
@@ -936,14 +1283,14 @@ test("quench: our stop closed failed keeps the run stopping, its tab open, until
   await new Promise((done) => setTimeout(done, Math.max(0, window + 500 - (Date.now() - since))));
   const late = await o.step();
   assert.equal(late.code, 0, late.err + late.out);
-  assert.match(late.out, /invite 9: stop_failed, terminal_left_open/, late.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", late.out);
+  assert.notEqual(o.runs()[`${REALM}|${ROOM}|9`].tree.state, "removed");
   assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
 });
 
 // Review of PR #724 п.3: an order left issued for good holds neither the slot nor the orders
 // cursor past the window — the run ends said so, its tab untouched (#7522).
-test("quench: our stop left open past the window ends the run, its tab open, the cursor passing", async (t) => {
+test("quench: an open stop past the window keeps its runtime, tree and held cursor", async (t) => {
   const window = 6000;
   const o = await stopping(t, { status: 201, body: { id: "ord-i" } }, "ord-i", {
     ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
@@ -958,10 +1305,9 @@ test("quench: our stop left open past the window ends the run, its tab open, the
   await new Promise((done) => setTimeout(done, Math.max(0, window + 500 - (Date.now() - since))));
   const late = await o.step();
   assert.equal(late.code, 0, late.err + late.out);
-  assert.match(late.out, /invite 9: stop_unanswered, terminal_left_open/, late.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", late.out);
   assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
-  assert.equal(cursor(), 1, "the lapsed order no longer holds the cursor");
+  assert.equal(cursor(), 0, "an unknown stop still holds its cursor");
 });
 
 // Review of PR #724 п.4: a stop answered without an id is matched by its seat — never by an
@@ -983,6 +1329,7 @@ test("quench: a stop without an id is not matched by an older closed order of it
   assert.equal((await ack(o, "ord-y", "stopped")).status, 200);
   const after = await o.step();
   assert.equal(after.code, 0, after.err + after.out);
+  await waitEnded(o);
   assert.equal(run().state, "ended", after.out);
 });
 
@@ -1029,6 +1376,7 @@ test("quench: a stopping run whose graph left the boundary ends when its order c
   assert.equal(closed.status, 200);
   const after = await o.step();
   assert.equal(after.code, 0, after.err + after.out);
+  await waitEnded(o);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 
@@ -1061,11 +1409,11 @@ test("quench: a stop on demand of our seat by someone else ends the run, closes 
   assert.equal(acked.status, 200);
   const after = await o.step();
   assert.equal(after.code, 0, after.err + after.out);
+  await waitEnded(o);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
-  assert.match(after.out, /invite 9: ended, terminal_closed/, after.out);
-  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
-  // The slot is free: the waiting invite rises in the same tact.
-  assert.match(after.out, /invite 10: launched/, after.out);
+  assert.deepEqual(o.closes(), [], "observed natural exit needs no extra close");
+  const next = await o.step();
+  assert.match(next.out, /invite 10: launched/, next.out);
   assert.equal(o.launches().length, 2);
   // The orchestrator itself ordered nothing.
   assert.equal(o.fake.state.orders.human.filter((h) => h.method === "POST").length, 0);
@@ -1083,8 +1431,8 @@ test("quench: a stop on demand already carried out before the tact ends the run 
   o.fake.state.orders.list.get("ord-q").state = "stopped"; // closed between two tacts
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
-  assert.match(r.out, /invite 9: stopped_elsewhere/, r.out);
-  assert.match(r.out, /invite 9: ended, terminal_closed/, r.out);
+  assert.match(r.out, /invite 9: stop_stopped_elsewhere/, r.out);
+  await waitEnded(o);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
 });
 
@@ -1132,6 +1480,7 @@ test("quench: a stop on demand of a seat not yet in the registry is read again o
   assert.equal(cursor(), 0, "an open order of our stopping run holds the cursor");
   assert.equal((await ack(o, "ord-e", "stopped")).status, 200);
   await o.step();
+  await waitEnded(o);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
   assert.equal(cursor(), 1, "the order closed: the cursor passes it");
 });
@@ -1174,12 +1523,13 @@ test("close: after Orca restarted, the old runtime's handle is not closed — sa
   o.restartOrca("rt_new");
   await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
   const r = await o.step();
-  assert.match(r.out, /invite 9: ended, terminal_runtime_changed/, r.out);
+  assert.match(r.out, /invite 9: seat_gone/, r.out);
+  assert.notEqual(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
   assert.equal(o.closes().length, 0);
   const shows = o.terminals().length;
   const again = await o.step();
   assert.doesNotMatch(again.out, /invite 9: ended/, again.out);
-  assert.equal(o.terminals().length, shows, "asked once");
+  assert.equal(o.terminals().length, shows, "no close attempt for another runtime");
 });
 
 test("on --launcher: the description lies under the holon of the work with agents; a launcher too long is refused", async (t) => {
@@ -1291,7 +1641,7 @@ test("clone: no checkout and an allowed repository — Orca clones it over https
   assert.equal(r.code, 0, r.err + r.out);
   assert.deepEqual(clones(o), [cloneCall(o)]);
   assert.match(r.out, /invite 9: launched/, r.out);
-  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+  assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
 });
 
 test("clone: the project id is Orca's own — github.com in lower case, another host as git:", async (t) => {
@@ -1330,14 +1680,15 @@ test("clone: a dry run judges Orca's checkout as there — the slot follows the 
   const r = await cli(o.dir, ["step", "--dry-run"]);
   assert.equal(r.code, 0, r.err + r.out);
   assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
-  // The tact launches into a checkout Orca has, whatever the clone would say without it.
+  // Orca's checkout is only a source; the launch uses its own detached tree (#7517).
   assert.match(
     r.out,
-    /invite 2: would launch: .*orca checkout of github\.com\/stranger\/one/,
+    /invite 2: would launch: .*--worktree path:<own detached tree of github\.com\/stranger\/one>/,
     r.out,
   );
   assert.match(r.out, /invite 9: .*limit_reached/, r.out);
-  assert.equal(clones(o).length, 0, "no orca call");
+  assert.ok(!existsSync(join(o.dir, "orca.log")), "not even an Orca source read");
+  assert.equal(r.out.includes(o.dir), false, "private source paths stay local");
 });
 
 test("clone: the repository's host in any case is the copy Orca registered — no clone_unregistered", async (t) => {
@@ -1429,7 +1780,7 @@ test("clone: the clone does not hold the tact — it runs in the background, sai
   await settled(o);
   const after = await o.step();
   assert.match(after.out, /invite 9: launched/, after.out);
-  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+  assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
 });
 
 test("clone: a timeout is clone_timeout; output beyond any buffer is no failure", async (t) => {
@@ -1541,7 +1892,7 @@ test("clone: Orca's client gives up waiting (runtime_timeout) — still cloning,
   await until(() => existsSync(join(o.dir, "orca.log.cloned")));
   const after = await o.step();
   assert.match(after.out, /invite 9: launched/, after.out);
-  assert.equal(o.launches()[0][5], `path:${cloneDir(o)}`);
+  assert.equal(o.launches()[0][5], `path:${o.runs()[`${REALM}|${ROOM}|9`].worktree}`);
   assert.equal(clones(o).length, 1, "cloned once");
   assert.equal(o.cloneRows()[REPO], undefined, "the clone's row is done");
 });

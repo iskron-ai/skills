@@ -6,7 +6,7 @@ import { test } from "node:test";
 
 import { execPending } from "../bridge/exec-exit.ts";
 import { settleStops } from "../bridge/orchestra-quench.ts";
-import { refusal } from "../bridge/orchestra-raise.ts";
+import { resolveInvite } from "../bridge/orchestra-resolve.ts";
 import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 
 const row = {
@@ -86,7 +86,7 @@ test("preparing and ambiguity both survive reload and occupy the launcher limit"
       ]),
     };
     assert.equal(
-      refusal(
+      resolveInvite(
         {
           launcher: "own",
           author: "@me",
@@ -96,10 +96,25 @@ test("preparing and ambiguity both survive reload and occupy the launcher limit"
         },
         ls,
         readRuns(dir),
-      ),
+      ).code,
       "limit_reached",
     );
     assert.equal(execPending(dir), true);
+    assert.equal(
+      resolveInvite(
+        {
+          launcher: "own",
+          author: "@me",
+          harness: "opencode",
+          model: "m",
+          repository: "example.test/o/r",
+        },
+        { ...ls, own: new Map(), elsewhere: new Map([["own", "other-machine"]]) },
+        readRuns(dir),
+      ).code,
+      "host_elsewhere",
+      "a live local registry must not turn a foreign machine's launcher into a local offer",
+    );
   }
 });
 test("a corrupt durable registry is not an empty registry allowing duplicate launch", (t) => {
