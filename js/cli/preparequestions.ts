@@ -15,10 +15,10 @@ export function object(value: unknown): value is Record<string, unknown> {
 /** Refuse an opaque shape instead of replacing foreign configuration. */
 export function denyClaudeQuestion(settings: Record<string, unknown>): boolean {
   if (settings.permissions !== undefined && !object(settings.permissions))
-    throw new Error(words(QUESTIONS).permissions);
+    throw new Error(words(QUESTIONS).permissions());
   const p = (settings.permissions ?? {}) as Record<string, unknown>;
   if (p.deny !== undefined && (!Array.isArray(p.deny) || p.deny.some((v) => typeof v !== "string")))
-    throw new Error(words(QUESTIONS).denyArray);
+    throw new Error(words(QUESTIONS).denyArray());
   const deny = (p.deny ?? []) as string[];
   if (deny.includes("AskUserQuestion")) return false;
   settings.permissions = { ...p, deny: [...deny, "AskUserQuestion"] };

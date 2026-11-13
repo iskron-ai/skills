@@ -37,7 +37,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
   const W = words(QUESTIONS);
   const rows: Verdict[] = [];
   const row = (layer: string, file: string, pass: boolean, error: string): void => {
-    const basis = layer === "question.plugin" ? W.pluginBasis : W.fileBasis;
+    const basis = layer === "question.plugin" ? W.pluginBasis() : W.fileBasis();
     rows.push({ layer, basis, file, hole: !pass, ...(pass ? {} : { error }) });
   };
   const text = readFileSync(join(root, "AGENTS.md"), "utf8");
@@ -45,7 +45,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
     "question.instructions",
     join(root, "AGENTS.md"),
     /question/.test(text) && /AskUserQuestion/.test(text) && /\bask\b/.test(text),
-    W.instructions,
+    W.instructions(),
   );
   const cc = join(root, ".claude/settings.json");
   const permissions = json(cc)?.permissions;
@@ -55,7 +55,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
     permissions.deny.includes("AskUserQuestion");
   const oc = questionConfig(root);
   const blocked = !oc.error && hasQuestionDeny(oc.cfg?.policies);
-  row("question.project", cc, !!denied, W.claudeProject);
+  row("question.project", cc, !!denied, W.claudeProject());
   row("question.project", oc.path, blocked, oc.error ?? W.manual(oc.path, "missing"));
   const path = manifest();
   const hooks = path ? json(path)?.hooks : null;
@@ -74,7 +74,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
             /permissionDecision:'deny'/.test(h.command),
         ),
     );
-  row("question.plugin", path ?? W.claudeFile, hook, W.claudePlugin);
+  row("question.plugin", path ?? W.claudeFile(), hook, W.claudePlugin());
   const file = [
     process.env.OPENCODE_CONFIG_DIR &&
       join(process.env.OPENCODE_CONFIG_DIR, "plugins", PLUGIN_COPY_FILE),
@@ -82,7 +82,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
     join(homedir(), ".config/opencode/plugins", PLUGIN_COPY_FILE),
   ].find((p): p is string => !!p && existsSync(p));
   let pass = false;
-  let error = W.opencodeMissing;
+  let error = W.opencodeMissing();
   if (file) {
     const foreign = mkdtempSync(join(tmpdir(), "question-audit-"));
     const keys = ["HOME", envName("BRIDGE_AUTH_DIR"), envName("BRIDGE_PATH"), envName("ROOT_SEAT")];
@@ -95,7 +95,7 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
       }
       const q = (await probeScope(file, root, foreign)).questions;
       pass = q.removed && q.denied && q.caseAllowed;
-      error = W.opencodeGuard;
+      error = W.opencodeGuard();
     } catch (e) {
       error = String(e);
     } finally {
@@ -106,6 +106,6 @@ export async function auditQuestions(root: string): Promise<Verdict[]> {
       rmSync(foreign, { recursive: true, force: true });
     }
   }
-  row("question.plugin", file ?? W.opencodeFile, pass, error);
+  row("question.plugin", file ?? W.opencodeFile(), pass, error);
   return rows;
 }

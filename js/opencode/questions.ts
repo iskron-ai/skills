@@ -14,6 +14,6 @@ export async function setupQuestionGuard(ctx: Context): Promise<void> {
   await ctx.permission.hook("evaluate", (event) => {
     if (event.action !== "question" || !selected()) return;
     event.effect = "deny";
-    event.message = words(QUESTIONS).guard;
+    event.message = words(QUESTIONS).guard();
   });
 }
