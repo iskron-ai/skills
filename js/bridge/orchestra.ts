@@ -50,7 +50,13 @@ export async function openOrchestra(
   paused: () => boolean,
   say: (line: string) => void,
 ): Promise<Server> {
-  return openOrchestraWatch(authDir, serve, paused, say, () => orchestraLeading(authDir));
+  return openOrchestraWatch(
+    authDir,
+    serve,
+    paused,
+    say,
+    () => orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true,
+  );
 }
 
 /**

@@ -946,12 +946,22 @@ test("raise: the timer skips its tact while the last one runs — no chain of ta
   assert.equal((await cli(o.dir, ["off"])).code, 0);
   rmSync(hold);
   // A step queues behind every tact begun before it: its answer — they all ended.
-  await o.step();
+  const step = await o.step();
+  assert.equal(step.code, 0, step.err);
+  assert.match(step.out, /the tact is empty/, step.out);
   const journal = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
   const at = journal.findIndex((l) => /orchestra tact: .*invite 9: launched/.test(l));
   assert.ok(at >= 0, journal.join("\n"));
   const behind = journal.slice(at + 1).filter((l) => /orchestra tact/.test(l));
+  // Only automatic tacts are journalled: the explicit barrier step above is not one.
   assert.deepEqual(behind, [], "tacts were queued behind the held one");
+  await new Promise((r) => setTimeout(r, 500));
+  const later = readFileSync(join(o.dir, "run", "daemon.log"), "utf8").split("\n");
+  assert.deepEqual(
+    later.filter((l) => /orchestra tact/.test(l)),
+    journal.filter((l) => /orchestra tact/.test(l)),
+    "OFF must not schedule new automatic tacts for a pending client",
+  );
 });
 
 /** The CLI as a human types it at a terminal: under a pseudo-terminal of `script`, its words
@@ -1183,18 +1193,28 @@ test("quench: the caller gone during the re-check — no stop order after it (#8
 });
 
 test("quench: a raised seat that never joined within the window is a failed launch — stopped (#9970)", async (t) => {
-  const o = await leading(t, { env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500" } });
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_EXIT: "0" },
+  });
   await o.queue([invite(9, GOOD)]);
   await o.step();
-  await new Promise((done) => setTimeout(done, 2_000));
+  // Cross the independent client's exit-observer tick as well as the join window.
+  await new Promise((done) => setTimeout(done, 6_000));
+  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.tree?.exit, undefined, `no_join needs a live client: ${JSON.stringify(run)}`);
   await o.queue([], [signal(1, 9, [])]);
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /invite 9: no_join/, r.out);
+  assert.match(r.out, /invite 9: no_join/, `${r.out}\n${JSON.stringify(o.runs())}`);
   const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
   assert.equal(stops.length, 1, JSON.stringify(o.fake.state.orders.human));
   assert.equal(stops[0].id, "seat-raised");
   assert.equal(stops[0].body.reason_code, "composition_empty");
+  assert.ok(
+    o.terminals().some((a) => a[1] === "wait"),
+    "the independent exit observer ran",
+  );
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].tree?.exit, undefined, "no fabricated client exit");
 });
 
 /** Our seat sat and its composition emptied; the stop answers `answer`, an open order lies. */
@@ -1660,14 +1680,15 @@ test("clone: a dry run judges Orca's checkout as there — the slot follows the 
   const r = await cli(o.dir, ["step", "--dry-run"]);
   assert.equal(r.code, 0, r.err + r.out);
   assert.match(r.out, /invite 2: if Orca has no checkout — clone_refused \(not_allowed\)/, r.out);
-  // The tact launches into a checkout Orca has, whatever the clone would say without it.
+  // Orca's checkout is only a source; the launch uses its own detached tree (#7517).
   assert.match(
     r.out,
-    /invite 2: would launch: .*orca checkout of github\.com\/stranger\/one/,
+    /invite 2: would launch: .*--worktree path:<own detached tree of github\.com\/stranger\/one>/,
     r.out,
   );
   assert.match(r.out, /invite 9: .*limit_reached/, r.out);
-  assert.equal(clones(o).length, 0, "no orca call");
+  assert.ok(!existsSync(join(o.dir, "orca.log")), "not even an Orca source read");
+  assert.equal(r.out.includes(o.dir), false, "private source paths stay local");
 });
 
 test("clone: the repository's host in any case is the copy Orca registered — no clone_unregistered", async (t) => {
