@@ -232,7 +232,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.0.0";
+var VERSION = "8.0.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1250,6 +1250,50 @@ Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}
     })[item],
     unread: (item, hook) => item === "hook.guard" ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)` : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
     head: (kind2) => ({ done: "done", kept: "already there", left: "for the model" })[kind2]
+  }
+};
+
+// js/delivery/words/questions.ts
+var QUESTIONS = {
+  ru: {
+    guard: () => "Задай вопрос карточкой ask в деле, не блокирующим инструментом question.",
+    permissions: () => "permissions должен быть объектом",
+    denyArray: () => "permissions.deny должен быть массивом строк",
+    manual: (file2, reason) => `${file2}: ${{
+      both: "одновременно стоят JSON и JSONC — устрани неоднозначность вручную",
+      parse: "конфиг не разбирается — исправь вручную",
+      shape: "неподдержанная форма конфига — исправь вручную",
+      missing: "нет политики tool.use/question:*/deny — добавь вручную"
+    }[reason]}`,
+    fileBasis: () => "содержимое файлов, не живой харнес",
+    pluginBasis: () => "манифест / подставной контекст, не живой харнес",
+    instructions: () => "Нет явного запрета question / AskUserQuestion и пути через ask в деле (проверено только содержимое)",
+    claudeProject: () => "Нет проектного permissions.deny AskUserQuestion",
+    claudePlugin: () => "Нет отказа плагина Claude (проверка манифеста, не живого исполнения)",
+    claudeFile: () => "Плагин Claude hooks/hooks.json",
+    opencodeFile: () => "Плагин OpenCode",
+    opencodeMissing: () => "Плагин OpenCode недоступен",
+    opencodeGuard: () => "Плагин OpenCode не удалил/запретил question либо запретил действие дела (подставной контекст)"
+  },
+  en: {
+    guard: () => "Use a case ask card, not the blocking question tool.",
+    permissions: () => "permissions must be an object",
+    denyArray: () => "permissions.deny must be a string array",
+    manual: (file2, reason) => `${file2}: ${{
+      both: "both JSON and JSONC exist — resolve the ambiguity manually",
+      parse: "cannot parse configuration — repair manually",
+      shape: "unsupported configuration shape — repair manually",
+      missing: "missing tool.use/question:*/deny policy — add manually"
+    }[reason]}`,
+    fileBasis: () => "file contents, not live harness",
+    pluginBasis: () => "manifest / stand-in context, not live harness",
+    instructions: () => "Missing explicit question / AskUserQuestion prohibition and case ask route (content check only)",
+    claudeProject: () => "Missing project permissions.deny AskUserQuestion",
+    claudePlugin: () => "Claude plugin denial unavailable (manifest check, not live harness enforcement)",
+    claudeFile: () => "Claude plugin hooks/hooks.json",
+    opencodeFile: () => "OpenCode plugin",
+    opencodeMissing: () => "OpenCode plugin unavailable",
+    opencodeGuard: () => "OpenCode plugin did not remove/deny question or denied unrelated case action (stand-in context)"
   }
 };
 
@@ -21543,6 +21587,22 @@ function skillsReport(out7, codexHomes2) {
 import { existsSync as existsSync19, readFileSync as readFileSync45 } from "node:fs";
 import { homedir as homedir18 } from "node:os";
 import { dirname as dirname18, join as join46 } from "node:path";
+
+// js/shared/jsonc.ts
+function parseJsonc(text7) {
+  const STRING = '"(?:[^"\\\\]|\\\\.)*"';
+  const noComments = text7.replace(
+    new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
+    (m) => m.startsWith('"') ? m : ""
+  );
+  const noTrailing = noComments.replace(
+    new RegExp(`${STRING}|,(\\s*[}\\]])`, "g"),
+    (m, tail2) => m.startsWith('"') ? m : tail2 ?? ""
+  );
+  return JSON.parse(noTrailing);
+}
+
+// js/cli/opencode-config.ts
 var BRIDGE_PART_RE = new RegExp(
   `(^|[\\\\/])${PRODUCT_PATTERN}[^\\\\/]*\\.mjs$|${escapeRe(BRIDGE_NAME)}`
 );
@@ -21579,18 +21639,6 @@ function openCodeMcpEntries(out7) {
     if (e.url && isProductionServer(e.url)) return "http";
     return null;
   };
-  const parse4 = (text7) => {
-    const STRING = '"(?:[^"\\\\]|\\\\.)*"';
-    const noComments = text7.replace(
-      new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
-      (m) => m.startsWith('"') ? m : ""
-    );
-    const noTrailing = noComments.replace(
-      new RegExp(`${STRING}|,(\\s*[}\\]])`, "g"),
-      (m, tail2) => m.startsWith('"') ? m : tail2 ?? ""
-    );
-    return JSON.parse(noTrailing);
-  };
   const bridgePath = (v) => {
     const e = v ?? {};
     const parts = [
@@ -21615,7 +21663,7 @@ function openCodeMcpEntries(out7) {
   let found = 0;
   for (const [file2, text7] of sources) {
     try {
-      const cfg = parse4(text7);
+      const cfg = parseJsonc(text7);
       for (const [name2, v] of Object.entries(cfg.mcp ?? {})) {
         const kind2 = kindOf3(v);
         if (!kind2) continue;
@@ -22249,26 +22297,47 @@ function object3(value) {
 }
 function denyClaudeQuestion(settings) {
   if (settings.permissions !== void 0 && !object3(settings.permissions))
-    throw new Error("permissions must be an object");
+    throw new Error(words(QUESTIONS).permissions());
   const p = settings.permissions ?? {};
   if (p.deny !== void 0 && (!Array.isArray(p.deny) || p.deny.some((v) => typeof v !== "string")))
-    throw new Error("permissions.deny must be a string array");
+    throw new Error(words(QUESTIONS).denyArray());
   const deny = p.deny ?? [];
   if (deny.includes("AskUserQuestion")) return false;
   settings.permissions = { ...p, deny: [...deny, "AskUserQuestion"] };
   return true;
 }
-function prepareQuestionPolicy(root, write = true) {
+function hasQuestionDeny(policies) {
+  return Array.isArray(policies) && policies.some(
+    (p) => object3(p) && p.action === "tool.use" && p.resource === "question:*" && p.effect === "deny"
+  );
+}
+function questionConfig(root) {
   const path = join50(root, ".opencode", "opencode.json");
+  const jsoncPath = `${path}c`;
+  const jsonc = existsSync21(jsoncPath);
+  const file2 = jsonc ? jsoncPath : path;
+  const fail2 = (reason) => ({
+    path: file2,
+    jsonc,
+    error: words(QUESTIONS).manual(file2, reason)
+  });
+  if (jsonc && existsSync21(path)) return fail2("both");
   try {
-    if (existsSync21(join50(root, ".opencode", "opencode.jsonc"))) return path;
-    const cfg = existsSync21(path) ? JSON.parse(readFileSync49(path, "utf8")) : {};
-    if (!object3(cfg) || cfg.policies !== void 0 && !Array.isArray(cfg.policies)) return path;
+    const cfg = existsSync21(file2) ? parseJsonc(readFileSync49(file2, "utf8")) : {};
+    if (!object3(cfg) || cfg.policies !== void 0 && !Array.isArray(cfg.policies))
+      return fail2("shape");
+    if (jsonc && !hasQuestionDeny(cfg.policies)) return fail2("missing");
+    return { path: file2, cfg, jsonc };
+  } catch {
+    return fail2("parse");
+  }
+}
+function prepareQuestionPolicy(root, write = true) {
+  const { path, cfg, error, jsonc } = questionConfig(root);
+  if (error) return error;
+  if (!cfg || jsonc || hasQuestionDeny(cfg.policies)) return null;
+  try {
     const policies = cfg.policies ?? [];
-    if (policies.some(
-      (p) => object3(p) && p.action === "tool.use" && p.resource === "question:*" && p.effect === "deny"
-    ))
-      return null;
     cfg.policies = [...policies, QUESTION_POLICY];
     cfg.$schema ??= "https://opencode.ai/config.json";
     if (!write) return null;
@@ -22277,7 +22346,7 @@ function prepareQuestionPolicy(root, write = true) {
 `);
     return null;
   } catch {
-    return path;
+    return words(QUESTIONS).manual(path, "parse");
   }
 }
 
@@ -22645,11 +22714,11 @@ ${W4.usage()}` });
   } : null;
   const { on } = ritualsOf(coverBlock(cover.text, COVER.root));
   const policyError = prepareQuestionPolicy(root, false);
-  if (policyError) return say2(json3, 1, { refused: W4.unparsed(policyError) });
+  if (policyError) return say2(json3, 1, { refused: policyError });
   const unparsed = prepareHooks(root, addr, out7, on, !!warning);
   if (unparsed) return say2(json3, 1, { refused: W4.unparsed(unparsed) });
   const policyWriteError = prepareQuestionPolicy(root);
-  if (policyWriteError) return say2(json3, 1, { refused: W4.unparsed(policyWriteError) });
+  if (policyWriteError) return say2(json3, 1, { refused: policyWriteError });
   writeAgents(cover, out7);
   writeReality(root, f["--case"], out7);
   writeClaude(root, out7);
@@ -22925,9 +22994,10 @@ function manifest() {
 }
 async function auditQuestions(root) {
   if (!ritualCover(root)) return [];
+  const W4 = words(QUESTIONS);
   const rows = [];
   const row = (layer, file3, pass2, error2) => {
-    const basis = layer === "question.plugin" ? "manifest / stand-in context, not live harness" : "file contents, not live harness";
+    const basis = layer === "question.plugin" ? W4.pluginBasis() : W4.fileBasis();
     rows.push({ layer, basis, file: file3, hole: !pass2, ...pass2 ? {} : { error: error2 } });
   };
   const text7 = readFileSync52(join55(root, "AGENTS.md"), "utf8");
@@ -22935,23 +23005,15 @@ async function auditQuestions(root) {
     "question.instructions",
     join55(root, "AGENTS.md"),
     /question/.test(text7) && /AskUserQuestion/.test(text7) && /\bask\b/.test(text7),
-    "Missing explicit question / AskUserQuestion prohibition and case ask route (content check only)"
+    W4.instructions()
   );
   const cc = join55(root, ".claude/settings.json");
   const permissions = json2(cc)?.permissions;
   const denied = object3(permissions) && Array.isArray(permissions.deny) && permissions.deny.includes("AskUserQuestion");
-  const oc = join55(root, ".opencode/opencode.json");
-  const policies = json2(oc)?.policies;
-  const blocked = !existsSync24(join55(root, ".opencode/opencode.jsonc")) && Array.isArray(policies) && policies.some(
-    (p) => object3(p) && p.action === "tool.use" && p.resource === "question:*" && p.effect === "deny"
-  );
-  row("question.project", cc, !!denied, "Missing project permissions.deny AskUserQuestion");
-  row(
-    "question.project",
-    oc,
-    blocked,
-    "Missing project policy tool.use question:* deny; JSONC requires manual verification"
-  );
+  const oc = questionConfig(root);
+  const blocked = !oc.error && hasQuestionDeny(oc.cfg?.policies);
+  row("question.project", cc, !!denied, W4.claudeProject());
+  row("question.project", oc.path, blocked, oc.error ?? W4.manual(oc.path, "missing"));
   const path = manifest();
   const hooks = path ? json2(path)?.hooks : null;
   const entries2 = object3(hooks) ? hooks.PreToolUse : null;
@@ -22960,19 +23022,14 @@ async function auditQuestions(root) {
       (h) => object3(h) && typeof h.command === "string" && /permissionDecision:'deny'/.test(h.command)
     )
   );
-  row(
-    "question.plugin",
-    path ?? "Claude plugin hooks/hooks.json",
-    hook,
-    "Claude plugin denial unavailable (manifest check, not live harness enforcement)"
-  );
+  row("question.plugin", path ?? W4.claudeFile(), hook, W4.claudePlugin());
   const file2 = [
     process.env.OPENCODE_CONFIG_DIR && join55(process.env.OPENCODE_CONFIG_DIR, "plugins", PLUGIN_COPY_FILE),
     join55(dirname21(SELF2), PLUGIN_FILE),
     join55(homedir21(), ".config/opencode/plugins", PLUGIN_COPY_FILE)
   ].find((p) => !!p && existsSync24(p));
   let pass = false;
-  let error = "OpenCode plugin unavailable";
+  let error = W4.opencodeMissing();
   if (file2) {
     const foreign = mkdtempSync2(join55(tmpdir2(), "question-audit-"));
     const keys = ["HOME", envName("BRIDGE_AUTH_DIR"), envName("BRIDGE_PATH"), envName("ROOT_SEAT")];
@@ -22984,7 +23041,7 @@ async function auditQuestions(root) {
       }
       const q = (await probeScope(file2, root, foreign)).questions;
       pass = q.removed && q.denied && q.caseAllowed;
-      error = "OpenCode plugin did not remove/deny question or denied unrelated case action (stand-in context)";
+      error = W4.opencodeGuard();
     } catch (e) {
       error = String(e);
     } finally {
@@ -22995,7 +23052,7 @@ async function auditQuestions(root) {
       rmSync3(foreign, { recursive: true, force: true });
     }
   }
-  row("question.plugin", file2 ?? "OpenCode plugin", pass, error);
+  row("question.plugin", file2 ?? W4.opencodeFile(), pass, error);
   return rows;
 }
 

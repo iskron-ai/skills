@@ -146,6 +146,9 @@ var serverProtocol = {
   refusal: "iskron/refusal"
 };
 
+// js/delivery/questions.ts
+var QUESTION_SCOPE = "repo";
+
 // js/delivery/spawned-for.ts
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 var SPAWNED_FOR = {
@@ -174,7 +177,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.0.0";
+var VERSION = "8.0.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -821,6 +824,50 @@ Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}
     })[item],
     unread: (item, hook) => item === "hook.guard" ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)` : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
     head: (kind2) => ({ done: "done", kept: "already there", left: "for the model" })[kind2]
+  }
+};
+
+// js/delivery/words/questions.ts
+var QUESTIONS = {
+  ru: {
+    guard: () => "Задай вопрос карточкой ask в деле, не блокирующим инструментом question.",
+    permissions: () => "permissions должен быть объектом",
+    denyArray: () => "permissions.deny должен быть массивом строк",
+    manual: (file, reason2) => `${file}: ${{
+      both: "одновременно стоят JSON и JSONC — устрани неоднозначность вручную",
+      parse: "конфиг не разбирается — исправь вручную",
+      shape: "неподдержанная форма конфига — исправь вручную",
+      missing: "нет политики tool.use/question:*/deny — добавь вручную"
+    }[reason2]}`,
+    fileBasis: () => "содержимое файлов, не живой харнес",
+    pluginBasis: () => "манифест / подставной контекст, не живой харнес",
+    instructions: () => "Нет явного запрета question / AskUserQuestion и пути через ask в деле (проверено только содержимое)",
+    claudeProject: () => "Нет проектного permissions.deny AskUserQuestion",
+    claudePlugin: () => "Нет отказа плагина Claude (проверка манифеста, не живого исполнения)",
+    claudeFile: () => "Плагин Claude hooks/hooks.json",
+    opencodeFile: () => "Плагин OpenCode",
+    opencodeMissing: () => "Плагин OpenCode недоступен",
+    opencodeGuard: () => "Плагин OpenCode не удалил/запретил question либо запретил действие дела (подставной контекст)"
+  },
+  en: {
+    guard: () => "Use a case ask card, not the blocking question tool.",
+    permissions: () => "permissions must be an object",
+    denyArray: () => "permissions.deny must be a string array",
+    manual: (file, reason2) => `${file}: ${{
+      both: "both JSON and JSONC exist — resolve the ambiguity manually",
+      parse: "cannot parse configuration — repair manually",
+      shape: "unsupported configuration shape — repair manually",
+      missing: "missing tool.use/question:*/deny policy — add manually"
+    }[reason2]}`,
+    fileBasis: () => "file contents, not live harness",
+    pluginBasis: () => "manifest / stand-in context, not live harness",
+    instructions: () => "Missing explicit question / AskUserQuestion prohibition and case ask route (content check only)",
+    claudeProject: () => "Missing project permissions.deny AskUserQuestion",
+    claudePlugin: () => "Claude plugin denial unavailable (manifest check, not live harness enforcement)",
+    claudeFile: () => "Claude plugin hooks/hooks.json",
+    opencodeFile: () => "OpenCode plugin",
+    opencodeMissing: () => "OpenCode plugin unavailable",
+    opencodeGuard: () => "OpenCode plugin did not remove/deny question or denied unrelated case action (stand-in context)"
   }
 };
 
@@ -7452,11 +7499,14 @@ function createPulseFeed(opts) {
 
 // js/opencode/questions.ts
 async function setupQuestionGuard(ctx) {
-  await ctx.tool.transform((editor) => editor.remove("question"));
+  const selected = () => QUESTION_SCOPE === "all" || !!ctx.location?.directory && repoSigns(ctx.location.directory, "opencode").cover;
+  await ctx.tool.transform((editor) => {
+    if (selected()) editor.remove("question");
+  });
   await ctx.permission.hook("evaluate", (event) => {
-    if (event.action !== "question") return;
+    if (event.action !== "question" || !selected()) return;
     event.effect = "deny";
-    event.message = "Use a case ask card, not the blocking question tool.";
+    event.message = words(QUESTIONS).guard();
   });
 }
 
