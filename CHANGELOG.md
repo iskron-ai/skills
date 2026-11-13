@@ -1,5 +1,16 @@
 # Changelog
 
+## [8.0.2](https://github.com/iskron-ai/skills/compare/v8.0.1...v8.0.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* admit owned ready trees for native exec ([#750](https://github.com/iskron-ai/skills/issues/750)) ([04afb8b](https://github.com/iskron-ai/skills/commit/04afb8b5b62d9af769d624259ddf2d8b8ecd244b))
+* isolate orchestra runs and resolve ordinary calls ([#748](https://github.com/iskron-ai/skills/issues/748)) ([d65337f](https://github.com/iskron-ai/skills/commit/d65337f442b36279b198081c5028d6b244a97569))
+* keep the browser and leaked dev daemons out of every test run ([#751](https://github.com/iskron-ai/skills/issues/751)) ([3054044](https://github.com/iskron-ai/skills/commit/3054044973d9bab19c1505f6112dd61935738fed))
+* **opencode:** find bundled bridge beside plugin ([#752](https://github.com/iskron-ai/skills/issues/752)) ([96fdfeb](https://github.com/iskron-ai/skills/commit/96fdfeb3630e9862261c30280eecae34003fcdba))
+* raise an ordinary orchestrator call end to end and ship the OpenCode release archive ([#753](https://github.com/iskron-ai/skills/issues/753)) ([5fc5974](https://github.com/iskron-ai/skills/commit/5fc59742e088057c54e06fb80d19f44807b8845f))
+
 ## [8.0.1](https://github.com/iskron-ai/skills/compare/v8.0.0...v8.0.1) (2026-11-13)
 
 
