@@ -16,6 +16,7 @@ node_modules
 .claude/agents/ingester.md
 .claude/agents/reviewer.md
 .claude/agents/verifier.md
+.claude/agents/deputy-chief-of-staff.md
 .opencode/agents/reader.md
 .opencode/agents/recaller.md
 .opencode/agents/worker.md
@@ -24,3 +25,4 @@ node_modules
 .opencode/agents/ingester.md
 .opencode/agents/reviewer.md
 .opencode/agents/verifier.md
+.opencode/agents/deputy-chief-of-staff.md
