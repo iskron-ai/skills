@@ -50,13 +50,14 @@ var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
 var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+var SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/spawned-for.ts
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "7.39.0";
+var VERSION = "8.2.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts

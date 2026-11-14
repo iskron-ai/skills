@@ -8,7 +8,7 @@ import { bash, COVER, opencode, repo, start } from "./rites-kit.mjs";
 
 const old = COVER.replace("contract: 39", "contract: 38");
 const warning =
-  "Контракт 38 больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до 41; ритуалы будут приняты после проверки";
+  "Контракт 38 больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до 43; ритуалы будут приняты после проверки";
 
 test("Claude startup warns even when the repository holds its own start hook", () => {
   const dir = repo({

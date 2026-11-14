@@ -1,5 +1,5 @@
 // js/delivery/contract.ts
-var CONTRACT_SUPPORT = { minimum: 39, target: 41 };
+var CONTRACT_SUPPORT = { minimum: 39, target: 43 };
 var CONTRACT_WORDS = {
   ru: {
     unsupported: (n2, target) => `Контракт ${n2} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
@@ -141,10 +141,14 @@ var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
 var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+var SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var serverProtocol = {
   refusal: "iskron/refusal"
 };
+
+// js/delivery/questions.ts
+var QUESTION_SCOPE = "repo";
 
 // js/delivery/spawned-for.ts
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
@@ -174,7 +178,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "7.39.0";
+var VERSION = "8.2.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -532,8 +536,8 @@ var OPENCODE = {
     statusDescription: () => "Состояние моста Искрона в этой сессии OpenCode: выполнен ли вход, адрес авторизации, сколько тулов iskron_* поднято. Зови, когда тулов iskron_* нет или они отвечают отказом входа.",
     statusBridge: (path) => `мост: ${path}`,
     statusLoginPending: (open, elsewhere2) => `вход: НЕ ВЫПОЛНЕН — ${open}. Адрес локальный: ${elsewhere2} (скилл establish-mcp).`,
-    openInBrowser: (url) => `открой в браузере ${url}`,
-    finishInBrowser: () => "заверши вход в браузере",
+    openInBrowser: (url) => `откройте в браузере ${url}`,
+    finishInBrowser: () => "завершите вход в браузере",
     statusLoginDone: () => "вход: есть, сервер отвечает",
     statusLoginWaiting: () => "вход: мост ещё не ответил (рукопожатие идёт)",
     statusTools: (n2, source) => `тулов iskron_*: ${n2} (${source})`,
@@ -566,8 +570,8 @@ var OPENCODE = {
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     sessionLeftOpen: (id, why) => `Искрон: сессия ${id} остановлена, но её окно осталось открытым — ${why ?? "клиента этой сессии плагину не найти"}; закройте его в OpenCode`,
     clientClosed: (id, pid) => `Искрон: сессия ${id} остановлена, её клиент закрыт (pid ${pid})`,
-    held: (key) => `Искрон: мост держит стояние ${key}`,
-    released: (key, text3) => `Искрон: мост отпустил стояние ${key} — ${text3}`,
+    held: (key) => `Искрон: мост держит место ${key}`,
+    released: (key, text3) => `Искрон: мост отпустил место ${key} — ${text3}`,
     endUnrevoked: (seats) => `Искрон: сессия удалена, но её место не снято (${seats}) — запись держания оставлена; мост машины повторит снятие после окна, иначе место уйдёт сроком платформы`,
     endUnconfirmed: (seats) => `Искрон: сессия удалена, снятие места не подтверждено (${seats}) — ответ похож на снятое, но без данных; запись держания оставлена, мост машины сверится после окна`
   },
@@ -627,8 +631,8 @@ var OPENCODE = {
     notDelivered: (frame, id, message) => `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
     sessionLeftOpen: (id, why) => `Iskron: session ${id} is stopped but its window is left open — ${why ?? "the plugin finds no client of this session"}; close it in OpenCode`,
     clientClosed: (id, pid) => `Iskron: session ${id} is stopped, its client closed (pid ${pid})`,
-    held: (key) => `Iskron: the bridge holds the standing ${key}`,
-    released: (key, text3) => `Iskron: the bridge released the standing ${key} — ${text3}`,
+    held: (key) => `Iskron: the bridge holds the seat ${key}`,
+    released: (key, text3) => `Iskron: the bridge released the seat ${key} — ${text3}`,
     endUnrevoked: (seats) => `Iskron: the session is deleted but its seat is not revoked (${seats}) — the hold record is kept; the machine's bridge repeats the revoke after the window, else the seat goes by the platform's term`,
     endUnconfirmed: (seats) => `Iskron: the session is deleted, its seat's revoke is not confirmed (${seats}) — the reply reads as gone but carries no data; the hold record is kept, the machine's bridge checks after the window`
   }
@@ -653,9 +657,9 @@ var OPENCODE_KEEP = {
     watchFailed: (root, message) => `Искрон: сторож слуха сессии ${root} — ${message}`,
     keepaliveTitle: () => "iskron: каталог держит место",
     noRemove: (title) => `Искрон: у контекста сессий OpenCode нет remove — служебные сессии продления «${title}» не удаляются и копятся дочерними у места; продление идёт`,
-    cap: (max, title) => `Искрон: неудалённых служебных сессий продления больше ${max} — старшие больше не повторяю, удали дочерние «${title}» руками`,
+    cap: (max, title) => `Искрон: неудалённых служебных сессий продления больше ${max} — старшие больше не повторяю, удалите дочерние «${title}» вручную`,
     notCreated: (message) => `Искрон: каталог не продлён — служебная сессия не создана: ${message}`,
-    noId: (answer, title) => `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удали её руками`,
+    noId: (answer, title) => `Искрон: каталог продлён, но id служебной сессии из ответа create не разобран (${answer}) — она останется дочерней сессией места «${title}», удалите её вручную`,
     notRemoved: (id) => `Искрон: каталог продлён, служебная сессия ${id} не удалена — повторю на следующем такте`,
     tickFailed: (message) => `Искрон: такт продления каталога сорвался — ${message}`,
     lostWord: (hhmm, where) => `Искрон: слух потерян в ${hhmm}, плагин остановили: ${where}. Место возвращается само, кадры придут пачкой — подожди. iskron_stand — только если сторож слуха скажет: возврат не удался.`,
@@ -673,8 +677,8 @@ var OPENCODE_KEEP = {
     elsewhereDevice: (device) => `с другого устройства (телефон подойдёт) — ${device}; либо личный токен в ~/.iskron-bridge/token`,
     elsewhereTunnel: (why) => (why ? `${why}; ` : "") + "с другой машины — ssh -L <порт>:127.0.0.1:<порт>, либо личный токен в ~/.iskron-bridge/token",
     needLoginError: (open, elsewhere2) => `Искрон: нужен вход в граф — ${open} и повтори вызов. Адрес локальный для машины OpenCode: ${elsewhere2} (скилл establish-mcp).`,
-    openAndFinish: (url) => `открой ${url} и заверши его`,
-    finishItInBrowser: () => "заверши его в браузере",
+    openAndFinish: (url) => `откройте ${url} и завершите вход`,
+    finishItInBrowser: () => "завершите вход в браузере",
     needLogin: (open, elsewhere2) => `Искрон: нужен вход — ${open}; адрес локальный: ${elsewhere2}. Тулы iskron_* поднимутся после входа сами.`,
     codeUntil: (link, until) => `${link} (код действует до ${until} UTC)`
   },
@@ -715,8 +719,8 @@ var OPENCODE_KEEP = {
     elsewhereDevice: (device) => `from another device (a phone will do) — ${device}; or a personal token in ~/.iskron-bridge/token`,
     elsewhereTunnel: (why) => (why ? `${why}; ` : "") + "from another machine — ssh -L <port>:127.0.0.1:<port>, or a personal token in ~/.iskron-bridge/token",
     needLoginError: (open, elsewhere2) => `Iskron: sign-in to the graph is needed — ${open} and repeat the call. The address is local to the OpenCode machine: ${elsewhere2} (the establish-mcp skill).`,
-    openAndFinish: (url) => `open ${url} and finish it`,
-    finishItInBrowser: () => "finish it in the browser",
+    openAndFinish: (url) => `open ${url} and complete sign-in`,
+    finishItInBrowser: () => "complete sign-in in the browser",
     needLogin: (open, elsewhere2) => `Iskron: sign-in needed — ${open}; the address is local: ${elsewhere2}. The iskron_* tools come up by themselves after sign-in.`,
     codeUntil: (link, until) => `${link} (the code is valid until ${until} UTC)`
   }
@@ -821,6 +825,50 @@ Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}
     })[item],
     unread: (item, hook) => item === "hook.guard" ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)` : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
     head: (kind2) => ({ done: "done", kept: "already there", left: "for the model" })[kind2]
+  }
+};
+
+// js/delivery/words/questions.ts
+var QUESTIONS = {
+  ru: {
+    guard: () => "Задай вопрос карточкой ask в деле, не блокирующим инструментом question.",
+    permissions: () => "permissions должен быть объектом",
+    denyArray: () => "permissions.deny должен быть массивом строк",
+    manual: (file, reason2) => `${file}: ${{
+      both: "одновременно стоят JSON и JSONC — устрани неоднозначность вручную",
+      parse: "конфиг не разбирается — исправь вручную",
+      shape: "неподдержанная форма конфига — исправь вручную",
+      missing: "нет политики tool.use/question:*/deny — добавь вручную"
+    }[reason2]}`,
+    fileBasis: () => "содержимое файлов, не живой харнес",
+    pluginBasis: () => "манифест / подставной контекст, не живой харнес",
+    instructions: () => "Нет явного запрета question / AskUserQuestion и пути через ask в деле (проверено только содержимое)",
+    claudeProject: () => "Нет проектного permissions.deny AskUserQuestion",
+    claudePlugin: () => "Нет отказа плагина Claude (проверка манифеста, не живого исполнения)",
+    claudeFile: () => "Плагин Claude hooks/hooks.json",
+    opencodeFile: () => "Плагин OpenCode",
+    opencodeMissing: () => "Плагин OpenCode недоступен",
+    opencodeGuard: () => "Плагин OpenCode не удалил/запретил question либо запретил действие дела (подставной контекст)"
+  },
+  en: {
+    guard: () => "Use a case ask card, not the blocking question tool.",
+    permissions: () => "permissions must be an object",
+    denyArray: () => "permissions.deny must be a string array",
+    manual: (file, reason2) => `${file}: ${{
+      both: "both JSON and JSONC exist — resolve the ambiguity manually",
+      parse: "cannot parse configuration — repair manually",
+      shape: "unsupported configuration shape — repair manually",
+      missing: "missing tool.use/question:*/deny policy — add manually"
+    }[reason2]}`,
+    fileBasis: () => "file contents, not live harness",
+    pluginBasis: () => "manifest / stand-in context, not live harness",
+    instructions: () => "Missing explicit question / AskUserQuestion prohibition and case ask route (content check only)",
+    claudeProject: () => "Missing project permissions.deny AskUserQuestion",
+    claudePlugin: () => "Claude plugin denial unavailable (manifest check, not live harness enforcement)",
+    claudeFile: () => "Claude plugin hooks/hooks.json",
+    opencodeFile: () => "OpenCode plugin",
+    opencodeMissing: () => "OpenCode plugin unavailable",
+    opencodeGuard: () => "OpenCode plugin did not remove/deny question or denied unrelated case action (stand-in context)"
   }
 };
 
@@ -2246,6 +2294,7 @@ import {
 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
 import { join as join5, resolve as resolve3 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // js/shared/bridge-client.ts
 import { spawn } from "node:child_process";
@@ -2512,10 +2561,12 @@ function findBridge() {
   const tried = [];
   const env = process.env[envName("BRIDGE_PATH")]?.trim();
   if (env) tried.push(resolve3(env));
+  tried.push(fileURLToPath2(new URL(`./${BRIDGE_FILE}`, import.meta.url)));
   tried.push(homeBridgePath());
   for (const candidate of tried) {
     try {
       accessSync(candidate, constants.R_OK);
+      if (!statSync2(candidate).isFile()) continue;
       return { path: candidate, tried };
     } catch {
     }
@@ -2562,7 +2613,7 @@ function loginUrlOf(message) {
 async function handshake(b, onLogin, onReady) {
   const deadline = Date.now() + HANDSHAKE_MS;
   for (; ; ) {
-    const stamp2 = grantStamp();
+    const stamp3 = grantStamp();
     try {
       await b.request(
         "initialize",
@@ -2586,7 +2637,7 @@ async function handshake(b, onLogin, onReady) {
       if (!AUTH_PENDING.test(message)) throw e;
       onLogin(loginUrlOf(message), deviceOf(message));
       const code2 = codeWatch(authDir(), message);
-      while (grantStamp() === stamp2) {
+      while (grantStamp() === stamp3) {
         if (Date.now() + AUTH_POLL_MS > deadline) throw e;
         await sleep(AUTH_POLL_MS);
         if (code2.moved()) break;
@@ -3073,6 +3124,12 @@ function separateGraphBatch(ev) {
   };
 }
 
+// js/shared/halt-phase.ts
+var ARCHIVE_CODES = ["archive_missing", "archive_refused", "archive_unconfirmed"];
+var PHASES = /* @__PURE__ */ new Set(["client_unbound", ...ARCHIVE_CODES.map((c) => `interrupt_confirmed_${c}`)]);
+var isHaltPhase = (code2) => code2 !== null && PHASES.has(code2);
+var archivePhase = (code2) => ARCHIVE_CODES.includes(code2) ? `interrupt_confirmed_${code2}` : code2;
+
 // js/opencode/halts.ts
 import { createHash as createHash3, randomUUID } from "node:crypto";
 import { mkdirSync as mkdirSync2, readFileSync as readFileSync5, unlinkSync, writeFileSync as writeFileSync3 } from "node:fs";
@@ -3084,23 +3141,35 @@ var lifted = () => globalThis[`${GLOBAL_PREFIX}LiftedAt`] ??= /* @__PURE__ */ ne
 var ids = () => globalThis[`${GLOBAL_PREFIX}StopIds`] ??= /* @__PURE__ */ new Map();
 var words2 = () => globalThis[`${GLOBAL_PREFIX}StopWords`] ??= /* @__PURE__ */ new Map();
 var alones = () => globalThis[`${GLOBAL_PREFIX}StopAlone`] ??= /* @__PURE__ */ new Set();
+var fulls = () => globalThis[`${GLOBAL_PREFIX}StopFull`] ??= /* @__PURE__ */ new Set();
 var code = (e) => e.code;
 function recorded(file, since) {
   try {
     const r = JSON.parse(readFileSync5(file, "utf8"));
     if (r.lifted || since !== void 0 && Date.parse(r.at ?? "") <= since) return null;
-    return { id: r.id ?? r.at ?? "?", word: r.word, alone: r.alone === true };
+    return {
+      id: r.id ?? r.at ?? "?",
+      word: r.word,
+      alone: r.alone === true,
+      full: r.full === true
+    };
   } catch (e) {
     return code(e) === "ENOENT" ? null : { id: "?" };
   }
 }
 function createHalts(parentOf2, dir, unwritten, unlifted) {
-  const marked2 = (s) => stops().has(s) ? { id: ids().get(s) ?? "?", word: words2().get(s), alone: alones().has(s) } : recorded(fileOf(dir(), s), lifted().get(s));
+  const marked2 = (s) => stops().has(s) ? {
+    id: ids().get(s) ?? "?",
+    word: words2().get(s),
+    alone: alones().has(s),
+    full: fulls().has(s)
+  } : recorded(fileOf(dir(), s), lifted().get(s));
   const drop2 = (s) => {
     stops().delete(s);
     ids().delete(s);
     words2().delete(s);
     alones().delete(s);
+    fulls().delete(s);
     lifted().set(s, Date.now());
     const file = fileOf(dir(), s);
     try {
@@ -3117,29 +3186,32 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
       unlifted(s, e.message, kept2);
     }
   };
-  function stopOf(session) {
+  function chain(session) {
     const found = [];
     const seen = /* @__PURE__ */ new Set();
     for (let s = session; s && !seen.has(s); s = parentOf2(s)) {
       const m = marked2(s);
-      if (m && (s === session || !m.alone)) found.push(m.id);
+      if (m && (s === session || !m.alone)) found.push(m);
       seen.add(s);
     }
-    return found.length ? found.join(" ") : null;
+    return found;
   }
+  const stopOf = (session) => chain(session).map((m) => m.id).join(" ") || null;
   return {
-    stop(session, word2, alone = false) {
+    stop(session, word2, alone = false, full = false) {
       const id = randomUUID();
       stops().add(session);
       ids().set(session, id);
       words2().set(session, word2);
       if (alone) alones().add(session);
       else alones().delete(session);
+      if (full) fulls().add(session);
+      else fulls().delete(session);
       lifted().delete(session);
       try {
         mkdirSync2(dir(), { recursive: true, mode: 448 });
         const at2 = (/* @__PURE__ */ new Date()).toISOString();
-        const record2 = JSON.stringify({ session, at: at2, id, word: word2, ...alone ? { alone } : {} });
+        const record2 = JSON.stringify({ session, at: at2, id, word: word2, ...alone ? { alone } : {}, full });
         writeFileSync3(fileOf(dir(), session), record2, { mode: 384 });
       } catch (e) {
         unwritten(session, e.message);
@@ -3149,6 +3221,7 @@ function createHalts(parentOf2, dir, unwritten, unlifted) {
     gone: drop2,
     halted: (session) => stopOf(session) !== null,
     stopOf,
+    full: (session) => chain(session).some((m) => m.full === true),
     wordOf(session, general) {
       const m = marked2(session);
       return m ? m.word === void 0 ? general : m.word : null;
@@ -3173,17 +3246,25 @@ function descendantsOf(session, parents) {
 // js/opencode/cutwait.ts
 var outcomes = () => globalThis[`${GLOBAL_PREFIX}CutOutcomes`] ??= /* @__PURE__ */ new Map();
 var waiters = () => globalThis[`${GLOBAL_PREFIX}CutWaiters`] ??= /* @__PURE__ */ new Map();
+var executors = () => globalThis[`${GLOBAL_PREFIX}CutExecutors`] ??= /* @__PURE__ */ new Map();
 var lineages = () => globalThis[`${GLOBAL_PREFIX}Lineages`] ??= /* @__PURE__ */ new Set();
 function wake(id) {
   const set = waiters().get(id);
   waiters().delete(id);
   for (const w of set ?? []) w();
 }
+function claim(id) {
+  const token = /* @__PURE__ */ Symbol();
+  executors().set(id, token);
+  outcomes().delete(id);
+  return () => executors().get(id) === token;
+}
 function settle(id, gen, code2) {
   outcomes().set(id, [gen, code2]);
   wake(id);
 }
 function forget(id) {
+  executors().delete(id);
   outcomes().delete(id);
   wake(id);
 }
@@ -3262,30 +3343,38 @@ function createCuts(d) {
   const cutFails = /* @__PURE__ */ new Map();
   const retries = /* @__PURE__ */ new Set();
   const waits = /* @__PURE__ */ new Set();
-  const archived = /* @__PURE__ */ new Set();
+  const global = globalThis;
+  const archived = global[`${GLOBAL_PREFIX}ArchivedStops`] ??= /* @__PURE__ */ new Set();
   function cut(id) {
     const gen = d.stopOf(id);
     if (gen === null || cutDone.get(id) === gen || cutting.get(id) === gen) return;
     d.dropped(id);
     if (cutting.has(id)) return;
+    const owns = claim(id);
+    const current = () => owns() && d.stopOf(id) === gen;
     const settle2 = (code2) => {
       cutDone.set(id, gen);
-      settle(id, gen, code2);
+      if (current()) settle(id, gen, code2);
     };
     if (!d.canInterrupt()) return settle2("interrupt_missing");
     cutting.set(id, gen);
     void Promise.resolve().then(() => d.interrupt(id)).then(
-      () => {
-        if (d.stopOf(id) !== gen) return;
-        settle2(null);
+      async () => {
+        if (!current()) return;
         cutFails.delete(id);
-        if (!archived.has(id)) {
+        if (d.full(id)) {
           archived.add(id);
-          void d.archive(id, true);
+          try {
+            await d.archive(id, true, current);
+          } catch (e) {
+            if (current()) settle2(archivePhase(e.message));
+            return;
+          }
         }
+        if (current()) settle2(null);
       },
       (e) => {
-        if (d.stopOf(id) !== gen) return;
+        if (!current()) return;
         const was = cutFails.get(id);
         const n2 = (was?.[0] === gen ? was[1] : 0) + 1;
         cutFails.set(id, [gen, n2]);
@@ -3299,6 +3388,7 @@ function createCuts(d) {
         retries.add(t);
       }
     ).finally(() => {
+      if (!owns() && d.stopOf(id) === gen) cutDone.set(id, gen);
       cutting.delete(id);
       if (d.stopOf(id) !== gen) cut(id);
     });
@@ -3326,7 +3416,9 @@ function createCuts(d) {
         for (let next = ids2(); next.length; next = ids2().filter((id) => !asked.has(id))) {
           for (const id of next) asked.add(id);
           const all = await Promise.all(next.map((id) => outcomeOf(id, d.stopOf, own.signal)));
-          first ??= all.find((c) => c !== null) ?? null;
+          for (const code2 of all)
+            if (code2 !== null && (first === null || isHaltPhase(first) && !isHaltPhase(code2)))
+              first = code2;
         }
         return first;
       } finally {
@@ -3341,7 +3433,8 @@ function createCuts(d) {
     forget(id, stands = false) {
       cutDone.delete(id);
       cutFails.delete(id);
-      if (archived.delete(id) && stands) void d.archive(id, false);
+      if (archived.delete(id) && stands)
+        void d.archive(id, false).catch((e) => d.refused(id, e.message, true));
       forget(id);
     },
     stop() {
@@ -3376,25 +3469,51 @@ function standaloneClient() {
 }
 function clientOf(sessionID) {
   const own = standaloneClient();
-  if (own !== null) return own;
   const uid = process.getuid?.();
   if (uid === void 0) return null;
   const id = sessionID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const opened = new RegExp(
     `(?:^|[\\s/\\\\])opencode(?:\\.exe)?\\s(?:.*\\s)?(?:--session|-s)(?:=|\\s+)${id}(?:\\s|$)`
   );
-  const hit = processes().find(
-    (p) => p.uid === uid && p.pid !== process.pid && opened.test(p.command)
+  const hits = processes().filter(
+    (p) => p.uid === uid && p.pid !== process.pid && (own !== null ? p.pid === own : opened.test(p.command))
   );
-  return hit?.pid ?? null;
+  const hit = hits.length === 1 ? hits[0] : void 0;
+  const born = hit ? stamp(hit.pid) : null;
+  return hit && born ? { ...hit, born } : null;
 }
-function closeClient(pid) {
+function stamp(pid) {
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      timeout: 5e3,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    }).trim() || void 0;
+  } catch (e) {
+    const failure = e;
+    return failure.status === 1 && !failure.stdout?.trim() && !failure.stderr?.trim() ? null : void 0;
+  }
+}
+async function closeClient(client, current) {
+  const { pid, born } = client;
+  const now2 = processes().find((p) => p.pid === pid);
+  if (stamp(pid) !== born || now2?.uid !== client.uid || now2.command !== client.command || !current())
+    return false;
   try {
     process.kill(pid, "SIGTERM");
-    return true;
   } catch {
     return false;
   }
+  const until = Date.now() + 5e3;
+  while (Date.now() < until) {
+    const observed = stamp(pid);
+    if (observed === null || typeof observed === "string" && observed !== born) return true;
+    if (observed === void 0) return false;
+    if (!current()) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
 }
 
 // js/opencode/skillread.ts
@@ -3620,31 +3739,67 @@ function archives(ctx) {
   const m = typeof v === "string" ? /^(\d+)\.(\d+)/.exec(v) : null;
   return !!m && (Number(m[1]) > 2 || Number(m[1]) === 2 && Number(m[2]) >= 2);
 }
+async function accepting(ctx, id) {
+  try {
+    const info = await ctx.session.get({ sessionID: id });
+    const shape = info;
+    return !(shape?.time?.archived ?? shape?.data?.time?.archived);
+  } catch {
+    return false;
+  }
+}
 var CLOSE_AFTER_MS = 1e3;
 function archiver(ctx, tell) {
   const W5 = words(OPENCODE);
   const session = ctx.session;
-  const pending = /* @__PURE__ */ new Map();
-  const turns = /* @__PURE__ */ new Map();
-  return async (id, on) => {
+  const global = globalThis;
+  const { turns, updating } = global[`${GLOBAL_PREFIX}ArchiveQueue`] ??= {
+    turns: /* @__PURE__ */ new Map(),
+    updating: /* @__PURE__ */ new Map()
+  };
+  return async (id, on, active = () => true) => {
     const turn = (turns.get(id) ?? 0) + 1;
     turns.set(id, turn);
-    clearTimeout(pending.get(id));
-    pending.delete(id);
-    let why = null;
-    if (archives(ctx) && typeof session.update === "function")
-      await session.update({ sessionID: id, archived: on }).catch((e) => why = e.message);
-    if (!on) return;
-    const root = await Promise.resolve().then(() => session.get({ sessionID: id })).then((s) => !s?.parentID).catch(() => false);
-    if (turns.get(id) !== turn) return;
-    const pid = root ? clientOf(id) : null;
-    if (pid === null) return void ((root || why) && tell(W5.sessionLeftOpen(id, why)));
-    const t = setTimeout(() => {
-      pending.delete(id);
-      tell(closeClient(pid) ? W5.clientClosed(id, pid) : W5.sessionLeftOpen(id, null));
-    }, CLOSE_AFTER_MS);
-    t.unref?.();
-    pending.set(id, t);
+    const current = () => turns.get(id) === turn && active();
+    if (!archives(ctx) || typeof session.update !== "function") {
+      if (!on) return;
+      tell(W5.sessionLeftOpen(id, "archive_missing"));
+      throw new Error("archive_missing");
+    }
+    const update = (updating.get(id) ?? Promise.resolve()).catch(() => {
+    }).then(async () => {
+      if (!current()) return;
+      await session.update({ sessionID: id, archived: on });
+    });
+    updating.set(id, update);
+    try {
+      await update;
+    } catch {
+      tell(W5.sessionLeftOpen(id, "archive_refused"));
+      throw new Error("archive_refused");
+    } finally {
+      if (updating.get(id) === update) updating.delete(id);
+    }
+    if (!on || !current()) return;
+    const res = await session.get({ sessionID: id }).catch(() => null);
+    const info = res?.data ?? res;
+    if (!info?.time?.archived) throw new Error("archive_unconfirmed");
+    const root = !info.parentID;
+    if (!current()) return;
+    const client = root ? clientOf(id) : null;
+    if (!root) return;
+    if (client === null) {
+      tell(W5.sessionLeftOpen(id, null));
+      throw new Error("client_unbound");
+    }
+    await new Promise((r) => setTimeout(r, CLOSE_AFTER_MS));
+    if (!current()) return;
+    const closed = await closeClient(client, current);
+    if (!current()) return;
+    tell(
+      closed ? W5.clientClosed(id, client.pid) : W5.sessionLeftOpen(id, "client_exit_unconfirmed")
+    );
+    if (!closed) throw new Error("client_exit_unconfirmed");
   };
 }
 function homeOf(ctx) {
@@ -5540,11 +5695,11 @@ function createSeatLife(d) {
             callThrough: async (...args) => {
               attempt3.onWire = true;
               attempt3.fresh = true;
-              const claim = d.claiming?.(args[3]) === true;
+              const claim2 = d.claiming?.(args[3]) === true;
               try {
                 const out2 = await d.callThrough(...args);
                 if (out2.fresh === false) attempt3.returned = true;
-                const fresh = out2.fresh === true || out2.fresh === void 0 && !claim;
+                const fresh = out2.fresh === true || out2.fresh === void 0 && !claim2;
                 if (fresh && out2.provisional === true && out2.key && out2.place)
                   attempt3.owned = { key: out2.key, place: out2.place };
                 return out2;
@@ -6180,26 +6335,19 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
     (id, message) => say(W5.haltUnwritten(id, message), "warning"),
     (id, message, kept2) => say(W5.haltUnlifted(id, message, kept2), "warning")
   );
-  async function accepting(id) {
-    try {
-      const info = await ctx.session.get({ sessionID: id });
-      return !(info?.time?.archived ?? info?.data?.time?.archived);
-    } catch {
-      return false;
-    }
-  }
+  const accepting2 = (id) => accepting(ctx, id);
   async function deliver2(session2, text3, frame = W5.frame(), delivery = "steer", child = false) {
     let id = session2;
-    if (child && (!id || !await accepting(id))) {
+    if (child && (!id || !await accepting2(id))) {
       say(W5.childGone(frame, id ?? "?", text3.slice(0, 120)), "error");
       return null;
     }
-    if (id && !await accepting(id)) {
+    if (id && !await accepting2(id)) {
       say(W5.sessionClosed(id, frame), "warning");
       id = null;
     }
     id ??= freshestRoot();
-    if (id && id !== session2 && !await accepting(id)) id = null;
+    if (id && id !== session2 && !await accepting2(id)) id = null;
     if (!id) {
       say(W5.nowhere(frame, text3.slice(0, 120)), "error");
       return null;
@@ -6335,6 +6483,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
   const cuts = createCuts({
     stopOf: (id) => halts.stopOf(id),
     halted: (id) => halts.halted(id),
+    full: (id) => halts.full(id),
     canInterrupt: () => typeof session().interrupt === "function",
     interrupt: (id) => session().interrupt({ sessionID: id, resume: false }),
     dropped: (id) => {
@@ -6345,11 +6494,13 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
     archive: archiver(ctx, (text3) => say(text3, "warning"))
   });
   const cut = cuts.cut;
-  function stopped(session2, text3, child, alone) {
+  function stopped(session2, text3, child, ev) {
     say(text3, "error");
     dropPile(`${child ? "child" : "root"}:${session2 ?? ""}`);
     if (!session2) return;
-    halts.stop(session2, child ? null : text3, alone);
+    const alone = ev.reason === "revoked:silent";
+    const full = typeof ev.order === "string";
+    halts.stop(session2, child ? null : text3, alone, full);
     cut(session2);
     cutBelow(session2);
     onStop(session2);
@@ -6372,12 +6523,14 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
     },
     // Each reading cuts the descendants this instance serves, a child born during the wait too;
     // other instances cut theirs by the same stops (plugin.ts sweep).
-    halted(session2, signal) {
-      return cuts.outcome(() => {
+    async halted(session2, signal) {
+      const gen = session2 ? halts.stopOf(session2) : null;
+      const outcome2 = await cuts.outcome(() => {
         if (!session2) return [];
         this.halt(session2);
         return [session2, ...covered(processDescendants(session2))];
       }, signal);
+      return session2 && halts.stopOf(session2) !== gen ? "stop_superseded" : outcome2;
     },
     halt(session2) {
       if (!halts.halted(session2)) return false;
@@ -6452,7 +6605,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
           loud(session2, P.dead(String(ev.code)), child);
           return;
         case "stopped":
-          stopped(session2, P.stopped(ev.text ?? ""), child, ev.reason === "revoked:silent");
+          stopped(session2, P.stopped(ev.text ?? ""), child, ev);
           return;
         case "stale":
           return batch(session2, child, ev, W5.staleBatch());
@@ -6472,7 +6625,7 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
           if (params?.data?.automatic === false) {
             halts.held(session2);
             for (const s of session2 ? [session2, ...descendantsOf(session2, parents)] : [])
-              cuts.forget(s, true);
+              if (!halts.halted(s)) cuts.forget(s, true);
           }
           say(W5.held(ev.key ?? ""), "info");
           return;
@@ -7348,6 +7501,19 @@ function createPulseFeed(opts) {
   };
 }
 
+// js/opencode/questions.ts
+async function setupQuestionGuard(ctx) {
+  const selected = () => QUESTION_SCOPE === "all" || !!ctx.location?.directory && repoSigns(ctx.location.directory, "opencode").cover;
+  await ctx.tool.transform((editor) => {
+    if (selected()) editor.remove("question");
+  });
+  await ctx.permission.hook("evaluate", (event) => {
+    if (event.action !== "question" || !selected()) return;
+    event.effect = "deny";
+    event.message = words(QUESTIONS).guard();
+  });
+}
+
 // js/opencode/quiet-calls.ts
 var lineOf2 = (f) => f.line && typeof f.line === "object" ? f.line : {};
 var kindOf2 = (f) => typeof f.event_kind === "string" && f.event_kind.startsWith("room.") ? f.event_kind.slice(5) : String(lineOf2(f).kind ?? "");
@@ -7800,7 +7966,7 @@ function coverIn(where) {
   if ("foreign" in cover) return null;
   return "why" in cover ? { why: cover.why, align } : cover;
 }
-function stamp(where) {
+function stamp2(where) {
   try {
     const st = statSync5(join16(where, COVER.file));
     return `${st.mtimeMs}:${st.size}:${st.ino}`;
@@ -7848,7 +8014,7 @@ function createRealign(halted) {
         waiting.delete(session);
         return null;
       }
-      const sig = stamp(w.where);
+      const sig = stamp2(w.where);
       if (!always && sig === w.sig) return null;
       w.sig = sig;
       const cover = coverIn(w.where);
@@ -7907,7 +8073,7 @@ function attempt2(session, x, expect) {
   t.promise = (async () => {
     const where = await d.directoryOf(session);
     if (cancelled() || !where || expect !== void 0 && where !== expect) return no(null);
-    const sig = stamp(where);
+    const sig = stamp2(where);
     const cover = coverIn(where);
     if (cover === null) return no(null);
     if ("why" in cover) {
@@ -7915,11 +8081,12 @@ function attempt2(session, x, expect) {
       x.arm(session, where, cover.why, sig);
       return no(realignWord(cover.why));
     }
+    const karta = d.role?.(session) ?? cover.karta;
     const before = x.line.at;
     const turn = before.then(() => {
       if (cancelled()) return { cancelled: true };
       t.begun = true;
-      return d.seat(session, cover.realm, cover.karta, cancelled);
+      return d.seat(session, cover.realm, karta, cancelled);
     });
     x.line.at = before.then(() => Promise.race([turn, pause(ceilingMs())])).catch(() => {
     });
@@ -7929,7 +8096,7 @@ function attempt2(session, x, expect) {
       return no(null);
     }
     if ("error" in r) return no(refusedWord(r.error));
-    return { word: heldWord(r, cover.realm, cover.karta), seated: true };
+    return { word: heldWord(r, cover.realm, karta), seated: true };
   })().catch(async (e) => {
     if (cancelled()) {
       if (t.begun) await d.release(session);
@@ -8069,13 +8236,18 @@ function parseSpawn(value) {
     return invalid();
   return { invite: a.invite, room: a.room.toLowerCase() };
 }
-function spawnJson(text3) {
+function spawnLine(text3, role2) {
   try {
     const keys = [...text3.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
       (m) => JSON.parse(m[1])
     );
     if (keys.length !== new Set(keys).size) return invalid();
-    return parseSpawn(JSON.parse(text3));
+    const v = JSON.parse(text3);
+    if (!role2 || !v || typeof v !== "object" || !Object.hasOwn(v, "karta"))
+      return { pair: parseSpawn(v) };
+    const { karta, ...pair } = v;
+    if (!Number.isSafeInteger(karta) || Number(karta) <= 0) return invalid();
+    return { pair: parseSpawn(pair), karta };
   } catch {
     return invalid();
   }
@@ -8087,15 +8259,47 @@ function mergeSpawn(...values) {
 }
 function firstLineSpawn(text3) {
   const first = text3.split(/\r?\n/, 1)[0];
-  return first.startsWith("spawned_for:") ? spawnJson(first.slice("spawned_for:".length)) : void 0;
+  if (!first.startsWith(SPAWN_LINE)) return void 0;
+  const body = first.slice(SPAWN_LINE.length);
+  const at2 = body.indexOf("{");
+  if (at2 < 0 || body.slice(0, at2).trim() !== "") return invalid();
+  let end = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = at2; i < body.length; i++) {
+    const ch = body[i];
+    if (escaped) escaped = false;
+    else if (quoted && ch === "\\") escaped = true;
+    else if (quoted) quoted = ch !== '"';
+    else if (ch === '"') quoted = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return invalid();
+  const { pair, karta } = spawnLine(body.slice(at2, end + 1), true);
+  const role2 = karta === void 0 ? {} : { karta };
+  const below = (() => {
+    if (text3.length === first.length) return "";
+    return text3.slice(first.length + (text3.charCodeAt(first.length) === 10 ? 1 : 2));
+  })();
+  const after2 = body.slice(end + 1);
+  if (after2 === "") return { pair, rest: below, ...role2 };
+  if (after2[0] !== " " && after2[0] !== "	") return invalid();
+  const brief2 = after2.replace(/^[ \t]+/, "");
+  if (!brief2) return invalid();
+  return { pair, rest: below ? `${brief2}
+${below}` : brief2, ...role2 };
 }
 function spawnReceipt(structured, expected, identity) {
   if (!structured || typeof structured !== "object") return null;
   const s = structured;
   if (s.action !== "register" || s.incomplete === true || s.dropped !== void 0 && s.dropped !== 0 || !Array.isArray(s.seats))
     return null;
-  if (!identity.seat_id && !identity.standing && (!identity.name || s.seats.length !== 1))
-    return null;
+  if (!identity.seat_id && !identity.standing && !identity.name) return null;
   const seats = s.seats;
   if (seats.some(
     (v2) => !v2 || typeof v2 !== "object" || typeof v2.seat_id !== "string" || !v2.seat_id || typeof v2.standing !== "string" || !/^@[^:]+:.+$/.test(v2.standing)
@@ -8123,7 +8327,8 @@ function spawnReceipt(structured, expected, identity) {
 function spawnAdmission(starts, readContext) {
   return async (session, text3, message) => {
     if (text3.startsWith(FRAME_MARK)) return text3;
-    const pair = firstLineSpawn(text3);
+    const spawn2 = firstLineSpawn(text3);
+    const pair = spawn2?.pair;
     let entry = starts.get(session);
     if (!pair) {
       await entry?.pending?.catch(() => {
@@ -8134,10 +8339,11 @@ function spawnAdmission(starts, readContext) {
     const initialError = () => new Error(words(SPAWNED_FOR).initial());
     if (entry?.error) throw entry.error;
     if (entry && !entry.pair) throw initialError();
-    const stripped = () => text3.slice(text3.indexOf("\n") + 1);
+    const stripped = () => spawn2 ? spawn2.rest : text3;
     const compare = (own2) => {
       try {
         mergeSpawn(own2.pair, pair);
+        if (own2.karta !== spawn2?.karta) throw new Error(words(SPAWNED_FOR).invalid());
       } catch (e) {
         own2.conflict = true;
         own2.error = e;
@@ -8152,7 +8358,11 @@ function spawnAdmission(starts, readContext) {
       return stripped();
     }
     const fresh = !entry;
-    entry ??= { pair, ids: /* @__PURE__ */ new Set() };
+    entry ??= {
+      pair,
+      ...spawn2.karta === void 0 ? {} : { karta: spawn2.karta },
+      ids: /* @__PURE__ */ new Set()
+    };
     const own = entry;
     starts.set(session, own);
     const proof = Promise.resolve().then(async () => {
@@ -8189,6 +8399,11 @@ function createSpawnStarts(readContext) {
   return {
     has(session) {
       return !!starts.get(session)?.pair;
+    },
+    /** The role the launch named for its home (#10598); none — the cover's. */
+    karta(session) {
+      const k = starts.get(session)?.karta;
+      return k === void 0 ? void 0 : String(k);
     },
     async cleanup(session, release) {
       const entry = starts.get(session);
@@ -8603,6 +8818,7 @@ var CHANNEL_DOWN = "channel_down";
 var nothing = () => {
 };
 async function setup(ctx) {
+  await setupQuestionGuard(ctx);
   const W5 = words(OPENCODE);
   const say = (text3, level) => {
     process.stderr.write(`[${PRODUCT}${level === "info" ? "" : "/" + level}] ${text3}
@@ -8714,6 +8930,7 @@ async function setup(ctx) {
     directoryOf: (s) => sessionDirectory(ctx, s),
     halted: (s) => !ch || stops2.halted(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
+    role: (s) => spawnStarts.karta(s),
     cancel: (s) => half.cancelSeat(s),
     release: (s) => half.releaseSeat(s),
     finished: (s) => {

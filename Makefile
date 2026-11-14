@@ -51,36 +51,38 @@ typecheck:
 # rebuilt first — the committed outputs are the release build, not this tree's.
 # ISKRON_BRIDGE_NO_UPDATE: под пробами мост не выравнивает настоящий дом и не
 # ходит к релизам; проба самообновления снимает выключатель сама, на подставном
-# доме и подставных релизах.
+# доме и подставных релизах. Его ставит scripts/run-tests.mjs — он же держит
+# браузер машины закрытым для мостов под пробой и снимает утёкшие dev-демоны.
 test: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 js/tests/*.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=300000 js/tests/*.test.mjs
 
 test-coverage: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=300000 --experimental-test-coverage js/tests/*.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=300000 --experimental-test-coverage js/tests/*.test.mjs
 
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/standing-*.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/standing-*.test.mjs
 
 test-extension: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/extension.test.mjs
+	@node scripts/run-tests.mjs js/tests/extension.test.mjs
 
 test-opencode: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/opencode.test.mjs js/tests/opencode-siblings.test.mjs js/tests/opencode-lineage-stop.test.mjs js/tests/opencode-compaction.test.mjs js/tests/opencode-mindslice.test.mjs js/tests/opencode-hook-context.test.mjs js/tests/opencode-hook-stop.test.mjs js/tests/opencode-leadend.test.mjs js/tests/opencode-turnend.test.mjs js/tests/opencode-once.test.mjs
+	@node scripts/run-tests.mjs js/tests/opencode-package*.test.mjs
+	@node scripts/run-tests.mjs js/tests/opencode.test.mjs js/tests/opencode-real-bridges.test.mjs js/tests/opencode-siblings.test.mjs js/tests/opencode-lineage-stop.test.mjs js/tests/opencode-compaction.test.mjs js/tests/opencode-mindslice.test.mjs js/tests/opencode-hook-context.test.mjs js/tests/opencode-hook-stop.test.mjs js/tests/opencode-leadend.test.mjs js/tests/opencode-turnend.test.mjs js/tests/opencode-once.test.mjs
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
 test-stand: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/stand.test.mjs js/tests/stand-2.test.mjs js/tests/stand-3.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/stand.test.mjs js/tests/stand-2.test.mjs js/tests/stand-3.test.mjs
 
 test-update: build-js
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test --test-timeout=120000 js/tests/update.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/update.test.mjs
 
 # Probe for the Codex delivery — the plugin manifest and the repo marketplace.
 # Its heavy half runs Codex's own on-disk ingestion validator, which needs
 # python3 with pyyaml and a machine where Codex is installed; without either it
 # skips by name and the structural half still runs.
 test-codex:
-	@ISKRON_BRIDGE_NO_UPDATE=1 node --test js/tests/codex-plugin.test.mjs
+	@node scripts/run-tests.mjs js/tests/codex-plugin.test.mjs
 
 # Build the shipped JS from js/: one file for the bridge, both watchdogs and
 # doctor, the OpenCode plugin, the pi extension, the roadmap template with

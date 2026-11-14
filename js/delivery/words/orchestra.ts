@@ -92,7 +92,7 @@ export interface OrchestraWords {
 export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   ru: {
     usage: () =>
-      "использование: orchestra <on|off|status|step [--dry-run]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "использование: orchestra <on|off|status|step [--dry-run] [--only UUID/номер]|demands> [--realm <граф>]… [--auth-dir <dir>] [--lang en|ru]\nДля --only нужен ровно один --realm; дело задаётся UUID, номер зова — положительным целым.\n" +
       "              orchestra on --launcher <имя> [--model <id>]… [--limit N] [--host <машина>] — описание запускателя в mind, если его нет\n",
     noDaemon: () =>
       "демона машины нет — оркестратор живёт демоном и его локальным входом; поднимите мост (любая сессия харнеса поднимает демона) и повторите",
@@ -140,10 +140,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
     leadOrdersUnread: (why) =>
       `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
-    brief: (realm, karta, room, invite) =>
-      `Ты уже взят: оркестратор поднял тебя по зову ${invite} дела ${room} в графе ${realm}, роль #${karta}, и место встало по первой строке. ` +
-      `Заново не регистрируйся. До работы войди в дело: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
-      "Прочти постановку дела и критерии приёмки; задачи не выдумывай.",
+    // Short: a long line reaches the terminal as a paste that is never sent (#9966).
+    brief: (realm, _karta, room) =>
+      `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
     planLaunch: (argv) => `поднял бы: ${argv}`,
@@ -172,7 +171,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
   },
   en: {
     usage: () =>
-      "usage: orchestra <on|off|status|step [--dry-run]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n" +
+      "usage: orchestra <on|off|status|step [--dry-run] [--only UUID/invite]|demands> [--realm <graph>]… [--auth-dir <dir>] [--lang en|ru]\n--only requires exactly one --realm, a case UUID and a positive invite number.\n" +
       "       orchestra on --launcher <name> [--model <id>]… [--limit N] [--host <machine>] — describes the launcher in mind unless one lies there\n",
     noDaemon: () =>
       "the machine daemon is not running — the orchestrator lives by the daemon and its local entrance; raise a bridge (any harness session raises the daemon) and retry",
@@ -221,10 +220,9 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
     leadOrdersUnread: (why) =>
       `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
-    brief: (realm, karta, room, invite) =>
-      `You are already taken: the orchestrator raised you for invite ${invite} of case ${room} in graph ${realm}, role #${karta}, and your seat stood by the first line. ` +
-      `Do not register again. Before any work join the case: ${tool("case")}(action="join", realm="${realm}", room="${room}"). ` +
-      "Read the case assignment and its acceptance criteria; do not invent a task.",
+    // Short: a long line reaches the terminal as a paste that is never sent (#9966).
+    brief: (realm, _karta, room) =>
+      `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
     planLaunch: (argv) => `would launch: ${argv}`,

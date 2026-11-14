@@ -29,6 +29,7 @@ import { sliceBy } from "./mindslice.ts";
 import { annotate } from "./notice.ts";
 import { createOnboardStart } from "./onboardstart.ts";
 import { createPulseFeed } from "./pulse.ts";
+import { setupQuestionGuard } from "./questions.ts";
 import { quietCalls } from "./quiet-calls.ts";
 import { createRites } from "./rites.ts";
 import { createRootSeats } from "./rootseat.ts";
@@ -52,6 +53,8 @@ const nothing = (): void => {};
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
 
 async function setup(ctx: Context): Promise<() => Promise<void>> {
+  // A guard registration failure must fail loading, not silently allow questions.
+  await setupQuestionGuard(ctx);
   const W = words(OPENCODE);
   // A server plugin has no toast: a word to the human is the service's stderr (channel.ts prompts the agent).
   const say: Say = (text, level) => {
@@ -191,6 +194,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     directoryOf: (s) => sessionDirectory(ctx, s),
     halted: (s) => !ch || stops.halted(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
+    role: (s) => spawnStarts.karta(s),
     cancel: (s) => half.cancelSeat(s),
     release: (s) => half.releaseSeat(s),
     finished: (s) => {

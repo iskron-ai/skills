@@ -31,6 +31,12 @@ export const ID_PREFIX = `${PRODUCT}-`;
 export const STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
 
 /**
+ * Метка первой строки начального промпта с парой приглашения: строку без своей метки плагин
+ * другой поставки в том же харнесе не трогает (граф @nks/nks-dev, #9959).
+ */
+export const SPAWN_LINE = `${PRODUCT}/spawned_for:`;
+
+/**
  * Ключ `capabilities.experimental` клиента моста, который подтверждает исполнение стопа
  * харнесом методом `method("halted")` (плагин OpenCode): приказ останова ждёт его исхода.
  */

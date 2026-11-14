@@ -15,7 +15,7 @@ const receipt = {
 
 async function claimed(args) {
   const starts = createSpawnStarts(async () => []);
-  await starts.prompt("s", `spawned_for: ${JSON.stringify(pair)}\nhello`, "m1");
+  await starts.prompt("s", `iskron/spawned_for: ${JSON.stringify(pair)}\nhello`, "m1");
   starts.verify("s", { action: "register", name: "proba", spawned_for: pair, ...args }, receipt);
   return starts;
 }
@@ -75,3 +75,74 @@ test("a claim with its realm names that graph", async () => {
   const word = (await claimed({ realm: "@nks/nks-dev" })).taken("s");
   assert.ok(word?.includes("@nks/nks-dev") && word.includes(pair.room), word ?? "(none)");
 });
+
+// #9959 v16, #9969 v12: the orchestrator submits the pair and the brief on one line — a
+// multi-line --prompt the terminal turns into a paste that is never sent. The plugin of the
+// same delivery admits the one-line form exactly as the two-line one.
+test("the one-line form seats the pair and hands the session the same-line remainder", async () => {
+  const starts = createSpawnStarts(async () => []);
+  const one = await starts.prompt(
+    "s1",
+    `iskron/spawned_for: ${JSON.stringify(pair)} brief after the pair`,
+    "m1",
+  );
+  assert.equal(one, "brief after the pair");
+  const two = await starts.prompt(
+    "s2",
+    `iskron/spawned_for: ${JSON.stringify(pair)}\nbrief line`,
+    "m2",
+  );
+  assert.equal(two, "brief line");
+  for (const s of ["s1", "s2"]) assert.ok(starts.has(s), s);
+});
+
+// #10598: a role raised in its home by the description names itself on the line — the root
+// seats it, not its cover's role; the register still takes the bare pair.
+test("the line's role is the session's, and the pair stays bare", async () => {
+  const starts = createSpawnStarts(async () => []);
+  const line = `iskron/spawned_for: ${JSON.stringify({ ...pair, karta: 3478 })} brief`;
+  assert.equal(await starts.prompt("s", line, "m1"), "brief");
+  assert.equal(starts.karta("s"), "3478");
+  const args = { realm: "@nks/nks-dev", karta: "3478" };
+  starts.apply("s", "iskron_stand", args);
+  assert.deepEqual(args.spawned_for, pair);
+  const plain = createSpawnStarts(async () => []);
+  await plain.prompt("s", `iskron/spawned_for: ${JSON.stringify(pair)} brief`, "m1");
+  assert.equal(plain.karta("s"), undefined);
+});
+
+for (const [why, karta] of [
+  ["zero", 0],
+  ["a string", "3478"],
+  ["a fraction", 1.5],
+])
+  test(`the line's role must be a role number: ${why}`, async () => {
+    const starts = createSpawnStarts(async () => []);
+    const line = `iskron/spawned_for: ${JSON.stringify({ ...pair, karta })} brief`;
+    await assert.rejects(starts.prompt("s", line, "m"), /spawned_for/);
+    assert.ok(!starts.has("s"));
+  });
+
+// #9959: the line carries this delivery's mark; another delivery's plugin in the same harness
+// (its own mark, or the bare line of an older one) leaves it be — and so does this one.
+test("a pair line without this delivery's mark is ordinary text: no seat, no refusal", async () => {
+  const starts = createSpawnStarts(async () => []);
+  for (const [i, text] of [
+    `spawned_for: ${JSON.stringify(pair)} brief`,
+    `spawned_for: ${JSON.stringify(pair)}\nbrief`,
+    `verstak/spawned_for: ${JSON.stringify(pair)} brief`,
+  ].entries()) {
+    assert.equal(await starts.prompt(`s${i}`, text, `m${i}`), text);
+    assert.equal(starts.taken(`s${i}`), null);
+  }
+});
+
+for (const [why, text] of [
+  ["no space after the object", `iskron/spawned_for: ${JSON.stringify(pair)}x`],
+  ["space and no remainder", `iskron/spawned_for: ${JSON.stringify(pair)} `],
+])
+  test(`the one-line form refuses a broken remainder: ${why}`, async () => {
+    const starts = createSpawnStarts(async () => []);
+    await assert.rejects(starts.prompt("s", text, "m"), /spawned_for/);
+    assert.ok(!starts.has("s"));
+  });

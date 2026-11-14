@@ -323,6 +323,32 @@ test("no daemon — absent; another seam version — refused with the reason", a
   });
 });
 
+test("a session the host refuses is logged with the asking bridge: pid, file and cwd", async () => {
+  const dir = fresh();
+  const said = [];
+  const host = {
+    build: "vT+daemon",
+    find: () => null,
+    open: () => "its personal token differs",
+    log: (m) => said.push(m),
+  };
+  const server = await listenSeam(dir, (s) => serveSeam(s, host, 200));
+  try {
+    const asking = hello({ pid: 4242, cwd: "/work", path: "/probe/iskron.mjs" });
+    await assert.rejects(
+      connectSeam(seamSocketPath(dir), asking, 1000),
+      (e) => e.kind === "refused",
+    );
+    const line = said.find((m) => m.startsWith("seam refused:")) ?? "";
+    assert.match(line, /its personal token differs/);
+    for (const part of ["pid 4242", "/probe/iskron.mjs", "cwd /work"])
+      assert.ok(line.includes(part), line);
+  } finally {
+    await new Promise((r) => server.close(r));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a probe learns the daemon's build without opening a session", async () => {
   await withDaemon(async ({ path, opened }) => {
     const l = await connectSeam(path, hello({ probe: true }), 1000);

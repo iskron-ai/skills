@@ -1,5 +1,78 @@
 # Changelog
 
+## [8.2.2](https://github.com/iskron-ai/skills/compare/v8.2.1...v8.2.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **iskronify:** the OpenCode replacement probe gets a bare origin to push to ([#762](https://github.com/iskron-ai/skills/issues/762)) ([8f58f06](https://github.com/iskron-ai/skills/commit/8f58f0688e18ff61211ad8006dd84bf3efdd0f70))
+
+## [8.2.1](https://github.com/iskron-ai/skills/compare/v8.2.0...v8.2.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **check-rituals:** find the Claude plugin's hooks where Claude Code installed it; probe OpenCode replacement outside the repo tree ([#759](https://github.com/iskron-ai/skills/issues/759)) ([df7cd06](https://github.com/iskron-ai/skills/commit/df7cd06c8fc31d9d645f6bd469e8bfa24d90d7a5))
+* **orchestra:** a role with a home is raised even when its call names no repository ([#761](https://github.com/iskron-ai/skills/issues/761)) ([a50a770](https://github.com/iskron-ai/skills/commit/a50a7708f8dae79afb0a789c8acaf9385a7d20de))
+
+## [8.2.0](https://github.com/iskron-ai/skills/compare/v8.1.0...v8.2.0) (2026-11-13)
+
+
+### Features
+
+* **orchestra:** raise a role in the home the launcher description names ([#756](https://github.com/iskron-ai/skills/issues/756)) ([29275ac](https://github.com/iskron-ai/skills/commit/29275acc84a3c6120eb431427bf7715222f82eb1))
+
+## [8.1.0](https://github.com/iskron-ai/skills/compare/v8.0.2...v8.1.0) (2026-11-13)
+
+
+### Features
+
+* **iskronify:** contract 43 — the orchestrator tree is no agent's to remove or move ([#757](https://github.com/iskron-ai/skills/issues/757)) ([e4e7a1e](https://github.com/iskron-ai/skills/commit/e4e7a1ecbecea78e485aa9fb0ad974482344de92))
+
+
+### Bug Fixes
+
+* **orchestra:** raise without hands — wait for Orca to see the tree, lock it, free a removed tree's slot ([#754](https://github.com/iskron-ai/skills/issues/754)) ([f2589b0](https://github.com/iskron-ai/skills/commit/f2589b0ef54c84198f0a5b83376bab385e4ebe53))
+
+## [8.0.2](https://github.com/iskron-ai/skills/compare/v8.0.1...v8.0.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* admit owned ready trees for native exec ([#750](https://github.com/iskron-ai/skills/issues/750)) ([04afb8b](https://github.com/iskron-ai/skills/commit/04afb8b5b62d9af769d624259ddf2d8b8ecd244b))
+* isolate orchestra runs and resolve ordinary calls ([#748](https://github.com/iskron-ai/skills/issues/748)) ([d65337f](https://github.com/iskron-ai/skills/commit/d65337f442b36279b198081c5028d6b244a97569))
+* keep the browser and leaked dev daemons out of every test run ([#751](https://github.com/iskron-ai/skills/issues/751)) ([3054044](https://github.com/iskron-ai/skills/commit/3054044973d9bab19c1505f6112dd61935738fed))
+* **opencode:** find bundled bridge beside plugin ([#752](https://github.com/iskron-ai/skills/issues/752)) ([96fdfeb](https://github.com/iskron-ai/skills/commit/96fdfeb3630e9862261c30280eecae34003fcdba))
+* raise an ordinary orchestrator call end to end and ship the OpenCode release archive ([#753](https://github.com/iskron-ai/skills/issues/753)) ([5fc5974](https://github.com/iskron-ai/skills/commit/5fc59742e088057c54e06fb80d19f44807b8845f))
+
+## [8.0.1](https://github.com/iskron-ai/skills/compare/v8.0.0...v8.0.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* scope question guards and preserve verified JSONC policies ([#746](https://github.com/iskron-ai/skills/issues/746)) ([5fdea27](https://github.com/iskron-ai/skills/commit/5fdea27472a24655e9f35d3a421572b4c96921d4))
+
+## [8.0.0](https://github.com/iskron-ai/skills/compare/v7.39.1...v8.0.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* unify owned exec lifecycle and graph-led work ([#744](https://github.com/iskron-ai/skills/issues/744))
+
+### Features
+
+* unify owned exec lifecycle and graph-led work ([#744](https://github.com/iskron-ai/skills/issues/744)) ([768c0cf](https://github.com/iskron-ai/skills/commit/768c0cf345c2dbf9097bf95db47fea61079b0b86))
+
+## [7.39.1](https://github.com/iskron-ai/skills/compare/v7.39.0...v7.39.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* admit Orca by capabilities instead of a pinned version ([#742](https://github.com/iskron-ai/skills/issues/742)) ([5294860](https://github.com/iskron-ai/skills/commit/52948607228cf462f43f05544175cf60f4edecc9))
+* defer companion case management to its host method ([#741](https://github.com/iskron-ai/skills/issues/741)) ([fbd04f9](https://github.com/iskron-ai/skills/commit/fbd04f9276a2e1627adba9287cb9b3cd7feedf95))
+* require squash when merging release PRs ([#738](https://github.com/iskron-ai/skills/issues/738)) ([b086e6e](https://github.com/iskron-ai/skills/commit/b086e6e657f3a478f18c119b5e9b414ef59b2add))
+* scope companion tracking to hosts that provide it ([#743](https://github.com/iskron-ai/skills/issues/743)) ([3645ac3](https://github.com/iskron-ai/skills/commit/3645ac3328258ca3a12b4031170ce6bb77e26aed))
+
 ## [7.39.0](https://github.com/iskron-ai/skills/compare/v7.38.1...v7.39.0) (2026-11-11)
 
 

@@ -15,16 +15,27 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { initCheckout } from "./git-checkout.mjs";
+
 const args = process.argv.slice(2);
 if (args[0] === "--version") {
   process.stdout.write(`${process.env.FAKE_ORCA_VERSION ?? "1.4.242"}\n`);
-  process.exit(0);
+  process.exit(Number(process.env.FAKE_ORCA_VERSION_EXIT ?? 0));
 }
 if (args[0] === "agent-context") {
   // FAKE_ORCA_CONTEXT_DELAY_MS: the schema answers this much later — a tact slow before a clone.
   const slow = Number(process.env.FAKE_ORCA_CONTEXT_DELAY_MS ?? 0);
   if (slow) await new Promise((r) => setTimeout(r, slow));
-  const flags = ["agent", "worktree", "prompt", "model", "effort", "surface", "focus", "json"];
+  const flags = process.env.FAKE_ORCA_LAUNCH_FLAGS?.split(",") ?? [
+    "agent",
+    "worktree",
+    "prompt",
+    "model",
+    "effort",
+    "surface",
+    "focus",
+    "json",
+  ];
   // setup-clone's flags as 1.4.242 declares them; FAKE_ORCA_CLONE_FLAGS — another list.
   const clone = process.env.FAKE_ORCA_CLONE_FLAGS?.split(",") ?? [
     "help",
@@ -123,6 +134,7 @@ if (args[0] === "project" && args[1] === "setup-clone") {
   mkdirSync(dest, { recursive: true });
   if (process.env.FAKE_ORCA_CLONE_COVER)
     writeFileSync(join(dest, "AGENTS.md"), process.env.FAKE_ORCA_CLONE_COVER);
+  if (process.env.FAKE_ORCA_CLONE_COVER) initCheckout(dest);
   if (flag("project") !== id)
     refuse(
       "runtime_error",
@@ -165,7 +177,28 @@ if (args[0] === "project" && (args[1] === "list" || args[1] === "setups")) {
   process.stdout.write(JSON.stringify({ ok: true, result }) + "\n");
   process.exit(0);
 }
+// worktree show — the shape 1.4.258 answered (#9966): the tree at the path as given, kept out
+// of FAKE_ORCA_LOG, each call a line in <log>.shows. FAKE_ORCA_TREE_UNSEEN=N — the first N
+// answer selector_not_found, as right after `git worktree add`; "never" — every one.
+if (args[0] === "worktree" && args[1] === "show") {
+  const shows = `${process.env.FAKE_ORCA_LOG}.shows`;
+  appendFileSync(shows, JSON.stringify(args) + "\n");
+  // FAKE_ORCA_TREE_SHOW_DELAY_MS — each answer comes this much later.
+  const slow = Number(process.env.FAKE_ORCA_TREE_SHOW_DELAY_MS ?? 0);
+  if (slow) await new Promise((r) => setTimeout(r, slow));
+  const unseen = process.env.FAKE_ORCA_TREE_UNSEEN ?? "0";
+  const seen = readFileSync(shows, "utf8").trim().split("\n").length;
+  // FAKE_ORCA_TREE_HIDE=<file> — every answer is selector_not_found while the file stands.
+  const hide = process.env.FAKE_ORCA_TREE_HIDE;
+  if (unseen === "never" || seen <= Number(unseen) || (hide && existsSync(hide)))
+    refuse("selector_not_found", "selector_not_found");
+  const path = args[args.indexOf("--worktree") + 1].replace(/^path:/, "");
+  process.stdout.write(JSON.stringify({ ok: true, result: { worktree: { path } } }) + "\n");
+  process.exit(0);
+}
 appendFileSync(process.env.FAKE_ORCA_LOG, JSON.stringify(args) + "\n");
+// FAKE_ORCA_REFUSE=<code> — the launch is refused as 1.4.258 refuses it (#9966).
+if (args[0] === "agent" && process.env.FAKE_ORCA_REFUSE) refuse(process.env.FAKE_ORCA_REFUSE, "x");
 // A clone registered at a path git does not name (a symlink, another case) is no worktree to
 // agent launch on 1.4.242 (case №4221): selector_not_found.
 if (args[0] === "agent" && args.includes("--worktree")) {
@@ -188,20 +221,83 @@ const hold = process.env.FAKE_ORCA_HOLD;
 while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
 const code = Number(process.env.FAKE_ORCA_EXIT ?? 0);
 // The launch answer's form by agent-context 1.4.242 (outcome.kind, outcome.handle), not an
-// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. terminal show and close
-// answer ok. Every answer carries _meta.runtimeId as 1.4.242 did (№4050 [74]): the content of
-// FAKE_ORCA_RUNTIME_FILE (a restarted Orca), else rt_fake; "" in the file — no _meta.
+// observed launch; FAKE_ORCA_HANDLE="" — an answer without a handle. The prompt and receipt
+// words observed on 1.4.257 for a one-line --prompt (#9966): prompt {delivery: submit,
+// outcome: handed-to-terminal} and receipt {mode: terminal, preferred: terminal, reason:
+// requested, detail} — the launch is submitted only in this shape. FAKE_ORCA_PROMPT_DELIVERY
+// (default submit; "none" — no prompt field) and FAKE_ORCA_PROMPT_OUTCOME change or drop the
+// prompt words; FAKE_ORCA_RECEIPT_MODE and FAKE_ORCA_RECEIPT_REASON — the receipt's.
+// terminal show and close answer ok. Every answer carries _meta.runtimeId as 1.4.242 did
+// (№4050 [74]): the content of FAKE_ORCA_RUNTIME_FILE (a restarted Orca), else rt_fake; ""
+// in the file — no _meta.
 const handle = process.env.FAKE_ORCA_HANDLE ?? "term_fake";
+const delivery = process.env.FAKE_ORCA_PROMPT_DELIVERY ?? "submit";
+const promptWords =
+  delivery === "none"
+    ? {}
+    : {
+        prompt: {
+          delivery,
+          outcome: process.env.FAKE_ORCA_PROMPT_OUTCOME ?? "handed-to-terminal",
+        },
+      };
+const receiptWords = {
+  receipt: {
+    mode: process.env.FAKE_ORCA_RECEIPT_MODE ?? "terminal",
+    preferred: "terminal",
+    reason: process.env.FAKE_ORCA_RECEIPT_REASON ?? "requested",
+    detail: "surface terminal requested by the caller",
+  },
+};
 const rtFile = process.env.FAKE_ORCA_RUNTIME_FILE;
 const runtime = rtFile && existsSync(rtFile) ? readFileSync(rtFile, "utf8").trim() : "rt_fake";
+if (args[0] === "terminal" && args[1] === "wait") {
+  const hold = process.env.FAKE_ORCA_WAIT_HOLD;
+  while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
+}
 const answer = {
   ok: true,
   result:
     args[0] === "agent"
-      ? { outcome: handle ? { kind: "terminal", handle } : { kind: "chat" } }
+      ? {
+          outcome: handle ? { kind: "terminal", handle } : { kind: "chat" },
+          ...promptWords,
+          ...receiptWords,
+        }
       : args[1] === "show"
-        ? { terminal: { handle: args[3] } }
-        : {},
+        ? {
+            terminal: {
+              handle: args[3],
+              incarnationId:
+                process.env.FAKE_ORCA_EXIT_INCARNATION &&
+                readFileSync(process.env.FAKE_ORCA_LOG, "utf8").includes('"wait"')
+                  ? process.env.FAKE_ORCA_EXIT_INCARNATION
+                  : "inc_fake",
+              connected: false,
+              writable: false,
+              executionHostId: "local",
+              worktreePath: (() => {
+                const log = readFileSync(process.env.FAKE_ORCA_LOG, "utf8")
+                  .trim()
+                  .split("\n")
+                  .map(JSON.parse);
+                const launch = log.findLast((a) => a[0] === "agent" && a.includes("--worktree"));
+                return launch?.[launch.indexOf("--worktree") + 1]?.replace(/^path:/, "");
+              })(),
+            },
+          }
+        : args[1] === "close"
+          ? { close: { handle: args[3], ptyKilled: true } }
+          : args[1] === "wait"
+            ? {
+                wait: {
+                  handle: args[3],
+                  condition: "exit",
+                  satisfied: process.env.FAKE_ORCA_WAIT_EXIT !== "0",
+                  status: process.env.FAKE_ORCA_WAIT_EXIT === "0" ? "running" : "exited",
+                },
+              }
+            : {},
   ...(runtime ? { _meta: { runtimeId: runtime } } : {}),
 };
 if (code === 0) process.stdout.write(JSON.stringify(answer) + "\n");

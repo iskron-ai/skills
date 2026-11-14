@@ -48,10 +48,12 @@ export {
   method,
   SERVER_LOCALE,
   serverProtocol,
+  SPAWN_LINE,
   STRUCTURED_CAPABILITY,
   tool,
   TOOL_PREFIX,
 } from "./protocol.ts";
+export { QUESTION_SCOPE } from "./questions.ts";
 export { SPAWNED_FOR, SPAWNED_FOR_ENV, spawnedForSchema } from "./spawned-for.ts";
 export { BUILD_MARK, CHANNEL_MARK, VERSION } from "./version.ts";
 export { ABSORB, type AbsorbWords } from "./words/absorb.ts";
@@ -101,6 +103,7 @@ export { PI, type PiWords } from "./words/pi.ts";
 export { PLACES, type PlacesWords } from "./words/places.ts";
 export { PLUGIN, type PluginWords } from "./words/plugin.ts";
 export { PREPARE, type PrepareAddr, type PrepareLeft, type PrepareWords } from "./words/prepare.ts";
+export { QUESTIONS, type QuestionWords } from "./words/questions.ts";
 export { REALMS, type RealmsWords } from "./words/realms.ts";
 export { RELEASES, type ReleasesWords } from "./words/releases.ts";
 export { RESUME, type ResumeWords } from "./words/resume.ts";

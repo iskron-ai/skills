@@ -11,7 +11,7 @@ import { COVER, repo } from "./rites-kit.mjs";
 
 const bridge = process.env.ISKRON_BRIDGE_PATH || BUILT_BRIDGE;
 const warning =
-  "Контракт 38 больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до 41; ритуалы будут приняты после проверки";
+  "Контракт 38 больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до 43; ритуалы будут приняты после проверки";
 const old = COVER.replace("contract: 39", "contract: 38");
 const envFor = (home) => ({
   ...process.env,

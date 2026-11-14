@@ -260,7 +260,7 @@ test("stop with a grant that will not refresh says sign in again aloud and sends
   });
   const r = await stop(dir, ["dead-grant"], noPat);
   assert.equal(r.status, 1, r.stdout);
-  assert.match(r.stderr, /ВОЙДИ ЗАНОВО/, r.stderr);
+  assert.match(r.stderr, /ВОЙДИТЕ ЗАНОВО/, r.stderr);
   assert.equal(fake.state.orders.human.length, 0, "no foreign or stale key is sent");
 });
 

@@ -95,11 +95,11 @@ async function leadChild(name, env = {}, sessions) {
     await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
     const rootPid = pidOf(b.log);
     appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
-    await until(() => rec.said().includes("мост держит стояние k-root"), "the root's held word");
+    await until(() => rec.said().includes("мост держит место k-root"), "the root's held word");
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
     appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
-    await until(() => rec.said().includes("мост держит стояние k-sub"), "the child's held word");
+    await until(() => rec.said().includes("мост держит место k-sub"), "the child's held word");
     return { b, rec, rootPid, childPid };
   } catch (e) {
     await rec.stop();
@@ -316,10 +316,7 @@ test("a new session under the same place name as an ended lead stands freely; th
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child2");
     const child2Pid = pidsOf(b.log).at(-1);
     appendFileSync(`${b.events}.${child2Pid}`, event("held", { key: "k-sub2", place: SUB_PLACE }));
-    await until(
-      () => rec.said().includes("мост держит стояние k-sub2"),
-      "the new child's held word",
-    );
+    await until(() => rec.said().includes("мост держит место k-sub2"), "the new child's held word");
     turn(rec, "новое поручение", "child2");
     await until(() => turnWords(rec).length === 2, "the new child's turn word");
     assert.match(turnWords(rec)[1].text, new RegExp(`standing="${SUB}"`));

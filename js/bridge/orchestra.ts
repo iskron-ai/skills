@@ -8,25 +8,19 @@
 // is orchestra-runs.ts.
 import type { Server } from "node:net";
 
-import { envName, ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
+import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import { execPending, observeExec } from "./exec-exit.ts";
 import { readDemands } from "./orchestra-demands.ts";
-import { ensureLauncher, launcherSpecOf } from "./orchestra-describe.ts";
-import {
-  listenOrchestraDoor,
-  type OrchestraAnswer,
-  type OrchestraServe,
-} from "./orchestra-door.ts";
-import {
-  envAdmitted,
-  orchestraAdmitted,
-  readOrchestraFlag,
-  writeOrchestraFlag,
-} from "./orchestra-flag.ts";
+import { type OrchestraAnswer, type OrchestraServe } from "./orchestra-door.ts";
+import { envAdmitted, orchestraAdmitted, readOrchestraFlag } from "./orchestra-flag.ts";
 import { leadAct } from "./orchestra-lead.ts";
+import { parseOnly, selectedStep } from "./orchestra-only.ts";
 import { planTact } from "./orchestra-plan.ts";
-import { readClones } from "./orchestra-runs.ts";
-import { stepTact, tactStateOf } from "./orchestra-tact.ts";
+import { orchestraStatus } from "./orchestra-status.ts";
+import { switchOrchestra } from "./orchestra-switch.ts";
+import { stepTact } from "./orchestra-tact.ts";
+import { openOrchestraWatch } from "./orchestra-watch.ts";
 
 const w = (): OrchestraWords => words(ORCHESTRA);
 
@@ -45,12 +39,9 @@ export interface OrchestraNet {
   changed?: () => void;
 }
 
-/** The daemon leads: the flag on and the machine's consent given — it stays and tacts. */
+/** Keep the daemon for consented raising OR an owned exec lifecycle; step still checks the flag. */
 export const orchestraLeading = (authDir: string): boolean =>
-  orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true;
-
-/** The orchestrator's own tact while leading (#7513). */
-const TACT_MS = Number(process.env[envName("ORCHESTRA_TACT_MS")]) || 60_000;
+  execPending(authDir) || (orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true);
 
 /** The door, and the daemon's own tact while leading — no agent, no human in the loop (#7513). */
 export async function openOrchestra(
@@ -59,20 +50,13 @@ export async function openOrchestra(
   paused: () => boolean,
   say: (line: string) => void,
 ): Promise<Server> {
-  const door = await listenOrchestraDoor(authDir, serve);
-  // A tact still running skips the timer's next one: no chain of tacts behind a slow one.
-  let busy = false;
-  setInterval(() => {
-    if (busy || paused() || !orchestraLeading(authDir)) return;
-    busy = true;
-    void serve("step", [])
-      .then(
-        (a) => say(`orchestra tact: ${a.said.replace(/\n/g, " · ")}`),
-        (e: Error) => say(`orchestra tact failed: ${e.message}`),
-      )
-      .finally(() => (busy = false));
-  }, TACT_MS).unref();
-  return door;
+  return openOrchestraWatch(
+    authDir,
+    serve,
+    paused,
+    say,
+    () => orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true,
+  );
 }
 
 /**
@@ -85,6 +69,19 @@ export async function openOrchestra(
 export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraServe {
   // One tact at a time: the timer's and a caller's step never interleave their launches.
   let tacting: Promise<unknown> = Promise.resolve();
+  // A previously launched client's lifecycle survives `off`; this grants no raising consent.
+  let observing = false;
+  setInterval(() => {
+    if (observing || !execPending(authDir)) return;
+    observing = true;
+    const next = tacting.then(() => observeExec(authDir, net?.base() ?? "", net?.token() ?? null));
+    tacting = next.catch(() => {});
+    void next
+      .catch(() => process.stderr.write("exec_observer_failed\n"))
+      .finally(() => {
+        observing = false;
+      });
+  }, 5_000).unref();
   const step = (gone?: { gone: boolean }): Promise<OrchestraAnswer> => {
     const next = tacting.then(() => stepOnce(gone));
     tacting = next.catch(() => {});
@@ -109,6 +106,29 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     return stepTact(authDir, base, token, boundary, gone, act);
   };
   return async (op, realms, gone, extra) => {
+    const only = extra?.only === undefined ? undefined : parseOnly(extra.only);
+    if (only === null || (only && ((op !== "step" && op !== "plan") || realms.length !== 1)))
+      return { ok: false, said: "only_requires_step_UUID/invite_and_one_realm" };
+    if (only && op === "step") {
+      const next = tacting.then(async () => {
+        const flag = readOrchestraFlag(authDir);
+        if (!(extra?.consent === true || envAdmitted() || (flag?.on && orchestraAdmitted(authDir))))
+          return { ok: false, said: "only_not_admitted" };
+        const boundary = [...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? [])])];
+        return selectedStep(
+          authDir,
+          net?.base() ?? "",
+          net?.token() ?? null,
+          net?.mcp?.() ?? "",
+          realms,
+          boundary,
+          only,
+          gone,
+        );
+      });
+      tacting = next.catch(() => {});
+      return next;
+    }
     if (op === "demands") {
       const flag = readOrchestraFlag(authDir);
       const boundary = [...new Set([...(flag?.realms ?? []), ...(net?.realms?.() ?? [])])];
@@ -121,40 +141,7 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
       );
       return { ok: demands.complete, said: "", demands };
     }
-    if (op === "on") {
-      const prior = readOrchestraFlag(authDir);
-      const terminal = extra?.consent === true;
-      // A graph added to the boundary is enabling there: the same consent as `on` itself — the
-      // consent lying in the flag only re-says what the human named (#7514).
-      const widens = realms.some((r) => !(prior?.on ? prior.realms : []).includes(r));
-      if (!envAdmitted() && !terminal && (!prior?.consent || widens))
-        return { ok: false, said: w().notAdmitted() };
-      // A short rN does not ride REST as is (live probe: 404 "Realm not found") — the door
-      // refuses it aloud instead of storing a boundary the tact cannot walk (#8202).
-      const short = realms.filter((r) => /^r\d+$/i.test(r.trim()));
-      if (short.length) return { ok: false, said: w().onShortRealm(short.join(", ")) };
-      // The launcher named with on is described first: a refusal leaves the flag unmoved.
-      const spec = launcherSpecOf(extra?.launcher);
-      let described = "";
-      if (spec)
-        try {
-          described = await ensureLauncher(net?.mcp?.() ?? "", net?.token() ?? null, spec);
-        } catch (e) {
-          return { ok: false, said: (e as Error).message };
-        }
-      const named = [...new Set([...(prior?.on ? prior.realms : []), ...realms])];
-      const consent = terminal
-        ? { by: "terminal" as const, at: new Date().toISOString() }
-        : prior?.consent;
-      writeOrchestraFlag(authDir, { on: true, realms: named, ...(consent ? { consent } : {}) });
-      net?.changed?.();
-      return { ok: true, said: [described, w().on(named.join(", "))].filter(Boolean).join("\n") };
-    }
-    if (op === "off") {
-      writeOrchestraFlag(authDir, { on: false, realms: [] });
-      net?.changed?.();
-      return { ok: true, said: w().off() };
-    }
+    if (op === "on" || op === "off") return switchOrchestra(authDir, net, op, realms, extra);
     if (op === "step") return step(gone);
     if (op === "plan") {
       const flag = readOrchestraFlag(authDir);
@@ -167,24 +154,9 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
         net?.mcp?.() ?? "",
         realms.length ? realms : boundary,
         boundary,
+        only,
       );
     }
-    const flag = readOrchestraFlag(authDir);
-    const tact = tactStateOf(authDir);
-    const lines = Object.entries(tact.realms).map(([realm, t]) =>
-      w().tactOut(realm, t.invites, t.signals, t.cursor ?? "", t.at),
-    );
-    // A clone runs in the daemon's background — said here, never hidden (#10078, #8202).
-    for (const [repo, c] of Object.entries(readClones(authDir)))
-      lines.push(w().cloneOut(repo, c.state, c.why ?? "", c.at));
-    if (tact.lead) lines.push(w().lead(tact.lead));
-    // Both halves of the boundary are said aloud (#8202): the named one from the flag and
-    // the discovered one — the graphs this machine's live places stand on.
-    const named = flag?.realms ?? [];
-    const found = [...new Set(net?.realms?.() ?? [])].filter((r) => !named.includes(r));
-    return {
-      ok: true,
-      said: w().status(!!flag?.on, named.join(", "), found.join(", "), lines.join("; ")),
-    };
+    return orchestraStatus(authDir, net?.realms?.() ?? []);
   };
 }

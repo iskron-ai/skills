@@ -817,6 +817,12 @@ test("a keepalive that meets a dead refresh records the refusal, so the human's 
     );
     assert.equal(fake.state.counts.refresh, 1, "the keepalive must knock exactly once");
     assert.equal(fake.state.counts.authorize, 1, "the background must not open a browser");
+    // The durable refusal warms grace before its separate journal append completes.
+    await waitFor(
+      () => /grant refused/.test(readFileSync(join(dir, "grant.log"), "utf8")),
+      "the keepalive refusal to reach the machine log",
+      5000,
+    );
     const log = readFileSync(join(dir, "grant.log"), "utf8");
     assert.match(log, /grant refused/, "the background refusal must reach the machine log");
     assert.doesNotMatch(log, /too early/, "a dead refresh is not an early speculative refusal");

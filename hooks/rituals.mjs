@@ -2,7 +2,7 @@
 import { readFileSync as readFileSync8 } from "node:fs";
 
 // js/delivery/contract.ts
-var CONTRACT_SUPPORT = { minimum: 39, target: 41 };
+var CONTRACT_SUPPORT = { minimum: 39, target: 43 };
 var CONTRACT_WORDS = {
   ru: {
     unsupported: (n, target) => `Контракт ${n} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
@@ -119,6 +119,7 @@ var LOGGERS = { channel: `${PRODUCT}-channel`, bridge: BRIDGE_NAME };
 var FRAME_MARK = `[${PRODUCT}]`;
 var ID_PREFIX = `${PRODUCT}-`;
 var STRUCTURED_CAPABILITY = `${PRODUCT}/structured`;
+var SPAWN_LINE = `${PRODUCT}/spawned_for:`;
 var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 
 // js/delivery/spawned-for.ts
