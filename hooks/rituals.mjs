@@ -2,7 +2,7 @@
 import { readFileSync as readFileSync8 } from "node:fs";
 
 // js/delivery/contract.ts
-var CONTRACT_SUPPORT = { minimum: 39, target: 43 };
+var CONTRACT_SUPPORT = { minimum: 39, target: 44 };
 var CONTRACT_WORDS = {
   ru: {
     unsupported: (n, target) => `Контракт ${n} больше не поддерживается; старые хуки не удалены. Выполните полный прогон iskronify до ${target}; ритуалы будут приняты после проверки`
