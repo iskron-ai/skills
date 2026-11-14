@@ -1,0 +1,30 @@
+# Искрон в DeepSeek Harness (dsh) — слой патчей поверх профиля.
+# Запуск: dsh headless --patch <этот файл> или эти записи — в слой патчей
+# профиля ($DSH_HOME/profiles/<профиль>/cordis.patch.yml).
+# Модель здесь не задаётся: её выбирает человек.
+- insert:
+    - id: mcp-iskron
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: iskron
+        transport: stdio
+        command: node
+        args:
+          - !!js '`${process.env.HOME}/.iskron-bridge/iskron-bridge.mjs`'
+        # dsh вычищает окружение дочернего процесса (имена с TOKEN, KEY, SECRET
+        # и DSH_*), поэтому HOME и переменные моста идут явно из окружения dsh;
+        # пустое значение мост читает как «не задано».
+        env:
+          HOME: !!js process.env.HOME
+          ISKRON_BRIDGE_TOKEN: !!js process.env.ISKRON_BRIDGE_TOKEN ?? ''
+          ISKRON_BRIDGE_URL: !!js process.env.ISKRON_BRIDGE_URL ?? ''
+        toolCallTimeoutMs: 120000
+# Описания скиллов — до ~900 байт; по умолчанию каталог режет их на 500 знаках
+# вместе с триггерами в хвосте.
+- id: tool-skill
+  config:
+    catalogDescriptionMaxLength: 1024
+# Вопрос человеку Искрон задаёт карточкой в деле; вопросный тул снят.
+# В профилях без него (headless) --dump-config скажет «not found» — не ошибка.
+- id: tool-ask-user
+  disabled: true
