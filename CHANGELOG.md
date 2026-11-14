@@ -1,5 +1,19 @@
 # Changelog
 
+## [8.3.0](https://github.com/iskron-ai/skills/compare/v8.2.3...v8.3.0) (2026-11-14)
+
+
+### Features
+
+* **iskronify:** contract 44 — iterate on the touched checks, run the full gate once on the merge candidate ([#770](https://github.com/iskron-ai/skills/issues/770)) ([0497ccc](https://github.com/iskron-ai/skills/commit/0497cccc588f8fe65076410477942e470e0f4060))
+
+
+### Bug Fixes
+
+* hold the AGENTS.md cover at 41 until the Claude Code live check ([#767](https://github.com/iskron-ai/skills/issues/767)) ([2c626b2](https://github.com/iskron-ai/skills/commit/2c626b2588cae956a3409c9dd57ad057dc72478e))
+* **iskronify:** no full gate before every push or PR update in the template ([#772](https://github.com/iskron-ai/skills/issues/772)) ([e289211](https://github.com/iskron-ai/skills/commit/e289211fbe05ed9a5abbfd9631ba0d6c396b946f))
+* **iskronify:** the iteration rule has one home; the gate line points to it ([#771](https://github.com/iskron-ai/skills/issues/771)) ([688a93d](https://github.com/iskron-ai/skills/commit/688a93d7b38dc3940e4427ea1f326c8f22636ae0))
+
 ## [8.2.3](https://github.com/iskron-ai/skills/compare/v8.2.2...v8.2.3) (2026-11-14)
 
 
