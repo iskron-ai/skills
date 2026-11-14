@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.2.2](https://github.com/iskron-ai/skills/compare/v8.2.1...v8.2.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **iskronify:** the OpenCode replacement probe gets a bare origin to push to ([#762](https://github.com/iskron-ai/skills/issues/762)) ([8f58f06](https://github.com/iskron-ai/skills/commit/8f58f0688e18ff61211ad8006dd84bf3efdd0f70))
+
 ## [8.2.1](https://github.com/iskron-ai/skills/compare/v8.2.0...v8.2.1) (2026-11-13)
 
 
