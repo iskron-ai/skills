@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.2.3](https://github.com/iskron-ai/skills/compare/v8.2.2...v8.2.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* **iskron:** the review-findings moment row is a pointer, keeping the door under 40 KB ([#766](https://github.com/iskron-ai/skills/issues/766)) ([99cddde](https://github.com/iskron-ai/skills/commit/99cddded31c3a4cfac4b938bd2d1e8bf3d06b954))
+* unify review findings handling across agent workflows ([#740](https://github.com/iskron-ai/skills/issues/740)) ([b7dcb04](https://github.com/iskron-ai/skills/commit/b7dcb04ef7efb35dc11d7049590a69094610c7ec))
+
 ## [8.2.2](https://github.com/iskron-ai/skills/compare/v8.2.1...v8.2.2) (2026-11-14)
 
 
