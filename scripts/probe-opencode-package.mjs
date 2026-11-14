@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Real OpenCode loader; fixture PAT/MCP only. Never inherits the caller's environment.
-// Modes: default fixture HTTP tgz; --directory unpacked local package; --url <http(s) specifier>
-// (the release HTTPS link; the loader fetches it, this script never does).
+// Modes: default fixture HTTP tgz; --directory unpacked local package; --url <[@scope/name@]http(s) specifier>
+// (the release HTTPS link; the loader fetches it, this script never does). OpenCode 2.2.7 reads a bare
+// URL as a local path; the name-prefixed form is the one its loader fetches.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -20,7 +21,7 @@ assert.ok(!existsSync(out), "use a fresh carrier directory");
 const urlAt = process.argv.indexOf("--url");
 const remote = urlAt === -1 ? null : process.argv[urlAt + 1];
 assert.ok(!remote || !process.argv.includes("--directory"), "--url and --directory are exclusive");
-assert.ok(!remote || /^https?:\/\//.test(remote), "--url needs an http(s) plugin specifier");
+assert.ok(!remote || /^(@[\w.-]+\/[\w.-]+@)?https?:\/\//.test(remote), "--url needs an http(s) plugin specifier");
 mkdirSync(out, { recursive: true });
 const home = join(out, "home"), cwd = join(out, "project"), bin = join(out, "bin");
 const config = join(home, ".config/opencode");

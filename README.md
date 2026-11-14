@@ -75,14 +75,16 @@ codex plugin add iskron@iskron
 
 Дополнительный канал следующих выпусков — `https://github.com/iskron-ai/skills/releases/download/v<ver>/iskron-opencode-<ver>.tgz`. Архив содержит ровно три файла: `package.json`, плагин `index.js`, мост `iskron.mjs`; без зависимостей, install-скриптов и скиллов. Скиллы при необходимости устанавливаются отдельно, как ниже. Публикации этого канала в npm пока нет; прежняя самообновляемая установка копией остаётся.
 
-Выбери конкретный выпуск, у которого есть этот asset, и подставь его версию ссылкой прямо в `plugins` `opencode.json` проекта — версионной (не `/latest/`), без query и fragment:
+Выбери конкретный выпуск, у которого есть этот asset, и подставь его версию ссылкой в `plugins` `opencode.json` проекта — версионной (не `/latest/`), без query и fragment, с именем пакета перед ней (голую ссылку OpenCode принимает за локальный путь):
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["https://github.com/iskron-ai/skills/releases/download/vX.Y.Z/iskron-opencode-X.Y.Z.tgz"]
+  "plugins": ["@iskron/opencode@https://github.com/iskron-ai/skills/releases/download/vX.Y.Z/iskron-opencode-X.Y.Z.tgz"]
 }
 ```
+
+Проверку обновлений плагина OpenCode для такой ссылки не делает — новая версия ставится сменой ссылки.
 
 Не добавляй одновременно копию этого плагина в `plugins/`. Версию выбирает URL архива, не домашний мост. Node на машине агента не требуется — мост исполняет Bun OpenCode.
 
