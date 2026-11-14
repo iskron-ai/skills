@@ -4,10 +4,11 @@ import { test } from "node:test";
 import { CONTRACT_SUPPORT } from "../delivery/contract.ts";
 import { contractOf, contractWarning } from "../shared/covercontract.ts";
 
-// 43: covers name the orchestrator tree no agent removes or moves (#10603); the floor stays 39.
-test("the orchestrator-tree rule targets contract 43 without dropping 39", () => {
-  assert.deepEqual(CONTRACT_SUPPORT, { minimum: 39, target: 43 });
-  assert.match(contractWarning({ kind: "known", contract: 38 }), /до 43;/);
+// 44: covers run only the touched checks while iterating, the full gate once on the merge candidate
+// (#8903); the floor stays 39.
+test("the iteration rule targets contract 44 without dropping 39", () => {
+  assert.deepEqual(CONTRACT_SUPPORT, { minimum: 39, target: 44 });
+  assert.match(contractWarning({ kind: "known", contract: 38 }), /до 44;/);
 });
 
 const block = (fields) => `---\niskron:\n${fields}\n---\n# x\n`;
