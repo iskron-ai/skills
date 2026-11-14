@@ -3,8 +3,8 @@ iskron:
   graph: r5
   holon: 1506
   agent_role: 931
-  contract: 41
-  stamp: 2026-11-09
+  contract: 43
+  stamp: 2026-11-14
 ---
 # iskron/skills
 Скилл-бандлы NKS для агентов (Claude Code skills) под деплой **iskron.ru**, смотрящий на `mcp.iskron.ru`. Среди них `iskronify` — скилл, приводящий любой репозиторий к стандарту этого `AGENTS.md`.
