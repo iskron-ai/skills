@@ -233,7 +233,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.2.1";
+var VERSION = "8.2.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
