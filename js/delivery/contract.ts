@@ -1,5 +1,5 @@
 // Граница поддержки выравнивания (граф @nks/nks-dev, узел #9786).
-export const CONTRACT_SUPPORT = { minimum: 39, target: 43 } as const;
+export const CONTRACT_SUPPORT = { minimum: 39, target: 44 } as const;
 
 export const CONTRACT_WORDS = {
   ru: {
