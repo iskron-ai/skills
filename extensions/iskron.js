@@ -57,7 +57,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "8.2.1";
+var VERSION = "8.2.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
