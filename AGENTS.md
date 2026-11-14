@@ -3,7 +3,7 @@ iskron:
   graph: r5
   holon: 1506
   agent_role: 931
-  contract: 43
+  contract: 41
   stamp: 2026-11-14
 ---
 # iskron/skills
