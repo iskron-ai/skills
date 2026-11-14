@@ -3,15 +3,18 @@
 // its own. An explicit stand of the same session in the same graph on another name or role
 // replaces it the way take=true does — the bridge releases it (releasePrior) and stands on the
 // named one; a seat the agent took itself keeps the guard of one seat per bridge (#5164).
+// The session's first write through the seat — a case move, a graph write — makes it the
+// session's own as well (#8033): its cases and lead stay on it (#8592).
 //
 // Only a service call names a seat provisional: its id carries the service prefix the plugin
 // alone sends (shared/serviceid.ts), so an agent's argument cannot fake it. Per session
 // (shared/scope.ts): the daemon holds one per session.
 import { randomBytes } from "node:crypto";
 
-import { STAND_MOVES } from "../delivery/index.ts";
+import { STAND_MOVES, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { SERVICE_ID } from "../shared/serviceid.ts";
+import { readsOnly } from "../shared/toolreads.ts";
 import {
   type HoldRecord,
   keyOf,
@@ -21,6 +24,7 @@ import {
 } from "./holdrecord.ts";
 import { NAME_MAX } from "./names.ts";
 import { ledIn } from "./standmoves.ts";
+import { state } from "./transport.ts";
 import type { JsonRpcMessage } from "./types.ts";
 
 /** Fresh service seats have their own address even when two instances read an empty board.
@@ -50,6 +54,25 @@ export function noteStood(own: boolean, realm: string, karta: string, name: stri
   const key = keyOf(realm, karta, name);
   const rec = readHoldRecord(key, true);
   if (rec) writeHoldRecord(key, { ...rec, provisional: own });
+}
+
+const WRITES = new Set(["update", "arrow", "batch", "delete_node"].map(tool));
+const writes = (name: string, args: Record<string, unknown>): boolean =>
+  name === tool("case")
+    ? !readsOnly(name, args, true)
+    : WRITES.has(name) || name.startsWith(tool("add_"));
+
+/** A write went through the seat the call's graph is led by: the seat is no longer provisional. */
+export function noteWork(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
+  const name = String(msg.params?.name ?? "");
+  const args = msg.params?.arguments ?? {};
+  const service = typeof msg.id === "string" && msg.id.startsWith(SERVICE_ID);
+  if (service || reply.result?.isError || !writes(name, args)) return;
+  const led = args.realm == null ? state.standing : ledIn(String(args.realm));
+  if (!led?.name) return;
+  const karta = String(led.karta);
+  if (readHoldRecord(keyOf(led.realm, karta, led.name), true)?.provisional === true)
+    noteStood(false, led.realm, karta, led.name);
 }
 
 /** Returning from a still-live own bridge uses stand internally (#6702), not an agent's choice.
