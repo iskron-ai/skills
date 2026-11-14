@@ -180,6 +180,13 @@ approval, but approval policy is never`: тулы видны и не зовут�
 `--dangerously-bypass-approvals-and-sandbox` снимает заодно и песочницу — для
 этого он не нужен.
 
+**DeepSeek Harness (dsh)** — скиллы плоской установкой из шага 1 (dsh читает
+`~/.agents/skills/`), мост — копией в дом («Как поднять мост» ниже) и профиль-патчем
+`references/dsh-profile.yml` из установленного скилла `establish-mcp`:
+`dsh headless --patch <файл>` или его записи в `$DSH_HOME/profiles/<профиль>/cordis.patch.yml`.
+Что патч несёт и почему токен идёт явно окружением dsh — раздел «DeepSeek Harness»
+скилла `establish-mcp`.
+
 **OpenCode** — не запись `mcp` в конфиге, а **плагин из поставки**: запись `mcp`
 переименовала бы каждый тул в `<имя записи>.<тул>` — наблюдено на 2.0.9:
 `iskron.iskron_orient`, — и скиллы, зовущие `iskron_orient`, звали бы имя,
