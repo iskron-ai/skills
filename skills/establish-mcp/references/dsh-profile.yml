@@ -11,8 +11,8 @@
         command: node
         args:
           - !!js '`${process.env.HOME}/.iskron-bridge/iskron-bridge.mjs`'
-        # dsh вычищает окружение дочернего процесса (имена с TOKEN, KEY, SECRET
-        # и DSH_*), поэтому HOME и переменные моста идут явно из окружения dsh;
+        # Окружение процесса MCP dsh очищает (имена с TOKEN, KEY, SECRET — наблюдено),
+        # поэтому HOME и переменные моста идут явно из окружения dsh;
         # пустое значение мост читает как «не задано».
         env:
           HOME: !!js process.env.HOME
@@ -25,6 +25,5 @@
   config:
     catalogDescriptionMaxLength: 1024
 # Вопрос человеку Искрон задаёт карточкой в деле; вопросный тул снят.
-# В профилях без него (headless) --dump-config скажет «not found» — не ошибка.
 - id: tool-ask-user
   disabled: true
