@@ -4,6 +4,9 @@
 // that takes a fresh seat each time folds too. The first line of a shape is written whole, its
 // ids kept; the count goes as its own line once the window has passed, before the next line of
 // the journal. A count still open when the process ends is lost — the ceiling of this fold.
+// The daemon's session tag ([sN-pid]) is not masked: each session's lifecycle lines name it and
+// are read to tell sessions apart, so a storm of fresh thin bridges is bounded at its source —
+// the plugin's admission bound (opencode/spawn-retries.ts) — not here.
 const WINDOW_MS = 60_000;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ROOT = /\.root-[0-9a-f]{12}\b/g;

@@ -68,3 +68,33 @@ test(
     }
   },
 );
+
+test(
+  "sessions opened at once with an unconfirmed pair still pass the bound only that many times",
+  { timeout: 120_000 },
+  async (t) => {
+    const s = await setup(t);
+    const project = realpathSync(s.cwd);
+    writeAgents(project, COVER);
+    s.fake.state.structured = false;
+    s.fake.state.futureArgs.iskron_channel = ["spawned_for"];
+    const oc = await rootPlugin(s, project, { ISKRON_SPAWN_RETRY_MS: String(BASE_MS) });
+    try {
+      const ids = Array.from({ length: SESSIONS }, (_, i) => `burst-${i}`);
+      for (const id of ids) oc.create(id, { emit: false });
+      const outcomes = await Promise.allSettled(
+        ids.map((id) => oc.turn(id, `iskron/spawned_for: ${JSON.stringify(pair)}\nhi`)),
+      );
+      assert.ok(outcomes.every((o) => o.status === "rejected"));
+      const n = s.fake.state.calls.filter(
+        (c) =>
+          c.name === "iskron_channel" &&
+          c.arguments.action === "register" &&
+          c.arguments.spawned_for?.invite === pair.invite,
+      ).length;
+      assert.ok(n >= 1 && n <= TRIES, `registers with the pair: ${n}, at most ${TRIES}`);
+    } finally {
+      await oc.stop();
+    }
+  },
+);
