@@ -22,13 +22,36 @@ const WORK = {
   "строка дела": [
     { tool: "iskron_case", input: { realm: R, action: "line", room: ROOM, text: "ход" } },
   ],
+  // Граф назван другим алиасом, чем место: мост сводит его с местом до решения.
+  "запись в граф по алиасу r5": [
+    { tool: "iskron_add_vimarsha", input: { realm: "r5", name: "probe", given_as: "ding" } },
+  ],
+};
+
+// Не работа: отказ записи (тулом и JSON-RPC) и справка тула записи.
+const NOT_WORK = {
+  "отказ записи тулом": {
+    fails: "result",
+    calls: [{ tool: "iskron_add_vimarsha", input: { realm: R, name: "probe", given_as: "ding" } }],
+  },
+  "отказ записи JSON-RPC": {
+    fails: "rpc",
+    calls: [{ tool: "iskron_add_vimarsha", input: { realm: R, name: "probe", given_as: "ding" } }],
+  },
+  "справка arrow": { calls: [{ tool: "iskron_arrow", input: { realm: R, action: "?" } }] },
 };
 
 async function stage(t) {
   const s = await setup(t);
   const project = realpathSync(s.cwd);
   writeAgents(project, COVER);
-  s.fake.state.tools = ["iskron_orient", "iskron_add_vimarsha", "iskron_channel"]
+  s.fake.state.tools = [
+    "iskron_orient",
+    "iskron_add_vimarsha",
+    "iskron_arrow",
+    "iskron_realm",
+    "iskron_channel",
+  ]
     .map((name) => ({ name, description: name, inputSchema: { type: "object" } }))
     .concat({
       name: "iskron_case",
@@ -70,23 +93,33 @@ for (const [label, work] of Object.entries(WORK))
     },
   );
 
-test("без работы stand с model по-прежнему сменяет предварительное место", T, async (t) => {
-  const s = await stage(t);
-  const oc = await rootPlugin(s, s.project);
-  try {
-    oc.create("root");
-    await oc.turn("root", "привет");
-    const old = heldBy(s.dir, "root")[0];
-    await oc.turn("root", "чтение", () => [
-      { tool: "iskron_case", input: { realm: R, action: "mine" } },
-    ]);
-    const r = await oc.turn("root", "моё имя", () => [
-      { tool: "iskron_stand", input: { realm: R, karta: "931", model: "probe-model" } },
-    ]);
-    const own = heldBy(s.dir, "root");
-    assert.equal(own.length, 1, told(r));
-    assert.notEqual(own[0], old, told(r));
-  } finally {
-    await oc.stop();
-  }
-});
+const NOT_WORK_ALL = {
+  чтение: { calls: [{ tool: "iskron_case", input: { realm: R, action: "mine" } }] },
+  ...NOT_WORK,
+};
+
+for (const [label, { fails, calls }] of Object.entries(NOT_WORK_ALL))
+  test(
+    `не работа (${label}): stand с model по-прежнему сменяет предварительное место`,
+    T,
+    async (t) => {
+      const s = await stage(t);
+      const oc = await rootPlugin(s, s.project);
+      try {
+        oc.create("root");
+        await oc.turn("root", "привет");
+        const old = heldBy(s.dir, "root")[0];
+        s.fake.state.writeFails = fails;
+        await oc.turn("root", "не работа", () => calls);
+        s.fake.state.writeFails = undefined;
+        const r = await oc.turn("root", "моё имя", () => [
+          { tool: "iskron_stand", input: { realm: R, karta: "931", model: "probe-model" } },
+        ]);
+        const own = heldBy(s.dir, "root");
+        assert.equal(own.length, 1, told(r));
+        assert.notEqual(own[0], old, told(r));
+      } finally {
+        await oc.stop();
+      }
+    },
+  );
