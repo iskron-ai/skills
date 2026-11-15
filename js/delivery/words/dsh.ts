@@ -22,7 +22,7 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
   ru: {
     listening: (key) => `слушаю стояние ${key}`,
     deafNoStanding: (seconds) =>
-      `слуха нет: за окно прицепления (${seconds} с) место этой сессии не встало — скажи человеку`,
+      `слуха пока нет: за ${seconds} с место этой сессии не встало — жду дальше; пока его нет, кадры дела не дойдут`,
     deafSeveral: (keys) =>
       `слуха нет: несколько мест названы этой сессией (${keys}) — не угадываю, скажи человеку`,
     gone: (why) => `место ушло: ${why}`,
@@ -32,7 +32,7 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
   en: {
     listening: (key) => `listening on standing ${key}`,
     deafNoStanding: (seconds) =>
-      `no hearing: this session's seat never stood within the attach window (${seconds}s) — tell the human`,
+      `no hearing yet: this session's seat has not stood in ${seconds}s — still waiting; until it stands, case frames do not arrive`,
     deafSeveral: (keys) =>
       `no hearing: several seats are named this session's (${keys}) — not guessing, tell the human`,
     gone: (why) => `the seat is gone: ${why}`,

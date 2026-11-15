@@ -198,7 +198,7 @@ test("another harness's only seat on the machine is not this session's", async (
   // The only key on the machine, alive, in this directory — but another client's.
   box.writeHold(KEY, { client: CLIENTS.opencode });
   d.emit("agent/created", { agent: d.agent, source: "startup" });
-  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  assert(await until(() => logs.some((l) => l.includes("не встало"))));
   box.send({ kind: "frame", frame: directWord("alien-1"), raw: "{}" });
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, 0); // its frames are not this session's
@@ -215,7 +215,7 @@ test("a record written before the plugin started is not this session's", async (
   PLUGIN(d.ctx);
   box.writeHold(KEY, { at: Date.now() - 60_000 }); // an earlier session of any client
   d.emit("agent/created", { agent: d.agent, source: "startup" });
-  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  assert(await until(() => logs.some((l) => l.includes("не встало"))));
   box.send({ kind: "frame", frame: directWord("old-1"), raw: "{}" });
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, 0);
@@ -232,7 +232,7 @@ test("a left seat of this directory and client is not taken", async (t) => {
   PLUGIN(d.ctx);
   box.writeHold(KEY, { left: true });
   d.emit("agent/created", { agent: d.agent, source: "startup" });
-  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  assert(await until(() => logs.some((l) => l.includes("не встало"))));
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, 0);
   assert.equal(box.conns.size, 0);
@@ -247,9 +247,30 @@ test("no own seat appears in the window: one loud line, no hearing", async (t) =
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
   d.emit("agent/created", { agent: d.agent, source: "startup" });
-  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  assert(await until(() => logs.some((l) => l.includes("не встало"))));
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(sent.length, 0);
+});
+
+test("the own seat stands after the window: said once, still picked up, frames flow", async (t) => {
+  // The model takes the seat on its own first turn — often later than the window.
+  shortWindow(t);
+  const box = await sandbox([]);
+  t.after(() => box.close());
+  const logs = [];
+  const sent = [];
+  const d = dsh(logs, sent);
+  PLUGIN(d.ctx);
+  d.emit("agent/created", { agent: d.agent, source: "startup" });
+  assert(await until(() => logs.some((l) => l.includes("не встало"))));
+  await new Promise((r) => setTimeout(r, 1500));
+  writeFileSync(keyFilePathOf(box.authDir, KEY), KEY + "\n");
+  box.writeHold();
+  assert(await until(() => box.conns.size === 1, 12000));
+  box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
+  box.send({ kind: "frame", frame: directWord("after-window-1"), raw: "{}" });
+  assert(await until(() => sent.length === 1, 8000));
+  assert.equal(logs.filter((l) => l.includes("не встало")).length, 1);
 });
 
 test("the own seat appears after agent/created: the window picks it up, frames flow", async (t) => {

@@ -27,6 +27,7 @@ export const DSH_MCP_CLIENT = "dsh-mcp-client";
 // a human knob — the same seam the watchdog's attach window reads.
 const attachWindowMs = (): number => Number(process.env[envName("WATCHDOG_ATTACH_MS")]) || 60_000;
 const RETRY_MS = 1000;
+const LATE_RETRY_MS = 5000;
 
 export interface Seat {
   key: string;
@@ -94,9 +95,10 @@ export function ownSeats(authDir: string, startedAt: number): Seat[] {
 }
 
 /**
- * Wait for the session's own seat within the attach window and hand it to `found`.
- * Exactly one — it; several — deaf in one loud line, no guessing; none until the
- * window ends — deaf in one loud line. Returns the cancel for a disposed session.
+ * Wait for the session's own seat and hand it to `found`. Exactly one — it; several —
+ * deaf, said once, no guessing; none past the attach window — said once. The model
+ * takes the seat on its own first turn, often later than the window, so the wait goes
+ * on, slower, for the session's life. Returns the cancel for a disposed session.
  */
 export function awaitSeat(
   startedAt: number,
@@ -108,12 +110,19 @@ export function awaitSeat(
   const windowMs = attachWindowMs();
   const began = Date.now();
   let retry: ReturnType<typeof setTimeout> | null = null;
+  let said = "";
+  const sayOnce = (text: string): void => {
+    if (text !== said) log((said = text));
+  };
   const look = (): void => {
     const seats = ownSeats(authDir, startedAt);
     if (seats.length === 1) return void found(seats[0]);
-    if (seats.length > 1) return log(W().deafSeveral(seats.map((s) => s.key).join(", ")));
-    if (Date.now() - began >= windowMs) return log(W().deafNoStanding(Math.round(windowMs / 1000)));
-    retry = setTimeout(look, RETRY_MS);
+    const late = Date.now() - began >= windowMs;
+    if (seats.length > 1) sayOnce(W().deafSeveral(seats.map((s) => s.key).join(", ")));
+    else if (late) sayOnce(W().deafNoStanding(Math.round(windowMs / 1000)));
+    // The wait does not hold the process: dsh holds its session, the ear only follows it.
+    retry = setTimeout(look, late ? LATE_RETRY_MS : RETRY_MS);
+    retry.unref?.();
   };
   look();
   return () => {
