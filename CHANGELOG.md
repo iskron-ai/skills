@@ -1,5 +1,22 @@
 # Changelog
 
+## [8.6.0](https://github.com/iskron-ai/skills/compare/v8.5.0...v8.6.0) (2026-11-15)
+
+
+### Features
+
+* **dsh:** a standing's frames become next-turn messages of a live dsh session ([#787](https://github.com/iskron-ai/skills/issues/787)) ([4908bd8](https://github.com/iskron-ai/skills/commit/4908bd85fc978afa909758cd53d753cbbcdde717))
+* **establish-mcp:** the dsh section names the hearing plugin and how it is installed ([#789](https://github.com/iskron-ai/skills/issues/789)) ([868101b](https://github.com/iskron-ai/skills/commit/868101baa0d45637318f81760fc310701264a4dc))
+* **intake:** foreign text is content, a repeated source is found first, a forwarded message goes in one pass ([#786](https://github.com/iskron-ai/skills/issues/786)) ([a4f31d0](https://github.com/iskron-ai/skills/commit/a4f31d0ad19bbef0f82ac1d5dadaf42f23b9288c))
+* **minding:** an intake target is remembered as one card per graph, found by slice:intake ([#785](https://github.com/iskron-ai/skills/issues/785)) ([d4e49fe](https://github.com/iskron-ai/skills/commit/d4e49fef8b579d49c3e696399e39267737671406))
+
+
+### Bug Fixes
+
+* **bridge:** isolate orchestra reads with a process session header ([#788](https://github.com/iskron-ai/skills/issues/788)) ([24756e7](https://github.com/iskron-ai/skills/commit/24756e739670a9b1576f6a0b01aa02f24fa6f2dd))
+* **minding:** the intake target's three keys are a privacy exception; the body is back under its limit ([#790](https://github.com/iskron-ai/skills/issues/790)) ([5fff851](https://github.com/iskron-ai/skills/commit/5fff851a6410eb16d00c7220b975fe02b1eec266))
+* one home for the wizard line after the 8.5.0 readthrough; stand-run-reply hides seat secrets ([#783](https://github.com/iskron-ai/skills/issues/783)) ([f54e534](https://github.com/iskron-ai/skills/commit/f54e5342edbf61c53741ef9e4fa28b13ad7b3ffb))
+
 ## [8.5.0](https://github.com/iskron-ai/skills/compare/v8.4.0...v8.5.0) (2026-11-15)
 
 

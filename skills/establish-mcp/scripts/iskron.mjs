@@ -170,7 +170,8 @@ var CLIENTS = {
   opencode: `opencode-${PRODUCT}`,
   pi: `pi-${PRODUCT}`,
   doctor: `${PRODUCT}-doctor`,
-  watchdog: `${PRODUCT}-watchdog`
+  watchdog: `${PRODUCT}-watchdog`,
+  dsh: `dsh-${PRODUCT}`
 };
 var SERVER_URLS = {
   ru: "https://mcp.iskron.ru/",
@@ -235,7 +236,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.5.0";
+var VERSION = "8.6.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -15301,6 +15302,11 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
   return said2;
 }
 
+// js/bridge/orchestra-session.ts
+import { randomUUID as randomUUID5 } from "node:crypto";
+var ORCHESTRA_SESSION_HEADER = "X-NKS-Session-Id";
+var ORCHESTRA_SESSION_ID = randomUUID5();
+
 // js/bridge/exec-raised.ts
 async function bindExecRaised(authDir, base, token, realms) {
   const path = join31(seamRunDir(authDir), "exec-raised-cursors.json");
@@ -15318,7 +15324,10 @@ async function bindExecRaised(authDir, base, token, realms) {
       const q = new URLSearchParams({ limit: "200" });
       if (cursors[realm]) q.set("since", cursors[realm]);
       const res = await namedFetch(`${base}/realms/${encodeURIComponent(realm)}/raised?${q}`, {
-        headers: { authorization: `Bearer ${token}` },
+        headers: {
+          authorization: `Bearer ${token}`,
+          [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
+        },
         redirect: "error",
         signal: AbortSignal.timeout(1e4)
       });
@@ -15712,9 +15721,12 @@ function canonIn(index, name2) {
 // js/bridge/orchestra-demands.ts
 var LIMIT3 = 200;
 var MAX_PAGES2 = 50;
-async function get(base, token, path) {
+async function get(base, token, path, control = false) {
   const r = await namedFetch(`${base}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...!control ? { [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID } : {}
+    },
     redirect: "error",
     signal: AbortSignal.timeout(1e4)
   });
@@ -15797,7 +15809,7 @@ async function readDemands(base, token, requested, boundary, gone, owned, invite
     for (let n = 0; n < MAX_PAGES2; n++) {
       if (gone?.gone) throw new Error("caller_gone");
       const q = `open=true&limit=${LIMIT3}${since ? `&since=${since}` : ""}`;
-      const body = await get(base, token, `/me/orders?${q}`);
+      const body = await get(base, token, `/me/orders?${q}`, true);
       const rows = items(body);
       if (!rows.length) return result;
       const projected = rows.map((v) => stopRow(v, realms)).filter((v) => v !== null);
@@ -16629,7 +16641,7 @@ async function orcaSeesTree(path) {
 }
 
 // js/bridge/orchestra-tree.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
+import { randomUUID as randomUUID6 } from "node:crypto";
 import { existsSync as existsSync15, mkdirSync as mkdirSync23, realpathSync as realpathSync11 } from "node:fs";
 import { join as join37 } from "node:path";
 var LOCK_REASON = "do not remove or unlock: the agent raised here dies with this tree; its orchestrator frees it after the agent ends";
@@ -16664,7 +16676,7 @@ async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
   const parent = join37(source, ".worktrees");
   if (!existsSync15(parent)) mkdirSync23(parent, { mode: 448 });
   if (!directory2(parent)) return "tree_parent_unverified";
-  const operation = randomUUID5();
+  const operation = randomUUID6();
   const path = join37(parent, `orchestra-${operation}`);
   if (existsSync15(path)) return "tree_path_exists";
   r.tree = {
@@ -16923,7 +16935,11 @@ async function roleRefusal(base, token, row) {
     return "role_unverified";
   try {
     const res = await namedFetch(`${base}/nodes/${seq4}`, {
-      headers: { authorization: `Bearer ${token}`, "x-nks-realm": row.realm },
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-nks-realm": row.realm,
+        [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
+      },
       redirect: "error",
       signal: AbortSignal.timeout(1e4)
     });
@@ -16962,7 +16978,10 @@ function tactStateOf(authDir) {
 }
 async function getJson(base, token, path, redirect) {
   const res = await namedFetch(`${base}${path}`, {
-    headers: { authorization: `Bearer ${token}` },
+    headers: {
+      authorization: `Bearer ${token}`,
+      [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
+    },
     redirect,
     signal: AbortSignal.timeout(TIMEOUT_MS3)
   });
@@ -20692,8 +20711,14 @@ function attach(path, o) {
   let waitingBack = false;
   let ownRelease = false;
   let forgotten = false;
+  let dead = false;
+  let retry = null;
+  let hold = null;
+  let live2 = null;
   function tryOnce() {
+    if (dead) return;
     const sock = connect5(path);
+    live2 = sock;
     let buf = "";
     sock.setEncoding("utf8");
     sock.on("connect", () => {
@@ -20732,25 +20757,34 @@ function attach(path, o) {
     sock.on("error", () => {
     });
     sock.on("close", () => {
+      live2 = null;
+      if (dead) return;
       if (attached && handover) {
         attached = false;
         handover = false;
         waitingBack = true;
         startedAt = Date.now();
-        return void setTimeout(tryOnce, RETRY_MS3);
+        return void (retry = setTimeout(tryOnce, RETRY_MS3));
       }
       if (ownRelease) return;
-      if (forgotten) return void setInterval(() => {
-      }, SILENT_MS);
+      if (forgotten) return void (hold = setInterval(() => {
+      }, SILENT_MS));
       if (attached) return o.onGone(wd().bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s2 = ATTACH_WINDOW_MS / 1e3;
         return o.onGone(waitingBack ? wd().seatNotBack(s2, path) : wd().noSocket(path, s2));
       }
-      setTimeout(tryOnce, RETRY_MS3);
+      retry = setTimeout(tryOnce, RETRY_MS3);
     });
   }
   tryOnce();
+  return () => {
+    dead = true;
+    if (retry) clearTimeout(retry);
+    if (hold) clearInterval(hold);
+    live2?.destroy();
+    live2 = null;
+  };
 }
 
 // js/watchdog/codex.ts
@@ -23266,7 +23300,7 @@ function checkOpencode(root, out7) {
 }
 
 // js/cli/stopapi.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 var sw4 = () => words(STOP_CLI);
 var TIMEOUT_MS5 = 1e4;
 var sameServer = (a, b) => {
@@ -23326,7 +23360,7 @@ async function stopSeat(p, id, base, token) {
     if (realm === null) return { ok: false, said: sw4().unnamedGraph(seat2, p.realm) };
     const order2 = await ask2(`${at3}/stop`, "POST", realm, token, {
       reason_code: "person_request",
-      client_id: `stop-${randomUUID6()}`
+      client_id: `stop-${randomUUID7()}`
     });
     if (order2.status >= 200 && order2.status < 300) {
       let orderId = "";

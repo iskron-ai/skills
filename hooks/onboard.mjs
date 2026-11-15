@@ -93,7 +93,8 @@ var CLIENTS = {
   opencode: `opencode-${PRODUCT}`,
   pi: `pi-${PRODUCT}`,
   doctor: `${PRODUCT}-doctor`,
-  watchdog: `${PRODUCT}-watchdog`
+  watchdog: `${PRODUCT}-watchdog`,
+  dsh: `dsh-${PRODUCT}`
 };
 var SERVER_URLS = {
   ru: "https://mcp.iskron.ru/",

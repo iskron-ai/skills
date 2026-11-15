@@ -125,7 +125,8 @@ var CLIENTS = {
   opencode: `opencode-${PRODUCT}`,
   pi: `pi-${PRODUCT}`,
   doctor: `${PRODUCT}-doctor`,
-  watchdog: `${PRODUCT}-watchdog`
+  watchdog: `${PRODUCT}-watchdog`,
+  dsh: `dsh-${PRODUCT}`
 };
 var SERVER_URLS = {
   ru: "https://mcp.iskron.ru/",
@@ -180,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.5.0";
+var VERSION = "8.6.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
