@@ -233,7 +233,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.3.0";
+var VERSION = "8.4.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -17684,6 +17684,26 @@ function noteStood(own, realm, karta, name2) {
   const rec6 = readHoldRecord(key3, true);
   if (rec6) writeHoldRecord(key3, { ...rec6, provisional: own });
 }
+var WRITES = new Set(["case", "update", "arrow", "batch", "delete_node"].map(tool));
+var writes = (name2, args) => (WRITES.has(name2) || name2.startsWith(tool("add_"))) && !readsOnly(name2, args, true);
+function adopts(msg, reply2) {
+  const service = typeof msg.id === "string" && msg.id.startsWith(SERVICE_ID);
+  if (service || reply2.error || reply2.result?.isError) return false;
+  return writes(String(msg.params?.name ?? ""), msg.params?.arguments ?? {});
+}
+function mainProvisional() {
+  const s2 = state.standing;
+  return !!s2?.name && readHoldRecord(keyOf(s2.realm, String(s2.karta), s2.name), true)?.provisional === true;
+}
+function noteWork(msg, reply2) {
+  if (!adopts(msg, reply2)) return;
+  const args = msg.params?.arguments ?? {};
+  const led = args.realm == null ? state.standing : ledIn2(String(args.realm));
+  if (!led?.name) return;
+  const karta = String(led.karta);
+  if (readHoldRecord(keyOf(led.realm, karta, led.name), true)?.provisional === true)
+    noteStood(false, led.realm, karta, led.name);
+}
 function restore(rec6) {
   if (rec6.provisional !== true || !rec6.session || rec6.session !== sessionOfBridge()) return;
   const led = ledIn2(rec6.realm);
@@ -19129,6 +19149,16 @@ function localRealm(msg) {
   }));
 }
 
+// js/bridge/replynotes.ts
+async function noteReply(msg, reply2) {
+  noteCaseEntry(msg.params?.name, msg.params?.arguments, reply2);
+  const realm = msg.params?.arguments?.realm;
+  if (realm != null && adopts(msg, reply2) && mainProvisional())
+    await resolveAgainstLed(realm).catch(() => {
+    });
+  noteWork(msg, reply2);
+}
+
 // js/bridge/standdelivery.ts
 var standForHarness = async (msg, notice) => forHarness(notice(await serialized(() => withCallOrigin(msg.id, () => runStand(msg)))));
 var resumeByOrigin = (msg) => serialized(
@@ -19351,7 +19381,7 @@ async function deliverOne(msg) {
             );
           }
         }
-        noteCaseEntry(msg.params?.name, msg.params?.arguments, held2);
+        await noteReply(msg, held2);
         const reply2 = absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held2)));
         emit(forHarness(withNotice(reply2)));
       }
@@ -23561,7 +23591,7 @@ async function probeWith(file2, own, alias, foreign) {
   const id = Object.fromEntries(who.map((w12) => [w12, `${w12}@${tag}`]));
   const whoOf4 = (sessionID) => who.find((w12) => id[w12] === sessionID);
   const dirs = { mine: own, twin: alias, theirs: foreign };
-  const writes = { mine: 0, twin: 0, theirs: 0 };
+  const writes2 = { mine: 0, twin: 0, theirs: 0 };
   const hooks = {};
   const permissionHooks = [];
   const tools = /* @__PURE__ */ new Set(["question", "case_probe"]);
@@ -23579,7 +23609,7 @@ async function probeWith(file2, own, alias, foreign) {
         if (reads.has(k)) return async () => [];
         return async (arg) => {
           const who2 = whoOf4(arg?.sessionID);
-          if (who2) writes[who2] += 1;
+          if (who2) writes2[who2] += 1;
         };
       }
     }
@@ -23631,7 +23661,7 @@ async function probeWith(file2, own, alias, foreign) {
   ]).finally(() => clearTimeout(timer));
   try {
     await settle();
-    const onEvents = { ...writes };
+    const onEvents = { ...writes2 };
     const mine = await runHooks(hooks, id.mine);
     const question = { action: "question", effect: "allow" };
     const card = { action: "case_probe", effect: "allow" };
