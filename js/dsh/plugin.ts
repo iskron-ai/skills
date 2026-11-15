@@ -26,6 +26,7 @@ function agentOf(a: any): DshAgent | null {
 
 export function apply(ctx: DshCtx): void {
   const W = () => words(DSH);
+  const startedAt = Date.now(); // the plugin's own start: no hold record written earlier is this session's
   const log = (text: string): void => {
     try {
       ctx.logger?.info?.(text);
@@ -66,7 +67,7 @@ export function apply(ctx: DshCtx): void {
 
   on("agent/created", (payload) => {
     agent = agentOf(payload?.agent) ?? agent;
-    if (!hearing) hearing = startHearing(() => agent, log);
+    if (!hearing) hearing = startHearing(() => agent, log, startedAt);
   });
   on("session/disposed", () => {
     hearing?.stop(); // the session is gone: nothing more goes into it

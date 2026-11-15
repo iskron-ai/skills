@@ -5,6 +5,12 @@
 // serves a local client. The seam is the environment the plugin resolves at apply time
 // (the auth dir with its standings), so each test gets its own sandbox.
 //
+// The seat rule (stage 3, the review of 6719db4a): only the hold record the MCP bridge
+// of THIS session wrote — dsh's handshake client name, this working directory, `at` no
+// earlier than the plugin's start, not left. Another session's seat (the machine's only
+// key, a same-cwd record of another harness) is not taken; the own seat is waited for
+// within the attach window.
+//
 // ISKRON_DSH_PLUGIN points the probe at any copy (a past revision, a broken one) so it
 // can be shown red before a fix. Run with `make test-dsh`.
 import assert from "node:assert/strict";
@@ -14,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { CLIENTS } from "../delivery/index.ts";
 import { FRAME_MARK } from "../delivery/protocol.ts";
 import {
   holdFilePathOf,
@@ -31,6 +38,11 @@ const PLUGIN = (await import(`${SOURCE}?probe`)).apply;
 
 process.env.ISKRON_BRIDGE_LANG = "ru";
 
+// What dsh puts into clientInfo.name of its MCP initialize handshake — observed live
+// on 0.2.2-rc.1 (case 5251, stage 3); the bridge writes it as the hold record's
+// `client`. The probe holds it here so it names the surface, not the source tree.
+const DSH_MCP_CLIENT = "dsh-mcp-client";
+
 const KEY = "proba--931--r5";
 const OTHER = "sosed--48--r5";
 const until = async (fn, ms = 4000) => {
@@ -41,9 +53,22 @@ const until = async (fn, ms = 4000) => {
   }
   return fn();
 };
+/** A short attach window, so a deaf outcome does not wait a minute. */
+const shortWindow = (t, ms = "400") => {
+  const was = process.env.ISKRON_WATCHDOG_ATTACH_MS;
+  process.env.ISKRON_WATCHDOG_ATTACH_MS = ms;
+  t.after(() => {
+    if (was === undefined) delete process.env.ISKRON_WATCHDOG_ATTACH_MS;
+    else process.env.ISKRON_WATCHDOG_ATTACH_MS = was;
+  });
+};
 
-/** A live hold record of this working directory, at the key's own path. */
-const holdRecord = () =>
+/**
+ * A hold record as the session's own bridge writes it: the dsh MCP handshake client
+ * name, this working directory, written now. `over` spoofs another harness's or an
+ * earlier session's record.
+ */
+const holdRecord = (over = {}) =>
   JSON.stringify({
     realm: "@nks/nks-dev",
     karta: 931,
@@ -51,16 +76,21 @@ const holdRecord = () =>
     url: "https://example.invalid/",
     at: Date.now(),
     cwd: process.cwd(),
+    client: DSH_MCP_CLIENT,
+    ...over,
   });
 
-/** A sandbox with its own grant directory, standing key files and a live socket door of KEY. */
-async function sandbox(keys = [KEY], hold = false) {
+/**
+ * A sandbox with its own grant directory, standing key files and a live socket door of
+ * KEY. Hold records are written by the tests themselves after apply: a record written
+ * before the plugin started is another session's.
+ */
+async function sandbox(keys = [KEY]) {
   const dir = mkdtempSync(join(tmpdir(), "iskron-dsh-"));
   const authDir = join(dir, "auth");
   mkdirSync(join(authDir, "standings"), { recursive: true });
   process.env.ISKRON_BRIDGE_AUTH_DIR = authDir;
   for (const k of keys) writeFileSync(keyFilePathOf(authDir, k), k + "\n");
-  if (hold) writeFileSync(holdFilePathOf(authDir, KEY), holdRecord() + "\n");
   const server = createServer();
   const conns = new Set();
   server.on("connection", (sock) => {
@@ -74,6 +104,8 @@ async function sandbox(keys = [KEY], hold = false) {
     send: (ev) => {
       for (const s of conns) s.write(JSON.stringify(ev) + "\n");
     },
+    writeHold: (key = KEY, over = {}) =>
+      writeFileSync(holdFilePathOf(authDir, key), holdRecord(over) + "\n"),
     async close() {
       for (const s of conns) s.destroy();
       await new Promise((r) => server.close(r));
@@ -114,6 +146,7 @@ test("an addressed frame reaches the session as exactly one next-turn message", 
   const sent = [];
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
+  box.writeHold();
   d.emit("agent/created", { agent: d.agent, source: "startup" });
   assert(await until(() => box.conns.size === 1));
   box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
@@ -144,6 +177,7 @@ test("a disposed session detaches and nothing more is sent", async (t) => {
   const sent = [];
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
+  box.writeHold();
   d.emit("agent/created", { agent: d.agent, source: "startup" });
   assert(await until(() => box.conns.size === 1));
   d.emit("session/disposed");
@@ -153,8 +187,60 @@ test("a disposed session detaches and nothing more is sent", async (t) => {
   assert.equal(sent.length, 0);
 });
 
-test("no standing held: one loud line, no hearing", async () => {
-  const box = await sandbox([]);
+test("another harness's only seat on the machine is not this session's", async (t) => {
+  shortWindow(t);
+  const box = await sandbox();
+  t.after(() => box.close());
+  const logs = [];
+  const sent = [];
+  const d = dsh(logs, sent);
+  PLUGIN(d.ctx);
+  // The only key on the machine, alive, in this directory — but another client's.
+  box.writeHold(KEY, { client: CLIENTS.opencode });
+  d.emit("agent/created", { agent: d.agent, source: "startup" });
+  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  box.send({ kind: "frame", frame: directWord("alien-1"), raw: "{}" });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(sent.length, 0); // its frames are not this session's
+  assert.equal(box.conns.size, 0);
+});
+
+test("a record written before the plugin started is not this session's", async (t) => {
+  shortWindow(t);
+  const box = await sandbox();
+  t.after(() => box.close());
+  const logs = [];
+  const sent = [];
+  const d = dsh(logs, sent);
+  PLUGIN(d.ctx);
+  box.writeHold(KEY, { at: Date.now() - 60_000 }); // an earlier session of any client
+  d.emit("agent/created", { agent: d.agent, source: "startup" });
+  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  box.send({ kind: "frame", frame: directWord("old-1"), raw: "{}" });
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(sent.length, 0);
+  assert.equal(box.conns.size, 0);
+});
+
+test("a left seat of this directory and client is not taken", async (t) => {
+  shortWindow(t);
+  const box = await sandbox();
+  t.after(() => box.close());
+  const logs = [];
+  const sent = [];
+  const d = dsh(logs, sent);
+  PLUGIN(d.ctx);
+  box.writeHold(KEY, { left: true });
+  d.emit("agent/created", { agent: d.agent, source: "startup" });
+  assert(await until(() => logs.some((l) => l.includes("слуха нет"))));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(sent.length, 0);
+  assert.equal(box.conns.size, 0);
+});
+
+test("no own seat appears in the window: one loud line, no hearing", async (t) => {
+  shortWindow(t);
+  const box = await sandbox([]); // not one standing on the machine
   await box.close();
   const logs = [];
   const sent = [];
@@ -166,42 +252,55 @@ test("no standing held: one loud line, no hearing", async () => {
   assert.equal(sent.length, 0);
 });
 
-test("several standings: the hold record of this directory names the one", async (t) => {
-  const box = await sandbox([KEY, OTHER], true);
+test("the own seat appears after agent/created: the window picks it up, frames flow", async (t) => {
+  // The bridge of this session takes its place later than agent/created (the review of
+  // 6719db4a): until then there is not even a key file to mistake for an own seat.
+  const box = await sandbox([]);
   t.after(() => box.close());
   const logs = [];
   const sent = [];
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
   d.emit("agent/created", { agent: d.agent, source: "startup" });
-  assert(await until(() => box.conns.size === 1)); // the socket of KEY, not OTHER
+  await new Promise((r) => setTimeout(r, 2000));
+  assert.equal(box.conns.size, 0); // deaf while the seat is not there
+  writeFileSync(keyFilePathOf(box.authDir, KEY), KEY + "\n");
+  box.writeHold();
+  assert(await until(() => box.conns.size === 1, 8000));
   box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
-  box.send({ kind: "frame", frame: directWord("multi-1"), raw: "{}" });
-  assert(await until(() => sent.length === 1));
+  box.send({ kind: "frame", frame: directWord("late-seat-1"), raw: "{}" });
+  assert(await until(() => sent.length === 1, 8000));
   assert.ok(sent[0].content[0].text.includes("прямое слово соседа"));
 });
 
-test("several standings and none of this directory: one loud line, no hearing", async (t) => {
+test("two seats claim the session: one loud line, no guessing", async (t) => {
+  shortWindow(t);
   const box = await sandbox([KEY, OTHER]);
   t.after(() => box.close());
   const logs = [];
   const sent = [];
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
+  box.writeHold(KEY);
+  writeFileSync(
+    holdFilePathOf(box.authDir, OTHER),
+    holdRecord({ karta: 48, name: "sosed" }) + "\n",
+  );
   d.emit("agent/created", { agent: d.agent, source: "startup" });
   assert(await until(() => logs.some((l) => l.includes("слуха нет") && l.includes(","))));
-  await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 200));
   assert.equal(sent.length, 0);
   assert.equal(box.conns.size, 0);
 });
 
 test("compaction/end returns the role by the hold record, bare without one", async (t) => {
-  const box = await sandbox([KEY], true);
+  const box = await sandbox([KEY]);
   t.after(() => box.close());
   const logs = [];
   const sent = [];
   const d = dsh(logs, sent, 1); // the first word meets the store mid-publish (live: reenter)
   PLUGIN(d.ctx);
+  box.writeHold();
   d.emit("agent/created", { agent: d.agent, source: "startup" });
   assert(await until(() => box.conns.size === 1));
   box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
@@ -229,10 +328,13 @@ test("compaction without a hold record returns the bare word", async (t) => {
   const sent = [];
   const d = dsh(logs, sent);
   PLUGIN(d.ctx);
+  box.writeHold();
   d.emit("agent/created", { agent: d.agent, source: "startup" });
   assert(await until(() => box.conns.size === 1));
   box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
   assert(await until(() => logs.some((l) => l.includes("слушаю стояние"))));
+  // The record is gone by compaction time: the word is bare.
+  rmSync(holdFilePathOf(box.authDir, KEY), { force: true });
   d.emit("session/event", { id: "session-dsh-1" }, { type: "compaction/end", turn: 2 });
   assert(await until(() => sent.length === 1));
   const word = sent[0].content[0].text;
