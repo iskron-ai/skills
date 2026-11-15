@@ -87,9 +87,10 @@ test("the one-line form seats the pair and hands the session the same-line remai
     "m1",
   );
   assert.equal(one, "brief after the pair");
+  // Another pair: a second session with the same one waits its admission pause (#10782).
   const two = await starts.prompt(
     "s2",
-    `iskron/spawned_for: ${JSON.stringify(pair)}\nbrief line`,
+    `iskron/spawned_for: ${JSON.stringify({ ...pair, invite: 8 })}\nbrief line`,
     "m2",
   );
   assert.equal(two, "brief line");
