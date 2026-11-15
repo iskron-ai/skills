@@ -207,6 +207,7 @@ var SPAWNED_FOR = {
     unbound: () => "spawned_for: привязка взятого места к этой сессии ещё не восстановлена после проходящего отказа; мост повторит её перед следующим вызовом. Этот вызов не выполнен; другое место или вызов без пары её не заменяют.",
     schema: () => "Основание запуска: номер приглашения внутри дела и UUID дела. Регистрация должна подтвердить ту же пару; отказ не обходится другим именем или take.",
     taken: (realm, room, invite) => `Тебя взяли по зову ${invite} дела ${room} в графе ${realm}: регистрация подтвердила пару. До любой работы войди в это дело — ${tool("case")}(action="join", realm="${realm}", room="${room}") — и прочти его постановку; не вошёл — не работай, скажи почему.`,
+    gaveUp: (tries, room, invite) => `spawned_for: регистрация ${tries} раз не подтвердила зов ${invite} дела ${room}; этот экземпляр плагина больше не пытается и места не занимает. Подъём не удался — повтор только новым зовом.`,
     held: (place, realm, room, invite) => `Эта сессия уже стоит на месте ${place} по зову ${invite} дела ${room}: пара подтверждена, второе место не регистрирую. Войди в дело — ${tool("case")}(action="join", realm="${realm}", room="${room}") — до работы.`
   },
   en: {
@@ -218,6 +219,7 @@ var SPAWNED_FOR = {
     unbound: () => "spawned_for: the taken seat is not yet bound to this session again after a passing refusal; the bridge retries before the next call. This call did not run; another seat or a call without the pair does not replace it.",
     schema: () => "Launch basis: the invitation number within its case and the case UUID. Register must confirm the same pair; do not bypass a refusal with another name or take.",
     taken: (realm, room, invite) => `You were taken for invite ${invite} of case ${room} in graph ${realm}: register confirmed the pair. Before any work join that case — ${tool("case")}(action="join", realm="${realm}", room="${room}") — and read its assignment; not joined — do not work, say why.`,
+    gaveUp: (tries, room, invite) => `spawned_for: register did not confirm invite ${invite} of case ${room} ${tries} times; this plugin instance stops trying and takes no seat. The launch failed — only a new invitation retries it.`,
     held: (place, realm, room, invite) => `This session already stands on place ${place} for invite ${invite} of case ${room}: the pair is confirmed, no second place is registered. Join the case — ${tool("case")}(action="join", realm="${realm}", room="${room}") — before any work.`
   }
 };
@@ -233,7 +235,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.4.0";
+var VERSION = "8.5.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -3792,6 +3794,45 @@ import {
   writeFileSync as writeFileSync3
 } from "node:fs";
 import { join as join6 } from "node:path";
+
+// js/bridge/journal-fold.ts
+var WINDOW_MS = 6e4;
+var UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+var ROOT = /\.root-[0-9a-f]{12}\b/g;
+var shapeOf = (line) => line.replace(UUID, "<id>").replace(ROOT, ".root-<id>");
+function createFold(now2 = Date.now, windowMs = WINDOW_MS) {
+  const open = /* @__PURE__ */ new Map();
+  return (line) => {
+    const t = now2();
+    const out7 = [];
+    for (const [shape2, s3] of open)
+      if (t - s3.at >= windowMs) {
+        if (s3.folded)
+          out7.push(
+            `repeated ${s3.folded} more time(s) within ${windowMs / 1e3} s, last: ${s3.last}`
+          );
+        open.delete(shape2);
+      }
+    const shape = shapeOf(line);
+    const s2 = open.get(shape);
+    if (s2) {
+      s2.folded++;
+      s2.last = line;
+      return out7;
+    }
+    open.set(shape, { at: t, folded: 0, last: line });
+    out7.push(line);
+    return out7;
+  };
+}
+var folds = /* @__PURE__ */ new Map();
+function foldInto(path, line) {
+  let fold = folds.get(path);
+  if (!fold) folds.set(path, fold = createFold());
+  return fold(line);
+}
+
+// js/bridge/store.ts
 var b64url = (buf) => Buffer.from(buf).toString("base64url");
 var sha256 = (s2) => createHash5("sha256").update(s2).digest();
 var sleep = (ms2) => new Promise((r) => setTimeout(r, ms2));
@@ -3861,12 +3902,13 @@ function rotateJournal(path, max) {
 }
 function appendJournal(path, msg) {
   try {
+    const lines = foldInto(path, msg);
+    if (!lines.length) return;
     mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
     rotateJournal(path, 128e3);
-    appendFileSync(path, `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD} ${msg}
-`, {
-      mode: 384
-    });
+    const at3 = `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD}`;
+    appendFileSync(path, lines.map((l) => `${at3} ${l}
+`).join(""), { mode: 384 });
   } catch {
   }
 }
@@ -19659,13 +19701,11 @@ async function daemonMain(argv2) {
     try {
       mkdirSync26(run3, { recursive: true, mode: 448 });
       rotateJournal(journalPath, JOURNAL_MAX);
-      const text7 = line.trimEnd().replace(LOG_MARK, "");
-      appendFileSync5(
-        journalPath,
-        `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD} ${text7}
-`,
-        { mode: 384 }
-      );
+      const lines = foldInto(journalPath, line.trimEnd().replace(LOG_MARK, ""));
+      const at3 = `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD}`;
+      if (lines.length)
+        appendFileSync5(journalPath, lines.map((l) => `${at3} ${l}
+`).join(""), { mode: 384 });
     } catch {
     }
   };
