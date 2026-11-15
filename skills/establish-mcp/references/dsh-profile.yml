@@ -24,6 +24,6 @@
 - id: tool-skill
   config:
     catalogDescriptionMaxLength: 1024
-# Вопрос человеку Искрон задаёт карточкой в деле; вопросный тул снят.
+# Вопрос человеку Искрон задаёт карточкой в деле; опросник снят.
 - id: tool-ask-user
   disabled: true
