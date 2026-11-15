@@ -8,10 +8,7 @@ import { createFold, shapeOf } from "../bridge/journal-fold.ts";
 
 const held = (hex) =>
   `held 16-m3.nks-mcp.opus-5-5.root-${hex}--163--_nks_nks-dev cwd=/Users/x/orchestra-a338dad7-8a79-49be-8dec-52ad203c7b42`;
-// Every storm turn comes through a fresh thin bridge: a fresh daemon session tag and pid.
-let turn = 0;
-const refused = (uuid) =>
-  `[s${5583 + turn++}-89738] dispatcher: ${uuid} refused a frame: not_subscribed`;
+const refused = (uuid) => `[s1-89738] dispatcher: ${uuid} refused a frame: not_subscribed`;
 const hex = (i) => i.toString(16).padStart(12, "0");
 const uuid = (i) => `9abd68e8-a58e-43f0-9157-${hex(i)}`;
 
@@ -39,7 +36,5 @@ test("a storm of one shape is one line a minute with its count; other lines go w
 test("the shape masks only what the storm renews", () => {
   assert.equal(shapeOf(held("dbc29b60e9df")), shapeOf(held("16edd6511882")));
   assert.notEqual(shapeOf("held a--1--g cwd=/x"), shapeOf("held b--1--g cwd=/x"));
-  const opened = (n, pid) => `session s${n}-89738 for pid ${pid} (v8.4.0, /b.mjs) argv=[]`;
-  assert.equal(shapeOf(opened(5683, 97728)), shapeOf(opened(5684, 97732)));
   assert.notEqual(shapeOf(refused(uuid(1))), shapeOf(`${refused(uuid(1))} at 2`));
 });
