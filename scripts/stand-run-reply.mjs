@@ -370,7 +370,14 @@ try {
 }
 
 // The report never carries the credential, whatever a tool echoed.
-process.stdout.write(report.join("\n").split(token).join("<token>") + "\n");
+// The run's seats are revoked at its end, but their secrets (ws_token, hook_token, reply_hook)
+// are not printed: in JSON bodies and in key=value or key: value text alike.
+const SECRET = String.raw`\w*(?:token|hook|secret)\w*`;
+const redact = (s) =>
+  s
+    .replace(new RegExp(`"(${SECRET})"\\s*:\\s*"[^"]*"`, "gi"), '"$1":"<redacted>"')
+    .replace(new RegExp(`\\b(${SECRET})(\\s*[=:]\\s*)(?!<redacted>|")\\S+`, "gi"), "$1$2<redacted>");
+process.stdout.write(redact(report.join("\n").split(token).join("<token>")) + "\n");
 process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 // The machine daemon of this run's auth dir outlives its sessions by an idle window and
 // would write into the run dir after its removal: put it down first.
