@@ -27,12 +27,15 @@ function agentOf(a: any): DshAgent | null {
 export function apply(ctx: DshCtx): void {
   const W = () => words(DSH);
   const startedAt = Date.now(); // the plugin's own start: no hold record written earlier is this session's
+  // Headless dsh does not print ctx.logger at all (observed live, #10905): a loud line
+  // goes to the process's stderr too, where a person running headless sees it.
   const log = (text: string): void => {
     try {
       ctx.logger?.info?.(text);
     } catch {
       /* the console is not ours */
     }
+    console.error(text);
   };
   /**
    * A word sent from inside a session event lands after the store's publish cycle:
