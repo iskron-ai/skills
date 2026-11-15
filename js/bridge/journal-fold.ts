@@ -1,15 +1,22 @@
 // One repeating line does not crowd a machine journal out (graph @nks/nks-dev, #10782): a line
 // of a shape already written within the window is counted, not written. The shape masks what a
-// storm renews on every turn — case and seat UUIDs, a root seat's random suffix — so a launch
-// that takes a fresh seat each time folds too. The first line of a shape is written whole, its
+// storm renews on every turn — case and seat UUIDs, a root seat's random suffix, the daemon's
+// session tag and the thin bridge's pid — so a launch that takes a fresh seat through a fresh
+// bridge each time folds too. The first line of a shape is written whole, its
 // ids kept; the count goes as its own line once the window has passed, before the next line of
 // the journal. A count still open when the process ends is lost — the ceiling of this fold.
 const WINDOW_MS = 60_000;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ROOT = /\.root-[0-9a-f]{12}\b/g;
+const SESSION = /\bs\d+-\d+\b/g;
+const PID = /\bpid \d+\b/g;
 
 export const shapeOf = (line: string): string =>
-  line.replace(UUID, "<id>").replace(ROOT, ".root-<id>");
+  line
+    .replace(UUID, "<id>")
+    .replace(ROOT, ".root-<id>")
+    .replace(SESSION, "s<n>")
+    .replace(PID, "pid <n>");
 
 /** Lines to write for this one: the counts of windows that passed, then the line or nothing. */
 export function createFold(now: () => number = Date.now, windowMs = WINDOW_MS) {
