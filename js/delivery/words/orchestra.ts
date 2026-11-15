@@ -57,6 +57,8 @@ export interface OrchestraWords {
   leadOrdersUnread: (why: string) => string;
   /** Бриф поднимаемого агента после строки spawned_for. */
   brief: (realm: string, karta: number, room: string, invite: number) => string;
+  /** Бриф агента dsh (#10777): строка запуска с ролью — место модель занимает сама. */
+  dshBrief: (realm: string, karta: number, room: string) => string;
   /** Сухой такт: rows — строки по зовам через перевод строки (может быть пуст). */
   plan: (rows: string) => string;
   /** Сухой такт: зов был бы поднят этой командой. */
@@ -143,6 +145,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) =>
       `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshBrief: (realm, karta, room) =>
+      `start ${realm} #${karta} дело ${room}. Сначала — своё место по «Старту», затем ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
     planLaunch: (argv) => `поднял бы: ${argv}`,
@@ -223,6 +227,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) =>
       `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshBrief: (realm, karta, room) =>
+      `start ${realm} #${karta} case ${room}. First your seat by the Start, then ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     plan: (rows) =>
       `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
     planLaunch: (argv) => `would launch: ${argv}`,
