@@ -2289,6 +2289,27 @@ export async function startFakeNks(opts = {}) {
       }
       // Пишущая фабрика графа: пишет и без привязки, но метит запись безавторной —
       // так ведёт себя настоящая поверхность (write_unattributed_several_standings).
+      // Отказ записи: «result» — ответ тула с isError, «rpc» — ошибка JSON-RPC.
+      if (
+        msg.method === "tools/call" &&
+        st.writeFails &&
+        /^iskron_(add_|update)/.test(msg.params?.name ?? "")
+      )
+        return json(
+          res,
+          200,
+          st.writeFails === "rpc"
+            ? { jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "write failed" } }
+            : {
+                jsonrpc: "2.0",
+                id: msg.id,
+                result: {
+                  isError: true,
+                  content: [{ type: "text", text: "Ошибка: запись отклонена" }],
+                },
+              },
+          extra,
+        );
       if (msg.method === "tools/call" && /^iskron_(add_|update)/.test(msg.params?.name ?? "")) {
         const realm = msg.params.arguments?.realm;
         const bound = authorOf(sid, realm); // место канала в графе записи (#5838)

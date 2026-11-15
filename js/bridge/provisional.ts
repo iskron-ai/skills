@@ -56,18 +56,29 @@ export function noteStood(own: boolean, realm: string, karta: string, name: stri
   if (rec) writeHoldRecord(key, { ...rec, provisional: own });
 }
 
-const WRITES = new Set(["update", "arrow", "batch", "delete_node"].map(tool));
+const WRITES = new Set(["case", "update", "arrow", "batch", "delete_node"].map(tool));
 const writes = (name: string, args: Record<string, unknown>): boolean =>
-  name === tool("case")
-    ? !readsOnly(name, args, true)
-    : WRITES.has(name) || name.startsWith(tool("add_"));
+  (WRITES.has(name) || name.startsWith(tool("add_"))) && !readsOnly(name, args, true);
+
+/** The agent's write the server accepted: a refusal (tool or JSON-RPC) and a help read are no work. */
+export function adopts(msg: JsonRpcMessage, reply: JsonRpcMessage): boolean {
+  const service = typeof msg.id === "string" && msg.id.startsWith(SERVICE_ID);
+  if (service || reply.error || reply.result?.isError) return false;
+  return writes(String(msg.params?.name ?? ""), msg.params?.arguments ?? {});
+}
+
+/** The session's main seat is still provisional. */
+export function mainProvisional(): boolean {
+  const s = state.standing;
+  return (
+    !!s?.name && readHoldRecord(keyOf(s.realm, String(s.karta), s.name), true)?.provisional === true
+  );
+}
 
 /** A write went through the seat the call's graph is led by: the seat is no longer provisional. */
 export function noteWork(msg: JsonRpcMessage, reply: JsonRpcMessage): void {
-  const name = String(msg.params?.name ?? "");
+  if (!adopts(msg, reply)) return;
   const args = msg.params?.arguments ?? {};
-  const service = typeof msg.id === "string" && msg.id.startsWith(SERVICE_ID);
-  if (service || reply.result?.isError || !writes(name, args)) return;
   const led = args.realm == null ? state.standing : ledIn(String(args.realm));
   if (!led?.name) return;
   const karta = String(led.karta);

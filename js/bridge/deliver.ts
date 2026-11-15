@@ -388,7 +388,7 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         }
         // connect/mint: the bridge takes the socket and appends how to listen; the reply notes
         // the place — a satellite's case join, a provisional seat's first write (replynotes.ts).
-        noteReply(msg, held);
+        await noteReply(msg, held);
         const reply = absorbCloseReply(msg, absorbRevokeReply(msg, absorbChannelReply(msg, held)));
         emit(forHarness(withNotice(reply)));
       }
