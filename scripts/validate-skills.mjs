@@ -189,7 +189,11 @@ function checkPromisedFiles(name) {
   const collect = (d, prefix) => {
     if (!existsSync(d)) return;
     for (const e of readdirSync(d, { withFileTypes: true })) {
-      if (e.isDirectory()) collect(join(d, e.name), `${prefix}${e.name}/`);
+      // A shipped directory is a promise kept too: a package of files (references/dsh-plugin).
+      if (e.isDirectory()) {
+        shipped.add(`${prefix}${e.name}`);
+        collect(join(d, e.name), `${prefix}${e.name}/`);
+      }
       else { shipped.add(`${prefix}${e.name}`); shipped.add(e.name); }
     }
   };
