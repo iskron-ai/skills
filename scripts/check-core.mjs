@@ -19,7 +19,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const CORE_DIRS = ["bridge", "shared", "opencode", "extension", "watchdog", "cli"];
+const CORE_DIRS = ["bridge", "shared", "opencode", "extension", "watchdog", "cli", "dsh"];
 // A new directory under js/ must be named here or in CORE_DIRS, so a new core
 // directory cannot slip past the gate unchecked.
 const NOT_CORE = new Set(["delivery", "roadmap", "tests", "node_modules"]);

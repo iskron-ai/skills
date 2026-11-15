@@ -24,6 +24,7 @@ const OUTPUTS = [
   "skills/establish-mcp/scripts/iskron.mjs",
   "extensions/iskron.js",
   "skills/establish-mcp/scripts/opencode-plugin.js",
+  "skills/establish-mcp/references/dsh-plugin/index.js",
   "skills/product-roadmap/references/roadmap-template.html",
   "hooks/onboard.mjs",
   "hooks/rituals.mjs",
@@ -35,6 +36,7 @@ const OUTPUTS = [
 const PENDING = new Map([
   ["hooks/onboard.mjs", [7, 15, 0]],
   ["hooks/rituals.mjs", [7, 30, 0]],
+  ["skills/establish-mcp/references/dsh-plugin/index.js", [8, 6, 0]],
 ]);
 
 const common = {
@@ -95,6 +97,13 @@ async function produce() {
   outputs.set(
     "skills/establish-mcp/scripts/opencode-plugin.js",
     await bundleNode("js/opencode/plugin.ts"),
+  );
+
+  // Плагин слуха dsh (DeepSeek Harness) — кордис-бандл с экспортом apply(ctx), без
+  // импортов; пакет бандла (package.json, cordis.patch.yml) рядом — исходник.
+  outputs.set(
+    "skills/establish-mcp/references/dsh-plugin/index.js",
+    await bundleNode("js/dsh/plugin.ts"),
   );
 
   // Рендер роадмапа инлайнится в html-шаблон на месте метки; data-объект

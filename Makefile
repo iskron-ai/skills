@@ -1,4 +1,4 @@
-.PHONY: check deps validate check-bundles check-surface check-core lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update build build-js build-release check-js check-frozen surface hooks
+.PHONY: check deps validate check-bundles check-surface check-core lint format format-check typecheck test test-coverage test-watchdog test-extension test-opencode test-codex test-stand test-update test-dsh build build-js build-release check-js check-frozen surface hooks
 
 # Run the full CI gate locally: frontmatter contract + bundle sync + surface lint
 # + the JS ladder (lint → format → types → shipped outputs in sync → the
@@ -62,6 +62,11 @@ test-coverage: build-js
 # One suite at a time, for the red-probe discipline (see AGENTS.md).
 test-watchdog: build-js
 	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/standing-*.test.mjs
+
+# Probe for the dsh hearing plugin — the built bundle against a stand-in dsh context
+# and a stand-in standing socket (frames, repeats, disposal, compaction).
+test-dsh: build-js
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/dsh-plugin.test.mjs
 
 test-extension: build-js
 	@node scripts/run-tests.mjs js/tests/extension.test.mjs
