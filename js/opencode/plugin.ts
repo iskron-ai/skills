@@ -65,7 +65,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // and an ownerless bridge's frame goes to the freshest one seen — the v2 context lists no sessions.
   const roots = new Map<string, string>();
   const seen = new Map<string, number>();
-  const spawnStarts = createSpawnStarts((sessionID) => ctx.session.context({ sessionID } as any));
+  const spawnStarts = createSpawnStarts(
+    (sessionID) => ctx.session.context({ sessionID } as any),
+    (word) => say(word, "error"),
+  );
   // Child → parent as learnt: the owner's stop reaches a session's descendants (channel.ts, #7440).
   const parents = new Map<string, string>();
   async function rootOf(sessionID: string): Promise<string> {
@@ -253,6 +256,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         spawnStarts.guard(sid);
         if (root) prepared.ride();
       } catch (e) {
+        spawnStarts.failed(sid);
         await spawnStarts.cleanup(sid, () => half.releaseSeat(sid));
         if (root) half.finishSeat(sid);
         throw e;
