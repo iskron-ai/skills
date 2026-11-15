@@ -1,5 +1,20 @@
 # Changelog
 
+## [8.5.0](https://github.com/iskron-ai/skills/compare/v8.4.0...v8.5.0) (2026-11-15)
+
+
+### Features
+
+* **iskron:** a quota refusal on any axis, or a suspended source, is not retried ([#781](https://github.com/iskron-ai/skills/issues/781)) ([6a06ea9](https://github.com/iskron-ai/skills/commit/6a06ea93b90a59035c4276444686f63ec7d5f10d))
+* **onboarding:** the window wizard's prompt is told by an explicit line, not guessed ([#782](https://github.com/iskron-ai/skills/issues/782)) ([0e7cc30](https://github.com/iskron-ai/skills/commit/0e7cc30670e35e94a4ec26bb4591cd3c15c7657a))
+
+
+### Bug Fixes
+
+* **establish-mcp:** the dsh section names what the environment loses, the web question tool and the unverified hearing ([#777](https://github.com/iskron-ai/skills/issues/777)) ([948cb8c](https://github.com/iskron-ai/skills/commit/948cb8c9e8246ae9f5e2d757fecb3512f3a41675))
+* **opencode:** a burst of sessions cannot pass the admission bound ([#780](https://github.com/iskron-ai/skills/issues/780)) ([7bbf840](https://github.com/iskron-ai/skills/commit/7bbf8406e25c6c447288d8951278a2d79c76f293))
+* **opencode:** bound spawned_for retries across sessions and fold repeating journal lines ([#779](https://github.com/iskron-ai/skills/issues/779)) ([d7c9c62](https://github.com/iskron-ai/skills/commit/d7c9c62153ac2a3e9ace41c55e9ee0fd44a568c5))
+
 ## [8.4.0](https://github.com/iskron-ai/skills/compare/v8.3.0...v8.4.0) (2026-11-15)
 
 
