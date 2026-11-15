@@ -69,6 +69,7 @@ export { DEAF, type DeafWords } from "./words/deaf.ts";
 export { DOCTOR, type DoctorWords } from "./words/doctor.ts";
 export { HARNESS, type HarnessWords } from "./words/doctorharness.ts";
 export { DOOR, type DoorWords } from "./words/door.ts";
+export { DSH, type DshWords } from "./words/dsh.ts";
 export {
   CASE_LINE,
   type CaseLineWords,

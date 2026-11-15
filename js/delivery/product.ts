@@ -45,12 +45,13 @@ export const SUB_ENTRY_PREFIX = `${PRODUCT}-sub`;
 /** Запись MCP, ведущая к этой поставке, — по имени или команде (doctor). */
 export const CONNECTOR_PATTERN = /iskron|искрон|\bnks\b/i;
 
-/** Имена клиентов MCP, которыми представляются части поставки. */
+/** Имена клиентов MCP, которыми представляются части поставки; dsh — источник сообщений слуха. */
 export const CLIENTS = {
   opencode: `opencode-${PRODUCT}`,
   pi: `pi-${PRODUCT}`,
   doctor: `${PRODUCT}-doctor`,
   watchdog: `${PRODUCT}-watchdog`,
+  dsh: `dsh-${PRODUCT}`,
 } as const;
 
 /** Продовые адреса сервера по языку (#5040); умолчание — адрес языка по умолчанию. */
