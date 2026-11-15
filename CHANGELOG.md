@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.4.0](https://github.com/iskron-ai/skills/compare/v8.3.0...v8.4.0) (2026-11-15)
+
+
+### Features
+
+* **establish-mcp:** профиль-патч DeepSeek Harness в поставке ([#773](https://github.com/iskron-ai/skills/issues/773)) ([ab02ea5](https://github.com/iskron-ai/skills/commit/ab02ea527a98e58dc063a30c0af0d2ce76144d3e))
+
+
+### Bug Fixes
+
+* **bridge:** a provisional seat is adopted only by an accepted write, through any alias of its graph ([#776](https://github.com/iskron-ai/skills/issues/776)) ([e8539fd](https://github.com/iskron-ai/skills/commit/e8539fd79c7d74f5fc25b302bb4f8c559c7aef32))
+* **bridge:** first write through a provisional seat makes it the session's own ([#775](https://github.com/iskron-ai/skills/issues/775)) ([72918de](https://github.com/iskron-ai/skills/commit/72918de28c72ffe484fb4fdb4902ee02def50f0a))
+
 ## [8.3.0](https://github.com/iskron-ai/skills/compare/v8.2.3...v8.3.0) (2026-11-14)
 
 
