@@ -61,6 +61,7 @@ export async function launchDsh(
       cwd: run.worktree,
       env,
       detached: true,
+      windowsHide: true,
       stdio: ["ignore", out, err],
     });
   } finally {
