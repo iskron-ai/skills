@@ -132,8 +132,10 @@ export async function quench(
         if (!r.exec && !r.tree) r.state = "ended";
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
       } else if (got.status === 409 && r.idle_due) {
-        // The platform saw a live composition (#7518): the agent lives, the order is not repeated.
+        // The platform saw a live composition (#7518): the agent lives, the order is not repeated —
+        // it sits somewhere, so the no-join window no longer applies to it either.
         delete r.idle_due;
+        r.sat = true;
         said.push(w().leadRow(r.realm, r.room, r.invite, "composition_changed"));
       } else said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_refused_${got.status}`));
     } catch (e) {

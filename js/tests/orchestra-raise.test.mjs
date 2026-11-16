@@ -1407,6 +1407,27 @@ test("quench: a composition_changed refusal of the order leaves the agent alive,
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
 });
 
+test("quench: a composition_changed refusal of a never-sat seat past the window is not re-sent unfenced", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_EXIT: "0" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await new Promise((done) => setTimeout(done, 6_000));
+  await o.fake.control({
+    orders_stop_answer: { status: 409, body: { error: "composition_changed" } },
+  });
+  await o.queue([], [signal(1, 9, []), idleSignal(2, 9, "idle_due")]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /invite 9: composition_changed/, r.out);
+  await o.step();
+  const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
+  // The platform saw a live composition: no second order, least of all one without if_signal_n.
+  assert.equal(stops.length, 1, JSON.stringify(stops.map((s) => s.body)));
+  assert.equal(stops[0].body.if_signal_n, 2);
+});
+
 test("quench: the caller gone during the re-check — no stop order after it (#8202)", async (t) => {
   const o = await leading(t);
   await o.queue([invite(9, GOOD)]);
