@@ -159,6 +159,7 @@ var RUNTIME_PREFIX = PRODUCT;
 var GLOBAL_PREFIX = `__${PRODUCT}`;
 var BRIDGE_SKILL = "establish-mcp";
 var BRIDGE_FILE = `${PRODUCT}.mjs`;
+var DSH_PROFILE = "references/dsh-profile.yml";
 var PLUGIN_FILE = "opencode-plugin.js";
 var PLUGIN_COPY_FILE = `${PRODUCT}.js`;
 var SKILL_STAMP_MASK = "*/SKILL.md";
@@ -236,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.9.0";
+var VERSION = "8.10.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -16104,6 +16105,20 @@ function mcpSession(url, token, client = "bridge") {
   };
 }
 
+// js/bridge/node-body.ts
+function fencedBody(card) {
+  const lines = card.split("\n");
+  const open = lines.findIndex((l) => /^⟦+$/.test(l));
+  if (open < 0) return null;
+  const close = "⟧".repeat([...lines[open]].length);
+  const end = lines.indexOf(close, open + 1);
+  return end < 0 ? null : lines.slice(open + 1, end).join("\n");
+}
+async function nodeBody(call, look, realm, seq4) {
+  const card = await call(look, { realm, node_id: `#${seq4}` });
+  return fencedBody(card) ?? await call(look, { realm, node_id: `#${seq4}`, raw: true });
+}
+
 // js/bridge/orchestra-clone.ts
 import { existsSync as existsSync13 } from "node:fs";
 import { homedir as homedir11 } from "node:os";
@@ -16225,8 +16240,9 @@ var runnable = (p) => {
 function dshReady(spec) {
   const bin = spec.bin ? runnable(spec.bin) ? spec.bin : null : (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((d) => join36(d, "dsh")).find(runnable) ?? null;
   if (!bin) return { code: "dsh_missing" };
-  const patch = spec.patch ?? join36(homedir12(), ".agents", "skills", "establish-mcp", "references", "dsh-profile.yml");
-  if (!existsSync14(patch) || !statSync8(patch).isFile()) return { code: "dsh_patch_missing" };
+  const patch = spec.patch ?? (DSH_PROFILE ? join36(homedir12(), ".agents", "skills", BRIDGE_SKILL, DSH_PROFILE) : null);
+  if (!patch || !existsSync14(patch) || !statSync8(patch).isFile())
+    return { code: "dsh_patch_missing" };
   return { bin, patch };
 }
 function modelPatch(model) {
@@ -16374,7 +16390,7 @@ async function readLaunchers(serverUrl, token) {
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine = [];
     for (const seq4 of seqs) {
-      const body = await s2.call(tool("look"), { realm: "mind", node_id: `#${seq4}`, raw: true });
+      const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       const l = parseLauncher(body);
       if ("code" in l) {
         out7.refused.push({ what: l.launcher ?? `#${seq4}`, code: l.code });
@@ -17734,7 +17750,7 @@ async function ensureLauncher(serverUrl, token, spec) {
       limit: 50
     });
     for (const seq4 of new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))) {
-      const body = await s2.call(tool("look"), { realm: "mind", node_id: `#${seq4}`, raw: true });
+      const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       if (parseLauncher(body).launcher === spec.launcher)
         return w9().describeTaken(spec.launcher, `#${seq4}`);
     }

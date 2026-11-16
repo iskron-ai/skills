@@ -1,5 +1,25 @@
 # Changelog
 
+## [8.10.0](https://github.com/iskron-ai/skills/compare/v8.9.0...v8.10.0) (2026-11-16)
+
+
+### Features
+
+* **help:** connecting an agent is one step per harness, commands verbatim from the delivery's SETUP ([#815](https://github.com/iskron-ai/skills/issues/815)) ([a6c02d6](https://github.com/iskron-ai/skills/commit/a6c02d67d82819c2103b857651f727e865416bc6))
+
+
+### Bug Fixes
+
+* **bridge:** dsh's default profile patch comes from the delivery layer; a delivery without one requires patch ([#818](https://github.com/iskron-ai/skills/issues/818)) ([3980bfe](https://github.com/iskron-ai/skills/commit/3980bfe125d34b4172de114b29dd0b1224832aba))
+* **bridge:** the orchestrator reads launcher descriptions from the card's fences; raw only for an older server ([#821](https://github.com/iskron-ai/skills/issues/821)) ([aaf6a66](https://github.com/iskron-ai/skills/commit/aaf6a666b2925bca99f18c7b467e81b8c33495f3))
+* **establish-mcp:** the dsh profile patch passes AGENTS.md whole, not cut at 64 KB ([#824](https://github.com/iskron-ai/skills/issues/824)) ([4a6e29d](https://github.com/iskron-ai/skills/commit/4a6e29de2e8fdf30cac46b74070a0770e43761bf))
+* **help:** Claude Desktop goes the bridge's way, no connector; the reference's commands are checked against SETUP; onboarding claims nothing of the window and invents no path ([#820](https://github.com/iskron-ai/skills/issues/820)) ([420eb76](https://github.com/iskron-ai/skills/commit/420eb76dd526c24dfb33abc9184f7d63202a2551))
+* **onboarding:** the opening is always the skill's — what Iskron does and the name; no form, no wizard line, no handle asked ([#814](https://github.com/iskron-ai/skills/issues/814)) ([3d92e2b](https://github.com/iskron-ai/skills/commit/3d92e2b56de89e292647b03b27d72ead7d5a924b))
+* **onboarding:** the opening is said once per conversation; a known name is not asked again ([#817](https://github.com/iskron-ai/skills/issues/817)) ([207a067](https://github.com/iskron-ai/skills/commit/207a0671ed44849db8daaa17aa5bf1fd8ee77edc))
+* **onboarding:** the window's wizard line still marks the opening as said, until the window's form is gone ([#822](https://github.com/iskron-ai/skills/issues/822)) ([9a623bc](https://github.com/iskron-ai/skills/commit/9a623bccd0f7c42aaa71e843074bd9d952df376e))
+* **onboarding:** the wizard line marks both the opening and the completion as shown ([#823](https://github.com/iskron-ai/skills/issues/823)) ([e655b84](https://github.com/iskron-ai/skills/commit/e655b84ef2fa5ac39ae07d0efbebc2cc0c496d37))
+* readthrough findings on the 8.10.0 candidate (establish-mcp, onboarding) ([#826](https://github.com/iskron-ai/skills/issues/826)) ([f05a854](https://github.com/iskron-ai/skills/commit/f05a8549dd134e4aeb07d85a69a9c0a58f34c387))
+
 ## [8.9.0](https://github.com/iskron-ai/skills/compare/v8.8.1...v8.9.0) (2026-11-16)
 
 
