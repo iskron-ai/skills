@@ -241,6 +241,9 @@ export async function startFakeNks(opts = {}) {
     // фейк примет СВЕРХ снимка. Проба, которая им пользуется, моделирует сервер,
     // которого ещё нет, и обязана сказать в комментарии, какой перемены ждёт.
     futureArgs: opts.futureArgs ?? {},
+    // Обратное: { тул: [имена] }, которые фейк уронит, хотя снимок их объявляет, — сервер
+    // прошлой версии, без поля (проба называет, какой сервер моделирует).
+    pastArgs: opts.pastArgs ?? {},
     kartaTypes: {}, // роль → тип в шапке iskron_look (主 — роль владельца)
     searchRefuse: false, // iskron_search отвечает отказом
     // Личный граф: { missing: true } — признак missing; { rules: [{ seq, name, text }] } — present
@@ -1153,6 +1156,7 @@ export async function startFakeNks(opts = {}) {
         const declared = DECLARED_ARGS[name];
         if (declared && sent && typeof sent === "object") {
           const ok = new Set([...declared, ...(st.futureArgs[name] ?? [])]);
+          for (const k of st.pastArgs[name] ?? []) ok.delete(k);
           msg.params.arguments = Object.fromEntries(
             Object.entries(sent).filter(([k]) => ok.has(k)),
           );

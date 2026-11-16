@@ -200,7 +200,9 @@ for (const rule of [
   test(`spawned_for ${rule}: no retry or success, new own seat removed`, async (t) => {
     const { bridge, fake } = await ready(t, ASKS_FIELDS);
     fake.state.structured = true;
-    if (rule !== "missing_echo") {
+    // missing_echo — сервер до spawned_for в channel: поле молча роняется, эха нет.
+    if (rule === "missing_echo") fake.state.pastArgs.iskron_channel = ["spawned_for"];
+    else {
       fake.state.futureArgs.iskron_channel = ["spawned_for"];
       fake.state.registerRefuseNext = [
         { text: rule, status: rule.includes("claimed") || rule.includes("held") ? 409 : 422, rule },
