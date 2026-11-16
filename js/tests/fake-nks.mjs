@@ -2108,18 +2108,27 @@ export async function startFakeNks(opts = {}) {
         msg.method === "tools/call" &&
         a0.realm === "mind" &&
         ((msg.params.name === "iskron_search" && a0.attrs_filter === "slice:orchestra") ||
-          (msg.params.name === "iskron_look" && a0.raw === true))
+          (msg.params.name === "iskron_look" && (a0.raw === true || st.mind?.fenced)))
       ) {
+        // st.mind.fenced — сервер после снятия raw (MCP 0.150, #10962): raw отказывает, карточка
+        // несёт тело побайтно между строкой ⟦ и строкой ⟧.
         const list = st.mind?.orchestra ?? [];
-        const refuse = msg.params.name === "iskron_search" && st.mind?.refuseOrchestra;
+        const refuse =
+          (msg.params.name === "iskron_search" && st.mind?.refuseOrchestra) ||
+          (msg.params.name === "iskron_look" && a0.raw === true && st.mind?.fenced);
         const seq = String(a0.node_id ?? "").replace(/^#/, "");
+        const body = list.find((d) => String(d.seq) === seq)?.body ?? "";
         const text =
           msg.params.name === "iskron_search"
             ? list.length
               ? `Найдено ${list.length} узлов:\n` +
                 list.map((d) => `  🚀 Запускатель (#${d.seq}, phenomenon, Pt/Va/Ad, v1)`).join("\n")
               : "Ничего не найдено."
-            : (list.find((d) => String(d.seq) === seq)?.body ?? "");
+            : refuse
+              ? "raw снят: тело — на карточке"
+              : a0.raw === true
+                ? body
+                : `🚀 Запускатель (#${seq}, phenomenon, v1)\n  СТРЕЛКИ: —\n\n  ОПИСАНИЕ:\n⟦\n${body}\n⟧\n`;
         return json(
           res,
           200,

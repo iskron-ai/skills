@@ -85,6 +85,16 @@ test("dsh: no dsh binary or no patch — refused by code in status, no tree, no 
   assert.equal(p.orcaCalls().length + o.orcaCalls().length, 0);
 });
 
+// A server without the raw read (#10962): the description's body comes from the card's fences,
+// and the orchestrator still raises; an older server's raw read still works (every other probe).
+test("dsh: a server without raw — the description is read from the card's fences and raises", async (t) => {
+  const o = await leadingDsh(t, { fenced: true });
+  await o.queue([invite(19)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 19: launched/, r.out);
+  assert.doesNotMatch((await o.status()).out, /refused/);
+});
+
 test("dsh: no seat within the window — the bridge ends its own process, and the exit frees the slot", async (t) => {
   const o = await leadingDsh(t, {
     env: { FAKE_DSH_MODE: "hang", ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "500" },
