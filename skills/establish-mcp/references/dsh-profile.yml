@@ -24,6 +24,10 @@
 - id: tool-skill
   config:
     catalogDescriptionMaxLength: 1024
+# AGENTS.md проекта — целиком: по умолчанию инструкции режутся на 64 КБ.
+- id: agent-instructions
+  config:
+    maxBytes: 262144
 # Вопрос человеку Искрон задаёт карточкой в деле; опросник снят.
 - id: tool-ask-user
   disabled: true
