@@ -81,7 +81,7 @@ codex plugin add iskron@iskron
 dsh headless --patch "$SKILL_DIR/references/dsh-profile.yml" "<задача>"
 ```
 
-Либо записи этого файла дописываются в слой патчей своего профиля, `$DSH_HOME/profiles/<профиль>/cordis.patch.yml`; `settings.yaml` в headless не применяется. Патч несёт три вещи:
+Либо записи этого файла дописываются в слой патчей своего профиля, `$DSH_HOME/profiles/<профиль>/cordis.patch.yml`; `settings.yaml` в headless не применяется. Патч несёт четыре вещи:
 
 - **запись MCP моста** — stdio, `node ~/.iskron-bridge/iskron-bridge.mjs`. Процесс MCP получает от dsh очищенное окружение: имена с `TOKEN`, `KEY`, `SECRET` в нём пропадают (это наблюдалось), что ещё — не установлено. Поэтому нужное мосту запись передаёт явно из окружения самого dsh — `HOME`, `ISKRON_BRIDGE_TOKEN`, `ISKRON_BRIDGE_URL`; другую переменную моста (например `ISKRON_BRIDGE_OWNER_ROLE`) допиши в `env` записи тем же способом. Файлы `~/.iskron-bridge/token` и `server` мост читает и здесь (ниже, «Вход» и «Сервер: use»). Тулы приходят под именами `mcp__iskron__iskron_*` — это те же `iskron_*`;
 - **каталог скиллов без обрезки** — по умолчанию dsh режет описание на 500 знаках, и хвост с триггерами пропадает;
