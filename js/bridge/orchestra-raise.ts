@@ -48,7 +48,8 @@ export async function raiseRows(
     const { row, own } = resolved;
     const dsh = own.harnesses[String(row.harness).trim()].dsh;
     if (dsh) {
-      // The bridge raises dsh itself (#10777): Orca is never asked, its checkout neither.
+      // Adapter bridge (#10096, #10777): the bridge raises dsh itself — Orca is never asked, its
+      // checkout neither, and need not be on the machine.
       const got = await dshCheckout(own, dsh, row, canon);
       if (gone?.gone) break;
       const why =
