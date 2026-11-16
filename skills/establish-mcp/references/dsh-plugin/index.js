@@ -114,7 +114,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "8.8.1";
+var VERSION = "8.9.0";
 
 // js/delivery/words/asks.ts
 var ASK = {
