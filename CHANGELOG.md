@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.7.0](https://github.com/iskron-ai/skills/compare/v8.6.0...v8.7.0) (2026-11-16)
+
+
+### Features
+
+* **bridge:** the orchestrator raises a dsh agent itself — dsh headless in its own tree, the pair in the environment ([#793](https://github.com/iskron-ai/skills/issues/793)) ([b24693e](https://github.com/iskron-ai/skills/commit/b24693e30223128642e14d96cabcda2e656417c3))
+
+
+### Bug Fixes
+
+* **intake:** a forwarded message's targets are found through minding; REALITY names the dsh hearing class ([#791](https://github.com/iskron-ai/skills/issues/791)) ([a94421c](https://github.com/iskron-ai/skills/commit/a94421c9dd7d490a8d6931fe38c37023ca1f7462))
+
 ## [8.6.0](https://github.com/iskron-ai/skills/compare/v8.5.0...v8.6.0) (2026-11-15)
 
 
