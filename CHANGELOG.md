@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.9.0](https://github.com/iskron-ai/skills/compare/v8.8.1...v8.9.0) (2026-11-16)
+
+
+### Features
+
+* **opencode:** graph-reading tools stand outside code mode ([#809](https://github.com/iskron-ai/skills/issues/809)) ([aaa3c58](https://github.com/iskron-ai/skills/commit/aaa3c588a6c4bbf2e997d656e2cce9b1acd81cf1))
+
+
+### Bug Fixes
+
+* **writing:** a node's body is taken byte for byte as the look tool's description says, not from the card ([#813](https://github.com/iskron-ai/skills/issues/813)) ([fad0138](https://github.com/iskron-ai/skills/commit/fad0138fd197a4a677eea2bee69ca802c2b7ec87))
+* **writing:** how to take a node's body byte for byte is the look tool's description, not a retold format ([#811](https://github.com/iskron-ai/skills/issues/811)) ([62928c1](https://github.com/iskron-ai/skills/commit/62928c1358271780c9dce1191355219df6b0e0d7))
+
 ## [8.8.1](https://github.com/iskron-ai/skills/compare/v8.8.0...v8.8.1) (2026-11-16)
 
 
