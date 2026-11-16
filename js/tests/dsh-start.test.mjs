@@ -58,7 +58,11 @@ function dsh(t) {
   };
   PLUGIN({ on: (name, fn) => handlers.set(name, fn), logger: { info: () => {} } });
   t.after(() => handlers.get("session/disposed")?.());
-  return { agent, created: (a, source) => handlers.get("agent/created")?.({ agent: a, source }) };
+  return {
+    agent,
+    created: (a, source) => handlers.get("agent/created")?.({ agent: a, source }),
+    disposed: () => handlers.get("session/disposed")?.(),
+  };
 }
 
 const textOf = (a) => {
@@ -81,6 +85,21 @@ test("an own cover puts the start word with the graph and role into the system p
   const sub = d.agent();
   d.created(sub, "startup");
   assert.equal(sub.sections.length, 0);
+});
+
+test("a long process: the next session after a disposed one gets its own start word", (t) => {
+  repo(t, OWN);
+  const d = dsh(t);
+  const first = d.agent();
+  d.created(first, "startup");
+  textOf(first);
+  d.disposed();
+  const next = d.agent();
+  d.created(next, "startup");
+  assert.ok(
+    textOf(next).includes(DSH.ru.startListen()),
+    "the second session's root hears the word",
+  );
 });
 
 test("a resumed session hears why it stands again", (t) => {
