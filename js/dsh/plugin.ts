@@ -1,7 +1,8 @@
 // The delivery's ear inside a dsh (DeepSeek Harness) session — a Cordis bundle entry
 // applied as `apply(ctx)` (graph @nks/nks-dev, node #10776). No bridge and no tools of
 // its own: the machine bridge holds the standing, and the ear turns frames addressed to
-// the seat into next-turn messages of the live session (hearing.ts); a compacted session
+// the seat into next-turn messages of the live session (hearing.ts); the session's first
+// agent gets the start word in its system prompt (start.ts, #10921); a compacted session
 // gets its role back (compaction.ts); a disposed session hears nothing more.
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK events without a schema */
 import { DSH } from "../delivery/index.ts";
@@ -10,6 +11,7 @@ import { words } from "../shared/lang.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
 import { roleWord } from "./compaction.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
+import { putStartWord } from "./start.ts";
 
 export interface DshCtx {
   on(event: string, fn: (...args: any[]) => void): unknown;
@@ -68,7 +70,14 @@ export function apply(ctx: DshCtx): void {
     }
   };
 
+  let started = false; // the process's first agent is the session's; later ones are its subagents
   on("agent/created", (payload) => {
+    if (!started) {
+      started = true;
+      putStartWord(payload?.agent, payload?.source, process.cwd(), (why) =>
+        log(W().notDelivered(why)),
+      );
+    }
     agent = agentOf(payload?.agent) ?? agent;
     if (!hearing) hearing = startHearing(() => agent, log, startedAt);
   });

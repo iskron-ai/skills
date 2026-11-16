@@ -1,5 +1,6 @@
 // Слова слуха dsh-сессии (dsh/hearing.ts): строки, которыми ухо говорит в консоль dsh —
-// сигнал стояния, глухота без места и недоставленное в сессию. Форма сообщения плагина
+// сигнал стояния, глухота без места и недоставленное в сессию; хвосты слова старта (dsh/start.ts,
+// узел #10921) — само слово общее с OpenCode (PREPARE.start). Форма сообщения плагина
 // и строка возврата роли после сжатия — общие (COMPACTION), не здесь.
 import type { Lang } from "../lang.ts";
 
@@ -16,6 +17,10 @@ export interface DshWords {
   seatGone: (why: string) => string;
   /** Кадр или слово не дошли до живой сессии. */
   notDelivered: (why: string) => string;
+  /** Хвост слова старта новой сессии (dsh/start.ts): место слушает плагин. */
+  startListen: () => string;
+  /** Хвост слова старта продолженной сессии: место снято с прошлым процессом. */
+  startResumed: () => string;
 }
 
 export const DSH: Readonly<Record<Lang, DshWords>> = {
@@ -28,6 +33,10 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
     gone: (why) => `место ушло: ${why}`,
     seatGone: (why) => `место снято: ${why}`,
     notDelivered: (why) => `в сессию не дошло: ${why}`,
+    startListen: () =>
+      "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами.",
+    startResumed: () =>
+      "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand); сказанное месту после выхода придёт лежалым.",
   },
   en: {
     listening: (key) => `listening on standing ${key}`,
@@ -38,5 +47,9 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
     gone: (why) => `the seat is gone: ${why}`,
     seatGone: (why) => `the seat was taken off: ${why}`,
     notDelivered: (why) => `did not reach the session: ${why}`,
+    startListen: () =>
+      "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns.",
+    startResumed: () =>
+      "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand); what was said to the seat after the exit arrives late.",
   },
 };
