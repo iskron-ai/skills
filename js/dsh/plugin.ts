@@ -70,7 +70,9 @@ export function apply(ctx: DshCtx): void {
     }
   };
 
-  let started = false; // the process's first agent is the session's; later ones are its subagents
+  // The session's first agent is its root; later ones are its subagents. A disposed session
+  // makes the next agent/created a new session's root — a long process (dsh web) has many.
+  let started = false;
   on("agent/created", (payload) => {
     if (!started) {
       started = true;
@@ -85,6 +87,7 @@ export function apply(ctx: DshCtx): void {
     hearing?.stop(); // the session is gone: nothing more goes into it
     hearing = null;
     agent = null;
+    started = false;
   });
   on("session/event", (_session, ev) => {
     // A failed compaction kept the context: no word about a compaction that did not happen.
