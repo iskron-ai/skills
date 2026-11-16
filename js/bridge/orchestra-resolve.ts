@@ -6,7 +6,7 @@ import { LIVE, type Run } from "./orchestra-runs.ts";
 type Row = Record<string, unknown>;
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 const missing = (v: unknown): boolean => v === null || v === undefined;
-const supported = (h: string): boolean => h === "opencode";
+const supported = (h: string): boolean => h === "opencode" || h === "dsh";
 
 export function resolveInvite(
   source: Row,

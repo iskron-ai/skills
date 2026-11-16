@@ -13,6 +13,7 @@ import { tool } from "../delivery/index.ts";
 import { mcpSession } from "../shared/mcpsession.ts";
 import { parseExec } from "./exec-spec.ts";
 import { parseClone } from "./orchestra-clone.ts";
+import { parseDsh } from "./orchestra-dsh.ts";
 import type { HarnessOffer, Launcher, Launchers } from "./orchestra-launcher-types.ts";
 export type { HarnessOffer, Launcher, Launchers } from "./orchestra-launcher-types.ts";
 
@@ -50,7 +51,11 @@ export function parseLauncher(raw: string): Launcher | { code: string; launcher?
     if (!Array.isArray(x.models) || !x.models.every(str))
       return { code: "harness_invalid", launcher };
     harnesses[name] = { models: (x.models as string[]).map((m) => m.trim()) };
-    if (Object.hasOwn(x, "exec")) {
+    if (name === "dsh") {
+      const dsh = parseDsh(x);
+      if (!dsh) return { code: "dsh_invalid", launcher };
+      harnesses[name].dsh = dsh;
+    } else if (Object.hasOwn(x, "exec")) {
       const exec = name === "opencode" ? parseExec(x.exec, harnesses[name].models) : null;
       if (!exec) return { code: "exec_invalid", launcher };
       harnesses[name].exec = exec;

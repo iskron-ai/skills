@@ -1,9 +1,12 @@
 import type { ExecSpec } from "./exec-spec.ts";
 import type { ClonePolicy } from "./orchestra-clone.ts";
+import type { DshSpec } from "./orchestra-dsh.ts";
 
 export interface HarnessOffer {
   models: string[];
   exec?: ExecSpec;
+  /** The harness `dsh`: raised by the bridge itself, not Orca (#10777). */
+  dsh?: DshSpec;
 }
 export interface Launcher {
   launcher: string;
