@@ -19,6 +19,15 @@ appendFileSync(
   }) + "\n",
 );
 const mode = process.env.FAKE_DSH_MODE || "ok";
+// As the real dsh 0.2.2-rc.1: --patch is a launcher option, before the app's --json; after it
+// the app refuses it (observed live, case 5308 stage 3).
+const json = argv.indexOf("--json");
+if (json >= 0 && argv.slice(json).includes("--patch")) {
+  process.stdout.write(
+    JSON.stringify({ type: "error", message: "unknown option '--patch'" }) + "\n",
+  );
+  process.exit(1);
+}
 if (mode === "fail") {
   process.stdout.write(JSON.stringify({ type: "error", message: "probe refusal" }) + "\n");
   process.exit(3);

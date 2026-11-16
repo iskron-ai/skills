@@ -22,9 +22,11 @@ test("dsh: a call is raised as the bridge's own dsh process in its own tree, the
   assert.equal(call.cwd, run.worktree);
   assert.deepEqual(JSON.parse(call.spawned_for), { invite: 9, room: ROOM });
   assert.equal(call.orchestra, null, "the raised agent gets no raising consent");
-  assert.deepEqual(call.argv.slice(0, 4), ["headless", "--json", "--patch", o.patch]);
-  assert.equal(call.argv[4], "--patch");
-  assert.ok(!call.argv[5].startsWith(run.worktree), "the model patch lies outside the tree");
+  // --patch is a launcher option: before --json, which the app takes (real dsh refuses it after).
+  assert.deepEqual(call.argv.slice(0, 3), ["headless", "--patch", o.patch]);
+  assert.equal(call.argv[3], "--patch");
+  assert.ok(!call.argv[4].startsWith(run.worktree), "the model patch lies outside the tree");
+  assert.equal(call.argv[5], "--json");
   assert.match(call.model, /provider: "local-probe"\n {4}model: "mock"/);
   const brief = call.argv.at(-1);
   assert.equal(call.argv.length, 7);
@@ -94,7 +96,11 @@ test("dsh: the dry run says the dsh command, launching nothing", async (t) => {
   const { cli } = await import("./dsh-kit.mjs");
   const r = await cli(o.dir, ["step", "--dry-run"]);
   assert.equal(r.code, 0, r.err + r.out);
-  assert.match(r.out, new RegExp(`would launch: \\S+ headless --json --patch ${o.patch} `), r.out);
+  assert.match(
+    r.out,
+    new RegExp(`would launch: \\S+ headless --patch ${o.patch} --patch .+ --json `),
+    r.out,
+  );
   assert.match(r.out, new RegExp(`model ${MODEL}`), r.out);
   assert.equal(o.dshCalls().length, 0);
   assert.equal(o.orcaCalls().length, 0);

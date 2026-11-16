@@ -84,12 +84,13 @@ export function writeModelPatch(path: string, dir: string, text: string): void {
   writeFileSync(path, text, { mode: 0o600 });
 }
 
+/** `--patch` is dsh's launcher option, before the app's `--json` (observed live, case 5308). */
 export const dshArgv = (patch: string, model: string, brief: string): string[] => [
   "headless",
-  "--json",
   "--patch",
   patch,
   "--patch",
   model,
+  "--json",
   brief,
 ];
