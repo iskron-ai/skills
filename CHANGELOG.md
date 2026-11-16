@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.8.1](https://github.com/iskron-ai/skills/compare/v8.8.0...v8.8.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **intake:** a forwarded message with no graph named goes to a remembered target, never the session's graph by default ([#806](https://github.com/iskron-ai/skills/issues/806)) ([0ca201b](https://github.com/iskron-ai/skills/commit/0ca201b7c1698afad66e0e4582275090b7204f76))
+* **intake:** the human chooses among remembered targets; the no-target case stays in its minding home ([#808](https://github.com/iskron-ai/skills/issues/808)) ([13da032](https://github.com/iskron-ai/skills/commit/13da0324a71eff6621a75164e3f764cb08939b8f))
+
 ## [8.8.0](https://github.com/iskron-ai/skills/compare/v8.7.0...v8.8.0) (2026-11-16)
 
 
