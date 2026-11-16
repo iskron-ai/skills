@@ -62,12 +62,22 @@ const withoutOrca = (bin) =>
 const lines = (f) =>
   existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
 
-/** adapter — the description's; harnesses(patch) — its offers instead of the one dsh offer;
+/** fenced — a server without raw: the description's body only between the card's fences;
+ * adapter — the description's; harnesses(patch) — its offers instead of the one dsh offer;
  * beside — more bodies (patch) => description, checkouts filled in; orca: false — no orca at all
  * on the daemon's PATH. */
 export async function leadingDsh(
   t,
-  { env = {}, offer = {}, limit = 2, adapter = "bridge", harnesses, beside = [], orca = true } = {},
+  {
+    env = {},
+    offer = {},
+    limit = 2,
+    adapter = "bridge",
+    harnesses,
+    beside = [],
+    orca = true,
+    fenced = false,
+  } = {},
 ) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-")));
   const checkout = join(dir, "checkout");
@@ -90,7 +100,7 @@ export async function leadingDsh(
   const bodies = [body, ...beside.map((b) => ({ ...b(patch), checkouts: { [REPO]: checkout } }))];
   const fake = await startFakeNks({
     pat: "probe-pat",
-    mind: { orchestra: bodies.map((b, i) => ({ seq: 77 + i, body: JSON.stringify(b) })) },
+    mind: { orchestra: bodies.map((b, i) => ({ seq: 77 + i, body: JSON.stringify(b) })), fenced },
   });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
