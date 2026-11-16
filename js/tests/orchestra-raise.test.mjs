@@ -1328,6 +1328,8 @@ test("quench: our seat's idle_due after it sat gets one composition_empty stop o
   assert.equal(stops[0].realm, REALM);
   assert.equal(stops[0].body.reason_code, "composition_empty");
   assert.match(stops[0].body.client_id, /^orchestra-[0-9a-f]{32}$/);
+  // The order carries the idle_due's n: the server lays it only if no newer signal came (#7518).
+  assert.equal(stops[0].body.if_signal_n, 3);
   // The fake knows no such live seat (410): the seat is gone, the run ended, nothing repeats.
   assert.match(empty.out, /invite 9: seat_gone/, empty.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");

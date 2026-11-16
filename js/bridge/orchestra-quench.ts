@@ -77,6 +77,8 @@ async function order(base: string, token: string, r: Run, key: string) {
     body: JSON.stringify({
       reason_code: "composition_empty",
       client_id: `orchestra-${createHash("sha256").update(key).digest("hex").slice(0, 32)}`,
+      // The idle_due's n: the server lays the order only if no newer signal came (#7518).
+      ...(r.idle_due && r.n !== undefined ? { if_signal_n: r.n } : {}),
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
