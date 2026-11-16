@@ -3,6 +3,7 @@
 Кордис-плагин для DeepSeek Harness (граф @nks/nks-dev, узел #10776). Своих моста и тулов нет: стояние держит мост машины, а плагин прицепляется локальным клиентом к сокету стояния тем же путём, что сторожа (`js/watchdog/client.ts`).
 
 - `plugin.ts` — вход бандла, `apply(ctx)`: `agent/created` — взять агента и встать слухом; `session/disposed` — отцепиться, ничего не слать; `session/event` типа `compaction/end` — слово о роли после сжатия.
+- `start.ts` — слово старта (#10921): на первом `agent/created` процесса (`source` `startup`/`resume`; позднейшие агенты процесса — субагенты) обложка репо каталога сессии читается общим `js/shared/ritualcover.ts`, как в ритуалах OpenCode, и слово (`PREPARE.start` + хвост `DSH`: слушаю место / место снято с прошлым процессом) ложится секцией `delivery:start` в `payload.agent.ctx.systemPrompt` — агент-локально, снимается с агентом; наблюдено на 0.2.2-rc.1: секция доходит в `system` каждого запроса модели, на resume тоже. Нет обложки, чужая, ритуал `start` выключен — тишина. Предел: в долгоживущем процессе (`dsh web`) слово получает только первая сессия.
 - `seat.ts` — выбор стояния (раздел «Как выбирается стояние» ниже).
 - `hearing.ts` — прицепление и доставка: каждый адресованный месту кадр — одно сообщение `next-turn`, текст кадра — общим кодом `js/shared/frame-text.ts`; отметка доставленного — `noteSeen` после отправки.
 - `compaction.ts` — слово возврата роли по образцу `js/opencode/compaction.ts`: место из hold-записи, без записи — голое слово (словарь `COMPACTION`).
@@ -25,4 +26,4 @@
 
 ## Сборка и пробы
 
-Выход бандла — `skills/establish-mcp/references/dsh-plugin/index.js` (`js/build.mjs`, пишет его только сборка выпуска; бандл-пакет `package.json` + `cordis.patch.yml` рядом — исходник). Пробы — `js/tests/dsh-plugin.test.mjs` (`make test-dsh`): подставной сокет стояния и подставной `ctx`. Живой прогон — из скретча этапа 1 (`dsh` + mock-llm + dev-выход плагина).
+Выход бандла — `skills/establish-mcp/references/dsh-plugin/index.js` (`js/build.mjs`, пишет его только сборка выпуска; бандл-пакет `package.json` + `cordis.patch.yml` рядом — исходник). Пробы — `js/tests/dsh-plugin.test.mjs` и `js/tests/dsh-start.test.mjs` (`make test-dsh`): подставной сокет стояния и подставной `ctx`. Живой прогон — из скретча этапа 1 (`dsh` + mock-llm + dev-выход плагина).
