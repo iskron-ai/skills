@@ -1,5 +1,24 @@
 # Changelog
 
+## [8.8.0](https://github.com/iskron-ai/skills/compare/v8.7.0...v8.8.0) (2026-11-16)
+
+
+### Features
+
+* **dsh:** the plugin puts the start word into the session's system prompt by the repository cover; a resumed session hears its seat went with the last process ([#796](https://github.com/iskron-ai/skills/issues/796)) ([8386e02](https://github.com/iskron-ai/skills/commit/8386e0286ab3c20b3c63f4386735d23577606a0e))
+* **minding:** the launcher description names the dsh harness and its keys; intake points the target choice to minding ([#794](https://github.com/iskron-ai/skills/issues/794)) ([c11f891](https://github.com/iskron-ai/skills/commit/c11f8918934bd33595a874bb1ab11808b86aa935))
+* **minding:** the launcher description raises dsh under its own launcher with adapter bridge; opencode stays under orca ([#800](https://github.com/iskron-ai/skills/issues/800)) ([8a30cf1](https://github.com/iskron-ai/skills/commit/8a30cf16c2e8bcddeb244d09bafa2b098fbfbe8e))
+* **orchestra:** launcher adapter bridge raises dsh without Orca; a harness of the other adapter is harness_adapter_mismatch ([#799](https://github.com/iskron-ai/skills/issues/799)) ([ed074ab](https://github.com/iskron-ai/skills/commit/ed074abd76aca8f9b5e8693bb84c81652c199719))
+
+
+### Bug Fixes
+
+* **dsh:** each session of a long dsh process gets its start word; REALITY names the start-word class ([#797](https://github.com/iskron-ai/skills/issues/797)) ([999fdf2](https://github.com/iskron-ai/skills/commit/999fdf244d03cbc9580fcf76e5be8c145697d76e))
+* **establish-mcp:** a homes role is checked by graph only; homes and the graph's full address are named where a role lacks repository ([#804](https://github.com/iskron-ai/skills/issues/804)) ([992d846](https://github.com/iskron-ai/skills/commit/992d8469ad48a8254676c5ada4279debe3f97126))
+* **establish-mcp:** the bridge orchestrator door names adapter bridge for dsh and its refusal codes; minding marks clone as orca-only ([#801](https://github.com/iskron-ai/skills/issues/801)) ([3e16e64](https://github.com/iskron-ai/skills/commit/3e16e643522b94ae1d2fc7aa3160079f096f8a89))
+* **minding:** an adapter-bridge description takes checkouts or homes; intake says the target is chosen not by the text ([#802](https://github.com/iskron-ai/skills/issues/802)) ([20175f6](https://github.com/iskron-ai/skills/commit/20175f6604b717825da8660bfdda20efcfc5e5b2))
+* **minding:** homes raises a role without repository under any adapter; the door, cases and establish-mcp say so and know dsh ([#803](https://github.com/iskron-ai/skills/issues/803)) ([a8a75a8](https://github.com/iskron-ai/skills/commit/a8a75a8de32215568cf82d98ec8908fc3072df26))
+
 ## [8.7.0](https://github.com/iskron-ai/skills/compare/v8.6.0...v8.7.0) (2026-11-16)
 
 

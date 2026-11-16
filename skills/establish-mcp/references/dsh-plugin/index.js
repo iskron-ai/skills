@@ -9,6 +9,49 @@ function langOfServer(url) {
   }
 }
 
+// js/delivery/patterns/cover.ts
+var COVER = {
+  /** Файл обложки в каталоге сессии. */
+  file: "AGENTS.md",
+  /** Корневой ключ обложки поставки во фронтматтере. */
+  root: "iskron",
+  /** Прежние формы по языку репозитория (переход): действует та, чьи ключи стоят во фронтматтере. */
+  forms: {
+    ru: {
+      /** Слот графа: значение начинается с полного адреса графа (хэндл владельца/slug) или rN. */
+      graph: "Граф",
+      /**
+       * Слова, которыми в слоте графа перечисляют равноправные рабочие графы («@a/x или @b/y» —
+       * неоднозначно); граф за прозой (указатель на методологию, «не используется») — не рабочий (#8066).
+       */
+      graphJoins: ["или", "либо", "и", "or", "and"],
+      /** Слот роли агента: значение начинается с ровно одной ссылки «#N «имя»». */
+      role: "Роль агента",
+      /** Кавычки имени в ссылке роли: открывающая и закрывающая. */
+      roleQuotes: ["«", "»"],
+      /** Штамп iskronify в файле обложки: «(iskronify: контракт N, штамп …». */
+      stamp: /\(iskronify:\s*контракт\s*`?(\d+)`?\s*,\s*штамп/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*контракт\s*`?(\d+)`?(?=\s*[,—)])/m
+    },
+    en: {
+      graph: "Graph",
+      graphJoins: ["or", "and"],
+      role: "Agent role",
+      /** Открывающая и закрывающая совпадают: имя — до первой закрывающей. */
+      roleQuotes: ['"', '"'],
+      stamp: /\(iskronify:\s*contract\s*`?(\d+)`?\s*,\s*stamp/,
+      contractStamp: /^[\s*_]*\(iskronify:\s*contract\s*`?(\d+)`?(?=\s*[,—)])/m
+    }
+  },
+  /**
+   * Штамп выравнивания другой поставки: строка, начатая «(<кто>: contract|контракт N», где кто — не
+   * iskronify (свои штампы прежних шаблонов — без «штамп» или с датой вместо числа — не чужие).
+   * Он без своего — обложка чужой поставки, даже при совпавших ключах английской формы; та же
+   * скобка внутри строки прозы — не штамп.
+   */
+  stampShape: /^[\s*_]*\((?!iskronify:)[^()\n]*?:\s*(?:contract|контракт)\s*`?\d+/m
+};
+
 // js/delivery/patterns/launch.ts
 var LAUNCH_WORD = "start";
 var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -16,6 +59,20 @@ var LAUNCH_LINE = new RegExp(
   `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
   "imu"
 );
+
+// js/delivery/patterns/sections.ts
+var SECTIONS = {
+  /** Самопроверка этапа — слово пуша. */
+  check: (h) => /самопровер|self-check|self-review/i.test(h),
+  /** Жизненный цикл сессии — слово мержа, рядом с разделом мержа. */
+  lifecycle: (h) => /жизненн\S* цикл|lifecycle/i.test(h),
+  /** Акты после мержа — слово мержа. */
+  merge: (h) => /мерж|merge/i.test(h) && /граф|graph/i.test(h) || /every merge/i.test(h),
+  /** Пуш в ствол — слово мержа на пуше в main/master, прежде заголовка мержа (№2720). */
+  trunk: (h) => /пуш|push/i.test(h) && /main|master|ствол/i.test(h),
+  /** Правила персистентности — отказ memory-guard. */
+  persist: (h) => /персистент|persistence/i.test(h)
+};
 
 // js/delivery/product.ts
 var PRODUCT = "iskron";
@@ -57,7 +114,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "8.7.0";
+var VERSION = "8.8.0";
 
 // js/delivery/words/asks.ts
 var ASK = {
@@ -201,7 +258,9 @@ var DSH = {
     deafSeveral: (keys) => `слуха нет: несколько мест названы этой сессией (${keys}) — не угадываю, скажи человеку`,
     gone: (why) => `место ушло: ${why}`,
     seatGone: (why) => `место снято: ${why}`,
-    notDelivered: (why) => `в сессию не дошло: ${why}`
+    notDelivered: (why) => `в сессию не дошло: ${why}`,
+    startListen: () => "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами.",
+    startResumed: () => "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand); сказанное месту после выхода придёт лежалым."
   },
   en: {
     listening: (key) => `listening on standing ${key}`,
@@ -209,7 +268,94 @@ var DSH = {
     deafSeveral: (keys) => `no hearing: several seats are named this session's (${keys}) — not guessing, tell the human`,
     gone: (why) => `the seat is gone: ${why}`,
     seatGone: (why) => `the seat was taken off: ${why}`,
-    notDelivered: (why) => `did not reach the session: ${why}`
+    notDelivered: (why) => `did not reach the session: ${why}`,
+    startListen: () => "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns.",
+    startResumed: () => "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand); what was said to the seat after the exit arrives late."
+  }
+};
+
+// js/delivery/words/prepare.ts
+var RITE_RU = (what, where) => `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его, а в скрипте с ветками иных родов — лишь ветку этого (переход Шага 4 iskronify)`;
+var RITE_EN = (what, where) => `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off, and in a script with branches of other kinds only this one's branch (the transition of iskronify Step 4)`;
+var PLUGIN_RU = "свой плагин ритуалов в .opencode/plugins — ритуалы несёт поставка, а при нём она молчит: сними его, а если он несёт ветки иных родов (гейт мержа и подобное) — сними в нём лишь старт, пуш, мерж и memory-guard, остальное оставь файлом с именем без «ritual» (переход Шага 4 iskronify)";
+var PLUGIN_EN = "the repo's own rituals plugin in .opencode/plugins — the delivery carries the rituals and keeps silent beside it: take it off, and if it carries branches of other kinds (a merge gate and the like) take off only start, push, merge and the memory guard and keep the rest in a file named without «ritual» (the transition of iskronify Step 4)";
+var PREPARE = {
+  ru: {
+    usage: () => "использование: prepare [--dir <репо>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp ГГГГ-ММ-ДД] [--case N] [--json] [--lang en|ru]\n",
+    badArg: (flag, value) => `${flag}: «${value}» — не та форма; справка — prepare --help`,
+    notRepo: (dir) => `${dir} — не git-репозиторий: готовить нечего, ничего не записано`,
+    foreign: (file) => `${file} несёт обложку другой поставки — смену поставки решает человек, ничего не записано`,
+    unparsed: (file) => `${file} не разбирается — ничего не записано`,
+    reality: (caseNo) => `# Reality — против чего проверяется заявка
+
+Носители ещё не установлены${caseNo ? `; дело выравнивания №${caseNo}` : ""}. До их установления поведенческие заявки не принимаются.
+`,
+    start: ({ graph, holon, role: role2 }) => `До действий исполни «Старт» двери iskron до готовности. Обложка AGENTS.md: граф ${graph}${holon ? `, контур #${holon}` : ""}${role2 ? `, роль #${role2}` : ""}. Своё место повторно не занимай; субагент пишет только своим мостом-спутником.`,
+    guard: (graph, section = "Правила персистентности") => `BLOCKED: локальная память запрещена целиком (AGENTS.md${section ? `, «${section}»` : ""}). Правила/команды/свойства кода репо → AGENTS.md; ловушки → дом по «Раскладке»; смысл кода и состояние проекта → граф ${graph}; личное вне проекта, включая факты машины → minding. Полный маршрут — в AGENTS.md; директорию памяти не меняй.`,
+    left: (item, keys) => ({
+      "cover.repeat": `ключ ${keys} стоит во фронтматтере AGENTS.md дважды — строгий YAML его отвергает, AGENTS.md не тронут: оставь одно значение и повтори prepare`,
+      "cover.rituals": `ритуал ${keys} в поле rituals: обложки поставка не знает — он ничего не включает; её ритуалы: start push merge guard turn. Исправь имя или сними его`,
+      "cover.graph": "граф не назван — --graph rN (iskron_realm action=list), такт 1 iskronify",
+      "cover.holon": "контур не назван — --holon N: поиск контура по атрибуту repository или его заведение",
+      "cover.agent_role": "роль не названа — --agent-role N: стюард контура (iskron_search steward_of) или её заведение",
+      "cover.contract": "контракт не назван — --contract N последним вызовом прогона (Шаг 7)",
+      "cover.flat": "прежняя плоская обложка стоит рядом с блоком — слоты-суждения перенеси в «Проект», плоские ключи сними",
+      "CLAUDE.md": "CLAUDE.md — свой файл, не указатель: содержимое влей в AGENTS.md и замени указателем (Шаг 7)",
+      "hook.start": RITE_RU("хук старта", ".claude/settings.json"),
+      "hook.guard": "memory-guard ждёт графа в обложке — повтори prepare с --graph",
+      "hook.push": RITE_RU("хук пуша", ".claude/settings.json"),
+      "hook.merge": RITE_RU("хук мержа", ".claude/settings.json"),
+      "opencode.rituals": PLUGIN_RU
+    })[item],
+    unread: (item, hook) => item === "hook.guard" ? `стоит «${hook}», и prepare не узнал, memory-guard ли это, — своего рядом не поставил: прочти скрипт; это он — ничего не делай, нет — допиши по Шагу 4 iskronify (references/hooks.md)` : `стоит «${hook}», и prepare не узнал, хук старта ли это: прочти скрипт; это он — сними (старт несёт поставка, а при своём она молчит), нет — ничего не делай`,
+    head: (kind2) => ({ done: "сделано", kept: "уже стоит", left: "модели" })[kind2]
+  },
+  en: {
+    usage: () => "usage: prepare [--dir <repo>] [--graph rN] [--holon N] [--agent-role N] [--contract N] [--stamp YYYY-MM-DD] [--case N] [--json] [--lang en|ru]\n",
+    badArg: (flag, value) => `${flag}: "${value}" is not the right form; see prepare --help`,
+    notRepo: (dir) => `${dir} is not a git repository: nothing to prepare, nothing written`,
+    foreign: (file) => `${file} carries another delivery's cover — switching deliveries is the person's call, nothing written`,
+    unparsed: (file) => `${file} does not parse — nothing written`,
+    reality: (caseNo) => `# Reality — what a claim is checked against
+
+Carriers are not established yet${caseNo ? `; alignment case №${caseNo}` : ""}. Until they are, behavioral claims are not accepted.
+`,
+    start: ({ graph, holon, role: role2 }) => `Read the Start section of the iskron door before acting and finish it as readiness, not reading. Addresses are the iskron: cover of AGENTS.md: graph ${graph}${holon ? `, focus holon #${holon}` : ""}${role2 ? `, agent role #${role2}` : ""}. Standing on watch or before the first write to the graph or a case, one call: iskron_stand; a reading session takes no seat. start <graph> <role> <case №N> enters that case; a subagent stands on its own satellite bridge (iskron_stand with satellite_of) and does not write to the graph on the bridge of its caller.`,
+    guard: (graph, section = "Persistence rules") => `BLOCKED: local agent memory is forbidden entirely, by directory (AGENTS.md${section ? `, «${section}»` : ""}). Route the fact: repo conventions, rituals, commands and code properties → AGENTS.md; gotchas → their home by «Layout» (GOTCHAS.md or the graph); the meaning of code (decisions, grounds), project state, servers and dated duties → the graph ${graph}; a fact of the user outside the project, machine facts included → personal memory through minding. This memory-guard keeps the directory frozen.`,
+    left: (item, keys) => ({
+      "cover.repeat": `the key ${keys} stands twice in the front matter of AGENTS.md — strict YAML refuses it, AGENTS.md is untouched: keep one value and run prepare again`,
+      "cover.rituals": `the delivery knows no ritual ${keys} in the cover's rituals: field — it switches nothing on; its rituals: start push merge guard turn. Fix the name or drop it`,
+      "cover.graph": "no graph named — --graph rN (iskron_realm action=list), iskronify tact 1",
+      "cover.holon": "no holon named — --holon N: find the holon by its repository attribute or create it",
+      "cover.agent_role": "no role named — --agent-role N: the holon's steward (iskron_search steward_of) or create it",
+      "cover.contract": "no contract named — --contract N in the run's last call (Step 7)",
+      "cover.flat": "the former flat cover stands beside the block — move judgment slots into «Project», drop the flat keys",
+      "CLAUDE.md": "CLAUDE.md is a file of its own, not a pointer: merge its content into AGENTS.md and replace it with the pointer (Step 7)",
+      "hook.start": RITE_EN("start hook", ".claude/settings.json"),
+      "hook.guard": "memory-guard waits for a graph in the cover — run prepare again with --graph",
+      "hook.push": RITE_EN("push hook", ".claude/settings.json"),
+      "hook.merge": RITE_EN("merge hook", ".claude/settings.json"),
+      "opencode.rituals": PLUGIN_EN
+    })[item],
+    unread: (item, hook) => item === "hook.guard" ? `"${hook}" stands, and prepare could not tell whether it is the memory-guard — none of its own was put beside it: read the script; if it is, do nothing, if not, add it by iskronify Step 4 (references/hooks.md)` : `"${hook}" stands, and prepare could not tell whether it is the start hook: read the script; if it is, take it off (the delivery carries the start and keeps silent beside its own), if not, do nothing`,
+    head: (kind2) => ({ done: "done", kept: "already there", left: "for the model" })[kind2]
+  }
+};
+
+// js/delivery/words/rites.ts
+var cite = (heads) => heads.filter(Boolean).map((h) => `«${h}»`).join(", ");
+var RITES = {
+  ru: {
+    lifecycle: () => "Жизненный цикл сессии",
+    push: (check) => `[iskron] пуш — не отгрузка. Исполни самопроверку и правила ревью/PR по AGENTS.md${check ? `, «${check}»` : ""}.`,
+    merge: (holon, ...heads) => `[iskron] мерж: исполни акты после мержа по AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}${holon ? `; контур #${holon}` : ""}.`,
+    early: (graph) => `[iskron] граф ${graph}; контура и роли нет. Продолжи iskronify, «Первый граф», с недостающего шага; номера не выдумывай.`
+  },
+  en: {
+    lifecycle: () => "Session lifecycle",
+    push: (check) => `[iskron] a push ships nothing: self-check the diff, a vocabulary pass over the PR text; review — once per ready batch (AGENTS.md${check ? `, «${check}» and the review section` : ""}). Shipping is the merge.`,
+    merge: (holon, ...heads) => `[iskron] merge — the after-merge acts of AGENTS.md${cite(heads) ? ` (${cite(heads)})` : ""}: weave ${holon ? `holon #${holon}` : "the holon"}, advance the map, modes by evidence, close along the axis, reconcile, vocabulary pass; feedback reflection — if AGENTS.md calls for it; work by reference from an agent — only the transformation seed and the delivery modes.`,
+    early: (graph) => `[iskron] the AGENTS.md cover names graph ${graph}, with no holon and agent role in it yet — continue the onboarding: the «First graph» branch of the iskronify skill, from the missing step; do not invent holon or role numbers.`
   }
 };
 
@@ -572,6 +718,7 @@ function resolve2() {
 var S = scoped(() => ({ current: null }));
 var lang = () => S.current ??= resolve2();
 var words = (dict) => dict[lang()];
+var wordsIn = (dict, l) => dict[l ?? lang()];
 
 // js/shared/channel.ts
 var SILENT_FLOOR_MS = Number(process.env[envName("CHANNEL_SILENT_FLOOR_MS")]) || 6e4;
@@ -2219,6 +2366,187 @@ function startHearing(agent, log2, startedAt = Date.now()) {
   };
 }
 
+// js/shared/ritualcover.ts
+import { readdirSync as readdirSync2, readFileSync as readFileSync7 } from "node:fs";
+import { join as join5 } from "node:path";
+
+// js/shared/coverblock.ts
+var unquote = (v) => {
+  const t = v.trim();
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
+    return t.slice(1, -1).replace(/''/g, "'");
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    try {
+      return String(JSON.parse(t));
+    } catch {
+      return t.slice(1, -1);
+    }
+  }
+  return t;
+};
+var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
+var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
+var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
+var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
+var bare = (v) => unquote(
+  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
+);
+function fences(text2) {
+  const lines = text2.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  return end < 0 ? null : { lines, end };
+}
+function coverBlocks(text2) {
+  const blocks = /* @__PURE__ */ new Map();
+  const f = fences(text2);
+  let open = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const top = TOP.exec(line);
+    const child = open && CHILD.exec(line);
+    if (top) blocks.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
+    else if (open && child) open.set(unquote(child[1]), bare(child[2] ?? ""));
+    else open = null;
+  }
+  return blocks;
+}
+var coverBlock = (text2, root) => coverBlocks(text2).get(root) ?? null;
+var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
+var foreignBlock = (text2, root) => [...coverBlocks(text2)].some(([k, b]) => k !== root && b.has("contract"));
+var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
+function ritualsOf(block) {
+  const field = block?.get("rituals");
+  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
+  const names = field.split(/\s+/).filter(Boolean);
+  const known = (n) => RITUALS2.includes(n);
+  return { on: new Set(names.filter(known)), unknown: names.filter((n) => !known(n)) };
+}
+
+// js/shared/graphslot.ts
+var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
+var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
+var FRAME = String.raw`[\s\x60'"]*`;
+var HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
+var ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
+var PROSE = new RegExp("^[—–\\-:.(]*\\s*(?!r\\d)\\p{L}", "u");
+
+// js/shared/cover.ts
+function stampOf2(text2, cover = COVER) {
+  const block = coverBlock(text2, cover.root);
+  if (block && stamped(block) || Object.values(cover.forms).some((f) => f.stamp.test(text2)))
+    return "own";
+  if (block) return null;
+  return foreignBlock(text2, cover.root) || cover.stampShape.test(text2) ? "foreign" : null;
+}
+
+// js/shared/reposigns.ts
+import { readFileSync as readFileSync6, statSync } from "node:fs";
+import { dirname, join as join4, resolve as resolve3 } from "node:path";
+var exists = (path) => {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+function repoRoot(dir) {
+  let at = resolve3(dir);
+  for (; ; ) {
+    if (exists(join4(at, ".git"))) return at;
+    const up = dirname(at);
+    if (up === at) return null;
+    at = up;
+  }
+}
+
+// js/shared/ritualcover.ts
+function headings(text2) {
+  const lines = text2.split("\n");
+  let i = lines[0]?.trim() === "---" ? lines.findIndex((l, n) => n > 0 && l.trim() === "---") + 1 : 0;
+  let fenced = false;
+  const out2 = [];
+  for (; i < lines.length; i++) {
+    const l = lines[i] ?? "";
+    if (/^\s*(?:```|~~~)/.test(l)) fenced = !fenced;
+    else if (!fenced && /^#{1,6}\s/.test(l)) out2.push(l.replace(/^#+\s*|\s+#+\s*$/g, "").trim());
+  }
+  return out2;
+}
+function bodyLang(text2) {
+  const heads = headings(text2).map((h) => h.toLowerCase());
+  return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle().toLowerCase())));
+}
+function sectionsOf(text2) {
+  const heads = headings(text2);
+  const out2 = {};
+  for (const k of Object.keys(SECTIONS)) {
+    const h = heads.find(SECTIONS[k]);
+    if (h) out2[k] = h;
+  }
+  return out2;
+}
+function ritualCover(dir, cover = COVER) {
+  const root = repoRoot(dir);
+  if (!root) return null;
+  let text2;
+  try {
+    text2 = readFileSync7(join5(root, cover.file), "utf8");
+  } catch {
+    return null;
+  }
+  if (stampOf2(text2, cover) === "foreign") return null;
+  const block = coverBlock(text2, cover.root);
+  const graph = block?.get("graph");
+  if (!block || !graph) return null;
+  const holon = block.get("holon") || void 0;
+  const role2 = block.get("agent_role") || void 0;
+  const lang2 = bodyLang(text2);
+  const { on } = ritualsOf(block);
+  const sections = sectionsOf(text2);
+  return {
+    root,
+    graph,
+    ...holon ? { holon } : {},
+    ...role2 ? { role: role2 } : {},
+    lang: lang2,
+    on,
+    sections
+  };
+}
+function startWord(c) {
+  const { graph, holon, role: role2, lang: lang2 } = c;
+  return holon && role2 ? wordsIn(PREPARE, lang2).start({ graph, holon, role: role2 }) : wordsIn(RITES, lang2).early(graph);
+}
+
+// js/dsh/start.ts
+var START_SECTION = "delivery:start";
+var ORDER = 10300;
+function startText(dir, source) {
+  if (source !== "startup" && source !== "resume") return null;
+  const cover = ritualCover(dir);
+  if (!cover?.on.has("start")) return null;
+  const W2 = wordsIn(DSH, cover.lang);
+  return [startWord(cover), source === "resume" ? W2.startResumed() : W2.startListen()].join("\n\n");
+}
+function putStartWord(agent, source, dir, log2) {
+  const text2 = startText(dir, source);
+  const prompt = agent?.ctx?.systemPrompt;
+  if (!text2) return false;
+  if (typeof prompt?.section !== "function") {
+    log2("agent.ctx.systemPrompt.section is absent");
+    return false;
+  }
+  try {
+    prompt.section({ name: START_SECTION, order: ORDER, text: text2, interpolate: false });
+    return true;
+  } catch (e) {
+    log2(e.message);
+    return false;
+  }
+}
+
 // js/dsh/plugin.ts
 function agentOf(a) {
   if (!a || typeof a !== "object") return null;
@@ -2260,7 +2588,17 @@ function apply(ctx) {
       log2(W2().notDelivered(`${event}: ${e.message}`));
     }
   };
+  let started = false;
   on("agent/created", (payload) => {
+    if (!started) {
+      started = true;
+      putStartWord(
+        payload?.agent,
+        payload?.source,
+        process.cwd(),
+        (why) => log2(W2().notDelivered(why))
+      );
+    }
     agent = agentOf(payload?.agent) ?? agent;
     if (!hearing) hearing = startHearing(() => agent, log2, startedAt);
   });
@@ -2268,6 +2606,7 @@ function apply(ctx) {
     hearing?.stop();
     hearing = null;
     agent = null;
+    started = false;
   });
   on("session/event", (_session, ev) => {
     if (ev?.type !== "compaction/end" || ev.error) return;
