@@ -742,6 +742,18 @@ for (const name of skillNames) {
   }
 }
 
+// The help reference hands people install commands verbatim from SETUP.md: each command line of
+// its sh blocks must stand in SETUP.md as is, or the two homes drift apart silently.
+const CONNECT = join(skillsDir, "help", "references", "connect.md");
+if (existsSync(CONNECT)) {
+  const setup = readFileSync(join(root, "SETUP.md"), "utf8").split("\n").map((l) => l.trim());
+  const blocks = readFileSync(CONNECT, "utf8").matchAll(/```sh\n([\s\S]*?)```/g);
+  for (const [, body] of blocks)
+    for (const cmd of body.split("\n").map((l) => l.trim()).filter(Boolean))
+      if (!setup.includes(cmd))
+        fail("skills/help/references/connect.md", `команды «${cmd}» нет в SETUP.md строкой как есть — справка повторяет только его команды`);
+}
+
 // Report.
 if (warnings.length > 0) {
   console.warn(`⚠ ${warnings.length} warning${warnings.length === 1 ? "" : "s"} (non-fatal):`);
