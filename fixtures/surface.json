@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.130.0"
+    "version": "0.149.1"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -150,6 +150,10 @@
       "reader",
       "writer"
     ],
+    "scope": [
+      "business",
+      "own"
+    ],
     "base_role": [
       "none",
       "reader",
@@ -168,6 +172,7 @@
       "attrs",
       "continues_room",
       "epistemic_mode",
+      "expects",
       "in_room",
       "name",
       "ontic_mode",
@@ -176,6 +181,7 @@
       "realm",
       "reasoning",
       "telos",
+      "to",
       "volitive_mode"
     ],
     "iskron_add_holon": [
@@ -184,6 +190,7 @@
       "continues_room",
       "description",
       "epistemic_mode",
+      "expects",
       "in_room",
       "name",
       "ontic_mode",
@@ -192,6 +199,7 @@
       "parent_room",
       "realm",
       "reasoning",
+      "to",
       "volitive_mode"
     ],
     "iskron_add_karta": [
@@ -199,6 +207,7 @@
       "attrs",
       "continues_room",
       "epistemic_mode",
+      "expects",
       "group_of",
       "in_room",
       "manifested_as",
@@ -209,6 +218,7 @@
       "parent_room",
       "realm",
       "reasoning",
+      "to",
       "user",
       "volitive_mode"
     ],
@@ -219,6 +229,7 @@
       "description",
       "epistemic_mode",
       "essence",
+      "expects",
       "in_room",
       "name",
       "ontic_mode",
@@ -227,6 +238,7 @@
       "parent_room",
       "realm",
       "reasoning",
+      "to",
       "volitive_mode"
     ],
     "iskron_add_phenomenon": [
@@ -235,6 +247,7 @@
       "continues_room",
       "description",
       "epistemic_mode",
+      "expects",
       "given_as",
       "in_room",
       "name",
@@ -244,6 +257,7 @@
       "parent_room",
       "realm",
       "reasoning",
+      "to",
       "volitive_mode"
     ],
     "iskron_add_vimarsha": [
@@ -252,6 +266,7 @@
       "continues_room",
       "description",
       "epistemic_mode",
+      "expects",
       "genre",
       "in_room",
       "name",
@@ -262,6 +277,7 @@
       "posed_to",
       "realm",
       "reasoning",
+      "to",
       "vimarsha_of",
       "volitive_mode"
     ],
@@ -270,17 +286,19 @@
       "active",
       "channel",
       "email",
-      "limit",
+      "from",
+      "handle",
       "node_id",
-      "offset",
       "one_shot",
       "org",
       "payload",
       "q",
       "realm",
       "role",
+      "scope",
       "scope_vimarsha",
       "sub",
+      "to",
       "ttl_seconds",
       "url",
       "user_id",
@@ -306,20 +324,24 @@
     "iskron_batch": [
       "compensates",
       "continues_room",
+      "expects",
       "in_room",
       "open_room",
       "operations",
       "parent_room",
       "realm",
-      "reasoning"
+      "reasoning",
+      "to"
     ],
     "iskron_case": [
       "about",
       "action",
       "as_of",
       "attrs",
+      "cites",
       "client_id",
       "done",
+      "due",
       "evidence",
       "from_standing",
       "from_start",
@@ -331,7 +353,9 @@
       "key",
       "limit",
       "moved_to",
+      "no_node",
       "node",
+      "nodes",
       "note",
       "offset",
       "payload",
@@ -363,6 +387,7 @@
       "name",
       "realm",
       "satellite_of",
+      "spawned_for",
       "standing",
       "text",
       "ttl_seconds"
@@ -398,6 +423,7 @@
     "iskron_me": [
       "action",
       "handle",
+      "invitation_id",
       "key",
       "realm",
       "since",
@@ -411,6 +437,7 @@
       "base_role",
       "confirm",
       "email",
+      "graph_role",
       "handle",
       "limit",
       "name",
@@ -486,6 +513,7 @@
       "genre",
       "given_as",
       "hybrid",
+      "include_description",
       "limit",
       "node_type",
       "ontic_mode",
@@ -495,6 +523,7 @@
       "volitive_mode"
     ],
     "iskron_stand": [
+      "context_restored",
       "cwd",
       "karta",
       "model",
@@ -505,6 +534,7 @@
       "room",
       "room_karta",
       "satellite_of",
+      "spawned_for",
       "status",
       "take"
     ],
@@ -513,8 +543,10 @@
       "basis_version",
       "continues_room",
       "description",
+      "description_replace",
       "epistemic_mode",
       "essence",
+      "expects",
       "genre",
       "given_as",
       "in_room",
@@ -528,6 +560,7 @@
       "realm",
       "reasoning",
       "telos",
+      "to",
       "user",
       "volitive_mode"
     ]

@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.7.0";
+var VERSION = "8.10.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -6870,6 +6870,12 @@ async function setupContextGate(ctx, opts) {
   });
 }
 
+// js/opencode/direct.ts
+var DIRECT = ["look", "orient", "search", "semantic_search", "history"].map(tool);
+var standDirect = (ctx) => ctx.tool.transform((editor) => {
+  for (const id of DIRECT) editor.update(id, (t) => void (t.options = { codemode: false }));
+});
+
 // js/opencode/hook-context.ts
 var record = (x) => typeof x === "object" && x !== null;
 function checkpoint(m) {
@@ -8981,6 +8987,7 @@ async function setup(ctx) {
       (s) => spawnStarts.has(s),
       (s, args, result) => spawnStarts.verify(s, args, result)
     );
+    await standDirect(ctx);
   } catch (e) {
     say(words(PLUGIN).notRaised(e.message), "error");
   }

@@ -196,6 +196,20 @@ test("every bridge tool stands under its own name, with the server's JSON Schema
 // (ctx.app.version), for attrs.harness_version (#6226). No app — none is claimed.
 // ctx.app {name, version, channel} — from the types of @opencode/plugin 2.0.4
 // (app.d.ts) only; a live OpenCode's ctx.app is not observed.
+// A graph-reading tool is called directly, never from a code-mode script: the agent sees the
+// server's answer whole, arrows included, not what its own script kept (#10962, #10952).
+test("graph-reading tools stand outside code mode; the others stay in it", async () => {
+  const b = bridgeEnv("direct-reads");
+  const rec = await plugin(b.env);
+  try {
+    await serverTools(rec);
+    assert.equal(rec.tools().get("iskron_orient").options?.codemode, false);
+    assert.equal(rec.tools().get("iskron_channel").options?.codemode, undefined);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("the plugin hands OpenCode's own version to the bridge it raises", async () => {
   const envLog = join(SANDBOX, "host-version.env");
   const b = bridgeEnv("host-version", { FB_ENV: envLog });

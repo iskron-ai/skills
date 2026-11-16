@@ -159,6 +159,7 @@ var RUNTIME_PREFIX = PRODUCT;
 var GLOBAL_PREFIX = `__${PRODUCT}`;
 var BRIDGE_SKILL = "establish-mcp";
 var BRIDGE_FILE = `${PRODUCT}.mjs`;
+var DSH_PROFILE = "references/dsh-profile.yml";
 var PLUGIN_FILE = "opencode-plugin.js";
 var PLUGIN_COPY_FILE = `${PRODUCT}.js`;
 var SKILL_STAMP_MASK = "*/SKILL.md";
@@ -236,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.7.0";
+var VERSION = "8.10.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -9062,11 +9063,11 @@ function fitsOf(frame2, places) {
   if (byId) return [byId];
   const to = nameOfAddress(frame2.to_standing);
   if (!id && !to && frame2.realm == null && frame2.karta_seq == null) return null;
-  const fits = places.filter(
+  const fits2 = places.filter(
     (p) => (frame2.realm == null || sameRealm(frame2.realm, p.standing.realm)) && (!to || to === (p.standing.name ?? "")) && (frame2.karta_seq == null || String(frame2.karta_seq) === String(p.standing.karta))
   );
-  if (fits.length === 1 && id && !fits[0].door.standingId) fits[0].door.standingId = id;
-  return fits;
+  if (fits2.length === 1 && id && !fits2[0].door.standingId) fits2[0].door.standingId = id;
+  return fits2;
 }
 function strayOf(frame2, primary) {
   if (frame2?.type !== "message" || fitsOf(frame2, all(primary))?.length !== 0) return null;
@@ -9075,9 +9076,9 @@ function strayOf(frame2, primary) {
 }
 function routeFrame2(frame2, primary) {
   if (!frame2 || !extras.size) return { door: primary.door };
-  const fits = fitsOf(frame2, all(primary));
-  if (!fits) return { door: primary.door };
-  if (fits.length === 1) return { door: fits[0].door };
+  const fits2 = fitsOf(frame2, all(primary));
+  if (!fits2) return { door: primary.door };
+  if (fits2.length === 1) return { door: fits2[0].door };
   const id = typeof frame2.to_standing_id === "string" ? frame2.to_standing_id : "";
   return {
     door: primary.door,
@@ -9086,7 +9087,7 @@ function routeFrame2(frame2, primary) {
       id || "—",
       frame2.to_standing ?? "—",
       frame2.realm ?? "—",
-      fits.length > 0,
+      fits2.length > 0,
       primary.door.key
     )
   };
@@ -11728,11 +11729,11 @@ function besideRecords(url, primary) {
 async function resolveRecord(hello, rec6, primary) {
   if (resolvedRealm(rec6.realm)) return;
   const listed = Array.isArray(hello?.standings) ? hello.standings : [];
-  const fits = listed.filter(
+  const fits2 = listed.filter(
     (e) => typeof e.realm === "string" && !sameRealm(e.realm, primary.realm) && String(e.standing ?? "").replace(/^.*:/, "") === rec6.name && (e.karta_seq == null || String(e.karta_seq) === String(rec6.karta))
   );
-  if (fits.length === 1 && resolvedRealm(primary.realm))
-    learnRealm(rec6.realm, String(fits[0].realm));
+  if (fits2.length === 1 && resolvedRealm(primary.realm))
+    learnRealm(rec6.realm, String(fits2[0].realm));
   else await resolveAgainstLed(rec6.realm);
 }
 async function besideBack(url, primary) {
@@ -14531,15 +14532,15 @@ function runtimeOf(out7) {
   }
 }
 function launchWords(out7) {
-  const str6 = (v) => typeof v === "string" && v ? v.slice(0, 64) : void 0;
+  const str7 = (v) => typeof v === "string" && v ? v.slice(0, 64) : void 0;
   try {
     const r = JSON.parse(out7).result ?? {};
     const p = r.prompt;
     const rec6 = r.receipt;
-    const delivery = str6(p?.delivery);
-    const outcome = str6(p?.outcome);
-    const mode = str6(rec6?.mode);
-    const reason = str6(rec6?.reason);
+    const delivery = str7(p?.delivery);
+    const outcome = str7(p?.outcome);
+    const mode = str7(rec6?.mode);
+    const reason = str7(rec6?.reason);
     return {
       submitted: delivery === "submit" && outcome === "handed-to-terminal",
       ...delivery !== void 0 && outcome !== void 0 ? { prompt: { delivery, outcome } } : {},
@@ -16104,36 +16105,18 @@ function mcpSession(url, token, client = "bridge") {
   };
 }
 
-// js/bridge/exec-spec.ts
-var object2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-var text4 = (v) => typeof v === "string" && v.length > 0 && v === v.trim() && ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
-function parseExec(v, models) {
-  if (!object2(v) || Object.keys(v).some((k) => !["server", "modelRefs"].includes(k))) return null;
-  if (!text4(v.server) || !object2(v.modelRefs)) return null;
-  try {
-    const u = new URL(v.server);
-    if (u.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(u.hostname) || u.username || u.password || u.search || u.hash || u.pathname !== "/")
-      return null;
-  } catch {
-    return null;
-  }
-  const refs = {};
-  for (const [token, ref] of Object.entries(v.modelRefs)) {
-    if (!models.includes(token) || !object2(ref)) return null;
-    if (Object.keys(ref).some((k) => !["providerID", "id", "variant"].includes(k))) return null;
-    if (!text4(ref.providerID) || !text4(ref.id) || ref.variant !== void 0 && !text4(ref.variant))
-      return null;
-    Object.defineProperty(refs, token, {
-      enumerable: true,
-      value: {
-        providerID: ref.providerID,
-        id: ref.id,
-        ...ref.variant === void 0 ? {} : { variant: ref.variant }
-      }
-    });
-  }
-  if (!models.every((m) => Object.hasOwn(refs, m))) return null;
-  return { server: v.server, modelRefs: refs };
+// js/bridge/node-body.ts
+function fencedBody(card) {
+  const lines = card.split("\n");
+  const open = lines.findIndex((l) => /^⟦+$/.test(l));
+  if (open < 0) return null;
+  const close = "⟧".repeat([...lines[open]].length);
+  const end = lines.indexOf(close, open + 1);
+  return end < 0 ? null : lines.slice(open + 1, end).join("\n");
+}
+async function nodeBody(call, look, realm, seq4) {
+  const card = await call(look, { realm, node_id: `#${seq4}` });
+  return fencedBody(card) ?? await call(look, { realm, node_id: `#${seq4}`, raw: true });
 }
 
 // js/bridge/orchestra-clone.ts
@@ -16202,6 +16185,38 @@ function cloneArgv(project, url, parent) {
   ];
 }
 
+// js/bridge/exec-spec.ts
+var object2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var text4 = (v) => typeof v === "string" && v.length > 0 && v === v.trim() && ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
+function parseExec(v, models) {
+  if (!object2(v) || Object.keys(v).some((k) => !["server", "modelRefs"].includes(k))) return null;
+  if (!text4(v.server) || !object2(v.modelRefs)) return null;
+  try {
+    const u = new URL(v.server);
+    if (u.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(u.hostname) || u.username || u.password || u.search || u.hash || u.pathname !== "/")
+      return null;
+  } catch {
+    return null;
+  }
+  const refs = {};
+  for (const [token, ref] of Object.entries(v.modelRefs)) {
+    if (!models.includes(token) || !object2(ref)) return null;
+    if (Object.keys(ref).some((k) => !["providerID", "id", "variant"].includes(k))) return null;
+    if (!text4(ref.providerID) || !text4(ref.id) || ref.variant !== void 0 && !text4(ref.variant))
+      return null;
+    Object.defineProperty(refs, token, {
+      enumerable: true,
+      value: {
+        providerID: ref.providerID,
+        id: ref.id,
+        ...ref.variant === void 0 ? {} : { variant: ref.variant }
+      }
+    });
+  }
+  if (!models.every((m) => Object.hasOwn(refs, m))) return null;
+  return { server: v.server, modelRefs: refs };
+}
+
 // js/bridge/orchestra-dsh.ts
 import { accessSync, constants as constants2, existsSync as existsSync14, mkdirSync as mkdirSync22, statSync as statSync8, writeFileSync as writeFileSync20 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
@@ -16225,8 +16240,9 @@ var runnable = (p) => {
 function dshReady(spec) {
   const bin = spec.bin ? runnable(spec.bin) ? spec.bin : null : (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((d) => join36(d, "dsh")).find(runnable) ?? null;
   if (!bin) return { code: "dsh_missing" };
-  const patch = spec.patch ?? join36(homedir12(), ".agents", "skills", "establish-mcp", "references", "dsh-profile.yml");
-  if (!existsSync14(patch) || !statSync8(patch).isFile()) return { code: "dsh_patch_missing" };
+  const patch = spec.patch ?? (DSH_PROFILE ? join36(homedir12(), ".agents", "skills", BRIDGE_SKILL, DSH_PROFILE) : null);
+  if (!patch || !existsSync14(patch) || !statSync8(patch).isFile())
+    return { code: "dsh_patch_missing" };
   return { bin, patch };
 }
 function modelPatch(model) {
@@ -16261,12 +16277,42 @@ var dshArgv = (patch, model, brief2) => [
   brief2
 ];
 
+// js/bridge/orchestra-launcher-types.ts
+var HARNESS_ADAPTER = { opencode: "orca", dsh: "bridge" };
+
+// js/bridge/orchestra-harnesses.ts
+var str2 = (v) => typeof v === "string" && v.trim() !== "";
+function parseHarnesses(h, adapter) {
+  if (!h || typeof h !== "object" || Array.isArray(h)) return { code: "harnesses_missing" };
+  const harnesses = {};
+  for (const [name2, o] of Object.entries(h)) {
+    const x = o ?? {};
+    if (!Array.isArray(x.models) || !x.models.every(str2)) return { code: "harness_invalid" };
+    harnesses[name2] = { models: x.models.map((m) => m.trim()) };
+    if (HARNESS_ADAPTER[name2] && HARNESS_ADAPTER[name2] !== adapter) continue;
+    if (name2 === "dsh") {
+      const dsh = parseDsh(x);
+      if (!dsh) return { code: "dsh_invalid" };
+      harnesses[name2].dsh = dsh;
+    } else if (Object.hasOwn(x, "exec")) {
+      const exec = name2 === "opencode" ? parseExec(x.exec, harnesses[name2].models) : null;
+      if (!exec) return { code: "exec_invalid" };
+      harnesses[name2].exec = exec;
+    }
+  }
+  return { offers: harnesses };
+}
+function harnessRefusal(adapter, harness) {
+  const own = HARNESS_ADAPTER[harness];
+  return !own ? "harness_unsupported" : own !== adapter ? "harness_adapter_mismatch" : null;
+}
+
 // js/bridge/orchestra-launchers.ts
 var SLICE = "slice:orchestra";
 var LIMIT4 = 50;
 var HANDLE = /^@[^\s:@/]+$/;
 var LAUNCHER_MAX = 64;
-var str2 = (v) => typeof v === "string" && v.trim() !== "";
+var str3 = (v) => typeof v === "string" && v.trim() !== "";
 function parseLauncher(raw) {
   let v;
   try {
@@ -16276,61 +16322,47 @@ function parseLauncher(raw) {
     return { code: "description_not_json" };
   }
   const d = v ?? {};
-  if (!str2(d.launcher) || d.launcher.length > LAUNCHER_MAX) return { code: "launcher_missing" };
+  if (!str3(d.launcher) || d.launcher.length > LAUNCHER_MAX) return { code: "launcher_missing" };
   const launcher = d.launcher.trim();
-  if (d.host !== void 0 && d.host !== null && !str2(d.host))
+  if (d.host !== void 0 && d.host !== null && !str3(d.host))
     return { code: "host_invalid", launcher };
-  if (d.adapter !== "orca") return { code: "adapter_unsupported", launcher };
+  if (d.adapter !== "orca" && d.adapter !== "bridge")
+    return { code: "adapter_unsupported", launcher };
+  const adapter = d.adapter;
   if (!Number.isSafeInteger(d.limit) || d.limit < 0)
     return { code: "limit_missing", launcher };
-  const harnesses = {};
-  const h = d.harnesses;
-  if (!h || typeof h !== "object" || Array.isArray(h))
-    return { code: "harnesses_missing", launcher };
-  for (const [name2, o] of Object.entries(h)) {
-    const x = o ?? {};
-    if (!Array.isArray(x.models) || !x.models.every(str2))
-      return { code: "harness_invalid", launcher };
-    harnesses[name2] = { models: x.models.map((m2) => m2.trim()) };
-    if (name2 === "dsh") {
-      const dsh = parseDsh(x);
-      if (!dsh) return { code: "dsh_invalid", launcher };
-      harnesses[name2].dsh = dsh;
-    } else if (Object.hasOwn(x, "exec")) {
-      const exec = name2 === "opencode" ? parseExec(x.exec, harnesses[name2].models) : null;
-      if (!exec) return { code: "exec_invalid", launcher };
-      harnesses[name2].exec = exec;
-    }
-  }
+  const parsed = parseHarnesses(d.harnesses, adapter);
+  if ("code" in parsed) return { code: parsed.code, launcher };
+  const harnesses = parsed.offers;
   const checkouts = {};
   const c = d.checkouts ?? {};
   if (typeof c !== "object" || Array.isArray(c)) return { code: "checkouts_invalid", launcher };
   for (const [repo, path] of Object.entries(c)) {
-    if (!str2(path) || !isAbsolute6(path)) return { code: "checkouts_invalid", launcher };
+    if (!str3(path) || !isAbsolute6(path)) return { code: "checkouts_invalid", launcher };
     checkouts[repo] = path;
   }
   const homes = {};
   const m = d.homes ?? {};
   if (typeof m !== "object" || Array.isArray(m)) return { code: "homes_invalid", launcher };
   for (const [role, path] of Object.entries(m)) {
-    if (!/^\S+#[1-9]\d*$/.test(role) || !str2(path) || !isAbsolute6(path))
+    if (!/^\S+#[1-9]\d*$/.test(role) || !str3(path) || !isAbsolute6(path))
       return { code: "homes_invalid", launcher };
     homes[role] = path;
   }
   const callers = d.callers ?? [];
-  if (!Array.isArray(callers) || !callers.every((h2) => str2(h2) && HANDLE.test(h2.trim())))
+  if (!Array.isArray(callers) || !callers.every((h) => str3(h) && HANDLE.test(h.trim())))
     return { code: "callers_invalid", launcher };
   const clone = parseClone(d);
   if (clone && "code" in clone) return { code: clone.code, launcher };
   return {
     launcher,
-    host: str2(d.host) ? d.host.trim() : null,
-    adapter: "orca",
+    host: str3(d.host) ? d.host.trim() : null,
+    adapter,
     limit: d.limit,
     harnesses,
     checkouts,
     homes,
-    callers: callers.map((h2) => h2.trim().slice(1).toLowerCase()),
+    callers: callers.map((h) => h.trim().slice(1).toLowerCase()),
     clone
   };
 }
@@ -16358,7 +16390,7 @@ async function readLaunchers(serverUrl, token) {
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine = [];
     for (const seq4 of seqs) {
-      const body = await s2.call(tool("look"), { realm: "mind", node_id: `#${seq4}`, raw: true });
+      const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       const l = parseLauncher(body);
       if ("code" in l) {
         out7.refused.push({ what: l.launcher ?? `#${seq4}`, code: l.code });
@@ -16734,7 +16766,7 @@ async function dshCheckout(own, spec, row, canon2) {
 // js/bridge/orchestra-resolve.ts
 var text5 = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
 var missing = (v) => v === null || v === void 0;
-var supported = (h) => h === "opencode" || h === "dsh";
+var fits = (l, h) => harnessRefusal(l.adapter, h) === null;
 function resolveInvite(source, ls, runs) {
   const caller = accountOf(source.author);
   if (!caller || !ls.account) return { code: "caller_unknown" };
@@ -16755,27 +16787,30 @@ function resolveInvite(source, ls, runs) {
     const admitted = local.filter(allowed);
     if (!admitted.length) return { code: local.length ? "caller_not_allowed" : "launcher_missing" };
     const candidates = admitted.filter((l) => {
-      const harnesses2 = missing(source.harness) ? Object.keys(l.harnesses).filter(supported) : [text5(source.harness) ?? ""];
+      const harnesses2 = missing(source.harness) ? Object.keys(l.harnesses) : [text5(source.harness) ?? ""];
       return harnesses2.some(
-        (h) => l.harnesses[h] && l.harnesses[h].models.length > 0 && (missing(source.model) || l.harnesses[h].models.includes(text5(source.model) ?? ""))
+        (h) => fits(l, h) && l.harnesses[h] && l.harnesses[h].models.length > 0 && (missing(source.model) || l.harnesses[h].models.includes(text5(source.model) ?? ""))
       );
     });
     if (!candidates.length && admitted.length === 1) own = admitted[0];
     else if (!candidates.length) {
-      const hasHarness = admitted.some((l) => l.harnesses[text5(source.harness) ?? ""]);
+      const named2 = text5(source.harness) ?? "";
+      const offering = admitted.find((l) => l.harnesses[named2]);
+      const fitting = admitted.some((l) => l.harnesses[named2] && fits(l, named2));
       return {
-        code: !missing(source.harness) && !hasHarness ? "harness_not_offered" : !missing(source.model) ? "model_not_offered" : "launcher_missing"
+        code: !missing(source.harness) && !offering ? "harness_not_offered" : offering && !fitting ? harnessRefusal(offering.adapter, named2) ?? "harness_unsupported" : !missing(source.model) ? "model_not_offered" : "launcher_missing"
       };
     } else if (candidates.length > 1) return { code: "launcher_ambiguous" };
     else own = candidates[0];
   }
-  const harnesses = Object.keys(own.harnesses).filter(supported);
+  const harnesses = Object.keys(own.harnesses).filter((h) => fits(own, h));
   if (missing(source.harness) && harnesses.length !== 1)
     return { code: harnesses.length ? "harness_ambiguous" : "harness_missing" };
   const harness = missing(source.harness) ? harnesses[0] : text5(source.harness) ?? "";
   const offer = own.harnesses[harness];
   if (!offer) return { code: "harness_not_offered" };
-  if (!supported(harness)) return { code: "harness_unsupported" };
+  const refused2 = harnessRefusal(own.adapter, harness);
+  if (refused2) return { code: refused2 };
   const models = [...new Set(offer.models)];
   if (missing(source.model) && models.length !== 1)
     return { code: models.length ? "model_ambiguous" : "model_missing" };
@@ -17715,7 +17750,7 @@ async function ensureLauncher(serverUrl, token, spec) {
       limit: 50
     });
     for (const seq4 of new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))) {
-      const body = await s2.call(tool("look"), { realm: "mind", node_id: `#${seq4}`, raw: true });
+      const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       if (parseLauncher(body).launcher === spec.launcher)
         return w9().describeTaken(spec.launcher, `#${seq4}`);
     }
@@ -18536,7 +18571,7 @@ ${back.isError ? `${word3} register: ${short(back.text, 160)}` : word3}`;
 
 // js/bridge/standtool.ts
 var STAND_TOOL_NAME = tool("stand");
-var str3 = (description) => ({ type: "string", description });
+var str4 = (description) => ({ type: "string", description });
 var standTool = () => {
   const w12 = words(STAND_TOOL);
   return {
@@ -18545,18 +18580,18 @@ var standTool = () => {
     inputSchema: {
       type: "object",
       properties: {
-        realm: str3(w12.realm()),
-        karta: str3(w12.karta()),
-        name: str3(w12.name()),
-        room: str3(w12.room()),
-        model: str3(w12.model()),
+        realm: str4(w12.realm()),
+        karta: str4(w12.karta()),
+        name: str4(w12.name()),
+        room: str4(w12.room()),
+        model: str4(w12.model()),
         mute_siblings: { type: "boolean", description: w12.muteSiblings() },
         take: { type: "boolean", description: w12.take() },
-        room_karta: str3(w12.roomKarta()),
+        room_karta: str4(w12.roomKarta()),
         repeat_knock: { type: "boolean", description: w12.repeatKnock() },
-        satellite_of: str3(w12.satelliteOf()),
-        status: str3(w12.status()),
-        cwd: str3(w12.cwd()),
+        satellite_of: str4(w12.satelliteOf()),
+        status: str4(w12.status()),
+        cwd: str4(w12.cwd()),
         spawned_for: spawnedForSchema(words(SPAWNED_FOR).schema()),
         context_restored: { type: "boolean", description: words(CONTEXT_GATE).field }
       },
@@ -19125,21 +19160,21 @@ async function readOpenOrders(base, take3) {
 // js/bridge/stoporder.ts
 var taken = /* @__PURE__ */ new Set();
 var ACCEPT_CAP_MS = 2e3;
-var str4 = (v) => typeof v === "string" ? v : "";
+var str5 = (v) => typeof v === "string" ? v : "";
 function orderOf(frame2) {
-  const id = str4(frame2.order_id);
-  const standing = str4(frame2.standing_id);
+  const id = str5(frame2.order_id);
+  const standing = str5(frame2.standing_id);
   if (!id || !standing) return null;
   const span = frame2.ack_window_seconds;
   return {
     id,
     standing_id: standing,
-    reason_code: str4(frame2.reason_code),
-    by: str4(frame2.by),
-    issued_at: str4(frame2.issued_at),
+    reason_code: str5(frame2.reason_code),
+    by: str5(frame2.by),
+    issued_at: str5(frame2.issued_at),
     ...typeof span === "number" ? { ack_window_seconds: span } : {},
-    ...str4(frame2.to_standing_id) ? { to_standing_id: str4(frame2.to_standing_id) } : {},
-    ...str4(frame2.to_standing) ? { to_standing: str4(frame2.to_standing) } : {}
+    ...str5(frame2.to_standing_id) ? { to_standing_id: str5(frame2.to_standing_id) } : {},
+    ...str5(frame2.to_standing) ? { to_standing: str5(frame2.to_standing) } : {}
   };
 }
 function journalRefused(id, outcome) {
@@ -22216,7 +22251,7 @@ var TEMPLATE_PARENTS = [
   `mcp__plugin_${PLUGIN_NAME}_${PRODUCT}`,
   `mcp__${PRODUCT}`
 ];
-var str5 = (v) => typeof v === "string" ? v : "";
+var str6 = (v) => typeof v === "string" ? v : "";
 function entriesOf(fm) {
   const raw = fm.mcpServers;
   const pairs = [];
@@ -22229,14 +22264,14 @@ function entriesOf(fm) {
   } else if (raw && typeof raw === "object") pairs.push(...Object.entries(raw));
   return pairs.map(([name2, v]) => {
     const spec = v && typeof v === "object" && !Array.isArray(v) ? v : {};
-    const args = Array.isArray(spec.args) ? spec.args.map((a) => str5(a)) : [];
+    const args = Array.isArray(spec.args) ? spec.args.map((a) => str6(a)) : [];
     const env2 = {};
     if (spec.env && typeof spec.env === "object" && !Array.isArray(spec.env))
-      for (const [k, e] of Object.entries(spec.env)) env2[k] = str5(e);
-    return { name: name2, ref: v === null, command: str5(spec.command), args, env: env2 };
+      for (const [k, e] of Object.entries(spec.env)) env2[k] = str6(e);
+    return { name: name2, ref: v === null, command: str6(spec.command), args, env: env2 };
   });
 }
-var listOf = (v) => Array.isArray(v) ? v.map((x) => str5(x).trim()).filter(Boolean) : str5(v).split(",").map((x) => x.trim()).filter(Boolean);
+var listOf = (v) => Array.isArray(v) ? v.map((x) => str6(x).trim()).filter(Boolean) : str6(v).split(",").map((x) => x.trim()).filter(Boolean);
 function agentFiles(dir2, scope) {
   if (!existsSync21(dir2)) return [];
   let names2;
@@ -22253,7 +22288,7 @@ function agentFiles(dir2, scope) {
       if (text7 !== null) fm = parseFrontmatter(text7);
     } catch {
     }
-    return { path, agent: str5(fm.name) || basename7(f, ".md"), scope, fm };
+    return { path, agent: str6(fm.name) || basename7(f, ".md"), scope, fm };
   });
 }
 function projectRoot() {

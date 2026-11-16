@@ -1,5 +1,65 @@
 # Changelog
 
+## [8.10.0](https://github.com/iskron-ai/skills/compare/v8.9.0...v8.10.0) (2026-11-16)
+
+
+### Features
+
+* **help:** connecting an agent is one step per harness, commands verbatim from the delivery's SETUP ([#815](https://github.com/iskron-ai/skills/issues/815)) ([a6c02d6](https://github.com/iskron-ai/skills/commit/a6c02d67d82819c2103b857651f727e865416bc6))
+
+
+### Bug Fixes
+
+* **bridge:** dsh's default profile patch comes from the delivery layer; a delivery without one requires patch ([#818](https://github.com/iskron-ai/skills/issues/818)) ([3980bfe](https://github.com/iskron-ai/skills/commit/3980bfe125d34b4172de114b29dd0b1224832aba))
+* **bridge:** the orchestrator reads launcher descriptions from the card's fences; raw only for an older server ([#821](https://github.com/iskron-ai/skills/issues/821)) ([aaf6a66](https://github.com/iskron-ai/skills/commit/aaf6a666b2925bca99f18c7b467e81b8c33495f3))
+* **establish-mcp:** the dsh profile patch passes AGENTS.md whole, not cut at 64 KB ([#824](https://github.com/iskron-ai/skills/issues/824)) ([4a6e29d](https://github.com/iskron-ai/skills/commit/4a6e29de2e8fdf30cac46b74070a0770e43761bf))
+* **help:** Claude Desktop goes the bridge's way, no connector; the reference's commands are checked against SETUP; onboarding claims nothing of the window and invents no path ([#820](https://github.com/iskron-ai/skills/issues/820)) ([420eb76](https://github.com/iskron-ai/skills/commit/420eb76dd526c24dfb33abc9184f7d63202a2551))
+* **onboarding:** the opening is always the skill's — what Iskron does and the name; no form, no wizard line, no handle asked ([#814](https://github.com/iskron-ai/skills/issues/814)) ([3d92e2b](https://github.com/iskron-ai/skills/commit/3d92e2b56de89e292647b03b27d72ead7d5a924b))
+* **onboarding:** the opening is said once per conversation; a known name is not asked again ([#817](https://github.com/iskron-ai/skills/issues/817)) ([207a067](https://github.com/iskron-ai/skills/commit/207a0671ed44849db8daaa17aa5bf1fd8ee77edc))
+* **onboarding:** the window's wizard line still marks the opening as said, until the window's form is gone ([#822](https://github.com/iskron-ai/skills/issues/822)) ([9a623bc](https://github.com/iskron-ai/skills/commit/9a623bccd0f7c42aaa71e843074bd9d952df376e))
+* **onboarding:** the wizard line marks both the opening and the completion as shown ([#823](https://github.com/iskron-ai/skills/issues/823)) ([e655b84](https://github.com/iskron-ai/skills/commit/e655b84ef2fa5ac39ae07d0efbebc2cc0c496d37))
+* readthrough findings on the 8.10.0 candidate (establish-mcp, onboarding) ([#826](https://github.com/iskron-ai/skills/issues/826)) ([f05a854](https://github.com/iskron-ai/skills/commit/f05a8549dd134e4aeb07d85a69a9c0a58f34c387))
+
+## [8.9.0](https://github.com/iskron-ai/skills/compare/v8.8.1...v8.9.0) (2026-11-16)
+
+
+### Features
+
+* **opencode:** graph-reading tools stand outside code mode ([#809](https://github.com/iskron-ai/skills/issues/809)) ([aaa3c58](https://github.com/iskron-ai/skills/commit/aaa3c588a6c4bbf2e997d656e2cce9b1acd81cf1))
+
+
+### Bug Fixes
+
+* **writing:** a node's body is taken byte for byte as the look tool's description says, not from the card ([#813](https://github.com/iskron-ai/skills/issues/813)) ([fad0138](https://github.com/iskron-ai/skills/commit/fad0138fd197a4a677eea2bee69ca802c2b7ec87))
+* **writing:** how to take a node's body byte for byte is the look tool's description, not a retold format ([#811](https://github.com/iskron-ai/skills/issues/811)) ([62928c1](https://github.com/iskron-ai/skills/commit/62928c1358271780c9dce1191355219df6b0e0d7))
+
+## [8.8.1](https://github.com/iskron-ai/skills/compare/v8.8.0...v8.8.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **intake:** a forwarded message with no graph named goes to a remembered target, never the session's graph by default ([#806](https://github.com/iskron-ai/skills/issues/806)) ([0ca201b](https://github.com/iskron-ai/skills/commit/0ca201b7c1698afad66e0e4582275090b7204f76))
+* **intake:** the human chooses among remembered targets; the no-target case stays in its minding home ([#808](https://github.com/iskron-ai/skills/issues/808)) ([13da032](https://github.com/iskron-ai/skills/commit/13da0324a71eff6621a75164e3f764cb08939b8f))
+
+## [8.8.0](https://github.com/iskron-ai/skills/compare/v8.7.0...v8.8.0) (2026-11-16)
+
+
+### Features
+
+* **dsh:** the plugin puts the start word into the session's system prompt by the repository cover; a resumed session hears its seat went with the last process ([#796](https://github.com/iskron-ai/skills/issues/796)) ([8386e02](https://github.com/iskron-ai/skills/commit/8386e0286ab3c20b3c63f4386735d23577606a0e))
+* **minding:** the launcher description names the dsh harness and its keys; intake points the target choice to minding ([#794](https://github.com/iskron-ai/skills/issues/794)) ([c11f891](https://github.com/iskron-ai/skills/commit/c11f8918934bd33595a874bb1ab11808b86aa935))
+* **minding:** the launcher description raises dsh under its own launcher with adapter bridge; opencode stays under orca ([#800](https://github.com/iskron-ai/skills/issues/800)) ([8a30cf1](https://github.com/iskron-ai/skills/commit/8a30cf16c2e8bcddeb244d09bafa2b098fbfbe8e))
+* **orchestra:** launcher adapter bridge raises dsh without Orca; a harness of the other adapter is harness_adapter_mismatch ([#799](https://github.com/iskron-ai/skills/issues/799)) ([ed074ab](https://github.com/iskron-ai/skills/commit/ed074abd76aca8f9b5e8693bb84c81652c199719))
+
+
+### Bug Fixes
+
+* **dsh:** each session of a long dsh process gets its start word; REALITY names the start-word class ([#797](https://github.com/iskron-ai/skills/issues/797)) ([999fdf2](https://github.com/iskron-ai/skills/commit/999fdf244d03cbc9580fcf76e5be8c145697d76e))
+* **establish-mcp:** a homes role is checked by graph only; homes and the graph's full address are named where a role lacks repository ([#804](https://github.com/iskron-ai/skills/issues/804)) ([992d846](https://github.com/iskron-ai/skills/commit/992d8469ad48a8254676c5ada4279debe3f97126))
+* **establish-mcp:** the bridge orchestrator door names adapter bridge for dsh and its refusal codes; minding marks clone as orca-only ([#801](https://github.com/iskron-ai/skills/issues/801)) ([3e16e64](https://github.com/iskron-ai/skills/commit/3e16e643522b94ae1d2fc7aa3160079f096f8a89))
+* **minding:** an adapter-bridge description takes checkouts or homes; intake says the target is chosen not by the text ([#802](https://github.com/iskron-ai/skills/issues/802)) ([20175f6](https://github.com/iskron-ai/skills/commit/20175f6604b717825da8660bfdda20efcfc5e5b2))
+* **minding:** homes raises a role without repository under any adapter; the door, cases and establish-mcp say so and know dsh ([#803](https://github.com/iskron-ai/skills/issues/803)) ([a8a75a8](https://github.com/iskron-ai/skills/commit/a8a75a8de32215568cf82d98ec8908fc3072df26))
+
 ## [8.7.0](https://github.com/iskron-ai/skills/compare/v8.6.0...v8.7.0) (2026-11-16)
 
 

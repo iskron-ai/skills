@@ -1,7 +1,9 @@
 // The orchestrator raises dsh itself (graph @nks/nks-dev, #10777): a real daemon of the built
 // bridge, the fake NKS, a substitute dsh on PATH. Orca is never asked for a dsh call.
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { invite, leadingDsh, MODEL, REALM, ROOM } from "./dsh-kit.mjs";
@@ -83,6 +85,37 @@ test("dsh: no dsh binary or no patch — refused by code in status, no tree, no 
   assert.match((await p.step()).out, /invite 13: dsh_patch_missing/);
   assert.equal(p.dshCalls().length + o.dshCalls().length, 0);
   assert.equal(p.orcaCalls().length + o.orcaCalls().length, 0);
+});
+
+// A server without the raw read (#10962): the description's body comes from the card's fences,
+// and the orchestrator still raises; an older server's raw read still works (every other probe).
+test("dsh: a server without raw — the description is read from the card's fences and raises", async (t) => {
+  const o = await leadingDsh(t, { fenced: true });
+  await o.queue([invite(19)]);
+  const r = await o.step();
+  assert.match(r.out, /invite 19: launched/, r.out);
+  assert.doesNotMatch((await o.status()).out, /refused/);
+});
+
+// No patch in the description: the delivery's own profile in the flat install (DSH_PROFILE,
+// product.ts) — raised with it; the file absent — dsh_patch_missing (#10777).
+test("dsh: no patch named — the delivery's profile from the flat install, or dsh_patch_missing", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "iskron-dsh-home-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const o = await leadingDsh(t, { offer: { patch: undefined }, env: { HOME: home } });
+  await o.queue([invite(17)]);
+  assert.match((await o.step()).out, /invite 17: dsh_patch_missing/);
+  const profile = join(home, ".agents", "skills", "establish-mcp", "references", "dsh-profile.yml");
+  mkdirSync(dirname(profile), { recursive: true });
+  writeFileSync(profile, "- id: tool-ask-user\n  disabled: true\n");
+  const p = await leadingDsh(t, { offer: { patch: undefined }, env: { HOME: home } });
+  await p.queue([invite(18)]);
+  assert.match((await p.step()).out, /invite 18: launched/);
+  assert.ok(
+    p.dshCalls().some((c) => JSON.stringify(c).includes(profile)),
+    "dsh got the profile",
+  );
+  assert.equal(o.dshCalls().length, 0);
 });
 
 test("dsh: no seat within the window — the bridge ends its own process, and the exit frees the slot", async (t) => {

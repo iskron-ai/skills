@@ -27,6 +27,12 @@ export const GLOBAL_PREFIX = `__${PRODUCT}`;
 /** Скилл, несущий мост, и файл моста в его `scripts/`: по ним узнаётся корень набора (#6847). */
 export const BRIDGE_SKILL = "establish-mcp";
 export const BRIDGE_FILE = `${PRODUCT}.mjs`;
+/**
+ * Профиль-патч dsh поставки внутри скилла моста плоской установки (`~/.agents/skills/<скилл>/…`):
+ * им оркестратор поднимает dsh, когда описание запускателя не называет `patch` (#10777).
+ * Поставка без своего профиля ставит `null` — тогда `patch` в описании обязателен.
+ */
+export const DSH_PROFILE: string | null = "references/dsh-profile.yml";
 /** Файл плагина OpenCode в поставке (рядом с мостом) и имя его копии в `plugins/` OpenCode. */
 export const PLUGIN_FILE = "opencode-plugin.js";
 export const PLUGIN_COPY_FILE = `${PRODUCT}.js`;
