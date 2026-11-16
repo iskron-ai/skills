@@ -59,7 +59,13 @@ function registry(initial = []) {
       remove: (id) => m.delete(id),
       get: (id) => m.get(id),
       list: () => [...m.values()],
-      update() {},
+      update: (id, fn) => {
+        const t = m.get(id);
+        if (!t) return;
+        const copy = { ...t };
+        fn(copy);
+        m.set(id, copy);
+      },
       namespace() {},
     };
     for (const t of transforms) t(editor);

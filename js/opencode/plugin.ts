@@ -19,6 +19,7 @@ import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { createCompaction } from "./compaction.ts";
 import { setupContextGate } from "./context-gate.ts";
+import { standDirect } from "./direct.ts";
 import { idleHalf } from "./half.ts";
 import { createHalts } from "./halts.ts";
 import { createHookContext } from "./hook-context.ts";
@@ -188,6 +189,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
       (s) => spawnStarts.has(s),
       (s, args, result) => spawnStarts.verify(s, args, result),
     );
+    await standDirect(ctx);
   } catch (e) {
     say(words(PLUGIN).notRaised((e as Error).message), "error");
   }
