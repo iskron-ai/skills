@@ -23,7 +23,7 @@ export async function expireLaunches(
       if (r.dsh) {
         // No seat stood: our own process ends; its observed exit frees the slot (#10777).
         if (r.dsh.terminated || r.dsh.exit) continue;
-        dshTerminate(r, "no_seat");
+        await dshTerminate(r, "no_seat");
         r.why = "dsh_no_seat_terminated";
         said.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;

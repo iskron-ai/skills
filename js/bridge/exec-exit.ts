@@ -36,7 +36,7 @@ export async function observeExec(
     }
     writeRuns(authDir, runs);
     const identity = runIdentity(r);
-    if (!(r.exec?.exit || r.tree?.exit) && (r.dsh ? observeDsh(r) : await execExited(r))) {
+    if (!(r.exec?.exit || r.tree?.exit) && (r.dsh ? await observeDsh(r) : await execExited(r))) {
       const latest = readRuns(authDir)[key];
       if (!latest || runIdentity(latest) !== identity) continue;
       if (r.exec) r.exec.exit = new Date().toISOString();

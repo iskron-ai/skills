@@ -15,7 +15,7 @@ import {
   modelPatch,
   writeModelPatch,
 } from "./orchestra-dsh.ts";
-import { dshEvents, dshExit, dshTerminate, exits } from "./orchestra-dsh-proc.ts";
+import { children, dshEvents, dshExit, dshTerminate, exits } from "./orchestra-dsh-proc.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { dropUnlaunched } from "./orchestra-tree-drop.ts";
 
@@ -73,11 +73,13 @@ export async function launchDsh(
     child.once("error", () => resolve(null));
   });
   if (!started) return unstarted("dsh_spawn_failed");
-  child.once("exit", (code, signal) =>
-    exits.set(started, code !== null ? String(code) : `${signal}`),
-  );
+  children.add(started);
+  child.once("exit", (code, signal) => {
+    children.delete(started);
+    exits.set(started, code !== null ? String(code) : `${signal}`);
+  });
   child.unref();
-  run.dsh = { pid: started, events: files.events };
+  run.dsh = { pid: started, events: files.events, model: files.model };
   run.state = "launched";
   writeRuns(authDir, runs);
   for (const until = Date.now() + SESSION_MS; Date.now() < until;) {
@@ -87,7 +89,7 @@ export async function launchDsh(
       writeRuns(authDir, runs);
       return "launched";
     }
-    const exit = dshExit(run);
+    const exit = await dshExit(run);
     if (exit) {
       run.dsh.exit = exit;
       run.closed = "client_exited";
@@ -97,6 +99,6 @@ export async function launchDsh(
     await new Promise((done) => setTimeout(done, 100));
   }
   // No session within the window: the process is ours and ends; its exit frees the slot.
-  dshTerminate(run, "no_session");
+  await dshTerminate(run, "no_session");
   return fail("dsh_no_session", "launched");
 }

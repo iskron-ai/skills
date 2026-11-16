@@ -1,11 +1,35 @@
 // What a run's own dsh process says and whether it lives (graph @nks/nks-dev, node #10777):
 // its NDJSON event file, its exit, its end by its own process group — never another's pid.
+// A pid alone proves nothing after a restart: the process is ours only as a child this daemon
+// started, or by its command line carrying this run's model overlay, unique per run.
+import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import type { Run } from "./orchestra-runs.ts";
 
 /** Exits this process saw, by pid: a restarted daemon finds the pid gone instead. */
 export const exits = new Map<number, string>();
+/** Children this process started and has not yet seen exit. */
+export const children = new Set<number>();
+
+const commandOf = (pid: number): Promise<string | null> =>
+  new Promise((done) =>
+    execFile(
+      "ps",
+      ["-o", "command=", "-p", String(pid)],
+      { windowsHide: true, timeout: 5_000 },
+      (e, out) => done(e ? null : String(out)),
+    ),
+  );
+
+/** Proven ours and alive; no ps, another command, an error — not ours. */
+async function ours(r: Run): Promise<boolean> {
+  const d = r.dsh;
+  if (!d || exits.has(d.pid)) return false;
+  if (children.has(d.pid)) return true;
+  if (!d.model) return false;
+  return (await commandOf(d.pid))?.includes(d.model) ?? false;
+}
 
 /** What the event file said so far: the first session id and the final reason. */
 export function dshEvents(path: string): { session?: string; final?: string } {
@@ -31,22 +55,18 @@ export function dshEvents(path: string): { session?: string; final?: string } {
   return out;
 }
 
-/** The exit of the run's own process, or undefined while it lives. */
-export function dshExit(r: Run): string | undefined {
+/** The exit of the run's own process, or undefined while it is proven ours and alive; a process
+ * not proven ours is an unknown exit. */
+export async function dshExit(r: Run): Promise<string | undefined> {
   if (!r.dsh) return undefined;
   const seen = exits.get(r.dsh.pid);
   if (seen) return seen;
-  try {
-    process.kill(r.dsh.pid, 0);
-    return undefined;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM" ? undefined : "unknown";
-  }
+  return (await ours(r)) ? undefined : "unknown";
 }
 
-/** End the run's own process group — only while its exit is unseen. */
-export function dshTerminate(r: Run, why: string): void {
-  if (!r.dsh || r.dsh.terminated || dshExit(r)) return;
+/** End the run's own process group — only while it is proven ours and alive. */
+export async function dshTerminate(r: Run, why: string): Promise<void> {
+  if (!r.dsh || r.dsh.terminated || !(await ours(r))) return;
   try {
     process.kill(-r.dsh.pid, "SIGTERM");
     r.dsh.terminated = why;
@@ -57,16 +77,25 @@ export function dshTerminate(r: Run, why: string): void {
 
 /** One observation of a live dsh run: events read, a confirmed stop ends its own process; true
  * when its exit is newly seen — the caller records it as the client's exit. */
-export function observeDsh(r: Run): boolean {
+export async function observeDsh(r: Run): Promise<boolean> {
   if (!r.dsh || r.dsh.exit) return false;
   const seen = dshEvents(r.dsh.events);
   if (seen.session && !r.dsh.session) r.dsh.session = seen.session;
   if (seen.final) r.dsh.final = seen.final;
-  if (r.stop_outcome === "stopped") dshTerminate(r, "stopped");
-  const exit = dshExit(r);
+  if (r.stop_outcome === "stopped") await dshTerminate(r, "stopped");
+  const exit = await dshExit(r);
   if (!exit) return false;
   r.dsh.exit = exit;
   return true;
+}
+
+/** A run gone wrong after its session: its final not completed, or a non-zero exit — never
+ * our own termination nor an unknown exit. */
+export function dshFailure(r: Run): string | undefined {
+  const d = r.dsh;
+  if (!d?.session || !d.exit || d.terminated) return undefined;
+  if (d.final && d.final !== "completed") return `dsh_final_${d.final}`;
+  return d.exit === "0" || d.exit === "unknown" ? undefined : `dsh_exit_${d.exit}`;
 }
 
 /** Our dsh process exited and the tape, read after it, shows no seat: the run ends, nothing
@@ -74,6 +103,6 @@ export function observeDsh(r: Run): boolean {
 export function endDshUnseated(r: Run, live: boolean): boolean {
   if (!r.dsh?.exit || !r.tree?.exit || r.standing_id || !live) return false;
   r.state = "ended";
-  r.why = `dsh_ended_${r.dsh.final ?? "no_final"}`;
+  r.why = dshFailure(r) ?? `dsh_ended_${r.dsh.final ?? "no_final"}`;
   return true;
 }

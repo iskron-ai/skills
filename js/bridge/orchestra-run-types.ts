@@ -19,10 +19,12 @@ export interface Run {
   dsh?: {
     pid: number;
     events: string;
+    /** This run's model overlay: its path in the command line proves the pid ours. */
+    model?: string;
     session?: string;
     /** The `final` event's reason kind. */
     final?: string;
-    /** Observed exit: its code, or "unknown" when found gone after a restart. */
+    /** Observed exit: its code, or "unknown" when not proven ours after a restart. */
     exit?: string;
     terminated?: string;
   };

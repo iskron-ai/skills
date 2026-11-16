@@ -60,6 +60,16 @@ test("dsh: a non-zero exit before the session is a refused launch, never repeate
   assert.equal(o.orcaCalls().length, 0);
 });
 
+test("dsh: a non-zero exit after the session, no final — dsh_exit_N in the row and in status after the tree goes", async (t) => {
+  const o = await leadingDsh(t, { env: { FAKE_DSH_MODE: "crash" } });
+  await o.queue([invite(16)]);
+  assert.match((await o.step()).out, /invite 16: launched/);
+  const ended = await o.until(16, (r) => r.state === "ended" && r.tree?.state === "removed");
+  assert.equal(ended.dsh.exit, "5");
+  assert.equal(ended.why, "dsh_exit_5");
+  assert.match((await o.status()).out, /invite 16: dsh_exit_5/);
+});
+
 test("dsh: no dsh binary or no patch — refused by code in status, no tree, no process", async (t) => {
   const o = await leadingDsh(t, { offer: { bin: "/nonexistent/dsh" } });
   await o.queue([invite(12)]);
