@@ -1,6 +1,6 @@
 // A leading daemon for the dsh probes (graph @nks/nks-dev, #10777): the built bridge against the
-// fake NKS, the human's description offering the harness dsh, a substitute dsh on the daemon's
-// PATH and a substitute orca that only records — a dsh call never asks it.
+// fake NKS, the human's description of adapter bridge offering the harness dsh, a substitute dsh
+// on the daemon's PATH and a substitute orca that only records — a dsh call never asks it.
 import { spawn } from "node:child_process";
 import {
   existsSync,
@@ -42,20 +42,33 @@ export function cli(dir, args) {
   });
 }
 
-export const invite = (entry) => ({
+export const invite = (entry, attrs = {}) => ({
   entry_id: entry,
   room_id: ROOM,
   karta_seq: 931,
   author: "@tester:lead",
   at: "2026-11-09T10:00:00Z",
   payload: { holon: { seq: 4057, repository: REPO } },
-  attrs: { launcher: "probe-mac", harness: "dsh", model: MODEL },
+  attrs: { launcher: "probe-mac", harness: "dsh", model: MODEL, ...attrs },
 });
+
+// PATH without any orca: the probe's bin dir, then the inherited dirs that hold no orca.
+const withoutOrca = (bin) =>
+  [
+    bin,
+    ...(process.env.PATH ?? "").split(":").filter((d) => d && !existsSync(join(d, "orca"))),
+  ].join(":");
 
 const lines = (f) =>
   existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse) : [];
 
-export async function leadingDsh(t, { env = {}, offer = {}, limit = 2 } = {}) {
+/** adapter — the description's; harnesses(patch) — its offers instead of the one dsh offer;
+ * beside — more bodies (patch) => description, checkouts filled in; orca: false — no orca at all
+ * on the daemon's PATH. */
+export async function leadingDsh(
+  t,
+  { env = {}, offer = {}, limit = 2, adapter = "bridge", harnesses, beside = [], orca = true } = {},
+) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-")));
   const checkout = join(dir, "checkout");
   mkdirSync(checkout);
@@ -69,14 +82,15 @@ export async function leadingDsh(t, { env = {}, offer = {}, limit = 2 } = {}) {
   const body = {
     launcher: "probe-mac",
     host: hostname(),
-    adapter: "orca",
+    adapter,
     limit,
-    harnesses: { dsh: { models: [MODEL], patch, ...offer } },
+    harnesses: harnesses?.(patch) ?? { dsh: { models: [MODEL], patch, ...offer } },
     checkouts: { [REPO]: checkout },
   };
+  const bodies = [body, ...beside.map((b) => ({ ...b(patch), checkouts: { [REPO]: checkout } }))];
   const fake = await startFakeNks({
     pat: "probe-pat",
-    mind: { orchestra: [{ seq: 77, body: JSON.stringify(body) }] },
+    mind: { orchestra: bodies.map((b, i) => ({ seq: 77 + i, body: JSON.stringify(b) })) },
   });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
@@ -97,7 +111,7 @@ export async function leadingDsh(t, { env = {}, offer = {}, limit = 2 } = {}) {
   mkdirSync(bin);
   for (const [name, script] of [
     ["dsh", "fake-dsh.mjs"],
-    ["orca", "fake-orca.mjs"],
+    ...(orca ? [["orca", "fake-orca.mjs"]] : []),
   ])
     writeFileSync(join(bin, name), `#!/bin/sh\nexec "${NODE}" "${join(HERE, script)}" "$@"\n`, {
       mode: 0o755,
@@ -112,7 +126,7 @@ export async function leadingDsh(t, { env = {}, offer = {}, limit = 2 } = {}) {
       ISKRON_ORCHESTRA_TACT_MS: "3600000",
       ISKRON_BRIDGE_LANG: "en",
       ISKRON_ORCHESTRA: "1",
-      PATH: `${bin}:${process.env.PATH}`,
+      PATH: orca ? `${bin}:${process.env.PATH}` : withoutOrca(bin),
       FAKE_DSH_LOG: dshLog,
       FAKE_ORCA_LOG: orcaLog,
       ...env,

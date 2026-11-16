@@ -81,7 +81,13 @@ test("preparing and ambiguity both survive reload and occupy the launcher limit"
       own: new Map([
         [
           "own",
-          { launcher: "own", limit: 1, callers: [], harnesses: { opencode: { models: ["m"] } } },
+          {
+            launcher: "own",
+            adapter: "orca",
+            limit: 1,
+            callers: [],
+            harnesses: { opencode: { models: ["m"] } },
+          },
         ],
       ]),
     };
