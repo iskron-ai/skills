@@ -110,6 +110,11 @@ const signal = (i, entry, rooms, seat = "seat-raised") => ({
   at: `2026-11-09T10:00:0${i}Z`,
   cursor: `c${i}`,
 });
+/** The platform's idleness of a seat on the same tape (#6010): idle_warned or idle_due. */
+const idleSignal = (i, entry, cause, seat = "seat-raised") => ({
+  ...signal(i, entry, [], seat),
+  cause,
+});
 
 const orcaCalls = (log) =>
   existsSync(log)
@@ -1283,7 +1288,27 @@ test("dry run: says what one tact would raise or refuse, and touches nothing —
   assert.match(real.out, /invite 9: launched/, real.out);
 });
 
-test("quench: our seat's empty composition after it sat gets one composition_empty stop order", async (t) => {
+test("quench: an empty composition alone and idle_warned stop nothing — the moment is idle_due's", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  // Its case closed: the composition is empty, but the platform has not called it idle yet.
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  const empty = await o.step();
+  assert.equal(empty.code, 0, empty.err);
+  await o.step();
+  assert.equal(o.fake.state.orders.human.length, 0, "an empty composition alone is no end");
+  // Two wakes empty: the seat is told to leave — still not the orchestrator's moment.
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_warned")]);
+  const warned = await o.step();
+  assert.equal(warned.code, 0, warned.err);
+  assert.equal(o.fake.state.orders.human.length, 0, "idle_warned is no end");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
+test("quench: our seat's idle_due after it sat gets one composition_empty stop order", async (t) => {
   const o = await leading(t);
   await o.queue([invite(9, GOOD)]);
   await o.step();
@@ -1293,8 +1318,8 @@ test("quench: our seat's empty composition after it sat gets one composition_emp
   assert.equal(sat.code, 0, sat.err);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
   assert.equal(o.fake.state.orders.human.length, 0, "a seat in a case is not stopped");
-  // Its case closed: the composition is empty — the stop order goes out with the reason.
-  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  // Its case closed and the platform found it idle: the stop order goes out with the reason.
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")]);
   const empty = await o.step();
   assert.equal(empty.code, 0, empty.err);
   const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
@@ -1322,8 +1347,8 @@ test("quench: a membership landing after the read cancels the end — the re-che
       realms: {
         [REALM]: {
           invites: [],
-          signals: [signal(1, 9, [ROOM]), signal(2, 9, [])],
-          late: [signal(3, 9, [ROOM])],
+          signals: [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")],
+          late: [signal(4, 9, [ROOM])],
         },
       },
     },
@@ -1332,6 +1357,51 @@ test("quench: a membership landing after the read cancels the end — the re-che
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /invite 9: composition_changed/, r.out);
   assert.equal(o.fake.state.orders.human.length, 0, "no stop order on a fresh membership");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
+test("quench: a joined after idle_due cancels it even when the composition empties again", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    orchestra: {
+      realms: {
+        [REALM]: {
+          invites: [],
+          signals: [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")],
+          // The seat entered another case and left it: the count restarted, no idle_due stands.
+          late: [signal(4, 9, [ROOM]), signal(5, 9, [])],
+        },
+      },
+    },
+  });
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /invite 9: composition_changed/, r.out);
+  await o.step();
+  assert.equal(o.fake.state.orders.human.length, 0, "the idle_due before the joined is spent");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
+test("quench: a composition_changed refusal of the order leaves the agent alive, unrepeated", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({
+    orders_stop_answer: { status: 409, body: { error: "composition_changed" } },
+  });
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /invite 9: composition_changed/, r.out);
+  await o.step();
+  const stops = o.fake.state.orders.human.filter((h) => h.method === "POST");
+  assert.equal(stops.length, 1, "one order, not repeated after the refusal");
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
 });
 
@@ -1346,7 +1416,7 @@ test("quench: the caller gone during the re-check — no stop order after it (#8
       realms: {
         [REALM]: {
           invites: [],
-          signals: [signal(1, 9, [ROOM]), signal(2, 9, [])],
+          signals: [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")],
           // The tact's read answers; the re-check is held until released — past the client's ceiling.
           raised_holds: [false, true],
         },
@@ -1392,7 +1462,7 @@ test("quench: a raised seat that never joined within the window is a failed laun
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].tree?.exit, undefined, "no fabricated client exit");
 });
 
-/** Our seat sat and its composition emptied; the stop answers `answer`, an open order lies. */
+/** Our seat sat and went idle (idle_due); the stop answers `answer`, an open order lies. */
 async function stopping(t, answer, order, env = {}) {
   const o = await leading(t, { env });
   await o.queue([invite(9, GOOD)]);
@@ -1400,7 +1470,7 @@ async function stopping(t, answer, order, env = {}) {
   await o.queue([], [signal(1, 9, [ROOM])]);
   await o.step();
   await o.fake.control({ orders_stop_answer: answer });
-  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")]);
   const r = await o.step();
   assert.match(r.out, /invite 9: stop_ordered(?!_elsewhere)/, r.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
@@ -1698,7 +1768,7 @@ test("close: after Orca restarted, the old runtime's handle is not closed — sa
   await o.queue([], [signal(1, 9, [ROOM])]);
   await o.step();
   o.restartOrca("rt_new");
-  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), idleSignal(3, 9, "idle_due")]);
   const r = await o.step();
   assert.match(r.out, /invite 9: seat_gone/, r.out);
   assert.notEqual(o.runs()[`${REALM}|${ROOM}|9`].state, "ended");
@@ -1747,10 +1817,32 @@ test("on --launcher: no single holon of the work with agents — the description
 
 test("quench: a seat the orchestrator did not launch is never stopped", async (t) => {
   const o = await leading(t);
-  await o.queue([], [signal(1, 42, [ROOM], "seat-foreign"), signal(2, 42, [], "seat-foreign")]);
+  await o.queue(
+    [],
+    [
+      signal(1, 42, [ROOM], "seat-foreign"),
+      signal(2, 42, [], "seat-foreign"),
+      idleSignal(3, 42, "idle_due", "seat-foreign"),
+    ],
+  );
   const r = await o.step();
   assert.equal(r.code, 0, r.err);
   assert.equal(o.fake.state.orders.human.length, 0);
+});
+
+test("quench: idle_due of a seat without our spawned_for orders nothing, ours sat empty lives", async (t) => {
+  const o = await leading(t);
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  // Ours emptied without idle_due; a seat raised by hand goes idle_due beside it.
+  const hand = { ...idleSignal(3, 9, "idle_due", "seat-hand"), spawned_for: null };
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, []), hand]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err);
+  assert.equal(o.fake.state.orders.human.length, 0, "neither the hand seat nor ours is stopped");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].standing_id, "seat-raised");
 });
 
 // #10078, case №4206: a repository Orca does not know is cloned only by the description's leave.

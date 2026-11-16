@@ -52,6 +52,8 @@ export interface Run {
   n?: number;
   rooms?: number;
   sat?: boolean;
+  /** The platform's idle_due for this seat stands, not yet followed by any other signal (#6010). */
+  idle_due?: boolean;
   order_id?: string;
   stopping_at?: string;
   stop_outcome?: string;
