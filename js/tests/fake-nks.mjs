@@ -550,12 +550,14 @@ export async function startFakeNks(opts = {}) {
       const room = st.caseRooms[decodeURIComponent(caseRoute[1])];
       if (!room) return json(res, 404, { error: "not found" });
       if (!caseRoute[2]) return json(res, 200, { status: room.status });
-      const since = Number(u.searchParams.get("since") ?? 0);
-      return json(
-        res,
-        200,
-        room.entries.filter((entry) => Number(entry.line?.entry_id ?? entry.entry_id) > since),
-      );
+      // The holder's page form (#48): {items, cursor, numbering:"case"}; cursor — the last
+      // covered entry's number, or the former one when nothing new; entries carry the case's
+      // own numbers as `id` (#10995).
+      const since = Number(u.searchParams.get("since") ?? 0) || 0;
+      const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
+      const items = room.entries.filter((entry) => Number(entry.id) > since).slice(0, limit);
+      const cursor = items.length ? Number(items[items.length - 1].id) : since;
+      return json(res, 200, { items, cursor, numbering: "case" });
     }
 
     // Flat NodeView from API 0.185.4 (case 4603 [214]), no node/data fallback envelope.
