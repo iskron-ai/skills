@@ -266,29 +266,40 @@ test("disk return (resume) × the seat beside's end while the return prepares (i
 // A stop that lands while a register is on the wire is asked again before the next send: after
 // a waited 429 the retry answers 409 opened concurrently, and its fallback register goes through
 // the gate too — nothing after the stop (registergate.ts, #7439).
-test("rebind × the main seat's stop while its retry after the 429 is on the wire, answered 409 opened concurrently: no register after the stop", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const kit = await twoSeats(t);
-  const brief = { ...rateLimited(MAIN), data: { retry_after_secs: 1, key: "opening" } };
-  // structured: the 409's refusal carries its status (refusal.ts openedConcurrently reads it).
-  await kit.fake.control({
-    structured: true,
-    registerRefuseNext: [brief],
-    registerConcurrentNext: 1,
+for (const [kind, k] of Object.entries(KINDS))
+  test(`${kind} × the main seat's stop while its retry after the 429 is on the wire, answered 409 opened concurrently: no register after the stop`, async (t) => {
+    if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+    const kit = await twoSeats(t, k.env?.() ?? {}, !k.unsigned);
+    const brief = { ...rateLimited(MAIN), data: { retry_after_secs: 1, key: "opening" } };
+    // structured: the 409's refusal carries its status (refusal.ts racedOpening reads it);
+    // every register's answer is slow, so the stop lands while the retry is on the wire.
+    await kit.fake.control({
+      structured: true,
+      registerRefuseNext: [brief],
+      registerConcurrentNext: 1,
+      registerToolDelayMs: 1500,
+    });
+    const first = registers(kit.fake, MAIN);
+    const { pending, stoppedCall } = await k.begin(kit);
+    // The first register (429) and its retry after the wait: the retry is on the wire now.
+    await until(() => registers(kit.fake, MAIN) >= first + 2, "the retry on the wire", 10_000);
+    const atStop = registers(kit.fake);
+    await kit.fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+    const r = await pending;
+    await k.settle?.();
+    await new Promise((d) => setTimeout(d, 2_000)); // a late register (its answer slow) lands by now
+    await kit.fake.control({ registerToolDelayMs: 0 });
+    const seen = `${kind}: ${JSON.stringify(r)}`;
+    assert.equal(
+      kit.fake.state.counts.register_concurrent ?? 0,
+      1,
+      `the retry answered 409 — ${seen}`,
+    );
+    assert.equal(registers(kit.fake) - atStop, 0, `no register after the stop — ${seen}`);
+    stoppedCall(r);
+    // The journal says what happened: no retry went (b1 runs the rebind and the refresh).
+    if (kind === "rebind" || kind === "skills refresh") {
+      assert.doesNotMatch(kit.b1.stderr, /registering again once/, kit.b1.stderr);
+      assert.match(kit.b1.stderr, /not registered again/, kit.b1.stderr);
+    }
   });
-  await kit.fake.control({ kill_session: true }); // the next call meets a new session: the rebind
-  await kit.fake.control({ registerToolDelayMs: 1500 }); // every register's answer is slow
-  const writes = kit.fake.state.writes.length;
-  const first = registers(kit.fake, MAIN);
-  const pending = write(kit.b1);
-  // The first register (429) and its retry after the wait: the retry is on the wire now.
-  await until(() => registers(kit.fake, MAIN) >= first + 2, "the retry on the wire", 10_000);
-  const atStop = registers(kit.fake);
-  await kit.fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
-  const r = await pending;
-  await kit.fake.control({ registerToolDelayMs: 0 });
-  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
-  assert.equal(kit.fake.state.counts.register_concurrent ?? 0, 1, "the retry answered 409");
-  assert.equal(registers(kit.fake) - atStop, 0, `no register after the stop: ${JSON.stringify(r)}`);
-  assert.equal(kit.fake.state.writes.length, writes, `the call not sent: ${JSON.stringify(r)}`);
-});

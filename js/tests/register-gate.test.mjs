@@ -39,6 +39,26 @@ test("a register is built only inside the register gate", () => {
   assert.deepEqual(past, [], `register sent past the gate (${GATE}):\n${past.join("\n")}`);
 });
 
+// A register retried past the gate: the seat-open race (409, no rule) is told only by the gate,
+// and the generic tool call sends once — a second send inside call.ts is a retry nobody asks.
+test("the 409 retry of a register lives only in the gate; the tool call sends once", () => {
+  const RACE = /\b(racedOpening|openedConcurrently)\b/;
+  const past = [];
+  for (const file of sources(BRIDGE)) {
+    const name = file.slice(BRIDGE.length + 1);
+    if (name === GATE || name === "refusal.ts") continue; // the gate; the definition
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (RACE.test(line) && !/^\s*(\/\/|\*)/.test(line))
+          past.push(`${name}:${i + 1}: ${line.trim()}`);
+      });
+  }
+  assert.deepEqual(past, [], `a seat-open race retried past the gate:\n${past.join("\n")}`);
+  const sends = readFileSync(join(BRIDGE, "call.ts"), "utf8").match(/\bawait ask\(/g) ?? [];
+  assert.equal(sends.length, 1, "call.ts sends a tool call once, no retry of its own");
+});
+
 test("the gate itself builds the register: the probe would see a path moved away from it", () => {
   const gate = readFileSync(join(BRIDGE, GATE), "utf8");
   assert.match(gate, SEND, "the gate holds the register's arguments");
