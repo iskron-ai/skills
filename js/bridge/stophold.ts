@@ -13,7 +13,8 @@ import { STOP, type StopWho } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type Door } from "./door.ts";
 import { broadcast, type ChannelEvent, forgetSeat, notify, releasedAsOwn } from "./hold.ts";
-import { type Frame, H, whenStopped } from "./holdstate.ts";
+import { dropHoldRecord } from "./holdrecord.ts";
+import { type Frame, H, movingSeatById, noteSeatEnded, whenStopped } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { dropExtra, extraPlaces, type Place } from "./places.ts";
 import { standingLog } from "./store.ts";
@@ -61,6 +62,18 @@ function stopBeside(beside: Place, reason: string): void {
 }
 
 /**
+ * A seat a register move is registering and not held yet (a disk return's seat beside): its
+ * end goes into the move — no more register of it, the rest go on — and its record is dropped.
+ */
+function stopMoving(key: string, reason: string): void {
+  const text = stopWord(key.replace(/--.*$/, ""), reason);
+  log(`${text} — that seat was being registered: not registered, the rest go on`);
+  standingLog(`stopped ${key} in a register move${reason ? ` (${reason})` : ""}`);
+  noteSeatEnded(key);
+  dropHoldRecord(key);
+}
+
+/**
  * A stop order for seat `id` (stoporder.ts, graph @nks/nks-dev, node #7519): the same stop as
  * the owner taking that seat off — the main seat stops the agent, a seat beside goes alone.
  * null — no seat of this session has that id. An id unknown to a lone main seat is its own only
@@ -76,14 +89,17 @@ export function stopSeatByOrder(
   const seat = seatOf(id, to);
   if (seat === "main" && H.currentKey)
     stopAgent(H.currentKey, `stop order ${order}`, reason, order);
+  else if (seat && seat !== "main" && "moving" in seat) stopMoving(seat.moving, reason);
   else if (seat && seat !== "main") stopBeside(seat, reason);
   return seat === null ? null : seat === "main" ? "main" : "beside";
 }
 
-/** The session's seat with this id: the main one, one beside, or none. */
-function seatOf(id: string, to: Addressed): Place | "main" | null {
+/** The session's seat with this id: the main one, one beside, one a register move registers, or none. */
+function seatOf(id: string, to: Addressed): Place | "main" | { moving: string } | null {
   const beside = extraPlaces().find((p) => p.door.standingId === id);
   if (beside) return beside;
+  const moving = movingSeatById(id);
+  if (moving && moving !== H.currentKey) return { moving };
   return H.door && H.currentKey && namesMain(id, to) ? "main" : null;
 }
 
@@ -91,7 +107,9 @@ function seatOf(id: string, to: Addressed): Place | "main" | null {
 export const holdsSeat = (id: string, framed: boolean, to: Addressed = {}): boolean =>
   framed
     ? seatOf(id, to) !== null
-    : H.door?.standingId === id || extraPlaces().some((p) => p.door.standingId === id);
+    : H.door?.standingId === id ||
+      extraPlaces().some((p) => p.door.standingId === id) ||
+      movingSeatById(id) !== null;
 
 /** One seat of a live channel taken off (api: standing_ended {standing_id, by | reason}). */
 function seatEnded(key: string, frame: Frame): void {
@@ -118,6 +136,10 @@ function seatEnded(key: string, frame: Frame): void {
     }
     return stopBeside(beside, reason);
   }
+  // A seat a register move is registering, not held yet (a disk return beside) — before namesMain,
+  // which takes an unknown id for the lone main seat's when no seat beside is held.
+  const moving = id ? movingSeatById(id) : null;
+  if (moving && moving !== H.currentKey) return stopMoving(moving, reason);
   if (!namesMain(id, frame))
     return log(`standing_ended for seat ${id || "unnamed"}, not one this bridge knows — ignored`);
   if (releasedAsOwn("standing_ended")) return; // the frame outran the answer of the session's own revoke or close

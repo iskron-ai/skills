@@ -39,6 +39,23 @@ function besideRecords(url: string, primary: HoldRecord): HoldRecord[] {
   return out;
 }
 
+/** hello's seats of the channel that are the record's: its role and name outside the main seat's graph. */
+const listedAs = (hello: Frame | null, rec: HoldRecord, primary: HoldRecord) =>
+  (Array.isArray(hello?.standings) ? hello.standings : []).filter(
+    (e) =>
+      typeof e.realm === "string" &&
+      !sameRealm(e.realm, primary.realm) &&
+      String(e.standing ?? "").replace(/^.*:/, "") === rec.name &&
+      (e.karta_seq == null || String(e.karta_seq) === String(rec.karta)),
+  );
+
+/** The record's seat id from hello (one fitting seat with an id); null — not known. */
+function idFromHello(hello: Frame | null, rec: HoldRecord, primary: HoldRecord): string | null {
+  const fits = listedAs(hello, rec, primary);
+  const id = fits.length === 1 ? fits[0]?.standing_id : null;
+  return typeof id === "string" && id ? id : null;
+}
+
 /**
  * The record's graph as the agent named it (rN, slug) resolves to @owner/slug (#5838) — first
  * from hello, which lists the channel's seats with canonical graphs, by role and name outside
@@ -51,14 +68,7 @@ async function resolveRecord(
   primary: HoldRecord,
 ): Promise<void> {
   if (resolvedRealm(rec.realm)) return;
-  const listed = Array.isArray(hello?.standings) ? hello.standings : [];
-  const fits = listed.filter(
-    (e) =>
-      typeof e.realm === "string" &&
-      !sameRealm(e.realm, primary.realm) &&
-      String(e.standing ?? "").replace(/^.*:/, "") === rec.name &&
-      (e.karta_seq == null || String(e.karta_seq) === String(rec.karta)),
-  );
+  const fits = listedAs(hello, rec, primary);
   if (fits.length === 1 && resolvedRealm(primary.realm))
     learnRealm(rec.realm, String(fits[0].realm));
   else await resolveAgainstLed(rec.realm);
@@ -67,9 +77,10 @@ async function resolveRecord(
 /**
  * Register the seat of a hold record as a step of a return `move` (ratelimit.ts): the 429
  * rate_limited of the source is waited out inside it (#10801), the seat's key tells the move
- * whose register it is — a stop ends the move, this seat's own end only its register (#7439).
+ * whose register it is — a stop ends the move, this seat's own end only its register (#7439);
+ * `id` — the seat's id, if known: its end is heard by it before the seat is held (stophold.ts).
  */
-export const registerRecord = (rec: HoldRecord, move: RegisterMove) =>
+export const registerRecord = (rec: HoldRecord, move: RegisterMove, id: string | null = null) =>
   throughRateLimit(
     () =>
       callTool(tool("channel"), {
@@ -81,7 +92,7 @@ export const registerRecord = (rec: HoldRecord, move: RegisterMove) =>
       }),
     rateLimitedWait,
     move,
-    keyOf(rec.realm, rec.karta, rec.name),
+    { key: keyOf(rec.realm, rec.karta, rec.name), id },
   );
 
 /**
@@ -108,7 +119,8 @@ export async function besideBack(
       log(`seat beside ${key}: its graph is not known as another one — not registered`);
       continue;
     }
-    const { r, waitS, stop, ended } = await registerRecord(rec, move);
+    const id = idFromHello(hello, rec, primary); // the seat is not held yet: hello names it
+    const { r, waitS, stop, ended } = await registerRecord(rec, move, id);
     // A stop ends the whole return (#7439): no register of the next seats beside.
     if (stop) return log(`seats beside from ${key} on: the return was stopped`);
     // This seat ended in the return (its owner took it off): it alone is not registered.

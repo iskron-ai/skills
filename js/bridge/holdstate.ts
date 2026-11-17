@@ -50,6 +50,12 @@ export const H = scoped(() => ({
   stopped: { n: 0, key: "", text: "" },
   /** seats beside forgotten (places.ts dropExtra: stopped, released, gone): `n` counts ends, `at` — key → its end's count */
   ended: { n: 0, at: new Map<string, number>() },
+  /**
+   * register moves under way (ratelimit.ts), each with the seats it registers right now:
+   * key → the seat's id, if known (hold, hello, register answer). A seat not yet held beside
+   * (a disk return) is known here only: its end or stop order is matched against it too.
+   */
+  moves: new Set<{ readonly seats: Map<string, string | null> }>(),
   /** a stand call in flight since this stop count (standundo.ts): a stop meanwhile — its connect answers are not held */
   moveSince: null as number | null,
   /** seats a stand call in flight took or bound again (connect, register answered): a stop meanwhile takes them off */
@@ -91,6 +97,11 @@ export const stopWatch = (): StopWatch => {
 export function noteSeatEnded(key: string): void {
   H.ended.n++;
   H.ended.at.set(key, H.ended.n);
+}
+/** The key of a seat a register move is registering now by the seat's id; null — none. */
+export function movingSeatById(id: string): string | null {
+  for (const m of H.moves) for (const [key, sid] of m.seats) if (sid === id) return key;
+  return null;
 }
 /** One move's watch of its seats (#7439): whether the seat `key` ended since the move began. */
 export type EndWatch = (key: string) => boolean;

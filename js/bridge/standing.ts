@@ -7,7 +7,7 @@ import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
-import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
+import { addPlace, noteStandingId, releaseStanding, standingIdIn } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
@@ -154,7 +154,7 @@ export async function replayRegister(
     () => registerOnce(place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
     move,
-    seat,
+    { key: seat, id: place ? standingIdIn(place.realm) : null }, // its id: the held door's
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
   if (
