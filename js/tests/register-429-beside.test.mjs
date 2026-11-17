@@ -1,0 +1,133 @@
+// The 429 rate_limited wait of a register move (graph nks-dev: #10801, #11030): only the
+// main seat waits out its Retry-After, within the move's deadline; a seat beside answers its
+// refusal at once, so the client's cap on the answer (deadline + 15 s) holds. The stop met by
+// the rebind holds at the border of the waiting call (#7439). The matrix of stops and seat
+// ends over every kind of move — register-429-matrix.test.mjs.
+//
+// The bridge runs on the probe's clock (fast-clock.cjs: ten times faster), so a Retry-After
+// of 40 s passes in 4 s and the probe stays under 10 s.
+//
+// ISKRON_BRIDGE_PATH наводит пробу на любую копию моста.
+import assert from "node:assert/strict";
+import { dirname, join } from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { RESUME_ANSWER_MS } from "../shared/ratelimit.ts";
+import { placeOf, saidKind, setup, stand, until, write } from "./ownseat-kit.mjs";
+
+const FAST = 10;
+process.env.NODE_OPTIONS = `--require ${join(dirname(fileURLToPath(import.meta.url)), "fast-clock.cjs")}`;
+process.env.FAST_CLOCK = String(FAST);
+
+const KEY = "proba--931--_nks_nks-dev";
+const RETRY_AFTER_S = 40;
+const rateLimited = (realm) => ({
+  text: `Too Many Requests (429): rate_limited — retry after ${RETRY_AFTER_S}s`,
+  status: 429,
+  rule: "rate_limited",
+  data: { retry_after_secs: RETRY_AFTER_S, key: "opening" },
+  realm,
+});
+const registersIn = (fake, realm) =>
+  fake.state.calls.filter(
+    (c) =>
+      c.name === "iskron_channel" &&
+      c.arguments.action === "register" &&
+      String(c.arguments.realm).endsWith(realm),
+  ).length;
+
+test("main seat and the seat beside, both 429 for 40 s: the answer comes within the client's cap, the seat beside does not wait", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, cwd, up } = await setup(t);
+  const b1 = await up();
+  await b1.call("iskron/resume", { session: "ses-1" });
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  const beside = await stand(b1, { realm: "drugoy", karta: 48, name: "proba" });
+  assert.ok(!beside.result?.isError, JSON.stringify(beside));
+  await until(() => saidKind(b1, "beside"), "the beside word");
+  b1.kill();
+  await until(() => fake.state.ws.size === 0, "b1's socket gone");
+  await fake.control({
+    registerRefuseNext: [rateLimited("@nks/nks-dev"), rateLimited("@nks/drugoy")],
+  });
+  const mainBefore = registersIn(fake, "nks-dev");
+  const besideBefore = registersIn(fake, "drugoy");
+  const b2 = await up();
+  const started = Date.now();
+  const r = await b2.call("iskron/resume", { key: KEY });
+  const tookMs = (Date.now() - started) * FAST; // on the bridge's clock
+  assert.equal(r.result?.resumed, true, JSON.stringify(r));
+  assert.match(r.result.word, /переждал предел частоты источника \(40 с\)/, r.result.word);
+  assert.ok(
+    tookMs < RESUME_ANSWER_MS,
+    `the answer within the client's cap: ${tookMs} ms of ${RESUME_ANSWER_MS}`,
+  );
+  assert.equal(fake.state.counts.register_refused, 2, "each seat refused once");
+  assert.equal(registersIn(fake, "nks-dev") - mainBefore, 2, "the main seat waited and stood");
+  assert.equal(registersIn(fake, "drugoy") - besideBefore, 1, "the seat beside did not wait");
+});
+
+/** The main seat proba and two seats beside it in other graphs, stood by one bridge. */
+async function threeSeats(t) {
+  const kit = await setup(t);
+  const b1 = await kit.up();
+  await b1.call("iskron/resume", { session: "ses-1" });
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd: kit.cwd })),
+    "proba",
+  );
+  for (const [realm, karta, name] of [
+    ["drugoy", 48, "a-beside"],
+    ["methodology", 2, "z-beside"],
+  ]) {
+    const r = await stand(b1, { realm, karta, name });
+    assert.ok(!r.result?.isError, JSON.stringify(r));
+  }
+  await until(
+    () => b1.notifications.filter((n) => n.params?.data?.kind === "beside").length === 2,
+    "both beside words",
+  );
+  return { ...kit, b1 };
+}
+
+// The stop met on the rebind holds at the caller's border: the agent's call that waited for
+// the rebind does not go to the server, it answers the stop word (#7439).
+test("a stop during the main seat's 429 wait on the rebind: the waiting call is not sent, it answers the stop", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  await fake.control({ registerRefuseNext: [rateLimited("@nks/nks-dev")] });
+  await fake.control({ kill_session: true }); // the next call meets a new session: the rebind
+  const writes = fake.state.writes.length;
+  const pending = write(b1);
+  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "the main seat refused");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  assert.equal(
+    fake.state.writes.length,
+    writes,
+    `the waiting call was not sent: ${JSON.stringify(r)}`,
+  );
+  assert.ok(r.error || r.result?.isError, `the call answers a refusal: ${JSON.stringify(r)}`);
+  assert.match(JSON.stringify(r), /снят|остановлен|stopped/i, JSON.stringify(r));
+});
+
+// One deadline per move on the rebind too (#11030): the main seat waits its 40 s, the seats
+// beside do not wait — their refusals stand.
+test("the rebind's main seat and a seat beside, both 429 for 40 s: the main seat waits, the seat beside does not", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  await fake.control({
+    registerRefuseNext: [rateLimited("@nks/nks-dev"), rateLimited("@nks/drugoy")],
+  });
+  await fake.control({ kill_session: true });
+  const before = registersIn(fake, "drugoy");
+  const started = Date.now();
+  await write(b1);
+  const tookMs = (Date.now() - started) * FAST;
+  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within the deadline: ${tookMs} ms`);
+  assert.equal(registersIn(fake, "drugoy") - before, 1, "the seat beside did not wait");
+});

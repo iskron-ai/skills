@@ -498,6 +498,39 @@ for (const [status, rule] of [...BUSY_RULES.map((r) => [503, r]), [429, "db_pool
     assert.equal(fake.state.counts.unattributed, 0, seen);
   });
 
+// #10801: предел частоты источника — тоже не слово о приглашении: перепривязка ждёт
+// data.retry_after_secs внутри себя и шлёт второй register по-настоящему (попытка не
+// умирает в терминальном claimRefusal до запроса).
+test("spawned_for: a confirmed claim's replay refused with 429 rate_limited waits out retry_after_secs and registers again", async (t) => {
+  const { fake, regs, before, work, failed } = await rotatedClaim(t, {
+    registerRefuseNext: [
+      {
+        text: "Too Many Requests (429): rate_limited — retry after 1s",
+        status: 429,
+        rule: "rate_limited",
+        data: { retry_after_secs: 1, key: "opening" },
+      },
+    ],
+  });
+  const one = await work(1);
+  const two = await work(2);
+  const seen = JSON.stringify({
+    one: one.result ?? one.error,
+    two: two.result ?? two.error,
+    regs: regs().slice(before),
+  });
+  assert.deepEqual(fake.state.registerRefuseNext, [], `the refusal went to the replay: ${seen}`);
+  assert.equal(
+    regs().length,
+    before + 2,
+    `two register requests — the refused one and the real one after the wait: ${seen}`,
+  );
+  assert.ok(!failed(one), `the wait is inside the rebind — the first call works: ${seen}`);
+  assert.ok(!failed(two), seen);
+  assert.equal(fake.state.writes.at(-1)?.author, "spawn-held", seen);
+  assert.equal(fake.state.counts.unattributed, 0, seen);
+});
+
 // #9959: a terminal claim refusal forbids any later register of the pair, the bridge's own
 // background ones too (skills refresh after a call's answer); cleanup revoke stays allowed.
 test("spawned_for: after the first claim's terminal refusal no register goes out, the background ones included", async (t) => {
@@ -983,6 +1016,45 @@ test("iskron/usage: the snapshot the gap held back is flushed before leave and a
     assert.equal(usage?.tokens, 9000, `${how}: ${JSON.stringify(usage)}\n${bridge.stderr}`);
     assert.equal(usage?.model, "m2", how);
   }
+});
+
+// A usage snapshot does not return the seat: on a 429 rate_limited it sends once and does not
+// wait (ratelimit.ts MoveKind "once", #10801) — a retry outliving leave would write the former
+// holder's numbers over the next holder's.
+test("iskron/usage: the last snapshot met by a 429 is not retried after leave over the next holder's numbers", async (t) => {
+  const { fake, bridge } = await usageBridge(t, { gap: "600000" });
+  const standAs = (b, extra = {}) =>
+    b.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba", ...extra },
+    });
+  assert.ok(!(await standAs(bridge)).result?.isError, bridge.stderr);
+  assert.equal((await bridge.call("iskron/usage", SPEND)).result?.pushed, true);
+  const held = { ...SPEND, tokens: 200, context: 40000, window: 200000 };
+  assert.equal((await bridge.call("iskron/usage", held)).result?.pushed, false);
+  await fake.control({
+    registerRefuseNext: [
+      {
+        text: "Too Many Requests (429): rate_limited — retry after 4s",
+        status: 429,
+        rule: "rate_limited",
+        data: { retry_after_secs: 4, key: "opening" },
+      },
+    ],
+  });
+  const left = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  const next = await usageBridge(t, { fake });
+  assert.ok(!(await standAs(next.bridge, { take: true })).result?.isError, next.bridge.stderr);
+  const mine = { ...SPEND, tokens: 999, context: 180000, window: 200000 };
+  assert.equal((await next.bridge.call("iskron/usage", mine)).result?.pushed, true);
+  await new Promise((d) => setTimeout(d, 5000)); // a retry after the 4 s wait would land by now
+  const usage = fake.state.placeAttrs.get("931:proba")?.usage;
+  assert.equal(usage?.tokens, 999, `the next holder's numbers stand: ${JSON.stringify(usage)}`);
+  assert.equal(usage?.percent, 90, JSON.stringify(usage));
 });
 
 // The third part of a derived name is the model the agent runs on, never the

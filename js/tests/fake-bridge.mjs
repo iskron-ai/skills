@@ -54,6 +54,7 @@
 //   FB_PULSE_HOLD file whose presence holds the answer to every iskron/pulse (logged on
 //                 arrival) until the file is removed: a request in flight.
 //   FB_CALL_DELAY_MS every tools/call is answered this much later (a call in flight).
+//   FB_RESUME_DELAY_MS every iskron/resume and iskron/check is answered this much later.
 //   FB_USAGE_DELAY_MS the first iskron/usage is answered this much later; with FB_CALLS
 //                 every answer is logged as iskron/usage:answered.
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -379,7 +380,10 @@ process.stdin.on("data", (chunk) => {
       } catch {
         /* no answer prepared — nothing to resume */
       }
-      ok(msg.id, result);
+      // FB_RESUME_DELAY_MS: the return is answered this much later — a register waiting out a 429.
+      const resumeDelayMs = Number(process.env.FB_RESUME_DELAY_MS || 0);
+      if (resumeDelayMs) setTimeout(() => ok(msg.id, result), resumeDelayMs);
+      else ok(msg.id, result);
     } else if (msg.method === "iskron/suspend" || msg.method === "iskron/away") {
       // The OpenCode plugin pauses a satellite before its stop (js/bridge/suspend.ts, #6625),
       // and marks a root's absence before a reload or a move (js/bridge/away.ts, #7493).

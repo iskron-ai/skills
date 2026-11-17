@@ -13,7 +13,12 @@ import { ensureAuth } from "./auth.ts";
 import { localAway } from "./away.ts";
 import { BUILD } from "./build.ts";
 import { crossPlaceRefusal, resolveAgainstLed, serialized } from "./call.ts";
-import { claimReply, refuseLaunch, refuseUnbound } from "./claimdelivery.ts";
+import {
+  claimReply,
+  refused as refusalReply,
+  refuseLaunch,
+  refuseUnbound,
+} from "./claimdelivery.ts";
 import { contextCall, refuseContext } from "./context-gate.ts";
 import { deafRefusal } from "./deaf.ts";
 import {
@@ -273,18 +278,13 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
         log("no upstream session yet — initializing before the call");
         await reinitialize();
       }
-      if (!isInit) await ensureStanding(); // the session may have turned over under us
-      if (refuseLaunch(msg) || refuseUnbound(msg) || (await refuseContext(msg))) return;
-      // A taken or deaf seat signs no record (graph @nks/nks-dev, node #6706).
-      const taken = hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null;
-      if (taken) {
-        emit({
-          jsonrpc: "2.0",
-          id: msg.id,
-          result: { isError: true, content: [{ type: "text", text: taken }] },
-        });
+      // The session may have turned over under us: rebind; its stop sends nothing (#7439).
+      const stop = isInit ? null : await ensureStanding();
+      if (stop ? !hasId : refuseLaunch(msg) || refuseUnbound(msg) || (await refuseContext(msg)))
         return;
-      }
+      // A taken or deaf seat signs no record (graph @nks/nks-dev, node #6706); a stop answers.
+      const taken = stop ?? (hasId ? (evictedRefusal(msg) ?? (await deafRefusal(msg))) : null);
+      if (taken) return void emit(refusalReply(msg.id, taken));
       if (isStand) {
         emit(await standForHarness(msg, withNotice));
         return;

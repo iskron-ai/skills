@@ -65,7 +65,8 @@ const lines = (f) =>
 /** fenced — a server without raw: the description's body only between the card's fences;
  * adapter — the description's; harnesses(patch) — its offers instead of the one dsh offer;
  * beside — more bodies (patch) => description, checkouts filled in; orca: false — no orca at all
- * on the daemon's PATH. */
+ * on the daemon's PATH; bridge — the daemon's bridge file instead of the built one (a
+ * delivery copy with its own constants, e.g. DSH_PROFILE null). */
 export async function leadingDsh(
   t,
   {
@@ -77,6 +78,7 @@ export async function leadingDsh(
     beside = [],
     orca = true,
     fenced = false,
+    bridge,
   } = {},
 ) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-")));
@@ -128,7 +130,7 @@ export async function leadingDsh(
     });
   const dshLog = join(dir, "dsh.log"),
     orcaLog = join(dir, "orca.log");
-  const daemon = spawn(NODE, [BRIDGE, "daemon", "--auth-dir", dir], {
+  const daemon = spawn(NODE, [bridge ?? BRIDGE, "daemon", "--auth-dir", dir], {
     env: {
       ...process.env,
       ISKRON_BRIDGE_NO_UPDATE: "1",

@@ -14,7 +14,7 @@ import { normKarta, normName } from "./names.ts";
 import { noteLocaleEcho } from "./placefields.ts";
 import { extraIn } from "./places.ts";
 import { canonRealm, otherRealm, resolveRealms, unknownRealm, unresolvedWord } from "./realms.ts";
-import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
+import { type Refusal, refusalOf } from "./refusal.ts";
 import { OWN_CALL_PREFIX } from "./repeat.ts";
 import { launchBasis, refuseClaim, rememberBasis } from "./spawned-for.ts";
 import { noteStanding, replyText } from "./standing.ts";
@@ -193,15 +193,9 @@ export const callTool = async (name: string, args: Record<string, unknown>): Pro
 };
 
 async function answer(name: string, args: Record<string, unknown>): Promise<Answer> {
-  let { msg, got } = await ask(name, args);
-  // Seat-open race (409 without rule, refusal.ts): register once more, only once.
-  if (
-    name === tool("channel") &&
-    args.action === "register" &&
-    !args.spawned_for &&
-    openedConcurrently(got)
-  )
-    ({ msg, got } = await ask(name, args));
+  // One send: a register's retry after a seat-open race lives in the gate (registergate.ts).
+  const { msg, got: reply } = await ask(name, args);
+  let got = reply;
   if (!got) {
     if (args.spawned_for) refuseClaim(words(SPAWNED_FOR).echo());
     return { text: words(CALL).noReply(), isError: true };

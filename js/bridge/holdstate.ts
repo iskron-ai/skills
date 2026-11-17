@@ -75,6 +75,17 @@ export const stopsNow = (): number => H.stopped.n;
 /** The stop word if the session was stopped since the count `before`, whichever seat it held; otherwise null. */
 export const stoppedDuring = (before: number): string | null =>
   H.stopped.n !== before ? H.stopped.text : null;
+/**
+ * One move's stop watch (#7439): the count taken once at the move's start, then the stop word
+ * since then, else null. Every register of the move asks the same watch — a rebind, a return
+ * and the seats beside them are one move, and a stop ends all of it (ratelimit.ts).
+ */
+export { noteEndedSeat } from "./endedseats.ts"; // the frame's and the order's seat ends (stophold.ts)
+export type StopWatch = () => string | null;
+export const stopWatch = (): StopWatch => {
+  const before = stopsNow();
+  return () => stoppedDuring(before);
+};
 /** A stand call's connect answers after the session was stopped: the seat it took is not held (#7439). */
 export const stoppedInMove = (): boolean =>
   H.moveSince !== null && stoppedDuring(H.moveSince) !== null;

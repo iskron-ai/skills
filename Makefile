@@ -66,14 +66,14 @@ test-watchdog: build-js
 # Probe for the dsh hearing plugin — the built bundle against a stand-in dsh context
 # and a stand-in standing socket (frames, repeats, disposal, compaction).
 test-dsh: build-js
-	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/dsh-plugin.test.mjs js/tests/dsh-start.test.mjs js/tests/orchestra-dsh.test.mjs js/tests/orchestra-dsh-proc.test.mjs js/tests/orchestra-adapter.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/dsh-plugin.test.mjs js/tests/dsh-start.test.mjs js/tests/orchestra-dsh.test.mjs js/tests/orchestra-dsh-proc.test.mjs js/tests/orchestra-dsh-profile.test.mjs js/tests/orchestra-adapter.test.mjs
 
 test-extension: build-js
 	@node scripts/run-tests.mjs js/tests/extension.test.mjs
 
 test-opencode: build-js
 	@node scripts/run-tests.mjs js/tests/opencode-package*.test.mjs
-	@node scripts/run-tests.mjs js/tests/opencode.test.mjs js/tests/opencode-real-bridges.test.mjs js/tests/opencode-siblings.test.mjs js/tests/opencode-lineage-stop.test.mjs js/tests/opencode-compaction.test.mjs js/tests/opencode-mindslice.test.mjs js/tests/opencode-hook-context.test.mjs js/tests/opencode-hook-stop.test.mjs js/tests/opencode-leadend.test.mjs js/tests/opencode-turnend.test.mjs js/tests/opencode-once.test.mjs
+	@node scripts/run-tests.mjs js/tests/opencode.test.mjs js/tests/opencode-real-bridges.test.mjs js/tests/opencode-siblings.test.mjs js/tests/opencode-lineage-stop.test.mjs js/tests/opencode-compaction.test.mjs js/tests/opencode-mindslice.test.mjs js/tests/opencode-hook-context.test.mjs js/tests/opencode-hook-stop.test.mjs js/tests/opencode-leadend.test.mjs js/tests/opencode-turnend.test.mjs js/tests/opencode-once.test.mjs js/tests/opencode-resume-wait.test.mjs
 
 # Probes for the bridge's own tool iskron_stand and for the self-update.
 test-stand: build-js
