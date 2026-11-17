@@ -59,6 +59,8 @@ export async function foreignStops(
   const said: string[] = [];
   const fresh = new Set<Run>();
   const bySeat = new Map<string, Run>();
+  // A sleeping run's seat (#10995): an order naming it ends the sleep — the stop is not ours.
+  const asleep = new Map<string, Run>();
   // Stopping runs wait for their order's closed state: the cursor holds before an open one.
   const stopping = new Map<string, Run>();
   let unseated = false;
@@ -66,7 +68,8 @@ export async function foreignStops(
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);
       else unseated = true;
-    } else if (r.state === "stopping" && !r.stop_outcome && (r.exec || r.tree || !stopLapsed(r)))
+    } else if (r.state === "dormant" && r.standing_id) asleep.set(r.standing_id, r);
+    else if (r.state === "stopping" && !r.stop_outcome && (r.exec || r.tree || !stopLapsed(r)))
       stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
   const seen = new Set(Object.values(runs).map((r) => r.standing_id));
   let since = readSince(authDir);
@@ -88,6 +91,17 @@ export async function foreignStops(
         const id = typeof v.id === "string" ? v.id : "";
         const state = String(v.state);
         const open = OPEN.has(state);
+        // An order on a sleeping run's seat ends the sleep (#10995): the continuation is not
+        // wanted, whatever the order's own state — the seat was settled at the exit that armed
+        // the sleep, so the ordinary cleanup takes the tree.
+        const sleep = !run && asleep.get(seat);
+        if (sleep) {
+          asleep.delete(seat);
+          sleep.state = "ended";
+          sleep.why = open ? "stop_ordered_elsewhere" : `stop_${state}_elsewhere`;
+          said.push(w().leadRow(sleep.realm, sleep.room, sleep.invite, sleep.why));
+          continue;
+        }
         if (!run && unseated && seat && !seen.has(seat)) held ??= since;
         const bySeatOnly = stopping.get(`s:${seat}`);
         const own =
@@ -105,10 +119,12 @@ export async function foreignStops(
         bySeat.delete(seat);
         run.order_id = id;
         // Only a carried-out stop ends the run; a closed order of another outcome keeps it
-        // stopping until its window passes (settleStops, #7522).
+        // stopping until its window passes (settleStops, #7522). A carried-out one is a
+        // wind-down: its end never sleeps (#10995).
         const done =
           state === "stopped" && (!(run.exec || run.tree) || run.closed === "client_exited");
         run.state = done ? "ended" : "stopping";
+        if (done) run.why = "stopped_elsewhere";
         if (!done) run.stopping_at = new Date().toISOString();
         if (!open) run.stop_outcome = state;
         if (open) {

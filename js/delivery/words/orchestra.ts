@@ -60,6 +60,8 @@ export interface OrchestraWords {
   brief: (realm: string, karta: number, room: string, invite: number) => string;
   /** Бриф агента dsh (#10777): строка запуска с ролью — место модель занимает сама. */
   dshBrief: (realm: string, karta: number, room: string) => string;
+  /** Бриф продолжения дремоты (#10995): слово в деле поднимает ту же сессию dsh. */
+  dshContinue: (room: string, n: number) => string;
   /** Сухой такт: rows — строки по зовам через перевод строки (может быть пуст). */
   plan: (rows: string) => string;
   /** Сухой такт: зов был бы поднят этой командой. */
@@ -149,6 +151,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     dshBrief: (realm, karta, room) =>
       `start ${realm} #${karta} дело ${room}. Сначала — своё место по «Старту», затем ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshContinue: (room, n) =>
+      `Продолжение зова: в деле №${room} новая запись [${n}] для тебя — встань на место, прочти дело и доведи свою долю до исхода строки.`,
     plan: (rows) =>
       `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `\n${rows}` : " зовов нет"}`,
     planLaunch: (argv) => `поднял бы: ${argv}`,
@@ -232,6 +236,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     dshBrief: (realm, karta, room) =>
       `start ${realm} #${karta} case ${room}. First your seat by the Start, then ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshContinue: (room, n) =>
+      `Call continuation: case №${room} has a new entry [${n}] for you — take your seat, read the case and bring your share of the row to its outcome.`,
     plan: (rows) =>
       `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `\n${rows}` : " no invites"}`,
     planLaunch: (argv) => `would launch: ${argv}`,

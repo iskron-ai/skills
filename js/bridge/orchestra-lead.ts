@@ -8,7 +8,7 @@ import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
 import { readDemands, type TactInvites } from "./orchestra-demands.ts";
-import { dormantFromEnds } from "./orchestra-dsh-dormant.ts";
+import { dormantFromEnds, stepDormant } from "./orchestra-dsh-dormant.ts";
 import { foreignStops } from "./orchestra-foreign.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
@@ -96,6 +96,11 @@ export function leadAct(
           gone,
         )),
       );
+      // The dormant rows take their turn after the new calls: a word in the case wakes the
+      // continuation, a closed case or a passed window ends the sleep (#10995).
+      said.push(...(await stepDormant(authDir, base, token, runs, launchers, gone)));
+      writeRuns(authDir, runs);
+      await cleanupEndedTrees(authDir, runs);
       return said;
     } finally {
       writeRuns(authDir, runs);
