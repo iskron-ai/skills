@@ -49,6 +49,7 @@ test("orchestra session: direct reads share one process UUID across tacts; contr
           standing_id: "old-seat",
           rooms: 0,
           sat: true,
+          idle_due: true,
         },
         [`@probe/off|${room}|2`]: {
           realm: "@probe/off",

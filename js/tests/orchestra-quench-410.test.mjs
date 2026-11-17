@@ -14,7 +14,13 @@ async function emptySeat(f, exec = true) {
       "exec_launched",
     );
   const runs = readRuns(f.auth);
-  Object.assign(runs[f.key], { state: "raised", standing_id: "seat", rooms: 0, sat: true });
+  Object.assign(runs[f.key], {
+    state: "raised",
+    standing_id: "seat",
+    rooms: 0,
+    sat: true,
+    idle_due: true,
+  });
   runs.neighbor = {
     ...structuredClone(runs[f.key]),
     invite: 2,
