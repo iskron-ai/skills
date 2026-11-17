@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.11.0](https://github.com/iskron-ai/skills/compare/v8.10.0...v8.11.0) (2026-11-17)
+
+
+### Features
+
+* **bridge:** the orchestrator stops its raised agent only at the seat's idle_due ([#805](https://github.com/iskron-ai/skills/issues/805)) ([087fe56](https://github.com/iskron-ai/skills/commit/087fe56c999945fb9915376dadc341dbd2f00b38))
+
 ## [8.10.0](https://github.com/iskron-ai/skills/compare/v8.9.0...v8.10.0) (2026-11-16)
 
 
