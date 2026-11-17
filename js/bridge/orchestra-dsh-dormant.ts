@@ -35,6 +35,10 @@ export const dshSleepable = (r: Run): boolean =>
  */
 export async function goDormant(base: string, token: string, r: Run): Promise<boolean> {
   if (!dshSleepable(r) || r.tree?.state !== "ready") return false;
+  // A stop ordered elsewhere is a wind-down in any reading order of its states: the foreign
+  // mark, set at the order's first reading, holds to the end — such a row never sleeps
+  // (#10995 review 3).
+  if (r.why?.endsWith("_elsewhere")) return false;
   const seats = [
     ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
   ];

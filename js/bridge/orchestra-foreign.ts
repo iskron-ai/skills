@@ -115,9 +115,13 @@ export async function foreignStops(
           }
           continue;
         }
-        if (!run || !id || id === run.order_id) continue;
+        if (!run || !id || (id === run.order_id && !run.why?.endsWith("_elsewhere"))) continue;
         bySeat.delete(seat);
         run.order_id = id;
+        // A foreign order on the call's seat is a final end in any reading order of its
+        // states: the mark is set at the first reading — issued — and holds to the end, so
+        // no later path sleeps the row (#10995 review 3).
+        if (open) run.why = "stop_ordered_elsewhere";
         // Only a carried-out stop ends the run; a closed order of another outcome keeps it
         // stopping until its window passes (settleStops, #7522). A carried-out one is a
         // wind-down: its end never sleeps (#10995).

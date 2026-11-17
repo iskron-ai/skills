@@ -768,6 +768,61 @@ test("dormancy: an api-defect standing_required is a named transient — the sle
   assert.ok(said.join("; ").includes("api_defect_standing_required"));
 });
 
+/** A stand-in orders door: the probe switches the order's state between reads. */
+async function ordersApi(t, order) {
+  const state = { order };
+  const server = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    const since = Number(new URL(req.url, "http://x").searchParams.get("since") ?? 0);
+    const items = state.order.seq > since ? [state.order] : [];
+    res.end(JSON.stringify({ items, next_since: items.length ? state.order.seq : since }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+  return { base: `http://127.0.0.1:${server.address().port}/api`, state };
+}
+
+test("a foreign stop order ends the run in any reading order of its states", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-foreign-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // The reviewer's scenario: the order is first read issued, then stopped — the mark set at
+  // the first reading must hold to the end, and the end never sleeps (#10995 review 3).
+  const api = await ordersApi(t, {
+    id: "ord-1",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  const r = sleepingRow({ state: "raised", dormant: undefined, closed: "client_exited" });
+  delete r.why;
+  const runs = { k: r };
+  await foreignStops(dir, api.base, "key", runs);
+  assert.equal(r.state, "stopping");
+  assert.equal(r.why, "stop_ordered_elsewhere", "the mark is set at the first reading, issued");
+  api.state.order = { ...api.state.order, state: "stopped" };
+  await foreignStops(dir, api.base, "key", runs);
+  assert.equal(r.stop_outcome, "stopped", "the carried-out order's outcome reaches the row");
+  const { settleStops } = await import("../bridge/orchestra-run-ends.ts");
+  settleStops(runs, [], new Set(), AWAKE_NOW);
+  assert.equal(r.state, "ended", "the carried-out order ends the run");
+  assert.equal(
+    r.why,
+    "stop_ordered_elsewhere",
+    "the first reading's mark holds to the end — the row is a wind-down either way",
+  );
+  // The ended row never sleeps, whatever an open case would say.
+  const open = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+  await dormantFromEnds(open.base, "key", runs);
+  assert.equal(r.state, "ended", "a row with a foreign order is a wind-down, never a sleep");
+});
+
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const ours = exitedRun();
