@@ -1,7 +1,8 @@
-// The 429 rate_limited wait budget is the whole return's, not each seat's (graph nks-dev:
-// #10801): the main seat and the seat beside it come back in one move, and the client's
-// cap on the answer (budget + 15 s) holds only if their waits share one budget. The seat
-// beside waits only what the main seat left; more — its refusal stands, as without a wait.
+// The 429 rate_limited wait of a register move (graph nks-dev: #10801, #11030): only the
+// main seat waits out its Retry-After, within the move's deadline; a seat beside answers its
+// refusal at once, so the client's cap on the answer (deadline + 15 s) holds. The stop met by
+// the rebind holds at the border of the waiting call (#7439). The matrix of stops and seat
+// ends over every kind of move — register-429-matrix.test.mjs.
 //
 // The bridge runs on the probe's clock (fast-clock.cjs: ten times faster), so a Retry-After
 // of 40 s passes in 4 s and the probe stays under 10 s.
@@ -36,7 +37,7 @@ const registersIn = (fake, realm) =>
       String(c.arguments.realm).endsWith(realm),
   ).length;
 
-test("main seat and the seat beside, both 429 for 40 s: the answer comes within the client's cap, the seat beside does not wait past the rest", async (t) => {
+test("main seat and the seat beside, both 429 for 40 s: the answer comes within the client's cap, the seat beside does not wait", async (t) => {
   if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
   const { fake, cwd, up } = await setup(t);
   const b1 = await up();
@@ -67,15 +68,9 @@ test("main seat and the seat beside, both 429 for 40 s: the answer comes within 
   );
   assert.equal(fake.state.counts.register_refused, 2, "each seat refused once");
   assert.equal(registersIn(fake, "nks-dev") - mainBefore, 2, "the main seat waited and stood");
-  assert.equal(
-    registersIn(fake, "drugoy") - besideBefore,
-    1,
-    "the seat beside did not wait past the move's rest: its refusal stands",
-  );
+  assert.equal(registersIn(fake, "drugoy") - besideBefore, 1, "the seat beside did not wait");
 });
 
-// A stop ends the whole return (#7439): the owner's 4001 during one seat's 429 wait leaves
-// no register after it — not the next seat beside, not a retry.
 /** The main seat proba and two seats beside it in other graphs, stood by one bridge. */
 async function threeSeats(t) {
   const kit = await setup(t);
@@ -98,48 +93,6 @@ async function threeSeats(t) {
   );
   return { ...kit, b1 };
 }
-// Whichever seat beside goes first meets the 429; the other one is the next in the loop.
-const besidesLimited = (fake) =>
-  fake.control({
-    registerRefuseNext: [rateLimited("@nks/drugoy"), rateLimited("@nks/methodology")],
-  });
-const registers = (fake) =>
-  fake.state.calls.filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
-    .length;
-
-test("a stop during a beside seat's 429 wait ends the whole return: not one register after the stop", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const { fake, b1, up } = await threeSeats(t);
-  b1.kill();
-  await until(() => fake.state.ws.size === 0, "b1's socket gone");
-  await besidesLimited(fake);
-  const b2 = await up();
-  const pending = b2.call("iskron/resume", { key: KEY });
-  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "a beside seat refused");
-  const atStop = registers(fake);
-  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
-  const r = await pending;
-  assert.equal(r.result?.stopped, true, JSON.stringify(r));
-  assert.notEqual(r.result?.resumed, true, JSON.stringify(r));
-  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
-  assert.equal(registers(fake) - atStop, 0, "no register after the stop");
-});
-
-// The same move on the rebind (standing.ts): a new MCP session re-registers the main seat
-// and the seats beside in one move; the owner's 4001 during a beside seat's 429 wait ends it.
-test("a stop during a beside seat's 429 wait on the rebind ends the whole rebind: not one register after the stop", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const { fake, b1 } = await threeSeats(t);
-  await besidesLimited(fake);
-  await fake.control({ kill_session: true }); // the next call meets a new session: the rebind
-  const pending = write(b1);
-  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "a beside seat refused");
-  const atStop = registers(fake);
-  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
-  await pending;
-  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
-  assert.equal(registers(fake) - atStop, 0, "no register after the stop");
-});
 
 // The stop met on the rebind holds at the caller's border: the agent's call that waited for
 // the rebind does not go to the server, it answers the stop word (#7439).
@@ -162,75 +115,9 @@ test("a stop during the main seat's 429 wait on the rebind: the waiting call is 
   assert.match(JSON.stringify(r), /снят|остановлен|stopped/i, JSON.stringify(r));
 });
 
-// A seat beside ended in the move (standing_ended by the owner) ends only its own register:
-// no register of that seat after its end, the move goes on to the other seats (#7439).
-test("a seat beside ended by standing_ended during its 429 wait on the rebind: no register of it after, the other seat beside still registers", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const { fake, b1 } = await threeSeats(t);
-  const sideId = [...fake.state.channels.values()]
-    .map((c) => c.places.get("@nks/drugoy"))
-    .find(Boolean)?.standing_id;
-  assert.ok(sideId, "the seat beside in drugoy has an id");
-  await fake.control({ registerRefuseNext: [rateLimited("@nks/drugoy")] });
-  await fake.control({ kill_session: true });
-  const side = registersIn(fake, "drugoy");
-  const other = registersIn(fake, "methodology");
-  const pending = write(b1);
-  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "the seat beside refused");
-  await fake.control({
-    ws_send: JSON.stringify({ type: "standing_ended", standing_id: sideId, by: "person" }),
-  });
-  const r = await pending;
-  assert.ok(!r.result?.isError && !r.error, `the main seat is not stopped: ${JSON.stringify(r)}`);
-  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
-  assert.equal(
-    registersIn(fake, "drugoy") - side,
-    1,
-    "no register of the ended seat after its end",
-  );
-  assert.equal(registersIn(fake, "methodology") - other, 1, "the other seat beside registered");
-});
-
-// The move's budget is a deadline, not a sum of waits (#11030): a wait cut short by the
-// seat's end still spent the move's time, so the next seat beside gets only what is left.
-test("a beside seat's 60 s wait cut by standing_ended at 50 s: the next seat beside does not wait past the move's deadline", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const { fake, b1 } = await threeSeats(t);
-  const sideId = [...fake.state.channels.values()]
-    .map((c) => c.places.get("@nks/drugoy"))
-    .find(Boolean)?.standing_id;
-  assert.ok(sideId, "the seat beside in drugoy has an id");
-  const sixty = (realm) => ({
-    ...rateLimited(realm),
-    text: "Too Many Requests (429): rate_limited — retry after 60s",
-    data: { retry_after_secs: 60, key: "opening" },
-  });
-  await fake.control({ registerRefuseNext: [sixty("@nks/drugoy"), sixty("@nks/methodology")] });
-  await fake.control({ kill_session: true });
-  const other = registersIn(fake, "methodology");
-  const started = Date.now();
-  const pending = write(b1);
-  await until(
-    () => (fake.state.counts.register_refused ?? 0) >= 1,
-    "the first seat beside refused",
-  );
-  await new Promise((d) => setTimeout(d, 50_000 / FAST)); // 50 s of its 60 s wait
-  await fake.control({
-    ws_send: JSON.stringify({ type: "standing_ended", standing_id: sideId, by: "person" }),
-  });
-  await pending;
-  const tookMs = (Date.now() - started) * FAST;
-  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within the move's deadline: ${tookMs} ms`);
-  assert.equal(
-    registersIn(fake, "methodology") - other,
-    1,
-    "the next seat beside did not wait past the deadline: its refusal stands",
-  );
-});
-
-// One budget per move on the rebind too (#11030): the main seat waits its 40 s, the seat
-// beside gets only the rest — its 40 s are not waited, its refusal stands.
-test("the rebind's main seat and a seat beside, both 429 for 40 s: one 60 s budget for the move, the seat beside does not wait", async (t) => {
+// One deadline per move on the rebind too (#11030): the main seat waits its 40 s, the seats
+// beside do not wait — their refusals stand.
+test("the rebind's main seat and a seat beside, both 429 for 40 s: the main seat waits, the seat beside does not", async (t) => {
   if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
   const { fake, b1 } = await threeSeats(t);
   await fake.control({
@@ -241,6 +128,6 @@ test("the rebind's main seat and a seat beside, both 429 for 40 s: one 60 s budg
   const started = Date.now();
   await write(b1);
   const tookMs = (Date.now() - started) * FAST;
-  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within one budget: ${tookMs} ms`);
+  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within the deadline: ${tookMs} ms`);
   assert.equal(registersIn(fake, "drugoy") - before, 1, "the seat beside did not wait");
 });

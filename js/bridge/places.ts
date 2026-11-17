@@ -16,7 +16,7 @@ import {
   readHoldRecord,
   writeHoldRecord,
 } from "./holdrecord.ts";
-import { handoverReason, noteSeatEnded } from "./holdstate.ts";
+import { handoverReason } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { canonRealm, learnRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
@@ -39,6 +39,9 @@ const extras = scoped(() => new Map<string, Place>()); // seat key → seat with
 
 export const keyOfPlace = (s: Standing): string => keyOf(s.realm, s.karta, s.name ?? "");
 export const extraPlaces = (): Place[] => [...extras.values()];
+/** The seats beside to register in a move, each with its id as its door holds it now (ratelimit.ts). */
+export const besideSeats = (): { place: Standing; id: string | null }[] =>
+  state.places.map((place) => ({ place, id: extraIn(place.realm)?.door.standingId ?? null }));
 
 /** The channel seat in this graph (surely the same graph), if the bridge holds it. */
 export const extraIn = (realm: unknown): Place | undefined =>
@@ -162,7 +165,6 @@ export function dropExtra(
     p.door.broadcast({ kind: "released", key, text: reason, beside: true });
   p.door.close();
   if (forget) {
-    noteSeatEnded(key); // a register move under way registers this seat no more (ratelimit.ts)
     dropHoldRecord(key);
     state.places = state.places.filter((s) => keyOfPlace(s) !== key);
   }

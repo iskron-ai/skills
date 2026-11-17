@@ -352,8 +352,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   } else if (resumed) {
     // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
     const move = registerMove(() => stoppedDuring(stopsBefore)); // the call's stop count
-    const seat = { key: keyOf(realm, karta, name), id: null }; // the main seat: a stop ends all
-    const { r, waitS } = await throughRateLimitAnswer(register, move, seat);
+    const { r, waitS } = await throughRateLimitAnswer(register, move, { id: null, main: true });
     if (!r) return (lines.push(move.stopped() ?? ""), done(true)); // stopped before the register (#7439)
     if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
     heardHere = true;

@@ -133,7 +133,7 @@ export async function resumeFromDisk(
 /** Register the returned seat, then the seats beside it (#7602); "" — stopped, resumeBy says it. */
 async function registerBack(rec: HoldRecord, before: number): Promise<string> {
   const move = registerMove(() => stoppedDuring(before)); // from resumeBy's stop count
-  const { r, waitS } = await registerRecord(rec, move);
+  const { r, waitS } = await registerRecord(rec, move, { id: null, main: true });
   if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
   await besideBack(rec.url, rec, move); // the seats beside are the same move (#7439, #11030)
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";

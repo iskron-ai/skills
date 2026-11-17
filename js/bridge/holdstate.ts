@@ -48,14 +48,6 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
   /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
   stopped: { n: 0, key: "", text: "" },
-  /** seats beside forgotten (places.ts dropExtra: stopped, released, gone): `n` counts ends, `at` — key → its end's count */
-  ended: { n: 0, at: new Map<string, number>() },
-  /**
-   * register moves under way (ratelimit.ts), each with the seats it registers right now:
-   * key → the seat's id, if known (hold, hello, register answer). A seat not yet held beside
-   * (a disk return) is known here only: its end or stop order is matched against it too.
-   */
-  moves: new Set<{ readonly seats: Map<string, string | null> }>(),
   /** a stand call in flight since this stop count (standundo.ts): a stop meanwhile — its connect answers are not held */
   moveSince: null as number | null,
   /** seats a stand call in flight took or bound again (connect, register answered): a stop meanwhile takes them off */
@@ -88,26 +80,11 @@ export const stoppedDuring = (before: number): string | null =>
  * since then, else null. Every register of the move asks the same watch — a rebind, a return
  * and the seats beside them are one move, and a stop ends all of it (ratelimit.ts).
  */
+export { noteEndedSeat } from "./endedseats.ts"; // the frame's and the order's seat ends (stophold.ts)
 export type StopWatch = () => string | null;
 export const stopWatch = (): StopWatch => {
   const before = stopsNow();
   return () => stoppedDuring(before);
-};
-/** A seat beside is forgotten (places.ts dropExtra): a move under way registers it no more. */
-export function noteSeatEnded(key: string): void {
-  H.ended.n++;
-  H.ended.at.set(key, H.ended.n);
-}
-/** The key of a seat a register move is registering now by the seat's id; null — none. */
-export function movingSeatById(id: string): string | null {
-  for (const m of H.moves) for (const [key, sid] of m.seats) if (sid === id) return key;
-  return null;
-}
-/** One move's watch of its seats (#7439): whether the seat `key` ended since the move began. */
-export type EndWatch = (key: string) => boolean;
-export const endWatch = (): EndWatch => {
-  const before = H.ended.n;
-  return (key) => (H.ended.at.get(key) ?? 0) > before;
 };
 /** A stand call's connect answers after the session was stopped: the seat it took is not held (#7439). */
 export const stoppedInMove = (): boolean =>

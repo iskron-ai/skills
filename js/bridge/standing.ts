@@ -4,14 +4,21 @@ import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
 import { claimResult } from "./claimdelivery.ts";
 import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
+import { endedSince } from "./endedseats.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding, standingIdIn } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
-import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
-import { rateLimitedWait, type RegisterMove, registerMove, throughRateLimit } from "./ratelimit.ts";
+import { besideSeats, dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
+import {
+  type MoveSeat,
+  rateLimitedWait,
+  type RegisterMove,
+  registerMove,
+  throughRateLimit,
+} from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
 import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { noteSkills } from "./skillwatch.ts";
@@ -141,28 +148,29 @@ const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusa
  * One register of `place` as a step of a move (ratelimit.ts RegisterMove, begun once at the
  * move's start): a rebind of several seats or a skills refresh passes the same move to every
  * seat, so a stop ends the whole move and the 429 deadline is one; a lone register begins its
- * own. null — no register went (stopped, a terminal claim refusal).
+ * own. `seat` — the main seat by default (it waits out a 429); a seat beside passes its id and
+ * does not wait. null — no register went (stopped, ended, a terminal claim refusal).
  */
 export async function replayRegister(
   place: Standing | null,
   freshSkills = false,
   move: RegisterMove = registerMove(),
+  seat: MoveSeat = { id: place ? standingIdIn(place.realm) : null, main: true },
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801).
-  const seat = place ? keyOfPlace(place) : "";
-  const { r: got, waitS } = await throughRateLimit(
+  const {
+    r: got,
+    waitS,
+    stop,
+    ended,
+  } = await throughRateLimit(
     () => registerOnce(place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
     move,
-    { key: seat, id: place ? standingIdIn(place.realm) : null }, // its id: the held door's
+    seat,
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
-  if (
-    move.stopped() ||
-    move.ended(seat) ||
-    !openedConcurrently(got) ||
-    registeredBasis(place ?? {}).spawned_for
-  )
+  if (stop || ended || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for)
     return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
   return registerOnce(place, freshSkills);
@@ -207,25 +215,30 @@ async function registerOnce(
 
 /**
  * Re-register seats of other graphs; true — all in place (an expired one is forgotten).
- * `move` — the rebind's register move: a stop ends it, no register of the rest; a seat ended
- * meanwhile is not registered again; one deadline.
+ * `move` — the rebind's register move: a stop ends it, no register of the rest; a seat beside
+ * does not wait out a 429; one ended or forgotten meanwhile is not registered.
  */
 async function replayBeside(move: RegisterMove): Promise<boolean> {
   let whole = true;
-  for (const place of [...state.places]) {
+  // Ids taken now, before any wait: a seat forgotten later has no door to ask.
+  for (const { place, id } of besideSeats()) {
     // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
     const deaf = deafPlaceIn(place.realm) ? await deafSeatTaken(place) : null;
     if (deaf) {
       log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
       continue;
     }
-    const got = await replayRegister(place, false, move);
+    const key = keyOfPlace(place);
+    // Ended in the move (its owner took it off, its own release): forgotten, the rest go on.
+    if (!state.places.includes(place)) {
+      log(`place ${key} ended during the rebind — not re-registered`);
+      continue;
+    }
+    const got = await replayRegister(place, false, move, { id, main: false });
     if (move.stopped())
       return (log("places beside not re-registered: the session was stopped"), false);
     if (got && !got.error && !got.result?.isError) continue;
-    const key = keyOfPlace(place);
-    // Ended in the move (its owner took it off, its own release): forgotten, the rest go on.
-    if (move.ended(key)) log(`place ${key} ended during the rebind — not re-registered`);
+    if (endedSince(id, move.since)) log(`place ${key} ended during the rebind — not re-registered`);
     else if (seatIsGone(got)) {
       log(
         `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`,

@@ -13,9 +13,14 @@ import { callTool, resolveAgainstLed, short } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
-import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { dropHoldRecord, type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 import { placeFields } from "./placefields.ts";
-import { rateLimitedWait, type RegisterMove, throughRateLimit } from "./ratelimit.ts";
+import {
+  type MoveSeat,
+  rateLimitedWait,
+  type RegisterMove,
+  throughRateLimit,
+} from "./ratelimit.ts";
 import { learnRealm, otherRealm, resolvedRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -49,9 +54,9 @@ const listedAs = (hello: Frame | null, rec: HoldRecord, primary: HoldRecord) =>
       (e.karta_seq == null || String(e.karta_seq) === String(rec.karta)),
   );
 
-/** The record's seat id from hello (one fitting seat with an id); null — not known. */
+/** The record's seat id from hello — its graph, role and name, exactly one with an id; null — not known. */
 function idFromHello(hello: Frame | null, rec: HoldRecord, primary: HoldRecord): string | null {
-  const fits = listedAs(hello, rec, primary);
+  const fits = listedAs(hello, rec, primary).filter((e) => sameRealm(e.realm, rec.realm));
   const id = fits.length === 1 ? fits[0]?.standing_id : null;
   return typeof id === "string" && id ? id : null;
 }
@@ -75,12 +80,11 @@ async function resolveRecord(
 }
 
 /**
- * Register the seat of a hold record as a step of a return `move` (ratelimit.ts): the 429
- * rate_limited of the source is waited out inside it (#10801), the seat's key tells the move
- * whose register it is — a stop ends the move, this seat's own end only its register (#7439);
- * `id` — the seat's id, if known: its end is heard by it before the seat is held (stophold.ts).
+ * Register the seat of a hold record as a step of a return `move` (ratelimit.ts): a stop ends
+ * the move; the seat (`seat`: its id, if known, and whether it is the main one) ended since the
+ * move began is not registered (endedseats.ts, #7439); only the main seat waits out a 429 (#10801).
  */
-export const registerRecord = (rec: HoldRecord, move: RegisterMove, id: string | null = null) =>
+export const registerRecord = (rec: HoldRecord, move: RegisterMove, seat: MoveSeat) =>
   throughRateLimit(
     () =>
       callTool(tool("channel"), {
@@ -92,16 +96,16 @@ export const registerRecord = (rec: HoldRecord, move: RegisterMove, id: string |
       }),
     rateLimitedWait,
     move,
-    { key: keyOf(rec.realm, rec.karta, rec.name), id },
+    seat,
   );
 
 /**
  * Register again the seats beside the main seat just returned from disk at `url`; the
  * register answer puts each on the channel (standing.ts), and its `beside` word tells the
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
- * `move` — the return's register move (ratelimit.ts): the seats beside share the main seat's
- * deadline; a wait past it — a seat beside does not wait and its refusal stands
- * (#10801); a stop since the return began ends it, no register after it (#7439).
+ * `move` — the return's register move (ratelimit.ts): a seat beside does not wait out a 429,
+ * its refusal stands (#10801); one ended since the return began (endedseats.ts) is not
+ * registered and its record goes; a stop ends the return, no register after it (#7439).
  */
 export async function besideBack(
   url: string,
@@ -120,17 +124,16 @@ export async function besideBack(
       continue;
     }
     const id = idFromHello(hello, rec, primary); // the seat is not held yet: hello names it
-    const { r, waitS, stop, ended } = await registerRecord(rec, move, id);
+    const { r, stop, ended } = await registerRecord(rec, move, { id, main: false });
     // A stop ends the whole return (#7439): no register of the next seats beside.
     if (stop) return log(`seats beside from ${key} on: the return was stopped`);
     // This seat ended in the return (its owner took it off): it alone is not registered.
     if (!r || ended) {
-      log(`seat beside ${key} ended during the return — not registered`);
+      log(`seat beside ${key} ended during the return — not registered, its record dropped`);
+      dropHoldRecord(key);
       continue;
     }
     standingLog(r.isError ? `beside not resumed ${key}` : `resumed-from-disk beside ${key}`);
-    if (waitS > 0)
-      standingLog(`beside ${key}: register waited out a 429 of the source (${waitS} s)`);
     log(
       `seat beside ${key} with the main one: ${r.isError ? `not back — ${short(r.text)}` : "back"}`,
     );

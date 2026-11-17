@@ -6,8 +6,8 @@
 
 /**
  * The register move's deadline: no Retry-After wait of the move ends later than this many
- * seconds after the move began — a disk return or a rebind counts the main seat and every
- * seat beside it as one move, and the time of cut waits and of the calls counts too.
+ * seconds after the move began — only the move's main seat waits (the seats beside do not),
+ * and the time of cut waits and of the calls counts too.
  */
 export const RATE_LIMIT_WAIT_S = 60;
 

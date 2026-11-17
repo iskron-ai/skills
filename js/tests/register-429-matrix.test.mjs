@@ -1,10 +1,12 @@
 // The family "a stop or a seat's end × the path of a register move" (graph nks-dev: #7439,
 // #10801, #11030) as one matrix: every kind of register move — the rebind on a new MCP
 // session, the disk return (the plugin's resume and iskron_stand), the skills refresh — meets
-// each event during a 429 rate_limited wait: the owner's stop of the main seat (4001
-// revoked:person) and the end of the seat beside (standing_ended by=person). In every cell:
-// no register of the taken-off seat after the event; on the main stop no register at all and
-// the agent's waiting call is not sent; the move keeps within the client's cap.
+// each event during the main seat's 429 rate_limited wait (only the main seat waits): the
+// owner's stop of the main seat (4001 revoked:person) and the end of the seat beside the move
+// has not reached yet (standing_ended by=person). In every cell: no register of the taken-off
+// seat after the event; on the main stop no register at all and the agent's waiting call is
+// not sent; the move keeps within the client's cap. Beside them: a seat beside's own 429 —
+// one register, no wait; two seats beside of one role and name in two graphs.
 //
 // The bridge runs on the probe's clock (fast-clock.cjs: ten times faster): a Retry-After of
 // 40 s passes in 4 s, each cell takes a few seconds.
@@ -18,7 +20,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { RESUME_ANSWER_MS } from "../shared/ratelimit.ts";
-import { placeOf, saidKind, setup, stand, textOf, until, write } from "./ownseat-kit.mjs";
+import { placeOf, setup, stand, textOf, until, write } from "./ownseat-kit.mjs";
 
 const FAST = 10;
 process.env.NODE_OPTIONS = `--require ${join(dirname(fileURLToPath(import.meta.url)), "fast-clock.cjs")}`;
@@ -52,7 +54,7 @@ function skillSet() {
 }
 
 /** The main seat proba and a seat beside it in drugoy, stood by bridge b1 from cwd. */
-async function twoSeats(t, env = {}, session = true) {
+async function twoSeats(t, env = {}, session = true, besides = [["drugoy", 48, "a-beside"]]) {
   const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
   Object.assign(process.env, env);
   t.after(() => {
@@ -69,14 +71,18 @@ async function twoSeats(t, env = {}, session = true) {
     placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd: kit.cwd })),
     "proba",
   );
-  const side = await stand(b1, { realm: "drugoy", karta: 48, name: "a-beside" });
-  assert.ok(!side.result?.isError, JSON.stringify(side));
-  await until(() => saidKind(b1, "beside"), "the beside word");
-  const sideId = [...kit.fake.state.channels.values()]
-    .map((c) => c.places.get(SIDE))
-    .find(Boolean)?.standing_id;
+  for (const [realm, karta, name] of besides) {
+    const side = await stand(b1, { realm, karta, name });
+    assert.ok(!side.result?.isError, JSON.stringify(side));
+  }
+  const beside = () => b1.notifications.filter((n) => n.params?.data?.kind === "beside");
+  await until(() => beside().length === besides.length, "the beside words");
+  const idIn = (realm) =>
+    [...kit.fake.state.channels.values()].map((c) => c.places.get(realm)).find(Boolean)
+      ?.standing_id;
+  const sideId = idIn(SIDE);
   assert.ok(sideId, "the seat beside has an id");
-  return { ...kit, b1, sideId };
+  return { ...kit, b1, sideId, idIn };
 }
 
 /** The bridge b1 is gone, its hold records stay: the next bridge returns the seats from disk. */
@@ -86,11 +92,11 @@ async function fromDisk(kit) {
   return kit.up();
 }
 
-// Each kind: the seat whose register meets the 429 (`limited`), how the move begins (`begin`,
-// after the refusal is armed) and what the stopped agent's waiting call shows (`stoppedCall`).
+// Each kind: how the move begins (`begin`, after the refusal is armed), what the stopped agent's
+// waiting call shows (`stoppedCall`), whether it registers the seats beside (`besides`).
 const KINDS = {
   rebind: {
-    limited: SIDE,
+    besides: true,
     async begin(kit) {
       await kit.fake.control({ kill_session: true }); // the next call meets a new session
       const writes = kit.fake.state.writes.length;
@@ -111,7 +117,7 @@ const KINDS = {
     },
   },
   "disk return (resume)": {
-    limited: SIDE,
+    besides: true,
     async begin(kit) {
       const b2 = await fromDisk(kit);
       return {
@@ -124,7 +130,7 @@ const KINDS = {
     },
   },
   "disk return (iskron_stand)": {
-    limited: MAIN, // this path returns the named seat only: its own register meets the 429
+    besides: false, // this path returns the named seat only
     unsigned: true,
     async begin(kit) {
       const b2 = await fromDisk(kit);
@@ -138,8 +144,10 @@ const KINDS = {
     },
   },
   "skills refresh": {
-    limited: SIDE,
+    besides: true,
     env: () => ({ ISKRON_SKILLS_ROOT: skillSet(), ISKRON_SKILLS_GAP_MS: "1" }),
+    // The refresh runs behind the call: let a 40 s wait (4 s here) run out before reading.
+    settle: () => new Promise((d) => setTimeout(d, 4_500)),
     async begin(kit) {
       // A changed set: the next call's background refresh registers every seat with it.
       writeFileSync(join(process.env.ISKRON_SKILLS_ROOT, "establish-mcp", "SKILL.md"), "after");
@@ -149,21 +157,24 @@ const KINDS = {
   },
 };
 
+const ended = (kit, id) =>
+  kit.fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: id, by: "person" }),
+  });
+// Only the main seat waits out a 429: every event comes during its wait. The seat beside's end
+// comes before its own register — a seat the move has not reached yet (not held, on a disk return).
 const EVENTS = {
   "the main seat's stop": (kit) =>
     kit.fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" }),
-  "the seat beside's end": (kit) =>
-    kit.fake.control({
-      ws_send: JSON.stringify({ type: "standing_ended", standing_id: kit.sideId, by: "person" }),
-    }),
+  "the seat beside's end": (kit) => ended(kit, kit.sideId),
 };
 
 for (const [kind, k] of Object.entries(KINDS))
   for (const [event, fire] of Object.entries(EVENTS))
-    test(`${kind} × ${event} during the 429 wait`, async (t) => {
+    test(`${kind} × ${event} during the main seat's 429 wait`, async (t) => {
       if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
       const kit = await twoSeats(t, k.env?.() ?? {}, !k.unsigned);
-      await kit.fake.control({ registerRefuseNext: [rateLimited(k.limited)] });
+      await kit.fake.control({ registerRefuseNext: [rateLimited(MAIN)] });
       const started = Date.now();
       const { pending, stoppedCall, always } = await k.begin(kit);
       await until(() => (kit.fake.state.counts.register_refused ?? 0) >= 1, "the 429", 10_000);
@@ -171,6 +182,7 @@ for (const [kind, k] of Object.entries(KINDS))
       await fire(kit);
       const r = await pending;
       const tookMs = (Date.now() - started) * FAST;
+      await k.settle?.();
       await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
       const seen = `${kind} × ${event}: ${JSON.stringify(r)}`;
       always?.();
@@ -185,3 +197,44 @@ for (const [kind, k] of Object.entries(KINDS))
       }
       assert.ok(tookMs < RESUME_ANSWER_MS, `the move within the cap: ${tookMs} ms — ${seen}`);
     });
+
+// A seat beside does not wait out its 429: one register, its refusal stands, the move goes on
+// at once — the next move of its own brings it back (#10801).
+for (const [kind, k] of Object.entries(KINDS).filter(([, k]) => k.besides))
+  test(`${kind} × the seat beside's own 429: one register, no wait`, async (t) => {
+    if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+    const kit = await twoSeats(t, k.env?.() ?? {}, !k.unsigned);
+    await kit.fake.control({ registerRefuseNext: [rateLimited(SIDE)] });
+    const side = registers(kit.fake, SIDE);
+    const started = Date.now();
+    const { pending } = await k.begin(kit);
+    await until(() => (kit.fake.state.counts.register_refused ?? 0) >= 1, "the 429", 10_000);
+    await pending;
+    const tookMs = (Date.now() - started) * FAST;
+    await k.settle?.();
+    await new Promise((d) => setTimeout(d, 600)); // a retry after a wait would show by now
+    assert.equal(registers(kit.fake, SIDE) - side, 1, `${kind}: the seat beside registered once`);
+    assert.ok(tookMs < 40_000, `${kind}: no 40 s wait behind it — ${tookMs} ms`);
+  });
+
+// Two seats beside with one role and name in two graphs: the end of one is matched by its graph
+// too (hello names both), the other comes back (#7439).
+test("disk return × two seats beside of one role and name in two graphs: the ended one is not registered, the other is", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const kit = await twoSeats(t, {}, true, [
+    ["drugoy", 48, "a-beside"],
+    ["methodology", 48, "a-beside"],
+  ]);
+  await kit.fake.control({ registerRefuseNext: [rateLimited(MAIN)] });
+  const other = registers(kit.fake, "@nks/methodology");
+  const b2 = await fromDisk(kit);
+  const pending = b2.call("iskron/resume", { key: KEY });
+  await until(() => (kit.fake.state.counts.register_refused ?? 0) >= 1, "the 429", 10_000);
+  const side = registers(kit.fake, SIDE);
+  await ended(kit, kit.sideId);
+  const r = await pending;
+  await new Promise((d) => setTimeout(d, 600));
+  assert.equal(r.result?.resumed, true, JSON.stringify(r));
+  assert.equal(registers(kit.fake, SIDE) - side, 0, "the ended seat in drugoy not registered");
+  assert.equal(registers(kit.fake, "@nks/methodology") - other, 1, "the one in methodology is");
+});
