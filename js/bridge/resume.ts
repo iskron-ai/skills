@@ -37,11 +37,11 @@ import {
   restoreHoldRecord,
   sessionOfBridge,
 } from "./holdrecord.ts";
-import { stoppedDuring, stoppedSince, stopsNow, withSpoolHeld } from "./holdstate.ts";
+import { stoppedSince, stopsNow, withSpoolHeld } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
-import { registerMove } from "./ratelimit.ts";
+import { type RegisterMove, registerMove } from "./ratelimit.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { seatProof } from "./seatproof.ts";
@@ -131,8 +131,7 @@ export async function resumeFromDisk(
 }
 
 /** Register the returned seat, then the seats beside it (#7602); "" — stopped, resumeBy says it. */
-async function registerBack(rec: HoldRecord, before: number): Promise<string> {
-  const move = registerMove(() => stoppedDuring(before)); // from resumeBy's stop count
+async function registerBack(rec: HoldRecord, move: RegisterMove): Promise<string> {
   const { r, waitS } = await registerRecord(rec, move, { id: null, main: true });
   if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
   await besideBack(rec.url, rec, move); // the seats beside are the same move (#7439, #11030)
@@ -220,6 +219,8 @@ export async function resumeBy(
   register = true,
   takeOwn = false,
 ): Promise<ResumeOutcome> {
+  // The move begins here, before any disk read or wait: a seat ended since then is not registered (#7439).
+  const move = registerMove();
   await canonHoldRecords(); // an earlier build's record of rN or a bare slug returns as @owner/slug (#8677)
   const { own: recs, sameDir, legacy: legacyRecs, left, neighbour, stale } = recordsFor(sel);
   // A keyed seat older than the session's other record: a journal line and the outcome (refused),
@@ -295,7 +296,7 @@ export async function resumeBy(
     // The handover spool waits until the seats beside are back with this one (#7602).
     const { back, registered } = await withSpoolHeld(async () => {
       const b = await resumeFromDisk(rec.realm, rec.karta, rec.name);
-      return { back: b, registered: b && register ? await registerBack(rec, before) : null };
+      return { back: b, registered: b && register ? await registerBack(rec, move) : null };
     });
     // The return met the owner's 4001 — before the hello or during register's 429 wait: no return.
     const stop = stoppedOutcome(before, key);

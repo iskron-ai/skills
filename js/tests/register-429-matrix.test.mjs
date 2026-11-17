@@ -238,3 +238,27 @@ test("disk return × two seats beside of one role and name in two graphs: the en
   assert.equal(registers(kit.fake, SIDE) - side, 0, "the ended seat in drugoy not registered");
   assert.equal(registers(kit.fake, "@nks/methodology") - other, 1, "the one in methodology is");
 });
+
+// The move begins at the return's entry, before its preparation (the disk read, the socket,
+// the busy line back): a seat beside ended there is not registered either (#7439).
+test("disk return (resume) × the seat beside's end while the return prepares (its busy line), before any register", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const kit = await twoSeats(t);
+  const busy = await stand(kit.b1, { realm: "nks-dev", status: "занят" });
+  assert.ok(!busy.result?.isError, textOf(busy));
+  const b2 = await fromDisk(kit);
+  await kit.fake.control({ statusDelayMs: 1500 }); // the busy line back is slow
+  const side = registers(kit.fake, SIDE);
+  const statuses = kit.fake.state.counts.status_requests ?? 0;
+  const pending = b2.call("iskron/resume", { key: KEY, session: "ses-1" });
+  await until(() => (kit.fake.state.counts.status_requests ?? 0) > statuses, "the busy line");
+  await ended(kit, kit.sideId);
+  const r = await pending;
+  await new Promise((d) => setTimeout(d, 600));
+  assert.equal(r.result?.resumed, true, JSON.stringify(r));
+  assert.equal(
+    registers(kit.fake, SIDE) - side,
+    0,
+    "the seat ended in the preparation not registered",
+  );
+});

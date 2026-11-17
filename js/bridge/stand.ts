@@ -106,6 +106,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const a = msg.params?.arguments ?? {};
   const auto = provisional.takesProvisional(msg);
   const stopsBefore = stopsNow(); // an owner's 4001 met by this call's own return ends it (#7439)
+  const move = registerMove(() => stoppedDuring(stopsBefore)); // its return's move begins here
   let realm = typeof a.realm === "string" ? a.realm.trim() : "";
   let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];
@@ -351,7 +352,6 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
     // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
-    const move = registerMove(() => stoppedDuring(stopsBefore)); // the call's stop count
     const { r, waitS } = await throughRateLimitAnswer(register, move, { id: null, main: true });
     if (!r) return (lines.push(move.stopped() ?? ""), done(true)); // stopped before the register (#7439)
     if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
