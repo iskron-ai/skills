@@ -33,15 +33,15 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   const sleepOnError = (): boolean => {
     // A transient refusal names neither open nor closed: only a definitive closed|abandoned
     // may end the run. The row sleeps on the invite floor with the error named, the tree
-    // stays, the tact retries the read — and the window counts this sleep like any other
-    // (#10995 review).
+    // stays, the tact retries the read — and the window counts this sleep like any other.
+    // The wake caches are left unset: the tact establishes them from the invite itself
+    // before its first judgement (#10995 review 2).
     r.state = "dormant";
     r.why = "dormant_read_error";
     r.dormant = {
       since: new Date().toISOString(),
       cursor: Math.max(r.invite, r.dormant?.cursor ?? 0),
       seats,
-      asks: {},
     };
     return true;
   };
@@ -219,7 +219,29 @@ export async function stepDormant(
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      entries = (await readCaseHistory(base, token, r.room, sleep.cursor ?? 0)).entries;
+      // A sleep armed on a transient refusal carries no wake caches: one read from the invite
+      // itself re-establishes them — the role's uuid from the invite entry, the seat's own
+      // asks — before the judgement, which always starts at the cursor and never walks it
+      // down (#10995 review 2).
+      const unestablished = r.dormant.asks === undefined;
+      entries = (
+        await readCaseHistory(
+          base,
+          token,
+          r.room,
+          unestablished ? Math.max(0, r.invite - 1) : (sleep.cursor ?? 0),
+        )
+      ).entries;
+      if (unestablished) {
+        const seats = new Set(sleep.seats ?? []);
+        const asks: Record<string, string> = {};
+        for (const e of entries)
+          if (e.kind === "ask" && e.author_standing_id && seats.has(e.author_standing_id))
+            asks[e.n] = e.author_standing_id;
+        const karta = entries.find((e) => e.n === r.invite)?.to_karta_node_id;
+        r.dormant = { ...sleep, ...(karta ? { karta } : {}), asks };
+        delete r.why;
+      }
     } catch (e) {
       r.why = "dormant_read_error";
       out.push(
@@ -252,7 +274,7 @@ export async function stepDormant(
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      r.dormant = { ...sleep, cursor: verdict.wake.n };
+      r.dormant = { ...r.dormant, cursor: verdict.wake.n };
       const why = await launch(authDir, runs, key, spec, w().dshContinue(r.room, verdict.wake.n));
       out.push(w().leadRow(r.realm, r.room, r.invite, `dormant_woken_${verdict.wake.n}, ${why}`));
       continue;
@@ -260,11 +282,11 @@ export async function stepDormant(
     if ("end" in verdict) {
       r.state = "ended";
       r.why = verdict.end;
-      r.dormant = { ...sleep, cursor: verdict.cursor };
+      r.dormant = { ...r.dormant, cursor: verdict.cursor };
       out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
       continue;
     }
-    r.dormant = { ...sleep, cursor: verdict.cursor };
+    r.dormant = { ...r.dormant, cursor: verdict.cursor };
   }
   return out;
 }

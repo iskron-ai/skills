@@ -679,6 +679,42 @@ test("dormant tact: a row moved under the read launches nothing and the cursor s
   assert.equal(readRuns(dir).k.state, "dormant", "the stub launch writes no registry");
 });
 
+test("dormancy: a transient arming read loses neither the role uuid nor the asks — the next tact establishes them", async (t) => {
+  // 503 at the arming: the row sleeps without the wake caches. The api recovers with an ask
+  // to the invited role: the tact first re-establishes the caches by one read from the invite
+  // itself, then judges from the cursor — and the ask wakes (#10995 review 2).
+  const api = await caseApi(t, {
+    refuse: "history",
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(10, "ask", { to_karta_node_id: KARTA }),
+    ],
+  });
+  const r = exitedRun();
+  assert.equal(await goDormant(api.base, "key", r), true);
+  assert.equal(r.state, "dormant");
+  assert.equal(r.why, "dormant_read_error");
+  assert.equal(r.dormant.cursor, 9, "the invite's number is the floor and it does not move down");
+  api.state.refuse = 0;
+  const runs = { k: r };
+  const launch = launchStub();
+  const said = await stepDormant(
+    await dormantDir(t, runs),
+    api.base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
+  assert.equal(r.state, "launched", "the ask to the role wakes once the caches are established");
+  assert.equal(r.dormant.karta, KARTA);
+  assert.deepEqual(r.dormant.asks, {});
+  assert.ok(said.join("; ").includes("dormant_woken_10"));
+  assert.equal(launch.calls.length, 1);
+});
+
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const ours = exitedRun();
