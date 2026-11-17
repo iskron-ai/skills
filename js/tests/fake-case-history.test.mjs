@@ -10,7 +10,10 @@ test("fake case REST exposes status and history after a cursor", async (t) => {
     caseRooms: {
       "room-1": {
         status: "open",
-        entries: [{ entry_id: 1, kind: "said" }, { entry_id: 2, kind: "closed" }],
+        entries: [
+          { entry_id: 1, kind: "said" },
+          { entry_id: 2, kind: "closed" },
+        ],
       },
     },
   });
