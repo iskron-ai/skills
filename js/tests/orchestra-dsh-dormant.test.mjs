@@ -130,7 +130,11 @@ test("dormancy: a clean exit with the case open sleeps on the seat's own last wo
   const r = exitedRun();
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.equal(r.state, "dormant");
-  assert.equal(r.dormant.cursor, 10, "the cursor lands on the seat's own last word, not the journal's end");
+  assert.equal(
+    r.dormant.cursor,
+    10,
+    "the cursor lands on the seat's own last word, not the journal's end",
+  );
   assert.deepEqual(r.dormant.seats, [SEAT]);
   assert.equal(r.dormant.karta, KARTA, "the invited role's uuid comes from the invite entry");
   assert.deepEqual(r.dormant.asks, { 10: SEAT }, "the seat's own asks are kept for answers");
@@ -146,11 +150,24 @@ test("dormancy: the cursor keeps a said that came after the seat's last word, an
   });
   const r = exitedRun();
   assert.equal(await goDormant(api.base, "key", r), true);
-  assert.equal(r.dormant.cursor, 10, "a word past the seat's last move is not swallowed by the arming read");
+  assert.equal(
+    r.dormant.cursor,
+    10,
+    "a word past the seat's last move is not swallowed by the arming read",
+  );
   // The next tact reads from that cursor and the said still wakes the continuation.
   const runs = { k: r };
   const launch = launchStub();
-  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(r.state, "launched", "the said after the seat's last word wakes");
   assert.equal(r.dormant.cursor, 11);
   assert.equal(launch.calls.length, 1);
@@ -162,7 +179,6 @@ test("dormancy: no word of the call's own seats — the invite's number is the c
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.equal(r.dormant.cursor, 9);
 });
-
 
 test("dormancy: the seats collect the row's own id and every earlier one", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite")] });
@@ -207,10 +223,7 @@ test("dormancy: a transient read refusal sleeps the row on the invite floor, not
   // A 5xx names neither open nor closed: only a definitive closed|abandoned may end the run —
   // the row sleeps with the error named, the tree stays, and the tact retries the read.
   const status = exitedRun();
-  assert.equal(
-    await goDormant((await caseApi(t, { refuse: "status" })).base, "key", status),
-    true,
-  );
+  assert.equal(await goDormant((await caseApi(t, { refuse: "status" })).base, "key", status), true);
   assert.equal(status.state, "dormant");
   assert.equal(status.why, "dormant_read_error");
   assert.equal(status.dormant.cursor, 9, "the invite's number is the floor");
@@ -243,7 +256,8 @@ test("dormancy: a transient read refusal sleeps the row on the invite floor, not
   assert.equal(aged.why, "dormant_window");
 });
 
-test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {
+  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const launch = launchStub();
   const cases = [
     [entry(10, "said", { to_standing_id: SEAT }), "a said to the call's seat"],
@@ -289,7 +303,16 @@ test("dormant tact: the call's own words never wake it", async (t) => {
   });
   const r = sleepingRow();
   const runs = { k: r };
-  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(r.state, "dormant", "a said or an ask authored by the seat itself wakes nothing");
   assert.equal(r.dormant.cursor, 13, "the cursor still takes the read in");
 });
@@ -304,15 +327,36 @@ test("dormant tact: the page is decided whole — an end anywhere beats an earli
   });
   const r = sleepingRow();
   const launch = launchStub();
-  await stepDormant("/tmp/unused", api.base, "key", { k: r }, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: r },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(r.state, "ended", "a closed entry later on the same read ends the sleep");
   assert.equal(r.why, "dormant_case_closed");
   assert.equal(r.dormant.cursor, 11);
   assert.equal(launch.calls.length, 0, "no continuation launches on a read that ends the sleep");
   // Without an end the same waking word still launches.
-  api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA }), entry(10, "said", { to_standing_id: SEAT })];
+  api.state.entries = [
+    entry(9, "invite", { to_karta_node_id: KARTA }),
+    entry(10, "said", { to_standing_id: SEAT }),
+  ];
   const other = sleepingRow();
-  await stepDormant("/tmp/unused", api.base, "key", { k: other }, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: other },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(other.state, "launched");
 });
 

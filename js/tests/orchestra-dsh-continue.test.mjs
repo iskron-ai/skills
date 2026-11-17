@@ -157,5 +157,9 @@ test("dsh: the continuation is a new launch for the raise windows", async (t) =>
   assert.equal(woken.sat, undefined, "the no-join window starts over");
   assert.equal(woken.rooms, undefined);
   assert.equal(woken.n, undefined);
-  assert.equal(woken.idle_due, undefined, "the first life's idle marker does not stop the continuation");
+  assert.equal(
+    woken.idle_due,
+    undefined,
+    "the first life's idle marker does not stop the continuation",
+  );
 });
