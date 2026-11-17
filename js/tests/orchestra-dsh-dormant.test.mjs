@@ -486,24 +486,67 @@ test("dormant tact: the seat's left ladder — the first left is our exit stop's
 });
 
 test("dormancy: no sleep when the seat left the case before the process exited", async (t) => {
+  const invite = entry(9, "invite", { to_karta_node_id: KARTA });
+  // A leave is the agent's own farewell, and it does not end the standing (#4929) — our stop
+  // after it may still answer stopped. No sleep either way: the walk-away is by reason,
+  // not by our stop's outcome (#10995 review 2).
+  const api = await caseApi(t, {
+    entries: [
+      invite,
+      entry(10, "line", { author_standing_id: SEAT }),
+      entry(11, "left", { author_standing_id: SEAT, payload: { reason: "leave" } }),
+    ],
+  });
+  const stopped = exitedRun({ why: undefined, stop_outcome: "stopped" });
+  assert.equal(await goDormant(api.base, "key", stopped), false);
+  assert.equal(stopped.state, "ended");
+  assert.equal(stopped.why, "dormant_seat_left");
+  const gone = exitedRun();
+  assert.equal(await goDormant(api.base, "key", gone), false);
+  assert.equal(gone.why, "dormant_seat_left");
+  // Our own exit stop's left is revoked, not leave — it never blocks the sleep.
+  const revoked = await caseApi(t, {
+    entries: [invite, entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } })],
+  });
+  const ours = exitedRun({ why: undefined, stop_outcome: "stopped" });
+  assert.equal(await goDormant(revoked.base, "key", ours), true);
+  assert.equal(ours.state, "dormant");
+  // A leave superseded by a later joined of the call's seat does not block: the seat came back.
+  const rejoined = await caseApi(t, {
+    entries: [
+      invite,
+      entry(10, "left", { author_standing_id: SEAT, payload: { reason: "leave" } }),
+      entry(11, "joined", { author_standing_id: SEAT }),
+    ],
+  });
+  const back = exitedRun({ why: undefined, stop_outcome: "stopped" });
+  assert.equal(await goDormant(rejoined.base, "key", back), true);
+  assert.equal(back.state, "dormant");
+});
+
+test("dormancy: the arming cursor is the seat's last word that is not a left", async (t) => {
+  // The reviewer's scenario: progress[10], said[11], our stop's left revoked[12] — the cursor
+  // lands on the progress, so the said after it still wakes, and the technical left never
+  // serves as the cursor (#10995 review 2).
   const api = await caseApi(t, {
     entries: [
       entry(9, "invite", { to_karta_node_id: KARTA }),
-      entry(10, "left", { author_standing_id: SEAT, payload: { reason: "leave" } }),
+      entry(10, "progress", { author_standing_id: SEAT }),
+      entry(11, "said", { to_standing_id: SEAT }),
+      entry(12, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } }),
     ],
   });
-  // Our exit stop met an already-gone standing (410): the left in the journal is the seat's
-  // own walk-away, not our order's — no sleep on it.
-  const r = exitedRun();
-  assert.equal(await goDormant(api.base, "key", r), false);
-  assert.equal(r.state, "ended");
-  // Our own completed stop's left is another matter: the stop_outcome says we took the seat
-  // out, and the sleep arms on the seat's last word — the left itself.
-  const ours = exitedRun({ why: undefined, stop_outcome: "stopped" });
-  assert.equal(await goDormant(api.base, "key", ours), true);
-  assert.equal(ours.state, "dormant");
-  assert.equal(ours.dormant.cursor, 10);
+  const r = exitedRun({ why: undefined, stop_outcome: "stopped" });
+  assert.equal(await goDormant(api.base, "key", r), true);
+  assert.equal(r.dormant.cursor, 10, "the technical left of our own stop does not serve as the cursor");
+  // The said after the seat's last word still wakes the continuation.
+  const runs = { k: r };
+  const launch = launchStub();
+  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(r.state, "launched", "the said between the progress and the left wakes");
+  assert.equal(launch.calls.length, 1);
 });
+
 
 test("dormant tact: the window, the taken slot and the gone launcher hold the sleep", async (t) => {
   const api = await caseApi(t, {

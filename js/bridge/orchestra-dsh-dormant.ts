@@ -52,24 +52,43 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   } catch {
     return sleepOnError();
   }
-  // The seat left the case before the process exited: our exit stop met an already-gone
-  // standing (the 410 path), so a left authored by the call's seat is its own walk-away —
-  // no sleep on it. Our completed stop's left is another matter: its stop_outcome stands on
-  // the row, and the sleep arms (#10995 review).
+  // The seat walked out of the case by itself: a left with reason leave after the call's
+  // last joined is the agent's own farewell, and a leave does not end the standing (#4929) —
+  // our stop after it may even answer stopped. No sleep either way; our own exit stop's left
+  // is revoked, never leave, and never blocks (#10995 review 2).
+  const lastJoined = Math.max(
+    0,
+    ...read.entries
+      .filter(
+        (e) =>
+          e.kind === "joined" && !!e.author_standing_id && seats.includes(e.author_standing_id),
+      )
+      .map((e) => e.n),
+  );
   if (
-    r.why === "seat_gone_after_exit" &&
     read.entries.some(
-      (e) => e.kind === "left" && !!e.author_standing_id && seats.includes(e.author_standing_id),
+      (e) =>
+        e.kind === "left" &&
+        e.reason === "leave" &&
+        !!e.author_standing_id &&
+        seats.includes(e.author_standing_id) &&
+        e.n > lastJoined,
     )
-  )
+  ) {
+    r.why = "dormant_seat_left";
     return false;
-  // The cursor lands on the seat's own last word, never past it: a said that came after the
-  // agent's last move but before this read must still wake — a spurious wake is cheaper than
-  // a lost word (#10995 review). No word of the call's seats — the invite's number is the
-  // floor, and the cursor never walks back.
+  }
+  // The cursor lands on the seat's own last word that is not a left: a said that came after
+  // the agent's last move but before this read must still wake — a spurious wake is cheaper
+  // than a lost word — and the technical left of our own exit stop never serves as the
+  // cursor (#10995 review). No word of the call's seats — the invite's number is the floor,
+  // and the cursor never walks back.
   const seatLast = [...read.entries]
     .reverse()
-    .find((e) => e.author_standing_id && seats.includes(e.author_standing_id))?.n;
+    .find(
+      (e) =>
+        e.author_standing_id && seats.includes(e.author_standing_id) && e.kind !== "left",
+    )?.n;
   const asks: Record<string, string> = {};
   for (const e of read.entries)
     if (e.kind === "ask" && e.author_standing_id && seats.includes(e.author_standing_id))
