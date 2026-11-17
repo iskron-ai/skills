@@ -70,11 +70,7 @@ export async function dormantFromEnds(
  * uuid, an answer to the seat's own ask; a left of the seat with reason revoked ends it. */
 type Verdict = { wake: CaseEntry } | { end: string; cursor: number } | { cursor: number };
 
-function judge(
-  entries: CaseEntry[],
-  from: number,
-  r: Run,
-): Verdict {
+function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   const seats = new Set(r.dormant?.seats ?? []);
   const karta = r.dormant?.karta;
   const asks = r.dormant?.asks ?? {};
@@ -85,7 +81,11 @@ function judge(
       .map((e) => [e.n, e.author_standing_id as string]),
   );
   const wakes = (e: CaseEntry): boolean => {
-    if ((e.kind === "said" || e.kind === "ask") && !!e.to_standing_id && seats.has(e.to_standing_id))
+    if (
+      (e.kind === "said" || e.kind === "ask") &&
+      !!e.to_standing_id &&
+      seats.has(e.to_standing_id)
+    )
       return true;
     if ((e.kind === "ask" || e.kind === "invite") && !!karta && e.to_karta_node_id === karta)
       return true;
@@ -176,13 +176,7 @@ export async function stepDormant(
         continue;
       }
       r.dormant = { ...sleep, cursor: verdict.wake.n };
-      const why = await launch(
-        authDir,
-        runs,
-        key,
-        spec,
-        w().dshContinue(r.room, verdict.wake.n),
-      );
+      const why = await launch(authDir, runs, key, spec, w().dshContinue(r.room, verdict.wake.n));
       out.push(w().leadRow(r.realm, r.room, r.invite, `dormant_woken_${verdict.wake.n}, ${why}`));
       continue;
     }

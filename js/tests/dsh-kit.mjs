@@ -197,7 +197,13 @@ export async function leadingDsh(
      * rides along: the demands snapshot refuses an order without one. */
     stopOrder: (standing) =>
       fake.control({
-        stop_order: { id: "ord-probe", standing_id: standing, realm: REALM, karta_seq: 931, frame: false },
+        stop_order: {
+          id: "ord-probe",
+          standing_id: standing,
+          realm: REALM,
+          karta_seq: 931,
+          frame: false,
+        },
       }),
     /** A new daemon over the same registry and the same fake — a slept row must survive it. */
     restart: async () => {

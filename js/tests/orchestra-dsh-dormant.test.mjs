@@ -8,7 +8,12 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
-import { dormantFromEnds, dshSleepable, goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
+import {
+  dormantFromEnds,
+  dshSleepable,
+  goDormant,
+  stepDormant,
+} from "../bridge/orchestra-dsh-dormant.ts";
 
 const SEAT = "11111111-1111-4111-8111-111111111111";
 const OTHER = "44444444-4444-4444-8444-444444444444";
@@ -79,7 +84,14 @@ const sleepingRow = (over = {}) => ({
 /** The launcher of the tact: one dsh offer, limit 1; launch records and stays a stub. */
 const launchers = (limit = 1) => ({
   own: new Map([
-    ["l", { launcher: "l", limit, harnesses: { dsh: { models: ["m"], dsh: { bin: null, patch: null } } } }],
+    [
+      "l",
+      {
+        launcher: "l",
+        limit,
+        harnesses: { dsh: { models: ["m"], dsh: { bin: null, patch: null } } },
+      },
+    ],
   ]),
   elsewhere: new Map(),
   refused: [],
@@ -126,17 +138,24 @@ test("dormancy: the seats collect the row's own id and every earlier one", async
 
 test("dormancy: a closed case, a refused read and an unclean exit keep the end", async (t) => {
   const closed = exitedRun();
-  assert.equal(await goDormant((await caseApi(t, { status: "closed" })).base, "key", closed), false);
+  assert.equal(
+    await goDormant((await caseApi(t, { status: "closed" })).base, "key", closed),
+    false,
+  );
   assert.equal(closed.state, "ended");
   const refused = exitedRun();
   assert.equal(await goDormant((await caseApi(t, { refuse: 1 })).base, "key", refused), false);
   assert.equal(refused.state, "ended");
   assert.equal(
-    dshSleepable(exitedRun({ dsh: { pid: 1, events: "/e", final: "stopped", exit: "0", session: "s" } })),
+    dshSleepable(
+      exitedRun({ dsh: { pid: 1, events: "/e", final: "stopped", exit: "0", session: "s" } }),
+    ),
     false,
   );
   assert.equal(
-    dshSleepable(exitedRun({ dsh: { pid: 1, events: "/e", final: "completed", exit: "5", session: "s" } })),
+    dshSleepable(
+      exitedRun({ dsh: { pid: 1, events: "/e", final: "completed", exit: "5", session: "s" } }),
+    ),
     false,
   );
   assert.equal(
@@ -145,7 +164,11 @@ test("dormancy: a closed case, a refused read and an unclean exit keep the end",
     "no session to continue — no sleep",
   );
   const noTree = exitedRun({ tree: { state: "removed" } });
-  assert.equal(await goDormant((await caseApi(t)).base, "key", noTree), false, "a gone tree cannot sleep");
+  assert.equal(
+    await goDormant((await caseApi(t)).base, "key", noTree),
+    false,
+    "a gone tree cannot sleep",
+  );
 });
 
 test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {
@@ -164,11 +187,24 @@ test("dormant tact: a said to the seat, an ask to the role and an answer to the 
     const r = sleepingRow(over ? { dormant: { ...sleepingRow().dormant, ...over } } : {});
     api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA }), e];
     const runs = { k: r };
-    const said = await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
+    const said = await stepDormant(
+      "/tmp/unused",
+      api.base,
+      "key",
+      runs,
+      launchers(),
+      undefined,
+      AWAKE_NOW,
+      launch.run,
+    );
     assert.equal(r.state, "launched", name);
     assert.equal(r.dormant.cursor, 10, `${name}: the cursor lands on the waking entry`);
     assert.ok(said.join("; ").includes("dormant_woken_10"), name);
-    assert.equal(launch.calls.at(-1).brief.includes("[10]"), true, `${name}: the brief names the entry`);
+    assert.equal(
+      launch.calls.at(-1).brief.includes("[10]"),
+      true,
+      `${name}: the brief names the entry`,
+    );
   }
 });
 
@@ -201,43 +237,112 @@ test("dormant tact: an answer to a stranger's ask, a said to another seat and ot
 
 test("dormant tact: a left of the seat revoked and a closed entry end the sleep; the case status too", async (t) => {
   const api = await caseApi(t, {
-    entries: [entry(9, "invite", { to_karta_node_id: KARTA }), entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } })],
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } }),
+    ],
   });
   const revoked = sleepingRow();
-  await stepDormant("/tmp/unused", api.base, "key", { k: revoked }, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: revoked },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(revoked.state, "ended");
   assert.equal(revoked.why, "dormant_seat_revoked");
   api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA }), entry(10, "closed")];
   const closed = sleepingRow();
-  await stepDormant("/tmp/unused", api.base, "key", { k: closed }, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: closed },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(closed.why, "dormant_case_closed");
   api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA })];
   api.state.status = "abandoned";
   const abandoned = sleepingRow();
-  await stepDormant("/tmp/unused", api.base, "key", { k: abandoned }, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: abandoned },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(abandoned.state, "ended");
   assert.equal(abandoned.why, "dormant_case_closed");
 });
 
 test("dormant tact: the window, the taken slot and the gone launcher hold the sleep", async (t) => {
   const api = await caseApi(t, {
-    entries: [entry(9, "invite", { to_karta_node_id: KARTA }), entry(10, "said", { to_standing_id: SEAT })],
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(10, "said", { to_standing_id: SEAT }),
+    ],
   });
-  const past = sleepingRow({ dormant: { ...sleepingRow().dormant, since: "2026-10-01T00:00:00Z" } });
-  const said = await stepDormant("/tmp/unused", api.base, "key", { k: past }, launchers(), undefined, AWAKE_NOW, launchStub().run);  assert.equal(past.state, "ended");
+  const past = sleepingRow({
+    dormant: { ...sleepingRow().dormant, since: "2026-10-01T00:00:00Z" },
+  });
+  const said = await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: past },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
+  assert.equal(past.state, "ended");
   assert.equal(past.why, "dormant_window");
   assert.ok(said.join("; ").includes("dormant_window"));
   // The slot is taken by another live run of the same launcher: the waking word waits.
   const sleeping = sleepingRow();
-  const busy = { ...sleepingRow(), state: "launched", dormant: undefined, room: "room-2", invite: 8 };
+  const busy = {
+    ...sleepingRow(),
+    state: "launched",
+    dormant: undefined,
+    room: "room-2",
+    invite: 8,
+  };
   const runs = { k: sleeping, other: busy };
-  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(1), undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    runs,
+    launchers(1),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(sleeping.state, "dormant", "the waking word waits for the slot");
   assert.equal(sleeping.dormant.cursor, 9, "the cursor does not move past an unwoken word");
   assert.equal(sleeping.why, "dormant_limit_reached");
   // The launcher description gone: the word waits as well.
   const gone = sleepingRow();
-  await stepDormant("/tmp/unused", api.base, "key", { k: gone }, { own: new Map(), elsewhere: new Map(), refused: [] }, undefined, AWAKE_NOW, launchStub().run);
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: gone },
+    { own: new Map(), elsewhere: new Map(), refused: [] },
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(gone.state, "dormant");
   assert.equal(gone.why, "dormant_launcher_gone");
   assert.equal(gone.dormant.cursor, 9);
@@ -246,7 +351,16 @@ test("dormant tact: the window, the taken slot and the gone launcher hold the sl
 test("dormant tact: a failed read leaves the cursor standing and names itself in the row", async (t) => {
   const api = await caseApi(t, { refuse: 1 });
   const r = sleepingRow();
-  const said = await stepDormant("/tmp/unused", api.base, "key", { k: r }, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  const said = await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: r },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(r.state, "dormant");
   assert.equal(r.dormant.cursor, 9);
   assert.equal(r.why, "dormant_read_error");

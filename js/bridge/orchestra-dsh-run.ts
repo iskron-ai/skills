@@ -93,7 +93,12 @@ export async function launchDsh(
     exits.set(started, code !== null ? String(code) : `${signal}`);
   });
   child.unref();
-  run.dsh = { pid: started, events: files.events, model: files.model, ...(session ? { session } : {}) };
+  run.dsh = {
+    pid: started,
+    events: files.events,
+    model: files.model,
+    ...(session ? { session } : {}),
+  };
   run.state = "launched";
   writeRuns(authDir, runs);
   for (const until = Date.now() + SESSION_MS; Date.now() < until;) {
