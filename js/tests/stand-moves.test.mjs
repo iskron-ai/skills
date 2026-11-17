@@ -71,7 +71,8 @@ test("connect refused 429 socket_reissue_throttled is waited out inside the call
   assert.equal(fake.state.counts.connect_throttled, 1, "the api throttled the first connect");
   assert.match(text, /стояние \S*proba — роль #931/, text);
   assert.match(text, /вызов переждал порог платформы \(\d+ с\)/, text);
-  assert.doesNotMatch(text, /429|socket_reissue_throttled|Too Many/, text);
+  // Утечку ловит форма отказа — «(429)» и правило: голое «429» цепляет путь моста в строке сторожа.
+  assert.doesNotMatch(text, /\(429\)|socket_reissue_throttled|Too Many/, text);
 });
 
 // #7552, своё переоткрытие: сокет места упал, мост переоткрывает его сам, а connect вызова
@@ -95,7 +96,7 @@ test("429 met while the bridge itself reopens the seat's socket: the call waits 
     "no second connect: the socket is the bridge's own",
   );
   assert.match(text, /твоё — возвращено/, text);
-  assert.doesNotMatch(text, /429|socket_reissue_throttled|Too Many/, text);
+  assert.doesNotMatch(text, /\(429\)|socket_reissue_throttled|Too Many/, text);
 });
 
 // #7439 в ожидании 429: владелец снял место, пока вызов пережидал порог, — после стопа место
