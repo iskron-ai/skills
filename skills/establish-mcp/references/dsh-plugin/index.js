@@ -114,7 +114,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "8.11.0";
+var VERSION = "8.12.0";
 
 // js/delivery/words/asks.ts
 var ASK = {
@@ -259,8 +259,8 @@ var DSH = {
     gone: (why) => `место ушло: ${why}`,
     seatGone: (why) => `место снято: ${why}`,
     notDelivered: (why) => `в сессию не дошло: ${why}`,
-    startListen: () => "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами.",
-    startResumed: () => "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand); сказанное месту после выхода придёт лежалым."
+    startListen: () => "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами. Каталог скиллов в headless dsh не показан — загрузи скилл iskron тулом skill по имени и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
+    startResumed: () => "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand); сказанное месту после выхода придёт лежалым. Каталог скиллов в headless dsh не показан — загрузи скилл iskron тулом skill по имени и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом."
   },
   en: {
     listening: (key) => `listening on standing ${key}`,
@@ -269,8 +269,8 @@ var DSH = {
     gone: (why) => `the seat is gone: ${why}`,
     seatGone: (why) => `the seat was taken off: ${why}`,
     notDelivered: (why) => `did not reach the session: ${why}`,
-    startListen: () => "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns.",
-    startResumed: () => "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand); what was said to the seat after the exit arrives late."
+    startListen: () => "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns. The skills catalog is not shown in headless dsh — load the iskron skill by name with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
+    startResumed: () => "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand); what was said to the seat after the exit arrives late. The skills catalog is not shown in headless dsh — load the iskron skill by name with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome."
   }
 };
 
@@ -1933,6 +1933,10 @@ var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+
+// js/bridge/endedseats.ts
+var KEEP_MS = 10 * 6e4;
+var J = scoped(() => ({ ended: /* @__PURE__ */ new Map() }));
 
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({

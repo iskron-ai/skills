@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.11.0";
+var VERSION = "8.12.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -2930,6 +2930,10 @@ var ROOM_BATCH_MS = Number(process.env[envName("BRIDGE_ROOM_BATCH_MS")]) || 6e4;
 // js/bridge/sweep.ts
 var SEEN_FILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
 
+// js/bridge/endedseats.ts
+var KEEP_MS = 10 * 6e4;
+var J = scoped(() => ({ ended: /* @__PURE__ */ new Map() }));
+
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
   /** session dir the place is taken from (stand cwd), kept in the hold record for cwd resume (resume.ts) */
@@ -4383,6 +4387,11 @@ function createChildren(d) {
   return { childSlot, back, pause: pause3, settled };
 }
 
+// js/shared/ratelimit.ts
+var RATE_LIMIT_WAIT_S = 60;
+var RESUME_MARGIN_S = 15;
+var RESUME_ANSWER_MS = (RATE_LIMIT_WAIT_S + RESUME_MARGIN_S) * 1e3;
+
 // js/opencode/keep.ts
 var WATCH_MS = Number(process.env[envName("BRIDGE_WATCH_MS")] || 5 * 6e4);
 var PATIENCE_MS = Number(process.env[envName("RESUME_PATIENCE_MS")] || 1e4);
@@ -4437,7 +4446,7 @@ function createKeeper(doors) {
         return "none";
       }
       const r = await slot.bridge.request(method("resume"), selector(slot), {
-        timeoutMs: 3e4
+        timeoutMs: RESUME_ANSWER_MS
       });
       const elsewhere2 = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
       if (slot.child && Array.isArray(r?.refused) && r.refused.length) slot.refused = r.refused;
@@ -4474,7 +4483,7 @@ function createKeeper(doors) {
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
     await doors.ready(slot);
     const r = await slot.bridge.request(method("check"), selector(slot), {
-      timeoutMs: 3e4
+      timeoutMs: RESUME_ANSWER_MS
     });
     if (typeof r?.key === "string") slot.key = r.key;
     slot.provisional = r?.provisional === true;
