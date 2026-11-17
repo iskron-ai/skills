@@ -250,6 +250,28 @@ test("dormant tact: the call's own words never wake it", async (t) => {
   assert.equal(r.dormant.cursor, 13, "the cursor still takes the read in");
 });
 
+test("dormant tact: the page is decided whole — an end anywhere beats an earlier waking word", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(10, "said", { to_standing_id: SEAT }),
+      entry(11, "closed"),
+    ],
+  });
+  const r = sleepingRow();
+  const launch = launchStub();
+  await stepDormant("/tmp/unused", api.base, "key", { k: r }, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(r.state, "ended", "a closed entry later on the same read ends the sleep");
+  assert.equal(r.why, "dormant_case_closed");
+  assert.equal(r.dormant.cursor, 11);
+  assert.equal(launch.calls.length, 0, "no continuation launches on a read that ends the sleep");
+  // Without an end the same waking word still launches.
+  api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA }), entry(10, "said", { to_standing_id: SEAT })];
+  const other = sleepingRow();
+  await stepDormant("/tmp/unused", api.base, "key", { k: other }, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(other.state, "launched");
+});
+
 test("dormant tact: an answer to a stranger's ask, a said to another seat and other kinds only move the cursor", async (t) => {
   const api = await caseApi(t, {
     entries: [

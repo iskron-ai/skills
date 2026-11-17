@@ -103,25 +103,39 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
     return false;
   };
   let cursor = from;
+  let wake: CaseEntry | undefined;
+  let end: { code: string; n: number } | undefined;
   for (const e of entries) {
     // A number at or behind the cursor replaces its predecessor — it never wakes twice.
-    if (e.n <= cursor) continue;
-    if (e.kind === "closed") return { end: "dormant_case_closed", cursor: e.n };
+    if (e.n <= from) continue;
+    if (e.kind === "closed") {
+      end ??= { code: "dormant_case_closed", n: e.n };
+      continue;
+    }
     if (
       e.kind === "left" &&
       !!e.author_standing_id &&
       seats.has(e.author_standing_id) &&
       e.reason === "revoked"
-    )
-      return { end: "dormant_seat_revoked", cursor: e.n };
-    // The call's own words never wake it: the seat speaking is the live agent's business.
-    if (e.author_standing_id && seats.has(e.author_standing_id)) {
-      cursor = e.n;
+    ) {
+      end ??= { code: "dormant_seat_revoked", n: e.n };
       continue;
     }
-    if (wakes(e)) return { wake: e };
-    cursor = e.n;
+    // The call's own words never wake it: the seat speaking is the live agent's business.
+    if (e.author_standing_id && seats.has(e.author_standing_id)) {
+      cursor = Math.max(cursor, e.n);
+      continue;
+    }
+    if (!wake && wakes(e)) {
+      wake = e;
+      continue;
+    }
+    cursor = Math.max(cursor, e.n);
   }
+  // The read is decided whole: an end anywhere on it beats an earlier waking word — nothing
+  // continues a sleep whose own page says it is over (#10995 review).
+  if (end) return { end: end.code, cursor: end.n };
+  if (wake) return { wake };
   return { cursor };
 }
 
