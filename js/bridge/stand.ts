@@ -45,7 +45,7 @@ import {
   wasEvicted,
 } from "./hold.ts";
 import { keyOf, noteSeatBase } from "./holdrecord.ts";
-import { stoppedSince, stopsNow } from "./holdstate.ts";
+import { stoppedDuring, stoppedSince, stopsNow } from "./holdstate.ts";
 import { knock, resetKnocks } from "./knock.ts";
 import { heardOnReturn, returnToStanding } from "./leave.ts";
 import { listenBlock } from "./listen.ts";
@@ -64,6 +64,7 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberStandModel, type SeatMove } from "./placefields.ts";
 import * as provisional from "./provisional.ts";
+import { throughRateLimitAnswer } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
@@ -349,15 +350,14 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     if (heardHere && !standingIdIn(realm)) extra.push(sw().noIdInRegister());
     how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
-    const r = await register();
-    if (r.isError) {
-      lines.push(refusedWord("register", r, realm));
-      return done(true);
-    }
+    // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
+    const { r, waitS } = await throughRateLimitAnswer(register, () => stoppedDuring(stopsBefore));
+    if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
     heardHere = true;
     socketBefore = true;
     // A return does not republish the record's busy line (#6017): a fresh mark would pass old words as current.
-    how = `${resumed.word}, register`;
+    const word = waitS > 0 ? resumeWords.registerWaited(waitS) : "register";
+    how = `${resumed.word}, ${word}`;
   } else if (!take && isParked(realm, karta, name) && returnToStanding(tool("stand"))) {
     // Left the seat and came back: same address, socket reopened, register attributes. If
     // another session turned the address meanwhile, the socket is refused and released —

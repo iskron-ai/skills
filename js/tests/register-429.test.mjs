@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { holdRecord, placeOf, setup, stand, until } from "./ownseat-kit.mjs";
+import { holdRecord, placeOf, setup, stand, textOf, until } from "./ownseat-kit.mjs";
 
 const KEY = "proba--931--_nks_nks-dev"; // the seat's graph as @owner/slug (#8677)
 // Отказ как api 0.202.0 (#10801): HTTP 429, правило rate_limited, секунды — целым
@@ -85,6 +85,37 @@ test("429 source_paused: one register, no retry — the refusal returns as it ca
   assert.doesNotMatch(r.result.word, /переждал/, r.result.word);
   assert.equal(fake.state.counts.register_refused, 1, "exactly one register, no retry");
   assert.equal(fake.state.counts.register_standing, stood, `word=${r.result.word}`);
+});
+
+/** Место proba стоит мостом b1 из каталога cwd, записи без сессии; мост убит — возврат по имени (iskron_stand). */
+const returnedByName = async (t) => {
+  const kit = await setup(t);
+  const b1 = await kit.up();
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd: kit.cwd })),
+    "proba",
+  );
+  await until(() => kit.fake.state.ws.size === 1, "b1 socket");
+  b1.kill();
+  await until(() => kit.fake.state.ws.size === 0, "b1's socket gone");
+  return { ...kit, stood: kit.fake.state.counts.register_standing ?? 0 };
+};
+
+test("iskron_stand returning the seat from disk: the 429 rate_limited is waited out and the retry stands the seat", async (t) => {
+  const { fake, cwd, stood, up } = await returnedByName(t);
+  await fake.control({ registerRefuseNext: [refused("rate_limited", 1)] });
+  const b2 = await up();
+  const r = await stand(b2, { realm: "nks-dev", karta: 931, name: "proba", cwd });
+  assert.ok(!r.result?.isError, textOf(r));
+  assert.match(textOf(r), /возврат места с диска/, textOf(r));
+  assert.match(textOf(r), /переждал предел частоты источника \(1 с\)/, textOf(r));
+  assert.equal(fake.state.counts.register_refused, 1, "the api refused the first register");
+  assert.equal(
+    fake.state.counts.register_standing,
+    stood + 1,
+    "the register after the wait stood the seat",
+  );
+  assert.equal(fake.state.places.get("931:proba")?.listening, true, "the seat stands");
 });
 
 test("three rate_limited in a row: the refusal stands after the limit of tries", async (t) => {

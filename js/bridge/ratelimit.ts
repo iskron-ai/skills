@@ -61,3 +61,13 @@ export async function throughRateLimit<R>(
     waitS += wait;
   }
 }
+
+/**
+ * throughRateLimit over an Answer-shaped reply (call.ts) with rateLimitedWait as the waitOf —
+ * the register paths: the rebind (standing.ts), the disk return (resume.ts, besideback.ts),
+ * the explicit stand's return (stand.ts). One wait, shared, never a second one beside it.
+ */
+export const throughRateLimitAnswer = <R extends { isError: boolean; refusal?: Refusal }>(
+  call: () => Promise<R>,
+  stopped: () => string | null,
+): Promise<RateLimited<R>> => throughRateLimit(call, rateLimitedWait, stopped);
