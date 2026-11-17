@@ -18,6 +18,10 @@ export function orchestraStatus(authDir: string, discovered: string[]): Orchestr
     lines.push(w.cloneOut(repo, c.state, c.why ?? "", c.at));
   if (tact.lead) lines.push(w.lead(tact.lead));
   for (const r of Object.values(readRuns(authDir))) {
+    if (r.state === "dormant") {
+      lines.push(w.leadRow(r.realm, r.room, r.invite, w.dormant(r.dormant?.cursor ?? "")));
+      continue;
+    }
     // A dsh run gone wrong after its session stays said after its tree goes (#10777).
     const failed = r.state === "ended" ? dshFailure(r) : undefined;
     if (failed && r.tree?.state !== "retained") {

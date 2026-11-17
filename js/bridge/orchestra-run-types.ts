@@ -2,8 +2,18 @@ import type { ModelRef } from "./exec-spec.ts";
 import type { RunTree } from "./orchestra-tree-types.ts";
 
 export type RunState =
-  "preparing" | "ambiguity" | "launched" | "raised" | "stopping" | "ended" | "refused" | "no_seat";
+  | "preparing"
+  | "ambiguity"
+  | "launched"
+  | "raised"
+  | "stopping"
+  | "dormant"
+  | "ended"
+  | "refused"
+  | "no_seat";
 export interface Run {
+  /** Persisted case journal cursor and start of the current dormancy window. */
+  dormant?: { since: string; cursor: string | null };
   tree?: RunTree;
   exec?: {
     attempt: string;
