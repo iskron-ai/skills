@@ -15,7 +15,7 @@ import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
-import { stoppedDuring, stopsNow } from "./holdstate.ts";
+import { stoppedDuring } from "./holdstate.ts";
 import { placeFields } from "./placefields.ts";
 import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
 import { learnRealm, otherRealm, resolvedRealm, sameRealm } from "./realms.ts";
@@ -72,13 +72,18 @@ async function resolveRecord(
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
  * `spentS` — the 429 wait the main seat's register already took: the return has one budget
  * (../shared/ratelimit.ts), the seats beside share its rest in turn; spent, a seat beside
- * waits no more and its refusal stands (#10801).
+ * waits no more and its refusal stands (#10801). `before` — the stop count at the return's
+ * start (stopsNow): a stop since then ends the whole return.
  */
-export async function besideBack(url: string, primary: HoldRecord, spentS: number): Promise<void> {
+export async function besideBack(
+  url: string,
+  primary: HoldRecord,
+  spentS: number,
+  before: number,
+): Promise<void> {
   if (CFG.satellite) return;
   const recs = besideRecords(url, primary);
   if (!recs.length) return;
-  const before = stopsNow();
   const hello = await awaitHello(0);
   let leftS = RATE_LIMIT_WAIT_S - spentS;
   for (const rec of recs) {
@@ -87,6 +92,11 @@ export async function besideBack(url: string, primary: HoldRecord, spentS: numbe
     if (!otherRealm(primary.realm, rec.realm)) {
       log(`seat beside ${key}: its graph is not known as another one — not registered`);
       continue;
+    }
+    // A stop ends the whole return (#7439): no register after it, here or in the wait.
+    if (stoppedDuring(before)) {
+      log(`seats beside from ${key} on: the return was stopped — not registered`);
+      return;
     }
     // A 429 rate_limited of the source is waited out inside the return (#10801).
     const { r, waitS } = await throughRateLimit(

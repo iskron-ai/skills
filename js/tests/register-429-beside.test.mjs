@@ -73,3 +73,46 @@ test("main seat and the seat beside, both 429 for 40 s: the answer comes within 
     "the seat beside did not wait past the move's rest: its refusal stands",
   );
 });
+
+// A stop ends the whole return (#7439): the owner's 4001 during one seat's 429 wait leaves
+// no register after it — not the next seat beside, not a retry.
+test("a stop during a beside seat's 429 wait ends the whole return: not one register after the stop", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, cwd, up } = await setup(t);
+  const b1 = await up();
+  await b1.call("iskron/resume", { session: "ses-1" });
+  assert.equal(
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    "proba",
+  );
+  for (const [realm, karta, name] of [
+    ["drugoy", 48, "a-beside"],
+    ["methodology", 2, "z-beside"],
+  ]) {
+    const r = await stand(b1, { realm, karta, name });
+    assert.ok(!r.result?.isError, JSON.stringify(r));
+  }
+  await until(
+    () => b1.notifications.filter((n) => n.params?.data?.kind === "beside").length === 2,
+    "both beside words",
+  );
+  b1.kill();
+  await until(() => fake.state.ws.size === 0, "b1's socket gone");
+  // Whichever seat beside goes first meets the 429; the other one is the next in the loop.
+  await fake.control({
+    registerRefuseNext: [rateLimited("@nks/drugoy"), rateLimited("@nks/methodology")],
+  });
+  const registers = () =>
+    fake.state.calls.filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
+      .length;
+  const b2 = await up();
+  const pending = b2.call("iskron/resume", { key: KEY });
+  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "a beside seat refused");
+  const atStop = registers();
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  assert.equal(r.result?.stopped, true, JSON.stringify(r));
+  assert.notEqual(r.result?.resumed, true, JSON.stringify(r));
+  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
+  assert.equal(registers() - atStop, 0, "no register after the stop");
+});

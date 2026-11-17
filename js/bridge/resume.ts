@@ -132,8 +132,8 @@ export async function resumeFromDisk(
 }
 
 /** Register the seat returned from disk, then the seats beside it on the same channel (#7602). */
-async function registerBack(rec: HoldRecord): Promise<string> {
-  const before = stopsNow();
+async function registerBack(rec: HoldRecord, before: number): Promise<string> {
+  if (stoppedDuring(before)) return ""; // a stop ends the whole return: no register after it (#7439)
   const { r, waitS } = await throughRateLimit(
     () =>
       callTool(tool("channel"), {
@@ -147,7 +147,7 @@ async function registerBack(rec: HoldRecord): Promise<string> {
     () => stoppedDuring(before),
   );
   if (r.isError) return resumeWords.registerRefused(short(r.text));
-  await besideBack(rec.url, rec, waitS); // one wait budget for the whole return
+  await besideBack(rec.url, rec, waitS, before); // one wait budget and one stop watch for the whole return
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 
@@ -307,7 +307,7 @@ export async function resumeBy(
     // The handover spool waits until the seats beside are back with this one (#7602).
     const { back, registered } = await withSpoolHeld(async () => {
       const b = await resumeFromDisk(rec.realm, rec.karta, rec.name);
-      return { back: b, registered: b && register ? await registerBack(rec) : null };
+      return { back: b, registered: b && register ? await registerBack(rec, before) : null };
     });
     // The return met the owner's 4001 — before the hello or during register's 429 wait: no return.
     const stop = stoppedOutcome(before, key);
