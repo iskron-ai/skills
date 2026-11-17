@@ -8,7 +8,7 @@ import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
-import { stoppedDuring, stopsNow } from "./holdstate.ts";
+import { type StopWatch, stopWatch } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
@@ -83,14 +83,16 @@ function replayStanding(): Promise<void> {
   if (state.standingSession === state.sessionId) return Promise.resolve();
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
+    const stopped = stopWatch(); // one watch for the main seat and every seat beside (#7439)
     try {
       // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
       const deaf = await deafSeatTaken();
       if (deaf) return log(`standing not re-registered: ${deaf}`);
-      const got = await replayRegister(state.standing);
+      const got = await replayRegister(state.standing, false, stopped);
+      if (stopped()) return log("standing not re-registered: the session was stopped");
       if (got && !got.error && !got.result?.isError) {
         // Seats of other graphs in the same move, or their writes would land unattributed (#5838).
-        if (await replayBeside()) state.standingSession = state.sessionId;
+        if (await replayBeside(stopped)) state.standingSession = state.sessionId;
         log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
       } else if (seatIsGone(got)) {
         // The seat itself is gone (expired while we were away) — say so and let
@@ -124,19 +126,25 @@ const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusa
   return { isError: !!(reply?.error || reply?.result?.isError), ...(refusal ? { refusal } : {}) };
 };
 
+/**
+ * One register of `place` as a step of a move: `stopped` is the move's one stop watch
+ * (holdstate.ts stopWatch, taken once at the move's start) — a rebind of several seats or a
+ * skills refresh passes the same watch to every seat, so a stop ends the whole move; a lone
+ * register takes its own. null — no register went (stopped, a terminal claim refusal).
+ */
 export async function replayRegister(
   place: Standing | null,
   freshSkills = false,
+  stopped: StopWatch = stopWatch(),
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801).
-  const before = stopsNow();
   const { r: got, waitS } = await throughRateLimit(
     () => registerOnce(place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
-    () => stoppedDuring(before),
+    stopped,
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
-  if (!openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for) return got;
+  if (stopped() || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for) return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
   return registerOnce(place, freshSkills);
 }
@@ -178,8 +186,11 @@ async function registerOnce(
   return reply as JsonRpcMessage | null;
 }
 
-/** Re-register seats of other graphs; true — all in place (an expired one is forgotten). */
-async function replayBeside(): Promise<boolean> {
+/**
+ * Re-register seats of other graphs; true — all in place (an expired one is forgotten).
+ * `stopped` — the rebind's stop watch: a stop ends the move, no register of the rest.
+ */
+async function replayBeside(stopped: StopWatch): Promise<boolean> {
   let whole = true;
   for (const place of [...state.places]) {
     // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
@@ -188,7 +199,8 @@ async function replayBeside(): Promise<boolean> {
       log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
       continue;
     }
-    const got = await replayRegister(place);
+    const got = await replayRegister(place, false, stopped);
+    if (stopped()) return (log("places beside not re-registered: the session was stopped"), false);
     if (got && !got.error && !got.result?.isError) continue;
     const key = keyOfPlace(place);
     if (seatIsGone(got)) {

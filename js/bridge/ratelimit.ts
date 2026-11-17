@@ -30,18 +30,24 @@ export function rateLimitedWait(r: { isError: boolean; refusal?: Refusal }): num
 }
 
 export interface RateLimited<R> {
-  /** the last answer, whatever it is — the caller reads it exactly as without the wait */
-  r: R;
+  /**
+   * the last answer, whatever it is — the caller reads it exactly as without the wait;
+   * null — the move was stopped before the first call: nothing was sent
+   */
+  r: R | null;
   /** seconds actually waited out behind this call (the waits that ran, added up) */
   waitS: number;
+  /** the stop word: the move was stopped before a call or during a wait; null — not stopped */
+  stop: string | null;
 }
 
 /**
  * `call` answered 429 rate_limited — wait out the api's Retry-After and call again,
  * inside the same move: at most RATE_LIMIT_TRIES tries and RATE_LIMIT_WAIT_S of waiting
- * in total, and a wait that would pass the budget is not started. A stop of the session
- * or the seat during the wait (`stopped`, the reissue loop's watch) ends it with no
- * further try — the stopped session stands nowhere. `waitOf` says the seconds of an
+ * in total, and a wait that would pass the budget is not started. `stopped` is the move's
+ * one stop watch (holdstate.ts stopWatch), asked before every call, the first one too, and
+ * through the wait: a stop ends the move with no further call — the stopped session
+ * stands nowhere, and the caller's next seat sees the same watch. `waitOf` says the seconds of an
  * answer, null — not a rate limit (ratelimit.ts reads an Answer or a raw reply alike).
  * `budgetS` — what the move has left: a return of several seats shares one budget
  * (resume.ts, besideback.ts), so the client's cap on its answer holds (../shared/ratelimit.ts).
@@ -53,12 +59,16 @@ export async function throughRateLimit<R>(
   budgetS: number = RATE_LIMIT_WAIT_S,
 ): Promise<RateLimited<R>> {
   let waitS = 0;
+  let last: R | null = null;
   for (let tries = 1; ; tries++) {
-    const r = await call();
+    const before = stopped();
+    if (before) return { r: last, waitS, stop: before };
+    const r = (last = await call());
     const wait = waitOf(r);
-    if (wait === null || tries >= RATE_LIMIT_TRIES || waitS + wait > budgetS) return { r, waitS };
+    if (wait === null || tries >= RATE_LIMIT_TRIES || waitS + wait > budgetS)
+      return { r, waitS, stop: null };
     const { stop } = await awaitReissue(wait, () => false, stopped);
-    if (stop) return { r, waitS };
+    if (stop) return { r, waitS, stop };
     waitS += wait;
   }
 }

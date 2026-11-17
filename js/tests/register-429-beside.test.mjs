@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { RESUME_ANSWER_MS } from "../shared/ratelimit.ts";
-import { placeOf, saidKind, setup, stand, until } from "./ownseat-kit.mjs";
+import { placeOf, saidKind, setup, stand, until, write } from "./ownseat-kit.mjs";
 
 const FAST = 10;
 process.env.NODE_OPTIONS = `--require ${join(dirname(fileURLToPath(import.meta.url)), "fast-clock.cjs")}`;
@@ -76,13 +76,13 @@ test("main seat and the seat beside, both 429 for 40 s: the answer comes within 
 
 // A stop ends the whole return (#7439): the owner's 4001 during one seat's 429 wait leaves
 // no register after it — not the next seat beside, not a retry.
-test("a stop during a beside seat's 429 wait ends the whole return: not one register after the stop", async (t) => {
-  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
-  const { fake, cwd, up } = await setup(t);
-  const b1 = await up();
+/** The main seat proba and two seats beside it in other graphs, stood by one bridge. */
+async function threeSeats(t) {
+  const kit = await setup(t);
+  const b1 = await kit.up();
   await b1.call("iskron/resume", { session: "ses-1" });
   assert.equal(
-    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd })),
+    placeOf(await stand(b1, { realm: "nks-dev", karta: 931, name: "proba", cwd: kit.cwd })),
     "proba",
   );
   for (const [realm, karta, name] of [
@@ -96,23 +96,47 @@ test("a stop during a beside seat's 429 wait ends the whole return: not one regi
     () => b1.notifications.filter((n) => n.params?.data?.kind === "beside").length === 2,
     "both beside words",
   );
-  b1.kill();
-  await until(() => fake.state.ws.size === 0, "b1's socket gone");
-  // Whichever seat beside goes first meets the 429; the other one is the next in the loop.
-  await fake.control({
+  return { ...kit, b1 };
+}
+// Whichever seat beside goes first meets the 429; the other one is the next in the loop.
+const besidesLimited = (fake) =>
+  fake.control({
     registerRefuseNext: [rateLimited("@nks/drugoy"), rateLimited("@nks/methodology")],
   });
-  const registers = () =>
-    fake.state.calls.filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
-      .length;
+const registers = (fake) =>
+  fake.state.calls.filter((c) => c.name === "iskron_channel" && c.arguments.action === "register")
+    .length;
+
+test("a stop during a beside seat's 429 wait ends the whole return: not one register after the stop", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1, up } = await threeSeats(t);
+  b1.kill();
+  await until(() => fake.state.ws.size === 0, "b1's socket gone");
+  await besidesLimited(fake);
   const b2 = await up();
   const pending = b2.call("iskron/resume", { key: KEY });
   await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "a beside seat refused");
-  const atStop = registers();
+  const atStop = registers(fake);
   await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
   const r = await pending;
   assert.equal(r.result?.stopped, true, JSON.stringify(r));
   assert.notEqual(r.result?.resumed, true, JSON.stringify(r));
   await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
-  assert.equal(registers() - atStop, 0, "no register after the stop");
+  assert.equal(registers(fake) - atStop, 0, "no register after the stop");
+});
+
+// The same move on the rebind (standing.ts): a new MCP session re-registers the main seat
+// and the seats beside in one move; the owner's 4001 during a beside seat's 429 wait ends it.
+test("a stop during a beside seat's 429 wait on the rebind ends the whole rebind: not one register after the stop", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  await besidesLimited(fake);
+  await fake.control({ kill_session: true }); // the next call meets a new session: the rebind
+  const pending = write(b1);
+  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "a beside seat refused");
+  const atStop = registers(fake);
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  await pending;
+  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
+  assert.equal(registers(fake) - atStop, 0, "no register after the stop");
 });

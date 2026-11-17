@@ -6,6 +6,7 @@ import { serialized } from "./call.ts";
 import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
 import { isParked, releaseStanding, wasEvicted } from "./hold.ts";
+import { stopWatch } from "./holdstate.ts";
 import { dropExtra, keyOfPlace } from "./places.ts";
 import { retrySkillsCheck, skillsCheckDue, skillsNeedRegister } from "./skillwatch.ts";
 import { replayRegister, seatIsGone } from "./standing.ts";
@@ -18,7 +19,9 @@ export async function refreshSkills(): Promise<void> {
   S.refreshing = serialized(async () => {
     const primary = state.standing;
     if (!primary || !state.sessionId || !skillsCheckDue()) return;
+    const stopped = stopWatch(); // one move over every seat: a stop ends it (#7439)
     for (const place of [primary, ...state.places]) {
+      if (stopped()) break;
       if (isParked(place.realm, place.karta, place.name ?? "")) continue;
       if (wasEvicted(place.realm, place.karta, place.name ?? "")) continue;
       if (!skillsNeedRegister(place)) continue;
@@ -26,7 +29,8 @@ export async function refreshSkills(): Promise<void> {
         retrySkillsCheck();
         continue;
       }
-      const got = await replayRegister(place, false);
+      const got = await replayRegister(place, false, stopped);
+      if (stopped()) break;
       if (seatIsGone(got)) {
         if (place === primary ? state.standing !== place : !state.places.includes(place)) continue;
         const why = words(STANDING).seatExpired();

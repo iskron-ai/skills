@@ -133,7 +133,6 @@ export async function resumeFromDisk(
 
 /** Register the seat returned from disk, then the seats beside it on the same channel (#7602). */
 async function registerBack(rec: HoldRecord, before: number): Promise<string> {
-  if (stoppedDuring(before)) return ""; // a stop ends the whole return: no register after it (#7439)
   const { r, waitS } = await throughRateLimit(
     () =>
       callTool(tool("channel"), {
@@ -144,10 +143,11 @@ async function registerBack(rec: HoldRecord, before: number): Promise<string> {
         ...placeFields(rec),
       }),
     rateLimitedWait,
-    () => stoppedDuring(before),
+    () => stoppedDuring(before), // the return's one stop watch, from resumeBy's count (#7439)
   );
+  if (!r) return ""; // stopped before the register: resumeBy answers the stop
   if (r.isError) return resumeWords.registerRefused(short(r.text));
-  await besideBack(rec.url, rec, waitS, before); // one wait budget and one stop watch for the whole return
+  await besideBack(rec.url, rec, waitS, () => stoppedDuring(before)); // one budget, one stop watch
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 
