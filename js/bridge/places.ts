@@ -16,7 +16,7 @@ import {
   readHoldRecord,
   writeHoldRecord,
 } from "./holdrecord.ts";
-import { handoverReason } from "./holdstate.ts";
+import { handoverReason, noteSeatEnded } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { canonRealm, learnRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
@@ -162,6 +162,7 @@ export function dropExtra(
     p.door.broadcast({ kind: "released", key, text: reason, beside: true });
   p.door.close();
   if (forget) {
+    noteSeatEnded(key); // a register move under way registers this seat no more (ratelimit.ts)
     dropHoldRecord(key);
     state.places = state.places.filter((s) => keyOfPlace(s) !== key);
   }

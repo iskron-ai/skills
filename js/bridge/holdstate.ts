@@ -48,6 +48,8 @@ export const H = scoped(() => ({
   handingOver: null as string | null,
   /** the last owner's stop of this session (stophold.ts, #7439): `n` counts stops, a move compares it before and after */
   stopped: { n: 0, key: "", text: "" },
+  /** seats beside forgotten (places.ts dropExtra: stopped, released, gone): `n` counts ends, `at` — key → its end's count */
+  ended: { n: 0, at: new Map<string, number>() },
   /** a stand call in flight since this stop count (standundo.ts): a stop meanwhile — its connect answers are not held */
   moveSince: null as number | null,
   /** seats a stand call in flight took or bound again (connect, register answered): a stop meanwhile takes them off */
@@ -84,6 +86,17 @@ export type StopWatch = () => string | null;
 export const stopWatch = (): StopWatch => {
   const before = stopsNow();
   return () => stoppedDuring(before);
+};
+/** A seat beside is forgotten (places.ts dropExtra): a move under way registers it no more. */
+export function noteSeatEnded(key: string): void {
+  H.ended.n++;
+  H.ended.at.set(key, H.ended.n);
+}
+/** One move's watch of its seats (#7439): whether the seat `key` ended since the move began. */
+export type EndWatch = (key: string) => boolean;
+export const endWatch = (): EndWatch => {
+  const before = H.ended.n;
+  return (key) => (H.ended.at.get(key) ?? 0) > before;
 };
 /** A stand call's connect answers after the session was stopped: the seat it took is not held (#7439). */
 export const stoppedInMove = (): boolean =>

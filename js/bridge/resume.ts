@@ -6,7 +6,7 @@
 // key would kill the led one.
 import { envName, LOGGERS, method, tool } from "../delivery/index.ts";
 import { envOf, scoped, sessionCwd } from "../shared/scope.ts";
-import { besideBack } from "./besideback.ts";
+import { besideBack, registerRecord } from "./besideback.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
@@ -41,8 +41,7 @@ import { stoppedDuring, stoppedSince, stopsNow, withSpoolHeld } from "./holdstat
 import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
-import { placeFields } from "./placefields.ts";
-import { rateLimitedWait, registerMove, throughRateLimit } from "./ratelimit.ts";
+import { registerMove } from "./ratelimit.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { seatProof } from "./seatproof.ts";
@@ -134,18 +133,7 @@ export async function resumeFromDisk(
 /** Register the returned seat, then the seats beside it (#7602); "" — stopped, resumeBy says it. */
 async function registerBack(rec: HoldRecord, before: number): Promise<string> {
   const move = registerMove(() => stoppedDuring(before)); // from resumeBy's stop count
-  const { r, waitS } = await throughRateLimit(
-    () =>
-      callTool(tool("channel"), {
-        action: "register",
-        realm: rec.realm,
-        karta: rec.karta,
-        name: rec.name,
-        ...placeFields(rec),
-      }),
-    rateLimitedWait,
-    move,
-  );
+  const { r, waitS } = await registerRecord(rec, move);
   if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
   await besideBack(rec.url, rec, move); // the seats beside are the same move (#7439, #11030)
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";

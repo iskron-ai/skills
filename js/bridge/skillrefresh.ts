@@ -31,6 +31,7 @@ export async function refreshSkills(): Promise<void> {
       }
       const got = await replayRegister(place, false, move);
       if (move.stopped()) break;
+      if (move.ended(keyOfPlace(place))) continue; // forgotten meanwhile: the rest go on (#7439)
       if (seatIsGone(got)) {
         if (place === primary ? state.standing !== place : !state.places.includes(place)) continue;
         const why = words(STANDING).seatExpired();

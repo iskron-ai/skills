@@ -162,6 +162,35 @@ test("a stop during the main seat's 429 wait on the rebind: the waiting call is 
   assert.match(JSON.stringify(r), /снят|остановлен|stopped/i, JSON.stringify(r));
 });
 
+// A seat beside ended in the move (standing_ended by the owner) ends only its own register:
+// no register of that seat after its end, the move goes on to the other seats (#7439).
+test("a seat beside ended by standing_ended during its 429 wait on the rebind: no register of it after, the other seat beside still registers", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  const sideId = [...fake.state.channels.values()]
+    .map((c) => c.places.get("@nks/drugoy"))
+    .find(Boolean)?.standing_id;
+  assert.ok(sideId, "the seat beside in drugoy has an id");
+  await fake.control({ registerRefuseNext: [rateLimited("@nks/drugoy")] });
+  await fake.control({ kill_session: true });
+  const side = registersIn(fake, "drugoy");
+  const other = registersIn(fake, "methodology");
+  const pending = write(b1);
+  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "the seat beside refused");
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: sideId, by: "person" }),
+  });
+  const r = await pending;
+  assert.ok(!r.result?.isError && !r.error, `the main seat is not stopped: ${JSON.stringify(r)}`);
+  await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
+  assert.equal(
+    registersIn(fake, "drugoy") - side,
+    1,
+    "no register of the ended seat after its end",
+  );
+  assert.equal(registersIn(fake, "methodology") - other, 1, "the other seat beside registered");
+});
+
 // One budget per move on the rebind too (#11030): the main seat waits its 40 s, the seat
 // beside gets only the rest — its 40 s are not waited, its refusal stands.
 test("the rebind's main seat and a seat beside, both 429 for 40 s: one 60 s budget for the move, the seat beside does not wait", async (t) => {

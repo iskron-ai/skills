@@ -149,13 +149,20 @@ export async function replayRegister(
   move: RegisterMove = registerMove(),
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801).
+  const seat = place ? keyOfPlace(place) : "";
   const { r: got, waitS } = await throughRateLimit(
     () => registerOnce(place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
     move,
+    seat,
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
-  if (move.stopped() || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for)
+  if (
+    move.stopped() ||
+    move.ended(seat) ||
+    !openedConcurrently(got) ||
+    registeredBasis(place ?? {}).spawned_for
+  )
     return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
   return registerOnce(place, freshSkills);
@@ -200,7 +207,8 @@ async function registerOnce(
 
 /**
  * Re-register seats of other graphs; true — all in place (an expired one is forgotten).
- * `move` — the rebind's register move: a stop ends it, no register of the rest; one budget.
+ * `move` — the rebind's register move: a stop ends it, no register of the rest; a seat ended
+ * meanwhile is not registered again; one budget.
  */
 async function replayBeside(move: RegisterMove): Promise<boolean> {
   let whole = true;
@@ -216,7 +224,9 @@ async function replayBeside(move: RegisterMove): Promise<boolean> {
       return (log("places beside not re-registered: the session was stopped"), false);
     if (got && !got.error && !got.result?.isError) continue;
     const key = keyOfPlace(place);
-    if (seatIsGone(got)) {
+    // Ended in the move (its owner took it off, its own release): forgotten, the rest go on.
+    if (move.ended(key)) log(`place ${key} ended during the rebind — not re-registered`);
+    else if (seatIsGone(got)) {
       log(
         `the place ${key} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`,
       );

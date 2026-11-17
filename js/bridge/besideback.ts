@@ -65,6 +65,26 @@ async function resolveRecord(
 }
 
 /**
+ * Register the seat of a hold record as a step of a return `move` (ratelimit.ts): the 429
+ * rate_limited of the source is waited out inside it (#10801), the seat's key tells the move
+ * whose register it is — a stop ends the move, this seat's own end only its register (#7439).
+ */
+export const registerRecord = (rec: HoldRecord, move: RegisterMove) =>
+  throughRateLimit(
+    () =>
+      callTool(tool("channel"), {
+        action: "register",
+        realm: rec.realm,
+        karta: rec.karta,
+        name: rec.name,
+        ...placeFields(rec),
+      }),
+    rateLimitedWait,
+    move,
+    keyOf(rec.realm, rec.karta, rec.name),
+  );
+
+/**
  * Register again the seats beside the main seat just returned from disk at `url`; the
  * register answer puts each on the channel (standing.ts), and its `beside` word tells the
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
@@ -88,21 +108,14 @@ export async function besideBack(
       log(`seat beside ${key}: its graph is not known as another one — not registered`);
       continue;
     }
-    // A 429 rate_limited of the source is waited out inside the return (#10801).
-    const { r, waitS, stop } = await throughRateLimit(
-      () =>
-        callTool(tool("channel"), {
-          action: "register",
-          realm: rec.realm,
-          karta: rec.karta,
-          name: rec.name,
-          ...placeFields(rec),
-        }),
-      rateLimitedWait,
-      move,
-    );
+    const { r, waitS, stop, ended } = await registerRecord(rec, move);
     // A stop ends the whole return (#7439): no register of the next seats beside.
-    if (!r || stop) return log(`seats beside from ${key} on: the return was stopped`);
+    if (stop) return log(`seats beside from ${key} on: the return was stopped`);
+    // This seat ended in the return (its owner took it off): it alone is not registered.
+    if (!r || ended) {
+      log(`seat beside ${key} ended during the return — not registered`);
+      continue;
+    }
     standingLog(r.isError ? `beside not resumed ${key}` : `resumed-from-disk beside ${key}`);
     if (waitS > 0)
       standingLog(`beside ${key}: register waited out a 429 of the source (${waitS} s)`);
