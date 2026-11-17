@@ -22,7 +22,7 @@ test("dormant run survives registry reload, frees the limit and appears in statu
     worktree: "/tree",
     state: "dormant",
     at: "2026-11-01T00:00:00Z",
-    dormant: { since: "2026-11-01T01:00:00Z", cursor: "cursor-42" },
+    dormant: { since: "2026-11-01T01:00:00Z", cursor: 42 },
   };
   writeRuns(dir, { key: run });
   assert.deepEqual(readRuns(dir).key.dormant, run.dormant);
@@ -30,5 +30,5 @@ test("dormant run survives registry reload, frees the limit and appears in statu
   const status = orchestraStatus(dir, []);
   assert.match(status.said, /dormant/);
   assert.match(status.said, /room-1/);
-  assert.match(status.said, /cursor-42/);
+  assert.match(status.said, /42/);
 });

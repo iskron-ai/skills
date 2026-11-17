@@ -13,7 +13,7 @@ export type RunState =
   | "no_seat";
 export interface Run {
   /** Persisted case journal cursor and start of the current dormancy window. */
-  dormant?: { since: string; cursor: string | null };
+  dormant?: { since: string; cursor: number | null };
   tree?: RunTree;
   exec?: {
     attempt: string;
