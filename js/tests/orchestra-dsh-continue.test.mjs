@@ -143,6 +143,32 @@ test("dsh: a stop order naming the sleeping seat ends the sleep and the tree goe
   assert.equal(o.dshCalls().length, 1, "a stop order does not wake a continuation");
 });
 
+test("dsh: a failed continuation keeps the sleep, the tree and the session for the retry", async (t) => {
+  const { existsSync, rmSync, writeFileSync } = await import("node:fs");
+  const { o, row } = await asleep(t, 111);
+  const before = o.dshCalls().length;
+  // The launcher's patch disappears while the run sleeps: the waking word is tried and
+  // refused — the sleep stands, the word waits for the next tact (#10995 review 3).
+  rmSync(o.patch);
+  await o.room("open", [inviteEntry(111), said(112, SEAT)]);
+  assert.match((await o.step()).out, /invite 111: dormant_woken_112, dsh_patch_missing/);
+  const kept = o.run(111);
+  assert.equal(kept.state, "dormant", "a failed continuation is not a failed launch");
+  assert.equal(kept.why, "dormant_wake_dsh_patch_missing");
+  assert.equal(kept.dormant.cursor, 111, "the cursor does not move onto an unwoken word");
+  assert.equal(kept.tree.state, "ready");
+  assert.equal(kept.dsh.session, SESSION);
+  assert.ok(existsSync(kept.worktree), "the tree stays");
+  assert.equal(o.dshCalls().length, before, "no process was started");
+  // The patch returns: the same waking word launches the continuation.
+  writeFileSync(o.patch, "- id: tool-ask-user\n  disabled: true\n");
+  assert.match((await o.step()).out, /invite 111: dormant_woken_112, launched/);
+  const calls = o.dshCalls();
+  assert.equal(calls.length, before + 1);
+  assert.equal(calls.at(-1).argv[calls.at(-1).argv.indexOf("--session-id") + 1], SESSION);
+  assert.equal(o.run(111).dormant.cursor, 112);
+});
+
 test("dsh: a new invite raises a fresh call and never wakes the sleeping one", async (t) => {
   const { o } = await asleep(t, 101, { options: { limit: 2 } });
   // A new invite for the same role: the ordinary raising takes it — the sleeping run must

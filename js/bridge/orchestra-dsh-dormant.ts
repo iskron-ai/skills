@@ -291,8 +291,10 @@ export async function stepDormant(
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      r.dormant = { ...r.dormant, cursor: verdict.wake.n };
       const why = await launch(authDir, runs, key, spec, w().dshContinue(r.room, verdict.wake.n));
+      // The cursor lands on the waking entry only when the continuation truly launched: a
+      // refused one keeps the sleep, and the same word is tried again next tact (#10995).
+      if (why === "launched") r.dormant = { ...r.dormant, cursor: verdict.wake.n };
       out.push(w().leadRow(r.realm, r.room, r.invite, `dormant_woken_${verdict.wake.n}, ${why}`));
       continue;
     }

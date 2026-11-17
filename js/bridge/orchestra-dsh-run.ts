@@ -31,7 +31,25 @@ export async function launchDsh(
   brief: string,
 ): Promise<string> {
   const run = runs[key];
+  // A continuation (#10995) carries the slept run's session id into the same session again.
+  // Its failure is not a launch failure: the sleep stands and the waking word waits for the
+  // next tact — the tree, the session and the cursor are the sleep's own (#10995 review 3).
+  const sleptDsh = run.dsh;
+  const session = sleptDsh?.session;
+  const slept =
+    sleptDsh?.session !== undefined
+      ? { dormant: run.dormant, dsh: { ...sleptDsh }, at: run.at }
+      : undefined;
   const fail = (why: string, state: Run["state"] = "refused"): string => {
+    if (slept) {
+      run.state = "dormant";
+      run.why = `dormant_wake_${why}`;
+      run.dormant = slept.dormant;
+      run.dsh = slept.dsh;
+      run.at = slept.at;
+      writeRuns(authDir, runs);
+      return why;
+    }
     run.state = state;
     run.why = why;
     writeRuns(authDir, runs);
@@ -39,6 +57,7 @@ export async function launchDsh(
   };
   // Nothing started: the tree and the row go, a later tact raises the call again (#10598).
   const unstarted = async (why: string): Promise<string> => {
+    if (slept) return fail(why);
     const kept = await dropUnlaunched(authDir, runs, key);
     return kept ? fail(`${why}, ${kept}`, "ambiguity") : `${why}, retry`;
   };
@@ -46,8 +65,6 @@ export async function launchDsh(
   if ("code" in ready) return unstarted(ready.code);
   const model = modelPatch(run.model);
   if (!model || !run.tree) return unstarted(model ? "tree_unverified" : "dsh_model_invalid");
-  // A continuation (#10995) carries the slept run's session id into the same session again.
-  const session = run.dsh?.session;
   const files = dshFiles(authDir, run.tree.operation);
   writeModelPatch(files.model, files.dir, model);
   if (session) {
