@@ -420,27 +420,42 @@ test("dormant tact: a closed entry and a closed or abandoned status end the slee
   assert.equal(abandoned.why, "dormant_case_closed");
 });
 
-test("dormant tact: the seat's left ladder — the first left is our exit stop's, a later one ends", async (t) => {
+test("dormant tact: the seat's left by reason — revoked is our stop's trace, leave is the end", async (t) => {
   const invite = entry(9, "invite", { to_karta_node_id: KARTA });
   const left = (n, reason) => entry(n, "left", { author_standing_id: SEAT, payload: { reason } });
-  // The journal cannot tell our own exit-stop's left from the seat's walk-away: the first
-  // left of each seat after the cursor is taken as ours, and only a later one ends the sleep.
-  const api = await caseApi(t, { entries: [invite, left(10, "leave")] });
-  const r = sleepingRow();
+  // Our own exit stop leaves a revoked behind — a late trace with no live seat to end: only
+  // the cursor moves, however many of them stand in the read (#10995 review 2).
+  const api = await caseApi(t, { entries: [invite, left(10, "revoked"), left(11, "revoked")] });
+  const trace = sleepingRow();
   await stepDormant(
     "/tmp/unused",
     api.base,
     "key",
-    { k: r },
+    { k: trace },
     launchers(),
     undefined,
     AWAKE_NOW,
     launchStub().run,
   );
-  assert.equal(r.state, "dormant", "the first left of the seat is our exit stop's own");
-  assert.equal(r.dormant.cursor, 10);
-  // A said still wakes after that first left.
-  api.state.entries = [invite, left(10, "leave"), entry(11, "said", { to_standing_id: SEAT })];
+  assert.equal(trace.state, "dormant", "a revoked left never ends the sleep");
+  assert.equal(trace.dormant.cursor, 11);
+  // The agent's own farewell is a leave: the sleep ends at once, first or not.
+  api.state.entries = [invite, left(10, "leave")];
+  const farewell = sleepingRow();
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: farewell },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
+  assert.equal(farewell.state, "ended");
+  assert.equal(farewell.why, "dormant_seat_left");
+  // A said still wakes past a revoked trace.
+  api.state.entries = [invite, left(10, "revoked"), entry(11, "said", { to_standing_id: SEAT })];
   const wakes = sleepingRow();
   await stepDormant(
     "/tmp/unused",
@@ -453,36 +468,6 @@ test("dormant tact: the seat's left ladder — the first left is our exit stop's
     launchStub().run,
   );
   assert.equal(wakes.state, "launched");
-  // The second left ends: revoked by a stop order, leave by the seat itself.
-  api.state.entries = [invite, left(10, "revoked"), left(11, "revoked")];
-  const revoked = sleepingRow();
-  await stepDormant(
-    "/tmp/unused",
-    api.base,
-    "key",
-    { k: revoked },
-    launchers(),
-    undefined,
-    AWAKE_NOW,
-    launchStub().run,
-  );
-  assert.equal(revoked.state, "ended");
-  assert.equal(revoked.why, "dormant_seat_revoked");
-  assert.equal(revoked.dormant.cursor, 11);
-  api.state.entries = [invite, left(10, "leave"), left(11, "leave")];
-  const gone = sleepingRow();
-  await stepDormant(
-    "/tmp/unused",
-    api.base,
-    "key",
-    { k: gone },
-    launchers(),
-    undefined,
-    AWAKE_NOW,
-    launchStub().run,
-  );
-  assert.equal(gone.state, "ended", "the seat's own walk-away ends the sleep");
-  assert.equal(gone.why, "dormant_seat_left");
 });
 
 test("dormancy: no sleep when the seat left the case before the process exited", async (t) => {

@@ -150,9 +150,6 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   let cursor = from;
   let wake: CaseEntry | undefined;
   let end: { code: string; n: number } | undefined;
-  // The journal cannot tell our own exit-stop's left from the seat's walk-away: the first
-  // left of each seat after the cursor is taken as ours, and only a later one ends (#10995).
-  const firstLeft = new Set<string>();
   for (const e of entries) {
     // A number at or behind the cursor replaces its predecessor — it never wakes twice.
     if (e.n <= from) continue;
@@ -161,11 +158,9 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       continue;
     }
     if (e.kind === "left" && e.author_standing_id && seats.has(e.author_standing_id)) {
-      if (firstLeft.has(e.author_standing_id)) {
-        if (e.reason === "revoked") end ??= { code: "dormant_seat_revoked", n: e.n };
-        // The seat's own walk-away: the agent said it is done with the case.
-        else if (e.reason === "leave") end ??= { code: "dormant_seat_left", n: e.n };
-      } else firstLeft.add(e.author_standing_id);
+      // By reason, not by order (#10995 review 2): our own exit stop's left is revoked — a
+      // late trace with no live seat to end; the agent's own farewell is leave.
+      if (e.reason === "leave") end ??= { code: "dormant_seat_left", n: e.n };
       cursor = Math.max(cursor, e.n);
       continue;
     }
