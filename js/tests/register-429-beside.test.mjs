@@ -191,6 +191,43 @@ test("a seat beside ended by standing_ended during its 429 wait on the rebind: n
   assert.equal(registersIn(fake, "methodology") - other, 1, "the other seat beside registered");
 });
 
+// The move's budget is a deadline, not a sum of waits (#11030): a wait cut short by the
+// seat's end still spent the move's time, so the next seat beside gets only what is left.
+test("a beside seat's 60 s wait cut by standing_ended at 50 s: the next seat beside does not wait past the move's deadline", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  const sideId = [...fake.state.channels.values()]
+    .map((c) => c.places.get("@nks/drugoy"))
+    .find(Boolean)?.standing_id;
+  assert.ok(sideId, "the seat beside in drugoy has an id");
+  const sixty = (realm) => ({
+    ...rateLimited(realm),
+    text: "Too Many Requests (429): rate_limited — retry after 60s",
+    data: { retry_after_secs: 60, key: "opening" },
+  });
+  await fake.control({ registerRefuseNext: [sixty("@nks/drugoy"), sixty("@nks/methodology")] });
+  await fake.control({ kill_session: true });
+  const other = registersIn(fake, "methodology");
+  const started = Date.now();
+  const pending = write(b1);
+  await until(
+    () => (fake.state.counts.register_refused ?? 0) >= 1,
+    "the first seat beside refused",
+  );
+  await new Promise((d) => setTimeout(d, 50_000 / FAST)); // 50 s of its 60 s wait
+  await fake.control({
+    ws_send: JSON.stringify({ type: "standing_ended", standing_id: sideId, by: "person" }),
+  });
+  await pending;
+  const tookMs = (Date.now() - started) * FAST;
+  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within the move's deadline: ${tookMs} ms`);
+  assert.equal(
+    registersIn(fake, "methodology") - other,
+    1,
+    "the next seat beside did not wait past the deadline: its refusal stands",
+  );
+});
+
 // One budget per move on the rebind too (#11030): the main seat waits its 40 s, the seat
 // beside gets only the rest — its 40 s are not waited, its refusal stands.
 test("the rebind's main seat and a seat beside, both 429 for 40 s: one 60 s budget for the move, the seat beside does not wait", async (t) => {

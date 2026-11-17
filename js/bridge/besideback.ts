@@ -88,8 +88,8 @@ export const registerRecord = (rec: HoldRecord, move: RegisterMove) =>
  * Register again the seats beside the main seat just returned from disk at `url`; the
  * register answer puts each on the channel (standing.ts), and its `beside` word tells the
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
- * `move` — the return's register move (ratelimit.ts): the seats beside share what the main
- * seat left of its 429 budget, spent — a seat beside waits no more and its refusal stands
+ * `move` — the return's register move (ratelimit.ts): the seats beside share the main seat's
+ * deadline; a wait past it — a seat beside does not wait and its refusal stands
  * (#10801); a stop since the return began ends it, no register after it (#7439).
  */
 export async function besideBack(

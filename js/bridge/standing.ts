@@ -140,7 +140,7 @@ const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusa
 /**
  * One register of `place` as a step of a move (ratelimit.ts RegisterMove, begun once at the
  * move's start): a rebind of several seats or a skills refresh passes the same move to every
- * seat, so a stop ends the whole move and the 429 budget is one; a lone register begins its
+ * seat, so a stop ends the whole move and the 429 deadline is one; a lone register begins its
  * own. null — no register went (stopped, a terminal claim refusal).
  */
 export async function replayRegister(
@@ -208,7 +208,7 @@ async function registerOnce(
 /**
  * Re-register seats of other graphs; true — all in place (an expired one is forgotten).
  * `move` — the rebind's register move: a stop ends it, no register of the rest; a seat ended
- * meanwhile is not registered again; one budget.
+ * meanwhile is not registered again; one deadline.
  */
 async function replayBeside(move: RegisterMove): Promise<boolean> {
   let whole = true;

@@ -19,7 +19,7 @@ export async function refreshSkills(): Promise<void> {
   S.refreshing = serialized(async () => {
     const primary = state.standing;
     if (!primary || !state.sessionId || !skillsCheckDue()) return;
-    const move = registerMove(); // one move over every seat: a stop ends it, one budget (#7439)
+    const move = registerMove(); // one move over every seat: a stop ends it, one deadline (#7439)
     for (const place of [primary, ...state.places]) {
       if (move.stopped()) break;
       if (isParked(place.realm, place.karta, place.name ?? "")) continue;

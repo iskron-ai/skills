@@ -50,27 +50,28 @@ export interface RateLimited<R> {
  * seats beside included. It carries its halves together, so no path takes one without the
  * others: the stop watch counted from the move's start (holdstate.ts stopWatch) — a stop
  * ends the whole move; the watch of its seats (endWatch) — a seat beside forgotten since the
- * start registers no more, the rest go on; the 429 wait budget left to the move
- * (../shared/ratelimit.ts) — the client's cap holds.
+ * start registers no more, the rest go on; the move's deadline — its start plus the 429 wait
+ * budget (../shared/ratelimit.ts): a wait that would end past it is not started, so every
+ * cut wait, the calls themselves and the time before them are counted — the client's cap holds.
  */
 export interface RegisterMove {
   /** the stop word since the move began; null — not stopped */
   readonly stopped: StopWatch;
   /** whether the seat `key` (holdrecord.ts keyOf) ended since the move began */
   readonly ended: EndWatch;
-  /** seconds of Retry-After the move may still wait */
-  leftS: number;
+  /** Date.now() past which no wait of the move may end */
+  readonly deadline: number;
 }
 export const registerMove = (stopped: StopWatch = stopWatch()): RegisterMove => ({
   stopped,
   ended: endWatch(),
-  leftS: RATE_LIMIT_WAIT_S,
+  deadline: Date.now() + RATE_LIMIT_WAIT_S * 1000,
 });
 
 /**
  * `call` registers the seat `seat` (its key) — answered 429 rate_limited, wait out the api's
  * Retry-After and call again, inside the same move: at most RATE_LIMIT_TRIES tries, and a wait
- * past the move's budget left (`move.leftS`, spent here) is not started. Before every call,
+ * that would end past the move's deadline is not started — the refusal stands. Before every call,
  * the first one too, and through the wait the move is asked: stopped — the move ends with no
  * further call, the stopped session stands nowhere, its next seat sees the same watch; this
  * seat ended — no further call of it (`ended`), the caller goes on to the next seat.
@@ -89,13 +90,12 @@ export async function throughRateLimit<R>(
     if (stop || move.ended(seat)) return { r: last, waitS, stop, ended: !stop };
     const r = (last = await call());
     const wait = waitOf(r);
-    if (wait === null || tries >= RATE_LIMIT_TRIES || wait > move.leftS)
+    if (wait === null || tries >= RATE_LIMIT_TRIES || Date.now() + wait * 1000 > move.deadline)
       return { r, waitS, stop: null, ended: false };
     // The seat's end cuts its wait short too (the reissue loop's `held` — here: nothing to wait for).
     const cut = await awaitReissue(wait, () => move.ended(seat), move.stopped);
-    if (cut.stop || cut.own) continue; // cut short: the loop's head returns, nothing spent
+    if (cut.stop || cut.own) continue; // cut short: the loop's head returns
     waitS += wait;
-    move.leftS -= wait;
   }
 }
 
