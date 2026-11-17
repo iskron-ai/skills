@@ -10,7 +10,7 @@ import { type Answer, callTool } from "./call.ts";
 import { claimResult } from "./claimdelivery.ts";
 import { endedSince } from "./endedseats.ts";
 import { placeFields } from "./placefields.ts";
-import { type MoveSeat, type RegisterMove } from "./ratelimit.ts";
+import { type MoveSeat, type RegisterMove, seatIdOf } from "./ratelimit.ts";
 import { racedOpening, refusalOf } from "./refusal.ts";
 import { noteSkills } from "./skillwatch.ts";
 import { claimRefusal, launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
@@ -18,12 +18,20 @@ import { log } from "./streams.ts";
 import { post, type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** The move's main seat, its id not asked: its end is the move's stop (stophold.ts). */
-export const MAIN_SEAT: MoveSeat = { id: null, main: true };
+/**
+ * The move's main seat whose end is the move's own stop (stophold.ts), its id not asked — only
+ * the disk return's main seat (resume.ts). Every other caller passes its real seat (seatOfPlace):
+ * the guard register-gate.test.mjs fails on MAIN_SEAT elsewhere.
+ */
+export const MAIN_SEAT: MoveSeat = Object.freeze({ id: null, main: true });
 
-/** Why the gate is shut for `seat` in `move`: the stop word, the seat's end; null — open. */
+/**
+ * Why the gate is shut for `seat` in `move`: the stop word, the seat's end; null — open. The
+ * seat's id is looked up again on every ask (seatIdOf): one learnt mid-move, from a connect
+ * answer, is kept for the retries after it.
+ */
 export const gateShut = (move: RegisterMove, seat: MoveSeat): string | null =>
-  move.stopped() ?? (endedSince(seat.id, move.since) ? "the seat ended in this move" : null);
+  move.stopped() ?? (endedSince(seatIdOf(seat), move.since) ? "the seat ended in this move" : null);
 
 /**
  * A seat-open race (409 without a rule, refusal.ts) is registered once more — a claim

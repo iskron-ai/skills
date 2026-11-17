@@ -64,9 +64,9 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberStandModel, type SeatMove } from "./placefields.ts";
 import * as provisional from "./provisional.ts";
-import { registerMove, throughRateLimitAnswer } from "./ratelimit.ts";
+import { registerMove, seatOfPlace, throughRateLimitAnswer } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
-import { MAIN_SEAT, registerByCall } from "./registergate.ts";
+import { registerByCall } from "./registergate.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
@@ -218,8 +218,10 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   // The session directory goes into the hold record: a re-raised bridge returns the seat by it (#5140).
   noteStandCwd(cwd);
   const here = (move: SeatMove = "register") => placeFields({ realm, karta, name }, true, move); // seat fields on every registration (#5174)
+  // The named seat — main or beside — with its id as held, or as the connect answer gives it.
+  const seat = seatOfPlace({ realm, karta, name }, true);
   const reg = () =>
-    registerByCall(move, MAIN_SEAT, {
+    registerByCall(move, seat, {
       realm,
       karta,
       name,
@@ -352,7 +354,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
     // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
-    const { r, waitS } = await throughRateLimitAnswer(register, move, MAIN_SEAT);
+    const { r, waitS } = await throughRateLimitAnswer(register, move, seat);
     if (!r) return (lines.push(move.stopped() ?? ""), done(true)); // stopped before the register (#7439)
     if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
     heardHere = true;

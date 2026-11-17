@@ -10,8 +10,10 @@
 import { RATE_LIMIT_WAIT_S } from "../shared/ratelimit.ts";
 import { endedSince } from "./endedseats.ts";
 import { type StopWatch, stopWatch } from "./holdstate.ts";
+import { heldIdOf } from "./places.ts";
 import { type Refusal } from "./refusal.ts";
 import { awaitReissue } from "./standmoves.ts";
+import { type Standing } from "./transport.ts";
 
 /** At most this many register tries behind one move, however long each waited. */
 const RATE_LIMIT_TRIES = 3;
@@ -76,13 +78,29 @@ export function registerMove(kind: MoveKind, stopped: StopWatch = stopWatch()): 
 
 /**
  * The seat a register is for: its id, if the bridge knows it exactly (graph, role and name —
- * the hold, hello), and whether it is the move's main seat: only the main seat waits out a 429;
- * a seat beside answers its refusal at once — the next move of its own brings it back.
+ * the hold, hello, a connect answer), and whether it is the move's main seat: only the main seat
+ * waits out a 429; a seat beside answers its refusal at once — the next move brings it back.
+ * `place` — the seat itself, when its id may come only later (a connect answer of the same
+ * move): seatIdOf looks it up by place before each send and keeps it once found.
  */
 export interface MoveSeat {
   id: string | null;
   main: boolean;
+  place?: Standing;
 }
+
+/** The seat's id for the journal of ended seats (endedseats.ts): known, or found now and kept. */
+export function seatIdOf(seat: MoveSeat): string | null {
+  if (!seat.id && seat.place) seat.id = heldIdOf(seat.place);
+  return seat.id;
+}
+
+/** The seat `place` of a move: its id as held now (kept by seatIdOf once a later answer gives it). */
+export const seatOfPlace = (place: Standing, main: boolean): MoveSeat => ({
+  id: heldIdOf(place),
+  main,
+  place,
+});
 
 /**
  * `call` registers the seat `seat` — the main seat answered 429 rate_limited: wait out the
@@ -99,7 +117,7 @@ export async function throughRateLimit<R>(
   move: RegisterMove,
   seat: MoveSeat,
 ): Promise<RateLimited<R>> {
-  const ended = (): boolean => endedSince(seat.id, move.since);
+  const ended = (): boolean => endedSince(seatIdOf(seat), move.since);
   let waitS = 0;
   let last: R | null = null;
   for (let tries = 1; ; tries++) {

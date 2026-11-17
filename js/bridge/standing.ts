@@ -7,7 +7,7 @@ import { endedSince } from "./endedseats.ts";
 import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
-import { addPlace, noteStandingId, releaseStanding, standingIdIn } from "./hold.ts";
+import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
 import { besideSeats, dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import {
@@ -15,6 +15,7 @@ import {
   rateLimitedWait,
   type RegisterMove,
   registerMove,
+  seatOfPlace,
   throughRateLimit,
 } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
@@ -154,7 +155,7 @@ export async function replayRegister(
   place: Standing | null,
   freshSkills: boolean,
   move: RegisterMove,
-  seat: MoveSeat = { id: place ? standingIdIn(place.realm) : null, main: true },
+  seat: MoveSeat = seatOfPlace(place ?? { realm: "", karta: "" }, true), // exactly this seat's id
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801); a 409 seat-open
   // race is registered once more by the gate itself (registergate.ts).

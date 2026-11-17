@@ -59,6 +59,26 @@ test("the 409 retry of a register lives only in the gate; the tool call sends on
   assert.equal(sends.length, 1, "call.ts sends a tool call once, no retry of its own");
 });
 
+// The gate is asked about the real seat (seatOfPlace — main or beside, with its id). The move's
+// main seat with no id (MAIN_SEAT, or its literal) is only where the seat's end is the move's
+// own stop: the disk return's main seat (resume.ts).
+test("MAIN_SEAT, the main seat without an id, is passed only by the disk return", () => {
+  const MAIN = /\bMAIN_SEAT\b|\{\s*id:\s*null,\s*main:\s*true\s*\}/;
+  const MAIN_MOVES = new Set(["resume.ts"]);
+  const past = [];
+  for (const file of sources(BRIDGE)) {
+    const name = file.slice(BRIDGE.length + 1);
+    if (name === GATE || MAIN_MOVES.has(name)) continue;
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (MAIN.test(line) && !/^\s*(\/\/|\*)/.test(line))
+          past.push(`${name}:${i + 1}: ${line.trim()}`);
+      });
+  }
+  assert.deepEqual(past, [], `the gate asked about no real seat:\n${past.join("\n")}`);
+});
+
 test("the gate itself builds the register: the probe would see a path moved away from it", () => {
   const gate = readFileSync(join(BRIDGE, GATE), "utf8");
   assert.match(gate, SEND, "the gate holds the register's arguments");

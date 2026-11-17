@@ -303,3 +303,26 @@ for (const [kind, k] of Object.entries(KINDS))
       assert.match(kit.b1.stderr, /not registered again/, kit.b1.stderr);
     }
   });
+
+// The gate asks about the real seat, not the move's main one: iskron_stand of a seat beside
+// already held passes that seat and its id, so its standing_ended while the register's answer
+// (409 opened concurrently) is on the way shuts the gate before the retry (#7439).
+test("iskron_stand of a held seat beside × its standing_ended while the register's 409 is on the way: no retry, the stand does not succeed", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const kit = await twoSeats(t);
+  await kit.fake.control({
+    structured: true,
+    registerConcurrentNext: 1,
+    registerToolDelayMs: 1500,
+  });
+  const side = registers(kit.fake, SIDE);
+  const pending = stand(kit.b1, { realm: "drugoy", karta: 48, name: "a-beside" });
+  await until(() => registers(kit.fake, SIDE) > side, "the register on the wire", 10_000);
+  await ended(kit, kit.sideId);
+  const r = await pending;
+  await new Promise((d) => setTimeout(d, 2_000)); // a late retry (its answer slow) lands by now
+  await kit.fake.control({ registerToolDelayMs: 0 });
+  assert.equal(kit.fake.state.counts.register_concurrent ?? 0, 1, "the register answered 409");
+  assert.equal(registers(kit.fake, SIDE) - side, 1, `one register, no retry: ${textOf(r)}`);
+  assert.ok(r.result?.isError, `the ended seat is not stood: ${textOf(r)}`);
+});
