@@ -309,9 +309,10 @@ export async function resumeBy(
       const b = await resumeFromDisk(rec.realm, rec.karta, rec.name);
       return { back: b, registered: b && register ? await registerBack(rec) : null };
     });
+    // The return met the owner's 4001 — before the hello or during register's 429 wait: no return.
+    const stop = stoppedOutcome(before, key);
+    if (stop) return stop;
     if (!back) {
-      const stop = stoppedOutcome(before, key); // the return met the owner's 4001
-      if (stop) return stop;
       const kept = readHoldRecord(key);
       skipped.push(kept ? resumeWords.noHello(key) : resumeWords.stale(key));
       if (!kept) {

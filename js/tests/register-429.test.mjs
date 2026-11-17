@@ -17,9 +17,7 @@ const refused = (rule, retryAfterSecs) => ({
   text: `Too Many Requests (429): ${rule}${retryAfterSecs ? ` — retry after ${retryAfterSecs}s` : ""}`,
   status: 429,
   rule,
-  data: retryAfterSecs
-    ? { retry_after_secs: retryAfterSecs, key: "opening" }
-    : { key: "opening" },
+  data: retryAfterSecs ? { retry_after_secs: retryAfterSecs, key: "opening" } : { key: "opening" },
 });
 
 /** Место proba стоит мостом b1 из каталога cwd; мост убит, запись держания жива — возврат с диска. */
@@ -147,6 +145,9 @@ test("a stop during the wait ends it with no retry", async (t) => {
   const started = Date.now();
   const r = await pending;
   assert.ok(Date.now() - started < 6000, "the wait ended at the stop, not at Retry-After");
+  // The stop is the outcome: no return, not the bare 429 as a returned seat's word (#7439).
+  assert.notEqual(r.result?.resumed, true, `a stopped seat is not returned: ${JSON.stringify(r)}`);
+  assert.equal(r.result?.stopped, true, `the stop is said as a stop: ${JSON.stringify(r)}`);
   assert.equal(fake.state.counts.register_refused, 1, "no second register after the stop");
   assert.equal(fake.state.counts.register_standing, stood, `word=${r.result.word}`);
   await new Promise((d) => setTimeout(d, 1000));
