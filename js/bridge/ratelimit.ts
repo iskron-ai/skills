@@ -7,13 +7,12 @@
 // source's allowance still takes its seat. Any other 429 (source_paused — the fuse's own
 // word is "do not retry") and every other refusal return as they came. The wait shares
 // the reissue loop's stop watch (standmoves.ts, #7552).
+import { RATE_LIMIT_WAIT_S } from "../shared/ratelimit.ts";
 import { type Refusal } from "./refusal.ts";
 import { awaitReissue } from "./standmoves.ts";
 
 /** At most this many register tries behind one move, however long each waited. */
 const RATE_LIMIT_TRIES = 3;
-/** The whole move waits no longer than this many seconds of Retry-After, added up. */
-const RATE_LIMIT_WAIT_S = 60;
 
 /**
  * Seconds the api names on a 429 rate_limited refusal of register — the ProblemDetail's

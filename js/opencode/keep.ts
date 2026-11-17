@@ -12,6 +12,7 @@
 import { envName, method, OPENCODE_KEEP } from "../delivery/index.ts";
 import type { Bridge } from "../shared/bridge-client.ts";
 import { words } from "../shared/lang.ts";
+import { RESUME_ANSWER_MS } from "../shared/ratelimit.ts"; // the bridge's whole 429 wait + margin (#10801)
 import { sleep } from "./bridge-io.ts";
 import type { LostEntry } from "./records.ts";
 import type { Say } from "./tools.ts";
@@ -167,7 +168,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         return "none";
       }
       const r: any = await slot.bridge.request(method("resume"), selector(slot), {
-        timeoutMs: 30_000,
+        timeoutMs: RESUME_ANSWER_MS,
       });
       const elsewhere = Array.isArray(r?.elsewhere) && r.elsewhere.length ? r.elsewhere : null;
       if (slot.child && Array.isArray(r?.refused) && r.refused.length) slot.refused = r.refused;
@@ -210,7 +211,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
     await doors.ready(slot);
     const r: any = await slot.bridge.request(method("check"), selector(slot), {
-      timeoutMs: 30_000,
+      timeoutMs: RESUME_ANSWER_MS,
     });
     if (typeof r?.key === "string") slot.key = r.key;
     slot.provisional = r?.provisional === true;
