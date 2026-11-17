@@ -107,7 +107,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   const a = msg.params?.arguments ?? {};
   const auto = provisional.takesProvisional(msg);
   const stopsBefore = stopsNow(); // an owner's 4001 met by this call's own return ends it (#7439)
-  const move = registerMove(() => stoppedDuring(stopsBefore)); // its return's move begins here
+  const move = registerMove("returns", () => stoppedDuring(stopsBefore)); // its return's move begins here
   let realm = typeof a.realm === "string" ? a.realm.trim() : "";
   let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines: string[] = [];

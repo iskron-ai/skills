@@ -221,7 +221,7 @@ export async function resumeBy(
   takeOwn = false,
 ): Promise<ResumeOutcome> {
   // The move begins here, before any disk read or wait: a seat ended since then is not registered (#7439).
-  const move = registerMove();
+  const move = registerMove("returns");
   await canonHoldRecords(); // an earlier build's record of rN or a bare slug returns as @owner/slug (#8677)
   const { own: recs, sameDir, legacy: legacyRecs, left, neighbour, stale } = recordsFor(sel);
   // A keyed seat older than the session's other record: a journal line and the outcome (refused),

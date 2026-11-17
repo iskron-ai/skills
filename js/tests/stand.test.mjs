@@ -1018,6 +1018,45 @@ test("iskron/usage: the snapshot the gap held back is flushed before leave and a
   }
 });
 
+// A usage snapshot does not return the seat: on a 429 rate_limited it sends once and does not
+// wait (ratelimit.ts MoveKind "once", #10801) — a retry outliving leave would write the former
+// holder's numbers over the next holder's.
+test("iskron/usage: the last snapshot met by a 429 is not retried after leave over the next holder's numbers", async (t) => {
+  const { fake, bridge } = await usageBridge(t, { gap: "600000" });
+  const standAs = (b, extra = {}) =>
+    b.call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: "proba", ...extra },
+    });
+  assert.ok(!(await standAs(bridge)).result?.isError, bridge.stderr);
+  assert.equal((await bridge.call("iskron/usage", SPEND)).result?.pushed, true);
+  const held = { ...SPEND, tokens: 200, context: 40000, window: 200000 };
+  assert.equal((await bridge.call("iskron/usage", held)).result?.pushed, false);
+  await fake.control({
+    registerRefuseNext: [
+      {
+        text: "Too Many Requests (429): rate_limited — retry after 4s",
+        status: 429,
+        rule: "rate_limited",
+        data: { retry_after_secs: 4, key: "opening" },
+      },
+    ],
+  });
+  const left = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { realm: "nks-dev", action: "leave" },
+  });
+  assert.ok(!left.result?.isError, textOf(left));
+  const next = await usageBridge(t, { fake });
+  assert.ok(!(await standAs(next.bridge, { take: true })).result?.isError, next.bridge.stderr);
+  const mine = { ...SPEND, tokens: 999, context: 180000, window: 200000 };
+  assert.equal((await next.bridge.call("iskron/usage", mine)).result?.pushed, true);
+  await new Promise((d) => setTimeout(d, 5000)); // a retry after the 4 s wait would land by now
+  const usage = fake.state.placeAttrs.get("931:proba")?.usage;
+  assert.equal(usage?.tokens, 999, `the next holder's numbers stand: ${JSON.stringify(usage)}`);
+  assert.equal(usage?.percent, 90, JSON.stringify(usage));
+});
+
 // The third part of a derived name is the model the agent runs on, never the
 // branch: at session start the branch is almost always main and tells two
 // sessions of one machine over one repository apart from nothing.

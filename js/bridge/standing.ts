@@ -89,7 +89,7 @@ function replayStanding(): Promise<string | null> {
   if (state.standingSession === state.sessionId) return Promise.resolve(null);
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
-    const move = registerMove(); // one move: the main seat and every seat beside (#7439, #11030)
+    const move = registerMove("returns"); // one move: the main seat and every seat beside (#7439, #11030)
     try {
       await rebind(move);
     } catch (e) {
@@ -146,13 +146,14 @@ const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusa
  * One register of `place` as a step of a move (ratelimit.ts RegisterMove, begun once at the
  * move's start): a rebind of several seats or a skills refresh passes the same move to every
  * seat, so a stop ends the whole move and the 429 deadline is one; a lone register begins its
- * own. `seat` — the main seat by default (it waits out a 429); a seat beside passes its id and
- * does not wait. null — no register went (stopped, ended, a terminal claim refusal).
+ * own and says its kind (a usage snapshot: "once", no wait). `seat` — the main seat by default
+ * (it waits out a 429 in a move that returns a seat); a seat beside passes its id and does not
+ * wait. null — no register went (stopped, ended, a terminal claim refusal).
  */
 export async function replayRegister(
   place: Standing | null,
-  freshSkills = false,
-  move: RegisterMove = registerMove(),
+  freshSkills: boolean,
+  move: RegisterMove,
   seat: MoveSeat = { id: place ? standingIdIn(place.realm) : null, main: true },
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801); a 409 seat-open

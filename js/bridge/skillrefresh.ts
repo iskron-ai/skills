@@ -20,7 +20,7 @@ export async function refreshSkills(): Promise<void> {
   S.refreshing = serialized(async () => {
     const primary = state.standing;
     if (!primary || !state.sessionId || !skillsCheckDue()) return;
-    const move = registerMove(); // one move over every seat: a stop ends it, one deadline (#7439)
+    const move = registerMove("returns"); // one move over every seat: a stop ends it, one deadline (#7439)
     const seats = [{ place: primary, id: null as string | null }, ...besideSeats()];
     for (const { place, id } of seats) {
       if (move.stopped()) break;

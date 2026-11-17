@@ -8,6 +8,7 @@ import { fixture, state, withPlaceFields } from "./skillrefresh-kit.mjs";
 const source = process.env.ISKRON_REFRESH_SOURCE || resolve("js");
 const { placeFields } = await import(join(source, "bridge/placefields.ts"));
 const { replayRegister } = await import(join(source, "bridge/standing.ts"));
+const { registerMove } = await import(join(source, "bridge/ratelimit.ts"));
 
 for (const removedBeforeConnect of [false, true])
   test(`connect/register absence waits a full window; removed before connect=${removedBeforeConnect}`, async () => {
@@ -45,7 +46,7 @@ for (const path of ["fields", "replay"])
         writeFileSync(join(root, "establish-mcp", "SKILL.md"), "after");
         const read = async () => {
           if (path === "fields") return placeFields(state.standing).attrs.skills;
-          await replayRegister(state.standing);
+          await replayRegister(state.standing, false, registerMove("once")); // a lone register
           return calls.at(-1).attrs.skills;
         };
         assert.deepEqual(await read(), settled);

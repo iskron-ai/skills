@@ -53,6 +53,9 @@ export interface RateLimited<R> {
  * ends the whole move; the start itself — a seat ended since then (endedseats.ts) is not
  * registered, the rest go on; the deadline — the start plus the 429 wait budget
  * (../shared/ratelimit.ts): a wait that would end past it is not started — the client's cap holds.
+ * Its kind says whether it may wait at all, chosen by every move that begins: only a move that
+ * returns a seat ("returns") waits out a 429; any other register ("once" — the usage snapshot)
+ * sends once and its refusal stands, so a late retry cannot outlive the caller's interest.
  */
 export interface RegisterMove {
   /** the stop word since the move began; null — not stopped */
@@ -61,10 +64,14 @@ export interface RegisterMove {
   readonly since: number;
   /** Date.now() past which no wait of the move may end */
   readonly deadline: number;
+  /** whether its main seat waits out a 429 rate_limited */
+  readonly waits: boolean;
 }
-export function registerMove(stopped: StopWatch = stopWatch()): RegisterMove {
+/** "returns" — the move returns a seat (rebind, disk return, stand, skills refresh): it waits. */
+export type MoveKind = "returns" | "once";
+export function registerMove(kind: MoveKind, stopped: StopWatch = stopWatch()): RegisterMove {
   const since = Date.now();
-  return { stopped, since, deadline: since + RATE_LIMIT_WAIT_S * 1000 };
+  return { stopped, since, deadline: since + RATE_LIMIT_WAIT_S * 1000, waits: kind === "returns" };
 }
 
 /**
@@ -99,7 +106,7 @@ export async function throughRateLimit<R>(
     const stop = move.stopped();
     if (stop || ended()) return { r: last, waitS, stop, ended: !stop };
     const r = (last = await call());
-    const wait = seat.main ? waitOf(r) : null;
+    const wait = seat.main && move.waits ? waitOf(r) : null;
     if (wait === null || tries >= RATE_LIMIT_TRIES || Date.now() + wait * 1000 > move.deadline)
       return { r, waitS, stop: null, ended: false };
     const cut = await awaitReissue(wait, ended, move.stopped); // the seat's end cuts it too
