@@ -9,7 +9,7 @@ import { words } from "../shared/lang.ts";
 import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-case-read.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
-import { LIVE, type Run } from "./orchestra-runs.ts";
+import { LIVE, readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
 import { DORMANT_WINDOW_MS } from "./orchestra-window.ts";
 
 const w = () => words(ORCHESTRA);
@@ -229,6 +229,14 @@ export async function stepDormant(
     }
     const verdict = judge(entries, sleep.cursor ?? 0, r);
     if ("wake" in verdict) {
+      // The reads above awaited: the row may have moved under them — another writer ended it,
+      // re-armed it, or the caller left. Nothing launches and the cursor stands where it lay
+      // (#10995 review 2).
+      const latest = readRuns(authDir)[key];
+      if (gone?.gone || !latest || latest.state !== "dormant" || runIdentity(latest) !== runIdentity(r)) {
+        out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
       const own = ls.own.get(r.launcher);
       const spec = own?.harnesses[r.harness]?.dsh;
       if (!own || !spec) {

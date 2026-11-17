@@ -33,8 +33,9 @@ const entry = (id, kind, fields = {}) => ({
 });
 
 /** A stand-in case server whose status and entries the probe may switch mid-flight;
- * refuse: true — both doors, "status" / "history" — one of them (a transient 5xx). */
-async function caseApi(t, { status = "open", entries = [], refuse = 0 } = {}) {
+ * refuse: true — both doors, "status" / "history" — one of them (a transient 5xx);
+ * onHistory runs while a history read is being answered — the probe's race hook. */
+async function caseApi(t, { status = "open", entries = [], refuse = 0, onHistory = null } = {}) {
   const state = { status, entries, refuse };
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
@@ -46,6 +47,7 @@ async function caseApi(t, { status = "open", entries = [], refuse = 0 } = {}) {
     )
       return res.writeHead(503).end("{}");
     if (!history) return res.end(JSON.stringify({ status: state.status }));
+    if (onHistory) onHistory();
     const since = Number(new URL(req.url, "http://x").searchParams.get("since"));
     const items = state.entries.filter((e) => e.id > since);
     res.end(
@@ -119,6 +121,19 @@ const launchStub = () => {
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
 
+/** A registry dir holding the rows as the daemon would: the wake path re-reads the row from
+ * disk before launching (#10995 review 2). */
+async function dormantDir(t, rows) {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { writeRuns } = await import("../bridge/orchestra-runs.ts");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-tact-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeRuns(dir, rows);
+  return dir;
+}
+
 test("dormancy: a clean exit with the case open sleeps on the seat's own last word", async (t) => {
   const api = await caseApi(t, {
     entries: [
@@ -158,8 +173,9 @@ test("dormancy: the cursor keeps a said that came after the seat's last word, an
   // The next tact reads from that cursor and the said still wakes the continuation.
   const runs = { k: r };
   const launch = launchStub();
+  const dir = await dormantDir(t, runs);
   await stepDormant(
-    "/tmp/unused",
+    dir,
     api.base,
     "key",
     runs,
@@ -273,7 +289,7 @@ test("dormant tact: a said to the seat, an ask to the role and an answer to the 
     api.state.entries = [entry(9, "invite", { to_karta_node_id: KARTA }), e];
     const runs = { k: r };
     const said = await stepDormant(
-      "/tmp/unused",
+      await dormantDir(t, runs),
       api.base,
       "key",
       runs,
@@ -348,7 +364,7 @@ test("dormant tact: the page is decided whole — an end anywhere beats an earli
   ];
   const other = sleepingRow();
   await stepDormant(
-    "/tmp/unused",
+    await dormantDir(t, { k: other }),
     api.base,
     "key",
     { k: other },
@@ -458,7 +474,7 @@ test("dormant tact: the seat's left by reason — revoked is our stop's trace, l
   api.state.entries = [invite, left(10, "revoked"), entry(11, "said", { to_standing_id: SEAT })];
   const wakes = sleepingRow();
   await stepDormant(
-    "/tmp/unused",
+    await dormantDir(t, { k: wakes }),
     api.base,
     "key",
     { k: wakes },
@@ -527,7 +543,16 @@ test("dormancy: the arming cursor is the seat's last word that is not a left", a
   // The said after the seat's last word still wakes the continuation.
   const runs = { k: r };
   const launch = launchStub();
-  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    await dormantDir(t, runs),
+    api.base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(r.state, "launched", "the said between the progress and the left wakes");
   assert.equal(launch.calls.length, 1);
 });
@@ -567,7 +592,7 @@ test("dormant tact: the window, the taken slot and the gone launcher hold the sl
   };
   const runs = { k: sleeping, other: busy };
   await stepDormant(
-    "/tmp/unused",
+    await dormantDir(t, runs),
     api.base,
     "key",
     runs,
@@ -582,7 +607,7 @@ test("dormant tact: the window, the taken slot and the gone launcher hold the sl
   // The launcher description gone: the word waits as well.
   const gone = sleepingRow();
   await stepDormant(
-    "/tmp/unused",
+    await dormantDir(t, { k: gone }),
     api.base,
     "key",
     { k: gone },
@@ -613,6 +638,45 @@ test("dormant tact: a failed read leaves the cursor standing and names itself in
   assert.equal(r.dormant.cursor, 9);
   assert.equal(r.why, "dormant_read_error");
   assert.ok(said.join("; ").includes("dormant_read_error"));
+});
+
+test("dormant tact: a row moved under the read launches nothing and the cursor stands", async (t) => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { readRuns, writeRuns } = await import("../bridge/orchestra-runs.ts");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-race-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const row = sleepingRow();
+  writeRuns(dir, { k: row });
+  const entries = [
+    entry(9, "invite", { to_karta_node_id: KARTA }),
+    entry(10, "said", { to_standing_id: SEAT }),
+  ];
+  const launch = launchStub();
+  // The disk row ends while the history read is in flight — another writer moved it.
+  const replaced = await caseApi(t, {
+    entries,
+    onHistory: () => writeRuns(dir, { k: { ...row, state: "ended", why: "dormant_case_closed" } }),
+  });
+  const superseded = sleepingRow();
+  await stepDormant(dir, replaced.base, "key", { k: superseded }, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(launch.calls.length, 0, "nothing launches on a superseded row");
+  assert.equal(superseded.state, "dormant");
+  assert.equal(superseded.dormant.cursor, 9, "the cursor does not move");
+  // The caller leaves while the read is in flight — same refusal, same standing cursor.
+  const gone = { gone: false };
+  const leaving = await caseApi(t, { entries, onHistory: () => (gone.gone = true) });
+  await stepDormant(dir, leaving.base, "key", { k: sleepingRow() }, launchers(), gone, AWAKE_NOW, launch.run);
+  assert.equal(launch.calls.length, 0, "nothing launches after the caller left");
+  // With the row steady on disk, the same waking word launches.
+  const steady = await caseApi(t, { entries });
+  const awake = sleepingRow();
+  writeRuns(dir, { k: awake });
+  await stepDormant(dir, steady.base, "key", { k: awake }, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(awake.state, "launched");
+  assert.equal(launch.calls.length, 1);
+  assert.equal(readRuns(dir).k.state, "dormant", "the stub launch writes no registry");
 });
 
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
