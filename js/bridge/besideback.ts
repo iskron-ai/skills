@@ -8,16 +8,14 @@ import { join } from "node:path";
 
 import { tool } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
-import { RATE_LIMIT_WAIT_S } from "../shared/ratelimit.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { callTool, resolveAgainstLed, short } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
-import { type StopWatch } from "./holdstate.ts";
 import { placeFields } from "./placefields.ts";
-import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
+import { rateLimitedWait, type RegisterMove, throughRateLimit } from "./ratelimit.ts";
 import { learnRealm, otherRealm, resolvedRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -70,22 +68,19 @@ async function resolveRecord(
  * Register again the seats beside the main seat just returned from disk at `url`; the
  * register answer puts each on the channel (standing.ts), and its `beside` word tells the
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
- * `spentS` — the 429 wait the main seat's register already took: the return has one budget
- * (../shared/ratelimit.ts), the seats beside share its rest in turn; spent, a seat beside
- * waits no more and its refusal stands (#10801). `stopped` — the return's one stop watch
- * (holdstate.ts stopWatch): a stop since the return began ends it, no register after it.
+ * `move` — the return's register move (ratelimit.ts): the seats beside share what the main
+ * seat left of its 429 budget, spent — a seat beside waits no more and its refusal stands
+ * (#10801); a stop since the return began ends it, no register after it (#7439).
  */
 export async function besideBack(
   url: string,
   primary: HoldRecord,
-  spentS: number,
-  stopped: StopWatch,
+  move: RegisterMove,
 ): Promise<void> {
   if (CFG.satellite) return;
   const recs = besideRecords(url, primary);
   if (!recs.length) return;
   const hello = await awaitHello(0);
-  let leftS = RATE_LIMIT_WAIT_S - spentS;
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
     await resolveRecord(hello, rec, primary);
@@ -104,12 +99,10 @@ export async function besideBack(
           ...placeFields(rec),
         }),
       rateLimitedWait,
-      stopped,
-      Math.max(0, leftS),
+      move,
     );
     // A stop ends the whole return (#7439): no register of the next seats beside.
     if (!r || stop) return log(`seats beside from ${key} on: the return was stopped`);
-    leftS -= waitS;
     standingLog(r.isError ? `beside not resumed ${key}` : `resumed-from-disk beside ${key}`);
     if (waitS > 0)
       standingLog(`beside ${key}: register waited out a 429 of the source (${waitS} s)`);

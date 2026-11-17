@@ -11,7 +11,8 @@ import { emit } from "./streams.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-const refused = (id: JsonRpcMessage["id"], text: string): JsonRpcMessage => ({
+/** A tools/call answered by the bridge with a refusal `text`, nothing sent (deliver.ts too). */
+export const refused = (id: JsonRpcMessage["id"], text: string): JsonRpcMessage => ({
   jsonrpc: "2.0",
   id,
   result: { isError: true, content: [{ type: "text", text }] },

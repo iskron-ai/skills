@@ -140,3 +140,41 @@ test("a stop during a beside seat's 429 wait on the rebind ends the whole rebind
   await new Promise((d) => setTimeout(d, 600)); // a late register would land by now
   assert.equal(registers(fake) - atStop, 0, "no register after the stop");
 });
+
+// The stop met on the rebind holds at the caller's border: the agent's call that waited for
+// the rebind does not go to the server, it answers the stop word (#7439).
+test("a stop during the main seat's 429 wait on the rebind: the waiting call is not sent, it answers the stop", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  await fake.control({ registerRefuseNext: [rateLimited("@nks/nks-dev")] });
+  await fake.control({ kill_session: true }); // the next call meets a new session: the rebind
+  const writes = fake.state.writes.length;
+  const pending = write(b1);
+  await until(() => (fake.state.counts.register_refused ?? 0) >= 1, "the main seat refused");
+  await fake.control({ ws_close: 4001, ws_close_reason: "revoked:person" });
+  const r = await pending;
+  assert.equal(
+    fake.state.writes.length,
+    writes,
+    `the waiting call was not sent: ${JSON.stringify(r)}`,
+  );
+  assert.ok(r.error || r.result?.isError, `the call answers a refusal: ${JSON.stringify(r)}`);
+  assert.match(JSON.stringify(r), /снят|остановлен|stopped/i, JSON.stringify(r));
+});
+
+// One budget per move on the rebind too (#11030): the main seat waits its 40 s, the seat
+// beside gets only the rest — its 40 s are not waited, its refusal stands.
+test("the rebind's main seat and a seat beside, both 429 for 40 s: one 60 s budget for the move, the seat beside does not wait", async (t) => {
+  if (process.env.ISKRON_NODE) return t.skip("the probe's clock rides NODE_OPTIONS");
+  const { fake, b1 } = await threeSeats(t);
+  await fake.control({
+    registerRefuseNext: [rateLimited("@nks/nks-dev"), rateLimited("@nks/drugoy")],
+  });
+  await fake.control({ kill_session: true });
+  const before = registersIn(fake, "drugoy");
+  const started = Date.now();
+  await write(b1);
+  const tookMs = (Date.now() - started) * FAST;
+  assert.ok(tookMs < RESUME_ANSWER_MS, `the rebind within one budget: ${tookMs} ms`);
+  assert.equal(registersIn(fake, "drugoy") - before, 1, "the seat beside did not wait");
+});

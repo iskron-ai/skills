@@ -6,8 +6,8 @@ import { serialized } from "./call.ts";
 import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { errorMessage } from "./errors.ts";
 import { isParked, releaseStanding, wasEvicted } from "./hold.ts";
-import { stopWatch } from "./holdstate.ts";
 import { dropExtra, keyOfPlace } from "./places.ts";
+import { registerMove } from "./ratelimit.ts";
 import { retrySkillsCheck, skillsCheckDue, skillsNeedRegister } from "./skillwatch.ts";
 import { replayRegister, seatIsGone } from "./standing.ts";
 import { log } from "./streams.ts";
@@ -19,9 +19,9 @@ export async function refreshSkills(): Promise<void> {
   S.refreshing = serialized(async () => {
     const primary = state.standing;
     if (!primary || !state.sessionId || !skillsCheckDue()) return;
-    const stopped = stopWatch(); // one move over every seat: a stop ends it (#7439)
+    const move = registerMove(); // one move over every seat: a stop ends it, one budget (#7439)
     for (const place of [primary, ...state.places]) {
-      if (stopped()) break;
+      if (move.stopped()) break;
       if (isParked(place.realm, place.karta, place.name ?? "")) continue;
       if (wasEvicted(place.realm, place.karta, place.name ?? "")) continue;
       if (!skillsNeedRegister(place)) continue;
@@ -29,8 +29,8 @@ export async function refreshSkills(): Promise<void> {
         retrySkillsCheck();
         continue;
       }
-      const got = await replayRegister(place, false, stopped);
-      if (stopped()) break;
+      const got = await replayRegister(place, false, move);
+      if (move.stopped()) break;
       if (seatIsGone(got)) {
         if (place === primary ? state.standing !== place : !state.places.includes(place)) continue;
         const why = words(STANDING).seatExpired();

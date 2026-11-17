@@ -42,7 +42,7 @@ import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
 import { placeFields } from "./placefields.ts";
-import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
+import { rateLimitedWait, registerMove, throughRateLimit } from "./ratelimit.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { seatProof } from "./seatproof.ts";
@@ -131,8 +131,9 @@ export async function resumeFromDisk(
   return null;
 }
 
-/** Register the seat returned from disk, then the seats beside it on the same channel (#7602). */
+/** Register the returned seat, then the seats beside it (#7602); "" — stopped, resumeBy says it. */
 async function registerBack(rec: HoldRecord, before: number): Promise<string> {
+  const move = registerMove(() => stoppedDuring(before)); // from resumeBy's stop count
   const { r, waitS } = await throughRateLimit(
     () =>
       callTool(tool("channel"), {
@@ -143,11 +144,10 @@ async function registerBack(rec: HoldRecord, before: number): Promise<string> {
         ...placeFields(rec),
       }),
     rateLimitedWait,
-    () => stoppedDuring(before), // the return's one stop watch, from resumeBy's count (#7439)
+    move,
   );
-  if (!r) return ""; // stopped before the register: resumeBy answers the stop
-  if (r.isError) return resumeWords.registerRefused(short(r.text));
-  await besideBack(rec.url, rec, waitS, () => stoppedDuring(before)); // one budget, one stop watch
+  if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
+  await besideBack(rec.url, rec, move); // the seats beside are the same move (#7439, #11030)
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 

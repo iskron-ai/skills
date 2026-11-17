@@ -64,7 +64,7 @@ import {
 import { ownerRefusal } from "./owner.ts";
 import { placeFields, rememberStandModel, type SeatMove } from "./placefields.ts";
 import * as provisional from "./provisional.ts";
-import { throughRateLimitAnswer } from "./ratelimit.ts";
+import { registerMove, throughRateLimitAnswer } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
@@ -351,9 +351,8 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
     // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
-    const { r, waitS, stop } = await throughRateLimitAnswer(register, () =>
-      stoppedDuring(stopsBefore),
-    );
+    const move = registerMove(() => stoppedDuring(stopsBefore)); // the call's stop count
+    const { r, waitS, stop } = await throughRateLimitAnswer(register, move);
     if (!r) return (lines.push(stop ?? ""), done(true)); // stopped before the register (#7439)
     if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
     heardHere = true;

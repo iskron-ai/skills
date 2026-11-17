@@ -8,11 +8,10 @@ import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
-import { type StopWatch, stopWatch } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
-import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
+import { rateLimitedWait, type RegisterMove, registerMove, throughRateLimit } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
 import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { noteSkills } from "./skillwatch.ts";
@@ -67,57 +66,69 @@ export function rememberedPlace(
 // One replay at a time — and every concurrent caller WAITS for it. A flag that
 // merely skipped the second caller let it through unattributed while the first
 // was still re-registering (harnesses send calls in batches).
-const R = scoped(() => ({ inFlight: null as Promise<void> | null }));
+const R = scoped(() => ({ inFlight: null as Promise<string | null> | null }));
 
 // Put the remembered standing back on the current session — before the call
 // that would otherwise land unattributed. Silent by contract: register releases
 // nothing and evicts nobody, so replaying it costs one call and no state.
-export async function ensureStanding(): Promise<void> {
+// The stop word — the owner's stop met the rebind (#7439): every call that waited for it
+// answers the stop and is not sent; null — go on.
+export async function ensureStanding(): Promise<string | null> {
   // Seat taken (4000) and standing beside failed: try again; never sign with a taken seat (#6706).
-  if (state.standing && (await standBesideAgain())) return;
+  if (state.standing && (await standBesideAgain())) return null;
   return replayStanding();
 }
 
-function replayStanding(): Promise<void> {
-  if (!state.standing || !state.sessionId) return Promise.resolve();
-  if (state.standingSession === state.sessionId) return Promise.resolve();
+function replayStanding(): Promise<string | null> {
+  if (!state.standing || !state.sessionId) return Promise.resolve(null);
+  if (state.standingSession === state.sessionId) return Promise.resolve(null);
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
-    const stopped = stopWatch(); // one watch for the main seat and every seat beside (#7439)
+    const move = registerMove(); // one move: the main seat and every seat beside (#7439, #11030)
     try {
-      // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
-      const deaf = await deafSeatTaken();
-      if (deaf) return log(`standing not re-registered: ${deaf}`);
-      const got = await replayRegister(state.standing, false, stopped);
-      if (stopped()) return log("standing not re-registered: the session was stopped");
-      if (got && !got.error && !got.result?.isError) {
-        // Seats of other graphs in the same move, or their writes would land unattributed (#5838).
-        if (await replayBeside(stopped)) state.standingSession = state.sessionId;
-        log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
-      } else if (seatIsGone(got)) {
-        // The seat itself is gone (expired while we were away) — say so and let
-        // the agent take it back with connect; never guess a different name.
-        // The hold goes with the binding: a socket kept for a seat the platform
-        // no longer knows would make the bridge «lead» a place it cannot name,
-        // and the next connect would replace it silently (#5168).
-        log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
-        state.standing = null;
-        releaseStanding(SEAT_EXPIRED(), true);
-      } else {
-        // Any other refusal is the hour's, not the seat's: keep the memory and
-        // try again before the next call. Forgetting here is what left a bridge
-        // writing unattributed for the rest of a shift after one passing 503.
-        log(
-          `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`,
-        );
-      }
+      await rebind(move);
     } catch (e) {
       log(`re-registering the standing failed: ${errorMessage(e)}`);
     } finally {
       R.inFlight = null;
     }
+    // A stop met anywhere in the move holds at the border of every call that waited (#7439).
+    const stop = move.stopped();
+    if (stop) log("standing not re-registered: the session was stopped");
+    return stop;
   })();
   return R.inFlight;
+}
+
+async function rebind(move: RegisterMove): Promise<void> {
+  // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
+  const deaf = await deafSeatTaken();
+  if (deaf) return log(`standing not re-registered: ${deaf}`);
+  const got = await replayRegister(state.standing, false, move);
+  if (move.stopped()) return;
+  if (got && !got.error && !got.result?.isError) {
+    // Seats of other graphs in the same move, or their writes would land unattributed (#5838).
+    const whole = await replayBeside(move);
+    if (move.stopped()) return;
+    if (whole) state.standingSession = state.sessionId;
+    log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
+  } else if (seatIsGone(got)) {
+    // The seat itself is gone (expired while we were away) — say so and let
+    // the agent take it back with connect; never guess a different name.
+    // The hold goes with the binding: a socket kept for a seat the platform
+    // no longer knows would make the bridge «lead» a place it cannot name,
+    // and the next connect would replace it silently (#5168).
+    log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
+    state.standing = null;
+    releaseStanding(SEAT_EXPIRED(), true);
+  } else {
+    // Any other refusal is the hour's, not the seat's: keep the memory and
+    // try again before the next call. Forgetting here is what left a bridge
+    // writing unattributed for the rest of a shift after one passing 503.
+    log(
+      `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`,
+    );
+  }
 }
 
 /** A raw register reply (its own post, not callTool) as the rate-limit wait reads it (ratelimit.ts). */
@@ -127,24 +138,25 @@ const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusa
 };
 
 /**
- * One register of `place` as a step of a move: `stopped` is the move's one stop watch
- * (holdstate.ts stopWatch, taken once at the move's start) — a rebind of several seats or a
- * skills refresh passes the same watch to every seat, so a stop ends the whole move; a lone
- * register takes its own. null — no register went (stopped, a terminal claim refusal).
+ * One register of `place` as a step of a move (ratelimit.ts RegisterMove, begun once at the
+ * move's start): a rebind of several seats or a skills refresh passes the same move to every
+ * seat, so a stop ends the whole move and the 429 budget is one; a lone register begins its
+ * own. null — no register went (stopped, a terminal claim refusal).
  */
 export async function replayRegister(
   place: Standing | null,
   freshSkills = false,
-  stopped: StopWatch = stopWatch(),
+  move: RegisterMove = registerMove(),
 ): Promise<JsonRpcMessage | null> {
   // A 429 rate_limited of the source is waited out inside the rebind (#10801).
   const { r: got, waitS } = await throughRateLimit(
     () => registerOnce(place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
-    stopped,
+    move,
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
-  if (stopped() || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for) return got;
+  if (move.stopped() || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for)
+    return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
   return registerOnce(place, freshSkills);
 }
@@ -188,9 +200,9 @@ async function registerOnce(
 
 /**
  * Re-register seats of other graphs; true — all in place (an expired one is forgotten).
- * `stopped` — the rebind's stop watch: a stop ends the move, no register of the rest.
+ * `move` — the rebind's register move: a stop ends it, no register of the rest; one budget.
  */
-async function replayBeside(stopped: StopWatch): Promise<boolean> {
+async function replayBeside(move: RegisterMove): Promise<boolean> {
   let whole = true;
   for (const place of [...state.places]) {
     // A deaf seat another session may listen on is not re-bound (deaf.ts, #6706).
@@ -199,8 +211,9 @@ async function replayBeside(stopped: StopWatch): Promise<boolean> {
       log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
       continue;
     }
-    const got = await replayRegister(place, false, stopped);
-    if (stopped()) return (log("places beside not re-registered: the session was stopped"), false);
+    const got = await replayRegister(place, false, move);
+    if (move.stopped())
+      return (log("places beside not re-registered: the session was stopped"), false);
     if (got && !got.error && !got.result?.isError) continue;
     const key = keyOfPlace(place);
     if (seatIsGone(got)) {
