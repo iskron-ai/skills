@@ -835,7 +835,7 @@ export async function startFakeNks(opts = {}) {
         "revokeReplyDelayMs",
         "revokeRefuseNext",
         "revokeGone", // 404 | 410: revoke of a seat not there — the rule of api 0.124.0 (#7599)
-        "registerRefuseNext", // [{ text, status, rule, data }]: the next registers refused as the api would
+        "registerRefuseNext", // [{ text, status, rule, data, realm? }]: the next registers refused as the api would (realm — only there)
         "closeCodeDelayMs",
         "endedFrame",
         "accessTtl",
@@ -1379,7 +1379,10 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          const refuseReg = (st.registerRefuseNext ?? []).shift();
+          // An entry with `realm` refuses only a register in that graph; the rest wait their turn.
+          const regQueue = st.registerRefuseNext ?? [];
+          const regAt = regQueue.findIndex((e) => !e.realm || slug(e.realm) === slug(a.realm));
+          const refuseReg = regAt >= 0 ? regQueue.splice(regAt, 1)[0] : undefined;
           if (refuseReg) {
             st.counts.register_refused = (st.counts.register_refused ?? 0) + 1;
             const { text, status, rule, data } = refuseReg;

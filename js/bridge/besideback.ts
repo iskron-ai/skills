@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import { tool } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
+import { RATE_LIMIT_WAIT_S } from "../shared/ratelimit.ts";
 import { standingsDirOf } from "../shared/standings.ts";
 import { callTool, resolveAgainstLed, short } from "./call.ts";
 import { harnessName } from "./client.ts";
@@ -69,13 +70,17 @@ async function resolveRecord(
  * Register again the seats beside the main seat just returned from disk at `url`; the
  * register answer puts each on the channel (standing.ts), and its `beside` word tells the
  * thin bridge the seat is back. One not back gets no word: the thin bridge says it lost.
+ * `spentS` — the 429 wait the main seat's register already took: the return has one budget
+ * (../shared/ratelimit.ts), the seats beside share its rest in turn; spent, a seat beside
+ * waits no more and its refusal stands (#10801).
  */
-export async function besideBack(url: string, primary: HoldRecord): Promise<void> {
+export async function besideBack(url: string, primary: HoldRecord, spentS: number): Promise<void> {
   if (CFG.satellite) return;
   const recs = besideRecords(url, primary);
   if (!recs.length) return;
   const before = stopsNow();
   const hello = await awaitHello(0);
+  let leftS = RATE_LIMIT_WAIT_S - spentS;
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
     await resolveRecord(hello, rec, primary);
@@ -95,7 +100,9 @@ export async function besideBack(url: string, primary: HoldRecord): Promise<void
         }),
       rateLimitedWait,
       () => stoppedDuring(before),
+      Math.max(0, leftS),
     );
+    leftS -= waitS;
     standingLog(r.isError ? `beside not resumed ${key}` : `resumed-from-disk beside ${key}`);
     if (waitS > 0)
       standingLog(`beside ${key}: register waited out a 429 of the source (${waitS} s)`);

@@ -4,7 +4,10 @@
 // answer (../opencode/keep.ts). A client cap shorter than the bridge's wait cuts a lawful
 // return off before it ends.
 
-/** The whole register move waits no longer than this many seconds of Retry-After, added up. */
+/**
+ * The whole register move waits no longer than this many seconds of Retry-After, added up —
+ * a disk return counts the main seat and every seat beside it as one move.
+ */
 export const RATE_LIMIT_WAIT_S = 60;
 
 /** Room above the wait for the return's own steps: register, hello, the seats beside. */

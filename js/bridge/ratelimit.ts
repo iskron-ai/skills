@@ -43,18 +43,20 @@ export interface RateLimited<R> {
  * or the seat during the wait (`stopped`, the reissue loop's watch) ends it with no
  * further try — the stopped session stands nowhere. `waitOf` says the seconds of an
  * answer, null — not a rate limit (ratelimit.ts reads an Answer or a raw reply alike).
+ * `budgetS` — what the move has left: a return of several seats shares one budget
+ * (resume.ts, besideback.ts), so the client's cap on its answer holds (../shared/ratelimit.ts).
  */
 export async function throughRateLimit<R>(
   call: () => Promise<R>,
   waitOf: (r: R) => number | null,
   stopped: () => string | null,
+  budgetS: number = RATE_LIMIT_WAIT_S,
 ): Promise<RateLimited<R>> {
   let waitS = 0;
   for (let tries = 1; ; tries++) {
     const r = await call();
     const wait = waitOf(r);
-    if (wait === null || tries >= RATE_LIMIT_TRIES || waitS + wait > RATE_LIMIT_WAIT_S)
-      return { r, waitS };
+    if (wait === null || tries >= RATE_LIMIT_TRIES || waitS + wait > budgetS) return { r, waitS };
     const { stop } = await awaitReissue(wait, () => false, stopped);
     if (stop) return { r, waitS };
     waitS += wait;

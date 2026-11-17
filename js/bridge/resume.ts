@@ -147,7 +147,7 @@ async function registerBack(rec: HoldRecord): Promise<string> {
     () => stoppedDuring(before),
   );
   if (r.isError) return resumeWords.registerRefused(short(r.text));
-  await besideBack(rec.url, rec);
+  await besideBack(rec.url, rec, waitS); // one wait budget for the whole return
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 
