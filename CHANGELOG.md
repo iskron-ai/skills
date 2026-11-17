@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.12.0](https://github.com/iskron-ai/skills/compare/v8.11.0...v8.12.0) (2026-11-17)
+
+
+### Features
+
+* **bridge:** a returned seat waits out a 429 rate_limited through one register gate; the dsh start word loads iskron ([#828](https://github.com/iskron-ai/skills/issues/828)) ([35354c4](https://github.com/iskron-ai/skills/commit/35354c4b1e6e6bca1ec2fbd3222ff471cf929687))
+
 ## [8.11.0](https://github.com/iskron-ai/skills/compare/v8.10.0...v8.11.0) (2026-11-17)
 
 
