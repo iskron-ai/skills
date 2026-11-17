@@ -3,11 +3,39 @@
 // &limit ≤ 200 → {items, cursor, numbering:"case"} — cursor is the number of the last covered
 // entry, or the former one when nothing new came; the end is an empty items with the cursor
 // unmoved. The whole form lives in the two parsers below — the rest of the code reasons over
-// parsed entries only, so a changed page never reaches past this file.
-import { getJson } from "./orchestra-tact.ts";
+// parsed entries only, so a changed page never reaches past this file. Every history read
+// carries since and advance=false: the reader holds no seat, and the platform's own cursor
+// must not move — without since a one-seat account would read from that seat's cursor instead.
+import { namedFetch } from "../shared/http.ts";
+import { ORCHESTRA_SESSION_HEADER, ORCHESTRA_SESSION_ID } from "./orchestra-session.ts";
 
 /** The raised door's own cap (#6010); the case door shares it. */
 const LIMIT = 200;
+const TIMEOUT_MS = 10_000;
+
+/** One history path with both of the holder's read parameters always present. */
+const historyPath = (room: string, since: number): string =>
+  `/rooms/${encodeURIComponent(room)}/history?since=${since}&limit=${LIMIT}&advance=false`;
+
+/** One case-door GET under the orchestrator identity; a refusal's rule rides the error. A
+ * 409 standing_required under advance=false cannot happen by the holder's word — its arrival
+ * is an api defect, said aloud in the journal and named in the error. */
+async function caseGet(base: string, token: string, path: string): Promise<unknown> {
+  const res = await namedFetch(`${base}${path}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID,
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (res.ok) return res.json();
+  const body = (await res.json().catch(() => ({}))) as { errors?: { rule?: unknown }[] };
+  if (res.status === 409 && body.errors?.[0]?.rule === "standing_required") {
+    process.stderr.write("case_history_standing_required_under_advance_false\n");
+    throw new Error("api_defect_standing_required");
+  }
+  throw new Error(String(res.status));
+}
 
 /** One journal entry as the tact reasons over it: the page's own fields, parsed. */
 export interface CaseEntry {
@@ -82,13 +110,7 @@ export async function readCaseHistory(
   let cursor = since ?? 0;
   const out: CaseEntry[] = [];
   for (;;) {
-    const page = parseCasePage(
-      await getJson(
-        base,
-        token,
-        `/rooms/${encodeURIComponent(room)}/history?since=${cursor}&limit=${LIMIT}`,
-      ),
-    );
+    const page = parseCasePage(await caseGet(base, token, historyPath(room, cursor)));
     if (!page.entries.length) return { entries: out, cursor };
     if (page.cursor <= cursor) throw new Error("history_stalled");
     out.push(...page.entries);
@@ -102,5 +124,5 @@ export async function readCaseStatus(
   token: string,
   room: string,
 ): Promise<"open" | "closed"> {
-  return parseCaseStatus(await getJson(base, token, `/rooms/${encodeURIComponent(room)}`));
+  return parseCaseStatus(await caseGet(base, token, `/rooms/${encodeURIComponent(room)}`));
 }

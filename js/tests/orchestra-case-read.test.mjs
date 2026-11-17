@@ -15,7 +15,8 @@ test("case history pages by cursor with the orchestrator identity, until a page 
   const server = createServer((req, res) => {
     requests.push(req.url);
     res.setHeader("content-type", "application/json");
-    const since = Number(new URL(req.url, "http://x").searchParams.get("since"));
+    const q = new URL(req.url, "http://x").searchParams;
+    const since = Number(q.get("since"));
     // Two entries per page: the reader must walk to the empty one.
     const items = [
       { id: since + 1, kind: "said", payload: {} },
@@ -39,11 +40,39 @@ test("case history pages by cursor with the orchestrator identity, until a page 
   assert.deepEqual(
     requests,
     [
-      "/rooms/room%2Fid/history?since=0&limit=200",
-      "/rooms/room%2Fid/history?since=2&limit=200",
-      "/rooms/room%2Fid/history?since=4&limit=200",
+      "/rooms/room%2Fid/history?since=0&limit=200&advance=false",
+      "/rooms/room%2Fid/history?since=2&limit=200&advance=false",
+      "/rooms/room%2Fid/history?since=4&limit=200&advance=false",
     ],
-    "the cursor walks page by page and stops on the empty one",
+    "the cursor walks page by page, never advancing the platform's own",
+  );
+});
+
+test("case history names a standing_required refusal by its rule and says it aloud", async (t) => {
+  const requests = [];
+  const said = [];
+  const stderr = process.stderr.write;
+  process.stderr.write = (c) => (said.push(String(c)), true);
+  const server = createServer((req, res) => {
+    requests.push(req.url);
+    res.setHeader("content-type", "application/json");
+    res.writeHead(409).end(JSON.stringify({ errors: [{ rule: "standing_required" }] }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.close();
+    process.stderr.write = stderr;
+  });
+  await assert.rejects(
+    readCaseHistory(`http://127.0.0.1:${server.address().port}`, "secret", "room-1", 0),
+    /api_defect_standing_required/,
+  );
+  assert.ok(requests[0].includes("advance=false"), requests[0]);
+  assert.ok(requests[0].includes("since=0"), requests[0]);
+  assert.ok(
+    said.some((line) => line.includes("case_history_standing_required_under_advance_false")),
+    "the api defect is said aloud in the journal",
   );
 });
 

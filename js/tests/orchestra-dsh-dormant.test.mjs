@@ -46,6 +46,8 @@ async function caseApi(t, { status = "open", entries = [], refuse = 0, onHistory
       (state.refuse === "status" && !history)
     )
       return res.writeHead(503).end("{}");
+    if (state.refuse === "409" && history)
+      return res.writeHead(409).end(JSON.stringify({ errors: [{ rule: "standing_required" }] }));
     if (!history) return res.end(JSON.stringify({ status: state.status }));
     if (onHistory) onHistory();
     const since = Number(new URL(req.url, "http://x").searchParams.get("since"));
@@ -737,6 +739,33 @@ test("dormancy: a transient arming read loses neither the role uuid nor the asks
   assert.deepEqual(r.dormant.asks, {});
   assert.ok(said.join("; ").includes("dormant_woken_10"));
   assert.equal(launch.calls.length, 1);
+});
+
+test("dormancy: an api-defect standing_required is a named transient — the sleep stands", async (t) => {
+  // The holder says a 409 standing_required cannot come under advance=false: its arrival is
+  // an api defect. The row behaves as a transient refusal — sleeps, cursor stands — and the
+  // defect is named in the row (#10995 review 3).
+  const api = await caseApi(t, { refuse: "409" });
+  const armed = exitedRun();
+  assert.equal(await goDormant(api.base, "key", armed), true);
+  assert.equal(armed.state, "dormant");
+  assert.equal(armed.why, "dormant_read_error:api_defect_standing_required");
+  assert.equal(armed.dormant.cursor, 9);
+  const sleeping = sleepingRow();
+  const said = await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: sleeping },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
+  assert.equal(sleeping.state, "dormant");
+  assert.equal(sleeping.why, "dormant_read_error:api_defect_standing_required");
+  assert.equal(sleeping.dormant.cursor, 9, "the cursor stands");
+  assert.ok(said.join("; ").includes("api_defect_standing_required"));
 });
 
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {

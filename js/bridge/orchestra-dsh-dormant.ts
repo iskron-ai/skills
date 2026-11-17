@@ -14,6 +14,14 @@ import { DORMANT_WINDOW_MS } from "./orchestra-window.ts";
 
 const w = () => words(ORCHESTRA);
 
+/** A read refusal's row word: the holder says a 409 standing_required cannot come under
+ * advance=false — its arrival is an api defect and is named as itself; everything else is a
+ * plain transient (#10995 review 3). */
+export const readErrorWhy = (e: unknown): string =>
+  (e as Error).message === "api_defect_standing_required"
+    ? "dormant_read_error:api_defect_standing_required"
+    : "dormant_read_error";
+
 /** A dsh exit that can sleep: final completed, exit 0, a session to continue. */
 export const dshSleepable = (r: Run): boolean =>
   r.dsh?.final === "completed" && r.dsh.exit === "0" && !!r.dsh.session;
@@ -30,14 +38,14 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   const seats = [
     ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
   ];
-  const sleepOnError = (): boolean => {
+  const sleepOnError = (e: unknown): boolean => {
     // A transient refusal names neither open nor closed: only a definitive closed|abandoned
     // may end the run. The row sleeps on the invite floor with the error named, the tree
     // stays, the tact retries the read — and the window counts this sleep like any other.
     // The wake caches are left unset: the tact establishes them from the invite itself
     // before its first judgement (#10995 review 2).
     r.state = "dormant";
-    r.why = "dormant_read_error";
+    r.why = readErrorWhy(e);
     r.dormant = {
       since: new Date().toISOString(),
       cursor: Math.max(r.invite, r.dormant?.cursor ?? 0),
@@ -49,8 +57,8 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   try {
     if ((await readCaseStatus(base, token, r.room)) !== "open") return false;
     read = await readCaseHistory(base, token, r.room);
-  } catch {
-    return sleepOnError();
+  } catch (e) {
+    return sleepOnError(e);
   }
   // The seat walked out of the case by itself: a left with reason leave after the call's
   // last joined is the agent's own farewell, and a leave does not end the standing (#4929) —
@@ -242,9 +250,9 @@ export async function stepDormant(
         delete r.why;
       }
     } catch (e) {
-      r.why = "dormant_read_error";
+      r.why = readErrorWhy(e);
       out.push(
-        w().leadRow(r.realm, r.room, r.invite, `dormant_read_error (${(e as Error).message})`),
+        w().leadRow(r.realm, r.room, r.invite, `${r.why} (${(e as Error).message})`),
       );
       continue;
     }
