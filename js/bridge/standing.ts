@@ -18,10 +18,9 @@ import {
   throughRateLimit,
 } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
-import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
+import { type Refusal, refusalOf } from "./refusal.ts";
 import { registerRaw } from "./registergate.ts";
 import { noteSkills } from "./skillwatch.ts";
-import { registeredBasis } from "./spawned-for.ts";
 import { debug, log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -156,23 +155,16 @@ export async function replayRegister(
   move: RegisterMove = registerMove(),
   seat: MoveSeat = { id: place ? standingIdIn(place.realm) : null, main: true },
 ): Promise<JsonRpcMessage | null> {
-  // A 429 rate_limited of the source is waited out inside the rebind (#10801).
-  const {
-    r: got,
-    waitS,
-    stop,
-    ended,
-  } = await throughRateLimit(
+  // A 429 rate_limited of the source is waited out inside the rebind (#10801); a 409 seat-open
+  // race is registered once more by the gate itself (registergate.ts).
+  const { r: got, waitS } = await throughRateLimit(
     () => registerRaw(move, seat, place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
     move,
     seat,
   );
   if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
-  if (stop || ended || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for)
-    return got;
-  log("register refused by a concurrent opening (409, no rule) — registering again once");
-  return registerRaw(move, seat, place, freshSkills); // the gate asks the move again (#7439)
+  return got;
 }
 
 /**
