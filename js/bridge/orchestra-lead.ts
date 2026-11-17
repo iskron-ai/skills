@@ -8,6 +8,7 @@ import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
 import { readDemands, type TactInvites } from "./orchestra-demands.ts";
+import { dormantFromEnds } from "./orchestra-dsh-dormant.ts";
 import { foreignStops } from "./orchestra-foreign.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
@@ -56,6 +57,9 @@ export function leadAct(
       said.push(...foreign.said);
       said.push(...(await expireLaunches(runs, gone)));
       said.push(...settleStops(runs, owned, foreign.fresh));
+      // A dsh run the tact just ended sleeps when its case stays open (#10995) — before any
+      // write, so the tree cleanup below sees a dormant row, not an ended one.
+      await dormantFromEnds(base, token, runs);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(

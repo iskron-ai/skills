@@ -14,11 +14,13 @@ import {
 } from "./orchestra-tree-check.ts";
 
 /** The client is over: the stop said stopped, or the seat was already over after the exact
- * terminal exited (#9256). */
+ * terminal exited (#9256). A run that slept (#10995) had settled its seat at the exit that
+ * armed the sleep — the sleep's own end needs no fresh proof. */
 const clientGone = (r: Run): boolean =>
   r.stop_outcome === "stopped" ||
   r.why === "seat_gone_after_exit" ||
-  (!!r.dsh?.exit && !r.standing_id);
+  (!!r.dsh?.exit && !r.standing_id) ||
+  (!!r.dormant && !!r.dsh?.exit);
 /** Ended — or a dsh launch refused by its own exit before any session (#10777). */
 const over = (r: Run): boolean => r.state === "ended" || (r.state === "refused" && !!r.dsh?.exit);
 

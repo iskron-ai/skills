@@ -12,8 +12,18 @@ export type RunState =
   | "refused"
   | "no_seat";
 export interface Run {
-  /** Persisted case journal cursor and start of the current dormancy window. */
-  dormant?: { since: string; cursor: number | null };
+  /** The sleep of a cleanly exited dsh run (#10995): since when, the case journal cursor, and
+   * what a word in the case must name to wake the continuation. */
+  dormant?: {
+    since: string;
+    cursor: number | null;
+    /** The standing ids the call's seat had — the first and each after a continuation. */
+    seats?: string[];
+    /** The invited role's karta node UUID, from the invite entry of the same journal. */
+    karta?: string;
+    /** The seat's own asks — entry number → the ask author's standing id; an answer to one wakes. */
+    asks?: Record<string, string>;
+  };
   tree?: RunTree;
   exec?: {
     attempt: string;
