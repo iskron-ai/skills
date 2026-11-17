@@ -37,6 +37,13 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   const seats = [
     ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
   ];
+  // The cursor lands on the seat's own last word, never past it: a said that came after the
+  // agent's last move but before this read must still wake — a spurious wake is cheaper than
+  // a lost word (#10995 review). No word of the call's seats — the invite's number is the
+  // floor, and the cursor never walks back.
+  const seatLast = [...read.entries]
+    .reverse()
+    .find((e) => e.author_standing_id && seats.includes(e.author_standing_id))?.n;
   const asks: Record<string, string> = {};
   for (const e of read.entries)
     if (e.kind === "ask" && e.author_standing_id && seats.includes(e.author_standing_id))
@@ -45,7 +52,7 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   r.state = "dormant";
   r.dormant = {
     since: new Date().toISOString(),
-    cursor: read.cursor,
+    cursor: Math.max(seatLast ?? 0, r.invite, r.dormant?.cursor ?? 0),
     seats,
     ...(karta ? { karta } : {}),
     asks,
@@ -107,6 +114,11 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       e.reason === "revoked"
     )
       return { end: "dormant_seat_revoked", cursor: e.n };
+    // The call's own words never wake it: the seat speaking is the live agent's business.
+    if (e.author_standing_id && seats.has(e.author_standing_id)) {
+      cursor = e.n;
+      continue;
+    }
     if (wakes(e)) return { wake: e };
     cursor = e.n;
   }

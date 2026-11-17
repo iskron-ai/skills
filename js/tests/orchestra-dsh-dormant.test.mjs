@@ -112,7 +112,7 @@ const launchStub = () => {
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
 
-test("dormancy: a clean exit with the case open sleeps on the journal's last entry", async (t) => {
+test("dormancy: a clean exit with the case open sleeps on the seat's own last word", async (t) => {
   const api = await caseApi(t, {
     entries: [
       entry(9, "invite", { to_karta_node_id: KARTA }),
@@ -123,11 +123,39 @@ test("dormancy: a clean exit with the case open sleeps on the journal's last ent
   const r = exitedRun();
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.equal(r.state, "dormant");
-  assert.equal(r.dormant.cursor, 11);
+  assert.equal(r.dormant.cursor, 10, "the cursor lands on the seat's own last word, not the journal's end");
   assert.deepEqual(r.dormant.seats, [SEAT]);
   assert.equal(r.dormant.karta, KARTA, "the invited role's uuid comes from the invite entry");
   assert.deepEqual(r.dormant.asks, { 10: SEAT }, "the seat's own asks are kept for answers");
 });
+
+test("dormancy: the cursor keeps a said that came after the seat's last word, and it wakes", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(10, "line", { author_standing_id: SEAT }),
+      entry(11, "said", { to_standing_id: SEAT }),
+    ],
+  });
+  const r = exitedRun();
+  assert.equal(await goDormant(api.base, "key", r), true);
+  assert.equal(r.dormant.cursor, 10, "a word past the seat's last move is not swallowed by the arming read");
+  // The next tact reads from that cursor and the said still wakes the continuation.
+  const runs = { k: r };
+  const launch = launchStub();
+  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
+  assert.equal(r.state, "launched", "the said after the seat's last word wakes");
+  assert.equal(r.dormant.cursor, 11);
+  assert.equal(launch.calls.length, 1);
+});
+
+test("dormancy: no word of the call's own seats — the invite's number is the cursor floor", async (t) => {
+  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+  const r = exitedRun();
+  assert.equal(await goDormant(api.base, "key", r), true);
+  assert.equal(r.dormant.cursor, 9);
+});
+
 
 test("dormancy: the seats collect the row's own id and every earlier one", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite")] });
@@ -171,8 +199,7 @@ test("dormancy: a closed case, a refused read and an unclean exit keep the end",
   );
 });
 
-test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {
-  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const launch = launchStub();
   const cases = [
     [entry(10, "said", { to_standing_id: SEAT }), "a said to the call's seat"],
@@ -206,6 +233,21 @@ test("dormant tact: a said to the seat, an ask to the role and an answer to the 
       `${name}: the brief names the entry`,
     );
   }
+});
+
+test("dormant tact: the call's own words never wake it", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+      entry(12, "said", { author_standing_id: SEAT, to_standing_id: SEAT }),
+      entry(13, "ask", { author_standing_id: SEAT, to_karta_node_id: KARTA }),
+    ],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  await stepDormant("/tmp/unused", api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launchStub().run);
+  assert.equal(r.state, "dormant", "a said or an ask authored by the seat itself wakes nothing");
+  assert.equal(r.dormant.cursor, 13, "the cursor still takes the read in");
 });
 
 test("dormant tact: an answer to a stranger's ask, a said to another seat and other kinds only move the cursor", async (t) => {
