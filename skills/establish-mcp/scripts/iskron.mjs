@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.10.0";
+var VERSION = "8.11.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -15337,8 +15337,16 @@ function foldTape(realm, tape, runs) {
     if (run3.state === "launched" || run3.state === "no_seat" || run3.state === "refused")
       run3.state = "raised";
     const n = Number(s2.n);
-    if (!Number.isFinite(n) || run3.n !== void 0 && n < run3.n) continue;
+    const idle = s2.cause === "idle_due" || s2.cause === "idle_warned";
+    if (Number.isFinite(n) && run3.n !== void 0 && n < run3.n) continue;
+    if (s2.cause === "idle_due") run3.idle_due = true;
+    else delete run3.idle_due;
+    if (!Number.isFinite(n)) continue;
     run3.n = n;
+    if (idle) {
+      run3.rooms ??= 0;
+      continue;
+    }
     run3.rooms = Array.isArray(s2.rooms) ? s2.rooms.length : 0;
     if (run3.rooms > 0) run3.sat = true;
   }
@@ -15353,7 +15361,9 @@ async function order(base, token, r, key3) {
     },
     body: JSON.stringify({
       reason_code: "composition_empty",
-      client_id: `orchestra-${createHash9("sha256").update(key3).digest("hex").slice(0, 32)}`
+      client_id: `orchestra-${createHash9("sha256").update(key3).digest("hex").slice(0, 32)}`,
+      // The idle_due's n: the server lays the order only if no newer signal came (#7518).
+      ...r.idle_due && r.n !== void 0 ? { if_signal_n: r.n } : {}
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS)
   });
@@ -15362,15 +15372,13 @@ async function order(base, token, r, key3) {
 }
 async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
   const said2 = [];
-  const due = Object.entries(runs).filter(
-    ([, r]) => r.state === "raised" && !r.exec?.exit && !r.tree?.exit && r.rooms === 0 && r.standing_id && (r.sat || now2 - Date.parse(r.at) > RAISE_WINDOW_MS)
-  );
-  for (const [key3, r] of due) {
+  const isDue = (r) => r.state === "raised" && !r.exec?.exit && !r.tree?.exit && r.rooms === 0 && !!r.standing_id && (!!r.idle_due || !r.sat && now2 - Date.parse(r.at) > RAISE_WINDOW_MS);
+  for (const [key3, r] of Object.entries(runs).filter(([, r2]) => isDue(r2))) {
     if (gone?.gone) break;
     try {
       foldTape(r.realm, await reread(r.realm), runs);
       if (gone?.gone) break;
-      if (r.rooms !== 0) {
+      if (!isDue(r)) {
         said2.push(w2().leadRow(r.realm, r.room, r.invite, "composition_changed"));
         continue;
       }
@@ -15384,6 +15392,10 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
       } else if (got.status === 410) {
         if (!r.exec && !r.tree) r.state = "ended";
         said2.push(w2().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
+      } else if (got.status === 409 && r.idle_due) {
+        delete r.idle_due;
+        r.sat = true;
+        said2.push(w2().leadRow(r.realm, r.room, r.invite, "composition_changed"));
       } else said2.push(w2().leadRow(r.realm, r.room, r.invite, `${why}stop_refused_${got.status}`));
     } catch (e) {
       said2.push(w2().leadRow(r.realm, r.room, r.invite, `stop_unsent (${e.message})`));
