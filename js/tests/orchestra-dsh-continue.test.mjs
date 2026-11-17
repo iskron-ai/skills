@@ -142,3 +142,20 @@ test("dsh: a stop order naming the sleeping seat ends the sleep and the tree goe
   assert.equal(existsSync(row.worktree), false);
   assert.equal(o.dshCalls().length, 1, "a stop order does not wake a continuation");
 });
+
+test("dsh: the continuation is a new launch for the raise windows", async (t) => {
+  const { o, row } = await asleep(t, 91);
+  const since = row.dormant.since;
+  await o.room("open", [inviteEntry(91), said(92, SEAT)]);
+  await o.step();
+  const woken = o.run(91);
+  assert.equal(woken.state, "launched");
+  assert.ok(
+    Date.parse(woken.at) >= Date.parse(since),
+    "at moves to the continuation's own launch — expireLaunches must not see the first launch's age",
+  );
+  assert.equal(woken.sat, undefined, "the no-join window starts over");
+  assert.equal(woken.rooms, undefined);
+  assert.equal(woken.n, undefined);
+  assert.equal(woken.idle_due, undefined, "the first life's idle marker does not stop the continuation");
+});

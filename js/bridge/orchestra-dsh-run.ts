@@ -53,13 +53,20 @@ export async function launchDsh(
   if (session) {
     // The continuation's own client life (#10995): the slept life's exit marks must not end
     // the new process at once, and its event file starts over — the wait below observes THIS
-    // process, not the slept one's leftovers.
+    // process, not the slept one's leftovers. It is a new launch for every raise window too:
+    // at moves to now, and the first life's composition marks (sat/rooms/n, idle_due) reset,
+    // so expireLaunches and the no-join stop judge the continuation by its own age.
     if (run.tree) run.tree.exit = undefined;
+    run.at = new Date().toISOString();
     delete run.stop_outcome;
     delete run.order_id;
     delete run.stopping_at;
     delete run.restop;
     delete run.why;
+    delete run.sat;
+    delete run.rooms;
+    delete run.n;
+    delete run.idle_due;
     writeFileSync(files.events, "", { mode: 0o600 });
   }
   const env: NodeJS.ProcessEnv = {
