@@ -12,10 +12,15 @@ export async function readCaseHistory(
     if (!Number.isSafeInteger(since) || since < 1) throw new Error("invalid_cursor");
     query.set("since", String(since));
   }
-  const response = await getJson(base, token, `/rooms/${encodeURIComponent(room)}/history?${query}`);
+  const response = await getJson(
+    base,
+    token,
+    `/rooms/${encodeURIComponent(room)}/history?${query}`,
+  );
   if (!Array.isArray(response)) throw new Error("history_not_list");
   for (const entry of response) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("invalid_entry");
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new Error("invalid_entry");
     const n = Number(entry.line?.entry_id ?? entry.entry_id);
     if (!Number.isSafeInteger(n) || n < 1) throw new Error("invalid_entry_number");
   }

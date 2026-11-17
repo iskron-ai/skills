@@ -8,7 +8,11 @@ import { readCaseHistory } from "../bridge/orchestra-case-read.ts";
 test("case history uses the orchestrator identity without advancing the platform cursor", async (t) => {
   const requests = [];
   const server = createServer((req, res) => {
-    requests.push({ url: req.url, auth: req.headers.authorization, session: req.headers["x-nks-session-id"] });
+    requests.push({
+      url: req.url,
+      auth: req.headers.authorization,
+      session: req.headers["x-nks-session-id"],
+    });
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify([{ entry_id: 12, kind: "said" }]));
   });
