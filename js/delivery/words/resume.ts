@@ -31,6 +31,8 @@ export interface ResumeWords {
   noHello: (key: string) => string;
   stale: (key: string) => string;
   registerRefused: (text: string) => string;
+  /** register возврата переждал 429 rate_limited источника (#10801); seconds — сколько ждал. */
+  registerWaited: (seconds: number) => string;
   /** others — ключи через ", ". */
   othersInDir: (others: string) => string;
   notYours: () => string;
@@ -86,6 +88,8 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
       `${key}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
     stale: (key) => `${key}: запись протухла — место займёт ${via}`,
     registerRefused: (text) => `register отказал — ${text}`,
+    registerWaited: (seconds) =>
+      `register переждал предел частоты источника (${seconds} с) и встал`,
     othersInDir: (others) => `в том же каталоге записи и других мест: ${others}`,
     notYours: () => 'место не твоё — iskron_channel(action="leave") отпустит его, канал цел',
     nothingToReturn: (skipped) => `возвращать нечего — ${skipped}`,
@@ -141,6 +145,8 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
       `${key}: hello did not come — the record is intact, the watchdog will repeat the return; if you do not wait — ${via}`,
     stale: (key) => `${key}: the record went stale — ${via} will take the seat`,
     registerRefused: (text) => `register refused — ${text}`,
+    registerWaited: (seconds) =>
+      `register waited out the source's rate limit (${seconds} s) and stood`,
     othersInDir: (others) => `the same directory holds records of other seats too: ${others}`,
     notYours: () =>
       'the seat is not yours — iskron_channel(action="leave") will release it, the channel stays intact',

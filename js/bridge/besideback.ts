@@ -14,7 +14,9 @@ import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
 import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
+import { stoppedDuring, stopsNow } from "./holdstate.ts";
 import { placeFields } from "./placefields.ts";
+import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
 import { learnRealm, otherRealm, resolvedRealm, sameRealm } from "./realms.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
@@ -72,6 +74,7 @@ export async function besideBack(url: string, primary: HoldRecord): Promise<void
   if (CFG.satellite) return;
   const recs = besideRecords(url, primary);
   if (!recs.length) return;
+  const before = stopsNow();
   const hello = await awaitHello(0);
   for (const rec of recs) {
     const key = keyOf(rec.realm, rec.karta, rec.name);
@@ -80,14 +83,22 @@ export async function besideBack(url: string, primary: HoldRecord): Promise<void
       log(`seat beside ${key}: its graph is not known as another one — not registered`);
       continue;
     }
-    const r = await callTool(tool("channel"), {
-      action: "register",
-      realm: rec.realm,
-      karta: rec.karta,
-      name: rec.name,
-      ...placeFields(rec),
-    });
+    // A 429 rate_limited of the source is waited out inside the return (#10801).
+    const { r, waitS } = await throughRateLimit(
+      () =>
+        callTool(tool("channel"), {
+          action: "register",
+          realm: rec.realm,
+          karta: rec.karta,
+          name: rec.name,
+          ...placeFields(rec),
+        }),
+      rateLimitedWait,
+      () => stoppedDuring(before),
+    );
     standingLog(r.isError ? `beside not resumed ${key}` : `resumed-from-disk beside ${key}`);
+    if (waitS > 0)
+      standingLog(`beside ${key}: register waited out a 429 of the source (${waitS} s)`);
     log(
       `seat beside ${key} with the main one: ${r.isError ? `not back — ${short(r.text)}` : "back"}`,
     );

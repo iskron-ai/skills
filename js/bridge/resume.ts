@@ -37,11 +37,12 @@ import {
   restoreHoldRecord,
   sessionOfBridge,
 } from "./holdrecord.ts";
-import { stoppedSince, stopsNow, withSpoolHeld } from "./holdstate.ts";
+import { stoppedDuring, stoppedSince, stopsNow, withSpoolHeld } from "./holdstate.ts";
 import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
 import { placeFields } from "./placefields.ts";
+import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { seatProof } from "./seatproof.ts";
@@ -132,16 +133,22 @@ export async function resumeFromDisk(
 
 /** Register the seat returned from disk, then the seats beside it on the same channel (#7602). */
 async function registerBack(rec: HoldRecord): Promise<string> {
-  const r = await callTool(tool("channel"), {
-    action: "register",
-    realm: rec.realm,
-    karta: rec.karta,
-    name: rec.name,
-    ...placeFields(rec),
-  });
+  const before = stopsNow();
+  const { r, waitS } = await throughRateLimit(
+    () =>
+      callTool(tool("channel"), {
+        action: "register",
+        realm: rec.realm,
+        karta: rec.karta,
+        name: rec.name,
+        ...placeFields(rec),
+      }),
+    rateLimitedWait,
+    () => stoppedDuring(before),
+  );
   if (r.isError) return resumeWords.registerRefused(short(r.text));
   await besideBack(rec.url, rec);
-  return "register";
+  return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 
 /**

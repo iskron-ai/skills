@@ -8,11 +8,13 @@ import { errorMessage } from "./errors.ts";
 import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding } from "./hold.ts";
+import { stoppedDuring, stopsNow } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import { placeFields } from "./placefields.ts";
 import { dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
+import { rateLimitedWait, throughRateLimit } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
-import { openedConcurrently, refusalOf } from "./refusal.ts";
+import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
 import { noteSkills } from "./skillwatch.ts";
 import { claimRefusal, launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
 import { debug, log } from "./streams.ts";
@@ -116,11 +118,24 @@ function replayStanding(): Promise<void> {
   return R.inFlight;
 }
 
+/** A raw register reply (its own post, not callTool) as the rate-limit wait reads it (ratelimit.ts). */
+const asRefusalView = (reply: JsonRpcMessage | null): { isError: boolean; refusal?: Refusal } => {
+  const refusal = refusalOf(reply) ?? undefined;
+  return { isError: !!(reply?.error || reply?.result?.isError), ...(refusal ? { refusal } : {}) };
+};
+
 export async function replayRegister(
   place: Standing | null,
   freshSkills = false,
 ): Promise<JsonRpcMessage | null> {
-  const got = await registerOnce(place, freshSkills);
+  // A 429 rate_limited of the source is waited out inside the rebind (#10801).
+  const before = stopsNow();
+  const { r: got, waitS } = await throughRateLimit(
+    () => registerOnce(place, freshSkills),
+    (g) => rateLimitedWait(asRefusalView(g)),
+    () => stoppedDuring(before),
+  );
+  if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
   if (!openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for) return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
   return registerOnce(place, freshSkills);

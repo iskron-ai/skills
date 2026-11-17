@@ -1381,6 +1381,7 @@ export async function startFakeNks(opts = {}) {
           }
           const refuseReg = (st.registerRefuseNext ?? []).shift();
           if (refuseReg) {
+            st.counts.register_refused = (st.counts.register_refused ?? 0) + 1;
             const { text, status, rule, data } = refuseReg;
             const result = {
               isError: true,
