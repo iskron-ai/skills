@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.11.0";
+var VERSION = "8.12.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1367,6 +1367,7 @@ var RESUME = {
     noHello: (key3) => `${key3}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
     stale: (key3) => `${key3}: запись протухла — место займёт ${via}`,
     registerRefused: (text7) => `register отказал — ${text7}`,
+    registerWaited: (seconds2) => `register переждал предел частоты источника (${seconds2} с) и встал`,
     othersInDir: (others2) => `в том же каталоге записи и других мест: ${others2}`,
     notYours: () => 'место не твоё — iskron_channel(action="leave") отпустит его, канал цел',
     nothingToReturn: (skipped) => `возвращать нечего — ${skipped}`,
@@ -1403,6 +1404,7 @@ var RESUME = {
     noHello: (key3) => `${key3}: hello did not come — the record is intact, the watchdog will repeat the return; if you do not wait — ${via}`,
     stale: (key3) => `${key3}: the record went stale — ${via} will take the seat`,
     registerRefused: (text7) => `register refused — ${text7}`,
+    registerWaited: (seconds2) => `register waited out the source's rate limit (${seconds2} s) and stood`,
     othersInDir: (others2) => `the same directory holds records of other seats too: ${others2}`,
     notYours: () => 'the seat is not yours — iskron_channel(action="leave") will release it, the channel stays intact',
     nothingToReturn: (skipped) => `nothing to return — ${skipped}`,
@@ -2864,7 +2866,7 @@ function holdSocket(o) {
   const unsubscribePing = () => {
     diagnostics.unsubscribe?.(PING_CHANNEL, onPing);
   };
-  const stopWatch = () => {
+  const stopWatch2 = () => {
     if (watch2) clearInterval(watch2);
     watch2 = null;
   };
@@ -2873,7 +2875,7 @@ function holdSocket(o) {
     const startedAt = Date.now();
     const sock = namedSocket(o.url);
     ws = sock;
-    stopWatch();
+    stopWatch2();
     lastLife = startedAt;
     let gone = false;
     sock.addEventListener("ping", () => {
@@ -2908,7 +2910,7 @@ function holdSocket(o) {
       void dropped(c.code, typeof c.reason === "string" ? c.reason : "");
     });
     function watchLife(interval) {
-      stopWatch();
+      stopWatch2();
       if (!(interval > 0)) return;
       pingMs = interval;
       const every = Math.max(pingMs, 250);
@@ -2920,7 +2922,7 @@ function holdSocket(o) {
         if (stopped || ws !== sock || !runtimeSeesPings) return;
         const silent = now2 - lastLife;
         if (silent <= Math.max(SILENT_INTERVALS * pingMs + 1e3, SILENT_FLOOR_MS)) return;
-        stopWatch();
+        stopWatch2();
         (o.onHung ?? o.onNote)?.(words(CHANNEL).hung(Math.round(silent / 1e3), pingMs / 1e3));
         try {
           sock.close();
@@ -2935,13 +2937,13 @@ function holdSocket(o) {
       dead = true;
       stopped = true;
       if (retry) clearTimeout(retry);
-      stopWatch();
+      stopWatch2();
       unsubscribePing();
       cb(code2);
     }
     async function dropped(code2, reason = "") {
       if (stopped || ws !== sock) return;
-      stopWatch();
+      stopWatch2();
       if (handing) {
         const h = handing;
         handing = null;
@@ -2982,7 +2984,7 @@ function holdSocket(o) {
     close(reason = "held no more") {
       stopped = true;
       handing = null;
-      stopWatch();
+      stopWatch2();
       unsubscribePing();
       if (retry) clearTimeout(retry);
       retry = null;
@@ -3000,7 +3002,7 @@ function holdSocket(o) {
       }
       if (retry) clearTimeout(retry);
       retry = null;
-      stopWatch();
+      stopWatch2();
       handing = { onFrame, onGone };
     },
     send(text7, sent) {
@@ -8106,6 +8108,19 @@ var Door = class {
   }
 };
 
+// js/bridge/endedseats.ts
+var KEEP_MS = 10 * 6e4;
+var J = scoped(() => ({ ended: /* @__PURE__ */ new Map() }));
+function noteEndedSeat(raw) {
+  const id = typeof raw === "string" ? raw : "";
+  if (!id) return id;
+  const now2 = Date.now();
+  for (const [k, at3] of J.ended) if (now2 - at3 > KEEP_MS) J.ended.delete(k);
+  J.ended.set(id, now2);
+  return id;
+}
+var endedSince = (id, since) => !!id && (J.ended.get(id) ?? -1) >= since;
+
 // js/bridge/holdstate.ts
 var H2 = scoped(() => ({
   /** session dir the place is taken from (stand cwd), kept in the hold record for cwd resume (resume.ts) */
@@ -8167,6 +8182,10 @@ function noteTaken(a) {
 var stoppedSince = (before, key3) => H2.stopped.n !== before && H2.stopped.key === key3 ? H2.stopped.text : null;
 var stopsNow = () => H2.stopped.n;
 var stoppedDuring = (before) => H2.stopped.n !== before ? H2.stopped.text : null;
+var stopWatch = () => {
+  const before = stopsNow();
+  return () => stoppedDuring(before);
+};
 var stoppedInMove = () => H2.moveSince !== null && stoppedDuring(H2.moveSince) !== null;
 var E = {
   next: null,
@@ -8949,6 +8968,13 @@ async function resolveRealms(names2, list3) {
 var extras = scoped(() => /* @__PURE__ */ new Map());
 var keyOfPlace = (s2) => keyOf(s2.realm, s2.karta, s2.name ?? "");
 var extraPlaces = () => [...extras.values()];
+var besideSeats = () => state.places.map((place) => ({ place, id: heldIdOf(place) }));
+function heldIdOf(s2) {
+  const key3 = keyOfPlace(s2);
+  const beside = extras.get(key3);
+  if (beside) return beside.door.standingId;
+  return state.standing && keyOfPlace(state.standing) === key3 ? H2.door?.standingId ?? null : null;
+}
 var extraIn = (realm) => extraPlaces().find((p) => sameRealm(p.standing.realm, realm));
 function extraOf(realm, karta, name2) {
   const p = extraIn(realm);
@@ -9930,10 +9956,7 @@ var standingsInRealm = (r) => {
     (s2) => isObj(s2) && typeof s2.name === "string" && s2.name ? [s2.name] : []
   ) : [];
 };
-var openedConcurrently = (reply2) => {
-  const r = reply2?.result?.isError ? refusalOf(reply2) : null;
-  return !!r && !r.rule && r.status === 409;
-};
+var racedOpening = (r) => !!r && !r.rule && r.status === 409;
 
 // js/bridge/caseexit.ts
 var LEAVE_CAP_MS = Number(process.env[envName("CASE_LEAVE_MS")]) || 1500;
@@ -11133,6 +11156,553 @@ function withPlaceFields(args) {
   return { ...args, ...placeFields(args, true, String(args.action)) };
 }
 
+// js/shared/ratelimit.ts
+var RATE_LIMIT_WAIT_S = 60;
+var RESUME_MARGIN_S = 15;
+var RESUME_ANSWER_MS = (RATE_LIMIT_WAIT_S + RESUME_MARGIN_S) * 1e3;
+
+// js/bridge/standwords.ts
+var sw = () => words(STAND);
+function boardHeaders() {
+  const own = words(BOARD_HEADER);
+  return [
+    own,
+    LANGS.filter((l) => BOARD_HEADER[l] !== own).map((l) => BOARD_HEADER[l]).join(", ")
+  ];
+}
+function missWord(m, of) {
+  const w12 = words(STAND_MISS);
+  switch (m.why) {
+    case "none":
+      return w12.none();
+    case "args":
+      return w12.args(m.args.join(", "));
+    case "name":
+      return w12.name(m.asked, m.held);
+    case "satellite":
+      return w12.satellite(of ?? "?");
+    case "cwd":
+      return w12.cwd(m.cwd);
+    case "parked":
+      return w12.parked();
+    case "elsewhere":
+      return w12.elsewhere();
+  }
+}
+var needRealmKarta = (miss, of) => sw().needRealmKarta(miss ? ` ${missWord(miss, of)}` : "");
+
+// js/bridge/standmoves.ts
+var mw = () => words(STAND_MOVES);
+var standCall = (realm, karta, name2) => `${tool("stand")}(realm="${realm}", karta=${karta}${name2 ? `, name="${name2}"` : ""})`;
+function ledIn(realm) {
+  const prim = state.standing;
+  return prim && sameRealm(prim.realm, realm) ? prim : extraIn(realm)?.standing;
+}
+var STANDS_IN_REALM = "channel_already_stands_in_realm";
+async function releasePrior(realm, prior) {
+  const name2 = prior.name ?? "";
+  const beside = extraOf(realm, prior.karta, name2)?.door.key;
+  const args = { action: "revoke", realm, karta: String(prior.karta), standing: name2 };
+  if (beside) setRevokingBeside(beside, true);
+  const r = await callTool(tool("channel"), args).finally(() => {
+    if (beside) setRevokingBeside(beside, false);
+  });
+  if (!r.isError) {
+    if (beside) dropExtra(beside, holdWords().revokedOwn(), true, "own");
+    return { ok: true, note: mw().priorReleased(name2) };
+  }
+  return { ok: false, note: mw().priorKept(name2, short(r.text, 160), revokeCall(realm, prior)) };
+}
+var revokeCall = (realm, s2) => `${tool("channel")}(action="revoke", realm="${realm}", karta="${s2.karta}", standing="${s2.name ?? ""}")`;
+function besideHoldsMain(realm, prior, asked) {
+  const prim = state.standing;
+  if (!prim || !sameRealm(prim.realm, realm) || prim.name !== prior.name) return null;
+  const beside = extraPlaces().map((p) => p.standing);
+  if (!beside.length) return null;
+  return mw().besideHoldsMain(
+    prior.name ?? "",
+    asked,
+    beside.map((s2) => `${s2.name ?? ""} (${s2.realm})`).join(", "),
+    beside.map((s2) => revokeCall(s2.realm, s2)).join("; "),
+    standCall(realm, prior.karta, prior.name ?? "")
+  );
+}
+var REISSUE_MAX_S = 15;
+function reissueThrottled(r) {
+  if (!r.isError) return null;
+  const rule = r.refusal?.rule;
+  const hit = rule === "socket_reissue_throttled" || !rule && r.refusal?.status === 429 || r.text.includes("socket_reissue_throttled");
+  if (!hit) return null;
+  const said2 = Number(/retry in (\d+)\s*s/i.exec(r.text)?.[1] ?? NaN);
+  return Math.min(Math.max(Number.isFinite(said2) ? said2 : 10, 1), REISSUE_MAX_S);
+}
+async function awaitReissue(seconds2, held2, stopped) {
+  for (const end = Date.now() + seconds2 * 1e3; Date.now() < end; ) {
+    const stop2 = stopped();
+    if (stop2 || held2()) return { own: !stop2, stop: stop2 };
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const stop = stopped();
+  return { own: !stop && held2(), stop };
+}
+async function throughReissue(c, again, seat2, stopsBefore) {
+  const throttle = reissueThrottled(c);
+  if (!throttle) return { c, own: false, note: null };
+  const t0 = Date.now();
+  const { own, stop } = await awaitReissue(
+    throttle,
+    () => holdsStanding(seat2.realm, seat2.karta, seat2.name),
+    () => stoppedDuring(stopsBefore)
+  );
+  if (stop) return { c, own, note: null };
+  const seconds2 = Math.round((Date.now() - t0) / 1e3);
+  return { c: own ? c : await again(), own, note: mw().reissueWaited(seconds2, own) };
+}
+function yourStandingsMove(r, realm) {
+  const names2 = standingsInRealm(r.refusal);
+  if (!names2.length) return null;
+  const call = names2.map((n) => `${tool("stand")}(realm="${realm}", karta, name="${n}")`);
+  return { call: call.join("; "), name: names2.join(", ") };
+}
+function refusedWord(what, r, realm, afterConnect) {
+  if (r.refusal?.rule === STANDS_IN_REALM || r.text.includes(STANDS_IN_REALM)) {
+    const yours = yourStandingsMove(r, realm);
+    const led = yours || afterConnect !== void 0 ? void 0 : ledIn(realm);
+    const call = yours?.call ?? (led ? standCall(realm, led.karta, led.name ?? "") : "");
+    const board = `${tool("channel")}(action="list", realm="${realm}")`;
+    const leave = `${tool("channel")}(action="revoke", realm="${realm}", karta, standing=<${yours?.name ?? led?.name ?? "name"}>)`;
+    return mw().standsInRealm(realm, call, board, leave, !!yours);
+  }
+  return afterConnect ?? sw().refused(what, short(r.text));
+}
+
+// js/bridge/ratelimit.ts
+var RATE_LIMIT_TRIES = 3;
+function rateLimitedWait(r) {
+  if (!r.isError || r.refusal?.rule !== "rate_limited" || r.refusal.status !== 429) return null;
+  const said2 = r.refusal.data?.retry_after_secs;
+  const s2 = typeof said2 === "number" ? said2 : Number(said2);
+  return Number.isFinite(s2) && s2 > 0 ? s2 : null;
+}
+function registerMove(kind2, stopped = stopWatch()) {
+  const since = Date.now();
+  return { stopped, since, deadline: since + RATE_LIMIT_WAIT_S * 1e3, waits: kind2 === "returns" };
+}
+function seatIdOf(seat2) {
+  if (!seat2.id && seat2.place) seat2.id = heldIdOf(seat2.place);
+  return seat2.id;
+}
+var seatOfPlace = (place, main) => ({
+  id: heldIdOf(place),
+  main,
+  place
+});
+async function throughRateLimit(call, waitOf, move2, seat2) {
+  const ended = () => endedSince(seatIdOf(seat2), move2.since);
+  let waitS = 0;
+  let last = null;
+  for (let tries = 1; ; tries++) {
+    const stop = move2.stopped();
+    if (stop || ended()) return { r: last, waitS, stop, ended: !stop };
+    const r = last = await call();
+    const wait = seat2.main && move2.waits ? waitOf(r) : null;
+    if (wait === null || tries >= RATE_LIMIT_TRIES || Date.now() + wait * 1e3 > move2.deadline)
+      return { r, waitS, stop: null, ended: false };
+    const cut = await awaitReissue(wait, ended, move2.stopped);
+    if (cut.stop || cut.own) continue;
+    waitS += wait;
+  }
+}
+var throughRateLimitAnswer = (call, move2, seat2) => throughRateLimit(call, rateLimitedWait, move2, seat2);
+
+// js/bridge/deaf.ts
+var UNSIGNED = /* @__PURE__ */ new Set(["list", "leave", "close", "revoke", "?"]);
+function signedRealm(msg) {
+  if (msg?.method !== "tools/call" || msg.params?.name === tool("stand")) return null;
+  const a = msg.params?.arguments ?? {};
+  if (msg.params?.name === tool("channel") && UNSIGNED.has(String(a.action))) return null;
+  return typeof a.realm === "string" ? a.realm : null;
+}
+function deafPlaces() {
+  const s2 = state.standing;
+  if (!s2) return [];
+  const name2 = s2.name ?? "";
+  if (isParked(s2.realm, s2.karta, name2) || H2.unheard) return [s2, ...state.places];
+  const letGo3 = !ledKey() && H2.deafKey === keyOf(s2.realm, s2.karta, name2);
+  return letGo3 ? [s2, ...state.places, ...H2.deadPlaces] : [];
+}
+function deafPlaceIn(realm) {
+  if (typeof realm !== "string") return null;
+  return deafPlaces().find((p) => !otherRealm(realm, p.realm)) ?? null;
+}
+async function deafSeatTaken(p = deafPlaces()[0] ?? null) {
+  if (!p) return null;
+  const name2 = p.name ?? "";
+  const hearing = await askedHearing(p.realm, String(p.karta), name2);
+  if (hearing === "free") return null;
+  return hearing === "other" ? words(DEAF).takenByOther(name2) : words(DEAF).unknownHearing(name2);
+}
+async function deafRefusal(msg) {
+  const realm = signedRealm(msg);
+  if (H2.unheard && deafPlaceIn(realm)) await awaitHello(4e3);
+  const p = deafPlaceIn(realm);
+  const why = p ? await deafSeatTaken(p) : null;
+  return why ? words(DEAF).refusal(why) : null;
+}
+
+// js/bridge/satellite.ts
+import { randomBytes as randomBytes3 } from "node:crypto";
+import {
+  mkdirSync as mkdirSync11,
+  readFileSync as readFileSync20,
+  renameSync as renameSync11,
+  rmSync,
+  statSync as statSync6,
+  unlinkSync as unlinkSync15,
+  writeFileSync as writeFileSync12
+} from "node:fs";
+import { join as join16 } from "node:path";
+var SATELLITE_TTL_S = Number(process.env[envName("BRIDGE_SATELLITE_TTL")]) || 300;
+var sw2 = () => words(SATELLITE);
+var claimDir = () => join16(CFG.authDir, "satellites");
+var claimFile = (name2) => join16(claimDir(), `${name2.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
+var claims = scoped(() => /* @__PURE__ */ new Set());
+var allClaims = /* @__PURE__ */ new Map();
+var releaseOnExit = false;
+var LOCK_STALE_MS = 1e4;
+var LOCK_WAIT_MS = 3e3;
+function alive2(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+}
+function claimName(name2) {
+  const file2 = claimFile(name2);
+  let pid = 0;
+  try {
+    pid = Number(readFileSync20(file2, "utf8").trim());
+  } catch {
+  }
+  const me = sessionPid();
+  if (pid && pid !== me && alive2(pid)) return false;
+  writeFileSync12(file2, `${me}
+`, { mode: 384 });
+  if (!releaseOnExit) process.once("exit", releaseAllClaims);
+  releaseOnExit = true;
+  claims.add(file2);
+  allClaims.set(file2, me);
+  return true;
+}
+var dropClaim = (f, pid) => {
+  try {
+    if (Number(readFileSync20(f, "utf8").trim()) === pid) unlinkSync15(f);
+  } catch {
+  }
+  allClaims.delete(f);
+};
+function releaseSatelliteClaims() {
+  const me = sessionPid();
+  for (const f of claims) dropClaim(f, me);
+  claims.clear();
+}
+function releaseAllClaims() {
+  for (const [f, pid] of [...allClaims]) dropClaim(f, pid);
+}
+var LOCK_OWNER = "owner";
+function lockOwner(lock) {
+  try {
+    return readFileSync20(join16(lock, LOCK_OWNER), "utf8").trim();
+  } catch {
+    return null;
+  }
+}
+function abandoned(lock, owner) {
+  const pid = owner ? Number(owner.split(" ")[0]) : 0;
+  if (pid && !alive2(pid)) return true;
+  try {
+    return Date.now() - statSync6(lock).mtimeMs > LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+function takeLock(lock, owner) {
+  const away = `${lock}.${process.pid}-${randomBytes3(6).toString("hex")}`;
+  try {
+    renameSync11(lock, away);
+  } catch {
+    return null;
+  }
+  if (lockOwner(away) !== owner)
+    return `the claims lock of another bridge was taken by mistake and is left as ${away}`;
+  rmSync(away, { recursive: true, force: true });
+  return null;
+}
+async function underClaimLock(fn) {
+  const lock = join16(claimDir(), ".lock");
+  const token = `${process.pid} ${randomBytes3(8).toString("hex")}`;
+  let fault = null;
+  try {
+    mkdirSync11(claimDir(), { recursive: true, mode: 448 });
+  } catch (e) {
+    fault = e.message;
+  }
+  for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
+    try {
+      mkdirSync11(lock);
+    } catch (e) {
+      if (e.code !== "EEXIST") fault = e.message;
+      else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
+      else {
+        const owner = lockOwner(lock);
+        if (abandoned(lock, owner)) fault = takeLock(lock, owner);
+        if (!fault) await new Promise((r) => setTimeout(r, 20));
+      }
+      continue;
+    }
+    try {
+      writeFileSync12(join16(lock, LOCK_OWNER), `${token}
+`, { mode: 384 });
+    } catch (e) {
+      fault = e.message;
+      rmSync(lock, { recursive: true, force: true });
+    }
+    break;
+  }
+  if (fault) {
+    log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
+    return [fn(() => true), fault];
+  }
+  let unwritten = null;
+  let value;
+  try {
+    value = fn((name2) => {
+      try {
+        return claimName(name2);
+      } catch (e) {
+        unwritten = `claim not written: ${e.message}`;
+        log(`satellite ${unwritten}`);
+        return true;
+      }
+    });
+  } catch (e) {
+    if (lockOwner(lock) === token) takeLock(lock, token);
+    throw e;
+  }
+  const lost = lockOwner(lock) === token ? takeLock(lock, token) : `the claims lock ${lock} is no longer ours — left as it is; another bridge may have picked at the same time`;
+  if (lost) log(`satellite ${lost}`);
+  return [value, unwritten ?? lost];
+}
+function pickSatellite(entries2, of, karta, led, claim = () => true) {
+  const address = of.startsWith("@") && of.includes(":") ? of : null;
+  const base = address ? nameOf(address) : of.replace(/^@/, "");
+  const fault = base ? nameFault(base) : sw2().empty();
+  if (fault) return { ok: false, refusal: sw2().notSeatName(of, fault) };
+  const callers = entries2.filter(
+    (e) => address ? e.address === address : nameOf(e.address) === base
+  );
+  if (!callers.length) return { ok: false, refusal: sw2().noCaller(of) };
+  const same2 = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
+  if (same2.length !== 1) return { ok: false, refusal: sw2().ambiguous(callers.length, base) };
+  const caller = same2[0].address;
+  const callerKarta = same2[0].karta;
+  const callerId = same2[0].id;
+  const notes = [];
+  if (led && isSatelliteOf(base, led)) {
+    const word3 = sw2().alreadyHolds(led);
+    log(word3);
+    notes.push(word3);
+    return { ok: true, name: led, caller, callerKarta, callerId, notes };
+  }
+  const taken2 = new Set(entries2.map((e) => nameOf(e.address)));
+  for (let n = 1; n <= 99; n++) {
+    const name2 = satelliteName(base, n);
+    if (taken2.has(name2) || !claim(name2)) continue;
+    if (!name2.startsWith(`${base}.`)) notes.push(sw2().nameCut(base, n, NAME_MAX, name2));
+    return { ok: true, name: name2, caller, callerKarta, callerId, notes };
+  }
+  return { ok: false, refusal: sw2().allTaken(caller) };
+}
+async function satelliteGate(a, realm, karta, asked) {
+  const of = typeof a.satellite_of === "string" ? a.satellite_of.trim() : "";
+  const refuse2 = (refusal2) => ({ ok: false, refusal: refusal2 });
+  if (CFG.satellite && !of) return refuse2(sw2().needSatelliteOf());
+  if (!of) return null;
+  if (!CFG.satellite) return refuse2(sw2().notSatellite());
+  if (asked || a.take === true || typeof a.room === "string" && a.room.trim())
+    return refuse2(sw2().derivesName());
+  const b = await callTool(tool("channel"), { action: "list", realm });
+  if (b.isError) return refuse2(sw2().boardUnread(short(b.text)));
+  const s2 = state.standing;
+  const led = s2 && !otherRealm(s2.realm, realm) ? s2.name ?? null : null;
+  const { entries: entries2 } = readBoard(b);
+  const [pick3, unsure] = await underClaimLock(
+    (claim) => pickSatellite(entries2, of, karta, led, claim)
+  );
+  if (!pick3.ok) return pick3;
+  if (unsure && pick3.name !== led) pick3.notes.push(sw2().claimsUnsure(unsure, pick3.name));
+  if (!pick3.callerId) {
+    const k = await callTool(tool("channel"), { action: "list", realm, karta: pick3.callerKarta });
+    if (!k.isError)
+      pick3.callerId = readBoard(k).entries.find((e) => e.address === pick3.caller)?.id ?? null;
+  }
+  noteSatelliteOf(pick3.caller, pick3.callerId);
+  pick3.notes.push(sw2().seat(pick3.caller, normKarta(karta), SATELLITE_TTL_S));
+  if (!pick3.callerId) pick3.notes.push(sw2().noCallerId(pick3.caller));
+  return pick3;
+}
+var ttlRefused = (a) => a.refusal?.rule ? a.refusal.rule === "ttl_out_of_range" : /ttl/i.test(a.text) || /(^|\D)4\d\d(\D|$)/.test(a.text);
+var PLACE_ACTIONS2 = /* @__PURE__ */ new Set(["connect", "mint", "register", "revoke"]);
+function satelliteChannelRefusal(args) {
+  if (!CFG.satellite) return null;
+  const action = String(args.action ?? "");
+  if (!PLACE_ACTIONS2.has(action)) return null;
+  const s2 = state.standing;
+  const own = s2?.name ?? "";
+  if (!s2 || !SUB_RE.test(own)) return sw2().bypass(action);
+  const sameRealm2 = !otherRealm(args.realm, s2.realm);
+  const karta = normKarta(args.karta ?? s2.karta);
+  const target = action === "revoke" ? args.channel != null ? null : String(args.standing ?? "") : String(args.name ?? "").trim();
+  const mine = target != null && (target === own || target.endsWith(`:${own}`) || action === "revoke" && target === "mine");
+  if (sameRealm2 && karta === normKarta(s2.karta) && mine) return null;
+  return sw2().onlyOwn(action, own, normKarta(s2.karta), s2.realm);
+}
+var satelliteListenWord = () => sw2().listen(SATELLITE_TTL_S);
+
+// js/bridge/leave.ts
+var DEAF_MS = Number(process.env[envName("BRIDGE_DEAF_MS")]) || 15 * 6e4;
+var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
+var clearedLine = (st) => st.ok ? words(LEAVE).cleared() : words(LEAVE).notCleared(st.body);
+var deafWithoutListener = () => !notifiedClient();
+var K = scoped(() => ({
+  /** Busy line cleared by the leave — restored with the seat. */
+  status: "",
+  /** Busy lines of seats in other graphs cleared by the same leave — each to its seat (#5838). */
+  beside: []
+}));
+async function leaveStanding(reason, byWord = false) {
+  const W4 = words(LEAVE);
+  if (byWord && CFG.satellite) return leaveSatellite(reason);
+  const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
+  const leaving = heldPlaces().map((p) => p.key);
+  if (leaving.length) await flushUsage(usagePlace());
+  const status = publishedStatus();
+  const url = statusAddress()?.url ?? null;
+  const live2 = !!url && liveOnDispatcher(url);
+  const kept3 = !live2 && !!url && onDispatcher(url);
+  const early = live2 ? await publishStatus("", void 0, true) : null;
+  const parked = parkStanding(reason);
+  if (!parked) return W4.notHolding();
+  K.beside = beside;
+  K.status = status;
+  const st = early ?? (kept3 ? null : await publishStatus("", void 0, true));
+  if ((st?.ok ?? true) && K.status) rememberStatus(K.status);
+  if (byWord) for (const k of leaving) markLeft(k, true);
+  const line = st ? clearedLine(st) : W4.keptOnBoard();
+  log(`left the standing: ${reason}; ${line}`);
+  const which2 = leaving.length > 1 ? W4.seats(leaving.join(", ")) : W4.seat(parked);
+  return byWord ? W4.leftByWord(which2, line) : W4.left(which2, line);
+}
+async function leaveSatellite(reason) {
+  const W4 = words(LEAVE);
+  const place = heldPlaces()[0]?.key;
+  if (!place) return W4.notHolding();
+  await flushUsage(usagePlace());
+  const url = statusAddress()?.url ?? null;
+  const kept3 = !!url && onDispatcher(url) && !liveOnDispatcher(url);
+  const st = kept3 ? null : await publishStatus("", void 0, true);
+  releaseStanding(`${reason}: ${W4.satelliteReleased()}`, true, false, true);
+  releaseSatelliteClaims();
+  const line = st ? clearedLine(st) : W4.keptOnBoard();
+  log(`left the satellite place: ${reason}; ${line}`);
+  return W4.leftSatellite(place, line);
+}
+function returnToStanding(how2) {
+  if (!resumeStanding()) return false;
+  for (const p of heldPlaces()) markLeft(p.key, false);
+  const text7 = words(LEAVE).returned(how2, K.status);
+  log(text7);
+  if (K.status) {
+    const line = K.status;
+    K.status = "";
+    void publishStatus(line).then((st) => {
+      if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
+    });
+  }
+  for (const k of K.beside.splice(0))
+    void publishStatus(k.text, k.realm).then((st) => {
+      if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
+    });
+  emit({
+    jsonrpc: "2.0",
+    method: "notifications/message",
+    params: { level: "info", logger: LOGGERS.channel, data: { kind: "note", text: text7 } }
+  });
+  return true;
+}
+async function heardOnReturn() {
+  if (!H2.unheard || await awaitHello(4e3)) return;
+  const why = words(LEAVE).noHello();
+  log(why);
+  H2.deafKey = H2.currentKey;
+  releaseStanding(why, false, false, true);
+}
+function startDeafnessWatch() {
+  onListenerAttached(
+    () => setTimeout(() => {
+      if (localListeners() > 0) returnToStanding(words(LEAVE).watchdogAttached());
+    }, 300).unref()
+  );
+  setInterval(() => {
+    const since = listenerIdleSince();
+    if (since == null || !deafWithoutListener()) return;
+    if (Date.now() - since < DEAF_MS) return;
+    const s2 = state.standing;
+    if (!s2 || !holdsStanding(s2.realm, s2.karta, s2.name ?? "")) return;
+    const min = Math.round(DEAF_MS / 6e4);
+    void leaveStanding(words(LEAVE).nobodyListens(min));
+  }, TICK_MS).unref();
+}
+function namesOwnSeat(standing) {
+  const s2 = state.standing;
+  if (!s2) return false;
+  const address = H2.door?.address ?? null;
+  if (standing === ledKey() || standing === address) return true;
+  if (standing.startsWith("@")) return false;
+  return !!s2.name && nameOf(standing) === s2.name;
+}
+function localLeave(msg) {
+  if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
+  if (msg.params?.arguments?.action !== "leave") return null;
+  const realm = msg.params.arguments.realm;
+  const answer3 = (text7, isError = false) => ({
+    jsonrpc: "2.0",
+    id: msg.id,
+    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text7 }] }
+  });
+  return (async () => {
+    const W4 = words(LEAVE);
+    await resolveAgainstLed(realm);
+    const unresolved2 = unresolvedRefusal(realm);
+    if (unresolved2) return answer3(unresolved2, true);
+    const beside = besideKeyIn(realm);
+    if (beside)
+      return answer3(W4.refusedBeside(beside, String(ledKey()), state.standing?.realm), true);
+    if (state.standing && otherRealm(realm, state.standing.realm))
+      return answer3(W4.refusedOther(String(realm), String(ledKey()), state.standing.realm), true);
+    const named2 = msg.params.arguments.standing;
+    if (typeof named2 === "string" && named2.trim() && !namesOwnSeat(named2.trim()))
+      return answer3(W4.refusedNamed(named2.trim(), H2.door?.address ?? ledKey()), true);
+    return answer3(await leaveStanding(W4.byDoerWord(), true));
+  })();
+}
+
+// js/bridge/besideback.ts
+import { existsSync as existsSync5, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
+import { join as join17 } from "node:path";
+
 // js/shared/spawned-for.ts
 var sameSpawn = (a, b) => a.invite === b.invite && a.room === b.room;
 var invalid = () => {
@@ -11299,7 +11869,8 @@ function passing(reply2) {
   const r = refusalOf(reply2);
   const status = r?.status ?? 0;
   const server = status >= 500 && status < 600;
-  if (r?.rule) return BUSY_RULES.has(r.rule) && (server || status === 429);
+  if (r?.rule)
+    return BUSY_RULES.has(r.rule) && (server || status === 429) || r.rule === "rate_limited" && status === 429;
   return (!status || server) && !seatIsGone(reply2);
 }
 function claimResult(a, reply2, replay2 = false) {
@@ -11323,393 +11894,66 @@ function refuseUnbound(msg) {
   return true;
 }
 
-// js/bridge/deaf.ts
-var UNSIGNED = /* @__PURE__ */ new Set(["list", "leave", "close", "revoke", "?"]);
-function signedRealm(msg) {
-  if (msg?.method !== "tools/call" || msg.params?.name === tool("stand")) return null;
-  const a = msg.params?.arguments ?? {};
-  if (msg.params?.name === tool("channel") && UNSIGNED.has(String(a.action))) return null;
-  return typeof a.realm === "string" ? a.realm : null;
-}
-function deafPlaces() {
-  const s2 = state.standing;
-  if (!s2) return [];
-  const name2 = s2.name ?? "";
-  if (isParked(s2.realm, s2.karta, name2) || H2.unheard) return [s2, ...state.places];
-  const letGo3 = !ledKey() && H2.deafKey === keyOf(s2.realm, s2.karta, name2);
-  return letGo3 ? [s2, ...state.places, ...H2.deadPlaces] : [];
-}
-function deafPlaceIn(realm) {
-  if (typeof realm !== "string") return null;
-  return deafPlaces().find((p) => !otherRealm(realm, p.realm)) ?? null;
-}
-async function deafSeatTaken(p = deafPlaces()[0] ?? null) {
-  if (!p) return null;
-  const name2 = p.name ?? "";
-  const hearing = await askedHearing(p.realm, String(p.karta), name2);
-  if (hearing === "free") return null;
-  return hearing === "other" ? words(DEAF).takenByOther(name2) : words(DEAF).unknownHearing(name2);
-}
-async function deafRefusal(msg) {
-  const realm = signedRealm(msg);
-  if (H2.unheard && deafPlaceIn(realm)) await awaitHello(4e3);
-  const p = deafPlaceIn(realm);
-  const why = p ? await deafSeatTaken(p) : null;
-  return why ? words(DEAF).refusal(why) : null;
-}
-
-// js/bridge/satellite.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
-import {
-  mkdirSync as mkdirSync11,
-  readFileSync as readFileSync20,
-  renameSync as renameSync11,
-  rmSync,
-  statSync as statSync6,
-  unlinkSync as unlinkSync15,
-  writeFileSync as writeFileSync12
-} from "node:fs";
-import { join as join16 } from "node:path";
-var SATELLITE_TTL_S = Number(process.env[envName("BRIDGE_SATELLITE_TTL")]) || 300;
-var sw = () => words(SATELLITE);
-var claimDir = () => join16(CFG.authDir, "satellites");
-var claimFile = (name2) => join16(claimDir(), `${name2.replace(/[^A-Za-z0-9._-]+/g, "_")}.claim`);
-var claims = scoped(() => /* @__PURE__ */ new Set());
-var allClaims = /* @__PURE__ */ new Map();
-var releaseOnExit = false;
-var LOCK_STALE_MS = 1e4;
-var LOCK_WAIT_MS = 3e3;
-function alive2(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return e.code === "EPERM";
+// js/bridge/registergate.ts
+var MAIN_SEAT = Object.freeze({ id: null, main: true });
+var gateShut = (move2, seat2) => move2.stopped() ?? (endedSince(seatIdOf(seat2), move2.since) ? "the seat ended in this move" : null);
+async function onceMoreIfRaced(first2, raced, claim, move2, seat2, send3) {
+  if (claim || !raced(first2)) return first2;
+  const shut = gateShut(move2, seat2);
+  if (shut) {
+    log(`register refused by a concurrent opening (409, no rule) — not registered again: ${shut}`);
+    return first2;
   }
+  log("register refused by a concurrent opening (409, no rule) — registering again once");
+  return send3();
 }
-function claimName(name2) {
-  const file2 = claimFile(name2);
-  let pid = 0;
-  try {
-    pid = Number(readFileSync20(file2, "utf8").trim());
-  } catch {
-  }
-  const me = sessionPid();
-  if (pid && pid !== me && alive2(pid)) return false;
-  writeFileSync12(file2, `${me}
-`, { mode: 384 });
-  if (!releaseOnExit) process.once("exit", releaseAllClaims);
-  releaseOnExit = true;
-  claims.add(file2);
-  allClaims.set(file2, me);
-  return true;
+async function registerByCall(move2, seat2, args) {
+  const shut = gateShut(move2, seat2);
+  if (shut) return { isError: true, text: shut };
+  const send3 = () => callTool(tool("channel"), { ...args, action: "register" });
+  const claim = !!(args.spawned_for || launchBasis(args));
+  const raced = (a) => a.isError && racedOpening(a.refusal);
+  return onceMoreIfRaced(await send3(), raced, claim, move2, seat2, send3);
 }
-var dropClaim = (f, pid) => {
-  try {
-    if (Number(readFileSync20(f, "utf8").trim()) === pid) unlinkSync15(f);
-  } catch {
-  }
-  allClaims.delete(f);
-};
-function releaseSatelliteClaims() {
-  const me = sessionPid();
-  for (const f of claims) dropClaim(f, me);
-  claims.clear();
+async function registerRaw(move2, seat2, place, freshSkills) {
+  if (gateShut(move2, seat2) || claimRefusal()) return null;
+  const send3 = () => postRegister(place, freshSkills);
+  const first2 = await send3();
+  const claim = !!registeredBasis(place ?? {}).spawned_for;
+  const raced = (m) => !!m?.result?.isError && racedOpening(refusalOf(m));
+  return onceMoreIfRaced(first2, raced, claim, move2, seat2, send3);
 }
-function releaseAllClaims() {
-  for (const [f, pid] of [...allClaims]) dropClaim(f, pid);
-}
-var LOCK_OWNER = "owner";
-function lockOwner(lock) {
-  try {
-    return readFileSync20(join16(lock, LOCK_OWNER), "utf8").trim();
-  } catch {
-    return null;
-  }
-}
-function abandoned(lock, owner) {
-  const pid = owner ? Number(owner.split(" ")[0]) : 0;
-  if (pid && !alive2(pid)) return true;
-  try {
-    return Date.now() - statSync6(lock).mtimeMs > LOCK_STALE_MS;
-  } catch {
-    return false;
-  }
-}
-function takeLock(lock, owner) {
-  const away = `${lock}.${process.pid}-${randomBytes3(6).toString("hex")}`;
-  try {
-    renameSync11(lock, away);
-  } catch {
-    return null;
-  }
-  if (lockOwner(away) !== owner)
-    return `the claims lock of another bridge was taken by mistake and is left as ${away}`;
-  rmSync(away, { recursive: true, force: true });
-  return null;
-}
-async function underClaimLock(fn) {
-  const lock = join16(claimDir(), ".lock");
-  const token = `${process.pid} ${randomBytes3(8).toString("hex")}`;
-  let fault = null;
-  try {
-    mkdirSync11(claimDir(), { recursive: true, mode: 448 });
-  } catch (e) {
-    fault = e.message;
-  }
-  for (const end = Date.now() + LOCK_WAIT_MS; !fault; ) {
-    try {
-      mkdirSync11(lock);
-    } catch (e) {
-      if (e.code !== "EEXIST") fault = e.message;
-      else if (Date.now() > end) fault = `the claims lock ${lock} is held too long`;
-      else {
-        const owner = lockOwner(lock);
-        if (abandoned(lock, owner)) fault = takeLock(lock, owner);
-        if (!fault) await new Promise((r) => setTimeout(r, 20));
+async function postRegister(place, freshSkills) {
+  if (claimRefusal()) return null;
+  const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
+  let reply2 = null;
+  const basis = launchBasis({ ...place });
+  rememberBasis({ ...place }, basis);
+  const arguments_ = {
+    ...place,
+    ...placeFields(place ?? {}, freshSkills),
+    ...registeredBasis(place ?? {}),
+    action: "register"
+  };
+  await post2(
+    {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name: tool("channel"), arguments: arguments_ }
+    },
+    (m) => {
+      if (m.id === id) {
+        m = claimResult(arguments_, m, true);
+        reply2 = m;
+        if (!m.error && !m.result?.isError && place) noteSkills(place, arguments_.attrs.skills);
       }
-      continue;
     }
-    try {
-      writeFileSync12(join16(lock, LOCK_OWNER), `${token}
-`, { mode: 384 });
-    } catch (e) {
-      fault = e.message;
-      rmSync(lock, { recursive: true, force: true });
-    }
-    break;
-  }
-  if (fault) {
-    log(`satellite claims unavailable — the board alone picks the name: ${fault}`);
-    return [fn(() => true), fault];
-  }
-  let unwritten = null;
-  let value;
-  try {
-    value = fn((name2) => {
-      try {
-        return claimName(name2);
-      } catch (e) {
-        unwritten = `claim not written: ${e.message}`;
-        log(`satellite ${unwritten}`);
-        return true;
-      }
-    });
-  } catch (e) {
-    if (lockOwner(lock) === token) takeLock(lock, token);
-    throw e;
-  }
-  const lost = lockOwner(lock) === token ? takeLock(lock, token) : `the claims lock ${lock} is no longer ours — left as it is; another bridge may have picked at the same time`;
-  if (lost) log(`satellite ${lost}`);
-  return [value, unwritten ?? lost];
-}
-function pickSatellite(entries2, of, karta, led, claim = () => true) {
-  const address = of.startsWith("@") && of.includes(":") ? of : null;
-  const base = address ? nameOf(address) : of.replace(/^@/, "");
-  const fault = base ? nameFault(base) : sw().empty();
-  if (fault) return { ok: false, refusal: sw().notSeatName(of, fault) };
-  const callers = entries2.filter(
-    (e) => address ? e.address === address : nameOf(e.address) === base
   );
-  if (!callers.length) return { ok: false, refusal: sw().noCaller(of) };
-  const same2 = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
-  if (same2.length !== 1) return { ok: false, refusal: sw().ambiguous(callers.length, base) };
-  const caller = same2[0].address;
-  const callerKarta = same2[0].karta;
-  const callerId = same2[0].id;
-  const notes = [];
-  if (led && isSatelliteOf(base, led)) {
-    const word3 = sw().alreadyHolds(led);
-    log(word3);
-    notes.push(word3);
-    return { ok: true, name: led, caller, callerKarta, callerId, notes };
-  }
-  const taken2 = new Set(entries2.map((e) => nameOf(e.address)));
-  for (let n = 1; n <= 99; n++) {
-    const name2 = satelliteName(base, n);
-    if (taken2.has(name2) || !claim(name2)) continue;
-    if (!name2.startsWith(`${base}.`)) notes.push(sw().nameCut(base, n, NAME_MAX, name2));
-    return { ok: true, name: name2, caller, callerKarta, callerId, notes };
-  }
-  return { ok: false, refusal: sw().allTaken(caller) };
-}
-async function satelliteGate(a, realm, karta, asked) {
-  const of = typeof a.satellite_of === "string" ? a.satellite_of.trim() : "";
-  const refuse2 = (refusal2) => ({ ok: false, refusal: refusal2 });
-  if (CFG.satellite && !of) return refuse2(sw().needSatelliteOf());
-  if (!of) return null;
-  if (!CFG.satellite) return refuse2(sw().notSatellite());
-  if (asked || a.take === true || typeof a.room === "string" && a.room.trim())
-    return refuse2(sw().derivesName());
-  const b = await callTool(tool("channel"), { action: "list", realm });
-  if (b.isError) return refuse2(sw().boardUnread(short(b.text)));
-  const s2 = state.standing;
-  const led = s2 && !otherRealm(s2.realm, realm) ? s2.name ?? null : null;
-  const { entries: entries2 } = readBoard(b);
-  const [pick3, unsure] = await underClaimLock(
-    (claim) => pickSatellite(entries2, of, karta, led, claim)
-  );
-  if (!pick3.ok) return pick3;
-  if (unsure && pick3.name !== led) pick3.notes.push(sw().claimsUnsure(unsure, pick3.name));
-  if (!pick3.callerId) {
-    const k = await callTool(tool("channel"), { action: "list", realm, karta: pick3.callerKarta });
-    if (!k.isError)
-      pick3.callerId = readBoard(k).entries.find((e) => e.address === pick3.caller)?.id ?? null;
-  }
-  noteSatelliteOf(pick3.caller, pick3.callerId);
-  pick3.notes.push(sw().seat(pick3.caller, normKarta(karta), SATELLITE_TTL_S));
-  if (!pick3.callerId) pick3.notes.push(sw().noCallerId(pick3.caller));
-  return pick3;
-}
-var ttlRefused = (a) => a.refusal?.rule ? a.refusal.rule === "ttl_out_of_range" : /ttl/i.test(a.text) || /(^|\D)4\d\d(\D|$)/.test(a.text);
-var PLACE_ACTIONS2 = /* @__PURE__ */ new Set(["connect", "mint", "register", "revoke"]);
-function satelliteChannelRefusal(args) {
-  if (!CFG.satellite) return null;
-  const action = String(args.action ?? "");
-  if (!PLACE_ACTIONS2.has(action)) return null;
-  const s2 = state.standing;
-  const own = s2?.name ?? "";
-  if (!s2 || !SUB_RE.test(own)) return sw().bypass(action);
-  const sameRealm2 = !otherRealm(args.realm, s2.realm);
-  const karta = normKarta(args.karta ?? s2.karta);
-  const target = action === "revoke" ? args.channel != null ? null : String(args.standing ?? "") : String(args.name ?? "").trim();
-  const mine = target != null && (target === own || target.endsWith(`:${own}`) || action === "revoke" && target === "mine");
-  if (sameRealm2 && karta === normKarta(s2.karta) && mine) return null;
-  return sw().onlyOwn(action, own, normKarta(s2.karta), s2.realm);
-}
-var satelliteListenWord = () => sw().listen(SATELLITE_TTL_S);
-
-// js/bridge/leave.ts
-var DEAF_MS = Number(process.env[envName("BRIDGE_DEAF_MS")]) || 15 * 6e4;
-var TICK_MS = Math.min(6e4, Math.max(200, Math.floor(DEAF_MS / 5)));
-var clearedLine = (st) => st.ok ? words(LEAVE).cleared() : words(LEAVE).notCleared(st.body);
-var deafWithoutListener = () => !notifiedClient();
-var K = scoped(() => ({
-  /** Busy line cleared by the leave — restored with the seat. */
-  status: "",
-  /** Busy lines of seats in other graphs cleared by the same leave — each to its seat (#5838). */
-  beside: []
-}));
-async function leaveStanding(reason, byWord = false) {
-  const W4 = words(LEAVE);
-  if (byWord && CFG.satellite) return leaveSatellite(reason);
-  const beside = heldPlaces().filter((p) => !p.primary).map((p) => ({ realm: p.realm, text: readHoldRecord(p.key)?.status ?? "" })).filter((k) => k.text);
-  const leaving = heldPlaces().map((p) => p.key);
-  if (leaving.length) await flushUsage(usagePlace());
-  const status = publishedStatus();
-  const url = statusAddress()?.url ?? null;
-  const live2 = !!url && liveOnDispatcher(url);
-  const kept3 = !live2 && !!url && onDispatcher(url);
-  const early = live2 ? await publishStatus("", void 0, true) : null;
-  const parked = parkStanding(reason);
-  if (!parked) return W4.notHolding();
-  K.beside = beside;
-  K.status = status;
-  const st = early ?? (kept3 ? null : await publishStatus("", void 0, true));
-  if ((st?.ok ?? true) && K.status) rememberStatus(K.status);
-  if (byWord) for (const k of leaving) markLeft(k, true);
-  const line = st ? clearedLine(st) : W4.keptOnBoard();
-  log(`left the standing: ${reason}; ${line}`);
-  const which2 = leaving.length > 1 ? W4.seats(leaving.join(", ")) : W4.seat(parked);
-  return byWord ? W4.leftByWord(which2, line) : W4.left(which2, line);
-}
-async function leaveSatellite(reason) {
-  const W4 = words(LEAVE);
-  const place = heldPlaces()[0]?.key;
-  if (!place) return W4.notHolding();
-  await flushUsage(usagePlace());
-  const url = statusAddress()?.url ?? null;
-  const kept3 = !!url && onDispatcher(url) && !liveOnDispatcher(url);
-  const st = kept3 ? null : await publishStatus("", void 0, true);
-  releaseStanding(`${reason}: ${W4.satelliteReleased()}`, true, false, true);
-  releaseSatelliteClaims();
-  const line = st ? clearedLine(st) : W4.keptOnBoard();
-  log(`left the satellite place: ${reason}; ${line}`);
-  return W4.leftSatellite(place, line);
-}
-function returnToStanding(how2) {
-  if (!resumeStanding()) return false;
-  for (const p of heldPlaces()) markLeft(p.key, false);
-  const text7 = words(LEAVE).returned(how2, K.status);
-  log(text7);
-  if (K.status) {
-    const line = K.status;
-    K.status = "";
-    void publishStatus(line).then((st) => {
-      if (!st.ok) log(`busy line not restored after the return: ${st.body}`);
-    });
-  }
-  for (const k of K.beside.splice(0))
-    void publishStatus(k.text, k.realm).then((st) => {
-      if (!st.ok) log(`busy line of ${k.realm} not restored after the return: ${st.body}`);
-    });
-  emit({
-    jsonrpc: "2.0",
-    method: "notifications/message",
-    params: { level: "info", logger: LOGGERS.channel, data: { kind: "note", text: text7 } }
-  });
-  return true;
-}
-async function heardOnReturn() {
-  if (!H2.unheard || await awaitHello(4e3)) return;
-  const why = words(LEAVE).noHello();
-  log(why);
-  H2.deafKey = H2.currentKey;
-  releaseStanding(why, false, false, true);
-}
-function startDeafnessWatch() {
-  onListenerAttached(
-    () => setTimeout(() => {
-      if (localListeners() > 0) returnToStanding(words(LEAVE).watchdogAttached());
-    }, 300).unref()
-  );
-  setInterval(() => {
-    const since = listenerIdleSince();
-    if (since == null || !deafWithoutListener()) return;
-    if (Date.now() - since < DEAF_MS) return;
-    const s2 = state.standing;
-    if (!s2 || !holdsStanding(s2.realm, s2.karta, s2.name ?? "")) return;
-    const min = Math.round(DEAF_MS / 6e4);
-    void leaveStanding(words(LEAVE).nobodyListens(min));
-  }, TICK_MS).unref();
-}
-function namesOwnSeat(standing) {
-  const s2 = state.standing;
-  if (!s2) return false;
-  const address = H2.door?.address ?? null;
-  if (standing === ledKey() || standing === address) return true;
-  if (standing.startsWith("@")) return false;
-  return !!s2.name && nameOf(standing) === s2.name;
-}
-function localLeave(msg) {
-  if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
-  if (msg.params?.arguments?.action !== "leave") return null;
-  const realm = msg.params.arguments.realm;
-  const answer3 = (text7, isError = false) => ({
-    jsonrpc: "2.0",
-    id: msg.id,
-    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text7 }] }
-  });
-  return (async () => {
-    const W4 = words(LEAVE);
-    await resolveAgainstLed(realm);
-    const unresolved2 = unresolvedRefusal(realm);
-    if (unresolved2) return answer3(unresolved2, true);
-    const beside = besideKeyIn(realm);
-    if (beside)
-      return answer3(W4.refusedBeside(beside, String(ledKey()), state.standing?.realm), true);
-    if (state.standing && otherRealm(realm, state.standing.realm))
-      return answer3(W4.refusedOther(String(realm), String(ledKey()), state.standing.realm), true);
-    const named2 = msg.params.arguments.standing;
-    if (typeof named2 === "string" && named2.trim() && !namesOwnSeat(named2.trim()))
-      return answer3(W4.refusedNamed(named2.trim(), H2.door?.address ?? ledKey()), true);
-    return answer3(await leaveStanding(W4.byDoerWord(), true));
-  })();
+  return reply2;
 }
 
 // js/bridge/besideback.ts
-import { existsSync as existsSync5, readdirSync as readdirSync8, readFileSync as readFileSync21 } from "node:fs";
-import { join as join17 } from "node:path";
 function besideRecords(url, primary) {
   const dir2 = standingsDirOf(CFG.authDir);
   if (!existsSync5(dir2)) return [];
@@ -11726,17 +11970,33 @@ function besideRecords(url, primary) {
   }
   return out7;
 }
+var listedAs = (hello, rec6, primary) => (Array.isArray(hello?.standings) ? hello.standings : []).filter(
+  (e) => typeof e.realm === "string" && !sameRealm(e.realm, primary.realm) && String(e.standing ?? "").replace(/^.*:/, "") === rec6.name && (e.karta_seq == null || String(e.karta_seq) === String(rec6.karta))
+);
+function idFromHello(hello, rec6, primary) {
+  const fits2 = listedAs(hello, rec6, primary).filter((e) => sameRealm(e.realm, rec6.realm));
+  const id = fits2.length === 1 ? fits2[0]?.standing_id : null;
+  return typeof id === "string" && id ? id : null;
+}
 async function resolveRecord(hello, rec6, primary) {
   if (resolvedRealm(rec6.realm)) return;
-  const listed = Array.isArray(hello?.standings) ? hello.standings : [];
-  const fits2 = listed.filter(
-    (e) => typeof e.realm === "string" && !sameRealm(e.realm, primary.realm) && String(e.standing ?? "").replace(/^.*:/, "") === rec6.name && (e.karta_seq == null || String(e.karta_seq) === String(rec6.karta))
-  );
+  const fits2 = listedAs(hello, rec6, primary);
   if (fits2.length === 1 && resolvedRealm(primary.realm))
     learnRealm(rec6.realm, String(fits2[0].realm));
   else await resolveAgainstLed(rec6.realm);
 }
-async function besideBack(url, primary) {
+var registerRecord = (rec6, move2, seat2) => throughRateLimit(
+  () => registerByCall(move2, seat2, {
+    realm: rec6.realm,
+    karta: rec6.karta,
+    name: rec6.name,
+    ...placeFields(rec6)
+  }),
+  rateLimitedWait,
+  move2,
+  seat2
+);
+async function besideBack(url, primary, move2) {
   if (CFG.satellite) return;
   const recs = besideRecords(url, primary);
   if (!recs.length) return;
@@ -11748,13 +12008,14 @@ async function besideBack(url, primary) {
       log(`seat beside ${key3}: its graph is not known as another one — not registered`);
       continue;
     }
-    const r = await callTool(tool("channel"), {
-      action: "register",
-      realm: rec6.realm,
-      karta: rec6.karta,
-      name: rec6.name,
-      ...placeFields(rec6)
-    });
+    const id = idFromHello(hello, rec6, primary);
+    const { r, stop, ended } = await registerRecord(rec6, move2, { id, main: false });
+    if (stop) return log(`seats beside from ${key3} on: the return was stopped`);
+    if (!r || ended) {
+      log(`seat beside ${key3} ended during the return — not registered, its record dropped`);
+      dropHoldRecord(key3);
+      continue;
+    }
     standingLog(r.isError ? `beside not resumed ${key3}` : `resumed-from-disk beside ${key3}`);
     log(
       `seat beside ${key3} with the main one: ${r.isError ? `not back — ${short(r.text)}` : "back"}`
@@ -12342,7 +12603,11 @@ async function refreshSkills() {
   S7.refreshing = serialized(async () => {
     const primary = state.standing;
     if (!primary || !state.sessionId || !skillsCheckDue()) return;
-    for (const place of [primary, ...state.places]) {
+    const move2 = registerMove("returns");
+    const seats2 = [{ place: primary, id: null }, ...besideSeats()];
+    for (const { place, id } of seats2) {
+      if (move2.stopped()) break;
+      if (place !== primary && !state.places.includes(place)) continue;
       if (isParked(place.realm, place.karta, place.name ?? "")) continue;
       if (wasEvicted(place.realm, place.karta, place.name ?? "")) continue;
       if (!skillsNeedRegister(place)) continue;
@@ -12350,7 +12615,10 @@ async function refreshSkills() {
         retrySkillsCheck();
         continue;
       }
-      const got = await replayRegister(place, false);
+      const seat2 = place === primary ? void 0 : { id, main: false };
+      const got = await replayRegister(place, false, move2, seat2);
+      if (move2.stopped()) break;
+      if (endedSince(id, move2.since)) continue;
       if (seatIsGone(got)) {
         if (place === primary ? state.standing !== place : !state.places.includes(place)) continue;
         const why = words(STANDING).seatExpired();
@@ -12873,17 +13141,11 @@ async function resumeFromDisk(realm, karta, name2) {
   if (rec6.cwd) noteStandCwd(prevCwd);
   return null;
 }
-async function registerBack(rec6) {
-  const r = await callTool(tool("channel"), {
-    action: "register",
-    realm: rec6.realm,
-    karta: rec6.karta,
-    name: rec6.name,
-    ...placeFields(rec6)
-  });
-  if (r.isError) return resumeWords.registerRefused(short(r.text));
-  await besideBack(rec6.url, rec6);
-  return "register";
+async function registerBack(rec6, move2) {
+  const { r, waitS } = await registerRecord(rec6, move2, MAIN_SEAT);
+  if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
+  await besideBack(rec6.url, rec6, move2);
+  return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";
 }
 var T3 = { takeOwn: null };
 function wireTakeOwn(fn) {
@@ -12918,6 +13180,7 @@ async function backToParked(key3, how2) {
   };
 }
 async function resumeBy(sel, register = true, takeOwn = false) {
+  const move2 = registerMove("returns");
   await canonHoldRecords();
   const { own: recs, sameDir: sameDir2, legacy: legacyRecs, left: left2, neighbour, stale } = recordsFor(sel);
   const staleWords = stale.map((x) => resumeWords.staleKey(x.name, x.fresher));
@@ -12957,8 +13220,8 @@ async function resumeBy(sel, register = true, takeOwn = false) {
     const holder = await localHolder(key3, sel.cwd ?? sessionCwd());
     if (holder === "session" && takeOwn && !CFG.satellite && T3.takeOwn) {
       const said2 = await T3.takeOwn(rec6, sel.cwd);
-      const stop = stoppedOutcome(before, key3);
-      if (stop) return stop;
+      const stop2 = stoppedOutcome(before, key3);
+      if (stop2) return stop2;
       const now2 = ledKey();
       if (now2 && holdsKey(now2)) {
         const hello = await awaitHello(4e3);
@@ -12983,11 +13246,11 @@ async function resumeBy(sel, register = true, takeOwn = false) {
     const proven = !!me && rec6.session === me || key3 === led && !rec6.session;
     const { back, registered } = await withSpoolHeld(async () => {
       const b = await resumeFromDisk(rec6.realm, rec6.karta, rec6.name);
-      return { back: b, registered: b && register ? await registerBack(rec6) : null };
+      return { back: b, registered: b && register ? await registerBack(rec6, move2) : null };
     });
+    const stop = stoppedOutcome(before, key3);
+    if (stop) return stop;
     if (!back) {
-      const stop = stoppedOutcome(before, key3);
-      if (stop) return stop;
       const kept3 = readHoldRecord(key3);
       skipped.push(kept3 ? resumeWords.noHello(key3) : resumeWords.stale(key3));
       if (!kept3) {
@@ -13440,88 +13703,81 @@ function rememberedPlace(realm, karta, name2) {
 }
 var R3 = scoped(() => ({ inFlight: null }));
 async function ensureStanding() {
-  if (state.standing && await standBesideAgain()) return;
+  if (state.standing && await standBesideAgain()) return null;
   return replayStanding();
 }
 function replayStanding() {
-  if (!state.standing || !state.sessionId) return Promise.resolve();
-  if (state.standingSession === state.sessionId) return Promise.resolve();
+  if (!state.standing || !state.sessionId) return Promise.resolve(null);
+  if (state.standingSession === state.sessionId) return Promise.resolve(null);
   if (R3.inFlight) return R3.inFlight;
   R3.inFlight = (async () => {
+    const move2 = registerMove("returns");
     try {
-      const deaf = await deafSeatTaken();
-      if (deaf) return log(`standing not re-registered: ${deaf}`);
-      const got = await replayRegister(state.standing);
-      if (got && !got.error && !got.result?.isError) {
-        if (await replayBeside()) state.standingSession = state.sessionId;
-        log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
-      } else if (seatIsGone(got)) {
-        log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
-        state.standing = null;
-        releaseStanding(SEAT_EXPIRED(), true);
-      } else {
-        log(
-          `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`
-        );
-      }
+      await rebind(move2);
     } catch (e) {
       log(`re-registering the standing failed: ${errorMessage(e)}`);
     } finally {
       R3.inFlight = null;
     }
+    const stop = move2.stopped();
+    if (stop) log("standing not re-registered: the session was stopped");
+    return stop;
   })();
   return R3.inFlight;
 }
-async function replayRegister(place, freshSkills = false) {
-  const got = await registerOnce(place, freshSkills);
-  if (!openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for) return got;
-  log("register refused by a concurrent opening (409, no rule) — registering again once");
-  return registerOnce(place, freshSkills);
+async function rebind(move2) {
+  const deaf = await deafSeatTaken();
+  if (deaf) return log(`standing not re-registered: ${deaf}`);
+  const got = await replayRegister(state.standing, false, move2);
+  if (move2.stopped()) return;
+  if (got && !got.error && !got.result?.isError) {
+    const whole = await replayBeside(move2);
+    if (move2.stopped()) return;
+    if (whole) state.standingSession = state.sessionId;
+    log(`standing re-registered on the new session (${state.standing?.name ?? "unnamed"})`);
+  } else if (seatIsGone(got)) {
+    log(`the standing's seat is gone, forgetting it: ${replyText(got).slice(0, 200)}`);
+    state.standing = null;
+    releaseStanding(SEAT_EXPIRED(), true);
+  } else {
+    log(
+      `could not re-register the standing this time, will retry before the next call: ${replyText(got).slice(0, 200)}`
+    );
+  }
 }
-async function registerOnce(place, freshSkills) {
-  if (claimRefusal()) return null;
-  const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
-  let reply2 = null;
-  const basis = launchBasis({ ...place });
-  rememberBasis({ ...place }, basis);
-  const arguments_ = {
-    ...place,
-    ...placeFields(place ?? {}, freshSkills),
-    ...registeredBasis(place ?? {}),
-    action: "register"
-  };
-  await post2(
-    {
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: {
-        name: tool("channel"),
-        arguments: arguments_
-      }
-    },
-    (m) => {
-      if (m.id === id) {
-        m = claimResult(arguments_, m, true);
-        reply2 = m;
-        if (!m.error && !m.result?.isError && place) noteSkills(place, arguments_.attrs.skills);
-      }
-    }
+var asRefusalView = (reply2) => {
+  const refusal2 = refusalOf(reply2) ?? void 0;
+  return { isError: !!(reply2?.error || reply2?.result?.isError), ...refusal2 ? { refusal: refusal2 } : {} };
+};
+async function replayRegister(place, freshSkills, move2, seat2 = seatOfPlace(place ?? { realm: "", karta: "" }, true)) {
+  const { r: got, waitS } = await throughRateLimit(
+    () => registerRaw(move2, seat2, place, freshSkills),
+    (g) => rateLimitedWait(asRefusalView(g)),
+    move2,
+    seat2
   );
-  return reply2;
+  if (waitS > 0) log(`register waited out a 429 rate limit of the source (${waitS} s)`);
+  return got;
 }
-async function replayBeside() {
+async function replayBeside(move2) {
   let whole = true;
-  for (const place of [...state.places]) {
+  for (const { place, id } of besideSeats()) {
     const deaf = deafPlaceIn(place.realm) ? await deafSeatTaken(place) : null;
     if (deaf) {
       log(`place ${keyOfPlace(place)} not re-registered: ${deaf}`);
       continue;
     }
-    const got = await replayRegister(place);
-    if (got && !got.error && !got.result?.isError) continue;
     const key3 = keyOfPlace(place);
-    if (seatIsGone(got)) {
+    if (!state.places.includes(place)) {
+      log(`place ${key3} ended during the rebind — not re-registered`);
+      continue;
+    }
+    const got = await replayRegister(place, false, move2, { id, main: false });
+    if (move2.stopped())
+      return log("places beside not re-registered: the session was stopped"), false;
+    if (got && !got.error && !got.result?.isError) continue;
+    if (endedSince(id, move2.since)) log(`place ${key3} ended during the rebind — not re-registered`);
+    else if (seatIsGone(got)) {
       log(
         `the place ${key3} is gone at the platform, forgetting it: ${replyText(got).slice(0, 200)}`
       );
@@ -13600,7 +13856,7 @@ function usagePlace() {
 }
 async function publish(place, u) {
   U.at = Date.now();
-  const got = await replayRegister(place, false);
+  const got = await replayRegister(place, false, registerMove("once"));
   const ok = !!got && !got.error && !got.result?.isError;
   if (ok) {
     if (u) U.published = u;
@@ -14053,9 +14309,8 @@ var callTool = async (name2, args) => {
   }
 };
 async function answer2(name2, args) {
-  let { msg, got } = await ask(name2, args);
-  if (name2 === tool("channel") && args.action === "register" && !args.spawned_for && openedConcurrently(got))
-    ({ msg, got } = await ask(name2, args));
+  const { msg, got: reply2 } = await ask(name2, args);
+  let got = reply2;
   if (!got) {
     if (args.spawned_for) refuseClaim(words(SPAWNED_FOR).echo());
     return { text: words(CALL).noReply(), isError: true };
@@ -14138,7 +14393,7 @@ async function standStatusOnly(msg) {
   const realm = typeof a.realm === "string" ? a.realm.trim() : "";
   if (!realm) return { miss: null };
   await resolveAgainstLed(realm);
-  const held2 = ledIn(realm);
+  const held2 = ledIn2(realm);
   if (!held2) return { miss: { why: "none" } };
   if (extra.length) return { miss: { why: "args", args: extra } };
   if (!unset2(a.karta) && normKarta(a.karta) !== String(held2.karta)) return { miss: null };
@@ -14165,7 +14420,7 @@ async function standStatusOnly(msg) {
   return { reply: replyTo(msg)(listen2 ? `${body}
 ${listen2}` : body, isError) };
 }
-function ledIn(realm) {
+function ledIn2(realm) {
   const prim = state.standing;
   return prim && (prim.realm === realm || sameRealm(prim.realm, realm)) ? prim : extraIn(realm)?.standing;
 }
@@ -17950,130 +18205,13 @@ function orchestraServe(authDir, net) {
 
 // js/bridge/provisional.ts
 import { randomBytes as randomBytes4 } from "node:crypto";
-
-// js/bridge/standwords.ts
-var sw2 = () => words(STAND);
-function boardHeaders() {
-  const own = words(BOARD_HEADER);
-  return [
-    own,
-    LANGS.filter((l) => BOARD_HEADER[l] !== own).map((l) => BOARD_HEADER[l]).join(", ")
-  ];
-}
-function missWord(m, of) {
-  const w12 = words(STAND_MISS);
-  switch (m.why) {
-    case "none":
-      return w12.none();
-    case "args":
-      return w12.args(m.args.join(", "));
-    case "name":
-      return w12.name(m.asked, m.held);
-    case "satellite":
-      return w12.satellite(of ?? "?");
-    case "cwd":
-      return w12.cwd(m.cwd);
-    case "parked":
-      return w12.parked();
-    case "elsewhere":
-      return w12.elsewhere();
-  }
-}
-var needRealmKarta = (miss, of) => sw2().needRealmKarta(miss ? ` ${missWord(miss, of)}` : "");
-
-// js/bridge/standmoves.ts
-var mw = () => words(STAND_MOVES);
-var standCall = (realm, karta, name2) => `${tool("stand")}(realm="${realm}", karta=${karta}${name2 ? `, name="${name2}"` : ""})`;
-function ledIn2(realm) {
-  const prim = state.standing;
-  return prim && sameRealm(prim.realm, realm) ? prim : extraIn(realm)?.standing;
-}
-var STANDS_IN_REALM = "channel_already_stands_in_realm";
-async function releasePrior(realm, prior) {
-  const name2 = prior.name ?? "";
-  const beside = extraOf(realm, prior.karta, name2)?.door.key;
-  const args = { action: "revoke", realm, karta: String(prior.karta), standing: name2 };
-  if (beside) setRevokingBeside(beside, true);
-  const r = await callTool(tool("channel"), args).finally(() => {
-    if (beside) setRevokingBeside(beside, false);
-  });
-  if (!r.isError) {
-    if (beside) dropExtra(beside, holdWords().revokedOwn(), true, "own");
-    return { ok: true, note: mw().priorReleased(name2) };
-  }
-  return { ok: false, note: mw().priorKept(name2, short(r.text, 160), revokeCall(realm, prior)) };
-}
-var revokeCall = (realm, s2) => `${tool("channel")}(action="revoke", realm="${realm}", karta="${s2.karta}", standing="${s2.name ?? ""}")`;
-function besideHoldsMain(realm, prior, asked) {
-  const prim = state.standing;
-  if (!prim || !sameRealm(prim.realm, realm) || prim.name !== prior.name) return null;
-  const beside = extraPlaces().map((p) => p.standing);
-  if (!beside.length) return null;
-  return mw().besideHoldsMain(
-    prior.name ?? "",
-    asked,
-    beside.map((s2) => `${s2.name ?? ""} (${s2.realm})`).join(", "),
-    beside.map((s2) => revokeCall(s2.realm, s2)).join("; "),
-    standCall(realm, prior.karta, prior.name ?? "")
-  );
-}
-var REISSUE_MAX_S = 15;
-function reissueThrottled(r) {
-  if (!r.isError) return null;
-  const rule = r.refusal?.rule;
-  const hit = rule === "socket_reissue_throttled" || !rule && r.refusal?.status === 429 || r.text.includes("socket_reissue_throttled");
-  if (!hit) return null;
-  const said2 = Number(/retry in (\d+)\s*s/i.exec(r.text)?.[1] ?? NaN);
-  return Math.min(Math.max(Number.isFinite(said2) ? said2 : 10, 1), REISSUE_MAX_S);
-}
-async function awaitReissue(seconds2, held2, stopped) {
-  for (const end = Date.now() + seconds2 * 1e3; Date.now() < end; ) {
-    const stop2 = stopped();
-    if (stop2 || held2()) return { own: !stop2, stop: stop2 };
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  const stop = stopped();
-  return { own: !stop && held2(), stop };
-}
-async function throughReissue(c, again, seat2, stopsBefore) {
-  const throttle = reissueThrottled(c);
-  if (!throttle) return { c, own: false, note: null };
-  const t0 = Date.now();
-  const { own, stop } = await awaitReissue(
-    throttle,
-    () => holdsStanding(seat2.realm, seat2.karta, seat2.name),
-    () => stoppedDuring(stopsBefore)
-  );
-  if (stop) return { c, own, note: null };
-  const seconds2 = Math.round((Date.now() - t0) / 1e3);
-  return { c: own ? c : await again(), own, note: mw().reissueWaited(seconds2, own) };
-}
-function yourStandingsMove(r, realm) {
-  const names2 = standingsInRealm(r.refusal);
-  if (!names2.length) return null;
-  const call = names2.map((n) => `${tool("stand")}(realm="${realm}", karta, name="${n}")`);
-  return { call: call.join("; "), name: names2.join(", ") };
-}
-function refusedWord(what, r, realm, afterConnect) {
-  if (r.refusal?.rule === STANDS_IN_REALM || r.text.includes(STANDS_IN_REALM)) {
-    const yours = yourStandingsMove(r, realm);
-    const led = yours || afterConnect !== void 0 ? void 0 : ledIn2(realm);
-    const call = yours?.call ?? (led ? standCall(realm, led.karta, led.name ?? "") : "");
-    const board = `${tool("channel")}(action="list", realm="${realm}")`;
-    const leave = `${tool("channel")}(action="revoke", realm="${realm}", karta, standing=<${yours?.name ?? led?.name ?? "name"}>)`;
-    return mw().standsInRealm(realm, call, board, leave, !!yours);
-  }
-  return afterConnect ?? sw2().refused(what, short(r.text));
-}
-
-// js/bridge/provisional.ts
 function name(base) {
   const suffix = `.root-${randomBytes4(6).toString("hex")}`;
   return (base || "root").slice(0, NAME_MAX - suffix.length).replace(/[.-]+$/, "") + suffix;
 }
 var takesProvisional = (msg) => msg.params?.arguments?.provisional === true && typeof msg.id === "string" && msg.id.startsWith(SERVICE_ID);
 function replacesProvisional(realm, own) {
-  const led = ledIn2(realm);
+  const led = ledIn(realm);
   if (own || !led?.name) return false;
   const rec6 = readHoldRecord(keyOf(led.realm, led.karta, led.name), true);
   return rec6?.provisional === true && !!sessionOfBridge() && rec6.session === sessionOfBridge();
@@ -18097,7 +18235,7 @@ function mainProvisional() {
 function noteWork(msg, reply2) {
   if (!adopts(msg, reply2)) return;
   const args = msg.params?.arguments ?? {};
-  const led = args.realm == null ? state.standing : ledIn2(String(args.realm));
+  const led = args.realm == null ? state.standing : ledIn(String(args.realm));
   if (!led?.name) return;
   const karta = String(led.karta);
   if (readHoldRecord(keyOf(led.realm, karta, led.name), true)?.provisional === true)
@@ -18105,7 +18243,7 @@ function noteWork(msg, reply2) {
 }
 function restore(rec6) {
   if (rec6.provisional !== true || !rec6.session || rec6.session !== sessionOfBridge()) return;
-  const led = ledIn2(rec6.realm);
+  const led = ledIn(rec6.realm);
   if (led?.name === rec6.name && String(led.karta) === String(rec6.karta))
     noteStood(true, led.realm, String(led.karta), rec6.name);
 }
@@ -18127,11 +18265,11 @@ async function knock(k) {
   const key3 = `${realm}|${karta}|${name2}|${room}`;
   const prior = knocks.get(key3);
   const waited = prior ? Date.now() - prior.at : Infinity;
-  if (prior && prior.count >= KNOCK_LIMIT) return sw2().knockTwice(room);
-  if (prior && !k.again) return sw2().knockSent(room, waited, KNOCK_REPEAT_AFTER_MS);
+  if (prior && prior.count >= KNOCK_LIMIT) return sw().knockTwice(room);
+  if (prior && !k.again) return sw().knockSent(room, waited, KNOCK_REPEAT_AFTER_MS);
   if (prior && waited < KNOCK_REPEAT_AFTER_MS)
-    return sw2().knockEarly(room, waited, KNOCK_REPEAT_AFTER_MS);
-  if (!roomKarta) return sw2().knockNoRole(room, realm);
+    return sw().knockEarly(room, waited, KNOCK_REPEAT_AFTER_MS);
+  if (!roomKarta) return sw().knockNoRole(room, realm);
   const s2 = await callTool(tool("channel"), {
     action: "send",
     realm,
@@ -18139,9 +18277,9 @@ async function knock(k) {
     standing: room,
     text: "join"
   });
-  if (s2.isError) return sw2().knockRefused(room, short(s2.text));
+  if (s2.isError) return sw().knockRefused(room, short(s2.text));
   knocks.set(key3, { at: Date.now(), count: (prior?.count ?? 0) + 1 });
-  return sw2().knockDone(room, !!prior, short(s2.text, 200));
+  return sw().knockDone(room, !!prior, short(s2.text, 200));
 }
 
 // js/bridge/orderjournal.ts
@@ -18166,7 +18304,7 @@ var alive5 = (pid) => {
     return e.code === "EPERM";
   }
 };
-var KEEP_MS = 24 * 36e5;
+var KEEP_MS2 = 24 * 36e5;
 var dir = () => join40(CFG.authDir, "orders");
 var SAFE = /^[A-Za-z0-9_-]{1,80}$/;
 var fileOf = (id) => SAFE.test(id) ? join40(dir(), `${id}.json`) : null;
@@ -18232,7 +18370,7 @@ function unanswered(now2 = Date.now()) {
   for (const n of names2) {
     const e = readOrder(n.slice(0, -".json".length));
     if (!e) continue;
-    if (e.acked && now2 - e.at > KEEP_MS) {
+    if (e.acked && now2 - e.at > KEEP_MS2) {
       try {
         unlinkSync21(join40(dir(), n));
       } catch {
@@ -18551,17 +18689,17 @@ async function stopGuard(msg, run3) {
     result: { isError: true, content: [{ type: "text", text: text7 }] }
   };
 }
-async function registerRefused(r, realm, taken2, prior, addr, cleanupFresh = false, claimFailed = false) {
+async function registerRefused(move2, r, realm, taken2, prior, addr, cleanupFresh = false, claimFailed = false) {
   const text7 = short(r.text);
-  if (!taken2) return refusedWord("register", r, realm, sw2().takenButRegister(text7));
+  if (!taken2) return refusedWord("register", r, realm, sw().takenButRegister(text7));
   if (!prior && cleanupFresh) {
     const refusal3 = refusedWord("register", r, realm);
     const left3 = await dropTaken(taken2);
     return left3 ? `${refusal3}
 ${left3}` : refusal3;
   }
-  if (!prior) return refusedWord("register", r, realm, sw2().takenButRegister(text7));
-  const refusal2 = refusedWord("register", r, realm, sw2().refused("register", text7));
+  if (!prior) return refusedWord("register", r, realm, sw().takenButRegister(text7));
+  const refusal2 = refusedWord("register", r, realm, sw().refused("register", text7));
   if (stoppedInMove()) return refusal2;
   const left2 = await dropTaken(taken2);
   if (left2) return `${refusal2}
@@ -18571,11 +18709,8 @@ ${left2}`;
   if (addr) holdStanding(addr.url, addr.statusUrl);
   if (claimFailed) return `${refusal2}
 ${mw2().moveUndone(taken2.name, prior.name ?? "")}`;
-  const back = await callTool(tool("channel"), {
-    action: "register",
-    ...prior,
-    ...placeFields(prior, true)
-  });
+  const seat2 = seatOfPlace(prior, true);
+  const back = await registerByCall(move2, seat2, { ...prior, ...placeFields(prior, true) });
   const word3 = mw2().moveUndone(taken2.name, prior.name ?? "");
   return `${refusal2}
 ${back.isError ? `${word3} register: ${short(back.text, 160)}` : word3}`;
@@ -18625,6 +18760,7 @@ async function standOnce(msg) {
   const a = msg.params?.arguments ?? {};
   const auto = takesProvisional(msg);
   const stopsBefore = stopsNow();
+  const move2 = registerMove("returns", () => stoppedDuring(stopsBefore));
   let realm = typeof a.realm === "string" ? a.realm.trim() : "";
   let karta = a.karta != null ? normKarta(a.karta) : "";
   const lines = [];
@@ -18640,7 +18776,7 @@ async function standOnce(msg) {
   rememberStandModel(model);
   const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : sessionCwd();
   if (cwd !== sessionCwd() && !isDirectory2(cwd)) {
-    lines.push(sw2().badCwd(cwd, !isAbsolute8(cwd)));
+    lines.push(sw().badCwd(cwd, !isAbsolute8(cwd)));
     return done(true);
   }
   const nameNotes = [];
@@ -18648,7 +18784,7 @@ async function standOnce(msg) {
   if (asked) {
     const fault = nameFault(asked);
     if (fault) {
-      lines.push(sw2().badName(asked, fault, NAME_MAX));
+      lines.push(sw().badName(asked, fault, NAME_MAX));
       return done(true);
     }
   }
@@ -18673,14 +18809,14 @@ async function standOnce(msg) {
   const ledSuffix = !!base && !!led0 && String(led0.karta) === String(karta) && led0.name !== base && baseOf2(led0.realm, led0.karta, led0.name ?? "") === base;
   const besideTaken = ledSuffix && !!led0 && wasEvicted(led0.realm, led0.karta, led0.name ?? "");
   if (ledSuffix && !besideTaken && a.take !== true) name2 = led0?.name ?? name2;
-  const ledThere = sat ? void 0 : ledIn2(realm);
+  const ledThere = sat ? void 0 : ledIn(realm);
   const replaces = replacesProvisional(realm, auto);
   const prior = (a.take === true || replaces) && ledThere?.name && (ledThere.name !== name2 || String(ledThere.karta) !== karta) ? { ...ledThere } : null;
   if (parts && fitted && fitted.cut.length) {
-    const what = fitted.cut.map((k) => sw2().cutPart(k)).join(", ");
-    nameNotes.push(sw2().nameCut(joinName(parts), NAME_MAX, name2, what));
+    const what = fitted.cut.map((k) => sw().cutPart(k)).join(", ");
+    nameNotes.push(sw().nameCut(joinName(parts), NAME_MAX, name2, what));
   }
-  if (!asked && !sat && !model) nameNotes.push(sw2().noModel());
+  if (!asked && !sat && !model) nameNotes.push(sw().noModel());
   const room = typeof a.room === "string" && a.room.trim() ? a.room.trim() : null;
   const unresolved2 = unresolvedRefusal(realm) ?? unresolvedAgent(karta, "connect");
   if (unresolved2) return lines.push(unresolved2), done(true);
@@ -18700,9 +18836,9 @@ async function standOnce(msg) {
   const prim = state.standing;
   const beside = !!prim && otherRealm(realm, prim.realm) && !holdsStanding(realm, karta, name2);
   noteStandCwd(cwd);
-  const here = (move2 = "register") => placeFields({ realm, karta, name: name2 }, true, move2);
-  const reg = () => callTool(tool("channel"), {
-    action: "register",
+  const here = (move3 = "register") => placeFields({ realm, karta, name: name2 }, true, move3);
+  const seat2 = seatOfPlace({ realm, karta, name: name2 }, true);
+  const reg = () => registerByCall(move2, seat2, {
     realm,
     karta,
     name: name2,
@@ -18712,7 +18848,7 @@ async function standOnce(msg) {
   const { register, kept: modelKept } = clearingRegister(reg, realm);
   const board = await callTool(tool("channel"), { action: "list", realm });
   if (board.isError) {
-    lines.push(sw2().boardUnread(short(board.text)));
+    lines.push(sw().boardUnread(short(board.text)));
     return done(true);
   }
   const bd = readBoard(board);
@@ -18722,7 +18858,7 @@ async function standOnce(msg) {
   const hearing = (n) => boardHearing(bd, karta, n);
   if (!recognized || own.length > 1 || hearing(name2) === "unknown" && a.take !== true) {
     lines.push(
-      !recognized ? sw2().boardUnknown(short(board.text, 160), ...boardHeaders()) : own.length > 1 ? sw2().boardAmbiguous(own.length, name2, karta) : sw2().boardCount(declared ?? 0, entries2.length)
+      !recognized ? sw().boardUnknown(short(board.text, 160), ...boardHeaders()) : own.length > 1 ? sw().boardAmbiguous(own.length, name2, karta) : sw().boardCount(declared ?? 0, entries2.length)
     );
     return done(true);
   }
@@ -18730,9 +18866,9 @@ async function standOnce(msg) {
   let byRecord = null;
   const root = !base ? "" : asked ? baseOf2(realm, karta, base) : base;
   if (base && (a.take !== true || beside) && name2 === base) {
-    const seat2 = await seatFor(realm, karta, base, hearing, beside, cwd, root);
-    const choice = seat2.choice;
-    byRecord = seat2.resumed;
+    const seat3 = await seatFor(realm, karta, base, hearing, beside, cwd, root);
+    const choice = seat3.choice;
+    byRecord = seat3.resumed;
     if ("refusal" in choice) {
       lines.push(choice.refusal);
       return done(true);
@@ -18741,7 +18877,7 @@ async function standOnce(msg) {
     ownSession = choice.own;
     own = entries2.filter((e) => ofSeat(e, karta, name2));
     if (own.length > 1) {
-      lines.push(sw2().boardAmbiguous(own.length, name2, karta));
+      lines.push(sw().boardAmbiguous(own.length, name2, karta));
       return done(true);
     }
     if (choice.note) nameNotes.push(choice.note);
@@ -18760,8 +18896,8 @@ async function standOnce(msg) {
     const third = own2.slice(stem.length + 1);
     return branches.has(third) && alive(e);
   });
-  for (const e of legacy) nameNotes.push(sw2().legacy(e.address, realm, karta));
-  if (unread) lines.push(sw2().boardCountFound(declared ?? 0, entries2.length));
+  for (const e of legacy) nameNotes.push(sw().legacy(e.address, realm, karta));
+  if (unread) lines.push(sw().boardCountFound(declared ?? 0, entries2.length));
   const mine = own[0];
   let how2;
   let heardHere;
@@ -18780,24 +18916,23 @@ async function standOnce(msg) {
   if (beside) {
     const freed = prior ? await releasePrior(realm, prior) : null;
     if (freed && !freed.ok) return lines.push(freed.note), done(true);
-    if (freed) extra.push(sw2().note(freed.note));
+    if (freed) extra.push(sw().note(freed.note));
     const r = await register();
     if (r.isError) {
       lines.push(refusedWord("register", r, realm));
       return done(true);
     }
     heardHere = holdsStanding(realm, karta, name2);
-    if (heardHere && !standingIdIn(realm)) extra.push(sw2().noIdInRegister());
-    how2 = sw2().howBeside(ledKey() ?? "");
+    if (heardHere && !standingIdIn(realm)) extra.push(sw().noIdInRegister());
+    how2 = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
-    const r = await register();
-    if (r.isError) {
-      lines.push(refusedWord("register", r, realm));
-      return done(true);
-    }
+    const { r, waitS } = await throughRateLimitAnswer(register, move2, seat2);
+    if (!r) return lines.push(move2.stopped() ?? ""), done(true);
+    if (r.isError) return lines.push(refusedWord("register", r, realm)), done(true);
     heardHere = true;
     socketBefore = true;
-    how2 = `${resumed.word}, register`;
+    const word3 = waitS > 0 ? resumeWords.registerWaited(waitS) : "register";
+    how2 = `${resumed.word}, ${word3}`;
   } else if (!take3 && isParked(realm, karta, name2) && returnToStanding(tool("stand"))) {
     await heardOnReturn();
     const stoppedBack = stoppedSince(stopsBefore, keyOf(realm, karta, name2));
@@ -18819,7 +18954,7 @@ async function standOnce(msg) {
       return done(true);
     }
     heardHere = true;
-    how2 = sw2().howReturned();
+    how2 = sw().howReturned();
   } else if (!take3 && (holdsStanding(realm, karta, name2) || reopening)) {
     const r = await register();
     if (r.isError) {
@@ -18828,9 +18963,9 @@ async function standOnce(msg) {
     }
     heardHere = true;
     socketBefore = true;
-    how2 = sw2().howRegister();
+    how2 = sw().howRegister();
   } else if (!take3 && listensElsewhere) {
-    lines.push(sw2().otherHolder(mine?.address ?? name2));
+    lines.push(sw().otherHolder(mine?.address ?? name2));
     return done(true);
   } else {
     const args = { action: "connect", realm, karta, name: name2 };
@@ -18842,12 +18977,12 @@ async function standOnce(msg) {
     const re = await connectInMove(stopsBefore, { realm, karta, name: name2 }, connect6, async () => {
       const c0 = await connect6();
       if (!sat || !c0.isError || !ttlRefused(c0)) return c0;
-      extra.push(sw2().ttlRefused(SATELLITE_TTL_S, short(c0.text, 120)));
+      extra.push(sw().ttlRefused(SATELLITE_TTL_S, short(c0.text, 120)));
       delete args.ttl_seconds;
       return connect6();
     });
     const { c, own: ownReopen, taken: taken2 } = re;
-    if (re.note) extra.push(sw2().note(re.note));
+    if (re.note) extra.push(sw().note(re.note));
     if (c.isError && !ownReopen) {
       lines.push(refusedWord("connect", c, realm));
       return done(true);
@@ -18855,39 +18990,39 @@ async function standOnce(msg) {
     const r = await register();
     if (r.isError) {
       const freshClaim = !!basis && !mine && !ownSession && !reopening;
-      lines.push(await registerRefused(r, realm, taken2, prior, addr, freshClaim, !!basis));
+      lines.push(await registerRefused(move2, r, realm, taken2, prior, addr, freshClaim, !!basis));
       return done(true);
     }
     resetKnocks(realm, karta, name2);
     createdHere = !!taken2 && !mine && !ownSession && !reopening && !prior;
     heardHere = true;
     socketBefore = ownReopen;
-    how2 = ownReopen ? sw2().howRegister() : ownSession ? sw2().howOwnSession() : sw2().howConnect(!!mine, listensElsewhere, a.take === true);
-    if (takeLapsed()) extra.push(sw2().note(resumeWords.rejoin()));
+    how2 = ownReopen ? sw().howRegister() : ownSession ? sw().howOwnSession() : sw().howConnect(!!mine, listensElsewhere, a.take === true);
+    if (takeLapsed()) extra.push(sw().note(resumeWords.rejoin()));
     const freed = prior ? await releasePrior(realm, prior) : null;
-    if (freed) extra.push(sw2().note(releasedNote(replaces, freed, prior?.name ?? "")));
+    if (freed) extra.push(sw().note(releasedNote(replaces, freed, prior?.name ?? "")));
     priorKept = !!freed && !freed.ok;
   }
   lines.push(
-    sw2().head(mine?.address ?? name2, karta, realm, how2),
-    ...nameNotes.map((n) => sw2().note(n)),
+    sw().head(mine?.address ?? name2, karta, realm, how2),
+    ...nameNotes.map((n) => sw().note(n)),
     ...extra,
-    ...modelKept() ? [sw2().modelNotCleared(modelKept())] : []
+    ...modelKept() ? [sw().modelNotCleared(modelKept())] : []
   );
   const block = heardHere ? sat ? satelliteListenWord() : listenBlock(realm) : null;
   if (block) lines.push(block);
-  else lines.push(heardHere ? sw2().noSocket() : sw2().noWatchdog());
-  if (!heardHere) lines.push(sw2().besideNoDoor());
-  else if (beside) lines.push(sw2().besideHeard());
-  else if (socketBefore) lines.push(sw2().heldAlready());
+  else lines.push(heardHere ? sw().noSocket() : sw().noWatchdog());
+  if (!heardHere) lines.push(sw().besideNoDoor());
+  else if (beside) lines.push(sw().besideHeard());
+  else if (socketBefore) lines.push(sw().heldAlready());
   else {
     const hello = await awaitHello(4e3);
-    lines.push(hello ? sw2().hello(String(hello.pending ?? 0)) : sw2().noHello());
+    lines.push(hello ? sw().hello(String(hello.pending ?? 0)) : sw().noHello());
   }
   const localFault = heardHere ? doors().find((d) => d.key === heldKey(realm))?.listenError ?? null : null;
-  if (localFault) lines.push(sw2().noLocalSocket(localFault));
+  if (localFault) lines.push(sw().noLocalSocket(localFault));
   if (room && !heardHere) {
-    lines.push(sw2().knockNotHere(room));
+    lines.push(sw().knockNotHere(room));
   } else if (room) {
     const onBoard = entries2.find((e) => e.address === room);
     const roomKarta = onBoard?.karta ?? (typeof a.room_karta === "string" && a.room_karta.trim() ? a.room_karta.trim().replace(/^#/, "") : null);
@@ -18896,11 +19031,11 @@ async function standOnce(msg) {
     );
   }
   if (typeof a.status === "string" && a.status.trim() && !hasStatusAddressFor(realm, karta, name2)) {
-    lines.push(sw2().statusElsewhere(TAKE_PATH()));
+    lines.push(sw().statusElsewhere(TAKE_PATH()));
   } else if (typeof a.status === "string" && a.status.trim()) {
     const st = await publishStatus(a.status.trim(), realm);
     lines.push(
-      st.ok ? busyLine(a.status.trim(), realm) : sw2().statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : "")
+      st.ok ? busyLine(a.status.trim(), realm) : sw().statusRefused(short(st.body), st.code === 404 ? ` ${TURNED_GUIDANCE()}` : "")
     );
   }
   if (!priorKept) noteStood(auto, realm, karta, name2);
@@ -18990,7 +19125,7 @@ function seatOf2(id, to) {
 }
 var holdsSeat = (id, framed, to = {}) => framed ? seatOf2(id, to) !== null : H2.door?.standingId === id || extraPlaces().some((p) => p.door.standingId === id);
 function seatEnded(key3, frame2) {
-  const id = typeof frame2.standing_id === "string" ? frame2.standing_id : "";
+  const id = noteEndedSeat(frame2.standing_id);
   const reason = typeof frame2.by === "string" ? `revoked:${frame2.by}` : frame2.reason === "silent" ? "revoked:silent" : "";
   const beside = id ? extraPlaces().find((p) => p.door.standingId === id) : void 0;
   if (beside) {
@@ -19226,6 +19361,7 @@ async function finish(end) {
   await sendAck(end.base, end.id, end.state, end.reason);
 }
 async function execute(o, base, framed) {
+  noteEndedSeat(o.standing_id);
   const known2 = readOrder(o.id);
   if (known2 && isTerminal(known2.state)) {
     log(`stop order ${o.id} again — the same outcome ${known2.state}, no second stop`);
@@ -19698,17 +19834,11 @@ async function deliverOne(msg) {
         log("no upstream session yet — initializing before the call");
         await reinitialize();
       }
-      if (!isInit) await ensureStanding();
-      if (refuseLaunch(msg) || refuseUnbound(msg) || await refuseContext(msg)) return;
-      const taken2 = hasId ? evictedRefusal(msg) ?? await deafRefusal(msg) : null;
-      if (taken2) {
-        emit({
-          jsonrpc: "2.0",
-          id: msg.id,
-          result: { isError: true, content: [{ type: "text", text: taken2 }] }
-        });
+      const stop = isInit ? null : await ensureStanding();
+      if (stop ? !hasId : refuseLaunch(msg) || refuseUnbound(msg) || await refuseContext(msg))
         return;
-      }
+      const taken2 = stop ?? (hasId ? evictedRefusal(msg) ?? await deafRefusal(msg) : null);
+      if (taken2) return void emit(refused(msg.id, taken2));
       if (isStand) {
         emit(await standForHarness(msg, withNotice));
         return;
