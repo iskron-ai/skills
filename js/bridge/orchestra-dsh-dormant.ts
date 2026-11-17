@@ -37,6 +37,17 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   const seats = [
     ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
   ];
+  // The seat left the case before the process exited: our exit stop met an already-gone
+  // standing (the 410 path), so a left authored by the call's seat is its own walk-away —
+  // no sleep on it. Our completed stop's left is another matter: its stop_outcome stands on
+  // the row, and the sleep arms (#10995 review).
+  if (
+    r.why === "seat_gone_after_exit" &&
+    read.entries.some(
+      (e) => e.kind === "left" && !!e.author_standing_id && seats.includes(e.author_standing_id),
+    )
+  )
+    return false;
   // The cursor lands on the seat's own last word, never past it: a said that came after the
   // agent's last move but before this read must still wake — a spurious wake is cheaper than
   // a lost word (#10995 review). No word of the call's seats — the invite's number is the
@@ -105,6 +116,9 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   let cursor = from;
   let wake: CaseEntry | undefined;
   let end: { code: string; n: number } | undefined;
+  // The journal cannot tell our own exit-stop's left from the seat's walk-away: the first
+  // left of each seat after the cursor is taken as ours, and only a later one ends (#10995).
+  const firstLeft = new Set<string>();
   for (const e of entries) {
     // A number at or behind the cursor replaces its predecessor — it never wakes twice.
     if (e.n <= from) continue;
@@ -112,13 +126,13 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       end ??= { code: "dormant_case_closed", n: e.n };
       continue;
     }
-    if (
-      e.kind === "left" &&
-      !!e.author_standing_id &&
-      seats.has(e.author_standing_id) &&
-      e.reason === "revoked"
-    ) {
-      end ??= { code: "dormant_seat_revoked", n: e.n };
+    if (e.kind === "left" && e.author_standing_id && seats.has(e.author_standing_id)) {
+      if (firstLeft.has(e.author_standing_id)) {
+        if (e.reason === "revoked") end ??= { code: "dormant_seat_revoked", n: e.n };
+        // The seat's own walk-away: the agent said it is done with the case.
+        else if (e.reason === "leave") end ??= { code: "dormant_seat_left", n: e.n };
+      } else firstLeft.add(e.author_standing_id);
+      cursor = Math.max(cursor, e.n);
       continue;
     }
     // The call's own words never wake it: the seat speaking is the live agent's business.
