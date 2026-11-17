@@ -86,8 +86,7 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   const seatLast = [...read.entries]
     .reverse()
     .find(
-      (e) =>
-        e.author_standing_id && seats.includes(e.author_standing_id) && e.kind !== "left",
+      (e) => e.author_standing_id && seats.includes(e.author_standing_id) && e.kind !== "left",
     )?.n;
   const asks: Record<string, string> = {};
   for (const e of read.entries)
@@ -255,7 +254,12 @@ export async function stepDormant(
       // re-armed it, or the caller left. Nothing launches and the cursor stands where it lay
       // (#10995 review 2).
       const latest = readRuns(authDir)[key];
-      if (gone?.gone || !latest || latest.state !== "dormant" || runIdentity(latest) !== runIdentity(r)) {
+      if (
+        gone?.gone ||
+        !latest ||
+        latest.state !== "dormant" ||
+        runIdentity(latest) !== runIdentity(r)
+      ) {
         out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
         continue;
       }

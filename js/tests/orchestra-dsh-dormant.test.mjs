@@ -174,16 +174,7 @@ test("dormancy: the cursor keeps a said that came after the seat's last word, an
   const runs = { k: r };
   const launch = launchStub();
   const dir = await dormantDir(t, runs);
-  await stepDormant(
-    dir,
-    api.base,
-    "key",
-    runs,
-    launchers(),
-    undefined,
-    AWAKE_NOW,
-    launch.run,
-  );
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, launch.run);
   assert.equal(r.state, "launched", "the said after the seat's last word wakes");
   assert.equal(r.dormant.cursor, 11);
   assert.equal(launch.calls.length, 1);
@@ -507,7 +498,10 @@ test("dormancy: no sleep when the seat left the case before the process exited",
   assert.equal(gone.why, "dormant_seat_left");
   // Our own exit stop's left is revoked, not leave — it never blocks the sleep.
   const revoked = await caseApi(t, {
-    entries: [invite, entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } })],
+    entries: [
+      invite,
+      entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } }),
+    ],
   });
   const ours = exitedRun({ why: undefined, stop_outcome: "stopped" });
   assert.equal(await goDormant(revoked.base, "key", ours), true);
@@ -539,7 +533,11 @@ test("dormancy: the arming cursor is the seat's last word that is not a left", a
   });
   const r = exitedRun({ why: undefined, stop_outcome: "stopped" });
   assert.equal(await goDormant(api.base, "key", r), true);
-  assert.equal(r.dormant.cursor, 10, "the technical left of our own stop does not serve as the cursor");
+  assert.equal(
+    r.dormant.cursor,
+    10,
+    "the technical left of our own stop does not serve as the cursor",
+  );
   // The said after the seat's last word still wakes the continuation.
   const runs = { k: r };
   const launch = launchStub();
@@ -556,7 +554,6 @@ test("dormancy: the arming cursor is the seat's last word that is not a left", a
   assert.equal(r.state, "launched", "the said between the progress and the left wakes");
   assert.equal(launch.calls.length, 1);
 });
-
 
 test("dormant tact: the window, the taken slot and the gone launcher hold the sleep", async (t) => {
   const api = await caseApi(t, {
@@ -660,20 +657,47 @@ test("dormant tact: a row moved under the read launches nothing and the cursor s
     onHistory: () => writeRuns(dir, { k: { ...row, state: "ended", why: "dormant_case_closed" } }),
   });
   const superseded = sleepingRow();
-  await stepDormant(dir, replaced.base, "key", { k: superseded }, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    dir,
+    replaced.base,
+    "key",
+    { k: superseded },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(launch.calls.length, 0, "nothing launches on a superseded row");
   assert.equal(superseded.state, "dormant");
   assert.equal(superseded.dormant.cursor, 9, "the cursor does not move");
   // The caller leaves while the read is in flight — same refusal, same standing cursor.
   const gone = { gone: false };
   const leaving = await caseApi(t, { entries, onHistory: () => (gone.gone = true) });
-  await stepDormant(dir, leaving.base, "key", { k: sleepingRow() }, launchers(), gone, AWAKE_NOW, launch.run);
+  await stepDormant(
+    dir,
+    leaving.base,
+    "key",
+    { k: sleepingRow() },
+    launchers(),
+    gone,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(launch.calls.length, 0, "nothing launches after the caller left");
   // With the row steady on disk, the same waking word launches.
   const steady = await caseApi(t, { entries });
   const awake = sleepingRow();
   writeRuns(dir, { k: awake });
-  await stepDormant(dir, steady.base, "key", { k: awake }, launchers(), undefined, AWAKE_NOW, launch.run);
+  await stepDormant(
+    dir,
+    steady.base,
+    "key",
+    { k: awake },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launch.run,
+  );
   assert.equal(awake.state, "launched");
   assert.equal(launch.calls.length, 1);
   assert.equal(readRuns(dir).k.state, "dormant", "the stub launch writes no registry");
