@@ -498,6 +498,39 @@ for (const [status, rule] of [...BUSY_RULES.map((r) => [503, r]), [429, "db_pool
     assert.equal(fake.state.counts.unattributed, 0, seen);
   });
 
+// #10801: предел частоты источника — тоже не слово о приглашении: перепривязка ждёт
+// data.retry_after_secs внутри себя и шлёт второй register по-настоящему (попытка не
+// умирает в терминальном claimRefusal до запроса).
+test("spawned_for: a confirmed claim's replay refused with 429 rate_limited waits out retry_after_secs and registers again", async (t) => {
+  const { fake, regs, before, work, failed } = await rotatedClaim(t, {
+    registerRefuseNext: [
+      {
+        text: "Too Many Requests (429): rate_limited — retry after 1s",
+        status: 429,
+        rule: "rate_limited",
+        data: { retry_after_secs: 1, key: "opening" },
+      },
+    ],
+  });
+  const one = await work(1);
+  const two = await work(2);
+  const seen = JSON.stringify({
+    one: one.result ?? one.error,
+    two: two.result ?? two.error,
+    regs: regs().slice(before),
+  });
+  assert.deepEqual(fake.state.registerRefuseNext, [], `the refusal went to the replay: ${seen}`);
+  assert.equal(
+    regs().length,
+    before + 2,
+    `two register requests — the refused one and the real one after the wait: ${seen}`,
+  );
+  assert.ok(!failed(one), `the wait is inside the rebind — the first call works: ${seen}`);
+  assert.ok(!failed(two), seen);
+  assert.equal(fake.state.writes.at(-1)?.author, "spawn-held", seen);
+  assert.equal(fake.state.counts.unattributed, 0, seen);
+});
+
 // #9959: a terminal claim refusal forbids any later register of the pair, the bridge's own
 // background ones too (skills refresh after a call's answer); cleanup revoke stays allowed.
 test("spawned_for: after the first claim's terminal refusal no register goes out, the background ones included", async (t) => {
