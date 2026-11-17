@@ -1,5 +1,5 @@
 // Взятие места пережидает 429 rate_limited источника (граф nks-dev: #10801, второй пояс
-// предохранителя): register при возврате места с диска ждёт ровно Retry-After из отказа
+// предохранителя): register при возврате места с диска ждёт ровно названные api секунды
 // и повторяет — не больше трёх попыток и 60 с ожидания; source_paused и прочие отказы
 // не повторяются, стоп сессии во время ожидания прерывает его без повтора.
 //
@@ -10,11 +10,16 @@ import { test } from "node:test";
 import { holdRecord, placeOf, setup, stand, until } from "./ownseat-kit.mjs";
 
 const KEY = "proba--931--_nks_nks-dev"; // the seat's graph as @owner/slug (#8677)
-const refused = (rule, retryAfter) => ({
-  text: `Too Many Requests (429): ${rule}${retryAfter ? ` — retry after ${retryAfter}s` : ""}`,
+// Отказ как api 0.202.0 (#10801): HTTP 429, правило rate_limited, секунды — целым
+// errors[0].data.retry_after_secs; в data ещё key («opening» на регистрации места) и
+// иногда kind. Поля retry_after в data нет. source_paused — отдельное правило, без секунд.
+const refused = (rule, retryAfterSecs) => ({
+  text: `Too Many Requests (429): ${rule}${retryAfterSecs ? ` — retry after ${retryAfterSecs}s` : ""}`,
   status: 429,
   rule,
-  ...(retryAfter ? { data: { retry_after: retryAfter } } : {}),
+  data: retryAfterSecs
+    ? { retry_after_secs: retryAfterSecs, key: "opening" }
+    : { key: "opening" },
 });
 
 /** Место proba стоит мостом b1 из каталога cwd; мост убит, запись держания жива — возврат с диска. */
@@ -43,6 +48,29 @@ test("429 rate_limited with Retry-After: the return waits it out and the second 
   assert.equal(fake.state.counts.register_refused, 1, "the api refused the first register");
   assert.equal(fake.state.counts.register_standing, stood + 1, "the second register passed");
   assert.equal(fake.state.places.get("931:proba")?.listening, true, "the seat stands");
+});
+
+test("the former data.retry_after without retry_after_secs is not our form: no wait, no retry", async (t) => {
+  const { fake, stood, up } = await returnedSeat(t);
+  await fake.control({
+    // До api 0.202.0 мост читал data.retry_after — в отказе этого поля нет (#10801):
+    // отказ с ним и без retry_after_secs — не наша форма, секунды не названы.
+    registerRefuseNext: [
+      {
+        text: "Too Many Requests (429): rate_limited — retry after 1s",
+        status: 429,
+        rule: "rate_limited",
+        data: { retry_after: 1, key: "opening" },
+      },
+    ],
+  });
+  const b2 = await up();
+  const r = await b2.call("iskron/resume", { key: KEY });
+  assert.equal(r.result?.resumed, true, JSON.stringify(r));
+  assert.match(r.result.word, /register отказал.*rate_limited/, r.result.word);
+  assert.doesNotMatch(r.result.word, /переждал/, r.result.word);
+  assert.equal(fake.state.counts.register_refused, 1, "exactly one register, no retry");
+  assert.equal(fake.state.counts.register_standing, stood, `word=${r.result.word}`);
 });
 
 test("429 source_paused: one register, no retry — the refusal returns as it came", async (t) => {

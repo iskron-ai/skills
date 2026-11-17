@@ -1,9 +1,12 @@
 // The source's pace limit met by register (graph @nks/nks-dev, node #10801): the bridge
-// is the second belt behind the platform's fuse — a 429 rate_limited refusal carries the
-// api's Retry-After, and the move waits exactly that inside itself and registers again,
-// so an honest burst over the source's allowance still takes its seat. Any other 429
-// (source_paused — the fuse's own word is "do not retry") and every other refusal return
-// as they came. The wait shares the reissue loop's stop watch (standmoves.ts, #7552).
+// is the second belt behind the platform's fuse — a 429 rate_limited refusal names its
+// Retry-After in the body, `errors[0].data.retry_after_secs` of the ProblemDetail (api
+// 0.202.0; the HTTP answer also carries a Retry-After header, but the refusal view holds
+// no headers — refusal.ts reads the _meta refusal the api builds from the body), and the
+// move waits exactly that inside itself and registers again, so an honest burst over the
+// source's allowance still takes its seat. Any other 429 (source_paused — the fuse's own
+// word is "do not retry") and every other refusal return as they came. The wait shares
+// the reissue loop's stop watch (standmoves.ts, #7552).
 import { type Refusal } from "./refusal.ts";
 import { awaitReissue } from "./standmoves.ts";
 
@@ -13,13 +16,16 @@ const RATE_LIMIT_TRIES = 3;
 const RATE_LIMIT_WAIT_S = 60;
 
 /**
- * Seconds the api names on a 429 rate_limited refusal of register — its Retry-After in
- * `data.retry_after` (#10801); null — any other answer, or a rate_limited without the
- * header: without the source's own word how long, the move does not guess.
+ * Seconds the api names on a 429 rate_limited refusal of register — the ProblemDetail's
+ * `errors[0].data.retry_after_secs`, an integer the api puts into the refusal's `data`
+ * verbatim (refusal.ts; #10801); `data` also carries `key` ("opening" at a seat
+ * registration) and sometimes `kind`, and carries no `retry_after`. null — any other
+ * answer, or a rate_limited without the seconds: without the source's own word how
+ * long, the move does not guess.
  */
 export function rateLimitedWait(r: { isError: boolean; refusal?: Refusal }): number | null {
   if (!r.isError || r.refusal?.rule !== "rate_limited" || r.refusal.status !== 429) return null;
-  const said = r.refusal.data?.retry_after;
+  const said = r.refusal.data?.retry_after_secs;
   const s = typeof said === "number" ? said : Number(said);
   return Number.isFinite(s) && s > 0 ? s : null;
 }
