@@ -150,8 +150,9 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       seats.has(e.to_standing_id)
     )
       return true;
-    if ((e.kind === "ask" || e.kind === "invite") && !!karta && e.to_karta_node_id === karta)
-      return true;
+    // A new invite of the role raises a fresh call by the ordinary path — it never wakes the
+    // sleeping one (#10995 review 3); only an ask to the invited role does.
+    if (e.kind === "ask" && !!karta && e.to_karta_node_id === karta) return true;
     if (e.kind === "answer" && e.in_reply_to !== null) {
       const author = pageAsks.get(e.in_reply_to) ?? asks[String(e.in_reply_to)];
       return !!author && seats.has(author);

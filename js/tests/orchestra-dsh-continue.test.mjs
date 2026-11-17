@@ -143,6 +143,23 @@ test("dsh: a stop order naming the sleeping seat ends the sleep and the tree goe
   assert.equal(o.dshCalls().length, 1, "a stop order does not wake a continuation");
 });
 
+test("dsh: a new invite raises a fresh call and never wakes the sleeping one", async (t) => {
+  const { o } = await asleep(t, 101, { options: { limit: 2 } });
+  // A new invite for the same role: the ordinary raising takes it — the sleeping run must
+  // not take it as its own wake word (#10995 review 3).
+  await o.room("open", [inviteEntry(101), inviteEntry(102)]);
+  await o.queue([invite(102)]);
+  assert.match((await o.step()).out, /invite 102: launched/);
+  const calls = o.dshCalls();
+  assert.equal(calls.length, 2, "the first life plus one fresh launch — no continuation");
+  assert.ok(!calls[1].argv.includes("--session-id"), "the fresh call is not a continuation");
+  const sleeping = o.run(101);
+  assert.equal(sleeping.state, "dormant");
+  assert.equal(sleeping.dormant.cursor, 102, "the new invite's entry only moves the cursor");
+  const fresh = o.run(102);
+  assert.equal(fresh.state, "launched");
+});
+
 test("dsh: the continuation is a new launch for the raise windows", async (t) => {
   const { o, row } = await asleep(t, 91);
   const since = row.dormant.since;
