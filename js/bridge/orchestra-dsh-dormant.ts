@@ -256,9 +256,7 @@ export async function stepDormant(
       }
     } catch (e) {
       r.why = readErrorWhy(e);
-      out.push(
-        w().leadRow(r.realm, r.room, r.invite, `${r.why} (${(e as Error).message})`),
-      );
+      out.push(w().leadRow(r.realm, r.room, r.invite, `${r.why} (${(e as Error).message})`));
       continue;
     }
     const verdict = judge(entries, sleep.cursor ?? 0, r);
