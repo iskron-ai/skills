@@ -131,3 +131,14 @@ test("dsh: a new daemon over the same registry keeps the sleep and wakes the sam
   assert.equal(calls.length, 2);
   assert.equal(calls[1].argv[calls[1].argv.indexOf("--session-id") + 1], SESSION);
 });
+
+test("dsh: a stop order naming the sleeping seat ends the sleep and the tree goes", async (t) => {
+  const { o, row } = await asleep(t, 81);
+  await o.stopOrder(SEAT);
+  await o.step();
+  const ended = await o.until(81, (r) => r.state === "ended");
+  assert.equal(ended.why, "stop_ordered_elsewhere");
+  await o.until(81, (r) => r.tree?.state === "removed");
+  assert.equal(existsSync(row.worktree), false);
+  assert.equal(o.dshCalls().length, 1, "a stop order does not wake a continuation");
+});

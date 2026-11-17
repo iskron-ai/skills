@@ -8,7 +8,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
-import { dshSleepable, goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
+import { dormantFromEnds, dshSleepable, goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
 
 const SEAT = "11111111-1111-4111-8111-111111111111";
 const OTHER = "44444444-4444-4444-8444-444444444444";
@@ -251,4 +251,14 @@ test("dormant tact: a failed read leaves the cursor standing and names itself in
   assert.equal(r.dormant.cursor, 9);
   assert.equal(r.why, "dormant_read_error");
   assert.ok(said.join("; ").includes("dormant_read_error"));
+});
+
+test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
+  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+  const ours = exitedRun();
+  await dormantFromEnds(api.base, "key", { ours });
+  assert.equal(ours.state, "dormant", "the tact's own ended row sleeps when the case is open");
+  const elsewhere = exitedRun({ why: "stopped_elsewhere" });
+  await dormantFromEnds(api.base, "key", { elsewhere });
+  assert.equal(elsewhere.state, "ended", "a stop ordered elsewhere is a wind-down, not a sleep");
 });

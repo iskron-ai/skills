@@ -193,6 +193,12 @@ export async function leadingDsh(
     queue: (invites, signals = []) =>
       fake.control({ orchestra: { realms: { [REALM]: { invites, signals } } } }),
     room: (status, entries) => fake.control({ caseRooms: { [ROOM]: { status, entries } } }),
+    /** A stop order on the account naming a seat — the foreign stop path (#10995). The realm
+     * rides along: the demands snapshot refuses an order without one. */
+    stopOrder: (standing) =>
+      fake.control({
+        stop_order: { id: "ord-probe", standing_id: standing, realm: REALM, karta_seq: 931, frame: false },
+      }),
     /** A new daemon over the same registry and the same fake — a slept row must survive it. */
     restart: async () => {
       await stopDaemon();
