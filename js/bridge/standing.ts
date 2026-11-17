@@ -1,8 +1,7 @@
-import { ID_PREFIX, SEAT_GONE_RE, STANDING, tool, UNATTRIBUTED_RE } from "../delivery/index.ts";
+import { SEAT_GONE_RE, STANDING, tool, UNATTRIBUTED_RE } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { FORM } from "./board.ts";
-import { claimResult } from "./claimdelivery.ts";
 import { deafPlaceIn, deafSeatTaken } from "./deaf.ts";
 import { endedSince } from "./endedseats.ts";
 import { errorMessage } from "./errors.ts";
@@ -10,7 +9,6 @@ import { standBesideAgain } from "./evicted.ts";
 import { seatField, structuredOf } from "./fields.ts";
 import { addPlace, noteStandingId, releaseStanding, standingIdIn } from "./hold.ts";
 import { normKarta, normName } from "./names.ts";
-import { placeFields } from "./placefields.ts";
 import { besideSeats, dropExtra, keyOfPlace, rememberPlace } from "./places.ts";
 import {
   type MoveSeat,
@@ -21,10 +19,11 @@ import {
 } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
 import { openedConcurrently, type Refusal, refusalOf } from "./refusal.ts";
+import { registerRaw } from "./registergate.ts";
 import { noteSkills } from "./skillwatch.ts";
-import { claimRefusal, launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
+import { registeredBasis } from "./spawned-for.ts";
 import { debug, log } from "./streams.ts";
-import { post, type Standing, state } from "./transport.ts";
+import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
 const SEAT_EXPIRED = (): string => words(STANDING).seatExpired();
@@ -164,7 +163,7 @@ export async function replayRegister(
     stop,
     ended,
   } = await throughRateLimit(
-    () => registerOnce(place, freshSkills),
+    () => registerRaw(move, seat, place, freshSkills),
     (g) => rateLimitedWait(asRefusalView(g)),
     move,
     seat,
@@ -173,44 +172,7 @@ export async function replayRegister(
   if (stop || ended || !openedConcurrently(got) || registeredBasis(place ?? {}).spawned_for)
     return got;
   log("register refused by a concurrent opening (409, no rule) — registering again once");
-  return registerOnce(place, freshSkills);
-}
-
-async function registerOnce(
-  place: Standing | null,
-  freshSkills: boolean,
-): Promise<JsonRpcMessage | null> {
-  // A terminal claim refusal ends every own register of this session: replay, skills, usage (#9959).
-  if (claimRefusal()) return null;
-  const id = `${ID_PREFIX}bridge-restanding-${++state.reinitCounter}`;
-  let reply: JsonRpcMessage | null = null;
-  const basis = launchBasis({ ...place });
-  rememberBasis({ ...place }, basis);
-  const arguments_ = {
-    ...place,
-    ...placeFields(place ?? {}, freshSkills),
-    ...registeredBasis(place ?? {}),
-    action: "register",
-  };
-  await post(
-    {
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: {
-        name: tool("channel"),
-        arguments: arguments_,
-      },
-    },
-    (m) => {
-      if (m.id === id) {
-        m = claimResult(arguments_, m, true);
-        reply = m;
-        if (!m.error && !m.result?.isError && place) noteSkills(place, arguments_.attrs.skills);
-      }
-    },
-  );
-  return reply as JsonRpcMessage | null;
+  return registerRaw(move, seat, place, freshSkills); // the gate asks the move again (#7439)
 }
 
 /**

@@ -42,6 +42,7 @@ import { holdWords } from "./holdwords.ts";
 import { returnToStanding } from "./leave.ts";
 import { THIN_RESUME_ID } from "./lostplaces.ts";
 import { type RegisterMove, registerMove } from "./ratelimit.ts";
+import { MAIN_SEAT } from "./registergate.ts";
 import { recordsFor, type ResumeSelector } from "./resumepick.ts";
 import { resumeWords } from "./resumewords.ts";
 import { seatProof } from "./seatproof.ts";
@@ -132,7 +133,7 @@ export async function resumeFromDisk(
 
 /** Register the returned seat, then the seats beside it (#7602); "" — stopped, resumeBy says it. */
 async function registerBack(rec: HoldRecord, move: RegisterMove): Promise<string> {
-  const { r, waitS } = await registerRecord(rec, move, { id: null, main: true });
+  const { r, waitS } = await registerRecord(rec, move, MAIN_SEAT);
   if (!r || r.isError) return r ? resumeWords.registerRefused(short(r.text)) : "";
   await besideBack(rec.url, rec, move); // the seats beside are the same move (#7439, #11030)
   return waitS > 0 ? `register, ${resumeWords.registerWaited(waitS)}` : "register";

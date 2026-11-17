@@ -6,10 +6,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { tool } from "../delivery/index.ts";
 import { type Frame } from "../shared/channel.ts";
 import { standingsDirOf } from "../shared/standings.ts";
-import { callTool, resolveAgainstLed, short } from "./call.ts";
+import { resolveAgainstLed, short } from "./call.ts";
 import { harnessName } from "./client.ts";
 import { CFG } from "./config.ts";
 import { awaitHello } from "./hold.ts";
@@ -22,6 +21,7 @@ import {
   throughRateLimit,
 } from "./ratelimit.ts";
 import { learnRealm, otherRealm, resolvedRealm, sameRealm } from "./realms.ts";
+import { registerByCall } from "./registergate.ts";
 import { standingLog } from "./store.ts";
 import { log } from "./streams.ts";
 
@@ -87,8 +87,7 @@ async function resolveRecord(
 export const registerRecord = (rec: HoldRecord, move: RegisterMove, seat: MoveSeat) =>
   throughRateLimit(
     () =>
-      callTool(tool("channel"), {
-        action: "register",
+      registerByCall(move, seat, {
         realm: rec.realm,
         karta: rec.karta,
         name: rec.name,

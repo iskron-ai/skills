@@ -66,6 +66,7 @@ import { placeFields, rememberStandModel, type SeatMove } from "./placefields.ts
 import * as provisional from "./provisional.ts";
 import { registerMove, throughRateLimitAnswer } from "./ratelimit.ts";
 import { otherRealm } from "./realms.ts";
+import { MAIN_SEAT, registerByCall } from "./registergate.ts";
 import { resumeFromDisk, takeLapsed } from "./resume.ts";
 import { resumeWords } from "./resumewords.ts";
 import { SATELLITE_TTL_S, satelliteGate, satelliteListenWord, ttlRefused } from "./satellite.ts";
@@ -218,8 +219,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
   noteStandCwd(cwd);
   const here = (move: SeatMove = "register") => placeFields({ realm, karta, name }, true, move); // seat fields on every registration (#5174)
   const reg = () =>
-    call(tool("channel"), {
-      action: "register",
+    registerByCall(move, MAIN_SEAT, {
       realm,
       karta,
       name,
@@ -352,7 +352,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     how = sw().howBeside(ledKey() ?? "");
   } else if (resumed) {
     // A 429 rate_limited of the source is waited out inside the return (#10801, ratelimit.ts).
-    const { r, waitS } = await throughRateLimitAnswer(register, move, { id: null, main: true });
+    const { r, waitS } = await throughRateLimitAnswer(register, move, MAIN_SEAT);
     if (!r) return (lines.push(move.stopped() ?? ""), done(true)); // stopped before the register (#7439)
     if (r.isError) return (lines.push(refusedWord("register", r, realm)), done(true));
     heardHere = true;
@@ -423,7 +423,7 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const r = await register();
     if (r.isError) {
       const freshClaim = !!basis && !mine && !ownSession && !reopening;
-      lines.push(await registerRefused(r, realm, taken, prior, addr, freshClaim, !!basis));
+      lines.push(await registerRefused(move, r, realm, taken, prior, addr, freshClaim, !!basis));
       return done(true);
     }
     resetKnocks(realm, karta, name);
