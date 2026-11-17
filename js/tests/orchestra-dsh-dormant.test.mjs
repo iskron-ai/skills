@@ -32,13 +32,20 @@ const entry = (id, kind, fields = {}) => ({
   ...fields,
 });
 
-/** A stand-in case server whose status and entries the probe may switch mid-flight. */
+/** A stand-in case server whose status and entries the probe may switch mid-flight;
+ * refuse: true — both doors, "status" / "history" — one of them (a transient 5xx). */
 async function caseApi(t, { status = "open", entries = [], refuse = 0 } = {}) {
   const state = { status, entries, refuse };
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
-    if (state.refuse) return res.writeHead(503).end("{}");
-    if (!req.url.includes("/history")) return res.end(JSON.stringify({ status: state.status }));
+    const history = req.url.includes("/history");
+    if (
+      state.refuse === true ||
+      (state.refuse === "history" && history) ||
+      (state.refuse === "status" && !history)
+    )
+      return res.writeHead(503).end("{}");
+    if (!history) return res.end(JSON.stringify({ status: state.status }));
     const since = Number(new URL(req.url, "http://x").searchParams.get("since"));
     const items = state.entries.filter((e) => e.id > since);
     res.end(
@@ -164,16 +171,13 @@ test("dormancy: the seats collect the row's own id and every earlier one", async
   assert.deepEqual(r.dormant.seats, [OTHER, SEAT]);
 });
 
-test("dormancy: a closed case, a refused read and an unclean exit keep the end", async (t) => {
+test("dormancy: a definitively closed case and an unclean exit keep the end", async (t) => {
   const closed = exitedRun();
   assert.equal(
     await goDormant((await caseApi(t, { status: "closed" })).base, "key", closed),
     false,
   );
   assert.equal(closed.state, "ended");
-  const refused = exitedRun();
-  assert.equal(await goDormant((await caseApi(t, { refuse: 1 })).base, "key", refused), false);
-  assert.equal(refused.state, "ended");
   assert.equal(
     dshSleepable(
       exitedRun({ dsh: { pid: 1, events: "/e", final: "stopped", exit: "0", session: "s" } }),
@@ -197,6 +201,46 @@ test("dormancy: a closed case, a refused read and an unclean exit keep the end",
     false,
     "a gone tree cannot sleep",
   );
+});
+
+test("dormancy: a transient read refusal sleeps the row on the invite floor, not the end", async (t) => {
+  // A 5xx names neither open nor closed: only a definitive closed|abandoned may end the run —
+  // the row sleeps with the error named, the tree stays, and the tact retries the read.
+  const status = exitedRun();
+  assert.equal(
+    await goDormant((await caseApi(t, { refuse: "status" })).base, "key", status),
+    true,
+  );
+  assert.equal(status.state, "dormant");
+  assert.equal(status.why, "dormant_read_error");
+  assert.equal(status.dormant.cursor, 9, "the invite's number is the floor");
+  assert.deepEqual(status.dormant.seats, [SEAT]);
+  const history = exitedRun();
+  assert.equal(
+    await goDormant((await caseApi(t, { refuse: "history" })).base, "key", history),
+    true,
+  );
+  assert.equal(history.state, "dormant");
+  assert.equal(history.why, "dormant_read_error");
+  assert.equal(history.dormant.cursor, 9);
+  // The window still counts on an error-armed row: the sleep cannot outlive it on a dead api.
+  const api = await caseApi(t, { refuse: true });
+  const aged = sleepingRow({
+    dormant: { ...sleepingRow().dormant, since: "2026-10-01T00:00:00Z" },
+  });
+  aged.why = "dormant_read_error";
+  await stepDormant(
+    "/tmp/unused",
+    api.base,
+    "key",
+    { k: aged },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
+  assert.equal(aged.state, "ended");
+  assert.equal(aged.why, "dormant_window");
 });
 
 test("dormant tact: a said to the seat, an ask to the role and an answer to the seat's ask wake", async (t) => {  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
@@ -481,7 +525,7 @@ test("dormant tact: the window, the taken slot and the gone launcher hold the sl
 });
 
 test("dormant tact: a failed read leaves the cursor standing and names itself in the row", async (t) => {
-  const api = await caseApi(t, { refuse: 1 });
+  const api = await caseApi(t, { refuse: true });
   const r = sleepingRow();
   const said = await stepDormant(
     "/tmp/unused",

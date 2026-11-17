@@ -27,16 +27,31 @@ export const dshSleepable = (r: Run): boolean =>
  */
 export async function goDormant(base: string, token: string, r: Run): Promise<boolean> {
   if (!dshSleepable(r) || r.tree?.state !== "ready") return false;
+  const seats = [
+    ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
+  ];
+  const sleepOnError = (): boolean => {
+    // A transient refusal names neither open nor closed: only a definitive closed|abandoned
+    // may end the run. The row sleeps on the invite floor with the error named, the tree
+    // stays, the tact retries the read — and the window counts this sleep like any other
+    // (#10995 review).
+    r.state = "dormant";
+    r.why = "dormant_read_error";
+    r.dormant = {
+      since: new Date().toISOString(),
+      cursor: Math.max(r.invite, r.dormant?.cursor ?? 0),
+      seats,
+      asks: {},
+    };
+    return true;
+  };
   let read: { entries: CaseEntry[]; cursor: number };
   try {
     if ((await readCaseStatus(base, token, r.room)) !== "open") return false;
     read = await readCaseHistory(base, token, r.room);
   } catch {
-    return false;
+    return sleepOnError();
   }
-  const seats = [
-    ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
-  ];
   // The seat left the case before the process exited: our exit stop met an already-gone
   // standing (the 410 path), so a left authored by the call's seat is its own walk-away —
   // no sleep on it. Our completed stop's left is another matter: its stop_outcome stands on
