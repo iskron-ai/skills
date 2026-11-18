@@ -8,7 +8,13 @@ import { ORCHESTRA } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-case-read.ts";
 import { hasOpenShare } from "./orchestra-case-share.ts";
-import { callSeats, ownInvite, pairFor, SHARE_CLAIMED } from "./orchestra-dsh-reinvite.ts";
+import {
+  callSeats,
+  claimedOnPage,
+  ownInvite,
+  pairFor,
+  SHARE_CLAIMED,
+} from "./orchestra-dsh-reinvite.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
@@ -261,6 +267,7 @@ export async function stepDormant(
       continue;
     }
     let entries: CaseEntry[];
+    let claimed: boolean;
     try {
       if ((await readCaseStatus(base, token, r.room)) !== "open") {
         r.state = "ended";
@@ -303,9 +310,18 @@ export async function stepDormant(
         r.dormant = { ...sleep, ...(karta ? { karta } : {}), asks };
         delete r.why;
       }
+      claimed = await claimedOnPage(base, token, r, entries);
     } catch (e) {
       r.why = readErrorWhy(e);
       out.push(w().leadRow(r.realm, r.room, r.invite, `${r.why} (${(e as Error).message})`));
+      continue;
+    }
+    // Another seat came in on the call's ownerless invite: the share is carried, the sleep ends
+    // on the page alone, waking word or not (PR review, #10995).
+    if (claimed) {
+      r.state = "ended";
+      r.why = SHARE_CLAIMED;
+      out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
       continue;
     }
     const verdict = judge(entries, sleep.cursor ?? 0, r);

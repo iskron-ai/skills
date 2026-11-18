@@ -136,6 +136,39 @@ test("dsh: a continuation whose pair another seat took (409 spawned_for_claimed)
   assert.equal(o.dshCalls().length, 2, "no further continuation");
 });
 
+test("dsh: another seat in on the call's ownerless invite ends the sleep without a waking word", async (t) => {
+  // The reviewer's scenario (PR 845): the ownerless invite already lies behind the cursor, then
+  // another seat comes in on it — no said, ask or answer follows.
+  const o = await asleep(t, 501);
+  const before = [share(501), inviteEntry(501), revoked(502), ownerless(503)];
+  await o.room("open", before);
+  await o.step();
+  const slept = o.run(501);
+  assert.equal(slept.state, "dormant");
+  assert.equal(slept.dormant.cursor, 503, "the ownerless invite is behind the cursor");
+  await o.room("open", [...before, joined(504, OTHER_SEAT, 503)]);
+  assert.match((await o.step()).out, /invite 501: dormant_share_claimed/);
+  const ended = await o.until(501, (r) => r.state === "ended");
+  assert.equal(ended.why, "dormant_share_claimed");
+  await o.until(501, (r) => r.tree?.state === "removed");
+  assert.equal(existsSync(ended.worktree), false);
+  assert.equal(o.dshCalls().length, 1, "no continuation");
+});
+
+test("dsh: another seat in on a different invite leaves the sleep alone", async (t) => {
+  const o = await asleep(t, 551);
+  await o.room("open", [
+    share(551),
+    inviteEntry(551),
+    inviteEntry(552),
+    joined(553, OTHER_SEAT, 552),
+  ]);
+  await o.step();
+  const row = o.run(551);
+  assert.equal(row.state, "dormant", row.why);
+  assert.equal(row.tree.state, "ready");
+});
+
 test("dsh: no ownerless invite — the continuation keeps the call's pair", async (t) => {
   const o = await asleep(t, 251);
   // Another seat's ownerless invite is not the call's.

@@ -70,6 +70,31 @@ export const signalRun = (
   ) ??
   null;
 
+/**
+ * A sleeping call's tact page shows another seat coming in on an invite: when that invite is
+ * the call's own ownerless one, the share went on without it — no waking word needed. The
+ * invite may lie behind the cursor, so the journal is read again from the call's invite.
+ */
+export async function claimedOnPage(
+  base: string,
+  token: string,
+  r: Run,
+  page: CaseEntry[],
+): Promise<boolean> {
+  const seats = callSeats(r);
+  const foreign = page.some(
+    (e) =>
+      e.kind === "joined" &&
+      e.in_reply_to !== null &&
+      !!e.author_standing_id &&
+      !seats.includes(e.author_standing_id),
+  );
+  if (!foreign) return false;
+  const { entries } = await readCaseHistory(base, token, r.room, Math.max(0, r.invite - 1));
+  const own = ownInvite(entries, seats);
+  return !!own && "claimed" in own;
+}
+
 /** The seats a sleeping call answers for: every id it had and the one it holds now. */
 export const callSeats = (r: Run): string[] => [
   ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
