@@ -53,6 +53,7 @@ export async function launchDsh(
           n: run.n,
           idle_due: run.idle_due,
           treeExit: run.tree?.exit,
+          closed: run.closed,
         }
       : undefined;
   const fail = (why: string, state: Run["state"] = "refused"): string => {
@@ -71,6 +72,7 @@ export async function launchDsh(
       run.rooms = slept.rooms;
       run.n = slept.n;
       run.idle_due = slept.idle_due;
+      run.closed = slept.closed;
       if (run.tree) run.tree.exit = slept.treeExit ?? run.tree.exit;
       writeRuns(authDir, runs);
       return why;
@@ -94,12 +96,14 @@ export async function launchDsh(
   writeModelPatch(files.model, files.dir, model);
   if (session) {
     run.wakes = (run.wakes ?? 0) + 1;
+    writeRuns(authDir, runs);
     // The continuation's own client life (#10995): the slept life's exit marks must not end
     // the new process at once, and its event file starts over — the wait below observes THIS
     // process, not the slept one's leftovers. It is a new launch for every raise window too:
     // at moves to now, and the first life's composition marks (sat/rooms/n, idle_due) reset,
     // so expireLaunches and the no-join stop judge the continuation by its own age.
     if (run.tree) run.tree.exit = undefined;
+    delete run.closed;
     run.at = new Date().toISOString();
     delete run.stop_outcome;
     delete run.order_id;
