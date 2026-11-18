@@ -139,6 +139,55 @@ const launchStub = () => {
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
 
+test("a pending addressed word waits at the cursor and wakes once when its body arrives", async (t) => {
+  const pending = entry(10, "said", { to_standing_id: SEAT, body_pending: true });
+  const api = await caseApi(t, {
+    entries: [pending, entry(11, "said", { to_standing_id: OTHER })],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.dormant.cursor, 9);
+  api.state.entries = [{ ...pending, body_pending: false }, api.state.entries[1]];
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 1);
+  assert.equal(r.dormant.cursor, 10);
+});
+
+test("a pending word after a waking word cannot move the accepted cursor", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(10, "said", { to_standing_id: SEAT }),
+      entry(11, "said", { to_standing_id: SEAT, body_pending: true }),
+    ],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 1);
+  assert.equal(r.dormant.cursor, 10);
+});
+
+test("a pending word later aborted is consumed without waking", async (t) => {
+  const pending = entry(10, "said", { to_standing_id: SEAT, body_pending: true });
+  const api = await caseApi(t, { entries: [pending] });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(r.dormant.cursor, 9);
+  api.state.entries = [{ ...pending, body_pending: false, aborted: true }];
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.dormant.cursor, 10);
+});
+
 test("a clean exit without an open share does not sleep", async (t) => {
   const api = await caseApi(t, {
     entries: [
@@ -920,18 +969,107 @@ test("dormancy: an api-defect standing_required is a named transient — the sle
 
 /** A stand-in orders door: the probe switches the order's state between reads. */
 async function ordersApi(t, order) {
-  const state = { order };
+  const state = { order, extra: [] };
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     const since = Number(new URL(req.url, "http://x").searchParams.get("since") ?? 0);
-    const items = state.order.seq > since ? [state.order] : [];
-    res.end(JSON.stringify({ items, next_since: items.length ? state.order.seq : since }));
+    const items = [state.order, ...state.extra].filter((o) => o.seq > since);
+    res.end(JSON.stringify({ items, next_since: items.length ? items.at(-1).seq : since }));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(() => server.close());
   return { base: `http://127.0.0.1:${server.address().port}/api`, state };
 }
+
+test("a known own order stays own beside a foreign stop", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "legacy-own-order-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const api = await ordersApi(t, {
+    id: "ord-own",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  const r = sleepingRow({
+    state: "stopping",
+    order_id: "ord-own",
+    orders: ["ord-own"],
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+  });
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.equal(r.foreign_stop, undefined);
+  assert.deepEqual(r.orders, ["ord-own"]);
+  assert.equal(r.state, "stopping");
+  const secondDir = mkdtempSync(join(tmpdir(), "legacy-own-page-"));
+  t.after(() => rmSync(secondDir, { recursive: true, force: true }));
+  api.state.extra = [{ ...api.state.order, id: "ord-other", seq: 2 }];
+  const alongside = sleepingRow({
+    state: "stopping",
+    order_id: "ord-own",
+    orders: ["ord-own"],
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+  });
+  await foreignStops(secondDir, api.base, "key", { k: alongside });
+  assert.equal(alongside.foreign_stop?.id, "ord-other");
+  assert.equal(alongside.state, "ended");
+});
+
+test("an ambiguous v8.13.1 stop with no provenance is foreign and cannot sleep", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "legacy-ambiguous-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const api = await ordersApi(t, {
+    id: "ord-probe",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  // Produced by built v8.13.1 after the foreign stop and process exit; paths and times masked.
+  const r = {
+    realm: "@nks/nks-dev",
+    room: "room-1",
+    invite: 31,
+    karta: 931,
+    launcher: "probe-mac",
+    harness: "dsh",
+    model: "local-probe/mock",
+    repository: "github.com/probe/one",
+    worktree: "/probe/tree",
+    state: "stopping",
+    at: "2026-11-01T01:00:00Z",
+    standing_id: SEAT,
+    order_id: "ord-probe",
+    stopping_at: "2026-11-01T01:30:00Z",
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+    dsh: {
+      pid: 1,
+      events: "/probe/events",
+      model: "/probe/model",
+      session: "s",
+      final: "completed",
+      exit: "0",
+    },
+  };
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.equal(r.foreign_stop?.id, "ord-probe");
+  assert.equal(r.state, "ended");
+  assert.equal(await goDormant((await caseApi(t)).base, "key", r), false);
+});
 
 test("a foreign stop order ends the run in any reading order of its states", async (t) => {
   const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
