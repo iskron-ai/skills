@@ -5,7 +5,8 @@
 // agent gets the start word in its system prompt (start.ts, #10921); a compacted session
 // gets its role back (compaction.ts); a shell call that pushed or merged gets its lines as a
 // turn (rites.ts, #11071); a frame's turn that lost its word in the console wakes the session
-// (turnend.ts); a disposed session hears nothing more.
+// (turnend.ts) — in headless through a task holding the root's idle (hold.ts, #11071); a disposed
+// session hears nothing more.
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK events without a schema */
 import { DSH } from "../delivery/index.ts";
 import { markFrame } from "../shared/frame-text.ts";
@@ -16,6 +17,8 @@ import { TURN_RITE } from "../shared/turnend.ts";
 import { roleWord } from "./compaction.ts";
 import { isHeadless } from "./headless.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
+import { createHold } from "./hold.ts";
+import { afterPublish } from "./publish.ts";
 import { riteLines } from "./rites.ts";
 import { createRoot } from "./root.ts";
 import { putStartWord } from "./start.ts";
@@ -47,33 +50,19 @@ export function apply(ctx: DshCtx): void {
     }
     console.error(text);
   };
-  /**
-   * A word sent from inside a session event lands after the store's publish cycle:
-   * a synchronous followup there is rejected ("cannot reenter while another append
-   * is being published" — observed live on compaction/end, case 5251 stage 2).
-   */
-  const sendAfterPublish = (a: DshAgent, message: Record<string, unknown>, tries = 5): void => {
-    setTimeout(
-      () => {
-        try {
-          a.followup(message);
-        } catch (e) {
-          const msg = (e as Error).message;
-          if (tries > 0 && msg.includes("reenter")) return sendAfterPublish(a, message, tries - 1);
-          log(W().notDelivered(msg));
-        }
-      },
-      tries === 5 ? 0 : 25,
-    );
-  };
+  const notDelivered = (why: string): void => log(W().notDelivered(why));
+  const sendAfterPublish = (a: DshAgent, message: Record<string, unknown>): void =>
+    void afterPublish(a, message).catch((e: Error) => notDelivered(e.message));
   const authDir = authDirFromEnv();
   let agent: DshAgent | null = null;
+  let raw: any = null; // the root's agent itself: its status and maintenance (hold.ts)
+  let headless = false; // the sign shows on agent/created, not on apply (observed, #11071)
   let hearing: Hearing | null = null;
-  // Never in a headless run (headless.ts); no cover — on, a frame proves the seat; else by the
-  // cover's rituals field.
+  const hold = createHold(notDelivered);
+  // No cover — on, a frame proves the seat; else by the cover's rituals field.
   const turns = createTurnEnds({
-    on: () => !isHeadless(ctx) && (ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true),
-    wake: (text) => void (agent && sendAfterPublish(agent, turnMessage(text))),
+    on: () => ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true,
+    wake: (text) => hold.wake(turnMessage(text)),
   });
   /** The root's agent as the hearing sees it: each frame it lays is known to the turn's end. */
   const heard = (): DshAgent | null => {
@@ -82,7 +71,7 @@ export function apply(ctx: DshCtx): void {
     return {
       followup: (m: any) => {
         turns.laid(m);
-        return a.followup(m);
+        return hold.through(m) ?? a.followup(m);
       },
     };
   };
@@ -106,7 +95,9 @@ export function apply(ctx: DshCtx): void {
       putStartWord(payload?.agent, payload?.source, process.cwd(), (why) =>
         log(W().notDelivered(why)),
       );
-    agent = agentOf(payload?.agent) ?? agent;
+    const own = agentOf(payload?.agent);
+    if (own) [agent, raw] = [own, payload.agent];
+    headless = isHeadless(ctx);
     if (!hearing) hearing = startHearing(heard, log, startedAt);
   });
   on("session/disposed", (session) => {
@@ -114,8 +105,15 @@ export function apply(ctx: DshCtx): void {
     hearing?.stop(); // the session is gone: nothing more goes into it
     hearing = null;
     agent = null;
+    raw = null;
+    hold.end();
     turns.forget();
     root.end();
+  });
+  // Synchronously in the idle's own call: headless checks for its exit right after (hold.ts).
+  on("agent/status", (p) => {
+    if (p?.status === "idle" && raw && agent && p.agent === raw)
+      hold.idle(raw, agent, headless, hearing?.live() ?? false);
   });
   // A waterfall (exec, result, next): the decision passes unchanged, the lines go to the root.
   on("tools/post-execute", (exec, result, next) => {
@@ -132,6 +130,7 @@ export function apply(ctx: DshCtx): void {
   on("session/event", (session, ev) => {
     // A failed compaction kept the context: no word about a compaction that did not happen.
     if (!root.ours(session)) return;
+    if (ev?.type === "turn/start") hold.turnStarted();
     turns.onEvent(ev);
     if (ev?.type !== "compaction/end" || ev.error) return;
     const a = agent;

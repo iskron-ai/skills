@@ -1,11 +1,11 @@
-// Whether this dsh process is a one-shot headless run (graph @nks/nks-dev, node #11071): there no
-// human is at the console by construction, and the word after the turn is the orchestrator's
-// continuation (#10995) — a wake word there starts a turn the run disposes, and the run exits 1
-// (observed live on LAB, dsh 0.2.2-rc.1). Two signs, either suffices: the headless app's own
-// service `headlessStartup`, read with Cordis's ctx.get, which needs no inject (types of the
-// installed @deepseek-ai/dsh-headless 0.2.2-rc.1, startup.d.ts; cordis reflect.d.ts) — not observed
-// live from a plugin; and the launcher's profile in the process's argv — `dsh headless …` or
-// `dsh --profile headless …`, the shape the orchestrator launches (bridge/orchestra-dsh.ts).
+// Whether this dsh process is a one-shot headless run (graph @nks/nks-dev, node #11071): it exits
+// at its first idle, so the word after the turn goes through a task holding that idle (hold.ts);
+// out of headless no task — it would hold a human's input. Two signs, either suffices: the headless
+// app's own service `headlessStartup`, read with Cordis's ctx.get, which needs no inject (types of
+// the installed @deepseek-ai/dsh-headless 0.2.2-rc.1, startup.d.ts; cordis reflect.d.ts) — observed
+// present on agent/created, absent on apply; and the launcher's profile in the process's argv —
+// `dsh headless …` or `dsh --profile headless …`, the shape the orchestrator launches
+// (bridge/orchestra-dsh.ts).
 /* eslint-disable @typescript-eslint/no-explicit-any -- the Cordis context without a schema */
 
 /** The launcher's profile in argv (after node and the script): `dsh NAME` or `--profile NAME`. */
