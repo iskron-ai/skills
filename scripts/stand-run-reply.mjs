@@ -197,7 +197,7 @@ async function cleanup() {
         .map((_, i, ls) => ls.slice(i, i + 8).join("\n"))
         .find((blk) => blk.includes(`:${seatName} —`));
       const sid = (seatId?.match(/^\s+id ([0-9a-f-]{36})/m) || [])[1];
-      if (!sid) return report.push("SKIP cleanup seat: no id on the board (already gone?)");
+      if (!sid) return said(false, `the seat ${seatName}`, "no id on the board (already gone?)");
       const rv = await person.revoke(realm, sid);
       said(!rv.error, `the seat ${seatName} taken off`, rv.text);
     });
@@ -210,7 +210,7 @@ async function cleanup() {
     await step(`роль #${k}`, async () => {
       const look = await P.call("iskron_look", { realm, node_id: `#${k}` });
       const v = (look.text.match(/, v(\d+)\)/) || [])[1];
-      if (!v) return report.push(`SKIP cleanup роли #${k}: версия не прочитана — ${look.text.split("\n")[0].slice(0, 160)}`);
+      if (!v) return said(false, `роль #${k}: версия не прочитана`, look.text.split("\n")[0]);
       const del = await P.call("iskron_delete_node", { realm, node_id: `#${k}`, basis_version: v, reasoning: "прогон строки ответа: фикстура снята" });
       said(!del.error, `роль #${k} снята`, del.text.split("\n")[0]);
     });
