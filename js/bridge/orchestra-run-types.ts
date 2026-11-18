@@ -2,8 +2,30 @@ import type { ModelRef } from "./exec-spec.ts";
 import type { RunTree } from "./orchestra-tree-types.ts";
 
 export type RunState =
-  "preparing" | "ambiguity" | "launched" | "raised" | "stopping" | "ended" | "refused" | "no_seat";
+  | "preparing"
+  | "ambiguity"
+  | "launched"
+  | "raised"
+  | "stopping"
+  | "dormant"
+  | "ended"
+  | "refused"
+  | "no_seat";
 export interface Run {
+  /** The sleep of a cleanly exited dsh run (#10995): since when, the case journal cursor, and
+   * what a word in the case must name to wake the continuation. */
+  dormant?: {
+    since: string;
+    cursor: number | null;
+    /** The standing ids the call's seat had — the first and each after a continuation. */
+    seats?: string[];
+    /** The invited role's karta node UUID, from the invite entry of the same journal. */
+    karta?: string;
+    /** The seat's own asks — entry number → the ask author's standing id; an answer to one wakes. */
+    asks?: Record<string, string>;
+    /** Entry share could not be read; retry once the journal is available. */
+    share_pending?: boolean;
+  };
   tree?: RunTree;
   exec?: {
     attempt: string;
@@ -29,6 +51,8 @@ export interface Run {
     terminated?: string;
   };
   realm: string;
+  /** Original invite author, retained for the same caller gate on a continuation. */
+  author?: string;
   room: string;
   invite: number;
   karta: number;
@@ -45,6 +69,15 @@ export interface Run {
   /** The launch answer's receipt words (#9966), a safe short projection. */
   receipt?: { mode: string; reason: string };
   closed?: string;
+  /** The ids of the run's own stop orders — the call's exit stop and every continuation's.
+   * An order naming the seat outside this list is someone else's (#10995 review 4). */
+  orders?: string[];
+  /** A foreign stop order on the call's seat, set at its FIRST reading and never erased —
+   * not by re-reads, not by a continuation's rollback, not by the registry merge. While it
+   * stands there is no sleep and no continuation: the run ends (#10995 review 5). */
+  foreign_stop?: { id: string; state: string; at: string };
+  /** Monotonic continuation attempt number; never rolled back with the sleep snapshot. */
+  wakes?: number;
   state: RunState;
   at: string;
   why?: string;

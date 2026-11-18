@@ -1,5 +1,7 @@
 // The orchestrator raises dsh itself (graph @nks/nks-dev, #10777): a real daemon of the built
-// bridge, the fake NKS, a substitute dsh on PATH. Orca is never asked for a dsh call.
+// bridge, the fake NKS, a substitute dsh on PATH. Orca is never asked for a dsh call. The
+// case here is closed: a clean exit sleeps only while its case stays open (#10995) — with the
+// case over the ordinary end and cleanup take the run.
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +11,10 @@ import { test } from "node:test";
 import { invite, leadingDsh, MODEL, REALM, ROOM } from "./dsh-kit.mjs";
 
 test("dsh: a call is raised as the bridge's own dsh process in its own tree, the pair in the environment", async (t) => {
-  const o = await leadingDsh(t, { limit: 1 });
+  const o = await leadingDsh(t, {
+    limit: 1,
+    caseRoom: { status: "closed", entries: [] },
+  });
   await o.queue([invite(9), invite(10)]);
   const first = await o.step();
   assert.equal(first.code, 0, first.err + first.out);

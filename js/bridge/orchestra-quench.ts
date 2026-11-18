@@ -124,7 +124,10 @@ export async function quench(
       if (got.status >= 200 && got.status < 300) {
         r.state = "stopping";
         r.stopping_at = new Date(now).toISOString();
-        if (got.id) r.order_id = got.id;
+        if (got.id) {
+          r.order_id = got.id;
+          r.orders = [...(r.orders ?? []), got.id];
+        }
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
         // A missing seat proves neither exec exit nor durable suppression (#9256).

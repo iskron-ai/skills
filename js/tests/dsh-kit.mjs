@@ -79,6 +79,7 @@ export async function leadingDsh(
     orca = true,
     fenced = false,
     bridge,
+    caseRoom,
   } = {},
 ) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-")));
@@ -104,6 +105,8 @@ export async function leadingDsh(
     pat: "probe-pat",
     mind: { orchestra: bodies.map((b, i) => ({ seq: 77 + i, body: JSON.stringify(b) })), fenced },
   });
+  // The call's case as the REST doors serve it (#10995): status plus the journal's entries.
+  if (caseRoom) await fake.control({ caseRooms: { [ROOM]: caseRoom } });
   writeFileSync(join(dir, "server"), `${fake.base}/mcp\n`);
   writeFileSync(join(dir, "token"), "probe-pat");
   mkdirSync(join(dir, "standings"), { recursive: true });
@@ -130,38 +133,50 @@ export async function leadingDsh(
     });
   const dshLog = join(dir, "dsh.log"),
     orcaLog = join(dir, "orca.log");
-  const daemon = spawn(NODE, [bridge ?? BRIDGE, "daemon", "--auth-dir", dir], {
-    env: {
-      ...process.env,
-      ISKRON_BRIDGE_NO_UPDATE: "1",
-      ISKRON_BRIDGE_DAEMON_IDLE_MS: "30000",
-      ISKRON_ORCHESTRA_TACT_MS: "3600000",
-      ISKRON_BRIDGE_LANG: "en",
-      ISKRON_ORCHESTRA: "1",
-      PATH: orca ? `${bin}:${process.env.PATH}` : withoutOrca(bin),
-      FAKE_DSH_LOG: dshLog,
-      FAKE_ORCA_LOG: orcaLog,
-      ...env,
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
+  const daemonEnv = {
+    ...process.env,
+    ISKRON_BRIDGE_NO_UPDATE: "1",
+    ISKRON_BRIDGE_DAEMON_IDLE_MS: "30000",
+    ISKRON_ORCHESTRA_TACT_MS: "3600000",
+    ISKRON_BRIDGE_LANG: "en",
+    ISKRON_ORCHESTRA: "1",
+    PATH: orca ? `${bin}:${process.env.PATH}` : withoutOrca(bin),
+    FAKE_DSH_LOG: dshLog,
+    FAKE_ORCA_LOG: orcaLog,
+    ...env,
+  };
+  let daemon;
+  const spawnDaemon = () => {
+    daemon = spawn(NODE, [bridge ?? BRIDGE, "daemon", "--auth-dir", dir], {
+      env: daemonEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    daemon.stderr.on("data", (c) => (derr += c));
+    return daemon;
+  };
   let derr = "";
-  daemon.stderr.on("data", (c) => (derr += c));
-  t.after(async () => {
+  spawnDaemon();
+  const stopDaemon = async () => {
     if (daemon.exitCode === null && daemon.signalCode === null) {
       const ended = new Promise((r) => daemon.once("exit", r));
       daemon.kill("SIGKILL");
       await ended;
     }
+  };
+  t.after(async () => {
+    await stopDaemon();
     await fake.stop();
     rmSync(dir, { recursive: true, force: true });
   });
-  for (let i = 0; ; i++) {
-    const r = await cli(dir, ["status"]);
-    if (r.code === 0) break;
-    if (i > 100) throw new Error(`daemon not ready: ${r.err}\n${derr.slice(-1500)}`);
-    await new Promise((r2) => setTimeout(r2, 100));
-  }
+  const ready = async () => {
+    for (let i = 0; ; i++) {
+      const r = await cli(dir, ["status"]);
+      if (r.code === 0) return;
+      if (i > 100) throw new Error(`daemon not ready: ${r.err}\n${derr.slice(-1500)}`);
+      await new Promise((r2) => setTimeout(r2, 100));
+    }
+  };
+  await ready();
   const registry = () => {
     const f = join(dir, "run", "orchestra-runs.json");
     return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")).runs : {};
@@ -175,8 +190,27 @@ export async function leadingDsh(
     dshCalls: () => lines(dshLog),
     orcaCalls: () => lines(orcaLog),
     run: (n) => registry()[`${REALM}|${ROOM}|${n}`],
-    queue: (invites) =>
-      fake.control({ orchestra: { realms: { [REALM]: { invites, signals: [] } } } }),
+    queue: (invites, signals = []) =>
+      fake.control({ orchestra: { realms: { [REALM]: { invites, signals } } } }),
+    room: (status, entries) => fake.control({ caseRooms: { [ROOM]: { status, entries } } }),
+    /** A stop order on the account naming a seat — the foreign stop path (#10995). The realm
+     * rides along: the demands snapshot refuses an order without one. */
+    stopOrder: (standing) =>
+      fake.control({
+        stop_order: {
+          id: "ord-probe",
+          standing_id: standing,
+          realm: REALM,
+          karta_seq: 931,
+          frame: false,
+        },
+      }),
+    /** A new daemon over the same registry and the same fake — a slept row must survive it. */
+    restart: async () => {
+      await stopDaemon();
+      spawnDaemon();
+      await ready();
+    },
     async until(n, ok, ms = 20_000) {
       for (const end = Date.now() + ms; Date.now() < end;) {
         const r = registry()[`${REALM}|${ROOM}|${n}`];

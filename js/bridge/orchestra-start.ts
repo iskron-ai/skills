@@ -30,6 +30,7 @@ export async function startRun(
 ): Promise<string> {
   const run: Run = {
     realm: String(row.realm),
+    ...(typeof row.author === "string" ? { author: row.author } : {}),
     room: String(row.room),
     invite: Number(row.invite),
     karta: Number(row.karta),

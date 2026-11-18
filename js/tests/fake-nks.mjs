@@ -313,6 +313,7 @@ export async function startFakeNks(opts = {}) {
     placeArgs: [], // поля места, которые фейк ПРИНЯЛ у connect/mint/register (#5174) — после отсева по схеме; посланное — в calls
     acceptLanguage: new Set(), // значения Accept-Language запросов к /mcp ("" — заголовка не было)
     rooms: [],
+    caseRooms: {}, // /control {caseRooms: {id: {status, entries}}}; separate from board rooms
     // Такт-чтение оркестратора (№1225 [23], двери #4951/#6010): /control кладёт целиком
     // { realms: { "<canon>": { invites: [], signals: [], refuse?: код } } }.
     orchestra: null,
@@ -541,6 +542,24 @@ export async function startFakeNks(opts = {}) {
     }
     if (await ordersRoute(st, req, res, p, { json, body, wsFrame })) return;
 
+    const caseRoute = /^\/api\/rooms\/([^/]+)(\/history)?$/.exec(p);
+    if (caseRoute && req.method === "GET") {
+      const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
+      if ((!st.pat || bearer !== st.pat) && (!st.access || bearer !== st.access))
+        return json(res, 401, { error: "unauthorized" });
+      const room = st.caseRooms[decodeURIComponent(caseRoute[1])];
+      if (!room) return json(res, 404, { error: "not found" });
+      if (!caseRoute[2]) return json(res, 200, { status: room.status });
+      // The holder's page form (#48): {items, cursor, numbering:"case"}; cursor — the last
+      // covered entry's number, or the former one when nothing new; entries carry the case's
+      // own numbers as `id` (#10995).
+      const since = Number(u.searchParams.get("since") ?? 0) || 0;
+      const limit = Math.min(Number(u.searchParams.get("limit")) || 200, 200);
+      const items = room.entries.filter((entry) => Number(entry.id) > since).slice(0, limit);
+      const cursor = items.length ? Number(items[items.length - 1].id) : since;
+      return json(res, 200, { items, cursor, numbering: "case" });
+    }
+
     // Flat NodeView from API 0.185.4 (case 4603 [214]), no node/data fallback envelope.
     const roleNode = /^\/api\/nodes\/(\d+)$/.exec(p);
     if (roleNode && req.method === "GET") {
@@ -757,6 +776,7 @@ export async function startFakeNks(opts = {}) {
     if (p === "/control") {
       const patch = JSON.parse((await body(req)) || "{}");
       ordersControl(st, patch, wsFrame);
+      if (patch.caseRooms !== undefined) st.caseRooms = patch.caseRooms;
       if (typeof patch.ws_send === "string") {
         for (const sock of st.ws) if (!st.hung.has(sock)) sock.write(wsFrame(0x1, patch.ws_send));
       }

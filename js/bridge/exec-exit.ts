@@ -5,6 +5,7 @@ import { namedFetch } from "../shared/http.ts";
 import { execExited } from "./exec-client-exit.ts";
 import { execBound, importAttempt } from "./exec-launch.ts";
 import { bindExecRaised } from "./exec-raised.ts";
+import { goDormant } from "./orchestra-dsh-dormant.ts";
 import { endDshUnseated, observeDsh } from "./orchestra-dsh-proc.ts";
 import { foreignStops } from "./orchestra-foreign.ts";
 import { LIVE, readRuns, type Run, runIdentity, writeRuns } from "./orchestra-runs.ts";
@@ -81,6 +82,9 @@ async function finishExits(authDir: string, base: string, token: string): Promis
   const runs = readRuns(authDir);
   for (const [key, r] of Object.entries(runs)) {
     if (endDshUnseated(r, LIVE.includes(r.state))) {
+      // A clean exit with the case still open sleeps instead of ending (#10995); the row's
+      // recorded end proof stays on it for the sleep's own end.
+      await goDormant(base, token, r);
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
       continue;
@@ -94,6 +98,7 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       continue;
     if (r.stop_outcome === "stopped") {
       r.state = "ended";
+      await goDormant(base, token, r);
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
       continue;
@@ -132,12 +137,17 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       }
       if (res.ok && typeof body.id === "string" && body.id) {
         r.order_id = body.id;
+        // Every own stop order's id is kept: the call's exit stop and each continuation's
+        // (#10995 review 4) — a re-read of one's own order is never a foreign stop.
+        r.orders = [...(r.orders ?? []), body.id];
         r.state = "stopping";
         r.stopping_at = new Date().toISOString();
       } else if (res.status === 410 && ownProcess(r)) {
         // The exact terminal exited and the seat is over: nobody is left to wake (#9256).
         r.state = "ended";
         r.why = "seat_gone_after_exit";
+        // Its case still open and the exit clean — the run sleeps instead of ending (#10995).
+        await goDormant(base, token, r);
       } else
         r.why =
           res.status === 410
