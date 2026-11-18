@@ -70,7 +70,7 @@ var COVER = {
 var LAUNCH_WORD = "start";
 var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var LAUNCH_LINE = new RegExp(
-  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
+  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(\\S+))?(?=\\s|$)`,
   "imu"
 );
 

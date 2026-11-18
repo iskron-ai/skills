@@ -67,7 +67,7 @@ var COVER = {
 var LAUNCH_WORD = "start";
 var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var LAUNCH_LINE = new RegExp(
-  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
+  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(\\S+))?(?=\\s|$)`,
   "imu"
 );
 
@@ -165,7 +165,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.14.0";
+var VERSION = "8.14.1";
 
 // js/delivery/words/asks.ts
 var ASK = {
@@ -311,8 +311,8 @@ var DSH = {
     seatGone: (why) => `место снято: ${why}`,
     notDelivered: (why) => `в сессию не дошло: ${why}`,
     startListen: () => "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
-    startResumed: () => "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand). Сказанное месту после выхода придёт следующим сообщением — ответь на него первым, «Старт» — после. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
-    startSeated: (place, karta, realm, resumed) => `Место этой сессии уже стоит: ${place}, роль #${karta} в ${realm} — его посадил плагин поставки, вставать заново (iskron_stand) не нужно; кадры дела придут ходами.${resumed ? " Сказанное месту после выхода придёт следующим сообщением — ответь на него первым, «Старт» — после." : ""} Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.`
+    startResumed: () => "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand). Сказанное месту после выхода, если было, придёт в этот же ход, как только встанешь, — ответь на него первым, «Старт» — после. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
+    startSeated: (place, karta, realm, resumed) => `Место этой сессии уже стоит: ${place}, роль #${karta} в ${realm} — его посадил плагин поставки, вставать заново (iskron_stand) не нужно; кадры дела придут ходами.${resumed ? " Сказанное месту после выхода, если было, приходит в этот же ход — рядом с задачей или следующим шагом; ответь на него первым, «Старт» — после." : ""} Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.`
   },
   en: {
     listening: (key) => `listening on standing ${key}`,
@@ -322,8 +322,8 @@ var DSH = {
     seatGone: (why) => `the seat was taken off: ${why}`,
     notDelivered: (why) => `did not reach the session: ${why}`,
     startListen: () => "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
-    startResumed: () => "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand). What was said to the seat after the exit comes as the next message — answer it first, the Start after. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
-    startSeated: (place, karta, realm, resumed) => `This session's seat already stands: ${place}, role #${karta} in ${realm} — the delivery's plugin seated it, no need to take it again (iskron_stand); case frames arrive as turns.${resumed ? " What was said to the seat after the exit comes as the next message — answer it first, the Start after." : ""} Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.`
+    startResumed: () => "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand). What was said to the seat after the exit, if anything, comes within this turn once you take it — answer it first, the Start after. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
+    startSeated: (place, karta, realm, resumed) => `This session's seat already stands: ${place}, role #${karta} in ${realm} — the delivery's plugin seated it, no need to take it again (iskron_stand); case frames arrive as turns.${resumed ? " What was said to the seat after the exit, if anything, comes within this turn — beside the task or as a next step; answer it first, the Start after." : ""} Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.`
   }
 };
 
@@ -900,7 +900,7 @@ function seatIs(frame, ...named2) {
   if (!myId && !myAddr) return null;
   const id = named2.map((v) => str(obj(v).id)).find(Boolean);
   if (id && myId) return id === myId;
-  const addr = named2.map((v) => addresseeOf(v)?.addr.filter((a) => a.startsWith("@"))[0]).find(Boolean);
+  const addr = named2.map((v) => addresseeOf(v)?.addr.filter((a) => a !== str(obj(v).id))[0]).find(Boolean);
   if (addr) return addr === myAddr;
   return id ? false : null;
 }
@@ -908,7 +908,7 @@ function addresseeOf(v) {
   if (typeof v === "string") return v ? { addr: [v], label: v } : null;
   const o = obj(v);
   const handle = str(o.handle).replace(/^@/, "");
-  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : str(o.name));
   const id = str(o.id);
   const label = standing || str(o.name) || id;
   const addr = [standing, id].filter(Boolean);
@@ -1660,13 +1660,19 @@ function caseHead(frame, withZachin) {
   const no = W().case(need(c.room));
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function userTag(user) {
+  const u = typeof user === "string" ? user.trim().replace(/^@/, "") : "";
+  if (!u) return "";
+  return /^[\w.-]+$/.test(u) && !UUID.test(u) ? ` @${u}` : ` ${u}`;
+}
 function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin2 = frame.origin ?? classifyOrigin(frame);
   if (origin2 === "platform") return W().whoPlatform();
   if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin2 === "human") return W().whoHuman(opt(" @", p.user)) + place;
+  if (origin2 === "human") return W().whoHuman(userTag(p.user)) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
   return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
@@ -3488,6 +3494,97 @@ function seatedStart(out2, dir, source, seat) {
   return { ...out2, sections };
 }
 
+// js/dsh/steer.ts
+var FIRST_MS = 6e3;
+var QUIET_MS = 2e3;
+var LOOK_MS2 = 50;
+var capMs = () => Number(process.env[envName("DSH_FIRST_MS")]) || FIRST_MS;
+function toTurn(raw, followup, m) {
+  if (raw?.status === "running" && typeof raw.steer === "function") return raw.steer(m);
+  return followup(m);
+}
+function createFirstStep(route) {
+  let gate = null;
+  let stepping = null;
+  const gone = (h) => h.fail(new Error("the session ended before its first step"));
+  const pass = (g, h) => {
+    clearTimeout(h.timer);
+    if (g.ended) return gone(h);
+    void new Promise((ok) => ok(route(h.m))).then(h.done, h.fail);
+  };
+  const drop = (g) => {
+    if (!g) return;
+    g.ended = true;
+    for (const h of g.held.splice(0)) pass(g, h);
+    g.wake();
+  };
+  const close = () => {
+    drop(gate);
+    drop(stepping);
+    gate = stepping = null;
+  };
+  return {
+    begin(agent) {
+      close();
+      gate = { agent, held: [], wake: () => void 0, ended: false };
+    },
+    take(m, running) {
+      const g = gate;
+      if (!g || !running) return null;
+      return new Promise((done, fail) => {
+        const h = { m, done, fail };
+        g.held.push(h);
+        g.wake();
+        h.timer = setTimeout(() => {
+          const i = g.held.indexOf(h);
+          if (i >= 0) pass(g, g.held.splice(i, 1)[0]);
+        }, capMs());
+        h.timer.unref?.();
+      });
+    },
+    async preStep(payload, next, wait, attached) {
+      const g = gate;
+      if (!g || payload?.agent !== g.agent) return next();
+      const end = Date.now() + capMs();
+      const quiet2 = Math.min(QUIET_MS, capMs() / 3);
+      let since = null;
+      while (wait && !g.held.length && !payload?.signal?.aborted && Date.now() < end) {
+        if (attached()) since ??= Date.now();
+        if (since !== null && Date.now() - since >= quiet2) break;
+        await new Promise((r) => {
+          g.wake = r;
+          setTimeout(r, LOOK_MS2).unref?.();
+        });
+      }
+      if (gate === g) gate = null;
+      const held = g.held.splice(0);
+      held.forEach((h) => clearTimeout(h.timer));
+      let d;
+      stepping = g;
+      try {
+        d = await next();
+      } catch (e) {
+        held.forEach((h) => pass(g, h));
+        throw e;
+      } finally {
+        if (stepping === g) stepping = null;
+      }
+      const into = !g.ended && d?.kind === "enter" && Array.isArray(d.messages);
+      if (!held.length || !into) {
+        held.forEach((h) => pass(g, h));
+        return d;
+      }
+      const msgs = d.messages;
+      const at2 = msgs.findIndex((x) => x?.source?.kind === "runtime-context");
+      const cut = at2 < 0 ? msgs.length : at2;
+      const words3 = held.map((h) => h.m);
+      held.forEach((h) => h.done());
+      return { ...d, messages: [...msgs.slice(0, cut), ...words3, ...msgs.slice(cut)] };
+    },
+    end: close
+  };
+}
+
 // js/shared/quietframe.ts
 var flat = (s) => s.replace(/\s+/g, "");
 var esc3 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -3642,15 +3739,10 @@ function apply(ctx) {
     wake: (text3) => hold.wake(turnMessage(text3)),
     watched: () => !headless
   });
-  const heard = () => {
-    const a = agent;
-    if (!a) return null;
-    return {
-      followup: (m) => {
-        turns.laid(m);
-        return hold.through(m) ?? a.followup(m);
-      }
-    };
+  const route = (m) => agent ? hold.through(m) ?? toTurn(raw, agent.followup, m) : notDelivered("no live agent");
+  const first = createFirstStep(route);
+  const heard = () => agent && {
+    followup: (m) => (turns.laid(m), first.take(m, raw?.status === "running") ?? route(m))
   };
   const on = listenerOf(ctx, notDelivered);
   const root = createRoot();
@@ -3665,6 +3757,7 @@ function apply(ctx) {
     if (took === "root" && fresh) {
       source = payload.source;
       seats.begin(payload?.agent, process.cwd());
+      first.begin(payload.agent);
     }
     headless = isHeadless(ctx);
     if (!hearing) hearing = startHearing(heard, log2, startedAt);
@@ -3674,6 +3767,10 @@ function apply(ctx) {
     if (a && a === raw) await seats.request(a);
     const out2 = typeof next === "function" ? await next() : _assembly;
     return a && a === raw ? seatedStart(out2, process.cwd(), source, seats.seated()) : out2;
+  });
+  on("agent/pre-step", (payload, next) => {
+    const wait = source === "resume" && !!seats.seated();
+    return first.preStep(payload, next, wait, () => !!hearing?.key() || !hearing?.live());
   });
   on("agent/request", async (payload, next) => {
     await seats.request(payload?.agent);
@@ -3686,6 +3783,7 @@ function apply(ctx) {
     agent = null;
     raw = null;
     hold.end();
+    first.end();
     seats.end();
     turns.forget();
     root.end();
