@@ -40,7 +40,9 @@ if (mode === "fail") {
 const unproven = mode === "noterm-continue" && argv.includes("--session-id");
 const id = "session-0b6f1c2e-probe";
 if (!unproven)
-  process.stdout.write(JSON.stringify({ type: "session", sessionId: id, cwd: process.cwd() }) + "\n");
+  process.stdout.write(
+    JSON.stringify({ type: "session", sessionId: id, cwd: process.cwd() }) + "\n",
+  );
 if (unproven) process.on("SIGTERM", () => {});
 if (mode === "hang") setInterval(() => {}, 1000);
 else if (mode === "crash") setTimeout(() => process.exit(5), 200);

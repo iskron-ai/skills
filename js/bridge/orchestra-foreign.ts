@@ -120,7 +120,12 @@ export async function foreignStops(
           }
           continue;
         }
-        if (!run || !id || run.orders?.includes(id) || (id === run.order_id && !run.why?.endsWith("_elsewhere")))
+        if (
+          !run ||
+          !id ||
+          run.orders?.includes(id) ||
+          (id === run.order_id && !run.why?.endsWith("_elsewhere"))
+        )
           continue;
         bySeat.delete(seat);
         run.order_id = id;
