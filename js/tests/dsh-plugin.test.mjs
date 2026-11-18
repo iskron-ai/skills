@@ -362,3 +362,46 @@ test("compaction without a hold record returns the bare word", async (t) => {
   assert.ok(word.includes("контекст сжат"));
   assert.ok(!word.includes("#931"));
 });
+
+// dsh's subagent tool spawns the child inside the same process, and the plugin hears its
+// agent/created (observed live on LAB, dsh 0.2.2-rc.1, #11071). The child's payload form is NOT
+// observed: its session header — parentSession, origin "subagent", delegationDepth — is read from
+// the types of the installed @deepseek-ai/dsh-session 0.2.2-rc.1 (SessionHeader in types.d.ts);
+// source "startup" for the child is assumed (SessionStartSource, dsh-agent runtime-types.d.ts).
+// The header-less variant stands for a child whose header says nothing.
+const SUBAGENT_HEADER = { parentSession: "session-dsh-1", origin: "subagent", delegationDepth: 1 };
+for (const [name, header] of [
+  ["its session header names the parent", SUBAGENT_HEADER],
+  ["a fresh agent while the root lives", undefined],
+])
+  test(`a subagent spawned in the process does not take the root's hearing: ${name}`, async (t) => {
+    const box = await sandbox();
+    t.after(() => box.close());
+    const logs = [];
+    const sent = [];
+    const d = dsh(logs, sent);
+    PLUGIN(d.ctx);
+    box.writeHold();
+    d.emit("agent/created", { agent: d.agent, source: "startup" });
+    assert(await until(() => box.conns.size === 1));
+    box.send({ kind: "attached", key: KEY, seen: seenFilePathOf(box.authDir, KEY), buffered: 0 });
+    assert(await until(() => logs.some((l) => l.includes("слушаю стояние"))));
+    const toSub = [];
+    const sub = {
+      session: { id: "session-dsh-sub", ...(header ? { header } : {}) },
+      followup: (m) => void toSub.push(m),
+    };
+    d.emit("agent/created", { agent: sub, source: "startup" });
+    const frame = directWord("direct-sub");
+    box.send({ kind: "frame", frame, raw: JSON.stringify(frame) });
+    assert(await until(() => sent.length === 1), "the frame reaches the root");
+    assert.equal(toSub.length, 0, "the subagent hears nothing of the root's seat");
+    // The subagent's session ends; the root's lives on and still hears.
+    d.emit("session/disposed", sub.session);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(box.conns.size, 1, "the root's hearing stays attached");
+    const next = directWord("direct-after");
+    box.send({ kind: "frame", frame: next, raw: JSON.stringify(next) });
+    assert(await until(() => sent.length === 2));
+    assert.equal(toSub.length, 0);
+  });

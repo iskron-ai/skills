@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { DSH } from "../delivery/index.ts";
+import { CONTRACT_SUPPORT, CONTRACT_WORDS, DSH, ONBOARD_START } from "../delivery/index.ts";
 import { BUILT } from "./built.mjs";
 
 const SOURCE =
@@ -120,8 +120,36 @@ test("a resumed session hears why it stands again", (t) => {
   assert.match(text, /закрой строку исходом/);
 });
 
-test("no cover — silence", (t) => {
+// A repository with no sign of alignment (shared/reposigns.ts): no start word, the onboarding
+// invitation only — as OpenCode's onboardstart.ts and Claude Code's onboard-hook.ts (#11071).
+test("no cover — no start word, the onboarding invitation only", (t) => {
   repo(t, null);
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  assert.equal(textOf(a), ONBOARD_START.ru.start());
+  // A later agent of the process is a subagent: no second invitation.
+  const sub = d.agent();
+  d.created(sub, "startup");
+  assert.equal(sub.sections.length, 0);
+});
+
+test("an aligned repository hears no invitation", (t) => {
+  repo(t, OWN);
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  assert.ok(!textOf(a).includes(ONBOARD_START.ru.start()));
+});
+
+test("outside a git repository — silence", (t) => {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-out-")));
+  const was = process.cwd();
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(was);
+    rmSync(dir, { recursive: true, force: true });
+  });
   const d = dsh(t);
   const a = d.agent();
   d.created(a, "startup");
@@ -134,4 +162,29 @@ test("another delivery's cover — silence", (t) => {
   const a = d.agent();
   d.created(a, "startup");
   assert.equal(a.sections.length, 0);
+});
+
+// The cover's contract below the supported minimum is warned of in the same section, before the
+// start word — as OpenCode's first prompt (opencode/rites.ts) and Claude Code's SessionStart
+// (cli/rituals-hook.ts) do (#11071).
+const withContract = (n) =>
+  OWN.replace("  agent_role: 931\n", `  agent_role: 931\n  contract: ${n}\n`);
+
+test("an unsupported cover contract is warned of before the start word", (t) => {
+  repo(t, withContract(16));
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  const text = textOf(a);
+  const warning = CONTRACT_WORDS.ru.unsupported(16, CONTRACT_SUPPORT.target);
+  assert.ok(text.startsWith(warning), text);
+  assert.match(text, /#931/);
+});
+
+test("a supported cover contract — no warning", (t) => {
+  repo(t, withContract(CONTRACT_SUPPORT.target));
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  assert.doesNotMatch(textOf(a), /больше не поддерживается/);
 });
