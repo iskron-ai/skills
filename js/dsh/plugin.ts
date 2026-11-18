@@ -122,7 +122,8 @@ export function apply(ctx: DshCtx): void {
     try {
       const note = riteLines(exec, result, process.cwd());
       const a = agent;
-      if (note && a) sendAfterPublish(a, turnMessage(markFrame(note)));
+      // The RITES words carry the delivery's mark themselves: no second one.
+      if (note && a) sendAfterPublish(a, turnMessage(note));
     } catch (e) {
       log(W().notDelivered((e as Error).message));
     }

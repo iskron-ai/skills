@@ -118,7 +118,10 @@ test("a branch's push: the push line as one next-turn message; the decision pass
   assert.equal(d.sent.length, 1);
   assert.equal(d.sent[0].target, "next-turn");
   const [text] = texts(d.sent);
-  assert.ok(text.startsWith(FRAME_MARK), text);
+  // Exactly one mark: the line starts with the mark and a word, not with the mark twice
+  // (observed live on LAB: «[iskron] [iskron] пуш…», #11071).
+  assert.ok(text.startsWith(`${FRAME_MARK} `), text);
+  assert.ok(!text.slice(FRAME_MARK.length).trimStart().startsWith(FRAME_MARK), text);
   assert.match(text, PUSH_WORD);
   assert.doesNotMatch(text, MERGE_WORD);
 });
@@ -129,6 +132,7 @@ test("a forge's merge by its outcome: the merge line", async (t) => {
   await d.call("gh pr merge 7 --squash", { stdout: "✓ Squashed and merged pull request #7" });
   assert.equal(d.sent.length, 1);
   assert.match(texts(d.sent)[0], MERGE_WORD);
+  assert.equal(texts(d.sent)[0].split(FRAME_MARK).length, 2, "one mark");
 });
 
 test("a quiet push to the trunk is judged by git's state: the merge line", async (t) => {
