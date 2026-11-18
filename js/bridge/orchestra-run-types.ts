@@ -101,4 +101,10 @@ export interface Run {
   /** The daemon's own close of the launch's terminal, tried once (#11099): client_exited or
    * the refusal that left it untouched. */
   reaped?: string;
+  /** The case ids of the composition at the greatest n (#11099). */
+  cases?: string[];
+  /** When the daemon last folded a signal of this seat — the idle window counts from it. */
+  signal_at?: string;
+  /** The n the platform answered a live composition at: no end by our reading until a newer. */
+  live_n?: number;
 }

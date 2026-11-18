@@ -1420,6 +1420,65 @@ test("quench: a composition_changed refusal of the order leaves the agent alive,
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
 });
 
+/** Our OpenCode seat sat in the case and the platform says nothing more about it. */
+async function sitting(t, env = {}) {
+  const o = await leading(t, { env });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  await o.queue([], [signal(1, 9, [ROOM])]);
+  await o.step();
+  await o.fake.control({ orders_stop_answer: { status: 201, body: { id: "ord-q" } } });
+  return o;
+}
+const posted = (o) => o.fake.state.orders.human.filter((h) => h.method === "POST");
+
+// #11099 (в): as the dsh sleep reads its case, the tact reads the composition's cases; all
+// closed or abandoned — one composition_empty order fenced by the seat's n; an open one — none.
+test("quench: every case of an OpenCode seat's composition closed — a composition_empty order", async (t) => {
+  const o = await sitting(t);
+  await o.fake.control({ caseRooms: { [ROOM]: { status: "closing", entries: [] } } });
+  const open = await o.step();
+  assert.equal(open.code, 0, open.err + open.out);
+  assert.equal(posted(o).length, 0, "a closing case still lives");
+  await o.fake.control({ caseRooms: { [ROOM]: { status: "abandoned", entries: [] } } });
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: composition_closed, stop_ordered/, r.out);
+  const stops = posted(o);
+  assert.equal(stops.length, 1, JSON.stringify(stops));
+  assert.equal(stops[0].body.reason_code, "composition_empty");
+  assert.equal(stops[0].body.if_signal_n, 1);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
+});
+
+// #11099 (г): the composition emptied and no signal of the seat came for the idle window.
+test("quench: an empty OpenCode composition silent past the idle window gets the order", async (t) => {
+  const o = await sitting(t, { ISKRON_ORCHESTRA_DORMANT_WINDOW_MS: "2000" });
+  await o.queue([], [signal(1, 9, [ROOM]), signal(2, 9, [])]);
+  const empty = await o.step();
+  assert.equal(empty.code, 0, empty.err + empty.out);
+  assert.equal(posted(o).length, 0, "within the window an empty composition is no end");
+  await new Promise((done) => setTimeout(done, 2_500));
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: idle_window, stop_ordered/, r.out);
+  const stops = posted(o);
+  assert.equal(stops.length, 1, JSON.stringify(stops));
+  assert.equal(stops[0].body.reason_code, "composition_empty");
+  assert.equal(stops[0].body.if_signal_n, 2);
+});
+
+// #11099 (д): a refused case read names neither open nor closed — nothing is decided.
+test("quench: a refused case read orders nothing", async (t) => {
+  const o = await sitting(t);
+  await o.fake.control({ caseRooms: { [ROOM]: { refuse: 503 } } });
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  await o.step();
+  assert.equal(posted(o).length, 0, "a transient refusal is no closed case");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
+});
+
 test("quench: a composition_changed refusal of a never-sat seat past the window is not re-sent unfenced", async (t) => {
   const o = await leading(t, {
     env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_EXIT: "0" },

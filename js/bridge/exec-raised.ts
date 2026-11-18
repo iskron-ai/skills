@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { namedFetch } from "../shared/http.ts";
 import { seamRunDir } from "../shared/seam-entrance.ts";
 import { writeOwned } from "./doorfiles.ts";
-import { foldTape } from "./orchestra-quench.ts";
+import { foldTape } from "./orchestra-fold.ts";
 import { readRuns, writeRuns } from "./orchestra-runs.ts";
 import { ORCHESTRA_SESSION_HEADER, ORCHESTRA_SESSION_ID } from "./orchestra-session.ts";
 
