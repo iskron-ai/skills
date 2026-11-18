@@ -66,6 +66,21 @@ export async function foreignStops(
   const stopping = new Map<string, Run>();
   let unseated = false;
   for (const r of Object.values(runs)) {
+    // 8.13.1 stored both own and foreign order ids with no durable origin marker.
+    // An unmarked old id is ambiguous, so it must never authorize a continuation.
+    if (!r.orders && r.order_id && !r.foreign_stop) {
+      r.foreign_stop = {
+        id: r.order_id,
+        state: r.stop_outcome ?? "issued",
+        at: r.stopping_at ?? r.at,
+      };
+      if (r.dsh && r.state === "stopping" && r.tree?.exit) {
+        r.state = "ended";
+        r.why = OPEN.has(r.foreign_stop.state)
+          ? "stop_ordered_elsewhere"
+          : `stop_${r.foreign_stop.state}_elsewhere`;
+      }
+    }
     if (r.state !== "ended" && r.standing_id) seatRuns.set(r.standing_id, r);
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);
