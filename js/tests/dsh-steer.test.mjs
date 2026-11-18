@@ -17,7 +17,7 @@
 // ISKRON_DSH_PLUGIN points the probe at any copy (a past revision) so it can be shown red
 // before a fix. Run with `make test-dsh`.
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { holdFilePathOf, seenFilePathOf } from "../shared/standings.ts";
@@ -180,4 +180,27 @@ test("a subagent's step takes no frame; the root's turn does", async (t) => {
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(sub.got.length, 0, "the subagent hears nothing of the root's seat");
   assert.equal(s.root.got[0].target, "next-step");
+});
+
+// The review of PR 848 (P2 on 320d4c99, reproduced on the built plugin): a word held for the
+// root's first step, then session/disposed, then a new root — the old word reached the new
+// session when its window ran out. A word not given to its session goes to no other one and is
+// not marked seen: the platform keeps it, as a frame undelivered before the close.
+test("a disposed session drops its held first-step words: no other session gets them", async (t) => {
+  const s = await session(t, "startup");
+  await s.attach();
+  s.frame("direct-held"); // the root runs, its first step not yet proposed: held
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(s.root.got, [], "held for the first step");
+  s.handlers.get("session/disposed")?.(SESSION);
+  const next = agentOf({ id: "session-dsh-next" });
+  s.handlers.get("agent/created")?.({ agent: next.agent, source: "startup" });
+  next.agent.status = "running";
+  t.after(() => s.handlers.get("session/disposed")?.(next.agent.session));
+  await new Promise((r) => setTimeout(r, 3400)); // past the first-step window (3 s)
+  assert.deepEqual(next.got, [], "the new session gets no word of the old one");
+  assert.deepEqual(s.root.got, [], "nor does the disposed one");
+  const seen = seenFilePathOf(s.box.authDir, KEY);
+  const marks = existsSync(seen) ? readFileSync(seen, "utf8") : "";
+  assert.doesNotMatch(marks, /direct-held/, "not marked seen: the platform keeps it");
 });

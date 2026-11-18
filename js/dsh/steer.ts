@@ -33,6 +33,15 @@ export function toTurn(raw: any, followup: (m: unknown) => unknown, m: unknown):
 interface Held {
   m: unknown;
   done: () => void;
+  fail: (e: Error) => void;
+  timer?: ReturnType<typeof setTimeout>;
+}
+
+interface Gate {
+  agent: any;
+  held: Held[];
+  wake: () => void;
+  ended: boolean;
 }
 
 export interface FirstStep {
@@ -52,27 +61,40 @@ export interface FirstStep {
 
 /** route — where a word goes once the first step is gone (toTurn and the hold). */
 export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
-  let gate: { agent: any; held: Held[]; wake: () => void } | null = null;
-  const pass = (h: Held): void => {
+  let gate: Gate | null = null;
+  // A word held for a session that ended goes to no other session: it is rejected, so the
+  // hearing does not mark it seen and the platform keeps it, as a frame undelivered at close.
+  const gone = (h: Held): void => h.fail(new Error("the session ended before its first step"));
+  const pass = (g: Gate, h: Held): void => {
+    clearTimeout(h.timer);
+    if (g.ended) return gone(h);
     void Promise.resolve(route(h.m)).then(h.done, h.done);
+  };
+  const drop = (g: Gate | null): void => {
+    if (!g) return;
+    g.ended = true;
+    for (const h of g.held.splice(0)) pass(g, h);
+    g.wake();
   };
 
   return {
     begin(agent) {
-      gate = { agent, held: [], wake: () => undefined };
+      drop(gate);
+      gate = { agent, held: [], wake: () => undefined, ended: false };
     },
     take(m, running) {
       const g = gate;
       if (!g || !running) return null; // an idle root: the word opens its own turn
-      return new Promise((done) => {
-        const h = { m, done };
+      return new Promise((done, fail) => {
+        const h: Held = { m, done, fail };
         g.held.push(h);
         g.wake();
         // No first step within the window: the word goes its usual way.
-        setTimeout(() => {
+        h.timer = setTimeout(() => {
           const i = g.held.indexOf(h);
-          if (i >= 0) pass(g.held.splice(i, 1)[0] as Held);
-        }, capMs()).unref?.();
+          if (i >= 0) pass(g, g.held.splice(i, 1)[0] as Held);
+        }, capMs());
+        h.timer.unref?.();
       });
     },
     async preStep(payload, next, wait, attached) {
@@ -89,17 +111,19 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
           setTimeout(r, LOOK_MS).unref?.();
         });
       }
-      gate = null; // later words go into the turn as it runs
+      if (gate === g) gate = null; // later words go into the turn as it runs
       const held = g.held.splice(0);
+      held.forEach((h) => clearTimeout(h.timer));
       let d: any;
       try {
         d = await next();
       } catch (e) {
-        held.forEach(pass);
+        held.forEach((h) => pass(g, h));
         throw e;
       }
-      if (!held.length || d?.kind !== "enter" || !Array.isArray(d.messages)) {
-        held.forEach(pass);
+      const into = !g.ended && d?.kind === "enter" && Array.isArray(d.messages);
+      if (!held.length || !into) {
+        held.forEach((h) => pass(g, h));
         return d;
       }
       const msgs = d.messages as any[];
@@ -110,6 +134,7 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
       return { ...d, messages: [...msgs.slice(0, cut), ...words, ...msgs.slice(cut)] };
     },
     end() {
+      drop(gate);
       gate = null;
     },
   };
