@@ -549,8 +549,6 @@ export async function startFakeNks(opts = {}) {
         return json(res, 401, { error: "unauthorized" });
       const room = st.caseRooms[decodeURIComponent(caseRoute[1])];
       if (!room) return json(res, 404, { error: "not found" });
-      // {refuse: code} — the case door refuses so, a transient refusal (#11099).
-      if (room.refuse) return json(res, room.refuse, { error: "unavailable" });
       if (!caseRoute[2]) return json(res, 200, { status: room.status });
       // The holder's page form (#48): {items, cursor, numbering:"case"}; cursor — the last
       // covered entry's number, or the former one when nothing new; entries carry the case's
