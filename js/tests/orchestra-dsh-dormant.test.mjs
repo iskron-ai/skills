@@ -982,7 +982,7 @@ async function ordersApi(t, order) {
   return { base: `http://127.0.0.1:${server.address().port}/api`, state };
 }
 
-test("an 8.13.1 own order is migrated before checking a foreign stop", async (t) => {
+test("a known own order stays own beside a foreign stop", async (t) => {
   const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -1000,6 +1000,7 @@ test("an 8.13.1 own order is migrated before checking a foreign stop", async (t)
   const r = sleepingRow({
     state: "stopping",
     order_id: "ord-own",
+    orders: ["ord-own"],
     closed: "client_exited",
     tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
   });
@@ -1013,12 +1014,61 @@ test("an 8.13.1 own order is migrated before checking a foreign stop", async (t)
   const alongside = sleepingRow({
     state: "stopping",
     order_id: "ord-own",
+    orders: ["ord-own"],
     closed: "client_exited",
     tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
   });
   await foreignStops(secondDir, api.base, "key", { k: alongside });
   assert.equal(alongside.foreign_stop?.id, "ord-other");
   assert.equal(alongside.state, "ended");
+});
+
+test("an ambiguous v8.13.1 stop with no provenance is foreign and cannot sleep", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "legacy-ambiguous-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const api = await ordersApi(t, {
+    id: "ord-probe",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  // Produced by built v8.13.1 after the foreign stop and process exit; paths and times masked.
+  const r = {
+    realm: "@nks/nks-dev",
+    room: "room-1",
+    invite: 31,
+    karta: 931,
+    launcher: "probe-mac",
+    harness: "dsh",
+    model: "local-probe/mock",
+    repository: "github.com/probe/one",
+    worktree: "/probe/tree",
+    state: "stopping",
+    at: "2026-11-01T01:00:00Z",
+    standing_id: SEAT,
+    order_id: "ord-probe",
+    stopping_at: "2026-11-01T01:30:00Z",
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+    dsh: {
+      pid: 1,
+      events: "/probe/events",
+      model: "/probe/model",
+      session: "s",
+      final: "completed",
+      exit: "0",
+    },
+  };
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.equal(r.foreign_stop?.id, "ord-probe");
+  assert.equal(r.state, "ended");
+  assert.equal(await goDormant((await caseApi(t)).base, "key", r), false);
 });
 
 test("a foreign stop order ends the run in any reading order of its states", async (t) => {
