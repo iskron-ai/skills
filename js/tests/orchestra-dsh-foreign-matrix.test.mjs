@@ -24,7 +24,7 @@ const entry = (id, kind, extra = {}) => ({
   ...extra,
 });
 
-test("foreign stopped × dormant × exit observed × own order on page", async (t) => {
+async function check(t, state, own) {
   if (process.env.ISKRON_NODE) return t.skip("the accelerated clock requires NODE_OPTIONS");
   const first = entry(31, "invite", { to_karta_node_id: KARTA });
   const o = await leadingDsh(t, {
@@ -43,33 +43,43 @@ test("foreign stopped × dormant × exit observed × own order on page", async (
   const registry = join(o.dir, "run", "orchestra-runs.json");
   const data = JSON.parse(readFileSync(registry, "utf8"));
   const row = Object.values(data.runs).find((r) => r.invite === 31);
-  row.orders = [...(row.orders ?? []), "ord-own"];
+  if (own) row.orders = [...(row.orders ?? []), "ord-own"];
   writeFileSync(registry, JSON.stringify(data));
   const base = readFileSync(join(o.dir, "server"), "utf8").trim().replace(/\/mcp$/, "");
   await fetch(`${base}/control`, {
     method: "POST",
     body: JSON.stringify({
       stop_orders: [
-        { id: "ord-own", standing_id: SEAT, realm: "@nks/nks-dev", frame: false },
+        ...(own
+          ? [{ id: "ord-own", standing_id: SEAT, realm: "@nks/nks-dev", frame: false }]
+          : []),
         { id: "ord-foreign", standing_id: SEAT, realm: "@nks/nks-dev", frame: false },
       ],
     }),
   });
-  const ack = await fetch(`${base}/api/me/orders/ord-foreign/ack`, {
-    method: "POST",
-    headers: {
-      authorization: "Bearer probe-pat",
-      "content-type": "application/json",
-      "user-agent": "probe",
-    },
-    body: JSON.stringify({ state: "stopped" }),
-  });
-  assert.ok(ack.ok, `foreign stop ack: ${ack.status}`);
+  if (state === "stopped") {
+    const ack = await fetch(`${base}/api/me/orders/ord-foreign/ack`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer probe-pat",
+        "content-type": "application/json",
+        "user-agent": "probe",
+      },
+      body: JSON.stringify({ state: "stopped" }),
+    });
+    assert.ok(ack.ok, `foreign stop ack: ${ack.status}`);
+  }
   await o.room("open", [first, entry(32, "said", { to_standing_id: SEAT })]);
   const calls = o.dshCalls().length;
   await o.step();
   const ended = await o.until(31, (r) => r.state === "ended");
   assert.equal(o.dshCalls().length, calls, "no continuation after the foreign stop was read");
   assert.equal(ended.foreign_stop?.id, "ord-foreign");
-  assert.equal(ended.foreign_stop?.state, "stopped");
-});
+  assert.equal(ended.foreign_stop?.state, state);
+}
+
+for (const state of ["issued", "stopped"])
+  for (const own of [true, false])
+    test(`foreign ${state} × dormant × exit observed × own order ${own}`, (t) =>
+      check(t, state, own),
+    );
