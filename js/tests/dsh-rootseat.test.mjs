@@ -73,8 +73,10 @@ function holdRecord(auth, { realm, karta, name }) {
   );
 }
 
-/** The plugin over a stand-in dsh whose registry holds the bridge's stand tool. */
-function dsh(t, auth) {
+/** The plugin over a stand-in dsh whose registry holds the bridge's stand tool; task — the
+ * headless run's task in its service `headlessStartup` {json, sessionId, task} (keys observed
+ * live on agent/created, dsh 0.2.2-rc.1). */
+function dsh(t, auth, task) {
   const handlers = new Map();
   const logs = [];
   const order = [];
@@ -92,7 +94,12 @@ function dsh(t, auth) {
   const tools = { get: (name) => (name === STAND ? stand : undefined) };
   PLUGIN({
     on: (name, fn) => handlers.set(name, fn),
-    get: (name) => (name === "tools" ? tools : undefined),
+    get: (name) =>
+      name === "tools"
+        ? tools
+        : name === "headlessStartup" && task !== undefined
+          ? { json: true, sessionId: undefined, task }
+          : undefined,
     logger: { info: (l) => logs.push(String(l)) },
   });
   t.after(() => handlers.get("session/disposed")?.({ id: "s-root" }));
@@ -180,6 +187,28 @@ test("the switch off: no seating; on: the seating", async (t) => {
   off.created(a, "startup");
   await off.request(a);
   assert.deepEqual(off.order, ["request"]);
+});
+
+// The orchestrator's task of a call raised in its role's home (bridge/orchestra-raise-gates.ts
+// homeLine): the pair line with the role, then the brief.
+const ROOM = "725414c2-7078-4dfa-a5b9-140adb3b3422";
+const homeTask = (karta) =>
+  `iskron/spawned_for: {"invite":9,"room":"${ROOM}","karta":${karta}} start @probe/seat #${karta} дело ${ROOM}.`;
+
+test("a task naming the call's role seats that role; a task without it — the cover's", async (t) => {
+  const { auth } = repo(t);
+  const called = dsh(t, auth, homeTask(77));
+  const a = called.agent();
+  called.created(a, "startup");
+  await called.request(a);
+  assert.deepEqual(called.stands, [{ realm: "@probe/seat", karta: "77", model: "glm-5.3" }]);
+  rmSync(holdFilePathOf(auth, "glm.p--77--probe"));
+  await new Promise((r) => setTimeout(r, 5));
+  const plain = dsh(t, auth, `start @probe/seat #77 дело ${ROOM}.`);
+  const b = plain.agent();
+  plain.created(b, "startup");
+  await plain.request(b);
+  assert.deepEqual(plain.stands, [{ realm: "@probe/seat", karta: "931", model: "glm-5.3" }]);
 });
 
 test("a seat already held in another graph: refused, not stood over", async (t) => {

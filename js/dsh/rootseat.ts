@@ -1,5 +1,6 @@
 // The root seating of a dsh session (graph @nks/nks-dev, node #11076): the delivery's plugin seats
-// the root session on the cover's role in its graph before the first model request, as OpenCode's
+// the root session on the cover's role in its graph — the call's role when the orchestrator's task
+// names it for its home (taskRole) — before the first model request, as OpenCode's
 // root seating (#9334) — the same cover reading (shared/coverin.ts), switch and term
 // (shared/rootseat-env.ts), comparison (shared/sameseat.ts) and words (shared/rootseat-say.ts).
 // The word of the start stays the word of the work; a seating that failed is a stderr line.
@@ -20,12 +21,37 @@ import { coverIn } from "../shared/coverin.ts";
 import { rootSeatEnabled, rootSeatMs } from "../shared/rootseat-env.ts";
 import { heldWord, lateWord, notSeatedWord, refusedWord } from "../shared/rootseat-say.ts";
 import { type HeldSeat, sameSeat, short } from "../shared/sameseat.ts";
+import { firstLineSpawn } from "../shared/spawned-for.ts";
 import { holdOf, ownSeats } from "./seat.ts";
 
 /** The stand tool as dsh's MCP client names it (references/dsh-profile.yml, observed #10657). */
 export const STAND = `mcp__${PRODUCT}__${tool("stand")}`;
 const LOOK_MS = 100;
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms).unref?.());
+
+/**
+ * The role the orchestrator's task names for its home (#10598): the task of the headless run —
+ * the service `headlessStartup` {json, sessionId, task}, observed live on agent/created — opens
+ * with the pair line carrying the role (bridge/orchestra-raise-gates.ts homeLine), read by
+ * OpenCode's own parse (shared/spawned-for.ts firstLineSpawn). No line, no role in it — none,
+ * the cover's role; a broken line is said and the cover's role stays.
+ */
+function taskRole(ctx: any, log: (text: string) => void): string | undefined {
+  let task: unknown;
+  try {
+    task = ctx?.get?.("headlessStartup", false)?.task;
+  } catch {
+    return undefined;
+  }
+  if (typeof task !== "string") return undefined;
+  try {
+    const k = firstLineSpawn(task)?.karta;
+    return k === undefined ? undefined : String(k);
+  } catch (e) {
+    log(refusedWord((e as Error).message));
+    return undefined;
+  }
+}
 
 export interface RootSeat {
   /** The root's agent/created, startup or resume: its seating starts. */
@@ -70,7 +96,8 @@ export function createRootSeat(
     const cover = coverIn(dir);
     if (cover === null) return;
     if ("why" in cover) return log(notSeatedWord(cover.why));
-    const { realm, karta } = cover;
+    const realm = cover.realm;
+    const karta = taskRole(ctx, log) ?? cover.karta;
     const own = held();
     if (own) {
       // Held already: compared, not stood over — an rN beside @owner/slug is not guessed.

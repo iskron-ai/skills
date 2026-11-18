@@ -66,7 +66,7 @@ test-watchdog: build-js
 # Probe for the dsh hearing plugin — the built bundle against a stand-in dsh context
 # and a stand-in standing socket (frames, repeats, disposal, compaction, rituals).
 test-dsh: build-js
-	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/dsh-*.test.mjs js/tests/orchestra-dsh.test.mjs js/tests/orchestra-dsh-proc.test.mjs js/tests/orchestra-dsh-profile.test.mjs js/tests/orchestra-dsh-continue.test.mjs js/tests/orchestra-dsh-dormant.test.mjs js/tests/orchestra-adapter.test.mjs
+	@node scripts/run-tests.mjs --test-timeout=120000 js/tests/dsh-*.test.mjs js/tests/orchestra-dsh.test.mjs js/tests/orchestra-dsh-proc.test.mjs js/tests/orchestra-dsh-profile.test.mjs js/tests/orchestra-dsh-continue.test.mjs js/tests/orchestra-dsh-dormant.test.mjs js/tests/orchestra-dsh-home.test.mjs js/tests/orchestra-adapter.test.mjs
 
 test-extension: build-js
 	@node scripts/run-tests.mjs js/tests/extension.test.mjs

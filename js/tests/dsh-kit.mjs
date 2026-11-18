@@ -66,7 +66,8 @@ const lines = (f) =>
  * adapter — the description's; harnesses(patch) — its offers instead of the one dsh offer;
  * beside — more bodies (patch) => description, checkouts filled in; orca: false — no orca at all
  * on the daemon's PATH; bridge — the daemon's bridge file instead of the built one (a
- * delivery copy with its own constants, e.g. DSH_PROFILE null). */
+ * delivery copy with its own constants, e.g. DSH_PROFILE null); homes(checkout) — the
+ * description's homes (#10096). */
 export async function leadingDsh(
   t,
   {
@@ -80,6 +81,7 @@ export async function leadingDsh(
     fenced = false,
     bridge,
     caseRoom,
+    homes,
   } = {},
 ) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-")));
@@ -99,6 +101,7 @@ export async function leadingDsh(
     limit,
     harnesses: harnesses?.(patch) ?? { dsh: { models: [MODEL], patch, ...offer } },
     checkouts: { [REPO]: checkout },
+    ...(homes ? { homes: homes(checkout) } : {}),
   };
   const bodies = [body, ...beside.map((b) => ({ ...b(patch), checkouts: { [REPO]: checkout } }))];
   const fake = await startFakeNks({
