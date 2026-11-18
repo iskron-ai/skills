@@ -74,6 +74,26 @@ test("(г) headless: a wake word whose task aborts at once is not sent", async (
   assert.equal(s.sent.filter(isWake).length, 0);
 });
 
+// Observed live on LAB (92feef19, real dsh): the headless task — a user message of source user
+// (dsh-headless lib/index.js:369-375) — counted as a watching human's word and hushed the wake for
+// 30 minutes. In headless no human is at the console: the task is not that word.
+test("headless: the task is no watching human — a frame's lost word still wakes", async (t) => {
+  const s = await hearingSession(t, null, HEADLESS);
+  const task = {
+    id: "task-1",
+    role: "user",
+    content: [text("сделай долю")],
+    source: { kind: "user" },
+  };
+  await s.turn({ entered: [task], steps: [[text("готово")]] });
+  const laid = await s.frame("hold-5");
+  assert.ok(await until(() => s.jobs[0]?.settled), "the frame left the first hold");
+  await s.turn({ entered: [laid], steps: [[text(LONG)]] });
+  const wakes = s.sent.filter(isWake);
+  assert.equal(wakes.length, 1);
+  assert.ok(s.inTask.has(wakes[0]), "the wake word went from inside the hold");
+});
+
 for (const argv of [
   ["headless", "--patch", "p.yml", "--json", "brief"],
   ["--patch", "p.yml", "--profile", "headless", "brief"],

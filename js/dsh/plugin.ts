@@ -57,6 +57,7 @@ export function apply(ctx: DshCtx): void {
   const turns = createTurnEnds({
     on: () => ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true,
     wake: (text) => hold.wake(turnMessage(text)),
+    watched: () => !headless,
   });
   /** The root's agent as the hearing sees it: each frame it lays is known to the turn's end. */
   const heard = (): DshAgent | null => {
