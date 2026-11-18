@@ -10,7 +10,9 @@ import { tokenRequest } from "./tokenrequest.ts";
 
 // RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
 const SLOW_DOWN_MS = Number(process.env[envName("BRIDGE_DEVICE_SLOW_DOWN_MS")]) || 5_000;
-// A code the server would not issue is asked for again after this long.
+// A first code the server would not issue is asked for again after this long: with
+// no code standing a caller has nothing dead to renew (devicehandout.ts). Only
+// the device_authorization endpoint is asked; a code once issued is never renewed here.
 const REISSUE_PAUSE_MS = Number(process.env[envName("BRIDGE_DEVICE_REISSUE_MS")]) || 30_000;
 
 /** The device side of one published login. */
@@ -36,7 +38,8 @@ const never = new Promise<never>(() => {});
  * so the login's record — what every bridge of the machine hands out — stays current.
  * `called` reads the code a caller issued: one that found the record's code
  * dead asks a fresh one (devicehandout.ts), and that one is polled
- * from then on, the old one never again.
+ * from then on, the old one never again. A dead code is renewed only so: the
+ * poll itself never asks for a new one.
  */
 export function deviceSide(
   meta: Meta,
@@ -102,8 +105,9 @@ export function deviceSide(
         onCode(code);
         continue;
       }
-      let renew = Date.now() >= code.expires_at;
-      if (!renew) {
+      // A dead code is not renewed here: the poll waits, touching the token endpoint
+      // no more, until a caller asking for the login after its end issues the next one.
+      if (Date.now() < code.expires_at) {
         try {
           await tokenRequest(meta, {
             grant_type: DEVICE_GRANT,
@@ -121,15 +125,12 @@ export function deviceSide(
             code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
             onCode(code);
           } else if (word && word !== "authorization_pending") {
-            renew = true; // expired_token, or a code the server no longer knows
+            // expired_token, or a code the server no longer knows: dead in the record
+            // too, so the next caller issues a fresh one (devicehandout.ts)
+            code = { ...code, expires_at: Date.now() };
+            onCode(code);
           } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
         }
-      }
-      if (renew) {
-        code = newer(code) ?? (await fresh(clientId));
-        if (halt.signal.aborted) return never;
-        if (unset) return giveUp();
-        onCode(code);
       }
     }
   };

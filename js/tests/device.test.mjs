@@ -53,23 +53,55 @@ test("the login is offered from another device too: approved there, the grant la
   );
 });
 
-test("an expired code is replaced by a new one while the login is needed", async () => {
+// The field (RU, Rauthy): a published login nobody came to polled the token
+// endpoint every interval and took a new code by itself at each expiry, all night.
+test("a code dead with nobody to call: the poll stops and asks for no new code", async () => {
+  await withFake(
+    { device: { interval: 1, expiresIn: 2, client: "iskron-bridge" } },
+    async ({ fake, dir, bridge }) => {
+      const first = offered(await bridge.call("initialize", 1, INIT));
+      const dev = fake.state.device;
+      await waitFor(() => dev.polls.length >= 1, "the first poll");
+      const end = [...dev.codes.values()][0].expires_at;
+      await sleep(end - Date.now() + 4_000); // past the code's end, then four intervals more
+      const late = dev.polls.filter((p) => p.at >= end);
+      assert.deepEqual(late, [], "no poll of the token endpoint once the code is dead");
+      assert.deepEqual(dev.issued, [first.userCode], "no code issued without a caller");
+      const res = await fetch(first.local, { redirect: "follow" });
+      assert.equal(res.status, 200, "the local link of the same login still waits");
+      await res.text();
+      await grantLanded(dir);
+      assert.ok((await bridge.call("tools/list", 2)).result?.tools?.length);
+    },
+  );
+});
+
+test("a caller after the code's end gets one new code, and the poll goes on with it", async () => {
   await withFake(
     { device: { interval: 1, client: "iskron-bridge" } },
     async ({ fake, dir, bridge }) => {
       const first = offered(await bridge.call("initialize", 1, INIT));
+      const dev = fake.state.device;
       await fake.control({ device_expire: true });
       await waitFor(
-        () => fake.state.device.polls.some((p) => p.answer === "expired_token"),
+        () => dev.polls.some((p) => p.answer === "expired_token"),
         "the server to refuse the code",
       );
-      await waitFor(() => fake.state.device.issued.length >= 2, "a new code after the refusal");
+      const refused = dev.polls.length;
+      await sleep(3_000);
+      assert.equal(dev.polls.length, refused, "no poll after the refusal, while nobody calls");
+      assert.equal(dev.issued.length, 1, "no new code while nobody calls");
       const next = linksIn((await bridge.call("initialize", 2, INIT)).error?.message);
-      assert.notEqual(next.userCode, first.userCode, "the next call hands out the new code");
-      assert.equal(next.userCode, fake.state.device.issued.at(-1));
+      assert.notEqual(next.userCode, first.userCode, "the caller hands out a new code");
+      assert.deepEqual(dev.issued, [first.userCode, next.userCode], "exactly one new code");
+      await waitFor(
+        () => dev.polls.slice(refused).some((p) => p.user_code === next.userCode),
+        "the poll to go on with the new code",
+      );
       await fake.control({ device_approve: next.userCode });
       await grantLanded(dir);
       assert.ok((await bridge.call("tools/list", 3)).result?.tools?.length);
+      assert.equal(dev.issued.length, 2);
     },
   );
 });
