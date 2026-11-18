@@ -17,9 +17,12 @@ export function resolveInvite(
   runs: Record<string, Run>,
 ): { row: Row; own: Launcher } | { code: string } {
   const caller = authorOf(source);
-  const self = caller && sameAccount(caller, { id: ls.accountId ?? "", handle: ls.account });
-  if (!caller || self == null) return { code: "caller_unknown" };
-  const allowed = (l: Launcher): boolean => self || listed(l.callers, caller);
+  if (!caller) return { code: "caller_unknown" };
+  // callers first, by any basis the author has; own after it — an incomparable own refuses
+  // as unknown only when no description names the author either.
+  const self = sameAccount(caller, { id: ls.accountId ?? "", handle: ls.account });
+  const allowed = (l: Launcher): boolean => listed(l.callers, caller) || self === true;
+  const notAllowed = self == null ? "caller_unknown" : "caller_not_allowed";
   const launcher = text(source.launcher);
   let own: Launcher | undefined;
   if (!missing(source.launcher)) {
@@ -32,11 +35,14 @@ export function resolveInvite(
           (launcher && ls.elsewhere.has(launcher) ? "host_elsewhere" : "launcher_unknown"),
       };
     }
-    if (!allowed(own)) return { code: "caller_not_allowed" };
+    if (!allowed(own)) return { code: notAllowed };
   } else {
     const local = [...ls.own.values()];
     const admitted = local.filter(allowed);
-    if (!admitted.length) return { code: local.length ? "caller_not_allowed" : "launcher_missing" };
+    if (!admitted.length)
+      return {
+        code: local.length || self == null ? notAllowed : "launcher_missing",
+      };
     const candidates = admitted.filter((l) => {
       const harnesses = missing(source.harness)
         ? Object.keys(l.harnesses)
