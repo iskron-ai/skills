@@ -95,8 +95,15 @@ export async function foreignStops(
         const state = String(v.state);
         const open = OPEN.has(state);
         const seatRun = seatRuns.get(seat);
-        if (id && seatRun && !seatRun.orders?.includes(id))
+        if (id && seatRun && !seatRun.orders?.includes(id)) {
           seatRun.foreign_stop ??= { id, state, at: new Date().toISOString() };
+          if (seatRun.dsh && seatRun.state === "stopping" && seatRun.tree?.exit) {
+            seatRun.state = "ended";
+            seatRun.why = OPEN.has(seatRun.foreign_stop.state)
+              ? "stop_ordered_elsewhere"
+              : `stop_${seatRun.foreign_stop.state}_elsewhere`;
+          }
+        }
         // An order on a sleeping run's seat is foreign unless its id is the row's own
         // (#10995): the sticky field is set at this first reading and never erased — the
         // dormant tact ends the sleep by the field alone, not here.
