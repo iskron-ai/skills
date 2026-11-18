@@ -1,7 +1,7 @@
 {
   "server": {
     "name": "iskron",
-    "version": "0.149.1"
+    "version": "0.158.0"
   },
   "protocolVersion": "2025-06-18",
   "resource": "https://mcp.iskron.ru",
@@ -425,6 +425,7 @@
       "handle",
       "invitation_id",
       "key",
+      "name",
       "realm",
       "since",
       "subject",
@@ -473,12 +474,16 @@
     "iskron_realm": [
       "action",
       "attrs",
+      "before",
       "confirm",
       "include_archived",
       "name",
+      "node",
       "public_read_role",
       "realm",
-      "slug"
+      "slug",
+      "standing",
+      "status"
     ],
     "iskron_search": [
       "actor",
