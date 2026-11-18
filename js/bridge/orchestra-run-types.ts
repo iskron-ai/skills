@@ -56,6 +56,8 @@ export interface Run {
   realm: string;
   /** Original invite author, retained for the same caller gate on a continuation. */
   author?: string;
+  /** The original author's account id (#11011), when the invite carried it. */
+  author_user_id?: string;
   room: string;
   invite: number;
   /** The invite a continuation registers on (#10995): the ownerless invite the call's ended

@@ -34,7 +34,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     name: () =>
       "Своя половина имени стояния; без неё выводится машина.репо.модель — модель из параметра model.",
     room: () =>
-      "Адрес места человека @handle:name (его даёт окно человека); мост стучит туда join, чтобы встать рядом с человеком.",
+      "Адрес места человека, как печатает доска (голое имя или @handle:name; его даёт окно человека); мост стучит туда join, чтобы встать рядом с человеком.",
     model: () =>
       "Модель, которой бежит агент (id или имя, например claude-opus-5 или opus-5) — третья часть выведенного имени; без неё имя — машина.репо.",
     muteSiblings: () => "Не слышать эхо других стояний той же роли.",
@@ -45,7 +45,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     repeatKnock: () =>
       "Осознанный повтор стука в то же место человека: разрешён один раз и не раньше чем через 2 минуты после первого; без него повторный вызов второго join не шлёт.",
     satelliteOf: () =>
-      "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего @handle:name из постановки. Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется); место живёт прогоном. name, take и room с ним не передаются.",
+      "Только мосту-спутнику субагента (запись моста с --satellite в файле агента): место позвавшего из постановки, как печатает доска (голое имя или @handle:name). Мост встаёт рядом местом-спутником <имя позвавшего>.sub-N (первое свободное N), ролью из karta (её называет постановка, роль позвавшего не наследуется); место живёт прогоном. name, take и room с ним не передаются.",
     status: () =>
       "Занятость места, до 64 символов: при занятии — первая строка; на месте, которое этот мост уже держит, — основной способ обновить занятость (вызов только её и ставит); пустая строка снимает.",
     cwd: () =>
@@ -67,7 +67,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     name: () =>
       "Your own half of the standing's name; without it machine.repo.model is derived — the model from the model parameter.",
     room: () =>
-      "The human's seat address @handle:name (the human's window gives it); the bridge knocks a join there to stand beside the human.",
+      "The human's seat address as the board prints it (a bare name or @handle:name; the human's window gives it); the bridge knocks a join there to stand beside the human.",
     model: () =>
       "The model the agent runs on (id or name, for example claude-opus-5 or opus-5) — the third part of the derived name; without it the name is machine.repo.",
     muteSiblings: () => "Do not hear the echo of other standings of the same role.",
@@ -78,7 +78,7 @@ export const STAND_TOOL: Readonly<Record<Lang, StandToolWords>> = {
     repeatKnock: () =>
       "A deliberate repeat of the knock at the same human seat: allowed once and no sooner than 2 minutes after the first; without it a repeated call sends no second join.",
     satelliteOf: () =>
-      "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat @handle:name from the brief. The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited); the seat lives for the run. name, take and room are not passed with it.",
+      "Only for a subagent's satellite bridge (the bridge entry with --satellite in the agent file): the caller's seat from the brief, as the board prints it (a bare name or @handle:name). The bridge stands beside as the satellite seat <caller's name>.sub-N (the first free N), with the role from karta (the brief names it, the caller's role is not inherited); the seat lives for the run. name, take and room are not passed with it.",
     status: () =>
       "The seat's busyness, up to 64 characters: on taking — the first line; on a seat this bridge already holds — the main way to update busyness (the call sets only it); an empty string clears.",
     cwd: () =>

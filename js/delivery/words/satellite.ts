@@ -29,11 +29,11 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
   ru: {
     empty: () => "пусто",
     notSeatName: (of, fault) =>
-      `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: @handle:name.`,
+      `Отказано (мост): satellite_of «${of}» — не имя места (${fault}); передай место позвавшего как печатает доска: голое имя или @handle:name.`,
     noCaller: (of) =>
       `Отказано (мост): места позвавшего ${of} на доске этого графа нет — спутнику не к чему встать рядом; проверь satellite_of и граф в постановке.`,
     ambiguous: (count, base) =>
-      `Отказано (мост): имя ${base} на доске носят ${count} места — передай satellite_of полным адресом @handle:name.`,
+      `Отказано (мост): имя ${base} на доске носят ${count} места — передай satellite_of адресом места, как печатает доска (голое имя или @handle:name).`,
     alreadyHolds: (led) =>
       `мост уже держит ${led} — повтор этого прогона либо параллельный прогон с той же записью моста (тот же файл агента или другой с той же записью), который делит это место и потеряет его, когда первый закончит; параллельно — не больше одного прогона на запись моста`,
     nameCut: (base, n, max, name) =>
@@ -41,7 +41,7 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
     allTaken: (caller) =>
       `Отказано (мост): у места ${caller} заняты все спутники .sub-1…99 — прибери погасшие места прежних прогонов.`,
     needSatelliteOf: () =>
-      "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
+      "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего из постановки, как печатает доска (голое имя или @handle:name).",
     notSatellite: () =>
       "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
     derivesName: () =>
@@ -65,11 +65,11 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
   en: {
     empty: () => "empty",
     notSeatName: (of, fault) =>
-      `Refused (bridge): satellite_of "${of}" is not a seat name (${fault}); pass the caller's seat as the board prints it: @handle:name.`,
+      `Refused (bridge): satellite_of "${of}" is not a seat name (${fault}); pass the caller's seat as the board prints it: a bare name or @handle:name.`,
     noCaller: (of) =>
       `Refused (bridge): the caller's seat ${of} is not on this graph's board — the satellite has nothing to stand beside; check satellite_of and the graph in the brief.`,
     ambiguous: (count, base) =>
-      `Refused (bridge): ${count} seats on the board carry the name ${base} — pass satellite_of as the full address @handle:name.`,
+      `Refused (bridge): ${count} seats on the board carry the name ${base} — pass satellite_of as the seat address the board prints (a bare name or @handle:name).`,
     alreadyHolds: (led) =>
       `the bridge already holds ${led} — a repeat of this run or a parallel run with the same bridge entry (the same agent file or another with the same entry), which shares this seat and loses it when the first one ends; in parallel — no more than one run per bridge entry`,
     nameCut: (base, n, max, name) =>
@@ -77,7 +77,7 @@ export const SATELLITE: Readonly<Record<Lang, SatelliteWords>> = {
     allTaken: (caller) =>
       `Refused (bridge): every satellite .sub-1…99 of the seat ${caller} is taken — clear the dead seats of former runs.`,
     needSatelliteOf: () =>
-      "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat (@handle:name) from the brief.",
+      "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat from the brief, as the board prints it (a bare name or @handle:name).",
     notSatellite: () =>
       "Refused (bridge): satellite_of is for a satellite bridge only (a bridge entry with --satellite in the agent file); this is a session bridge, and a satellite seat on it would take the caller's voice. A subagent without a bridge of its own has a limit: it speaks as the caller's seat and names itself in its lines.",
     derivesName: () =>

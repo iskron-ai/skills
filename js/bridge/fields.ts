@@ -123,7 +123,7 @@ export function boardField(sc: unknown): { seats: Seat[]; folded: number } | nul
     (s) =>
       typeof s.karta_seq === "number" &&
       typeof s.standing === "string" &&
-      s.standing.startsWith("@") &&
+      s.standing.trim() !== "" &&
       typeof s.listening === "boolean",
   );
   if (!whole || !is.num(folded)) return fallback(`${tool("channel")} list`, sc);

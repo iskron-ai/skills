@@ -391,6 +391,10 @@ export async function startFakeNks(opts = {}) {
     return known ? known.canon : t;
   };
   const cleanName = (n) => String(n ?? "").trim() || "(unnamed)";
+  // Адрес места мостовых мест: «@tester:имя»; /control {seatHandle: ""} — учётка без
+  // хэндла, место печатается голым именем (решение #11011).
+  const seatAddr = (name) =>
+    st.seatHandle === "" ? name : `${st.seatHandle ?? "@tester"}:${name}`;
   let chanSeq = 0;
   const place = (karta, name) => ({ karta, name, standing_id: randomUUID() });
   const newChannel = (realm, karta, name) => {
@@ -506,7 +510,7 @@ export async function startFakeNks(opts = {}) {
     seat_id: idOfPlace(p),
     karta_seq: Number(p.karta),
     karta_name: "Роль",
-    standing: `@tester:${p.name}`,
+    standing: seatAddr(p.name),
     state: p.state ?? "active",
     listening: !!p.listening,
     pending: p.pending ?? 0,
@@ -877,6 +881,7 @@ export async function startFakeNks(opts = {}) {
         "connectThrottleNext", // столько ближайших connect отказать 429 socket_reissue_throttled
         "connectThrottleRetryS", // «retry in N s» этого отказа
         "rooms",
+        "seatHandle", // "" — мостовые места печатаются голым именем (учётка без хэндла)
         "boardText",
         "boardByKarta", // { "931": text } — доска list с karta: только она печатает строку «id» места
         "english", // доска английской формой — предположенной, на .ai не наблюдённой (#6632 п.2)
@@ -914,7 +919,7 @@ export async function startFakeNks(opts = {}) {
             content_type: "text/plain",
             body_chars: text.length,
             to_standing_id: pl.standing_id,
-            to_standing: `@tester:${pl.name}`,
+            to_standing: seatAddr(pl.name),
             realm,
             karta_seq: Number(pl.karta),
             body: text,
@@ -1565,7 +1570,7 @@ export async function startFakeNks(opts = {}) {
                       seats: [
                         {
                           ...(seatId ? { seat_id: seatId } : {}),
-                          standing: `@tester:${cleanName(a.name)}`,
+                          standing: seatAddr(cleanName(a.name)),
                           opened: !existed,
                           locale: a.locale ?? "ru",
                           ...(a.spawned_for ? { spawned_for: a.spawned_for } : {}),
@@ -1619,8 +1624,8 @@ export async function startFakeNks(opts = {}) {
             // строка занятости «💬 «…»» и строка входящего адреса «📥».
             lines.push(
               en
-                ? `  #${p.karta} 👨‍💻 Role 能 · @tester:${p.name} — live · idle 6h · ${p.pending ? `undelivered ${p.pending} · ` : ""}${p.listening ? "listening" : "not listening"} · socket was 2026-09-08T16:43:28.211106Z · opened by @tester`
-                : `  #${p.karta} 👨‍💻 Роль 能 · @tester:${p.name} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
+                ? `  #${p.karta} 👨‍💻 Role 能 · ${seatAddr(p.name)} — live · idle 6h · ${p.pending ? `undelivered ${p.pending} · ` : ""}${p.listening ? "listening" : "not listening"} · socket was 2026-09-08T16:43:28.211106Z · opened by @tester`
+                : `  #${p.karta} 👨‍💻 Роль 能 · ${seatAddr(p.name)} — живой · простой 6h · ${p.pending ? `не доставлено ${p.pending} · ` : ""}${p.listening ? "слушает" : "не слушает"} · сокет был 2026-09-08T16:43:28.211106Z · открыл @tester`,
             );
             lines.push(`     💬 «${p.status ?? "на вахте"}» · 2026-09-08T16:08:56.121391Z`);
             if (p.incoming) lines.push(`     📥 ${p.incoming}`);
@@ -2497,7 +2502,7 @@ export async function startFakeNks(opts = {}) {
             karta_seq: Number(p.karta),
             pending: 0,
             realm,
-            standing: `@tester:${p.name}`,
+            standing: seatAddr(p.name),
             ...(st.helloNoIds ? {} : { standing_id: p.standing_id }),
           })),
           ping_interval_seconds: opts.helloPingS ?? (opts.pingMs ? opts.pingMs / 1000 : 30),

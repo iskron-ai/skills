@@ -57,11 +57,11 @@ export function readBoard(a: { text: string; structured?: unknown }): Board {
   };
 }
 
-/** Board lines: `#N … · @handle:name — …`, then `📥 https://…` and `id <uuid>`. */
+/** Board lines: `#N … · @handle:name — …` or a bare `#N … · name — …` (#11011), then `📥 https://…` and `id <uuid>`. */
 export function parseBoard(text: string): BoardEntry[] {
   const out: BoardEntry[] = [];
   for (const line of text.split("\n")) {
-    const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
+    const m = /^\s*#(\d+)\s.*?·\s(\S+)\s—\s(.*)$/.exec(line);
     if (m) {
       out.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
@@ -74,7 +74,7 @@ export function parseBoard(text: string): BoardEntry[] {
   return out;
 }
 
-/** Own half of `@handle:name`, compared whole: `endsWith(":proba")` would match neighbour `x.proba`. */
+/** Own half of `@handle:name` (a bare name is itself), compared whole: `endsWith(":proba")` would match neighbour `x.proba`. */
 export const nameOf = (address: string): string => address.slice(address.indexOf(":") + 1);
 
 /**

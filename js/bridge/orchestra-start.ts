@@ -31,6 +31,7 @@ export async function startRun(
   const run: Run = {
     realm: String(row.realm),
     ...(typeof row.author === "string" ? { author: row.author } : {}),
+    ...(typeof row.author_user_id === "string" ? { author_user_id: row.author_user_id } : {}),
     room: String(row.room),
     invite: Number(row.invite),
     karta: Number(row.karta),

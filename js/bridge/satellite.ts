@@ -243,9 +243,10 @@ export function pickSatellite(
   const base = address ? nameOf(address) : of.replace(/^@/, "");
   const fault = base ? nameFault(base) : sw().empty();
   if (fault) return { ok: false, refusal: sw().notSeatName(of, fault) };
-  const callers = entries.filter((e) =>
-    address ? e.address === address : nameOf(e.address) === base,
-  );
+  // A bare seat (#11011) is its own full address: an exact match goes first.
+  const exact = entries.filter((e) => e.address === of);
+  const callers =
+    address || exact.length ? exact : entries.filter((e) => nameOf(e.address) === base);
   if (!callers.length) return { ok: false, refusal: sw().noCaller(of) };
   // One name on several seats (different roles): the own role's seat if it is the only one.
   const same = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;

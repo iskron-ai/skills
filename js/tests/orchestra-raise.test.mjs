@@ -976,6 +976,66 @@ test("raise: the machine's account unknown — nothing is raised, said aloud", a
   assert.equal(o.launches().length, 0);
 });
 
+// An account without a handle (#11011): the whoami text names the account by an «id <uuid>»
+// line (asked of the MCP server, not yet printed — the form is the request's); an invite carries
+// author_user_id, the author's seat is a bare name. Own is a matching id; a whoami and invites
+// without ids keep the handle (the probes above).
+const ME_ID = "0b6f9a3e-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
+const FRIEND_ID = "7d8e9f00-1a2b-4c3d-9e4f-5a6b7c8d9e0f";
+const byId = (n, id, author) => ({ ...invite(n, GOOD, REPO, author), author_user_id: id });
+
+test("raise: a whoami without a handle names the account by its id line — own calls rise, a foreign id is refused, no basis is said aloud", async (t) => {
+  const o = await leading(t, {
+    whoami: `Вызывающая идентичность: логин 16-m3 (probe@example.com)\nid ${ME_ID}`,
+  });
+  await o.queue([
+    byId(1, ME_ID, "16-m3.lead"),
+    byId(2, FRIEND_ID, "friend.lead"),
+    invite(3, GOOD, REPO, "16-m3.lead"),
+  ]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.doesNotMatch(r.out, /account_unknown/, r.out);
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: caller_not_allowed/, r.out);
+  assert.match(r.out, /invite 3: caller_unknown/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
+test("raise: callers take an account id beside @handle; an invite without author_user_id falls back to the handle", async (t) => {
+  const o = await leading(t, {
+    whoami: `Вызывающая идентичность: логин tester · handle @tester (tester@probe.example)\nid ${ME_ID}`,
+    descriptions: () => [
+      describe({ body: { callers: [FRIEND_ID.toUpperCase(), "@pal"], limit: 5 } }),
+    ],
+  });
+  await o.queue([
+    byId(1, FRIEND_ID, "friend.lead"),
+    byId(2, "11111111-2222-4333-8444-555555555555", "other.lead"),
+    invite(3, GOOD),
+    invite(4, GOOD, REPO, "@pal:lead"),
+  ]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: caller_not_allowed/, r.out);
+  assert.match(r.out, /invite 3: launched/, r.out);
+  assert.match(r.out, /invite 4: launched/, r.out);
+  assert.equal(o.launches().length, 3);
+});
+
+test("raise: with ids on both sides own is decided by the id, not by the seat's handle", async (t) => {
+  const o = await leading(t, {
+    whoami: `Вызывающая идентичность: логин tester · handle @tester (tester@probe.example)\nid ${ME_ID}`,
+  });
+  await o.queue([byId(1, ME_ID, "@renamed:lead"), byId(2, FRIEND_ID, "@tester:lead")]);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 1: launched/, r.out);
+  assert.match(r.out, /invite 2: caller_not_allowed/, r.out);
+  assert.equal(o.launches().length, 1);
+});
+
 test("raise: the account from an English whoami, a hyphenated handle — own calls only", async (t) => {
   // The en form as LOCAL 0.169.0 answers it (09.11.2026, №4050).
   const o = await leading(t, {

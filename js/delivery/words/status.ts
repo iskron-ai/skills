@@ -51,7 +51,7 @@ export const STATUS: Readonly<Record<Lang, StatusWords>> = {
     busyLine: (label, line, nudge) => `занятость ${label}: ${line || "(снята)"}${nudge}`,
     placeDerived: (place) => `${place} (адрес выведен, hello его не называл)`,
     placeUnnamed: (name) =>
-      `места${name ? ` «${name}»` : ""} (адреса @handle:name ещё нет — hello не пришёл)`,
+      `места${name ? ` «${name}»` : ""} (адреса места ещё нет — hello не пришёл)`,
     evictedWhy: () =>
       `слух у другого держателя — вернуть его iskron_stand с take=true: ${TAKE.ru.rule()}`,
     reopeningWhy: () => "сокет переоткрывается — строка опубликована, слух вернётся сам",
@@ -72,7 +72,7 @@ export const STATUS: Readonly<Record<Lang, StatusWords>> = {
     busyLine: (label, line, nudge) => `busyness ${label}: ${line || "(cleared)"}${nudge}`,
     placeDerived: (place) => `${place} (address derived, hello did not name it)`,
     placeUnnamed: (name) =>
-      `of the seat${name ? ` «${name}»` : ""} (no @handle:name address yet — hello has not come)`,
+      `of the seat${name ? ` «${name}»` : ""} (no seat address yet — hello has not come)`,
     evictedWhy: () =>
       `the hearing is with another holder — take it back by iskron_stand with take=true: ${TAKE.en.rule()}`,
     reopeningWhy: () =>

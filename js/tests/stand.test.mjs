@@ -3161,7 +3161,7 @@ test("two graphs: before any hello the busy line of a place beside names the pla
   assert.ok(!text.split("\n")[0].includes("proba-b--48--"), `the record key stands in:\n${text}`);
   assert.equal(
     text.split("\n")[0],
-    "занятость места «proba-b» (адреса @handle:name ещё нет — hello не пришёл): до hello",
+    "занятость места «proba-b» (адреса места ещё нет — hello не пришёл): до hello",
     text,
   );
   // The socket reopens, the hello lists the places: the address is the platform's now.
@@ -6238,4 +6238,70 @@ test("#7440: a stop without a reason names the owner or another session; revoked
     await until(() => stoppedEv(bridge), "the stop word");
     assert.match(stoppedEv(bridge).text, who, reason);
   }
+});
+
+// A human without a handle (#11011, #7917): the seat of that human and of their agents
+// is printed and taken by the bare seat name — no "@", handle or colon; the graph stands
+// in the frame beside it. The bridge takes both kinds on one board.
+const BARE_NEIGHBOURS = [{ karta: "1", address: "@alari:16-m3.skills" }];
+for (const fields of [false, true])
+  test(`bare seat: a board with bare seats beside @-seats — iskron_stand reads them: a held name stands beside, the own seat comes back (fields: ${fields})`, async (t) => {
+    const { fake, bridge } = await ready(t, fields ? ASKS_FIELDS : INIT);
+    fake.state.structured = fields;
+    await fake.control({
+      seatHandle: "",
+      rooms: BARE_NEIGHBOURS,
+      places: [{ karta: "931", name: "proba", listening: true }],
+    });
+    const args = { realm: "nks-dev", karta: 931, name: "proba" };
+    const r = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${bridge.stderr}`);
+    assert.equal(placeOf(r), "proba.2", "the bare seat another holder listens on is seen");
+    assert.doesNotMatch(textOf(r), /@\S*proba/, "the bare seat gets no handle");
+    const connects = fake.state.counts.connect;
+    const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!again.result?.isError, textOf(again));
+    assert.equal(placeOf(again), "proba.2", textOf(again));
+    assert.equal(fake.state.counts.connect, connects, "the own bare seat comes back, no connect");
+  });
+
+test("bare seat: satellite_of by the bare name finds the caller on a board with @-seats", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  t.after(() => fake.stop());
+  fake.state.structured = true;
+  await fake.control({
+    seatHandle: "",
+    rooms: BARE_NEIGHBOURS,
+    places: [{ karta: "931", name: CALLER, listening: true }],
+  });
+  const sat = await satelliteBridge(t, fake);
+  const r = await standAs(sat, { realm: "nks-dev", karta: 931, satellite_of: CALLER });
+  assert.ok(!r.result?.isError, `${textOf(r)}\n${sat.stderr}`);
+  assert.equal(placeOf(r), `${CALLER}.sub-1`, textOf(r));
+});
+
+test("bare seat: the seat beside a bare main seat gets the bare address, not «no address yet»", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({ seatHandle: "" });
+  const stand = (args) => bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+  assert.ok(!(await stand({ realm: NKS, karta: 931, name: "proba" })).result?.isError);
+  const b = await stand({ realm: DRUGOY, karta: 48, name: "proba-b" });
+  assert.ok(!b.result?.isError, textOf(b));
+  const said = await stand({ realm: DRUGOY, status: "seat beside" });
+  assert.ok(!said.result?.isError, textOf(said));
+  assert.match(textOf(said), /занятость proba-b[ :]/, textOf(said));
+  assert.doesNotMatch(textOf(said), /@\S*proba-b|адреса .*ещё нет/, textOf(said));
+});
+
+test("bare seat: register with spawned_for on a channel with a bare seat is not refused", async (t) => {
+  const { bridge, fake } = await ready(t, ASKS_FIELDS);
+  fake.state.structured = true;
+  fake.state.futureArgs.iskron_channel = ["spawned_for"];
+  await fake.control({ seatHandle: "", rooms: BARE_NEIGHBOURS });
+  const r = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "@nks/nks-dev", karta: "931", name: "receipt-probe", spawned_for: SPAWN },
+  });
+  assert.ok(!(r.error || r.result?.isError), `${textOf(r)}\n${bridge.stderr}`);
+  assert.equal(placeOf(r), "receipt-probe", textOf(r));
 });
