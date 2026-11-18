@@ -65,6 +65,9 @@ export interface Run {
   /** The launch answer's receipt words (#9966), a safe short projection. */
   receipt?: { mode: string; reason: string };
   closed?: string;
+  /** The ids of the run's own stop orders — the call's exit stop and every continuation's.
+   * An order naming the seat outside this list is someone else's (#10995 review 4). */
+  orders?: string[];
   state: RunState;
   at: string;
   why?: string;

@@ -92,10 +92,15 @@ export async function foreignStops(
         const state = String(v.state);
         const open = OPEN.has(state);
         // An order on a sleeping run's seat ends the sleep (#10995): the continuation is not
-        // wanted, whatever the order's own state — the seat was settled at the exit that armed
-        // the sleep, so the ordinary cleanup takes the tree.
+        // wanted, whatever the order's own state — unless the order is the row's own: the
+        // call's exit stop, re-read while another open order holds the cursor, is not
+        // foreign (#10995 review 4).
         const sleep = !run && asleep.get(seat);
         if (sleep) {
+          if (id && sleep.orders?.includes(id)) {
+            asleep.delete(seat);
+            continue;
+          }
           asleep.delete(seat);
           sleep.state = "ended";
           sleep.why = open ? "stop_ordered_elsewhere" : `stop_${state}_elsewhere`;
@@ -115,7 +120,8 @@ export async function foreignStops(
           }
           continue;
         }
-        if (!run || !id || (id === run.order_id && !run.why?.endsWith("_elsewhere"))) continue;
+        if (!run || !id || run.orders?.includes(id) || (id === run.order_id && !run.why?.endsWith("_elsewhere")))
+          continue;
         bySeat.delete(seat);
         run.order_id = id;
         // A foreign order on the call's seat is a final end in any reading order of its

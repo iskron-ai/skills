@@ -823,6 +823,35 @@ test("a foreign stop order ends the run in any reading order of its states", asy
   assert.equal(r.state, "ended", "a row with a foreign order is a wind-down, never a sleep");
 });
 
+test("the run's own stop order, re-read, never ends the sleep", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-own-order-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // The reviewer's scenario: the /me/orders cursor is held by another open order, so the
+  // run's OWN exit stop comes around again — re-read, it must not read as foreign (#10995
+  // review 4). Only an order naming the seat outside the row's own list is someone else's.
+  const api = await ordersApi(t, {
+    id: "ord-own",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "stopped",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  const r = sleepingRow({ orders: ["ord-own"] });
+  const runs = { k: r };
+  await foreignStops(dir, api.base, "key", runs);
+  assert.equal(r.state, "dormant", "the row's own order, re-read, ends nothing");
+  // A genuinely foreign order on the same seat still ends the sleep.
+  api.state.order = { ...api.state.order, id: "ord-else", seq: 2 };
+  await foreignStops(dir, api.base, "key", runs);
+  assert.equal(r.state, "ended");
+  assert.equal(r.why, "stop_stopped_elsewhere");
+});
+
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const ours = exitedRun();

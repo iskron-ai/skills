@@ -137,6 +137,9 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       }
       if (res.ok && typeof body.id === "string" && body.id) {
         r.order_id = body.id;
+        // Every own stop order's id is kept: the call's exit stop and each continuation's
+        // (#10995 review 4) — a re-read of one's own order is never a foreign stop.
+        r.orders = [...(r.orders ?? []), body.id];
         r.state = "stopping";
         r.stopping_at = new Date().toISOString();
       } else if (res.status === 410 && ownProcess(r)) {
