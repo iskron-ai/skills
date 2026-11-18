@@ -83,3 +83,11 @@ for (const state of ["issued", "stopped"])
     test(`foreign ${state} × dormant × exit observed × own order ${own}`, (t) =>
       check(t, state, own),
     );
+
+for (const state of ["issued", "stopped"])
+  for (const own of [true, false])
+    test(
+      `foreign ${state} × dormant × exit unobserved × own order ${own}`,
+      { skip: "dormancy requires the observed clean dsh exit" },
+      () => {},
+    );
