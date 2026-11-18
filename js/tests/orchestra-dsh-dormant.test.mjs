@@ -904,7 +904,11 @@ test("a foreign stop is sticky: set once, it outlives re-reads, rollbacks and me
   const ended = { ...r, state: "dormant" };
   const said = await stepDormant(
     dir,
-    (await caseApi(t, { entries: [entry(9, "invite"), entry(10, "said", { to_standing_id: SEAT })] })).base,
+    (
+      await caseApi(t, {
+        entries: [entry(9, "invite"), entry(10, "said", { to_standing_id: SEAT })],
+      })
+    ).base,
     "key",
     { k: ended },
     launchers(),
@@ -915,7 +919,9 @@ test("a foreign stop is sticky: set once, it outlives re-reads, rollbacks and me
   assert.equal(ended.state, "ended", "the tact ends the sleep by the field alone");
   assert.equal(ended.why, "stop_ordered_elsewhere");
   assert.ok(said.join("; ").includes("stop_ordered_elsewhere"));
-  const fresh = exitedRun({ foreign_stop: { id: "o", state: "stopped", at: "2026-11-01T01:30:00Z" } });
+  const fresh = exitedRun({
+    foreign_stop: { id: "o", state: "stopped", at: "2026-11-01T01:30:00Z" },
+  });
   assert.equal(
     await goDormant((await caseApi(t, { entries: [entry(9, "invite")] })).base, "key", fresh),
     false,
@@ -923,7 +929,7 @@ test("a foreign stop is sticky: set once, it outlives re-reads, rollbacks and me
   );
 });
 
-test("the run identity ignores the continuation's fields and counts its wakes", async (t) => {
+test("the run identity ignores the continuation's fields and counts its wakes", async () => {
   const { runIdentity } = await import("../bridge/orchestra-runs-delta.ts");
   const base = sleepingRow();
   assert.equal(

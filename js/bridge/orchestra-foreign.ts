@@ -119,12 +119,7 @@ export async function foreignStops(
           }
           continue;
         }
-        if (
-          !run ||
-          !id ||
-          run.orders?.includes(id)
-        )
-          continue;
+        if (!run || !id || run.orders?.includes(id)) continue;
         bySeat.delete(seat);
         run.order_id = id;
         // A foreign order on the call's seat is a final end in any reading order of its

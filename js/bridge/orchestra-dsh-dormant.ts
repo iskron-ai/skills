@@ -17,9 +17,7 @@ const w = () => words(ORCHESTRA);
 /** The status word of a foreign stop's end: an open order was merely ordered, a closed one
  * says its outcome (#10995). */
 const stopElsewhere = (state: string): string =>
-  state === "issued" || state === "accepted"
-    ? "stop_ordered_elsewhere"
-    : `stop_${state}_elsewhere`;
+  state === "issued" || state === "accepted" ? "stop_ordered_elsewhere" : `stop_${state}_elsewhere`;
 
 /** A read refusal's row word: the holder says a 409 standing_required cannot come under
  * advance=false — its arrival is an api defect and is named as itself; everything else is a
