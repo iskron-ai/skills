@@ -17,6 +17,8 @@ const NOT_OURS = new Set(["terminal_binding_changed", "client_unbound"]);
 /** Tacts a transient refusal (Orca unreachable, an exit not seen) is tried before it is said
  * exhausted. */
 const REAP_TRIES = 3;
+/** The daemon's observed close of a client nothing else waits on — the tree cleanup's proof. */
+export const REAPED_OVER = "client_exited_over";
 
 /** Why the daemon must close this run's terminal itself; null — not its turn, or settled. */
 export function reapCause(r: Run, now = Date.now()): string | null {
@@ -55,6 +57,11 @@ export async function reapOwn(
       ? await close(r.terminal!, r.runtime!, current, expected)
       : "client_unbound";
     said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${settle(r, outcome, now)}`));
+    // A launch that never sat has no wakes to stop: its observed exit ends it (#11099).
+    if (outcome === null && cause === "no_seat") {
+      r.state = "ended";
+      r.reaped = REAPED_OVER;
+    }
   }
   return said;
 }

@@ -818,8 +818,8 @@ test("raise: a cover naming the graph by its short form is the call's graph", as
 // №4050 [56]: no seat within the window — the terminal the orchestrator opened is closed by its
 // own handle from the launch answer; the cause the harness refused with is not the daemon's to see.
 // #11099: the agent's bridge never sat, so nobody else closes it — the daemon closes its own
-// terminal under the exact-client proof. The observed exit alone is no end (#9256): no seat
-// was seen to end, so the row stays ambiguous with its tree.
+// terminal under the exact-client proof. A launch that never sat has no wakes to stop: its
+// observed exit ends it, frees the slot, and the tree goes by the ordinary cleanup.
 test("raise: no seat within the window — the daemon closes its own terminal by the exact proof", async (t) => {
   const o = await leading(t, {
     env: {
@@ -837,12 +837,30 @@ test("raise: no seat within the window — the daemon closes its own terminal by
   assert.match(r.out, /invite 9: tree_no_seat_unverified/, r.out);
   assert.match(r.out, /invite 9: no_seat, client_exited/, r.out);
   assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_probe1", "--json"]]);
-  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  const run = await waitEnded(o);
   assert.equal(run.closed, "client_exited");
-  assert.equal(run.state, "ambiguity", "a closed client is no ended seat");
-  assert.equal(run.tree.state, "ready");
-  await o.step();
+  // The slot is free: the next call of the same description is launched.
+  await o.queue([invite(10, GOOD), invite(11, GOOD)]);
+  const next = await o.step();
+  assert.match(next.out, /invite 10: launched/, next.out);
+  assert.match(next.out, /invite 11: launched/, next.out);
   assert.equal(o.closes().length, 1, "closed once");
+});
+
+test("raise: no seat within the window — a dirty tree outlives the ended launch, named", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_AFTER_CLOSE: "1" },
+  });
+  await o.queue([invite(9, GOOD)]);
+  await o.step();
+  writeFileSync(join(o.runs()[`${REALM}|${ROOM}|9`].worktree, "unsaved.txt"), "work\n");
+  await new Promise((done) => setTimeout(done, 2_000));
+  await o.queue([]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_seat, client_exited/, r.out);
+  const run = await runUntil(o, (x) => x.tree?.state === "retained", "the retained tree");
+  assert.equal(run.state, "ended");
+  assert.equal(run.tree.why, "tree_dirty_retained");
 });
 
 // №4050 [71] item 2: an incomplete snapshot acts on nothing — not even the expiry's close.
