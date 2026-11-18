@@ -2,7 +2,8 @@
 // applied as `apply(ctx)` (graph @nks/nks-dev, node #10776). No bridge and no tools of
 // its own: the machine bridge holds the standing, and the ear turns frames addressed to
 // the seat into next-turn messages of the live session (hearing.ts); the session's first
-// agent gets the start word in its system prompt (start.ts, #10921); a compacted session
+// agent gets the start word in its system prompt (start.ts, #10921) and its seat by the cover
+// before the first model request (rootseat.ts, #11076); a compacted session
 // gets its role back (compaction.ts); a shell call that pushed or merged gets its lines as a
 // turn (rites.ts, #11071); a frame's turn that lost its word in the console wakes the session
 // (turnend.ts) — in headless through a task holding the root's idle (hold.ts, #11071); a disposed
@@ -20,21 +21,14 @@ import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearin
 import { createHold } from "./hold.ts";
 import { afterPublish } from "./publish.ts";
 import { riteLines } from "./rites.ts";
-import { createRoot } from "./root.ts";
+import { agentOf, createRoot } from "./root.ts";
+import { createRootSeat } from "./rootseat.ts";
 import { putStartWord } from "./start.ts";
 import { createTurnEnds } from "./turnend.ts";
 
 export interface DshCtx {
   on(event: string, fn: (...args: any[]) => unknown): unknown;
   logger?: { info?: (...args: unknown[]) => void };
-}
-
-/** followup is send(message, "next-turn", true) — the observed surface (#10776 stage 1). */
-function agentOf(a: any): DshAgent | null {
-  if (!a || typeof a !== "object") return null;
-  if (typeof a.followup === "function") return { followup: (m) => a.followup(m) };
-  if (typeof a.send === "function") return { followup: (m) => a.send(m, "next-turn", true) };
-  return null;
 }
 
 export function apply(ctx: DshCtx): void {
@@ -88,17 +82,23 @@ export function apply(ctx: DshCtx): void {
   // its hearing, start word or rituals (root.ts). A disposed root session makes the next
   // agent/created a new session's root — a long process (dsh web) has many.
   const root = createRoot();
+  // The root's seat by the cover before its first model request (rootseat.ts, #11076).
+  const seats = createRootSeat(ctx, startedAt, authDir, log);
   on("agent/created", (payload) => {
     const took = root.take(payload?.agent, payload?.source);
     if (took === "child") return;
-    if (took === "root")
-      putStartWord(payload?.agent, payload?.source, process.cwd(), (why) =>
-        log(W().notDelivered(why)),
-      );
+    const fresh = payload?.source === "startup" || payload?.source === "resume";
+    if (took === "root") putStartWord(payload?.agent, payload?.source, process.cwd(), notDelivered);
     const own = agentOf(payload?.agent);
     if (own) [agent, raw] = [own, payload.agent];
+    if (took === "root" && fresh) seats.begin(payload?.agent, process.cwd());
     headless = isHeadless(ctx);
     if (!hearing) hearing = startHearing(heard, log, startedAt);
+  });
+  // A waterfall (payload, next): the root's first request waits for its seating, no longer.
+  on("agent/request", async (payload, next) => {
+    await seats.request(payload?.agent);
+    return typeof next === "function" ? next() : undefined;
   });
   on("session/disposed", (session) => {
     if (!root.ours(session)) return; // a subagent's session ended, the root's lives on
@@ -107,6 +107,7 @@ export function apply(ctx: DshCtx): void {
     agent = null;
     raw = null;
     hold.end();
+    seats.end();
     turns.forget();
     root.end();
   });
