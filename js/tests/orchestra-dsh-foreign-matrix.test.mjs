@@ -24,19 +24,35 @@ const entry = (id, kind, extra = {}) => ({
   ...extra,
 });
 
-async function check(t, state, own) {
+async function check(t, state, own, phase = "dormant") {
   if (process.env.ISKRON_NODE) return t.skip("the accelerated clock requires NODE_OPTIONS");
   const first = entry(31, "invite", { to_karta_node_id: KARTA });
   const o = await leadingDsh(t, {
-    env: { FAKE_DSH_HOLD_MS: "1000" },
+    env: { FAKE_DSH_HOLD_MS: phase === "live" ? "10000" : "1000" },
     caseRoom: { status: "open", entries: [first] },
   });
+  const base = readFileSync(join(o.dir, "server"), "utf8").trim().replace(/\/mcp$/, "");
+  if (phase === "live-exited")
+    await fetch(`${base}/control`, {
+      method: "POST",
+      body: JSON.stringify({ orders_stop_answer: { status: 201, body: { id: "ord-own" } } }),
+    });
   await o.queue([invite(31)]);
   assert.match((await o.step()).out, /invite 31: launched/);
   await o.queue([], [{ cursor: "s-31", spawned_for: { invite: 31, room: ROOM }, standing: SEAT }]);
   await o.step();
-  const sleeping = await o.until(31, (r) => r.state === "dormant", 30_000);
-  assert.ok(sleeping.tree.exit, "the process exit was observed");
+  const before = await o.until(
+    31,
+    (r) =>
+      phase === "dormant"
+        ? r.state === "dormant"
+        : phase === "live-exited"
+          ? r.state === "stopping" && !!r.tree?.exit
+          : r.state === "raised",
+    30_000,
+  );
+  if (phase !== "live") assert.ok(before.tree.exit, "the process exit was observed");
+  else assert.equal(before.tree.exit, undefined, "the live process has not exited");
 
   // The fake has no seat to accept our exit stop; seed the known own id on the persisted run,
   // then let its orders API serve that id and the foreign one on the same page.
@@ -45,7 +61,6 @@ async function check(t, state, own) {
   const row = Object.values(data.runs).find((r) => r.invite === 31);
   if (own) row.orders = [...(row.orders ?? []), "ord-own"];
   writeFileSync(registry, JSON.stringify(data));
-  const base = readFileSync(join(o.dir, "server"), "utf8").trim().replace(/\/mcp$/, "");
   await fetch(`${base}/control`, {
     method: "POST",
     body: JSON.stringify({
@@ -72,6 +87,22 @@ async function check(t, state, own) {
   await o.room("open", [first, entry(32, "said", { to_standing_id: SEAT })]);
   const calls = o.dshCalls().length;
   await o.step();
+  if (phase !== "dormant" && state === "issued") {
+    const ack = await fetch(`${base}/api/me/orders/ord-foreign/ack`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer probe-pat",
+        "content-type": "application/json",
+        "user-agent": "probe",
+      },
+      body: JSON.stringify({ state: "stopped" }),
+    });
+    assert.ok(ack.ok);
+  }
+  for (let i = 0; i < 20 && o.run(31)?.state !== "ended"; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await o.step();
+  }
   const ended = await o.until(31, (r) => r.state === "ended");
   assert.equal(o.dshCalls().length, calls, "no continuation after the foreign stop was read");
   assert.equal(ended.foreign_stop?.id, "ord-foreign");
@@ -82,6 +113,18 @@ for (const state of ["issued", "stopped"])
   for (const own of [true, false])
     test(`foreign ${state} × dormant × exit observed × own order ${own}`, (t) =>
       check(t, state, own),
+    );
+
+for (const state of ["issued", "stopped"])
+  for (const own of [true, false])
+    test(`foreign ${state} × live × exit unobserved × own order ${own}`, (t) =>
+      check(t, state, own, "live"),
+    );
+
+for (const state of ["issued", "stopped"])
+  for (const own of [true, false])
+    test(`foreign ${state} × live × exit observed × own order ${own}`, (t) =>
+      check(t, state, own, "live-exited"),
     );
 
 for (const state of ["issued", "stopped"])
