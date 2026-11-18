@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.13.1";
+var VERSION = "8.14.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -5480,14 +5480,7 @@ async function revokeAsLauncher(freed, args, call) {
   }
 }
 
-// js/opencode/rootseat-by.ts
-function heldSeat(d, slot, session) {
-  if (slot.place) return { ...slot.place };
-  const rec4 = d.recorded?.(slot, session);
-  if (rec4) return rec4;
-  const [name = "", karta = ""] = (slot.key ?? "").split("--");
-  return { name, karta, realm: "" };
-}
+// js/shared/sameseat.ts
 var short = (t) => /^r\d+$/.test(t.trim());
 var canonical = (t) => /^@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(t);
 var slug = (t) => /^[A-Za-z0-9_.-]+$/.test(t) && !short(t);
@@ -5499,6 +5492,15 @@ function sameSeat2(seat, realm, karta) {
   if (canonical(x) && slug(y)) return x.slice(x.indexOf("/") + 1) === y;
   if (slug(x) && canonical(y)) return x === y.slice(y.indexOf("/") + 1);
   return slug(x) && slug(y) && x === y;
+}
+
+// js/opencode/rootseat-by.ts
+function heldSeat(d, slot, session) {
+  if (slot.place) return { ...slot.place };
+  const rec4 = d.recorded?.(slot, session);
+  if (rec4) return rec4;
+  const [name = "", karta = ""] = (slot.key ?? "").split("--");
+  return { name, karta, realm: "" };
 }
 var REALM_MS = 1e4;
 async function canonOf(slot, realm) {
@@ -7296,7 +7298,7 @@ function repoSigns(dir, harness, keys = REPO_SIGNS, cover = COVER) {
   const any = signs.cover || signs.stamp || hooked;
   const block = agents === null ? null : coverBlock(agents, cover.root);
   const carried = !!block?.get("graph") && !!block.get("holon") && !!block.get("agent_role");
-  const complete = signs.cover && signs.stamp && (harness === null || carried || signs.hooks[harness]);
+  const complete = signs.cover && signs.stamp && (harness === null || harness === "dsh" || carried || signs.hooks[harness]);
   const verdict = stamped2 === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
@@ -7856,6 +7858,18 @@ function merged(c) {
   return ran(c, "gh pr merge", noop, /(Merged|Squashed and merged|Rebased and merged) pull request/) || ran(c, "fj pr merge", noop, /Merged PR #/) || (c.exit ?? 0) === 0 && PULL.test(c.command);
 }
 
+// js/shared/ritenotes.ts
+function shellNotes(cover, call, dir, skip = () => false) {
+  const W5 = wordsIn(RITES, cover.lang);
+  const { on, holon, sections } = cover;
+  const push = on.has("push") && !skip("push") ? pushedTo(call, dir) : null;
+  const said2 = [];
+  if (push === "branch") said2.push(W5.push(sections.check));
+  if (push === "trunk" || on.has("merge") && !skip("merge") && merged(call))
+    said2.push(W5.merge(holon, ...mergeHeads(sections, push === "trunk")));
+  return said2;
+}
+
 // js/shared/turnend.ts
 var TURN_RITE = "turn";
 var SPEAKING = /* @__PURE__ */ new Map([
@@ -7944,13 +7958,7 @@ function createRites(ctx) {
         };
         const c = await coverOf(String(t.sessionID));
         if (!c) return;
-        const W5 = wordsIn(RITES, c.cover.lang);
-        const { on, holon, sections } = c.cover;
-        const push = on.has("push") ? pushedTo(call, c.dir) : null;
-        const note = [
-          push === "branch" && W5.push(sections.check),
-          (push === "trunk" || on.has("merge") && merged(call)) && W5.merge(holon, ...mergeHeads(sections, push === "trunk"))
-        ].filter(Boolean).join("\n\n");
+        const note = shellNotes(c.cover, call, c.dir).join("\n\n");
         if (!note || !once(t.id)) return;
         const next = {
           ...result,
@@ -7965,9 +7973,35 @@ ${note}` : [...content ?? [], { type: "text", text: note }]
   };
 }
 
+// js/shared/rootseat-say.ts
+var W4 = () => words(ROOT_SEAT);
+var oneLine = (text3) => {
+  const t = text3.replace(/\s+/g, " ").trim();
+  return t.length > 300 ? `${t.slice(0, 299)}…` : t;
+};
+var notSeatedWord = (why) => W4().notSeated(why);
+var refusedWord = (text3) => W4().notSeated(W4().refused(oneLine(text3)));
+var lateWord = (ms) => W4().notSeated(W4().late(Math.round(ms / 100) / 10));
+var realignWord = (why) => W4().realign(why, COVER.file);
+function heldWord(r, realm, karta) {
+  if ("other" in r) {
+    const { name, karta: k, realm: held } = r.other;
+    return r.uncompared ? W4().heldUncompared(name, k, held || W4().unknownRealm(), r.uncompared) : W4().ownOther(name, k, held || W4().unknownRealm());
+  }
+  return (r.provisional === true ? W4().seated : W4().ownSeated)(
+    r.place,
+    karta,
+    r.realm ?? realm,
+    COVER.file
+  );
+}
+
 // js/opencode/rootseat-again.ts
-import { realpathSync as realpathSync6, statSync as statSync5 } from "node:fs";
+import { statSync as statSync5 } from "node:fs";
 import { join as join16 } from "node:path";
+
+// js/shared/coverin.ts
+import { realpathSync as realpathSync6 } from "node:fs";
 function atRepoRoot(where) {
   const root = repoRoot(where);
   if (root === null) return false;
@@ -7984,6 +8018,8 @@ function coverIn(where) {
   if ("foreign" in cover) return null;
   return "why" in cover ? { why: cover.why, align } : cover;
 }
+
+// js/opencode/rootseat-again.ts
 function stamp2(where) {
   try {
     const st = statSync5(join16(where, COVER.file));
@@ -8048,34 +8084,13 @@ function createRealign(halted) {
   };
 }
 
-// js/opencode/rootseat-doors.ts
+// js/shared/rootseat-env.ts
 var rootSeatMs = () => Number(process.env[envName("ROOT_SEAT_MS")] || 15e3);
 var rootSeatEnabled = () => process.env[envName("ROOT_SEAT")] !== "0";
+
+// js/opencode/rootseat-doors.ts
 var ceilingMs = () => rootSeatMs() + Math.min(rootSeatMs(), 5e3);
 var pause = (ms) => new Promise((r) => setTimeout(r, ms).unref?.());
-
-// js/opencode/rootseat-say.ts
-var W4 = () => words(ROOT_SEAT);
-var oneLine = (text3) => {
-  const t = text3.replace(/\s+/g, " ").trim();
-  return t.length > 300 ? `${t.slice(0, 299)}…` : t;
-};
-var notSeatedWord = (why) => W4().notSeated(why);
-var refusedWord = (text3) => W4().notSeated(W4().refused(oneLine(text3)));
-var lateWord = (ms) => W4().notSeated(W4().late(Math.round(ms / 100) / 10));
-var realignWord = (why) => W4().realign(why, COVER.file);
-function heldWord(r, realm, karta) {
-  if ("other" in r) {
-    const { name, karta: k, realm: held } = r.other;
-    return r.uncompared ? W4().heldUncompared(name, k, held || W4().unknownRealm(), r.uncompared) : W4().ownOther(name, k, held || W4().unknownRealm());
-  }
-  return (r.provisional === true ? W4().seated : W4().ownSeated)(
-    r.place,
-    karta,
-    r.realm ?? realm,
-    COVER.file
-  );
-}
 
 // js/opencode/rootseat-attempt.ts
 function attempt2(session, x, expect) {
