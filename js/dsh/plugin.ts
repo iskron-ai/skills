@@ -16,6 +16,7 @@ import { ritualCover } from "../shared/ritualcover.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
 import { TURN_RITE } from "../shared/turnend.ts";
 import { roleWord } from "./compaction.ts";
+import { type DshCtx, listenerOf, loudOf } from "./console.ts";
 import { isHeadless } from "./headless.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
 import { createHold } from "./hold.ts";
@@ -23,27 +24,15 @@ import { afterPublish } from "./publish.ts";
 import { riteLines } from "./rites.ts";
 import { agentOf, createRoot } from "./root.ts";
 import { createRootSeat } from "./rootseat.ts";
-import { putStartWord } from "./start.ts";
+import { putStartWord, seatedStart } from "./start.ts";
 import { createTurnEnds } from "./turnend.ts";
 
-export interface DshCtx {
-  on(event: string, fn: (...args: any[]) => unknown): unknown;
-  logger?: { info?: (...args: unknown[]) => void };
-}
+export type { DshCtx } from "./console.ts";
 
 export function apply(ctx: DshCtx): void {
   const W = () => words(DSH);
   const startedAt = Date.now(); // the plugin's own start: no hold record written earlier is this session's
-  // Headless dsh does not print ctx.logger at all (observed live, #10905): a loud line
-  // goes to the process's stderr too, where a person running headless sees it.
-  const log = (text: string): void => {
-    try {
-      ctx.logger?.info?.(text);
-    } catch {
-      /* the console is not ours */
-    }
-    console.error(text);
-  };
+  const log = loudOf(ctx);
   const notDelivered = (why: string): void => log(W().notDelivered(why));
   const sendAfterPublish = (a: DshAgent, message: Record<string, unknown>): void =>
     void afterPublish(a, message).catch((e: Error) => notDelivered(e.message));
@@ -51,6 +40,7 @@ export function apply(ctx: DshCtx): void {
   let agent: DshAgent | null = null;
   let raw: any = null; // the root's agent itself: its status and maintenance (hold.ts)
   let headless = false; // the sign shows on agent/created, not on apply (observed, #11071)
+  let source: unknown = null; // the root's start: startup or resume (start.ts)
   let hearing: Hearing | null = null;
   const hold = createHold(notDelivered);
   // No cover — on, a frame proves the seat; else by the cover's rituals field.
@@ -71,13 +61,7 @@ export function apply(ctx: DshCtx): void {
     };
   };
 
-  const on = (event: string, fn: (...args: any[]) => unknown): void => {
-    try {
-      ctx.on(event, fn);
-    } catch (e) {
-      log(W().notDelivered(`${event}: ${(e as Error).message}`));
-    }
-  };
+  const on = listenerOf(ctx, notDelivered);
 
   // The session's first agent is its root; a subagent spawned in the process takes none of
   // its hearing, start word or rituals (root.ts). A disposed root session makes the next
@@ -92,11 +76,23 @@ export function apply(ctx: DshCtx): void {
     if (took === "root") putStartWord(payload?.agent, payload?.source, process.cwd(), notDelivered);
     const own = agentOf(payload?.agent);
     if (own) [agent, raw] = [own, payload.agent];
-    if (took === "root" && fresh) seats.begin(payload?.agent, process.cwd());
+    if (took === "root" && fresh) {
+      source = payload.source;
+      seats.begin(payload?.agent, process.cwd());
+    }
     headless = isHeadless(ctx);
     if (!hearing) hearing = startHearing(heard, log, startedAt);
   });
-  // A waterfall (payload, next): the root's first request waits for its seating, no longer.
+  // Waterfalls before the root's first model request wait for its seating, no longer: the
+  // prompt's assembly (system-prompt/assemble, context.scope — the agent; dsh-agent
+  // lib/index.js:407-412) — its start word then names the seat taken (start.ts) — and the
+  // request itself (payload, next).
+  on("system-prompt/assemble", async (_assembly, context, next) => {
+    const a = context?.scope;
+    if (a && a === raw) await seats.request(a);
+    const out = typeof next === "function" ? await next() : _assembly;
+    return a && a === raw ? seatedStart(out, process.cwd(), source, seats.seated()) : out;
+  });
   on("agent/request", async (payload, next) => {
     await seats.request(payload?.agent);
     return typeof next === "function" ? next() : undefined;

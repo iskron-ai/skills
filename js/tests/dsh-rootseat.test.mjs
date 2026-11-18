@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { envName, ROOT_SEAT } from "../delivery/index.ts";
+import { DSH, envName, ROOT_SEAT } from "../delivery/index.ts";
 import { holdFilePathOf, keyFilePathOf } from "../shared/standings.ts";
 import { BUILT } from "./built.mjs";
 
@@ -87,12 +87,13 @@ function dsh(t, auth, task) {
       assert.ok(exec?.signal instanceof AbortSignal, "the call carries a signal");
       order.push("stand");
       stands.push(args);
+      if (registry.refuse) throw new Error("отказ моста");
       holdRecord(auth, { realm: "@probe/seat", karta: String(args.karta), name: "glm.p" });
       return { content: [{ type: "text", text: "стою" }] };
     },
   };
   // registered — the MCP client has published its tools; a probe may hold it back.
-  const registry = { registered: true };
+  const registry = { registered: true, refuse: false };
   const tools = { get: (name) => (name === STAND && registry.registered ? stand : undefined) };
   PLUGIN({
     on: (name, fn) => handlers.set(name, fn),
@@ -119,6 +120,22 @@ function dsh(t, auth, task) {
     registry,
     created: (a, source) => handlers.get("agent/created")?.({ agent: a, source }),
     disposed: () => handlers.get("session/disposed")?.({ id: "s-root" }),
+    /**
+     * One prompt assembly of the agent through the presentation waterfall system-prompt/assemble
+     * (assembly, context {agent, scope: agent}, next) — dsh-system-prompt lib/index.js:401,
+     * dsh-agent lib/index.js:407-412; the start section as start.ts registered it.
+     */
+    async assemble(a) {
+      const assembly = {
+        sections: [{ name: "delivery:start", text: "слово старта как было" }],
+        contexts: [],
+        variables: {},
+      };
+      const next = async () => (order.push("assemble"), assembly);
+      const h = handlers.get("system-prompt/assemble");
+      const out = h ? await h(assembly, { agent: a, scope: a }, next) : await next();
+      return out.sections[0].text;
+    },
     /** One model request of the agent: the waterfall, or the request alone without a listener. */
     async request(a) {
       const next = async () => (order.push("request"), { provider: "probe", model: "glm-5.3" });
@@ -236,6 +253,27 @@ test("a disposed session aborts its pending seat: no stand after the tool appear
   d.registry.registered = true;
   await new Promise((r) => setTimeout(r, 400));
   assert.deepEqual(d.stands, [], "no stand for a disposed session");
+});
+
+// Observed live on LAB (92feef19): the continued session's start word said «встань снова» though
+// the plugin had seated it. A seating done before the first prompt is named by the start word.
+test("the start word names the seat the plugin took, and keeps the old word when it failed", async (t) => {
+  const { auth } = repo(t);
+  const seated = dsh(t, auth);
+  const a = seated.agent();
+  seated.created(a, "resume");
+  const text = await seated.assemble(a);
+  assert.deepEqual(seated.order, ["stand", "assemble"], "the assembly waited for the seating");
+  assert.ok(text.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), text);
+  assert.ok(!text.includes(DSH.ru.startResumed()), text);
+  rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
+  await new Promise((r) => setTimeout(r, 5));
+  const refused = dsh(t, auth);
+  refused.registry.refuse = true;
+  const b = refused.agent();
+  refused.created(b, "resume");
+  assert.equal(await refused.assemble(b), "слово старта как было");
+  assert.equal(refused.stands.length, 1);
 });
 
 test("a seat already held in another graph: refused, not stood over", async (t) => {

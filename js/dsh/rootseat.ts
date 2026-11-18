@@ -3,7 +3,8 @@
 // names it for its home (taskRole) — before the first model request, as OpenCode's
 // root seating (#9334) — the same cover reading (shared/coverin.ts), switch and term
 // (shared/rootseat-env.ts), comparison (shared/sameseat.ts) and words (shared/rootseat-say.ts).
-// The word of the start stays the word of the work; a seating that failed is a stderr line.
+// The word of the start stays the word of the work and names a seat the seating took before the
+// first prompt (start.ts seatedStart); a seating that failed is a stderr line and the old word.
 //
 // The path to the session's bridge: OpenCode's plugin owns the bridge it seats through; dsh's
 // plugin owns none — the session's bridge is dsh's MCP child, its tools registered by
@@ -21,43 +22,21 @@ import { coverIn } from "../shared/coverin.ts";
 import { rootSeatEnabled, rootSeatMs } from "../shared/rootseat-env.ts";
 import { heldWord, lateWord, notSeatedWord, refusedWord } from "../shared/rootseat-say.ts";
 import { type HeldSeat, sameSeat, short } from "../shared/sameseat.ts";
-import { firstLineSpawn } from "../shared/spawned-for.ts";
 import { holdOf, ownSeats } from "./seat.ts";
+import { taskRole } from "./taskrole.ts";
 
 /** The stand tool as dsh's MCP client names it (references/dsh-profile.yml, observed #10657). */
 export const STAND = `mcp__${PRODUCT}__${tool("stand")}`;
 const LOOK_MS = 100;
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms).unref?.());
 
-/**
- * The role the orchestrator's task names for its home (#10598): the task of the headless run —
- * the service `headlessStartup` {json, sessionId, task}, observed live on agent/created — opens
- * with the pair line carrying the role (bridge/orchestra-raise-gates.ts homeLine), read by
- * OpenCode's own parse (shared/spawned-for.ts firstLineSpawn). No line, no role in it — none,
- * the cover's role; a broken line is said and the cover's role stays.
- */
-function taskRole(ctx: any, log: (text: string) => void): string | undefined {
-  let task: unknown;
-  try {
-    task = ctx?.get?.("headlessStartup", false)?.task;
-  } catch {
-    return undefined;
-  }
-  if (typeof task !== "string") return undefined;
-  try {
-    const k = firstLineSpawn(task)?.karta;
-    return k === undefined ? undefined : String(k);
-  } catch (e) {
-    log(refusedWord((e as Error).message));
-    return undefined;
-  }
-}
-
 export interface RootSeat {
   /** The root's agent/created, startup or resume: its seating starts. */
   begin(agent: any, dir: string): void;
-  /** The root's model request: the first one waits for the seating within its term. */
+  /** The root's first prompt assembly or model request waits for the seating within its term. */
   request(agent: any): Promise<void>;
+  /** The seat this session's seating took or found its own by the cover; else null. */
+  seated(): HeldSeat | null;
   end(): void;
 }
 
@@ -73,6 +52,7 @@ export function createRootSeat(
     abort: AbortController;
     waited: boolean;
   } | null = null;
+  let took: HeldSeat | null = null; // the seat the seating took or found its own
 
   /** The session's own seat on disk (seat.ts), as the bridge recorded it. */
   const held = (): HeldSeat | null => {
@@ -107,8 +87,10 @@ export function createRootSeat(
     if (own) {
       // Held already: compared, not stood over — an rN beside @owner/slug is not guessed.
       const known = !!own.realm && short(own.realm) === short(realm);
-      if (known && sameSeat(own, realm, karta))
+      if (known && sameSeat(own, realm, karta)) {
+        took = own;
         return log(heldWord({ place: own.name, realm: own.realm }, realm, karta));
+      }
       return log(
         heldWord(known ? { other: own } : { other: own, uncompared: realm }, realm, karta),
       );
@@ -125,11 +107,13 @@ export function createRootSeat(
     }
     if (signal.aborted) return;
     const now = held();
+    took = now;
     log(heldWord({ place: now?.name ?? "?", realm: now?.realm || realm }, realm, karta));
   }
 
   return {
     begin(agent, dir) {
+      took = null;
       if (!rootSeatEnabled()) return;
       seating?.abort.abort();
       const abort = new AbortController();
@@ -150,9 +134,11 @@ export function createRootSeat(
       const late = await Promise.race([s.done.then(() => false), pause(ms).then(() => true)]);
       if (late) log(lateWord(ms));
     },
+    seated: () => took,
     end() {
       seating?.abort.abort();
       seating = null;
+      took = null;
     },
   };
 }
