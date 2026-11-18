@@ -91,7 +91,9 @@ function dsh(t, auth, task) {
       return { content: [{ type: "text", text: "стою" }] };
     },
   };
-  const tools = { get: (name) => (name === STAND ? stand : undefined) };
+  // registered — the MCP client has published its tools; a probe may hold it back.
+  const registry = { registered: true };
+  const tools = { get: (name) => (name === STAND && registry.registered ? stand : undefined) };
   PLUGIN({
     on: (name, fn) => handlers.set(name, fn),
     get: (name) =>
@@ -114,7 +116,9 @@ function dsh(t, auth, task) {
     order,
     stands,
     agent,
+    registry,
     created: (a, source) => handlers.get("agent/created")?.({ agent: a, source }),
+    disposed: () => handlers.get("session/disposed")?.({ id: "s-root" }),
     /** One model request of the agent: the waterfall, or the request alone without a listener. */
     async request(a) {
       const next = async () => (order.push("request"), { provider: "probe", model: "glm-5.3" });
@@ -209,6 +213,29 @@ test("a task naming the call's role seats that role; a task without it — the c
   plain.created(b, "startup");
   await plain.request(b);
   assert.deepEqual(plain.stands, [{ realm: "@probe/seat", karta: "931", model: "glm-5.3" }]);
+});
+
+// The review's case (PR 844, P2): the registry is late, the first request has begun waiting, the
+// session is disposed, then the tool appears — the disposed session's seating is aborted, no stand.
+test("a disposed session aborts its pending seat: no stand after the tool appears", async (t) => {
+  const { auth } = repo(t);
+  const was = process.env[envName("ROOT_SEAT_MS")];
+  process.env[envName("ROOT_SEAT_MS")] = "2000";
+  t.after(() =>
+    was === undefined
+      ? delete process.env[envName("ROOT_SEAT_MS")]
+      : (process.env[envName("ROOT_SEAT_MS")] = was),
+  );
+  const d = dsh(t, auth);
+  d.registry.registered = false;
+  const a = d.agent();
+  d.created(a, "startup");
+  void d.request(a);
+  await new Promise((r) => setTimeout(r, 50));
+  d.disposed();
+  d.registry.registered = true;
+  await new Promise((r) => setTimeout(r, 400));
+  assert.deepEqual(d.stands, [], "no stand for a disposed session");
 });
 
 test("a seat already held in another graph: refused, not stood over", async (t) => {

@@ -67,7 +67,12 @@ export function createRootSeat(
   authDir: string,
   log: (text: string) => void,
 ): RootSeat {
-  let seating: { agent: any; done: Promise<void>; abort: AbortController } | null = null;
+  let seating: {
+    agent: any;
+    done: Promise<void>;
+    abort: AbortController;
+    waited: boolean;
+  } | null = null;
 
   /** The session's own seat on disk (seat.ts), as the bridge recorded it. */
   const held = (): HeldSeat | null => {
@@ -128,13 +133,19 @@ export function createRootSeat(
       if (!rootSeatEnabled()) return;
       seating?.abort.abort();
       const abort = new AbortController();
-      const done = seat(agent, dir, abort.signal).catch((e: Error) => log(refusedWord(e.message)));
-      seating = { agent, done, abort };
+      // The attempt keeps its controller to its own end: a disposal while it runs aborts it.
+      const s = { agent, done: Promise.resolve(), abort, waited: false };
+      s.done = seat(agent, dir, abort.signal)
+        .catch((e: Error) => log(refusedWord(e.message)))
+        .finally(() => {
+          if (seating === s) seating = null;
+        });
+      seating = s;
     },
     async request(agent) {
       const s = seating;
-      if (!s || s.agent !== agent) return;
-      seating = null; // only the first request waits
+      if (!s || s.agent !== agent || s.waited) return;
+      s.waited = true; // only the first request waits
       const ms = rootSeatMs();
       const late = await Promise.race([s.done.then(() => false), pause(ms).then(() => true)]);
       if (late) log(lateWord(ms));
