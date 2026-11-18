@@ -56,9 +56,9 @@ export async function launchDsh(
           closed: run.closed,
         }
       : undefined;
-  const fail = (why: string, state: Run["state"] = "refused"): string => {
+  const fail = (why: string, state: Run["state"] = "refused", snapshot = true): string => {
     if (slept) {
-      rememberRuns(authDir, runs);
+      if (snapshot) rememberRuns(authDir, runs);
       run.state = "dormant";
       run.why = `dormant_wake_${why}`;
       run.dormant = slept.dormant;
@@ -72,7 +72,7 @@ export async function launchDsh(
       run.rooms = slept.rooms;
       run.n = slept.n;
       run.idle_due = slept.idle_due;
-      run.closed = slept.closed;
+      run.closed = slept.closed ?? run.closed;
       if (run.tree) run.tree.exit = slept.treeExit ?? run.tree.exit;
       writeRuns(authDir, runs);
       return why;
@@ -164,10 +164,11 @@ export async function launchDsh(
     }
     const exit = await dshExit(run);
     if (exit) {
+      rememberRuns(authDir, runs);
       run.dsh.exit = exit;
       run.closed = "client_exited";
       run.tree.exit = new Date().toISOString();
-      return fail(`dsh_exit_${exit}`);
+      return fail(`dsh_exit_${exit}`, "refused", false);
     }
     await new Promise((done) => setTimeout(done, 100));
   }
