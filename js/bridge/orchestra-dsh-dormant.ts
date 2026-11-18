@@ -16,6 +16,7 @@ import {
   SHARE_CLAIMED,
 } from "./orchestra-dsh-reinvite.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
+import { entryCursor, wakesBy } from "./orchestra-dsh-wake.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
 import { homeLine } from "./orchestra-raise-gates.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
@@ -133,13 +134,23 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   } catch (e) {
     return sleepOnError(e);
   }
+  // A waking word before the seat's last word whose body has not landed holds the cursor
+  // before it: its later body is the same number, and a cursor past it would drop the word.
+  const role = karta ?? r.dormant?.karta;
+  const { cursor, seen } = entryCursor(
+    read.entries,
+    wakesBy(new Set(seats), role, asks, read.entries),
+    seatLast ?? 0,
+    Math.max(r.invite, r.dormant?.cursor ?? 0),
+  );
   r.state = "dormant";
   r.dormant = {
     since: new Date().toISOString(),
-    cursor: Math.max(seatLast ?? 0, r.invite, r.dormant?.cursor ?? 0),
+    cursor,
     seats,
     ...(karta ? { karta } : {}),
     asks,
+    ...(seen.length ? { seen } : {}),
   };
   return true;
 }
@@ -164,29 +175,9 @@ type Verdict = { wake: CaseEntry } | { end: string; cursor: number } | { cursor:
 function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   const seats = new Set(r.dormant?.seats ?? []);
   const karta = r.dormant?.karta;
-  const asks = r.dormant?.asks ?? {};
-  // An answer may answer an ask of this same page: the page's own asks resolve first.
-  const pageAsks = new Map(
-    entries
-      .filter((e) => e.kind === "ask" && e.author_standing_id)
-      .map((e) => [e.n, e.author_standing_id as string]),
-  );
-  const wakes = (e: CaseEntry): boolean => {
-    if (
-      (e.kind === "said" || e.kind === "ask") &&
-      !!e.to_standing_id &&
-      seats.has(e.to_standing_id)
-    )
-      return true;
-    // A new invite of the role raises a fresh call by the ordinary path — it never wakes the
-    // sleeping one (#10995 review 3); only an ask to the invited role does.
-    if (e.kind === "ask" && !!karta && e.to_karta_node_id === karta) return true;
-    if (e.kind === "answer" && e.in_reply_to !== null) {
-      const author = pageAsks.get(e.in_reply_to) ?? asks[String(e.in_reply_to)];
-      return !!author && seats.has(author);
-    }
-    return false;
-  };
+  const wakes = wakesBy(seats, karta, r.dormant?.asks ?? {}, entries);
+  // Words the live agent had before the sleep, behind a word still waiting for its body.
+  const seen = new Set(r.dormant?.seen ?? []);
   let cursor = from;
   let wake: CaseEntry | undefined;
   let pending: number | undefined;
@@ -214,7 +205,7 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       cursor = Math.max(cursor, e.n);
       continue;
     }
-    if (wakes(e)) {
+    if (wakes(e) && !seen.has(e.n)) {
       if (e.body_pending) pending ??= e.n;
       else if (!wake && pending === undefined) wake = e;
       continue;
