@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.13.1";
+var VERSION = "8.14.0";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1090,6 +1090,7 @@ var ORCHESTRA = {
     cloneOut: (repository, state2, why, at3) => `клон ${repository}: ${state2}${why ? ` (${why})` : ""} (${at3})`,
     lead: (lines) => `ведение: ${lines}`,
     leadRow: (realm, room, invite, code2) => `${realm} дело ${room} зов ${invite}: ${code2}`,
+    dormant: (cursor) => `dormant, ждёт после ${cursor || "начала журнала"}`,
     leadNotAdmitted: () => "флаг лежит, но машина не допустила оркестратора (orchestra on, набранная в терминале, или ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
     leadIncomplete: (errors) => `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
     leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
@@ -1098,6 +1099,7 @@ var ORCHESTRA = {
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) => `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     dshBrief: (realm, karta, room) => `start ${realm} #${karta} дело ${room}. Сначала — своё место по «Старту», затем ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshContinue: (room, n) => `Продолжение зова: в деле №${room} новая запись [${n}] для тебя — встань на место, прочти дело и доведи свою долю до исхода строки.`,
     plan: (rows) => `сухой такт — ничего не поднято, не приказано и не сдвинуто (Orca не спрошена):${rows ? `
 ${rows}` : " зовов нет"}`,
     planLaunch: (argv2) => `поднял бы: ${argv2}`,
@@ -1137,6 +1139,7 @@ ${rows}` : " зовов нет"}`,
     cloneOut: (repository, state2, why, at3) => `clone ${repository}: ${state2}${why ? ` (${why})` : ""} (${at3})`,
     lead: (lines) => `leading: ${lines}`,
     leadRow: (realm, room, invite, code2) => `${realm} case ${room} invite ${invite}: ${code2}`,
+    dormant: (cursor) => `dormant, waiting after ${cursor || "journal start"}`,
     leadNotAdmitted: () => "the flag lies, but the machine has not admitted the orchestrator (orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
     leadIncomplete: (errors) => `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
     leadNoLaunchers: (why) => `the launcher descriptions in mind did not read (${why}) — nothing is raised`,
@@ -1145,6 +1148,7 @@ ${rows}` : " зовов нет"}`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) => `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
     dshBrief: (realm, karta, room) => `start ${realm} #${karta} case ${room}. First your seat by the Start, then ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
+    dshContinue: (room, n) => `Call continuation: case №${room} has a new entry [${n}] for you — take your seat, read the case and bring your share of the row to its outcome.`,
     plan: (rows) => `dry run — nothing launched, ordered or moved (Orca not asked):${rows ? `
 ${rows}` : " no invites"}`,
     planLaunch: (argv2) => `would launch: ${argv2}`,
@@ -1366,7 +1370,7 @@ var RESUME = {
     ownNotTaken: (key3, why) => `${key3}: держит прежний мост этой сессии, взять не вышло — ${why}`,
     noHello: (key3) => `${key3}: hello не пришёл — запись цела, сторож повторит возврат; не ждёшь — ${via}`,
     stale: (key3) => `${key3}: запись протухла — место займёт ${via}`,
-    registerRefused: (text7) => `register отказал — ${text7}`,
+    registerRefused: (text8) => `register отказал — ${text8}`,
     registerWaited: (seconds2) => `register переждал предел частоты источника (${seconds2} с) и встал`,
     othersInDir: (others2) => `в том же каталоге записи и других мест: ${others2}`,
     notYours: () => 'место не твоё — iskron_channel(action="leave") отпустит его, канал цел',
@@ -1375,7 +1379,7 @@ var RESUME = {
     noSeatNoKeyNoCwd: () => "места нет, ни key, ни cwd не передан",
     leftByWord: (key3) => `место ${key3} отпущено словом держателя (leave) — сторож его не поднимает; вернуть: ${via} тем же именем`,
     watchdogReason: () => "сторож слуха",
-    boardUnread: (text7) => `доска не прочиталась — ${text7}`,
+    boardUnread: (text8) => `доска не прочиталась — ${text8}`,
     noSeatOnBoard: () => "своего места на доске нет",
     listening: () => "слушаю",
     gaveUp: (key3, limit) => `Искрон: доска читает место ${key3} не слушающим и после ${limit} переоткрытий сокета — больше не рву; проверь доску и сервер, вернуть слух — ${via} тем же именем: другую сессию на месте он не тронет и встанет рядом; take=true: ${TAKE.ru.rule()}.`,
@@ -1403,7 +1407,7 @@ var RESUME = {
     ownNotTaken: (key3, why) => `${key3}: a former bridge of this session holds it, taking it failed — ${why}`,
     noHello: (key3) => `${key3}: hello did not come — the record is intact, the watchdog will repeat the return; if you do not wait — ${via}`,
     stale: (key3) => `${key3}: the record went stale — ${via} will take the seat`,
-    registerRefused: (text7) => `register refused — ${text7}`,
+    registerRefused: (text8) => `register refused — ${text8}`,
     registerWaited: (seconds2) => `register waited out the source's rate limit (${seconds2} s) and stood`,
     othersInDir: (others2) => `the same directory holds records of other seats too: ${others2}`,
     notYours: () => 'the seat is not yours — iskron_channel(action="leave") will release it, the channel stays intact',
@@ -1412,7 +1416,7 @@ var RESUME = {
     noSeatNoKeyNoCwd: () => "no seat, and neither key nor cwd was passed",
     leftByWord: (key3) => `the seat ${key3} was released by the holder's word (leave) — the watchdog does not raise it; to bring it back: ${via} with the same name`,
     watchdogReason: () => "the hearing watchdog",
-    boardUnread: (text7) => `the board could not be read — ${text7}`,
+    boardUnread: (text8) => `the board could not be read — ${text8}`,
     noSeatOnBoard: () => "the own seat is not on the board",
     listening: () => "listening",
     gaveUp: (key3, limit) => `Iskron: the board reads the seat ${key3} as not listening and after ${limit} socket reopenings — I no longer tear it; check the board and the server, to restore hearing — ${via} with the same name: it leaves another session on the seat alone and stands beside; take=true: ${TAKE.en.rule()}.`,
@@ -1489,8 +1493,8 @@ var ROOM = {
     messages: (n) => {
       const m10 = n % 10;
       const m100 = n % 100;
-      const w12 = m10 === 1 && m100 !== 11 ? "слово" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "слова" : "слов";
-      return `${n} ${w12}`;
+      const w13 = m10 === 1 && m100 !== 11 ? "слово" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "слова" : "слов";
+      return `${n} ${w13}`;
     },
     body: (refersTo, author) => `текст слова [${refersTo}] от ${author}`,
     bodyAborted: (refersTo) => `слово [${refersTo}] оборвано автором`,
@@ -1619,7 +1623,7 @@ var ROOT_SEAT = {
     unproven: () => "мост не подтвердил, что это провизорное место взято этой попыткой; revoke не разрешён",
     notSeated: (why) => `Искрон: сессия не посажена — ${why}; место — словом человека или iskron_stand.`,
     realign: (why, file2) => `Искрон: сессия не посажена — ${why}. Выровняй ${file2} через iskronify; граф и роль не угадывай. Однозначная обложка — посадка повторится сама.`,
-    refused: (text7) => `посадка сорвалась: ${text7}`,
+    refused: (text8) => `посадка сорвалась: ${text8}`,
     ownOther: (place, karta, realm) => `Искрон: сессия держит место ${place} — роль #${karta} в ${realm}; роль или граф не совпадают с обложкой. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
     heldUncompared: (place, karta, held2, cover) => `Искрон: сессия держит место ${place} — роль #${karta}, ${held2}; граф не сличён с ${cover} в обложке. Для смены — iskron_stand с take либо явное снятие текущего места (revoke).`,
     unknownRealm: () => "граф неизвестен (запись держания недоступна)",
@@ -1645,7 +1649,7 @@ var ROOT_SEAT = {
     unproven: () => "the bridge did not prove this attempt took a provisional seat; revoke is not authorized",
     notSeated: (why) => `Iskron: the session is not seated — ${why}; a seat comes by the human's word or iskron_stand.`,
     realign: (why, file2) => `Iskron: the session is not seated — ${why}. Align the repository with the iskronify skill from valid sources; do not guess the graph or the role — ask what cannot be determined by the alignment procedure. Seating repeats by itself as soon as the cover ${file2} becomes unambiguous.`,
-    refused: (text7) => `seating failed: ${text7}`,
+    refused: (text8) => `seating failed: ${text8}`,
     ownOther: (place, karta, realm) => `Iskron: the session holds seat ${place} — role #${karta} in ${realm}; its role or graph differs from the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
     heldUncompared: (place, karta, held2, cover) => `Iskron: the session holds seat ${place} — role #${karta}, ${held2}; its graph is not compared with ${cover} in the cover. To change seats, use iskron_stand with take or explicitly revoke the held seat.`,
     unknownRealm: () => "graph unknown (hold record unavailable)",
@@ -1678,7 +1682,7 @@ var SATELLITE = {
     needSatelliteOf: () => "Отказано (мост): это мост-спутник — он занимает только место-спутник субагента; передай satellite_of — место позвавшего (@handle:name) из постановки.",
     notSatellite: () => "Отказано (мост): satellite_of — только мосту-спутнику (запись моста с --satellite в файле агента); этот мост — мост сессии, и место-спутник на нём заняло бы голос позвавшего. Субагенту без своего моста — предел: он говорит местом позвавшего и называет себя в своих строках.",
     derivesName: () => "Отказано (мост): имя спутника выводит мост — name, take и room вместе с satellite_of не передаются.",
-    boardUnread: (text7) => `Отказано: доска не прочиталась — ${text7}`,
+    boardUnread: (text8) => `Отказано: доска не прочиталась — ${text8}`,
     claimsUnsure: (unsure, name2) => `заявки имён спутников на этой машине выбор не удержали (${unsure}) — имя ${name2} выбрано по доске: уникальность не гарантирована, мост-спутник, вставший разом, мог взять то же имя`,
     seat: (caller, karta, ttl) => `место-спутник ${caller}: роль #${karta}, окно простоя канала ${ttl} с, записи держания нет — место живёт прогоном`,
     noCallerId: (caller) => `id места ${caller} доска не напечатала — признак спутника (satellite_of) платформе не послан: место может унаследовать недоставленную почту роли`,
@@ -1697,7 +1701,7 @@ var SATELLITE = {
     needSatelliteOf: () => "Refused (bridge): this is a satellite bridge — it takes only a subagent's satellite seat; pass satellite_of — the caller's seat (@handle:name) from the brief.",
     notSatellite: () => "Refused (bridge): satellite_of is for a satellite bridge only (a bridge entry with --satellite in the agent file); this is a session bridge, and a satellite seat on it would take the caller's voice. A subagent without a bridge of its own has a limit: it speaks as the caller's seat and names itself in its lines.",
     derivesName: () => "Refused (bridge): the bridge derives the satellite's name — name, take and room do not go with satellite_of.",
-    boardUnread: (text7) => `Refused: the board did not read — ${text7}`,
+    boardUnread: (text8) => `Refused: the board did not read — ${text8}`,
     claimsUnsure: (unsure, name2) => `satellite name claims on this machine did not hold the pick (${unsure}) — the name ${name2} was picked by the board: uniqueness is not guaranteed, a satellite bridge standing at the same moment may have taken the same name`,
     seat: (caller, karta, ttl) => `satellite seat of ${caller}: role #${karta}, channel idle window ${ttl} s, no holding record — the seat lives by the run`,
     noCallerId: (caller) => `the board did not print the id of ${caller} — the satellite sign (satellite_of) was not sent to the platform: the seat may inherit the role's undelivered mail`,
@@ -1817,12 +1821,12 @@ var STAND = {
     nameCut: (full, max, name2, what) => `выведенное имя ${full} длиннее предела ${max} знаков — укорочено до ${name2} (срезано: ${what}); нужно другое — передай name`,
     noModel: () => "model не передан — имя без третьей части (машина.репо): вторая сессия этой машины над этим репозиторием сойдётся на то же место; передай model, чтобы различать",
     legacy: (address, realm, karta) => `на доске живо место прежнего имени ${address} — его адрес могут держать дела и хуки; сними его: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
-    boardUnread: (text7) => `Отказано: доска не прочиталась — ${text7}`,
+    boardUnread: (text8) => `Отказано: доска не прочиталась — ${text8}`,
     boardUnknown: (start, own, others2) => `Отказано: форма доски не распознана — ни заголовка «${own}» («${others2}»), ни слова о пустом графе, ни строк мест; управляющих действий (connect, стук) по догадке не делаю. Начало ответа: ${start}`,
     boardAmbiguous: (n, name2, karta) => `Отказано: на доске ${n} места с именем ${name2} у роли #${karta} — форма неоднозначна, состояние не определить.`,
     boardCount: (declared, parsed) => `Отказано: доска объявляет ${declared} мест, разобрано ${parsed}, и своего места среди разобранных нет — нераспознанная строка могла быть им — или местом, которое слушает другая сессия; connect ротировал бы его вслепую, а take=true отнял бы его. Повтори, когда доска прочтётся, либо встань под другим name.`,
     boardCountFound: (declared, parsed) => `Доска объявляет ${declared} мест, разобрано ${parsed} — одну строку парсер не понял; своё место найдено, иду дальше.`,
-    refused: (what, text7) => `Отказано: ${what} — ${text7}`,
+    refused: (what, text8) => `Отказано: ${what} — ${text8}`,
     noIdInRegister: () => "register id места не назвал — кадры места находятся по графу и адресу, занятость ждёт id.",
     modelNotCleared: (why) => `Прежняя модель места не снята (${why}): харнесс модели не назвал, а доска может показывать прежнюю.`,
     howBeside: (led) => `место другого графа — встаёт рядом на канале, который держит этот мост (${led}): register`,
@@ -1830,11 +1834,11 @@ var STAND = {
     howOwnSession: () => "своё место этой сессии — вернул: его держал прежний мост этой же сессии харнесса, connect (сокет теперь у этого моста, прежний получил 4000) и register",
     otherHolder: (holder) => `Отказано (мост): место ${holder} слушает другой держатель — подписываться им без слуха мост не станет; встань своим местом: iskron_stand без name либо с другим name.`,
     howRegister: () => "сокет уже держит этот мост — register",
-    ttlRefused: (ttl, text7) => `Окно простоя ${ttl} с контур не принял (${text7}) — место занято с окном по умолчанию контура.`,
-    takenButRegister: (text7) => `Место занято, но register отказал — ${text7}`,
+    ttlRefused: (ttl, text8) => `Окно простоя ${ttl} с контур не принял (${text8}) — место занято с окном по умолчанию контура.`,
+    takenButRegister: (text8) => `Место занято, но register отказал — ${text8}`,
     howConnect: (mine, listensElsewhere, take3) => mine ? listensElsewhere ? "место слушал другой держатель — connect по take (сокет теперь у этого моста, прежний держатель получил 4000) и register" : take3 ? "connect по take — новый цикл входа, счёт стуков сброшен — и register" : "место было — connect (сокет теперь у этого моста) и register" : "connect и register",
     head: (place, karta, realm, how2) => `[iskron_stand] стояние ${place} — роль #${karta}, граф ${realm}: ${how2}.`,
-    note: (text7) => `[iskron_stand] ${text7}`,
+    note: (text8) => `[iskron_stand] ${text8}`,
     noWatchdog: () => "Команда сторожа не выдаётся: сокета этого места у моста ещё нет — эта сессия кадры и приглашения не принимает, пока место не вернётся.",
     noSocket: () => "Сокета у моста нет — слушать нечем; проверь ответ connect.",
     besideNoDoor: () => "Место записано, но двери у него нет — сокет канала моста не жив; кадры этого графа сюда не придут.",
@@ -1848,8 +1852,8 @@ var STAND = {
     knockSent: (room, waited, window) => `Место человека ${room}: стук уже отправлен ${s(waited)} с назад — жди приглашения; осознанный повтор — тем же вызовом с repeat_knock=true, не раньше чем через ${s(window)} с.`,
     knockEarly: (room, waited, window) => `Место человека ${room}: повтор рано — с первого стука прошло ${s(waited)} с, правило ждёт ${s(window)} с; повтори через ${left(window, waited)} с.`,
     knockNoRole: (room, realm) => `Место человека ${room}: на доске графа ${realm} этого места нет, а send требует роль его держателя — стук не отправлен. Место человека живёт его присутствием: либо он ушёл дольше порога (попроси открыть чат и повтори), либо передай room_karta=<роль человека>.`,
-    knockRefused: (room, text7) => `Место человека ${room}: стук отказан — ${text7}`,
-    knockDone: (room, again, text7) => `Место человека ${room}: ${again ? "повторный " : ""}стук отправлен — ${text7} Жди первого слова из места человека с шапкой; до него туда не пиши — встанешь рядом с человеком, когда оно придёт.`,
+    knockRefused: (room, text8) => `Место человека ${room}: стук отказан — ${text8}`,
+    knockDone: (room, again, text8) => `Место человека ${room}: ${again ? "повторный " : ""}стук отправлен — ${text8} Жди первого слова из места человека с шапкой; до него туда не пиши — встанешь рядом с человеком, когда оно придёт.`,
     statusElsewhere: (takePath) => `Занятость не публикуется: статусного адреса этого стояния у моста нет — он у держателя сокета; ${takePath}.`,
     statusRefused: (body, guidance) => `Занятость не принята: ${body}${guidance}`
   },
@@ -1861,12 +1865,12 @@ var STAND = {
     nameCut: (full, max, name2, what) => `the derived name ${full} is longer than the ${max}-sign limit — cut to ${name2} (dropped: ${what}); want another — pass name`,
     noModel: () => "model not passed — the name has no third part (host.repo): a second session of this machine over this repository lands on the same seat; pass model to tell them apart",
     legacy: (address, realm, karta) => `a seat of the former name ${address} is alive on the board — cases and hooks may hold its address; remove it: iskron_channel(action="revoke", realm="${realm}", karta="${karta}", standing="${address}")`,
-    boardUnread: (text7) => `Refused: the board did not read — ${text7}`,
+    boardUnread: (text8) => `Refused: the board did not read — ${text8}`,
     boardUnknown: (start, own, others2) => `Refused: the board's form is not recognized — no «${own}» («${others2}») header, no word about an empty graph, no seat lines; no controlling moves (connect, knock) on a guess. The answer begins: ${start}`,
     boardAmbiguous: (n, name2, karta) => `Refused: the board has ${n} seats named ${name2} for role #${karta} — the form is ambiguous, the state cannot be told.`,
     boardCount: (declared, parsed) => `Refused: the board declares ${declared} seats, ${parsed} were read, and your own is not among them — the unread line may be it, or a seat another session listens on; connect would rotate it blind, and take=true would take it. Repeat when the board reads, or stand under another name.`,
     boardCountFound: (declared, parsed) => `The board declares ${declared} seats, ${parsed} were read — the parser missed a line; your own seat is found, going on.`,
-    refused: (what, text7) => `Refused: ${what} — ${text7}`,
+    refused: (what, text8) => `Refused: ${what} — ${text8}`,
     noIdInRegister: () => "register did not name the seat's id — the seat's frames are found by graph and address; the busy line waits for the id.",
     modelNotCleared: (why) => `The seat's earlier model is not cleared (${why}): the harness named no model, and the board may still show the earlier one.`,
     howBeside: (led) => `a seat of another graph — stands beside on the channel this bridge holds (${led}): register`,
@@ -1874,11 +1878,11 @@ var STAND = {
     howOwnSession: () => "this session's own seat — taken back: a former bridge of this same harness session held it, connect (the socket is now this bridge's, the former one got 4000) and register",
     otherHolder: (holder) => `Refused (bridge): another holder listens on the seat ${holder} — the bridge will not sign with it without hearing; stand on your own seat: iskron_stand without name or with another name.`,
     howRegister: () => "this bridge already holds the socket — register",
-    ttlRefused: (ttl, text7) => `The contour refused the ${ttl} s idle window (${text7}) — the seat is taken with the contour's default window.`,
-    takenButRegister: (text7) => `The seat is taken, but register refused — ${text7}`,
+    ttlRefused: (ttl, text8) => `The contour refused the ${ttl} s idle window (${text8}) — the seat is taken with the contour's default window.`,
+    takenButRegister: (text8) => `The seat is taken, but register refused — ${text8}`,
     howConnect: (mine, listensElsewhere, take3) => mine ? listensElsewhere ? "another holder listened on the seat — connect by take (the socket is now this bridge's, the former holder got 4000) and register" : take3 ? "connect by take — a new entry cycle, the knock count reset — and register" : "the seat was there — connect (the socket is now this bridge's) and register" : "connect and register",
     head: (place, karta, realm, how2) => `[iskron_stand] standing ${place} — role #${karta}, graph ${realm}: ${how2}.`,
-    note: (text7) => `[iskron_stand] ${text7}`,
+    note: (text8) => `[iskron_stand] ${text8}`,
     noWatchdog: () => "No watchdog command: the bridge does not hold this seat's socket yet — this session takes no frames and no invitations until the seat is back.",
     noSocket: () => "The bridge holds no socket — nothing to listen with; check the connect answer.",
     besideNoDoor: () => "The seat is recorded, but it has no door — the bridge's channel socket is not alive; this graph's frames will not come here.",
@@ -1892,8 +1896,8 @@ var STAND = {
     knockSent: (room, waited, window) => `The human's seat ${room}: a knock went ${s(waited)} s ago — wait for the invitation; a deliberate repeat — the same call with repeat_knock=true, not before ${s(window)} s.`,
     knockEarly: (room, waited, window) => `The human's seat ${room}: too early to repeat — ${s(waited)} s since the first knock, the rule waits ${s(window)} s; repeat in ${left(window, waited)} s.`,
     knockNoRole: (room, realm) => `The human's seat ${room}: the board of graph ${realm} does not have it, and send needs its holder's role — no knock sent. The human's seat lives by their presence: either they have been away past the threshold (ask them to open the chat and repeat), or pass room_karta=<the human's role>.`,
-    knockRefused: (room, text7) => `The human's seat ${room}: the knock was refused — ${text7}`,
-    knockDone: (room, again, text7) => `The human's seat ${room}: ${again ? "repeated " : ""}knock sent — ${text7} Wait for the first message from the human's seat with its header; do not write there before it — you will stand beside the human when it comes.`,
+    knockRefused: (room, text8) => `The human's seat ${room}: the knock was refused — ${text8}`,
+    knockDone: (room, again, text8) => `The human's seat ${room}: ${again ? "repeated " : ""}knock sent — ${text8} Wait for the first message from the human's seat with its header; do not write there before it — you will stand beside the human when it comes.`,
     statusElsewhere: (takePath) => `The busy line is not published: the bridge has no status address for this standing — the socket's holder has it; ${takePath}.`,
     statusRefused: (body, guidance) => `The busy line was not accepted: ${body}${guidance}`
   }
@@ -1950,22 +1954,22 @@ var STAND_MOVES = {
     standAgain: (call) => `Место этой сессии мост сейчас не держит — займи его полным вызовом: ${call} (status можно передать в нём же).`,
     priorReleased: (prior) => `прежнее место этой сессии ${prior} снято: take переносит сессию на взятое место, а не прибавляет второе`,
     provisionalReplaced: (prior) => `место автопосадки ${prior} заменено: оно было предварительным — явный вызов встал на названное и снял его`,
-    priorKept: (prior, text7, revoke) => `прежнее место этой сессии ${prior} не снято (${text7}) — пока оно живо, дела будут просить from_standing; сними его: ${revoke}`,
+    priorKept: (prior, text8, revoke) => `прежнее место этой сессии ${prior} не снято (${text8}) — пока оно живо, дела будут просить from_standing; сними его: ${revoke}`,
     besideHoldsMain: (prior, asked, beside, revokes, keep) => `Отказано: на основном месте этой сессии ${prior} стоят места рядом в других графах — ${beside}. Переход на ${asked} открыл бы новый канал: места рядом потеряли бы слух, а ${prior} не снялось бы, пока они стоят. Ничего не тронуто. Ход: сначала сними места рядом — ${revokes}, затем повтори вызов; или держи прежнее имя: ${keep}.`,
     reissueWaited: (seconds2, own) => own ? `твоё — возвращено: сокет этого места в тот же миг переоткрывал сам мост, вызов дождался его исхода (${seconds2} с)` : `сокет этого места только что переоткрывался — вызов переждал порог платформы (${seconds2} с) и занял место`,
     moveUndone: (asked, prior) => `Переход не состоялся: только что занятое место ${asked} снято, сессия осталась на прежнем месте ${prior} — оно у неё единственное.`,
-    moveNotUndone: (asked, text7, revoke) => `Только что занятое место ${asked} снять не удалось (${text7}) — сними его: ${revoke}`
+    moveNotUndone: (asked, text8, revoke) => `Только что занятое место ${asked} снять не удалось (${text8}) — сними его: ${revoke}`
   },
   en: {
     standsInRealm: (realm, call, board, leave, roleOpen) => `Refused (409): this bridge's channel already stands in the graph ${realm} with another seat — the platform holds no second seat of one channel in one graph. ` + (call ? `Stand as it: ${call}${roleOpen ? ` — the seat's karta is in its line on the board ${board}` : ""}. ` : `Its name is this channel's line on the board ${board}; stand as it: iskron_stand(realm="${realm}", karta, name=<that name>). `) + `If a new name is what you need, release the former one first: ${leave}, then repeat the call.`,
     standAgain: (call) => `The bridge does not hold this session's seat now — take it with the full call: ${call} (status can go in the same call).`,
     priorReleased: (prior) => `this session's former seat ${prior} is revoked: take moves the session to the taken seat, it does not add a second one`,
     provisionalReplaced: (prior) => `the auto-seating's seat ${prior} is replaced: it was provisional — the explicit call stood on the named one and revoked it`,
-    priorKept: (prior, text7, revoke) => `this session's former seat ${prior} is not revoked (${text7}) — while it lives, cases will ask for from_standing; revoke it: ${revoke}`,
+    priorKept: (prior, text8, revoke) => `this session's former seat ${prior} is not revoked (${text8}) — while it lives, cases will ask for from_standing; revoke it: ${revoke}`,
     besideHoldsMain: (prior, asked, beside, revokes, keep) => `Refused: seats beside in other graphs stand on this session's main seat ${prior} — ${beside}. Moving to ${asked} would open a new channel: the seats beside would lose hearing, and ${prior} would not be revoked while they stand. Nothing was touched. Move: revoke the seats beside first — ${revokes}, then repeat the call; or keep the former name: ${keep}.`,
     reissueWaited: (seconds2, own) => own ? `yours — returned: the bridge itself was reopening this seat's socket at that moment, the call waited for its outcome (${seconds2} s)` : `this seat's socket was just reopened — the call waited out the platform's threshold (${seconds2} s) and took the seat`,
     moveUndone: (asked, prior) => `The move did not happen: the seat ${asked} just taken is revoked, the session stays on its former seat ${prior} — its only one.`,
-    moveNotUndone: (asked, text7, revoke) => `The seat ${asked} just taken could not be revoked (${text7}) — revoke it: ${revoke}`
+    moveNotUndone: (asked, text8, revoke) => `The seat ${asked} just taken could not be revoked (${text8}) — revoke it: ${revoke}`
   }
 };
 
@@ -2325,7 +2329,7 @@ var ruFrames = (n) => {
 };
 var WATCHDOG = {
   ru: {
-    doer: (text7) => `ДЕЛАТЕЛЬ: ${text7}`,
+    doer: (text8) => `ДЕЛАТЕЛЬ: ${text8}`,
     listening: (key3, tail2 = "") => `слушаю стояние ${key3}${tail2}`,
     listeningCodex: (key3, thread) => `слушаю стояние ${key3}; кадры кладу в тред ${thread}`,
     backfilled: (count) => ` (${count} задним числом)`,
@@ -2335,7 +2339,7 @@ var WATCHDOG = {
     bridgeLetGo: () => "мост отпустил стояние или ушёл — сессия кончилась?",
     seatNotBack: (s2, path) => `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
     noSocket: (path, s2) => `мост не поднял локальный сокет ${path} за ${s2}s`,
-    bridgeReleasedSocket: (text7) => `мост отпустил сокет: ${text7}`,
+    bridgeReleasedSocket: (text8) => `мост отпустил сокет: ${text8}`,
     notWakeup: (type) => `кадр ${type ?? "не разобран"} — не повод будить`,
     seenEarlier: (id) => `кадр ${id} уже отдан прежним взводом — не повод будить`,
     unaddressed: () => "пачка без адресованных месту — счёт ждёт ближайшей побудки",
@@ -2357,7 +2361,7 @@ var WATCHDOG = {
     alreadyPut: (id) => `кадр ${id} уже вложен — в тред не кладу повторно`
   },
   en: {
-    doer: (text7) => `DOER: ${text7}`,
+    doer: (text8) => `DOER: ${text8}`,
     listening: (key3, tail2 = "") => `listening on standing ${key3}${tail2}`,
     listeningCodex: (key3, thread) => `listening on standing ${key3}; putting frames into thread ${thread}`,
     backfilled: (count) => ` (${count} back-dated)`,
@@ -2367,7 +2371,7 @@ var WATCHDOG = {
     bridgeLetGo: () => "the bridge released the standing or went away — did the session end?",
     seatNotBack: (s2, path) => `the seat did not return within ${s2}s after the daemon change — socket ${path} is not up; to bring it back use iskron_stand`,
     noSocket: (path, s2) => `the bridge did not bring up the local socket ${path} within ${s2}s`,
-    bridgeReleasedSocket: (text7) => `the bridge released the socket: ${text7}`,
+    bridgeReleasedSocket: (text8) => `the bridge released the socket: ${text8}`,
     notWakeup: (type) => `frame ${type ?? "unparsed"} — not a reason to wake`,
     seenEarlier: (id) => `frame ${id} was already delivered by an earlier arming — not a reason to wake`,
     unaddressed: () => "a batch with nothing addressed to the seat — the count waits for the next wake-up",
@@ -2392,7 +2396,7 @@ var WATCHDOG = {
 
 // js/shared/version.ts
 var releaseBuild = () => CHANNEL_MARK.endsWith(":release");
-var devBuildIn = (text7) => text7.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
+var devBuildIn = (text8) => text8.includes(`"${[BUILD_MARK, "dev"].join(":")}"`);
 function buildOf(selfUrl) {
   try {
     const src = readFileSync(fileURLToPath(selfUrl));
@@ -2402,9 +2406,9 @@ function buildOf(selfUrl) {
   }
 }
 var MARK_LITERAL = /"([^"\s]+-build):(?:dev|release)"/g;
-function versionIn(text7) {
-  for (const [, name2] of text7.matchAll(MARK_LITERAL)) if (name2 !== BUILD_MARK) return null;
-  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text7);
+function versionIn(text8) {
+  for (const [, name2] of text8.matchAll(MARK_LITERAL)) if (name2 !== BUILD_MARK) return null;
+  const m = /^(?:const|let|var)\s+VERSION\s*=\s*"([^"]+)"/m.exec(text8);
   return m ? m[1] : null;
 }
 
@@ -2547,8 +2551,8 @@ function resolve2() {
   const fromEnv = envOf(envName("BRIDGE_URL"))?.trim();
   if (fromEnv) return langOfServer(fromEnv);
   try {
-    const text7 = readFileSync2(join2(authDirFromEnv(), "server"), "utf8").trim();
-    if (text7) return langOfServer(text7);
+    const text8 = readFileSync2(join2(authDirFromEnv(), "server"), "utf8").trim();
+    if (text8) return langOfServer(text8);
   } catch {
   }
   return DEFAULT_LANG;
@@ -2583,10 +2587,10 @@ function guardStream(s2) {
   if (s2) s2.on("error", () => deadStreams.add(s2));
 }
 var backlogged = /* @__PURE__ */ new WeakSet();
-function writeTo(s2, text7) {
+function writeTo(s2, text8) {
   if (!canWrite(s2)) return false;
   try {
-    const fit = s2.write(text7);
+    const fit = s2.write(text8);
     if (!fit && !backlogged.has(s2)) s2.once("drain", () => backlogged.delete(s2));
     if (fit) backlogged.delete(s2);
     else backlogged.add(s2);
@@ -2638,11 +2642,11 @@ function strip(url) {
 }
 var isProductionServer = (url) => PRODUCTION_URLS.has(strip(url));
 function resolveServerChoice(word3) {
-  const w12 = word3.trim();
-  const chosen = LANGS.find((l) => SERVER_CHOICE[l].test(w12));
+  const w13 = word3.trim();
+  const chosen = LANGS.find((l) => SERVER_CHOICE[l].test(w13));
   if (chosen) return SERVER_URLS[chosen];
   try {
-    return new URL(w12).href;
+    return new URL(w13).href;
   } catch {
     return null;
   }
@@ -2650,8 +2654,8 @@ function resolveServerChoice(word3) {
 var serverChoicePath = (authDir) => join3(authDir, "server");
 function readServerChoice(authDir) {
   try {
-    const text7 = readFileSync3(serverChoicePath(authDir), "utf8").trim();
-    return text7 ? new URL(text7).href : null;
+    const text8 = readFileSync3(serverChoicePath(authDir), "utf8").trim();
+    return text8 ? new URL(text8).href : null;
   } catch {
     return null;
   }
@@ -2760,9 +2764,9 @@ function readPat(cfg) {
   }
   const file2 = join3(cfg.authDir, "token");
   try {
-    const text7 = readFileSync3(file2, "utf8").trim();
-    if (text7) {
-      cfg.pat = text7;
+    const text8 = readFileSync3(file2, "utf8").trim();
+    if (text8) {
+      cfg.pat = text8;
       cfg.patSource = file2;
     }
   } catch {
@@ -3005,10 +3009,10 @@ function holdSocket(o) {
       stopWatch2();
       handing = { onFrame, onGone };
     },
-    send(text7, sent) {
+    send(text8, sent) {
       if (stopped || handing || !ws || ws.readyState !== 1) return false;
       try {
-        ws.send(text7);
+        ws.send(text8);
       } catch {
         return false;
       }
@@ -5749,12 +5753,12 @@ function roomKind(frame2) {
   }
   const pending2 = kind2 === "said" && f.body_pending === true && !str(f.body) && !str(line.done);
   const aborted = kind2 === "body" && fields.aborted === true;
-  let text7 = kindText(kind2, values, f, pending2, aborted);
+  let text8 = kindText(kind2, values, f, pending2, aborted);
   if (kind2 === "closing") {
     const may = Array.isArray(fields.may_object) ? fields.may_object.map((m) => typeof m === "string" ? m : str(obj(m).id)) : [];
     const myId = str(f.to_standing_id);
     const mayI = !!myId && may.includes(myId);
-    text7 += "; " + (mayI ? W4.closingMay(need(values.entry_id)) : W4.closingNot());
+    text8 += "; " + (mayI ? W4.closingMay(need(values.entry_id)) : W4.closingNot());
   }
   const stack = rule === "stack" ? f.stack === "defer" ? "batch" : "interrupt" : rule === "mine" ? inviteMine(f) ? "interrupt" : "batch" : rule === "addressed" ? addressedMine(f) ? "interrupt" : "batch" : rule;
   const phase = pending2 ? "pending" : aborted ? "aborted" : null;
@@ -5762,7 +5766,7 @@ function roomKind(frame2) {
   return {
     kind: kind2,
     rule: phase ? "batch" : stack,
-    words: text7,
+    words: text8,
     author,
     bodyInWords,
     phase,
@@ -6551,9 +6555,9 @@ async function post2(msg, heard2) {
   }
   if (res.status === 202 || res.status === 204) return;
   if (!res.ok) {
-    const text8 = (await res.text().catch(() => "")).slice(0, 300);
+    const text9 = (await res.text().catch(() => "")).slice(0, 300);
     throw new UpstreamError(
-      `upstream HTTP ${res.status}: ${text8}`,
+      `upstream HTTP ${res.status}: ${text9}`,
       "http",
       null,
       res.status < 500 ? UpstreamError.NOT_SENT : UpstreamError.UNKNOWN
@@ -6581,12 +6585,12 @@ async function post2(msg, heard2) {
     }
     return;
   }
-  const text7 = await res.text();
-  if (!text7.trim()) return;
+  const text8 = await res.text();
+  if (!text8.trim()) return;
   try {
-    onMessage(JSON.parse(text7));
+    onMessage(JSON.parse(text8));
   } catch {
-    throw new UpstreamError(`upstream sent unparseable JSON: ${text7.slice(0, 200)}`, "http");
+    throw new UpstreamError(`upstream sent unparseable JSON: ${text8.slice(0, 200)}`, "http");
   }
 }
 var reinit = scoped(() => ({ inFlight: null }));
@@ -6876,10 +6880,10 @@ function humanWordReply(frame2, origin2) {
   return Object.values(missing2).every((x) => !x) ? T2().humanWordReply(need(f.realm), need(karta), need(p.from_standing), need(frame2.id)) : T2().noReplyAddress(missing2);
 }
 function frameToText(frame2, raw, withCase = true) {
-  const text7 = frameText(frame2, raw, withCase);
-  if (!frame2 || !withCase) return text7;
+  const text8 = frameText(frame2, raw, withCase);
+  if (!frame2 || !withCase) return text8;
   const cards = openCardsText(frame2);
-  return text7.split("\n").includes(cards) ? text7 : `${text7}
+  return text8.split("\n").includes(cards) ? text8 : `${text8}
 ${cards}`;
 }
 function frameText(frame2, raw, withCase) {
@@ -6888,7 +6892,7 @@ function frameText(frame2, raw, withCase) {
   if (notice) return notice;
   const f = frame2;
   const origin2 = frame2.origin ?? classifyOrigin(frame2);
-  const text7 = textOf(frame2);
+  const text8 = textOf(frame2);
   const c = caseOf(frame2);
   if (c) {
     if (!addressedToMine(frame2)) return caseCountLine([frame2]);
@@ -6903,11 +6907,11 @@ function frameText(frame2, raw, withCase) {
     const label = [withCase ? caseHead(frame2, true) : "", entry ? `[${entry}]` : ""];
     const head = `${[...label.filter(Boolean), words2].join(" ")}${by ? ` — ${by}` : ""}${tail(frame2, withReply)}`;
     const lines2 = [head];
-    if (text7 && !words2.includes(text7.trim())) lines2.push(text7);
+    if (text8 && !words2.includes(text8.trim())) lines2.push(text8);
     return lines2.join("\n");
   }
   const lines = [`${whoOf2(frame2, true) || "?"}${tail(frame2, true)}`];
-  if (text7) lines.push(text7);
+  if (text8) lines.push(text8);
   const reply2 = humanWordReply(frame2, origin2);
   if (reply2) lines.push(reply2);
   if (isLifeCheck(frame2)) lines.push(T2().lifeCheckSeat(warnedSeat(frame2)), T2().lifeCheckReply());
@@ -6927,9 +6931,9 @@ function batchLine(frame2, run3, withZachin = true, withCase = true) {
   const entry = typeof e === "number" || typeof e === "string" ? e : "?";
   const words2 = (rk?.words ?? T2().frame(typeof f.id === "string" ? f.id : "?")).replace(/\s+/g, " ").trim();
   const author = rk?.author && !words2.includes(rk.author) ? ` — ${rk.author}` : "";
-  const text7 = textOf(frame2).replace(/\s+/g, " ").trim();
-  const dup = !!text7 && words2.includes(text7);
-  return `${pre}[${entry}] ${words2}${author}${tail(frame2, !rk || !CAPTION_REPLY.has(rk.kind))}${text7 && !dup ? `: ${text7}` : ""}`;
+  const text8 = textOf(frame2).replace(/\s+/g, " ").trim();
+  const dup = !!text8 && words2.includes(text8);
+  return `${pre}[${entry}] ${words2}${author}${tail(frame2, !rk || !CAPTION_REPLY.has(rk.kind))}${text8 && !dup ? `: ${text8}` : ""}`;
 }
 function foldAsides(frames) {
   const asides = frames.map((f) => roomKind(f)?.aside ?? null);
@@ -7284,14 +7288,14 @@ function checkRetirements(entries2) {
   if (keys > SEEN_KEEP) throw new Error("graph retirement key limit reached");
 }
 function readRetirements(path) {
-  let text7;
+  let text8;
   try {
-    text7 = readFileSync11(path, "utf8");
+    text8 = readFileSync11(path, "utf8");
   } catch (e) {
     if (e.code === "ENOENT") return [];
     throw e;
   }
-  const data2 = JSON.parse(text7);
+  const data2 = JSON.parse(text8);
   if (!data2 || data2.version !== 1 || !Array.isArray(data2.entries))
     throw new Error("unsupported graph retirement schema");
   const entries2 = data2.entries;
@@ -7679,9 +7683,9 @@ var StaleBurst = class {
       this.timer = null;
       const all2 = this.burst.splice(0);
       if (!all2.length) return;
-      const { text: text7, keys, body } = staleBatch(all2, this.has);
-      if (!text7) return;
-      flush({ kind: "stale", frames: all2, marks: keys, text: text7, body });
+      const { text: text8, keys, body } = staleBatch(all2, this.has);
+      if (!text8) return;
+      flush({ kind: "stale", frames: all2, marks: keys, text: text8, body });
     }, STALE_BURST_MS).unref();
   }
   /** The frames the window holds (pulse.ts pending). */
@@ -8224,9 +8228,9 @@ function drainWhenFree(drain) {
   if (H2.spoolHeld > 0) H2.spoolLater = drain;
   else drain();
 }
-function liveWhenFree(judge) {
+function liveWhenFree(judge2) {
   if (H2.spoolHeld === 0) return false;
-  H2.liveLater.push(judge);
+  H2.liveLater.push(judge2);
   return true;
 }
 function setRevokingOwn(v) {
@@ -8717,7 +8721,7 @@ function createMux(url, onSocket) {
     onOpen: () => active().forEach(subscribe4),
     onMessage: (raw) => routeFrame(raw, routes),
     onDrop,
-    onHung: (text7) => active().forEach((s2) => (s2.o.onHung ?? s2.o.onNote)?.(text7)),
+    onHung: (text8) => active().forEach((s2) => (s2.o.onHung ?? s2.o.onNote)?.(text8)),
     onFallback: () => [...subs].forEach(toSocket)
   });
   const ticker = createTicker((tick) => link.send(tick));
@@ -8835,11 +8839,11 @@ function muxOf(url) {
   if (!m) muxes.set(url, m = createMux(url, fell));
   return m;
 }
-function pulseFrom(m, s2, text7, sent) {
+function pulseFrom(m, s2, text8, sent) {
   if (!s2.live || !s2.channel) return false;
   let f;
   try {
-    f = JSON.parse(text7);
+    f = JSON.parse(text8);
   } catch {
     return false;
   }
@@ -8862,7 +8866,7 @@ function holdChannel(o) {
       m.release(s2);
       onGone(0);
     },
-    send: (text7, sent) => s2.fallback ? s2.fallback.send(text7, sent) : pulseFrom(m, s2, text7, sent),
+    send: (text8, sent) => s2.fallback ? s2.fallback.send(text8, sent) : pulseFrom(m, s2, text8, sent),
     get alive() {
       return s2.fallback ? s2.fallback.alive : !s2.closed;
     },
@@ -8926,9 +8930,9 @@ function learnRealm(alias, canonical) {
   if (t && !t.startsWith("@") && CANON_RE.test(canonical)) aliases.set(t, canonical);
 }
 var LIST_LINE_RE = /^ {4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+) {2}(r\d+) {2}.* · /;
-function learnRealmList(text7) {
+function learnRealmList(text8) {
   const slugs = /* @__PURE__ */ new Map();
-  for (const line of text7.split("\n")) {
+  for (const line of text8.split("\n")) {
     const m = LIST_LINE_RE.exec(line);
     if (!m) continue;
     const [, c, short2] = m;
@@ -8953,9 +8957,9 @@ async function resolveRealms(names2, list3) {
   const open = names2.map(trimmed).filter((t) => t && !resolvedRealm(t));
   if (!open.length) return true;
   R.listing ??= list3().then(
-    (text7) => {
-      if (text7) learnRealmList(text7);
-      return !!text7;
+    (text8) => {
+      if (text8) learnRealmList(text8);
+      return !!text8;
     },
     () => false
   ).finally(() => {
@@ -9030,9 +9034,9 @@ var besideWord = (data2) => emit({
 function repointExtras(ch) {
   for (const p of extraPlaces()) writeRecord(p, ch);
 }
-function rememberExtraStatus(key3, ch, text7) {
+function rememberExtraStatus(key3, ch, text8) {
   const p = extras.get(key3);
-  if (p) writeRecord(p, ch, text7 || "");
+  if (p) writeRecord(p, ch, text8 || "");
 }
 function dropExtra(key3, reason, forget, as) {
   const p = extras.get(key3);
@@ -9153,13 +9157,13 @@ function parseFrame(raw) {
   }
 }
 function entries(path) {
-  let text7;
+  let text8;
   try {
-    text7 = readFileSync14(path, "utf8");
+    text8 = readFileSync14(path, "utf8");
   } catch {
     return null;
   }
-  return text7.slice(0, text7.lastIndexOf("\n") + 1).split("\n").filter(Boolean).map((line) => {
+  return text8.slice(0, text8.lastIndexOf("\n") + 1).split("\n").filter(Boolean).map((line) => {
     try {
       return JSON.parse(line);
     } catch {
@@ -9234,8 +9238,8 @@ function inTurnWithin(url, ms2, fn, late2) {
 var TRIMMED = "trimmed_to_limit";
 var LIMIT = 64;
 var obj3 = (v) => v && typeof v === "object" ? v : {};
-function trimToWord(text7, max) {
-  const chars = [...text7];
+function trimToWord(text8, max) {
+  const chars = [...text8];
   const head = chars.slice(0, max - 1).join("");
   const cut = chars[max - 1] === " " ? head.length : head.lastIndexOf(" ");
   return (cut > 0 ? head.slice(0, cut) : head).trimEnd() + "…";
@@ -9247,38 +9251,38 @@ function acceptedIn(body, sent) {
   } catch {
   }
   const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-  const w12 = obj3(warnings.find((x) => obj3(x).code === TRIMMED));
+  const w13 = obj3(warnings.find((x) => obj3(x).code === TRIMMED));
   const told = typeof parsed.doing === "string" ? parsed.doing : null;
-  if (!w12.code) return told === null ? {} : { doing: told };
+  if (!w13.code) return told === null ? {} : { doing: told };
   const doing = told ?? trimToWord(sent, LIMIT);
-  const message = typeof w12.message === "string" ? w12.message.trim() : "";
+  const message = typeof w13.message === "string" ? w13.message.trim() : "";
   return { doing, trimmed: { doing, message } };
 }
 function trimNudge(t) {
   if (t.message) return words(STATUS_POST).trimmedBy(t.message);
   return words(STATUS_POST).trimmed();
 }
-function byTick(url, text7, scope) {
-  if (!tickFor(url, scope, { status: text7 })) return null;
-  if ([...text7].length <= LIMIT) return { ok: true, body: "", doing: text7 };
-  const doing = trimToWord(text7, LIMIT);
+function byTick(url, text8, scope) {
+  if (!tickFor(url, scope, { status: text8 })) return null;
+  if ([...text8].length <= LIMIT) return { ok: true, body: "", doing: text8 };
+  const doing = trimToWord(text8, LIMIT);
   return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
 }
-async function publishStatusTo(url, text7, timeoutMs = 5e3, standingId = null) {
-  const ticked = byTick(url, text7, standingId);
+async function publishStatusTo(url, text8, timeoutMs = 5e3, standingId = null) {
+  const ticked = byTick(url, text8, standingId);
   if (ticked) return ticked;
-  const w12 = words(STATUS_POST);
+  const w13 = words(STATUS_POST);
   if (onDispatcher(url))
-    return { ok: false, body: liveOnDispatcher(url) ? w12.seatUnnamed() : w12.notSubscribed() };
+    return { ok: false, body: liveOnDispatcher(url) ? w13.seatUnnamed() : w13.notSubscribed() };
   return inTurnWithin(
     url,
     timeoutMs,
-    (until) => postStatus(url, text7, until, standingId),
+    (until) => postStatus(url, text8, until, standingId),
     () => ({ ok: false, body: late() })
   );
 }
 var late = () => words(STATUS_POST).noAnswer(words(STATUS_POST).late());
-async function postStatus(url, text7, until, standingId) {
+async function postStatus(url, text8, until, standingId) {
   const left2 = until - Date.now();
   if (left2 <= 0) return { ok: false, body: late() };
   const signal = AbortSignal.timeout(left2);
@@ -9286,7 +9290,7 @@ async function postStatus(url, text7, until, standingId) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(
-      typeof standingId === "string" ? { text: text7, standing_id: standingId } : { text: text7 }
+      typeof standingId === "string" ? { text: text8, standing_id: standingId } : { text: text8 }
     ),
     signal
   });
@@ -9303,10 +9307,10 @@ async function postStatus(url, text7, until, standingId) {
   if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
   if (!res.ok)
     return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
-  return { ok: true, body, ...acceptedIn(body, text7) };
+  return { ok: true, body, ...acceptedIn(body, text8) };
 }
 onFellBack(
-  (url, text7, standingId) => inTurn(url, () => postStatus(url, text7, Date.now() + 5e3, standingId), true).then((st) => {
+  (url, text8, standingId) => inTurn(url, () => postStatus(url, text8, Date.now() + 5e3, standingId), true).then((st) => {
     if (!st.ok) log(`busy line held for the dispatcher not posted: ${st.body}`);
   })
 );
@@ -9367,9 +9371,9 @@ function takeSpool(key3, primary, feed) {
 function sayStray(raw, frame2, p) {
   const to = strayOf(frame2, p);
   if (!to) return false;
-  const text7 = words(HANDOFF).strayFrame(String(frame2?.id ?? "?"), to, p.door.key, raw);
-  log(text7);
-  const ev = { kind: "note", text: text7 };
+  const text8 = words(HANDOFF).strayFrame(String(frame2?.id ?? "?"), to, p.door.key, raw);
+  log(text8);
+  const ev = { kind: "note", text: text8 };
   p.door.broadcast(ev);
   emit({
     jsonrpc: "2.0",
@@ -9448,19 +9452,19 @@ function noteStandCwd(cwd) {
   return prev;
 }
 var channel = () => H2.currentUrl ? { url: H2.currentUrl, statusUrl: H2.currentStatusUrl, cwd: H2.standCwd } : null;
-function rememberStatus(text7, realm) {
+function rememberStatus(text8, realm) {
   const s2 = state.standing;
   const ch = channel();
   if (!s2 || !H2.currentKey || !ch) return;
   const extra = realm ? extraIn(realm) : void 0;
-  if (extra) return rememberExtraStatus(extra.door.key, ch, text7);
+  if (extra) return rememberExtraStatus(extra.door.key, ch, text8);
   writeHoldRecord(H2.currentKey, {
     realm: s2.realm,
     karta: s2.karta,
     name: s2.name ?? "",
     url: ch.url,
     statusUrl: H2.currentStatusUrl,
-    status: text7 || void 0,
+    status: text8 || void 0,
     cwd: H2.standCwd ?? readHoldRecord(H2.currentKey)?.cwd,
     client: harnessName(),
     key: H2.currentKey
@@ -9475,9 +9479,9 @@ var doorHooks = {
     for (const fn of H2.attachHooks) fn();
   },
   lateEvent: () => H2.evictedKey ? H2.evictedEvent : null,
-  onError: (text7) => {
-    log(text7);
-    notify("error", { kind: "note", text: text7 });
+  onError: (text8) => {
+    log(text8);
+    notify("error", { kind: "note", text: text8 });
   }
 };
 var doors = () => [
@@ -9567,7 +9571,7 @@ function releaseStanding(reason, forget = false, keepBeside = false, own = false
   const busy = keepBusy ? null : H2.currentStatusUrl;
   letGo2(H2.holder, handover && !forget ? key3 ?? null : null, reason, busy);
   H2.holder = null;
-  for (const w12 of [...H2.helloWaiters]) w12(null);
+  for (const w13 of [...H2.helloWaiters]) w13(null);
   H2.door?.close();
   H2.door = null;
   Object.assign(H2, { parked: false, unheard: false, currentKey: null, currentUrl: null });
@@ -9612,8 +9616,8 @@ function parkStanding(reason) {
   H2.holder = null;
   Object.assign(H2, { parked: true, unheard: false });
   standingLog(`parked ${H2.currentKey}: ${reason}`);
-  const text7 = holdWords().parked(reason);
-  broadcast({ kind: "note", text: text7 });
+  const text8 = holdWords().parked(reason);
+  broadcast({ kind: "note", text: text8 });
   return H2.currentKey;
 }
 function expectHello() {
@@ -9642,16 +9646,16 @@ function deliverTo(d, raw, frame2, full) {
       d.broadcast(ev2);
       notify("info", keyed(d, ev2));
     });
-  const text7 = full === frame2 && full?.addressed === void 0 ? raw : JSON.stringify(full);
+  const text8 = full === frame2 && full?.addressed === void 0 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
-  for (const x of hello ? doors() : [d]) x.push(text7, full);
+  for (const x of hello ? doors() : [d]) x.push(text8, full);
   if (hello) Object.assign(H2, { unheard: false, deafKey: null });
-  if (hello) for (const w12 of [...H2.helloWaiters]) w12(full);
-  const ev = frameEvent(text7, full, seenPath);
+  if (hello) for (const w13 of [...H2.helloWaiters]) w13(full);
+  const ev = frameEvent(text8, full, seenPath);
   const msg = full?.type === "message" && !again ? full : null;
   if (msg) noteRoomKind(msg);
   const toBatch = (b) => (d.broadcast(b), notify("info", keyed(d, b)));
-  if (msg && !notifiedClient() && batchForWatchdogs(d, text7, msg, toBatch)) return;
+  if (msg && !notifiedClient() && batchForWatchdogs(d, text8, msg, toBatch)) return;
   if (!again) for (const x of hello ? doors() : [d]) x.broadcast(ev);
   if (full?.type === "status") return;
   if (again) return log(`frame ${id} came again — already delivered, not raised`);
@@ -9730,31 +9734,31 @@ function openHolder(url, key3) {
           releaseStanding(holdWords().resumeFailed(), true);
           return;
         }
-        const text7 = deadWord(code2);
-        log(text7);
+        const text8 = deadWord(code2);
+        log(text8);
         standingLog(`dead ${key3}: close ${code2}`);
-        const ev = { kind: "dead", code: code2, text: text7 };
+        const ev = { kind: "dead", code: code2, text: text8 };
         broadcast(ev);
         notify("error", ev);
         Object.assign(H2, { deafKey: key3, deadPlaces: [...state.places] });
         releaseStanding(holdWords().tokenDead(), true);
       },
       onServiceAlive: (version) => {
-        const text7 = holdWords().alive(version);
-        log(text7);
-        const ev = { kind: "alive", version, text: text7 };
+        const text8 = holdWords().alive(version);
+        log(text8);
+        const ev = { kind: "alive", version, text: text8 };
         broadcast(ev);
         notify("warning", ev);
       },
-      onNote: (text7) => {
-        log(text7);
-        broadcast({ kind: "note", text: text7 });
+      onNote: (text8) => {
+        log(text8);
+        broadcast({ kind: "note", text: text8 });
       },
       // Hang: a line waking the agent for the Monitor watchdog; pi and OpenCode show the human a notification that does not wake the agent (#5380).
-      onHung: (text7) => {
-        log(text7);
-        broadcast({ kind: "note", text: text7 });
-        notify("warning", { kind: "note", text: text7 });
+      onHung: (text8) => {
+        log(text8);
+        broadcast({ kind: "note", text: text8 });
+        notify("warning", { kind: "note", text: text8 });
       }
     })
   );
@@ -9870,9 +9874,9 @@ function readBoard(a) {
     declared: header?.[1] != null ? Number(header[1]) : null
   };
 }
-function parseBoard(text7) {
+function parseBoard(text8) {
   const out7 = [];
-  for (const line of text7.split("\n")) {
+  for (const line of text8.split("\n")) {
     const m = /^\s*#(\d+)\s.*?·\s(@\S+)\s—\s(.*)$/.exec(line);
     if (m) {
       out7.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
@@ -10416,14 +10420,14 @@ import { mkdirSync as mkdirSync10, readFileSync as readFileSync15, unlinkSync as
 import { dirname as dirname7 } from "node:path";
 var pathOf = (seat2) => `${seenFilePathOf(CFG.authDir, seat2, CFG.serverUrl)}.context-gate.json`;
 function readMark(path, seat2) {
-  let text7;
+  let text8;
   try {
-    text7 = readFileSync15(path, "utf8");
+    text8 = readFileSync15(path, "utf8");
   } catch (e) {
     if (e.code === "ENOENT") return null;
     throw e;
   }
-  const r = JSON.parse(text7);
+  const r = JSON.parse(text8);
   if (!r || r.version !== 1 || r.seat !== seat2 || typeof r.generation !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(r.generation) || typeof r.pending !== "boolean")
     throw new Error("invalid context recovery metadata");
   return r;
@@ -10717,9 +10721,9 @@ async function rawSeatRefusal(msg) {
   const hearing = await askedHearing(realm, karta, name2);
   if (hearing === "free") return null;
   const seat2 = keyOf(realm, karta, name2);
-  const w12 = words(HEARING);
-  const who = hearing === "other" ? w12.otherListens(seat2) : w12.unknownListens(seat2);
-  return w12.rawSeatRefusal(who, action);
+  const w13 = words(HEARING);
+  const who = hearing === "other" ? w13.otherListens(seat2) : w13.unknownListens(seat2);
+  return w13.rawSeatRefusal(who, action);
 }
 function ledHere(realm, karta, name2) {
   if (holdsStanding(realm, karta, name2)) return true;
@@ -10774,10 +10778,10 @@ async function observeSkill(p) {
   r.loaded.add(skill);
   if (r.required && [...r.required].every((s2) => r.loaded.has(s2))) finishRecovery(r);
 }
-var answer = (msg, text7, isError = false) => ({
+var answer = (msg, text8, isError = false) => ({
   jsonrpc: "2.0",
   id: msg.id,
-  result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text7 }] }
+  result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text8 }] }
 });
 var refusalReason = () => {
   const fault = recoveryFault();
@@ -11138,12 +11142,12 @@ function placeFields(place = {}, freshSkills = false, move2 = "register") {
   };
 }
 var PLACE_ACTIONS = /* @__PURE__ */ new Set(["connect", "mint", "register"]);
-function noteLocaleEcho(args, text7, structured) {
+function noteLocaleEcho(args, text8, structured) {
   const asked = args.locale;
   if (typeof asked !== "string" || P2.localeWarned) return;
   const action = String(args.action);
   const field = PLACE_ACTIONS.has(action) ? seatField(structured, action)?.locale : void 0;
-  const echo = (field ?? /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text7)?.[1])?.toLowerCase();
+  const echo = (field ?? /\blocale\b["']?\s*[:=]\s*["']?([a-z]{2})\b/i.exec(text8)?.[1])?.toLowerCase();
   if (!echo || echo === asked) return;
   P2.localeWarned = true;
   log(`locale: asked ${asked}, the server answered ${echo} — its prose stays in ${echo}`);
@@ -11171,22 +11175,22 @@ function boardHeaders() {
   ];
 }
 function missWord(m, of) {
-  const w12 = words(STAND_MISS);
+  const w13 = words(STAND_MISS);
   switch (m.why) {
     case "none":
-      return w12.none();
+      return w13.none();
     case "args":
-      return w12.args(m.args.join(", "));
+      return w13.args(m.args.join(", "));
     case "name":
-      return w12.name(m.asked, m.held);
+      return w13.name(m.asked, m.held);
     case "satellite":
-      return w12.satellite(of ?? "?");
+      return w13.satellite(of ?? "?");
     case "cwd":
-      return w12.cwd(m.cwd);
+      return w13.cwd(m.cwd);
     case "parked":
-      return w12.parked();
+      return w13.parked();
     case "elsewhere":
-      return w12.elsewhere();
+      return w13.elsewhere();
   }
 }
 var needRealmKarta = (miss, of) => sw().needRealmKarta(miss ? ` ${missWord(miss, of)}` : "");
@@ -11622,8 +11626,8 @@ async function leaveSatellite(reason) {
 function returnToStanding(how2) {
   if (!resumeStanding()) return false;
   for (const p of heldPlaces()) markLeft(p.key, false);
-  const text7 = words(LEAVE).returned(how2, K.status);
-  log(text7);
+  const text8 = words(LEAVE).returned(how2, K.status);
+  log(text8);
   if (K.status) {
     const line = K.status;
     K.status = "";
@@ -11638,7 +11642,7 @@ function returnToStanding(how2) {
   emit({
     jsonrpc: "2.0",
     method: "notifications/message",
-    params: { level: "info", logger: LOGGERS.channel, data: { kind: "note", text: text7 } }
+    params: { level: "info", logger: LOGGERS.channel, data: { kind: "note", text: text8 } }
   });
   return true;
 }
@@ -11677,10 +11681,10 @@ function localLeave(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
   if (msg.params?.arguments?.action !== "leave") return null;
   const realm = msg.params.arguments.realm;
-  const answer3 = (text7, isError = false) => ({
+  const answer3 = (text8, isError = false) => ({
     jsonrpc: "2.0",
     id: msg.id,
-    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text7 }] }
+    result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: text8 }] }
   });
   return (async () => {
     const W4 = words(LEAVE);
@@ -11715,16 +11719,16 @@ function parseSpawn(value) {
     return invalid();
   return { invite: a.invite, room: a.room.toLowerCase() };
 }
-function spawnJson(text7) {
-  return spawnLine(text7, false).pair;
+function spawnJson(text8) {
+  return spawnLine(text8, false).pair;
 }
-function spawnLine(text7, role) {
+function spawnLine(text8, role) {
   try {
-    const keys = [...text7.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
+    const keys = [...text8.matchAll(/("(?:\\.|[^"\\])*")\s*:/g)].map(
       (m) => JSON.parse(m[1])
     );
     if (keys.length !== new Set(keys).size) return invalid();
-    const v = JSON.parse(text7);
+    const v = JSON.parse(text8);
     if (!role || !v || typeof v !== "object" || !Object.hasOwn(v, "karta"))
       return { pair: parseSpawn(v) };
     const { karta, ...pair } = v;
@@ -11800,8 +11804,8 @@ var S6 = scoped(() => ({
   pair: void 0,
   refused: null
 }));
-var refuseClaim = (text7) => {
-  S6.refused = text7;
+var refuseClaim = (text8) => {
+  S6.refused = text8;
 };
 var claimRefusal = () => S6.refused;
 var targetOf = (a) => `${canonRealm(a.realm)}#${String(a.karta).replace(/^#/, "")}`;
@@ -11828,10 +11832,10 @@ function registeredBasis(a) {
 }
 
 // js/bridge/claimdelivery.ts
-var refused = (id, text7) => ({
+var refused = (id, text8) => ({
   jsonrpc: "2.0",
   id,
-  result: { isError: true, content: [{ type: "text", text: text7 }] }
+  result: { isError: true, content: [{ type: "text", text: text8 }] }
 });
 function launchAdmission(msg) {
   if (msg.method !== "tools/call") return null;
@@ -12061,17 +12065,17 @@ function lostPlaces(say3, log3) {
     },
     /** `stopped` — the owner took the seat off (#7439): `why` is the stop word, no retake advice. */
     lose(k, realm, why, satellite, stopped = false) {
-      const text7 = stopped ? why : satellite ? words(LOST).satellite(k) : words(LOST).seat(k, realm, why);
-      lost.set(k, { realm, satellite, text: text7 });
+      const text8 = stopped ? why : satellite ? words(LOST).satellite(k) : words(LOST).seat(k, realm, why);
+      lost.set(k, { realm, satellite, text: text8 });
       live2.delete(k);
-      log3(text7);
+      log3(text8);
       say3({
         jsonrpc: "2.0",
         method: "notifications/message",
         params: {
           level: "warning",
           logger: LOGGERS.channel,
-          data: { kind: stopped ? "stopped" : "lost", key: k, text: text7 }
+          data: { kind: stopped ? "stopped" : "lost", key: k, text: text8 }
         }
       });
     },
@@ -12138,12 +12142,12 @@ function realmListAsk() {
       if (msg.method !== void 0 || msg.id === void 0 || msg.id === null) return false;
       if (!asked.delete(JSON.stringify(msg.id))) return false;
       const content = msg.result?.content;
-      const text7 = (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n");
+      const text8 = (Array.isArray(content) ? content : []).map((c) => String(c?.text ?? "")).join("\n");
       if (msg.error || msg.result?.isError)
         log3(
-          `the realm list came back refused instead of the list — rN and slugs stay unresolved: ${text7 || msg.error?.message || "?"}`
+          `the realm list came back refused instead of the list — rN and slugs stay unresolved: ${text8 || msg.error?.message || "?"}`
         );
-      learnRealmList(text7);
+      learnRealmList(text8);
       return true;
     },
     /** No answer will come (link broke) — allow asking again. */
@@ -13184,7 +13188,7 @@ async function resumeBy(sel, register = true, takeOwn = false) {
   await canonHoldRecords();
   const { own: recs, sameDir: sameDir2, legacy: legacyRecs, left: left2, neighbour, stale } = recordsFor(sel);
   const staleWords = stale.map((x) => resumeWords.staleKey(x.name, x.fresher));
-  for (const w12 of staleWords) log(`resume: ${w12}`);
+  for (const w13 of staleWords) log(`resume: ${w13}`);
   const refused2 = stale.length ? { refused: stale.map((x) => x.name) } : {};
   if (!recs.length) {
     const legacy = await freeLegacy(legacyRecs);
@@ -13360,14 +13364,14 @@ async function runCheck(msg) {
     return reply(msg, { holding: true, key: key3, listening: listening2, pending: pending2, word: resumeWords.listening() });
   }
   if (D.reopens >= REOPEN_LIMIT) {
-    const text7 = resumeWords.gaveUp(key3, REOPEN_LIMIT);
+    const text8 = resumeWords.gaveUp(key3, REOPEN_LIMIT);
     if (!D.said) {
       D.said = true;
       standingLog(`reopen ${key3}: gave up after ${REOPEN_LIMIT} — board still reads deaf`);
       emit({
         jsonrpc: "2.0",
         method: "notifications/message",
-        params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text: text7 } }
+        params: { level: "warning", logger: LOGGERS.channel, data: { kind: "lost", text: text8 } }
       });
     }
     return reply(msg, {
@@ -13377,7 +13381,7 @@ async function runCheck(msg) {
       pending: pending2,
       reopened: false,
       stuck: true,
-      word: text7
+      word: text8
     });
   }
   D.reopens++;
@@ -13542,9 +13546,9 @@ async function takingSeat(args, fn) {
 // js/bridge/evicted.ts
 var LOOK_MS = 100;
 var RETRY_MS = 2e3;
-function announceEvicted(code2, text7) {
-  log(text7);
-  const ev = { kind: "evicted", code: code2, text: text7 };
+function announceEvicted(code2, text8) {
+  log(text8);
+  const ev = { kind: "evicted", code: code2, text: text8 };
   H2.evictedEvent = ev;
   broadcast(ev);
   notify("warning", ev);
@@ -13627,13 +13631,13 @@ async function besideAndSay(key3, s2, name2, base, beside, extras3, once = false
       );
     }
   F.failed = r.ok ? null : { key: key3, s: s2, name: name2, base, extras: extras3 };
-  const text7 = [
+  const text8 = [
     r.ok ? holdWords().besideDone(name2, r.text) : holdWords().besideFailed(name2, base, r.text),
     ...others2
   ].join("\n");
-  log(text7);
+  log(text8);
   standingLog(`evicted ${key3}: ${r.ok ? "stood beside" : "could not stand beside"}`);
-  notify("warning", { kind: "resumed", text: text7 });
+  notify("warning", { kind: "resumed", text: text8 });
 }
 var F = scoped(() => ({
   failed: null,
@@ -13810,9 +13814,9 @@ var isUnattributed = (reply2) => {
   if (!reply2) return false;
   const rule = refusalOf(reply2)?.rule;
   if (rule) return UNATTRIBUTED_CODE.test(rule);
-  const text7 = replyText(reply2);
-  if (UNATTRIBUTED_CODE.test(text7)) return true;
-  return !!reply2.result?.isError && UNATTRIBUTED_REFUSAL.test(text7);
+  const text8 = replyText(reply2);
+  if (UNATTRIBUTED_CODE.test(text8)) return true;
+  return !!reply2.result?.isError && UNATTRIBUTED_REFUSAL.test(text8);
 };
 
 // js/bridge/usagefields.ts
@@ -14082,17 +14086,17 @@ function localEnd(msg) {
 var SOCKET_RE = /wss:\/\/[^\s"'`<>)\]]+|ws:\/\/(?:127\.0\.0\.1|\[?::1\]?|localhost)(?::\d+)?\/[^\s"'`<>)\]]+/;
 var STATUS_RE = /https?:\/\/[^\s"'`<>)\]]+\/channel\/status\/[^\s"'`<>)\]]+/;
 var trim2 = (s2) => s2.replace(/[.,;:!?»"')\]]+$/, "");
-var hideAddresses = (text7) => text7.replace(new RegExp(SOCKET_RE.source, "g"), words(ABSORB).socketHidden()).replace(new RegExp(STATUS_RE.source, "g"), words(ABSORB).statusHidden());
+var hideAddresses = (text8) => text8.replace(new RegExp(SOCKET_RE.source, "g"), words(ABSORB).socketHidden()).replace(new RegExp(STATUS_RE.source, "g"), words(ABSORB).statusHidden());
 function absorbChannelReply(msg, reply2) {
   const a = msg?.params?.arguments;
   if (msg?.params?.name !== tool("channel")) return reply2;
   if (a?.action !== "connect" && a?.action !== "mint") return reply2;
   if (reply2?.error || reply2?.result?.isError) return reply2;
   if (stoppedInMove()) return reply2;
-  const text7 = replyText(reply2);
-  const socket = SOCKET_RE.exec(text7)?.[0];
+  const text8 = replyText(reply2);
+  const socket = SOCKET_RE.exec(text8)?.[0];
   if (!socket) return reply2;
-  const status = STATUS_RE.exec(text7)?.[0];
+  const status = STATUS_RE.exec(text8)?.[0];
   if (a.realm && a.karta != null) {
     state.standing = rememberedPlace(a.realm, a.karta, a.name);
   }
@@ -14239,11 +14243,11 @@ function unresolvedRefusal(realm) {
   return held2.some((s2) => unknownRealm(realm, s2.realm)) ? unresolvedWord(realm, heldRealms()) : null;
 }
 function otherPlaceWord(led, asked, sameName = false, hearing = "free") {
-  const w12 = words(CALL);
-  const same2 = sameName ? w12.sameNamePrefix() : "";
-  const advice = hearing !== "free" ? same2 + w12.heardAdvice(hearing === "other", asked, led) : led === asked ? w12.sameKeysAdvice() : sameName ? w12.sameNameAdvice() : w12.takeOtherAdvice();
+  const w13 = words(CALL);
+  const same2 = sameName ? w13.sameNamePrefix() : "";
+  const advice = hearing !== "free" ? same2 + w13.heardAdvice(hearing === "other", asked, led) : led === asked ? w13.sameKeysAdvice() : sameName ? w13.sameNameAdvice() : w13.takeOtherAdvice();
   const Advice = `${advice.charAt(0).toUpperCase()}${advice.slice(1)}`;
-  return w12.otherPlace(led, asked, Advice);
+  return w13.otherPlace(led, asked, Advice);
 }
 function besideRefusal(realm, how2) {
   const prim = state.standing;
@@ -14252,10 +14256,10 @@ function besideRefusal(realm, how2) {
   if (how2 === "stand" && holdsChannel()) return null;
   return how2 === "connect" ? words(CALL).besideConnect(led) : words(CALL).besideStand(led);
 }
-var refusal = (msg, text7) => ({
+var refusal = (msg, text8) => ({
   jsonrpc: "2.0",
   id: msg.id,
-  result: { isError: true, content: [{ type: "text", text: text7 }] }
+  result: { isError: true, content: [{ type: "text", text: text8 }] }
 });
 function crossPlaceRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
@@ -14301,9 +14305,9 @@ var callTool = async (name2, args) => {
     return await (name2 === tool("channel") ? takingSeat(args, () => answer2(name2, args)) : answer2(name2, args));
   } catch (e) {
     if (name2 === tool("channel") && args.action === "register" && args.spawned_for) {
-      const text7 = `${words(SPAWNED_FOR).echo()} ${errorMessage(e)}`;
-      refuseClaim(text7);
-      return { text: text7, isError: true };
+      const text8 = `${words(SPAWNED_FOR).echo()} ${errorMessage(e)}`;
+      refuseClaim(text8);
+      return { text: text8, isError: true };
     }
     throw e;
   }
@@ -14355,17 +14359,17 @@ var replyTo = (msg) => (body, isError = false) => ({
   id: msg.id,
   result: { ...isError ? { isError: true } : {}, content: [{ type: "text", text: body }] }
 });
-async function statusWord(text7, realm) {
-  const st = await publishStatus(text7, realm);
+async function statusWord(text8, realm) {
+  const st = await publishStatus(text8, realm);
   if (!st.ok && !statusAddress()) return [await notHeldHere(realm), true];
   if (st.code === 404) return [`${st.body} ${TURNED_GUIDANCE()}`, true];
-  if (st.ok) return [busyLine(text7, realm), false];
+  if (st.ok) return [busyLine(text8, realm), false];
   return [st.body, true];
 }
-function busyLine(text7, realm) {
+function busyLine(text8, realm) {
   const a = S8.accepted.get(statusAddress(realm)?.key ?? "");
-  const line = a?.sent === text7 ? a.doing : text7;
-  const nudge = a?.sent === text7 && a.trimmed ? `; ${trimNudge(a.trimmed)}` : "";
+  const line = a?.sent === text8 ? a.doing : text8;
+  const nudge = a?.sent === text8 && a.trimmed ? `; ${trimNudge(a.trimmed)}` : "";
   return words(STATUS).busyLine(placeLabel(realm), line, nudge);
 }
 function placeLabel(realm) {
@@ -14377,12 +14381,12 @@ function localStatus(msg) {
   if (msg?.method !== "tools/call" || msg?.params?.name !== tool("channel")) return null;
   const a = msg.params?.arguments;
   if (a?.action !== "status") return null;
-  const text7 = typeof a.text === "string" ? a.text : "";
+  const text8 = typeof a.text === "string" ? a.text : "";
   const reply2 = replyTo(msg);
   const realm = typeof a.realm === "string" ? a.realm : "";
   return (async () => {
     await resolveAgainstLed(realm);
-    return reply2(...await statusWord(text7, realm));
+    return reply2(...await statusWord(text8, realm));
   })();
 }
 async function standStatusOnly(msg) {
@@ -14430,17 +14434,17 @@ var S8 = scoped(() => ({
   accepted: /* @__PURE__ */ new Map()
 }));
 var publishedStatus = () => S8.lastPublished;
-async function publishStatus(text7, realm, everyPlace = false) {
+async function publishStatus(text8, realm, everyPlace = false) {
   const addr = statusAddress(realm);
   if (!addr) {
     return { ok: false, body: words(STATUS).notHeld() };
   }
   if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return { ok: false, body: words(STATUS).noSeatId(addr.key) };
-  const st = await publishStatusTo(addr.url, text7, 5e3, everyPlace ? EVERY : addr.standingId);
+  const st = await publishStatusTo(addr.url, text8, 5e3, everyPlace ? EVERY : addr.standingId);
   if (st.ok) {
-    const kept3 = st.doing ?? text7;
-    S8.accepted.set(addr.key, { sent: text7, doing: kept3, trimmed: st.trimmed });
+    const kept3 = st.doing ?? text8;
+    S8.accepted.set(addr.key, { sent: text8, doing: kept3, trimmed: st.trimmed });
     if (addr.key === statusAddress()?.key) S8.lastPublished = kept3;
     rememberStatus(kept3, realm);
   }
@@ -14808,14 +14812,14 @@ function launchWords(out7) {
 async function orcaLaunch(argv2) {
   const r = await run2(argv2, 12e4);
   if (r.code === 0) {
-    const w12 = launchWords(r.out);
+    const w13 = launchWords(r.out);
     return {
-      outcome: w12.submitted ? "ok" : "ambiguous",
-      ...!w12.submitted && { why: "prompt_not_submitted" },
+      outcome: w13.submitted ? "ok" : "ambiguous",
+      ...!w13.submitted && { why: "prompt_not_submitted" },
       handle: launchHandle(r.out),
       runtime: runtimeOf(r.out),
-      ...w12.prompt && { prompt: w12.prompt },
-      ...w12.receipt && { receipt: w12.receipt }
+      ...w13.prompt && { prompt: w13.prompt },
+      ...w13.receipt && { receipt: w13.receipt }
     };
   }
   if (r.code === "timeout") return { outcome: "ambiguous", why: "launch_timeout" };
@@ -14865,8 +14869,8 @@ async function execExited(r) {
     ],
     7e3
   );
-  const v = parse(waited.out), w12 = v.result?.wait;
-  if (waited.code !== 0 || v.ok !== true || v._meta?.runtimeId !== r.runtime || w12?.handle !== r.terminal || w12.condition !== "exit" || w12.satisfied !== true || w12.status !== "exited")
+  const v = parse(waited.out), w13 = v.result?.wait;
+  if (waited.code !== 0 || v.ok !== true || v._meta?.runtimeId !== r.runtime || w13?.handle !== r.terminal || w13.condition !== "exit" || w13.satisfied !== true || w13.status !== "exited")
     return false;
   const after2 = await show();
   return matches(after2) && after2.result?.terminal?.connected === false && after2.result?.terminal?.writable === false;
@@ -15113,7 +15117,7 @@ var runIdentity = (r) => JSON.stringify([
   r.terminal,
   r.runtime,
   r.harness,
-  r.at,
+  r.dsh ? r.wakes ?? 0 : r.at,
   r.exec?.attempt,
   r.exec?.session,
   r.exec?.incarnation,
@@ -15147,6 +15151,7 @@ function mergeRuns(authDir, runs, latest) {
     for (const field of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after2)])) {
       const k = field;
       if (JSON.stringify(before[k]) === JSON.stringify(after2[k])) continue;
+      if (k === "foreign_stop" && row.foreign_stop) continue;
       if (k === "exec" && before.exec && after2.exec && current2.exec) {
         const exec = { ...current2.exec };
         for (const field2 of /* @__PURE__ */ new Set([...Object.keys(before.exec), ...Object.keys(after2.exec)])) {
@@ -15159,8 +15164,10 @@ function mergeRuns(authDir, runs, latest) {
         row.exec = exec;
         continue;
       }
-      if (after2[k] === void 0) delete row[k];
-      else Object.assign(row, { [k]: after2[k] });
+      if (after2[k] === void 0) {
+        if (k === "foreign_stop" && row.foreign_stop) continue;
+        delete row[k];
+      } else Object.assign(row, { [k]: after2[k] });
     }
     const firstSeat = !!(before.exec || before.tree) && !!(after2.exec || after2.tree) && !before.standing_id && after2.standing_id && runIdentity({ ...after2, standing_id: void 0 }) === runIdentity(before);
     if (!firstSeat && runIdentity(after2) !== runIdentity(before)) {
@@ -15424,8 +15431,138 @@ import { join as join31 } from "node:path";
 // js/bridge/orchestra-quench.ts
 import { createHash as createHash9 } from "node:crypto";
 
+// js/bridge/orchestra-session.ts
+import { randomUUID as randomUUID5 } from "node:crypto";
+var ORCHESTRA_SESSION_HEADER = "X-NKS-Session-Id";
+var ORCHESTRA_SESSION_ID = randomUUID5();
+
+// js/bridge/orchestra-case-read.ts
+var LIMIT2 = 200;
+var TIMEOUT_MS = 1e4;
+var historyPath = (room, since) => `/rooms/${encodeURIComponent(room)}/history?since=${since}&limit=${LIMIT2}&advance=false`;
+async function caseGet(base, token, path) {
+  const res = await namedFetch(`${base}${path}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
+    },
+    signal: AbortSignal.timeout(TIMEOUT_MS)
+  });
+  if (res.ok) return res.json();
+  const body = await res.json().catch(() => ({}));
+  if (res.status === 409 && body.errors?.[0]?.rule === "standing_required") {
+    process.stderr.write("case_history_standing_required_under_advance_false\n");
+    throw new Error("api_defect_standing_required");
+  }
+  throw new Error(String(res.status));
+}
+var text3 = (v) => typeof v === "string" && v ? v : null;
+var number3 = (v) => typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : null;
+function entryOf3(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("invalid_entry");
+  const e = v;
+  const n = number3(e.id);
+  const kind2 = text3(e.kind);
+  if (!n || !kind2) throw new Error("invalid_entry");
+  const payload = e.payload;
+  const line = e.line && typeof e.line === "object" && !Array.isArray(e.line) ? e.line : {};
+  const p = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+  return {
+    n,
+    kind: kind2,
+    to_standing_id: text3(e.to_standing_id),
+    to_karta_node_id: text3(e.to_karta_node_id),
+    in_reply_to: number3(e.in_reply_to),
+    author_standing_id: text3(e.author_standing_id),
+    author: text3(e.author),
+    key: text3(line.key),
+    verdict: text3(line.verdict),
+    body_pending: e.body_pending === true,
+    aborted: e.aborted === true,
+    reason: text3(p.reason),
+    cause: text3(p.cause),
+    gone_standing: text3(p.gone_standing)
+  };
+}
+function parseCasePage(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("history_not_page");
+  const page = body;
+  if (!Array.isArray(page.items)) throw new Error("history_not_list");
+  const entries2 = page.items.map(entryOf3);
+  if (typeof page.cursor !== "number" || !Number.isSafeInteger(page.cursor) || page.cursor < 0)
+    throw new Error("invalid_cursor");
+  return { entries: entries2, cursor: page.cursor };
+}
+function parseCaseStatus(body) {
+  const s2 = body?.status;
+  if (s2 === "open" || s2 === "closing") return "open";
+  if (s2 === "closed" || s2 === "abandoned") return "closed";
+  throw new Error("case_status_unknown");
+}
+async function readCaseHistory(base, token, room, since) {
+  if (since !== void 0 && (!Number.isSafeInteger(since) || since < 0))
+    throw new Error("invalid_cursor");
+  let cursor = since ?? 0;
+  const out7 = [];
+  for (; ; ) {
+    const page = parseCasePage(await caseGet(base, token, historyPath(room, cursor)));
+    if (!page.entries.length) return { entries: out7, cursor };
+    if (page.cursor <= cursor) throw new Error("history_stalled");
+    out7.push(...page.entries);
+    cursor = page.cursor;
+  }
+}
+async function readCaseStatus(base, token, room) {
+  return parseCaseStatus(await caseGet(base, token, `/rooms/${encodeURIComponent(room)}`));
+}
+
+// js/bridge/orchestra-dsh-reinvite.ts
+var ownerlessOf = (e, seats2) => e.kind === "invite" && !e.author_standing_id && e.cause === "ownerless" && !!e.gone_standing && seats2.has(e.gone_standing);
+function ownInvite(entries2, seats2) {
+  const own = new Set(seats2);
+  const found = entries2.filter((e) => ownerlessOf(e, own)).at(-1);
+  if (!found) return null;
+  const joined2 = entries2.filter((e) => e.kind === "joined" && e.in_reply_to === found.n);
+  if (joined2.some((e) => !!e.author_standing_id && !own.has(e.author_standing_id)))
+    return { claimed: found.n };
+  return joined2.length ? null : { invite: found.n };
+}
+var SHARE_CLAIMED = "dormant_share_claimed";
+async function pairFor(base, token, r) {
+  const { entries: entries2 } = await readCaseHistory(base, token, r.room, Math.max(0, r.invite - 1));
+  const own = ownInvite(entries2, callSeats(r));
+  if (own && "claimed" in own) return SHARE_CLAIMED;
+  if (own) r.pair = own.invite;
+  return null;
+}
+var signalRun = (realm, room, invite, runs) => runs[runKey(realm, room.toLowerCase(), invite)] ?? runs[runKey(realm, room, invite)] ?? Object.values(runs).find(
+  (r) => r.realm === realm && r.pair === invite && r.room.toLowerCase() === room.toLowerCase()
+) ?? null;
+async function claimedOnPage(base, token, r, page) {
+  const seats2 = callSeats(r);
+  const foreign = page.some(
+    (e) => e.kind === "joined" && e.in_reply_to !== null && !!e.author_standing_id && !seats2.includes(e.author_standing_id)
+  );
+  if (!foreign) return false;
+  const { entries: entries2 } = await readCaseHistory(base, token, r.room, Math.max(0, r.invite - 1));
+  const own = ownInvite(entries2, seats2);
+  return !!own && "claimed" in own;
+}
+var callSeats = (r) => [
+  ...new Set([...r.dormant?.seats ?? [], r.standing_id].filter((s2) => !!s2))
+];
+function dormantShare(source, runs) {
+  if (source.author || source.cause !== "ownerless" || typeof source.gone_standing !== "string")
+    return false;
+  const gone = source.gone_standing;
+  return Object.values(runs).some(
+    (r) => r.realm === source.realm && r.room === source.room && !!r.dormant && r.state !== "ended" && r.state !== "refused" && callSeats(r).includes(gone)
+  );
+}
+
 // js/bridge/orchestra-window.ts
 var RAISE_WINDOW_MS = Number(process.env[envName("ORCHESTRA_RAISE_WINDOW_MS")]) || 15 * 6e4;
+var DORMANT_WINDOW_MS = Number(process.env[envName("ORCHESTRA_DORMANT_WINDOW_MS")]) || 3 * 60 * 6e4;
 var stopLapsed = (r, now2 = Date.now()) => now2 - Date.parse(r.stopping_at ?? r.at) > RAISE_WINDOW_MS;
 
 // js/bridge/orchestra-dsh-proc.ts
@@ -15449,14 +15586,14 @@ async function ours(r) {
   return (await commandOf(d.pid))?.includes(d.model) ?? false;
 }
 function dshEvents(path) {
-  let text7;
+  let text8;
   try {
-    text7 = readFileSync32(path, "utf8");
+    text8 = readFileSync32(path, "utf8");
   } catch {
     return {};
   }
   const out7 = {};
-  for (const line of text7.split("\n")) {
+  for (const line of text8.split("\n")) {
     let e;
     try {
       e = JSON.parse(line);
@@ -15570,7 +15707,7 @@ function settleStops(runs, open, fresh3 = /* @__PURE__ */ new Set(), now2 = Date
 
 // js/bridge/orchestra-quench.ts
 var w2 = () => words(ORCHESTRA);
-var TIMEOUT_MS = 1e4;
+var TIMEOUT_MS2 = 1e4;
 var idOf4 = (v) => {
   if (typeof v === "string" && v) return v;
   const id = v?.id;
@@ -15581,7 +15718,7 @@ function runOf(realm, s2, runs) {
   const invite = Number(sf.invite);
   const room = idOf4(sf.room) ?? idOf4(s2.room);
   if (!Number.isSafeInteger(invite) || !room) return null;
-  return runs[runKey(realm, room.toLowerCase(), invite)] ?? runs[runKey(realm, room, invite)] ?? null;
+  return signalRun(realm, room, invite, runs);
 }
 function foldTape(realm, tape, runs) {
   for (const s2 of tape) {
@@ -15620,7 +15757,7 @@ async function order(base, token, r, key3) {
       // The idle_due's n: the server lays the order only if no newer signal came (#7518).
       ...r.idle_due && r.n !== void 0 ? { if_signal_n: r.n } : {}
     }),
-    signal: AbortSignal.timeout(TIMEOUT_MS)
+    signal: AbortSignal.timeout(TIMEOUT_MS2)
   });
   const body = await res.json().catch(() => ({}));
   return { status: res.status, id: typeof body.id === "string" ? body.id : "" };
@@ -15642,7 +15779,10 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
       if (got.status >= 200 && got.status < 300) {
         r.state = "stopping";
         r.stopping_at = new Date(now2).toISOString();
-        if (got.id) r.order_id = got.id;
+        if (got.id) {
+          r.order_id = got.id;
+          r.orders = [...r.orders ?? [], got.id];
+        }
         said2.push(w2().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
         if (!r.exec && !r.tree) r.state = "ended";
@@ -15658,11 +15798,6 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
   }
   return said2;
 }
-
-// js/bridge/orchestra-session.ts
-import { randomUUID as randomUUID5 } from "node:crypto";
-var ORCHESTRA_SESSION_HEADER = "X-NKS-Session-Id";
-var ORCHESTRA_SESSION_ID = randomUUID5();
 
 // js/bridge/exec-raised.ts
 async function bindExecRaised(authDir, base, token, realms) {
@@ -15708,615 +15843,594 @@ async function bindExecRaised(authDir, base, token, realms) {
   writeOwned(path, JSON.stringify(cursors) + "\n");
 }
 
-// js/bridge/orchestra-foreign.ts
-import { mkdirSync as mkdirSync20, readFileSync as readFileSync34, writeFileSync as writeFileSync18 } from "node:fs";
-import { join as join32 } from "node:path";
-var w3 = () => words(ORCHESTRA);
-var LIMIT2 = 200;
-var MAX_PAGES = 50;
-var OPEN = /* @__PURE__ */ new Set(["issued", "accepted"]);
-var SKEW_MS = 6e4;
-var sinceStop = (r, v) => Date.parse(String(v.issued_at ?? "")) >= Date.parse(r.stopping_at ?? r.at) - SKEW_MS;
-var cursorFile = (authDir) => join32(seamRunDir(authDir), "orchestra-orders.json");
-function readSince(authDir) {
-  try {
-    const n = JSON.parse(readFileSync34(cursorFile(authDir), "utf8")).since;
-    return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : 0;
-  } catch {
-    return 0;
+// js/bridge/orchestra-case-share.ts
+function hasOpenShare(entries2, seats2, karta) {
+  const own = new Set(seats2);
+  const progress = /* @__PURE__ */ new Map();
+  for (const e of entries2) {
+    if (e.kind !== "progress" || !e.author_standing_id || !own.has(e.author_standing_id)) continue;
+    if (!e.key || !e.verdict) throw new Error("invalid_progress_line");
+    const previous = progress.get(e.key);
+    if (!previous || previous.n < e.n) progress.set(e.key, e);
   }
-}
-function writeSince(authDir, since) {
-  mkdirSync20(seamRunDir(authDir), { recursive: true, mode: 448 });
-  writeFileSync18(cursorFile(authDir), JSON.stringify({ since }) + "\n", { mode: 384 });
-}
-async function foreignStops(authDir, base, token, runs) {
-  const said2 = [];
-  const fresh3 = /* @__PURE__ */ new Set();
-  const bySeat = /* @__PURE__ */ new Map();
-  const stopping = /* @__PURE__ */ new Map();
-  let unseated = false;
-  for (const r of Object.values(runs))
-    if (r.state === "launched" || r.state === "raised") {
-      if (r.standing_id) bySeat.set(r.standing_id, r);
-      else unseated = true;
-    } else if (r.state === "stopping" && !r.stop_outcome && (r.exec || r.tree || !stopLapsed(r)))
-      stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
-  const seen = new Set(Object.values(runs).map((r) => r.standing_id));
-  let since = readSince(authDir);
-  let held2;
-  try {
-    for (let n = 0; n < MAX_PAGES; n++) {
-      const res = await namedFetch(`${base}/me/orders?limit=${LIMIT2}&since=${since}`, {
-        headers: { authorization: `Bearer ${token}` },
-        redirect: "error",
-        signal: AbortSignal.timeout(1e4)
-      });
-      if (!res.ok) throw new Error(`http_${res.status}`);
-      const body = await res.json();
-      if (!Array.isArray(body.items)) throw new Error("invalid_items");
-      if (!body.items.length) break;
-      for (const v of body.items) {
-        const seat2 = String(v.standing_id ?? "");
-        const run3 = bySeat.get(seat2);
-        const id = typeof v.id === "string" ? v.id : "";
-        const state2 = String(v.state);
-        const open = OPEN.has(state2);
-        if (!run3 && unseated && seat2 && !seen.has(seat2)) held2 ??= since;
-        const bySeatOnly = stopping.get(`s:${seat2}`);
-        const own = stopping.get(`o:${id}`) ?? (bySeatOnly && sinceStop(bySeatOnly, v) ? bySeatOnly : void 0);
-        if (!run3 && own) {
-          if (open) held2 ??= since;
-          else {
-            own.order_id ??= id;
-            own.stop_outcome = state2;
-          }
-          continue;
-        }
-        if (!run3 || !id || id === run3.order_id) continue;
-        bySeat.delete(seat2);
-        run3.order_id = id;
-        const done = state2 === "stopped" && (!(run3.exec || run3.tree) || run3.closed === "client_exited");
-        run3.state = done ? "ended" : "stopping";
-        if (!done) run3.stopping_at = (/* @__PURE__ */ new Date()).toISOString();
-        if (!open) run3.stop_outcome = state2;
-        if (open) {
-          fresh3.add(run3);
-          held2 ??= since;
-        }
-        said2.push(
-          w3().leadRow(
-            run3.realm,
-            run3.room,
-            run3.invite,
-            open ? "stop_ordered_elsewhere" : done ? "stopped_elsewhere" : `stop_${state2}_elsewhere`
-          )
-        );
-      }
-      const next = body.next_since;
-      if (typeof next !== "number" || !Number.isSafeInteger(next) || next <= since)
-        throw new Error("pagination_stalled");
-      since = next;
+  if ([...progress.values()].some((e) => e.verdict === "partial")) return true;
+  for (const e of entries2) {
+    if (e.kind === "ask") {
+      const toUs = !!e.to_standing_id && own.has(e.to_standing_id) || !!karta && e.to_karta_node_id === karta;
+      const fromUs = !!e.author_standing_id && own.has(e.author_standing_id);
+      if (toUs && !entries2.some(
+        (a) => a.kind === "answer" && a.in_reply_to === e.n && !!a.author_standing_id && own.has(a.author_standing_id)
+      ))
+        return true;
+      if (fromUs && !entries2.some((a) => a.kind === "answer" && a.in_reply_to === e.n)) return true;
     }
-  } catch (e) {
-    said2.push(w3().leadOrdersUnread(e.message));
+    if (e.kind === "invite" && e.to_standing_id && own.has(e.to_standing_id) && !entries2.some((a) => a.kind === "joined" && a.in_reply_to === e.n))
+      return true;
   }
-  writeSince(authDir, held2 ?? since);
-  return { said: said2, fresh: fresh3 };
+  return false;
 }
 
-// js/bridge/orchestra-tree-clean.ts
-import { closeSync as closeSync3, existsSync as existsSync12, fstatSync as fstatSync2, lstatSync as lstatSync8, openSync as openSync3, unlinkSync as unlinkSync19 } from "node:fs";
-import { join as join33 } from "node:path";
-var clientGone = (r) => r.stop_outcome === "stopped" || r.why === "seat_gone_after_exit" || !!r.dsh?.exit && !r.standing_id;
-var over = (r) => r.state === "ended" || r.state === "refused" && !!r.dsh?.exit;
-async function cleanupTree(authDir, runs, key3, execute2 = git2) {
-  const r = runs[key3], t = r.tree;
-  if (!t || t.state === "removed") return null;
-  if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
-  if (!over(r) || !clientGone(r) || r.closed !== "client_exited" || !t.exit)
-    return "tree_client_unverified";
-  const identity2 = runIdentity(r);
-  const current2 = () => {
-    const latest = readRuns(authDir)[key3];
-    return !!latest && runIdentity(latest) === identity2 && over(latest) && clientGone(latest) && latest.closed === "client_exited";
-  };
-  const retain = (why) => {
-    t.state = "retained";
-    t.why = why;
-    if (current2()) writeRuns(authDir, runs);
-    return why;
-  };
-  if (!current2()) return "tree_superseded";
-  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || t.path !== r.worktree || t.path !== join33(t.source, ".worktrees", `orchestra-${t.operation}`) || !OID.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
-    return retain("tree_identity_unverified");
-  let lock;
+// js/bridge/orchestra-dsh-run.ts
+import { spawn as spawn4 } from "node:child_process";
+import { closeSync as closeSync3, openSync as openSync3, writeFileSync as writeFileSync19 } from "node:fs";
+
+// js/bridge/orchestra-dsh.ts
+import { accessSync, constants as constants2, existsSync as existsSync12, mkdirSync as mkdirSync20, statSync as statSync8, writeFileSync as writeFileSync18 } from "node:fs";
+import { homedir as homedir11 } from "node:os";
+import { delimiter, isAbsolute as isAbsolute4, join as join32 } from "node:path";
+var KEYS = ["models", "bin", "patch"];
+function parseDsh(offer) {
+  if (Object.keys(offer).some((k) => !KEYS.includes(k))) return null;
+  const path = (v) => v === void 0 ? null : typeof v === "string" && isAbsolute4(v.trim()) ? v.trim() : void 0;
+  const bin = path(offer.bin), patch = path(offer.patch);
+  if (bin === void 0 || patch === void 0) return null;
+  return { bin, patch };
+}
+var runnable = (p) => {
   try {
-    const common = await gitText(
-      t.source,
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      execute2
-    );
-    if (common !== t.commonDir || JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
-      return retain("tree_identity_unverified");
-    const invalid2 = await treeContent(t, execute2);
-    if (invalid2) return retain(invalid2);
-    if (!current2()) return "tree_superseded";
-    const lockPath = join33(t.identity.gitDir, "HEAD.lock");
-    try {
-      const fd = openSync3(lockPath, "wx", 384);
-      const s2 = fstatSync2(fd);
-      lock = { fd, path: lockPath, dev: s2.dev, ino: s2.ino };
-    } catch {
-      return retain("tree_head_locked");
-    }
+    accessSync(p, constants2.X_OK);
+    return statSync8(p).isFile();
+  } catch {
+    return false;
+  }
+};
+function dshReady(spec) {
+  const bin = spec.bin ? runnable(spec.bin) ? spec.bin : null : (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((d) => join32(d, "dsh")).find(runnable) ?? null;
+  if (!bin) return { code: "dsh_missing" };
+  const patch = spec.patch ?? (DSH_PROFILE ? join32(homedir11(), ".agents", "skills", BRIDGE_SKILL, DSH_PROFILE) : null);
+  if (!patch || !existsSync12(patch) || !statSync8(patch).isFile())
+    return { code: "dsh_patch_missing" };
+  return { bin, patch };
+}
+function modelPatch(model) {
+  const at3 = model.indexOf("/");
+  if (at3 <= 0 || at3 === model.length - 1 || /[\r\n]/.test(model)) return null;
+  return `- id: agent-default-model
+  config:
+    provider: ${JSON.stringify(model.slice(0, at3))}
+    model: ${JSON.stringify(model.slice(at3 + 1))}
+`;
+}
+function dshFiles(authDir, operation) {
+  const dir2 = join32(seamRunDir(authDir), "dsh");
+  return {
+    dir: dir2,
+    model: join32(dir2, `${operation}.model.yml`),
+    events: join32(dir2, `${operation}.events.ndjson`),
+    stderr: join32(dir2, `${operation}.stderr`)
+  };
+}
+function writeModelPatch(path, dir2, text8) {
+  mkdirSync20(dir2, { recursive: true, mode: 448 });
+  writeFileSync18(path, text8, { mode: 384 });
+}
+var dshArgv = (patch, model, brief2, session) => [
+  "headless",
+  "--patch",
+  patch,
+  "--patch",
+  model,
+  ...session ? ["--session-id", session] : [],
+  "--json",
+  brief2
+];
+
+// js/bridge/orchestra-tree-drop.ts
+import { existsSync as existsSync13 } from "node:fs";
+async function dropUnlaunched(authDir, runs, key3, execute2 = git2) {
+  const r = runs[key3], t = r.tree;
+  if (!t || t.state !== "ready" || !t.identity || r.terminal || r.exec)
+    return "tree_drop_unverified";
+  try {
     if (JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
-      return retain("tree_identity_unverified");
+      return "tree_identity_unverified";
     const changed = await treeContent(t, execute2);
-    if (changed) return retain(changed);
-    if (!current2()) return "tree_superseded";
+    if (changed) return changed;
     t.state = "removing";
     writeRuns(authDir, runs);
     await execute2(t.source, ["worktree", "unlock", "--", t.path], 1e4);
     const removed = await execute2(t.source, ["worktree", "remove", "--", t.path], 3e4);
-    if (removed.code !== 0 || existsSync12(t.path) || existsSync12(t.identity.gitDir))
-      return retain("tree_remove_unverified");
-    t.state = "removed";
-    delete t.why;
-    if (!current2()) return "tree_superseded";
-    writeRuns(authDir, runs);
-    return null;
+    if (removed.code !== 0 || existsSync13(t.path) || existsSync13(t.identity.gitDir)) {
+      t.state = "retained";
+      return "tree_remove_unverified";
+    }
   } catch {
-    return retain("tree_cleanup_unverified");
+    return "tree_drop_unverified";
+  }
+  delete runs[key3];
+  writeRuns(authDir, runs);
+  return null;
+}
+
+// js/bridge/orchestra-dsh-run.ts
+var SESSION_MS = Number(process.env[envName("DSH_SESSION_MS")]) || 6e4;
+async function launchDsh(authDir, runs, key3, spec, brief2) {
+  const run3 = runs[key3];
+  const sleptDsh = run3.dsh;
+  const session = sleptDsh?.session;
+  const slept = sleptDsh?.session !== void 0 ? {
+    dormant: run3.dormant,
+    dsh: { ...sleptDsh },
+    at: run3.at,
+    stop_outcome: run3.stop_outcome,
+    order_id: run3.order_id,
+    stopping_at: run3.stopping_at,
+    restop: run3.restop,
+    sat: run3.sat,
+    rooms: run3.rooms,
+    n: run3.n,
+    idle_due: run3.idle_due,
+    treeExit: run3.tree?.exit,
+    closed: run3.closed
+  } : void 0;
+  const fail2 = (why, state2 = "refused", snapshot = true) => {
+    if (slept) {
+      if (snapshot) rememberRuns(authDir, runs);
+      run3.state = "dormant";
+      run3.why = `dormant_wake_${why}`;
+      run3.dormant = slept.dormant;
+      run3.dsh = slept.dsh;
+      run3.at = slept.at;
+      run3.stop_outcome = slept.stop_outcome;
+      run3.order_id = slept.order_id;
+      run3.stopping_at = slept.stopping_at;
+      run3.restop = slept.restop;
+      run3.sat = slept.sat;
+      run3.rooms = slept.rooms;
+      run3.n = slept.n;
+      run3.idle_due = slept.idle_due;
+      run3.closed = slept.closed ?? run3.closed;
+      if (run3.tree) run3.tree.exit = slept.treeExit ?? run3.tree.exit;
+      writeRuns(authDir, runs);
+      return why;
+    }
+    run3.state = state2;
+    run3.why = why;
+    writeRuns(authDir, runs);
+    return why;
+  };
+  const unstarted = async (why) => {
+    if (slept) return fail2(why);
+    const kept3 = await dropUnlaunched(authDir, runs, key3);
+    return kept3 ? fail2(`${why}, ${kept3}`, "ambiguity") : `${why}, retry`;
+  };
+  const ready = dshReady(spec);
+  if ("code" in ready) return unstarted(ready.code);
+  const model = modelPatch(run3.model);
+  if (!model || !run3.tree) return unstarted(model ? "tree_unverified" : "dsh_model_invalid");
+  const files = dshFiles(authDir, run3.tree.operation);
+  writeModelPatch(files.model, files.dir, model);
+  if (session) {
+    run3.wakes = (run3.wakes ?? 0) + 1;
+    writeRuns(authDir, runs);
+    if (run3.tree) run3.tree.exit = void 0;
+    delete run3.closed;
+    run3.at = (/* @__PURE__ */ new Date()).toISOString();
+    delete run3.stop_outcome;
+    delete run3.order_id;
+    delete run3.stopping_at;
+    delete run3.restop;
+    delete run3.why;
+    delete run3.sat;
+    delete run3.rooms;
+    delete run3.n;
+    delete run3.idle_due;
+    writeFileSync19(files.events, "", { mode: 384 });
+  }
+  const env2 = {
+    ...process.env,
+    [SPAWNED_FOR_ENV]: JSON.stringify({ invite: run3.pair ?? run3.invite, room: run3.room })
+  };
+  delete env2[envName("ORCHESTRA")];
+  const out7 = openSync3(files.events, "a", 384), err = openSync3(files.stderr, "a", 384);
+  let child;
+  try {
+    child = spawn4(ready.bin, dshArgv(ready.patch, files.model, brief2, session), {
+      cwd: run3.worktree,
+      env: env2,
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", out7, err]
+    });
   } finally {
-    if (lock) {
-      closeSync3(lock.fd);
-      try {
-        const s2 = lstatSync8(lock.path);
-        if (!s2.isSymbolicLink() && s2.dev === lock.dev && s2.ino === lock.ino) unlinkSync19(lock.path);
-      } catch {
-      }
-    }
+    closeSync3(out7);
+    closeSync3(err);
   }
-}
-async function cleanupEndedTrees(authDir, runs) {
-  for (const [key3, r] of Object.entries(runs))
-    if (r.tree?.state === "ready" && over(r)) {
-      const why = await cleanupTree(authDir, runs, key3);
-      if (why) r.why = why;
-    }
-}
-
-// js/bridge/exec-pending.ts
-function execPending(authDir) {
-  try {
-    return Object.values(readRuns(authDir)).some(
-      (r) => !!(r.exec || r.tree) && LIVE.includes(r.state) || (r.state === "ended" || r.state === "refused" && !!r.dsh?.exit) && r.tree?.state === "ready"
-    );
-  } catch {
-    return true;
-  }
-}
-
-// js/bridge/exec-exit.ts
-var exitClientId = (r) => `orchestra-${createHash10("sha256").update(`${runIdentity(r)}|client_exited`).digest("hex").slice(0, 32)}`;
-async function observeExec(authDir, base, token) {
-  let runs = readRuns(authDir);
-  for (const [key3, r] of Object.entries(runs)) {
-    if (!(r.exec || r.tree) || !LIVE.includes(r.state)) continue;
-    if (r.exec) importAttempt(r, authDir);
-    if (r.exec?.session && !execBound(r, authDir)) {
-      r.state = "ambiguity";
-      r.why = "exec_receipt_binding_unverified";
+  const started = await new Promise((resolve15) => {
+    child.once("spawn", () => resolve15(child.pid ?? null));
+    child.once("error", () => resolve15(null));
+  });
+  if (!started) return unstarted("dsh_spawn_failed");
+  children.add(started);
+  child.once("exit", (code2, signal) => {
+    children.delete(started);
+    exits.set(started, code2 !== null ? String(code2) : `${signal}`);
+  });
+  child.unref();
+  run3.dsh = {
+    pid: started,
+    events: files.events,
+    model: files.model,
+    ...session ? { session } : {}
+  };
+  run3.state = "launched";
+  writeRuns(authDir, runs);
+  for (const until = Date.now() + SESSION_MS; Date.now() < until; ) {
+    const seen = dshEvents(files.events);
+    if (seen.session) {
+      run3.dsh.session = seen.session;
       writeRuns(authDir, runs);
-      continue;
+      return "launched";
     }
+    const exit = await dshExit(run3);
+    if (exit) {
+      rememberRuns(authDir, runs);
+      run3.dsh.exit = exit;
+      run3.closed = "client_exited";
+      run3.tree.exit = (/* @__PURE__ */ new Date()).toISOString();
+      return fail2(`dsh_exit_${exit}`, "refused", false);
+    }
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  await dshTerminate(run3, "no_session");
+  if (slept && !exits.has(run3.dsh.pid)) {
+    run3.state = "launched";
+    run3.why = "dsh_no_session";
     writeRuns(authDir, runs);
-    const identity2 = runIdentity(r);
-    if (!(r.exec?.exit || r.tree?.exit) && (r.dsh ? await observeDsh(r) : await execExited(r))) {
-      const latest = readRuns(authDir)[key3];
-      if (!latest || runIdentity(latest) !== identity2) continue;
-      if (r.exec) r.exec.exit = (/* @__PURE__ */ new Date()).toISOString();
-      if (r.tree) r.tree.exit = (/* @__PURE__ */ new Date()).toISOString();
-      r.closed = "client_exited";
-      writeRuns(authDir, runs);
-    }
+    return "dsh_no_session";
   }
-  await cleanupEndedTrees(authDir, readRuns(authDir));
-  if (!base || !token) return;
-  runs = readRuns(authDir);
-  const realms = [
-    ...new Set(
-      Object.values(runs).filter((r) => (r.exec || r.tree) && LIVE.includes(r.state)).map((r) => r.realm)
-    )
-  ];
-  try {
-    await bindExecRaised(authDir, base, token, realms);
-    const latest = readRuns(authDir);
-    await foreignStops(authDir, base, token, latest);
-    writeRuns(authDir, latest);
-    await finishExits(authDir, base, token);
-    await cleanupEndedTrees(authDir, readRuns(authDir));
-  } catch {
-    process.stderr.write("exec_observer_graph_unreadable\n");
-  }
+  return fail2("dsh_no_session", "launched");
 }
-var ruleOf2 = (b) => b.errors?.[0]?.rule;
-var ownProcess = (r) => !!r.tree && !r.exec && (r.harness === "opencode" || !!r.dsh);
-async function finishExits(authDir, base, token) {
-  const runs = readRuns(authDir);
-  for (const [key3, r] of Object.entries(runs)) {
-    if (endDshUnseated(r, LIVE.includes(r.state))) {
-      writeRuns(authDir, runs);
-      await cleanupEndedTrees(authDir, runs);
-      continue;
+
+// js/bridge/orchestra-dsh-wake.ts
+function wakesBy(seats2, karta, asks, entries2) {
+  const pageAsks = new Map(
+    entries2.filter((e) => e.kind === "ask" && e.author_standing_id).map((e) => [e.n, e.author_standing_id])
+  );
+  return (e) => {
+    if (e.author_standing_id && seats2.has(e.author_standing_id)) return false;
+    if ((e.kind === "said" || e.kind === "ask") && !!e.to_standing_id && seats2.has(e.to_standing_id))
+      return true;
+    if (e.kind === "ask" && !!karta && e.to_karta_node_id === karta) return true;
+    if (e.kind === "answer" && e.in_reply_to !== null) {
+      const author = pageAsks.get(e.in_reply_to) ?? asks[String(e.in_reply_to)];
+      return !!author && seats2.has(author);
     }
-    if (!(r.exec?.exit || r.tree?.exit) || !r.standing_id || !LIVE.includes(r.state) || r.exec && !execBound(r, authDir))
-      continue;
-    if (r.stop_outcome === "stopped") {
-      r.state = "ended";
-      writeRuns(authDir, runs);
-      await cleanupEndedTrees(authDir, runs);
-      continue;
-    }
-    if (r.stop_outcome === "failed" && ownProcess(r) && r.closed === "client_exited" && !r.restop) {
-      r.restop = true;
-      delete r.order_id;
-      delete r.stop_outcome;
-    }
-    const before = runIdentity(r);
-    if (r.order_id) continue;
+    return false;
+  };
+}
+function entryCursor(entries2, wakes, last, floor) {
+  const cursor = Math.max(last, floor);
+  const pending2 = entries2.find(
+    (e) => e.n > floor && e.n <= cursor && e.body_pending && !e.aborted && wakes(e)
+  )?.n;
+  if (pending2 === void 0) return { cursor, seen: [] };
+  const seen = entries2.filter((e) => e.n > pending2 && e.n <= cursor && !e.body_pending && wakes(e)).map((e) => e.n);
+  return { cursor: pending2 - 1, seen };
+}
+
+// js/bridge/orchestra-raise-gates.ts
+import { existsSync as existsSync14, statSync as statSync9 } from "node:fs";
+
+// js/shared/cover.ts
+import { readFileSync as readFileSync34 } from "node:fs";
+import { join as join33 } from "node:path";
+
+// js/shared/coverblock.ts
+var FIELDS = ["graph", "holon", "agent_role", "contract", "stamp"];
+var unquote = (v) => {
+  const t = v.trim();
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
+    return t.slice(1, -1).replace(/''/g, "'");
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
     try {
-      const latest = readRuns(authDir)[key3];
-      if (!latest || runIdentity(latest) !== before) continue;
-      const seat2 = r.standing_id;
-      const stop = (reason_code) => namedFetch(`${base}/standings/${encodeURIComponent(seat2)}/stop`, {
-        method: "POST",
-        redirect: "error",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "x-nks-realm": r.realm,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({ reason_code, client_id: exitClientId(r) }),
-        signal: AbortSignal.timeout(1e4)
-      });
-      let res = await stop("client_exited");
-      let body = await res.json().catch(() => ({}));
-      if (res.status === 422 && ruleOf2(body) === "stop_reason_unknown") {
-        res = await stop("other");
-        body = await res.json().catch(() => ({}));
-      }
-      if (res.ok && typeof body.id === "string" && body.id) {
-        r.order_id = body.id;
-        r.state = "stopping";
-        r.stopping_at = (/* @__PURE__ */ new Date()).toISOString();
-      } else if (res.status === 410 && ownProcess(r)) {
-        r.state = "ended";
-        r.why = "seat_gone_after_exit";
-      } else
-        r.why = res.status === 410 ? "exec_suppression_unverified" : `exec_stop_unconfirmed_${res.status}`;
+      return String(JSON.parse(t));
     } catch {
-      r.why = "exec_stop_unknown";
-    }
-    writeRuns(authDir, runs);
-    if (r.state === "ended") await cleanupEndedTrees(authDir, runs);
-  }
-}
-
-// js/bridge/demand-rows.ts
-function object(v) {
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("invalid_object");
-  return v;
-}
-function text3(v) {
-  return typeof v === "string" && v.trim() ? v.trim() : null;
-}
-function required(v) {
-  const s2 = text3(v);
-  if (!s2) throw new Error("missing_identifier");
-  return s2;
-}
-function seq2(v) {
-  if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0)
-    throw new Error("invalid_sequence");
-  return v;
-}
-function startRow(v, realm) {
-  const x = object(v);
-  const p = x.payload === void 0 ? {} : object(x.payload);
-  const h = p.holon == null ? {} : object(p.holon);
-  const a = x.attrs == null ? {} : object(x.attrs);
-  return {
-    realm,
-    room: required(x.room_id),
-    invite: seq2(x.entry_id),
-    karta: seq2(x.karta_seq),
-    holon: typeof h.seq === "number" ? h.seq : null,
-    repository: text3(h.repository),
-    model: a.model == null ? null : text3(a.model) ?? "",
-    harness: a.harness == null ? null : text3(a.harness) ?? "",
-    launcher: a.launcher == null ? null : text3(a.launcher) ?? "",
-    author: text3(x.author)
-  };
-}
-function openOrder(v) {
-  const x = object(v);
-  return { order_id: required(x.id), standing_id: required(x.standing_id) };
-}
-function stopRow(v, realms) {
-  const x = object(v);
-  const realm = required(x.realm);
-  if (!realms.includes(realm)) return null;
-  if (x.state !== "issued" && x.state !== "accepted") throw new Error("invalid_order_state");
-  return {
-    order_id: required(x.id),
-    standing_id: required(x.standing_id),
-    realm,
-    karta: seq2(x.karta_seq),
-    standing: text3(x.standing),
-    repository: text3(x.repository),
-    state: x.state,
-    reason_code: text3(x.reason_code),
-    answer_by: text3(x.answer_by)
-  };
-}
-
-// js/bridge/realmindex.ts
-function realmIndexOf(listed) {
-  const byShort = /* @__PURE__ */ new Map();
-  const bySlug = /* @__PURE__ */ new Map();
-  for (const it of listed) {
-    const x = it;
-    if (typeof x.slug !== "string" || typeof x.owner_handle !== "string") continue;
-    const canon2 = `@${x.owner_handle}/${x.slug}`;
-    if (typeof x.short_id === "number") byShort.set(x.short_id, canon2);
-    bySlug.set(x.slug, [...bySlug.get(x.slug) ?? [], canon2]);
-  }
-  return { byShort, bySlug };
-}
-function canonIn(index, name2) {
-  const t = name2.trim();
-  const n = /^r(\d+)$/i.exec(t);
-  if (n) return index.byShort.get(Number(n[1])) ?? null;
-  const hits = index.bySlug.get(t) ?? [];
-  return hits.length === 1 ? hits[0] : null;
-}
-
-// js/bridge/orchestra-demands.ts
-var LIMIT3 = 200;
-var MAX_PAGES2 = 50;
-async function get(base, token, path, control = false) {
-  const r = await namedFetch(`${base}${path}`, {
-    headers: {
-      authorization: `Bearer ${token}`,
-      ...!control ? { [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID } : {}
-    },
-    redirect: "error",
-    signal: AbortSignal.timeout(1e4)
-  });
-  if (!r.ok) throw new Error(`http_${r.status}`);
-  return object(await r.json());
-}
-function items(body) {
-  if (!Array.isArray(body.items)) throw new Error("invalid_items");
-  return body.items;
-}
-function code(e) {
-  const s2 = e instanceof Error ? e.message : "";
-  return /^(http_\d{3}|invalid_\w+|missing_identifier|pagination_\w+)$/.test(s2) ? s2 : "read_failed";
-}
-async function readDemands(base, token, requested, boundary, gone, owned, invited) {
-  const realms = [...new Set(requested.map((s2) => s2.trim()))];
-  const result = {
-    schema_version: 1,
-    observed_at: (/* @__PURE__ */ new Date()).toISOString(),
-    scope: { realms, orders: "own_account" },
-    start: [],
-    stop: [],
-    complete: true,
-    errors: []
-  };
-  const error = (source, why, realm) => {
-    result.complete = false;
-    result.errors.push({ source, ...realm ? { realm } : {}, code: why });
-  };
-  if (realms.some((r) => !/^@[^/\s]+\/[^/\s]+$/.test(r))) {
-    error("scope", "invalid_realm");
-    return result;
-  }
-  let canonicalBoundary = boundary;
-  if (realms.some((r) => !boundary.includes(r)) && boundary.some((r) => /^r\d+$/i.test(r.trim()))) {
-    if (!base || !token) {
-      error("connection", "unavailable");
-      return result;
-    }
-    try {
-      const index = realmIndexOf(items(await get(base, token, `/realms?limit=${LIMIT3}`)));
-      canonicalBoundary = boundary.map((r) => {
-        if (!/^r\d+$/i.test(r.trim())) return r;
-        const canonical = canonIn(index, r);
-        if (!canonical) throw new Error("invalid_boundary");
-        return canonical;
-      });
-    } catch (e) {
-      error("scope", code(e));
-      return result;
+      return t.slice(1, -1);
     }
   }
-  if (!realms.length || realms.some((r) => !r || !canonicalBoundary.includes(r))) {
-    error("scope", "outside_boundary");
-    return result;
-  }
-  if (!base || !token) {
-    error("connection", "unavailable");
-    return result;
-  }
-  if (invited && (invited.base !== base || invited.token !== token || invited.responses.length !== realms.length || realms.some((realm) => invited.responses.filter((r) => r.realm === realm).length !== 1))) {
-    error("invites", "invalid_snapshot");
-    return result;
-  }
-  for (const realm of realms) {
-    if (gone?.gone) {
-      error("caller", "gone");
-      return result;
-    }
-    try {
-      const body = invited ? object(invited.responses.find((r) => r.realm === realm)?.body) : await get(base, token, `/realms/${encodeURIComponent(realm)}/invites`);
-      const rows = items(body).map((v) => startRow(v, realm));
-      result.start.push(...rows);
-    } catch (e) {
-      error("invites", code(e), realm);
-    }
-  }
-  let since = 0;
-  try {
-    for (let n = 0; n < MAX_PAGES2; n++) {
-      if (gone?.gone) throw new Error("caller_gone");
-      const q = `open=true&limit=${LIMIT3}${since ? `&since=${since}` : ""}`;
-      const body = await get(base, token, `/me/orders?${q}`, true);
-      const rows = items(body);
-      if (!rows.length) return result;
-      const projected = rows.map((v) => stopRow(v, realms)).filter((v) => v !== null);
-      owned?.push(...rows.map(openOrder));
-      result.stop.push(...projected);
-      const next = body.next_since;
-      if (typeof next !== "number" || !Number.isSafeInteger(next) || next <= since)
-        throw new Error("pagination_stalled");
-      since = next;
-    }
-    throw new Error("pagination_limit");
-  } catch (e) {
-    error("orders", code(e));
-  }
-  return result;
-}
-
-// js/bridge/orchestra-door.ts
-import { chmodSync as chmodSync3, unlinkSync as unlinkSync20 } from "node:fs";
-import { connect as connect4, createServer as createServer4 } from "node:net";
-var w4 = () => words(ORCHESTRA);
-var OPS = ["on", "off", "status", "step", "plan", "demands"];
-var isOrchestraOp = (op) => OPS.includes(op);
-async function listenOrchestraDoor(authDir, serve) {
-  const path = orchestraDoorPath(authDir);
-  if (process.platform !== "win32") {
-    try {
-      unlinkSync20(path);
-    } catch {
-    }
-  }
-  const server = createServer4((socket) => {
-    let buf = "";
-    socket.on("error", () => {
-    });
-    socket.on("data", (chunk) => {
-      buf += chunk;
-      const nl = buf.indexOf("\n");
-      if (nl < 0) return;
-      const line = buf.slice(0, nl);
-      buf = "";
-      let msg = {};
-      try {
-        msg = JSON.parse(line);
-      } catch {
-      }
-      const op = typeof msg.op === "string" ? msg.op : "";
-      const realms = Array.isArray(msg.realms) ? msg.realms.filter((x) => typeof x === "string") : [];
-      if (!isOrchestraOp(op)) {
-        socket.end(JSON.stringify({ ok: false, said: w4().unknownOp(op) }) + "\n");
-        return;
-      }
-      const gone = { gone: false };
-      socket.on("close", () => {
-        gone.gone = true;
-      });
-      void serve(op, realms, gone, {
-        launcher: msg.launcher,
-        consent: msg.consent === true,
-        only: msg.only
-      }).then((a) => socket.end(JSON.stringify(a) + "\n")).catch(
-        (e) => socket.end(JSON.stringify({ ok: false, said: w4().doorError(e.message) }) + "\n")
-      );
-    });
-  });
-  await new Promise((resolve15, reject) => {
-    server.once("error", reject);
-    server.listen(path, () => resolve15());
-  });
-  if (process.platform !== "win32") chmodSync3(path, 384);
-  return server;
-}
-function orchestraAsk(authDir, op, realms, timeoutMs = 5e3, extra = {}) {
-  return new Promise((resolve15) => {
-    let settled2 = false;
-    const done = (a) => {
-      if (settled2) return;
-      settled2 = true;
-      socket.destroy();
-      resolve15(a);
-    };
-    const socket = connect4(orchestraDoorPath(authDir, false));
-    socket.setTimeout(timeoutMs, () => done({ ok: false, said: w4().doorSilent() }));
-    socket.on("error", () => done({ ok: false, said: w4().noDaemon() }));
-    socket.on("connect", () => socket.write(JSON.stringify({ op, realms, ...extra }) + "\n"));
-    let buf = "";
-    socket.on("data", (c) => {
-      buf += c;
-      const nl = buf.indexOf("\n");
-      if (nl < 0) return;
-      try {
-        done(JSON.parse(buf.slice(0, nl)));
-      } catch {
-        done({ ok: false, said: w4().doorSilent() });
-      }
-    });
-  });
-}
-
-// js/bridge/orchestra-flag.ts
-import { mkdirSync as mkdirSync21, readFileSync as readFileSync35, writeFileSync as writeFileSync19 } from "node:fs";
-import { join as join34 } from "node:path";
-var ORCHESTRA_ENV = envName("ORCHESTRA");
-var envAdmitted = () => {
-  const v = process.env[ORCHESTRA_ENV]?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  return t;
 };
-var flagFile = (authDir) => join34(seamRunDir(authDir), "orchestra.json");
-function readOrchestraFlag(authDir) {
+var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
+var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
+var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
+var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
+var bare2 = (v) => unquote(
+  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
+);
+function fences(text8) {
+  const lines = text8.replace(/^\uFEFF/, "").split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  return end < 0 ? null : { lines, end };
+}
+function frontMatter(text8) {
+  const f = fences(text8);
+  if (!f) return null;
+  const raw = /* @__PURE__ */ new Map();
+  let last = null;
+  for (const line of f.lines.slice(1, f.end)) {
+    const kv = PAIR.exec(line);
+    if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
+    else if (last !== null && /^\s+[^\s#]/.test(line))
+      raw.set(last, `${raw.get(last)}
+${line.trim()}`);
+  }
+  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
+}
+function coverBlocks(text8) {
+  const blocks = /* @__PURE__ */ new Map();
+  const f = fences(text8);
+  let open = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    if (/^\s*(#|$)/.test(line)) continue;
+    const top = TOP.exec(line);
+    const child = open && CHILD.exec(line);
+    if (top) blocks.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
+    else if (open && child) open.set(unquote(child[1]), bare2(child[2] ?? ""));
+    else open = null;
+  }
+  return blocks;
+}
+function repeatedKeys(text8) {
+  const f = fences(text8);
+  const [seen, twice] = [/* @__PURE__ */ new Set(), /* @__PURE__ */ new Set()];
+  let block = null;
+  for (const line of f ? f.lines.slice(1, f.end) : []) {
+    const kv = PAIR.exec(line);
+    const at3 = line.search(/\S/);
+    if (!kv || line[at3] === "-") continue;
+    const name2 = unquote(kv[1]);
+    if (at3 === 0) block = TOP.test(line) ? { root: name2, at: -1 } : null;
+    else if (!block || block.at >= 0 && block.at !== at3) continue;
+    else block.at = at3;
+    const key3 = at3 === 0 ? name2 : `${block?.root}.${name2}`;
+    (seen.has(key3) ? twice : seen).add(key3);
+  }
+  return [...twice];
+}
+var coverBlock = (text8, root) => coverBlocks(text8).get(root) ?? null;
+var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
+var foreignBlock = (text8, root) => [...coverBlocks(text8)].some(([k, b]) => k !== root && b.has("contract"));
+var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
+function ritualsOf(block) {
+  const field = block?.get("rituals");
+  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
+  const names2 = field.split(/\s+/).filter(Boolean);
+  const known2 = (n) => RITUALS2.includes(n);
+  return { on: new Set(names2.filter(known2)), unknown: names2.filter((n) => !known2(n)) };
+}
+
+// js/shared/graphslot.ts
+var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
+var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
+var FRAME = String.raw`[\s\x60'"]*`;
+var HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
+var ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
+var PROSE = new RegExp("^[—–\\-:.(]*\\s*(?!r\\d)\\p{L}", "u");
+var esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var listing = (joins) => new RegExp(`^(?:[\\s\`'",;/+&|]${joins.map((j) => `|${esc(j)}(?=[\\s\`'"])`).join("")})*`, "u");
+var anyIn = (t) => [...t.matchAll(ANY)].map((m) => m[0]);
+function graphOfSlot(value, joins) {
+  const [line = "", ...more] = value.split("\n");
+  const list3 = listing(joins);
+  const heads = [];
+  let rest2 = line.replace(new RegExp(`^${FRAME}`), "");
+  for (let head = HEAD.exec(rest2); head; head = HEAD.exec(rest2)) {
+    heads.push(head.slice(1).filter((x) => !!x));
+    rest2 = rest2.slice(head[0].length);
+    rest2 = rest2.slice((list3.exec(rest2)?.[0] ?? "").length);
+  }
+  if (!heads.length) return null;
+  const pair = [...new Set(heads.flat())];
+  const slugs = pair.filter((n) => n.startsWith("@"));
+  const doubt = rest2 !== "" && !PROSE.test(rest2) ? anyIn(rest2) : [];
+  const after2 = anyIn(more.join("\n"));
+  const apart = heads.some((h) => !h.some((a) => heads[0]?.includes(a)));
+  const strange = doubt.some((a) => !pair.includes(a)) || after2.length > 0;
+  if (slugs.length > 1 || pair.length - slugs.length > 1 || apart || strange)
+    return { many: [.../* @__PURE__ */ new Set([...pair, ...doubt, ...after2])] };
+  return { realm: slugs[0] ?? pair[0] };
+}
+
+// js/shared/cover.ts
+var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
+function stampOf2(text8, cover = COVER) {
+  const block = coverBlock(text8, cover.root);
+  if (block && stamped(block) || Object.values(cover.forms).some((f) => f.stamp.test(text8)))
+    return "own";
+  if (block) return null;
+  return foreignBlock(text8, cover.root) || cover.stampShape.test(text8) ? "foreign" : null;
+}
+function hasCover(text8, cover = COVER) {
+  if (coverBlock(text8, cover.root)) return true;
+  const pairs = frontMatter(text8);
+  return !!pairs && formsIn(pairs, cover).length > 0;
+}
+function formOf2(pairs, cover = COVER) {
+  const W4 = words(ROOT_SEAT);
+  const listed = (keys) => keys.map((k) => `'${k}'`).join(", ");
+  const found = formsIn(pairs, cover);
+  if (found.length > 1)
+    return { why: W4.manyForms(cover.file, listed(found.map(([, f]) => f.graph))) };
+  const [lang2, form] = found[0] ?? [];
+  const all2 = [cover.root, ...Object.values(cover.forms).map((f) => f.graph)];
+  if (!lang2 || !form) return { why: W4.noForm(cover.file, listed(all2)) };
+  return { lang: lang2, form };
+}
+var LEAD2 = /^[\s`'"<]*/;
+var esc2 = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var roleRef = (q, flags = "") => new RegExp(
+  `${flags.includes("g") ? "" : "^"}#(\\d+)\\s*${esc2(q[0])}[\\s\\S]*?${esc2(q[1])}`,
+  flags
+);
+var distinct = (re, v) => [
+  ...new Set([...v.matchAll(re)].map((m) => m[1]))
+];
+function seatOfBlock(block, cover = COVER) {
+  const W4 = words(ROOT_SEAT);
+  const key3 = (f) => `${cover.root}.${f}`;
+  const graph = block.get("graph")?.trim();
+  if (!graph) return { why: W4.noKey(cover.file, key3("graph")) };
+  if (!/^(?:r\d+|@[\w.-]+\/[\w.-]*\w)$/.test(graph))
+    return { why: W4.noGraph(cover.file, key3("graph")) };
+  const role = block.get("agent_role")?.trim();
+  if (!role) return { why: W4.noKey(cover.file, key3("agent_role")) };
+  if (!/^\d+$/.test(role)) return { why: W4.notNumber(cover.file, key3("agent_role")) };
+  return { realm: graph, karta: role };
+}
+function seatOfPairs(pairs, cover = COVER) {
+  const W4 = words(ROOT_SEAT);
+  const of = formOf2(pairs, cover);
+  if ("why" in of) return of;
+  const keys = of.form;
+  const graph = pairs.get(keys.graph)?.trim();
+  if (!graph) return { why: W4.noKey(cover.file, keys.graph) };
+  const role = pairs.get(keys.role)?.trim();
+  if (!role) return { why: W4.noKey(cover.file, keys.role) };
+  const g = graphOfSlot(graph.replace(LEAD2, ""), keys.graphJoins ?? []);
+  if (!g) return { why: W4.noGraph(cover.file, keys.graph) };
+  if ("many" in g) return { why: W4.manyGraphs(cover.file, keys.graph, g.many.join(", ")) };
+  const r = role.replace(LEAD2, "");
+  const roles = distinct(roleRef(keys.roleQuotes, "g"), r);
+  if (roles.length > 1)
+    return { why: W4.manyRoles(cover.file, keys.role, roles.map((n) => `#${n}`).join(", ")) };
+  const first2 = roleRef(keys.roleQuotes).exec(r);
+  if (!first2)
+    return {
+      why: W4.noRoleRef(cover.file, keys.role, `#N ${keys.roleQuotes[0]}…${keys.roleQuotes[1]}`)
+    };
+  return { realm: g.realm, karta: first2[1] };
+}
+function readCover(dir2, cover = COVER) {
+  let text8;
   try {
-    const f = JSON.parse(readFileSync35(flagFile(authDir), "utf8"));
-    if (f.on !== true && f.on !== false) return null;
-    if (!Array.isArray(f.realms) || f.realms.some((x) => typeof x !== "string")) return null;
-    const c = f.consent;
-    const consent = f.on && c?.by === "terminal" && typeof c.at === "string" ? { by: "terminal", at: c.at } : void 0;
-    return { on: f.on, realms: f.realms, ...consent ? { consent } : {} };
+    text8 = readFileSync34(join33(dir2, cover.file), "utf8");
   } catch {
     return null;
   }
+  if (stampOf2(text8, cover) === "foreign") return { foreign: true };
+  const block = coverBlock(text8, cover.root);
+  if (block) return seatOfBlock(block, cover);
+  const pairs = frontMatter(text8);
+  if (!pairs) return { why: words(ROOT_SEAT).noFrontmatter(cover.file) };
+  return seatOfPairs(pairs, cover);
 }
-function writeOrchestraFlag(authDir, flag) {
-  mkdirSync21(seamRunDir(authDir), { recursive: true, mode: 448 });
-  const { on, realms, consent } = flag;
-  writeFileSync19(
-    flagFile(authDir),
-    JSON.stringify({ on, realms, ...consent ? { consent } : {} }) + "\n",
-    {
-      mode: 384
+
+// js/bridge/orchestra-raise-gates.ts
+var homeOf = (own, realm, karta) => own.homes?.[`${realm}#${karta}`];
+function homeLine(own, r) {
+  if (!homeOf(own, r.realm, r.karta)) return "";
+  return `${SPAWN_LINE} ${JSON.stringify({ invite: r.invite, room: r.room, karta: r.karta })} `;
+}
+function checkoutFor(own, repository, orca, home) {
+  const named2 = home ?? own.checkouts[repository];
+  const got = named2 ? { path: named2 } : orca(repository);
+  if ("code" in got) return got;
+  if (!existsSync14(got.path) || !statSync9(got.path).isDirectory())
+    return { code: "checkout_absent" };
+  return got.path;
+}
+async function coverRefusal(worktree, realm, karta, canon2, home = false) {
+  const c = readCover(worktree);
+  if (!c || "why" in c || "foreign" in c) return "checkout_uncovered";
+  if (!home && Number(c.karta) !== karta) return "checkout_other_seat";
+  const graph = /^r\d+$/i.test(c.realm) ? await canon2(c.realm) : c.realm;
+  if (!graph) return "checkout_cover_unresolved";
+  return graph === realm ? null : "checkout_other_seat";
+}
+
+// js/bridge/exec-spec.ts
+var object = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var text4 = (v) => typeof v === "string" && v.length > 0 && v === v.trim() && ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
+function parseExec(v, models) {
+  if (!object(v) || Object.keys(v).some((k) => !["server", "modelRefs"].includes(k))) return null;
+  if (!text4(v.server) || !object(v.modelRefs)) return null;
+  try {
+    const u = new URL(v.server);
+    if (u.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(u.hostname) || u.username || u.password || u.search || u.hash || u.pathname !== "/")
+      return null;
+  } catch {
+    return null;
+  }
+  const refs = {};
+  for (const [token, ref] of Object.entries(v.modelRefs)) {
+    if (!models.includes(token) || !object(ref)) return null;
+    if (Object.keys(ref).some((k) => !["providerID", "id", "variant"].includes(k))) return null;
+    if (!text4(ref.providerID) || !text4(ref.id) || ref.variant !== void 0 && !text4(ref.variant))
+      return null;
+    Object.defineProperty(refs, token, {
+      enumerable: true,
+      value: {
+        providerID: ref.providerID,
+        id: ref.id,
+        ...ref.variant === void 0 ? {} : { variant: ref.variant }
+      }
+    });
+  }
+  if (!models.every((m) => Object.hasOwn(refs, m))) return null;
+  return { server: v.server, modelRefs: refs };
+}
+
+// js/bridge/orchestra-launcher-types.ts
+var HARNESS_ADAPTER = { opencode: "orca", dsh: "bridge" };
+
+// js/bridge/orchestra-harnesses.ts
+var str2 = (v) => typeof v === "string" && v.trim() !== "";
+function parseHarnesses(h, adapter) {
+  if (!h || typeof h !== "object" || Array.isArray(h)) return { code: "harnesses_missing" };
+  const harnesses = {};
+  for (const [name2, o] of Object.entries(h)) {
+    const x = o ?? {};
+    if (!Array.isArray(x.models) || !x.models.every(str2)) return { code: "harness_invalid" };
+    harnesses[name2] = { models: x.models.map((m) => m.trim()) };
+    if (HARNESS_ADAPTER[name2] && HARNESS_ADAPTER[name2] !== adapter) continue;
+    if (name2 === "dsh") {
+      const dsh = parseDsh(x);
+      if (!dsh) return { code: "dsh_invalid" };
+      harnesses[name2].dsh = dsh;
+    } else if (Object.hasOwn(x, "exec")) {
+      const exec = name2 === "opencode" ? parseExec(x.exec, harnesses[name2].models) : null;
+      if (!exec) return { code: "exec_invalid" };
+      harnesses[name2].exec = exec;
     }
-  );
+  }
+  return { offers: harnesses };
 }
-var orchestraAdmitted = (authDir) => envAdmitted() || !!readOrchestraFlag(authDir)?.consent;
+function harnessRefusal(adapter, harness) {
+  const own = HARNESS_ADAPTER[harness];
+  return !own ? "harness_unsupported" : own !== adapter ? "harness_adapter_mismatch" : null;
+}
 
 // js/bridge/orchestra-launchers.ts
 import { hostname as hostname3 } from "node:os";
 import { isAbsolute as isAbsolute6 } from "node:path";
 
 // js/shared/mcpsession.ts
-var TIMEOUT_MS2 = 8e3;
+var TIMEOUT_MS3 = 8e3;
 var PROTOCOL = "2025-06-18";
-function answers(text7) {
-  const t = text7.trim();
+function answers(text8) {
+  const t = text8.trim();
   if (t.startsWith("{")) return [JSON.parse(t)];
   return t.split(/\r?\n/).filter((l) => l.startsWith("data:")).flatMap((l) => {
     try {
@@ -16340,7 +16454,7 @@ function mcpSession(url, token, client = "bridge") {
         ...sid ? { "mcp-session-id": sid } : {}
       },
       body: JSON.stringify({ jsonrpc: "2.0", ...body }),
-      signal: AbortSignal.timeout(TIMEOUT_MS2)
+      signal: AbortSignal.timeout(TIMEOUT_MS3)
     });
     if (!res.ok) throw new Error(String(res.status));
     sid = res.headers.get("mcp-session-id") ?? sid;
@@ -16366,7 +16480,7 @@ function mcpSession(url, token, client = "bridge") {
     close: async () => {
       if (!sid) return;
       const headers2 = { authorization: `Bearer ${token}`, "mcp-session-id": sid };
-      await namedFetch(url, { method: "DELETE", headers: headers2, signal: AbortSignal.timeout(TIMEOUT_MS2) }).then((r) => r.body?.cancel()).catch(() => {
+      await namedFetch(url, { method: "DELETE", headers: headers2, signal: AbortSignal.timeout(TIMEOUT_MS3) }).then((r) => r.body?.cancel()).catch(() => {
       });
     }
   };
@@ -16387,9 +16501,9 @@ async function nodeBody(call, look, realm, seq4) {
 }
 
 // js/bridge/orchestra-clone.ts
-import { existsSync as existsSync13 } from "node:fs";
-import { homedir as homedir11 } from "node:os";
-import { isAbsolute as isAbsolute4, join as join35 } from "node:path";
+import { existsSync as existsSync15 } from "node:fs";
+import { homedir as homedir12 } from "node:os";
+import { isAbsolute as isAbsolute5, join as join34 } from "node:path";
 var ALLOW = /^[^\s/:@]+\/[^\s/:@]+$/;
 var SEGMENT = /^[A-Za-z0-9._-]+$/;
 var hostLower = (hostOrg) => {
@@ -16400,8 +16514,8 @@ function parseClone(d) {
   if (d.clone === void 0 || d.clone === false) return null;
   if (d.clone !== true) return { code: "clone_invalid" };
   const raw = typeof d.clone_root === "string" ? d.clone_root.trim() : "";
-  const root = raw === "~" ? homedir11() : raw.startsWith("~/") ? join35(homedir11(), raw.slice(2)) : raw;
-  if (!root || !isAbsolute4(root)) return { code: "clone_root_invalid" };
+  const root = raw === "~" ? homedir12() : raw.startsWith("~/") ? join34(homedir12(), raw.slice(2)) : raw;
+  if (!root || !isAbsolute5(root)) return { code: "clone_root_invalid" };
   const allow = d.allow;
   if (!Array.isArray(allow) || !allow.length || !allow.every((a) => typeof a === "string" && ALLOW.test(a.trim())))
     return { code: "allow_invalid" };
@@ -16414,9 +16528,9 @@ function cloneTarget(policy, repository) {
   const [rawHost, org, repo] = parts;
   const host = rawHost.toLowerCase();
   if (!policy.allow.includes(`${host}/${org}`)) return { code: "clone_refused (not_allowed)" };
-  const parent = join35(policy.root, org);
-  const destination = join35(parent, repo);
-  if (existsSync13(destination)) return { code: "clone_refused (destination_exists)" };
+  const parent = join34(policy.root, org);
+  const destination = join34(parent, repo);
+  if (existsSync15(destination)) return { code: "clone_refused (destination_exists)" };
   return {
     url: `https://${host}/${org}/${repo}.git`,
     project: projectId(host, org, repo),
@@ -16452,131 +16566,9 @@ function cloneArgv(project, url, parent) {
   ];
 }
 
-// js/bridge/exec-spec.ts
-var object2 = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-var text4 = (v) => typeof v === "string" && v.length > 0 && v === v.trim() && ![...v].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
-function parseExec(v, models) {
-  if (!object2(v) || Object.keys(v).some((k) => !["server", "modelRefs"].includes(k))) return null;
-  if (!text4(v.server) || !object2(v.modelRefs)) return null;
-  try {
-    const u = new URL(v.server);
-    if (u.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(u.hostname) || u.username || u.password || u.search || u.hash || u.pathname !== "/")
-      return null;
-  } catch {
-    return null;
-  }
-  const refs = {};
-  for (const [token, ref] of Object.entries(v.modelRefs)) {
-    if (!models.includes(token) || !object2(ref)) return null;
-    if (Object.keys(ref).some((k) => !["providerID", "id", "variant"].includes(k))) return null;
-    if (!text4(ref.providerID) || !text4(ref.id) || ref.variant !== void 0 && !text4(ref.variant))
-      return null;
-    Object.defineProperty(refs, token, {
-      enumerable: true,
-      value: {
-        providerID: ref.providerID,
-        id: ref.id,
-        ...ref.variant === void 0 ? {} : { variant: ref.variant }
-      }
-    });
-  }
-  if (!models.every((m) => Object.hasOwn(refs, m))) return null;
-  return { server: v.server, modelRefs: refs };
-}
-
-// js/bridge/orchestra-dsh.ts
-import { accessSync, constants as constants2, existsSync as existsSync14, mkdirSync as mkdirSync22, statSync as statSync8, writeFileSync as writeFileSync20 } from "node:fs";
-import { homedir as homedir12 } from "node:os";
-import { delimiter, isAbsolute as isAbsolute5, join as join36 } from "node:path";
-var KEYS = ["models", "bin", "patch"];
-function parseDsh(offer) {
-  if (Object.keys(offer).some((k) => !KEYS.includes(k))) return null;
-  const path = (v) => v === void 0 ? null : typeof v === "string" && isAbsolute5(v.trim()) ? v.trim() : void 0;
-  const bin = path(offer.bin), patch = path(offer.patch);
-  if (bin === void 0 || patch === void 0) return null;
-  return { bin, patch };
-}
-var runnable = (p) => {
-  try {
-    accessSync(p, constants2.X_OK);
-    return statSync8(p).isFile();
-  } catch {
-    return false;
-  }
-};
-function dshReady(spec) {
-  const bin = spec.bin ? runnable(spec.bin) ? spec.bin : null : (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((d) => join36(d, "dsh")).find(runnable) ?? null;
-  if (!bin) return { code: "dsh_missing" };
-  const patch = spec.patch ?? (DSH_PROFILE ? join36(homedir12(), ".agents", "skills", BRIDGE_SKILL, DSH_PROFILE) : null);
-  if (!patch || !existsSync14(patch) || !statSync8(patch).isFile())
-    return { code: "dsh_patch_missing" };
-  return { bin, patch };
-}
-function modelPatch(model) {
-  const at3 = model.indexOf("/");
-  if (at3 <= 0 || at3 === model.length - 1 || /[\r\n]/.test(model)) return null;
-  return `- id: agent-default-model
-  config:
-    provider: ${JSON.stringify(model.slice(0, at3))}
-    model: ${JSON.stringify(model.slice(at3 + 1))}
-`;
-}
-function dshFiles(authDir, operation) {
-  const dir2 = join36(seamRunDir(authDir), "dsh");
-  return {
-    dir: dir2,
-    model: join36(dir2, `${operation}.model.yml`),
-    events: join36(dir2, `${operation}.events.ndjson`),
-    stderr: join36(dir2, `${operation}.stderr`)
-  };
-}
-function writeModelPatch(path, dir2, text7) {
-  mkdirSync22(dir2, { recursive: true, mode: 448 });
-  writeFileSync20(path, text7, { mode: 384 });
-}
-var dshArgv = (patch, model, brief2) => [
-  "headless",
-  "--patch",
-  patch,
-  "--patch",
-  model,
-  "--json",
-  brief2
-];
-
-// js/bridge/orchestra-launcher-types.ts
-var HARNESS_ADAPTER = { opencode: "orca", dsh: "bridge" };
-
-// js/bridge/orchestra-harnesses.ts
-var str2 = (v) => typeof v === "string" && v.trim() !== "";
-function parseHarnesses(h, adapter) {
-  if (!h || typeof h !== "object" || Array.isArray(h)) return { code: "harnesses_missing" };
-  const harnesses = {};
-  for (const [name2, o] of Object.entries(h)) {
-    const x = o ?? {};
-    if (!Array.isArray(x.models) || !x.models.every(str2)) return { code: "harness_invalid" };
-    harnesses[name2] = { models: x.models.map((m) => m.trim()) };
-    if (HARNESS_ADAPTER[name2] && HARNESS_ADAPTER[name2] !== adapter) continue;
-    if (name2 === "dsh") {
-      const dsh = parseDsh(x);
-      if (!dsh) return { code: "dsh_invalid" };
-      harnesses[name2].dsh = dsh;
-    } else if (Object.hasOwn(x, "exec")) {
-      const exec = name2 === "opencode" ? parseExec(x.exec, harnesses[name2].models) : null;
-      if (!exec) return { code: "exec_invalid" };
-      harnesses[name2].exec = exec;
-    }
-  }
-  return { offers: harnesses };
-}
-function harnessRefusal(adapter, harness) {
-  const own = HARNESS_ADAPTER[harness];
-  return !own ? "harness_unsupported" : own !== adapter ? "harness_adapter_mismatch" : null;
-}
-
 // js/bridge/orchestra-launchers.ts
 var SLICE = "slice:orchestra";
-var LIMIT4 = 50;
+var LIMIT3 = 50;
 var HANDLE = /^@[^\s:@/]+$/;
 var LAUNCHER_MAX = 64;
 var str3 = (v) => typeof v === "string" && v.trim() !== "";
@@ -16652,7 +16644,7 @@ async function readLaunchers(serverUrl, token) {
       realm: "mind",
       q: "",
       attrs_filter: SLICE,
-      limit: LIMIT4
+      limit: LIMIT3
     });
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine = [];
@@ -16680,8 +16672,1010 @@ async function readLaunchers(serverUrl, token) {
   }
 }
 
+// js/bridge/orchestra-resolve.ts
+var text5 = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
+var missing = (v) => v === null || v === void 0;
+var fits = (l, h) => harnessRefusal(l.adapter, h) === null;
+function resolveInvite(source, ls, runs) {
+  const caller = accountOf(source.author);
+  if (!caller || !ls.account) return { code: "caller_unknown" };
+  const allowed = (l) => caller === ls.account || l.callers.includes(caller);
+  const launcher = text5(source.launcher);
+  let own;
+  if (!missing(source.launcher)) {
+    own = launcher ? ls.own.get(launcher) : void 0;
+    if (!own) {
+      const broken = ls.refused.find((r) => r.what === launcher);
+      return {
+        code: broken?.code ?? (launcher && ls.elsewhere.has(launcher) ? "host_elsewhere" : "launcher_unknown")
+      };
+    }
+    if (!allowed(own)) return { code: "caller_not_allowed" };
+  } else {
+    const local = [...ls.own.values()];
+    const admitted = local.filter(allowed);
+    if (!admitted.length) return { code: local.length ? "caller_not_allowed" : "launcher_missing" };
+    const candidates = admitted.filter((l) => {
+      const harnesses2 = missing(source.harness) ? Object.keys(l.harnesses) : [text5(source.harness) ?? ""];
+      return harnesses2.some(
+        (h) => fits(l, h) && l.harnesses[h] && l.harnesses[h].models.length > 0 && (missing(source.model) || l.harnesses[h].models.includes(text5(source.model) ?? ""))
+      );
+    });
+    if (!candidates.length && admitted.length === 1) own = admitted[0];
+    else if (!candidates.length) {
+      const named2 = text5(source.harness) ?? "";
+      const offering = admitted.find((l) => l.harnesses[named2]);
+      const fitting = admitted.some((l) => l.harnesses[named2] && fits(l, named2));
+      return {
+        code: !missing(source.harness) && !offering ? "harness_not_offered" : offering && !fitting ? harnessRefusal(offering.adapter, named2) ?? "harness_unsupported" : !missing(source.model) ? "model_not_offered" : "launcher_missing"
+      };
+    } else if (candidates.length > 1) return { code: "launcher_ambiguous" };
+    else own = candidates[0];
+  }
+  const harnesses = Object.keys(own.harnesses).filter((h) => fits(own, h));
+  if (missing(source.harness) && harnesses.length !== 1)
+    return { code: harnesses.length ? "harness_ambiguous" : "harness_missing" };
+  const harness = missing(source.harness) ? harnesses[0] : text5(source.harness) ?? "";
+  const offer = own.harnesses[harness];
+  if (!offer) return { code: "harness_not_offered" };
+  const refused2 = harnessRefusal(own.adapter, harness);
+  if (refused2) return { code: refused2 };
+  const models = [...new Set(offer.models)];
+  if (missing(source.model) && models.length !== 1)
+    return { code: models.length ? "model_ambiguous" : "model_missing" };
+  const model = missing(source.model) ? models[0] : text5(source.model) ?? "";
+  if (!models.includes(model)) return { code: "model_not_offered" };
+  if (!text5(source.repository) && !homeOf(own, String(source.realm), Number(source.karta)))
+    return { code: own.clone ? "clone_refused (no_repository)" : "no_checkout" };
+  const live2 = Object.values(runs).filter(
+    (r) => r.launcher === own.launcher && LIVE.includes(r.state)
+  ).length;
+  if (live2 >= own.limit) return { code: "limit_reached" };
+  return { own, row: { ...source, launcher: own.launcher, harness, model } };
+}
+
+// js/bridge/orchestra-role.ts
+async function roleRefusal(base, token, row) {
+  const seq4 = row.karta;
+  if (!Number.isSafeInteger(seq4) || Number(seq4) <= 0 || typeof row.realm !== "string")
+    return "role_unverified";
+  try {
+    const res = await namedFetch(`${base}/nodes/${seq4}`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        "x-nks-realm": row.realm,
+        [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(1e4)
+    });
+    if (!res.ok) return "role_unreadable";
+    const node = await res.json();
+    if (!node || node.seq !== seq4) return "role_unverified";
+    if (node.node_type !== "karta") return "role_not_karta";
+    if (node.is_active !== true) return "role_inactive";
+    if (node.manifested_as === "adhikarin") return null;
+    if (node.manifested_as === "svatantra") return "human_role_not_executable";
+    if (node.manifested_as === "pratibimba" || node.manifested_as === "agantuka")
+      return "role_not_executable";
+    return "role_kind_unknown";
+  } catch {
+    return "role_unreadable";
+  }
+}
+
+// js/bridge/orchestra-dsh-dormant.ts
+var w3 = () => words(ORCHESTRA);
+var stopElsewhere = (state2) => state2 === "issued" || state2 === "accepted" ? "stop_ordered_elsewhere" : `stop_${state2}_elsewhere`;
+var readErrorWhy = (e) => e.message === "api_defect_standing_required" ? "dormant_read_error:api_defect_standing_required" : "dormant_read_error";
+var dshSleepable = (r) => r.dsh?.final === "completed" && r.dsh.exit === "0" && !!r.dsh.session;
+async function goDormant(base, token, r, boundary) {
+  if (!dshSleepable(r) || r.tree?.state !== "ready") return false;
+  if (boundary && !boundary.includes(r.realm)) return false;
+  if (r.foreign_stop) return false;
+  const seats2 = callSeats(r);
+  const sleepOnError = (e) => {
+    r.state = "dormant";
+    r.why = readErrorWhy(e);
+    r.dormant = {
+      since: (/* @__PURE__ */ new Date()).toISOString(),
+      cursor: Math.max(r.invite, r.dormant?.cursor ?? 0),
+      seats: seats2,
+      share_pending: true
+    };
+    return true;
+  };
+  let read;
+  try {
+    if (await readCaseStatus(base, token, r.room) !== "open") return false;
+    read = await readCaseHistory(base, token, r.room);
+  } catch (e) {
+    if (r.foreign_stop) return false;
+    return sleepOnError(e);
+  }
+  if (r.foreign_stop) return false;
+  const lastJoined = Math.max(
+    0,
+    ...read.entries.filter(
+      (e) => e.kind === "joined" && !!e.author_standing_id && seats2.includes(e.author_standing_id)
+    ).map((e) => e.n)
+  );
+  if (read.entries.some(
+    (e) => e.kind === "left" && e.reason === "leave" && !!e.author_standing_id && seats2.includes(e.author_standing_id) && e.n > lastJoined
+  )) {
+    r.why = "dormant_seat_left";
+    return false;
+  }
+  const own = ownInvite(read.entries, seats2);
+  if (own && "claimed" in own) {
+    r.why = SHARE_CLAIMED;
+    return false;
+  }
+  const seatLast = [...read.entries].reverse().find(
+    (e) => e.author_standing_id && seats2.includes(e.author_standing_id) && e.kind !== "left"
+  )?.n;
+  const asks = {};
+  for (const e of read.entries)
+    if (e.kind === "ask" && e.author_standing_id && seats2.includes(e.author_standing_id))
+      asks[e.n] = e.author_standing_id;
+  const karta = read.entries.find((e) => e.n === r.invite)?.to_karta_node_id;
+  try {
+    if (!hasOpenShare(read.entries, seats2, karta ?? r.dormant?.karta)) return false;
+  } catch (e) {
+    return sleepOnError(e);
+  }
+  const role = karta ?? r.dormant?.karta;
+  const { cursor, seen } = entryCursor(
+    read.entries,
+    wakesBy(new Set(seats2), role, asks, read.entries),
+    seatLast ?? 0,
+    Math.max(r.invite, r.dormant?.cursor ?? 0)
+  );
+  r.state = "dormant";
+  r.dormant = {
+    since: (/* @__PURE__ */ new Date()).toISOString(),
+    cursor,
+    seats: seats2,
+    ...karta ? { karta } : {},
+    asks,
+    ...seen.length ? { seen } : {}
+  };
+  return true;
+}
+async function dormantFromEnds(base, token, runs, boundary) {
+  for (const r of Object.values(runs))
+    if (r.state === "ended" && !r.foreign_stop && r.tree?.state === "ready")
+      await goDormant(base, token, r, boundary);
+}
+function judge(entries2, from, r) {
+  const seats2 = new Set(r.dormant?.seats ?? []);
+  const karta = r.dormant?.karta;
+  const wakes = wakesBy(seats2, karta, r.dormant?.asks ?? {}, entries2);
+  const seen = new Set(r.dormant?.seen ?? []);
+  let cursor = from;
+  let wake2;
+  let pending2;
+  let end;
+  for (const e of entries2) {
+    if (e.n <= from) continue;
+    if (e.aborted) {
+      cursor = Math.max(cursor, e.n);
+      continue;
+    }
+    if (e.kind === "closed") {
+      end ??= { code: "dormant_case_closed", n: e.n };
+      continue;
+    }
+    if (e.kind === "left" && e.author_standing_id && seats2.has(e.author_standing_id)) {
+      if (e.reason === "leave") end ??= { code: "dormant_seat_left", n: e.n };
+      cursor = Math.max(cursor, e.n);
+      continue;
+    }
+    if (e.author_standing_id && seats2.has(e.author_standing_id)) {
+      cursor = Math.max(cursor, e.n);
+      continue;
+    }
+    if (wakes(e) && !seen.has(e.n)) {
+      if (e.body_pending) pending2 ??= e.n;
+      else if (!wake2 && pending2 === void 0) wake2 = e;
+      continue;
+    }
+    cursor = Math.max(cursor, e.n);
+  }
+  if (end) return { end: end.code, cursor: end.n };
+  if (wake2) return { wake: wake2 };
+  return { cursor: pending2 === void 0 ? cursor : Math.min(cursor, pending2 - 1) };
+}
+async function stepDormant(authDir, base, token, runs, ls, gone, now2 = Date.now(), launch = launchDsh, boundary) {
+  const out7 = [];
+  for (const [key3, r] of Object.entries(runs)) {
+    if (r.state !== "dormant" || !r.dsh || !r.dormant) continue;
+    if (boundary && !boundary.includes(r.realm)) continue;
+    if (gone?.gone) break;
+    if (r.foreign_stop) {
+      r.state = "ended";
+      r.why = stopElsewhere(r.foreign_stop.state);
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+      continue;
+    }
+    let sleep2 = r.dormant;
+    if (now2 - Date.parse(sleep2.since) > DORMANT_WINDOW_MS) {
+      r.state = "ended";
+      r.why = "dormant_window";
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+      continue;
+    }
+    let entries2;
+    let claimed;
+    try {
+      if (await readCaseStatus(base, token, r.room) !== "open") {
+        r.state = "ended";
+        r.why = "dormant_case_closed";
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+        continue;
+      }
+      if (sleep2.share_pending) {
+        const history = await readCaseHistory(base, token, r.room);
+        const karta = history.entries.find((e) => e.n === r.invite)?.to_karta_node_id;
+        if (!hasOpenShare(history.entries, sleep2.seats ?? [], karta ?? sleep2.karta)) {
+          r.state = "ended";
+          r.why = "dormant_no_open_share";
+          out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+          continue;
+        }
+        sleep2 = { ...sleep2, share_pending: false };
+        r.dormant = sleep2;
+      }
+      const unestablished = r.dormant.asks === void 0;
+      entries2 = (await readCaseHistory(
+        base,
+        token,
+        r.room,
+        unestablished ? Math.max(0, r.invite - 1) : sleep2.cursor ?? 0
+      )).entries;
+      if (unestablished) {
+        const seats2 = new Set(sleep2.seats ?? []);
+        const asks = {};
+        for (const e of entries2)
+          if (e.kind === "ask" && e.author_standing_id && seats2.has(e.author_standing_id))
+            asks[e.n] = e.author_standing_id;
+        const karta = entries2.find((e) => e.n === r.invite)?.to_karta_node_id;
+        r.dormant = { ...sleep2, ...karta ? { karta } : {}, asks };
+        delete r.why;
+      }
+      claimed = await claimedOnPage(base, token, r, entries2);
+    } catch (e) {
+      r.why = readErrorWhy(e);
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, `${r.why} (${e.message})`));
+      continue;
+    }
+    if (claimed) {
+      r.state = "ended";
+      r.why = SHARE_CLAIMED;
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+      continue;
+    }
+    const verdict = judge(entries2, sleep2.cursor ?? 0, r);
+    if ("wake" in verdict) {
+      const latest = readRuns(authDir)[key3];
+      if (gone?.gone || !latest || latest.state !== "dormant" || !!latest.foreign_stop || !!r.foreign_stop || runIdentity(latest) !== runIdentity(r)) {
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      if (!r.author) {
+        try {
+          const history = await readCaseHistory(base, token, r.room, Math.max(0, r.invite - 1));
+          r.author = history.entries.find((e) => e.n === r.invite && e.kind === "invite")?.author ?? void 0;
+        } catch (e) {
+          r.why = readErrorWhy(e);
+          out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+          continue;
+        }
+      }
+      let claimed2;
+      try {
+        claimed2 = await pairFor(base, token, r);
+      } catch (e) {
+        r.why = readErrorWhy(e);
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+        continue;
+      }
+      const current2 = readRuns(authDir)[key3];
+      if (gone?.gone || !current2 || current2.state !== "dormant" || current2.foreign_stop || r.foreign_stop || runIdentity(current2) !== runIdentity(r)) {
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      if (claimed2) {
+        r.state = "ended";
+        r.why = claimed2;
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, claimed2));
+        continue;
+      }
+      const roleWhy = await roleRefusal(base, token, { ...r });
+      const afterRole = readRuns(authDir)[key3];
+      if (gone?.gone || !afterRole || afterRole.state !== "dormant" || afterRole.foreign_stop || r.foreign_stop || runIdentity(afterRole) !== runIdentity(r)) {
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      if (roleWhy) {
+        r.state = "ended";
+        r.why = roleWhy;
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, roleWhy));
+        continue;
+      }
+      const resolved = resolveInvite({ ...r }, ls, runs);
+      if ("code" in resolved) {
+        r.why = resolved.code;
+        if (resolved.code !== "limit_reached") r.state = "ended";
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+        continue;
+      }
+      const spec = resolved.own.harnesses[r.harness].dsh;
+      if (!spec) {
+        r.state = "ended";
+        r.why = "harness_not_offered";
+        out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+        continue;
+      }
+      const task = homeLine(resolved.own, r) + w3().dshContinue(r.room, verdict.wake.n);
+      const why = await launch(authDir, runs, key3, spec, task);
+      if (why === "launched") r.dormant = { ...r.dormant, cursor: verdict.wake.n };
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, `dormant_woken_${verdict.wake.n}, ${why}`));
+      continue;
+    }
+    if ("end" in verdict) {
+      r.state = "ended";
+      r.why = verdict.end;
+      r.dormant = { ...r.dormant, cursor: verdict.cursor };
+      out7.push(w3().leadRow(r.realm, r.room, r.invite, r.why));
+      continue;
+    }
+    r.dormant = { ...r.dormant, cursor: verdict.cursor };
+  }
+  return out7;
+}
+
+// js/bridge/orchestra-foreign.ts
+import { mkdirSync as mkdirSync21, readFileSync as readFileSync35, writeFileSync as writeFileSync20 } from "node:fs";
+import { join as join35 } from "node:path";
+var w4 = () => words(ORCHESTRA);
+var LIMIT4 = 200;
+var MAX_PAGES = 50;
+var OPEN = /* @__PURE__ */ new Set(["issued", "accepted"]);
+var SKEW_MS = 6e4;
+var sinceStop = (r, v) => Date.parse(String(v.issued_at ?? "")) >= Date.parse(r.stopping_at ?? r.at) - SKEW_MS;
+var cursorFile = (authDir) => join35(seamRunDir(authDir), "orchestra-orders.json");
+function readSince(authDir) {
+  try {
+    const n = JSON.parse(readFileSync35(cursorFile(authDir), "utf8")).since;
+    return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeSince(authDir, since) {
+  mkdirSync21(seamRunDir(authDir), { recursive: true, mode: 448 });
+  writeFileSync20(cursorFile(authDir), JSON.stringify({ since }) + "\n", { mode: 384 });
+}
+async function foreignStops(authDir, base, token, runs) {
+  const said2 = [];
+  const fresh3 = /* @__PURE__ */ new Set();
+  const bySeat = /* @__PURE__ */ new Map();
+  const seatRuns = /* @__PURE__ */ new Map();
+  const asleep = /* @__PURE__ */ new Map();
+  const stopping = /* @__PURE__ */ new Map();
+  let unseated = false;
+  for (const r of Object.values(runs)) {
+    if (!r.orders && r.order_id && !r.foreign_stop) {
+      r.foreign_stop = {
+        id: r.order_id,
+        state: r.stop_outcome ?? "issued",
+        at: r.stopping_at ?? r.at
+      };
+      if (r.dsh && r.state === "stopping" && r.tree?.exit) {
+        r.state = "ended";
+        r.why = OPEN.has(r.foreign_stop.state) ? "stop_ordered_elsewhere" : `stop_${r.foreign_stop.state}_elsewhere`;
+      }
+    }
+    if (r.state !== "ended" && r.standing_id) seatRuns.set(r.standing_id, r);
+    if (r.state === "launched" || r.state === "raised") {
+      if (r.standing_id) bySeat.set(r.standing_id, r);
+      else unseated = true;
+    } else if (r.state === "dormant" && r.standing_id) asleep.set(r.standing_id, r);
+    else if (r.state === "stopping" && !r.stop_outcome && (r.exec || r.tree || !stopLapsed(r)))
+      stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
+  }
+  const seen = new Set(Object.values(runs).map((r) => r.standing_id));
+  let since = readSince(authDir);
+  let held2;
+  try {
+    for (let n = 0; n < MAX_PAGES; n++) {
+      const res = await namedFetch(`${base}/me/orders?limit=${LIMIT4}&since=${since}`, {
+        headers: { authorization: `Bearer ${token}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(1e4)
+      });
+      if (!res.ok) throw new Error(`http_${res.status}`);
+      const body = await res.json();
+      if (!Array.isArray(body.items)) throw new Error("invalid_items");
+      if (!body.items.length) break;
+      for (const v of body.items) {
+        const seat2 = String(v.standing_id ?? "");
+        const run3 = bySeat.get(seat2);
+        const id = typeof v.id === "string" ? v.id : "";
+        const state2 = String(v.state);
+        const open = OPEN.has(state2);
+        const seatRun = seatRuns.get(seat2);
+        if (id && seatRun && !seatRun.orders?.includes(id)) {
+          seatRun.foreign_stop ??= { id, state: state2, at: (/* @__PURE__ */ new Date()).toISOString() };
+          if (seatRun.dsh && seatRun.state === "stopping" && seatRun.tree?.exit) {
+            seatRun.state = "ended";
+            seatRun.why = OPEN.has(seatRun.foreign_stop.state) ? "stop_ordered_elsewhere" : `stop_${seatRun.foreign_stop.state}_elsewhere`;
+          }
+        }
+        const sleep2 = !run3 && asleep.get(seat2);
+        if (sleep2) {
+          if (id && !sleep2.orders?.includes(id))
+            sleep2.foreign_stop ??= { id, state: state2, at: (/* @__PURE__ */ new Date()).toISOString() };
+          continue;
+        }
+        if (!run3 && unseated && seat2 && !seen.has(seat2)) held2 ??= since;
+        const bySeatOnly = stopping.get(`s:${seat2}`);
+        const own = stopping.get(`o:${id}`) ?? (bySeatOnly && sinceStop(bySeatOnly, v) ? bySeatOnly : void 0);
+        if (!run3 && own) {
+          if (open) held2 ??= since;
+          else {
+            own.order_id ??= id;
+            own.stop_outcome = state2;
+          }
+          continue;
+        }
+        if (!run3 || !id || run3.orders?.includes(id)) continue;
+        bySeat.delete(seat2);
+        run3.order_id = id;
+        run3.foreign_stop ??= { id, state: state2, at: (/* @__PURE__ */ new Date()).toISOString() };
+        if (open) run3.why = "stop_ordered_elsewhere";
+        const done = state2 === "stopped" && (!(run3.exec || run3.tree) || run3.closed === "client_exited");
+        run3.state = done ? "ended" : "stopping";
+        if (done) run3.why = "stopped_elsewhere";
+        if (!done) run3.stopping_at = (/* @__PURE__ */ new Date()).toISOString();
+        if (!open) run3.stop_outcome = state2;
+        if (open) {
+          fresh3.add(run3);
+          held2 ??= since;
+        }
+        said2.push(
+          w4().leadRow(
+            run3.realm,
+            run3.room,
+            run3.invite,
+            open ? "stop_ordered_elsewhere" : done ? "stopped_elsewhere" : `stop_${state2}_elsewhere`
+          )
+        );
+      }
+      const next = body.next_since;
+      if (typeof next !== "number" || !Number.isSafeInteger(next) || next <= since)
+        throw new Error("pagination_stalled");
+      since = next;
+    }
+  } catch (e) {
+    said2.push(w4().leadOrdersUnread(e.message));
+  }
+  writeSince(authDir, held2 ?? since);
+  return { said: said2, fresh: fresh3 };
+}
+
+// js/bridge/orchestra-tree-clean.ts
+import { closeSync as closeSync4, existsSync as existsSync16, fstatSync as fstatSync2, lstatSync as lstatSync8, openSync as openSync4, unlinkSync as unlinkSync19 } from "node:fs";
+import { join as join36 } from "node:path";
+var clientGone = (r) => r.stop_outcome === "stopped" || r.why === "seat_gone_after_exit" || r.why === "dormant_seat_left" || r.why === "dormant_share_claimed" && !!r.dsh?.exit || !!r.dsh?.exit && !r.standing_id || !!r.dormant && !!r.dsh?.exit;
+var over = (r) => r.state === "ended" || r.state === "refused" && !!r.dsh?.exit;
+async function cleanupTree(authDir, runs, key3, execute2 = git2) {
+  const r = runs[key3], t = r.tree;
+  if (!t || t.state === "removed") return null;
+  if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
+  if (!over(r) || !clientGone(r) || r.closed !== "client_exited" || !t.exit)
+    return "tree_client_unverified";
+  const identity2 = runIdentity(r);
+  const current2 = () => {
+    const latest = readRuns(authDir)[key3];
+    return !!latest && runIdentity(latest) === identity2 && over(latest) && clientGone(latest) && latest.closed === "client_exited";
+  };
+  const retain = (why) => {
+    t.state = "retained";
+    t.why = why;
+    if (current2()) writeRuns(authDir, runs);
+    return why;
+  };
+  if (!current2()) return "tree_superseded";
+  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || t.path !== r.worktree || t.path !== join36(t.source, ".worktrees", `orchestra-${t.operation}`) || !OID.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
+    return retain("tree_identity_unverified");
+  let lock;
+  try {
+    const common = await gitText(
+      t.source,
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      execute2
+    );
+    if (common !== t.commonDir || JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
+      return retain("tree_identity_unverified");
+    const invalid2 = await treeContent(t, execute2);
+    if (invalid2) return retain(invalid2);
+    if (!current2()) return "tree_superseded";
+    const lockPath = join36(t.identity.gitDir, "HEAD.lock");
+    try {
+      const fd = openSync4(lockPath, "wx", 384);
+      const s2 = fstatSync2(fd);
+      lock = { fd, path: lockPath, dev: s2.dev, ino: s2.ino };
+    } catch {
+      return retain("tree_head_locked");
+    }
+    if (JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
+      return retain("tree_identity_unverified");
+    const changed = await treeContent(t, execute2);
+    if (changed) return retain(changed);
+    if (!current2()) return "tree_superseded";
+    t.state = "removing";
+    writeRuns(authDir, runs);
+    await execute2(t.source, ["worktree", "unlock", "--", t.path], 1e4);
+    const removed = await execute2(t.source, ["worktree", "remove", "--", t.path], 3e4);
+    if (removed.code !== 0 || existsSync16(t.path) || existsSync16(t.identity.gitDir))
+      return retain("tree_remove_unverified");
+    t.state = "removed";
+    delete t.why;
+    if (!current2()) return "tree_superseded";
+    writeRuns(authDir, runs);
+    return null;
+  } catch {
+    return retain("tree_cleanup_unverified");
+  } finally {
+    if (lock) {
+      closeSync4(lock.fd);
+      try {
+        const s2 = lstatSync8(lock.path);
+        if (!s2.isSymbolicLink() && s2.dev === lock.dev && s2.ino === lock.ino) unlinkSync19(lock.path);
+      } catch {
+      }
+    }
+  }
+}
+async function cleanupEndedTrees(authDir, runs) {
+  for (const [key3, r] of Object.entries(runs))
+    if (r.tree?.state === "ready" && over(r)) {
+      const why = await cleanupTree(authDir, runs, key3);
+      if (why) r.why = why;
+    }
+}
+
+// js/bridge/exec-pending.ts
+function execPending(authDir) {
+  try {
+    return Object.values(readRuns(authDir)).some(
+      (r) => !!(r.exec || r.tree) && LIVE.includes(r.state) || (r.state === "ended" || r.state === "refused" && !!r.dsh?.exit) && r.tree?.state === "ready"
+    );
+  } catch {
+    return true;
+  }
+}
+
+// js/bridge/exec-exit.ts
+var exitClientId = (r) => `orchestra-${createHash10("sha256").update(`${runIdentity(r)}|client_exited`).digest("hex").slice(0, 32)}`;
+async function observeExec(authDir, base, token, boundary) {
+  let runs = readRuns(authDir);
+  for (const [key3, r] of Object.entries(runs)) {
+    if (!(r.exec || r.tree) || !LIVE.includes(r.state)) continue;
+    if (r.exec) importAttempt(r, authDir);
+    if (r.exec?.session && !execBound(r, authDir)) {
+      r.state = "ambiguity";
+      r.why = "exec_receipt_binding_unverified";
+      writeRuns(authDir, runs);
+      continue;
+    }
+    writeRuns(authDir, runs);
+    const identity2 = runIdentity(r);
+    if (!(r.exec?.exit || r.tree?.exit) && (r.dsh ? await observeDsh(r) : await execExited(r))) {
+      const latest = readRuns(authDir)[key3];
+      if (!latest || runIdentity(latest) !== identity2) continue;
+      if (r.exec) r.exec.exit = (/* @__PURE__ */ new Date()).toISOString();
+      if (r.tree) r.tree.exit = (/* @__PURE__ */ new Date()).toISOString();
+      r.closed = "client_exited";
+      writeRuns(authDir, runs);
+    }
+  }
+  await cleanupEndedTrees(authDir, readRuns(authDir));
+  if (!base || !token) return;
+  runs = readRuns(authDir);
+  const realms = [
+    ...new Set(
+      Object.values(runs).filter((r) => (r.exec || r.tree) && LIVE.includes(r.state)).map((r) => r.realm)
+    )
+  ];
+  try {
+    await bindExecRaised(authDir, base, token, realms);
+    const latest = readRuns(authDir);
+    await foreignStops(authDir, base, token, latest);
+    writeRuns(authDir, latest);
+    await finishExits(authDir, base, token, boundary);
+    await cleanupEndedTrees(authDir, readRuns(authDir));
+  } catch {
+    process.stderr.write("exec_observer_graph_unreadable\n");
+  }
+}
+var ruleOf2 = (b) => b.errors?.[0]?.rule;
+var ownProcess = (r) => !!r.tree && !r.exec && (r.harness === "opencode" || !!r.dsh);
+async function finishExits(authDir, base, token, boundary) {
+  const runs = readRuns(authDir);
+  for (const [key3, r] of Object.entries(runs)) {
+    if (endDshUnseated(r, LIVE.includes(r.state))) {
+      await goDormant(base, token, r, boundary);
+      writeRuns(authDir, runs);
+      await cleanupEndedTrees(authDir, runs);
+      continue;
+    }
+    if (!(r.exec?.exit || r.tree?.exit) || !r.standing_id || !LIVE.includes(r.state) || r.exec && !execBound(r, authDir))
+      continue;
+    if (r.stop_outcome === "stopped") {
+      r.state = "ended";
+      await goDormant(base, token, r, boundary);
+      writeRuns(authDir, runs);
+      await cleanupEndedTrees(authDir, runs);
+      continue;
+    }
+    if (r.stop_outcome === "failed" && ownProcess(r) && r.closed === "client_exited" && !r.restop) {
+      r.restop = true;
+      delete r.order_id;
+      delete r.stop_outcome;
+    }
+    const before = runIdentity(r);
+    if (r.order_id) continue;
+    try {
+      const latest = readRuns(authDir)[key3];
+      if (!latest || runIdentity(latest) !== before) continue;
+      const seat2 = r.standing_id;
+      const stop = (reason_code) => namedFetch(`${base}/standings/${encodeURIComponent(seat2)}/stop`, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-nks-realm": r.realm,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({ reason_code, client_id: exitClientId(r) }),
+        signal: AbortSignal.timeout(1e4)
+      });
+      let res = await stop("client_exited");
+      let body = await res.json().catch(() => ({}));
+      if (res.status === 422 && ruleOf2(body) === "stop_reason_unknown") {
+        res = await stop("other");
+        body = await res.json().catch(() => ({}));
+      }
+      if (res.ok && typeof body.id === "string" && body.id) {
+        r.order_id = body.id;
+        r.orders = [...r.orders ?? [], body.id];
+        r.state = "stopping";
+        r.stopping_at = (/* @__PURE__ */ new Date()).toISOString();
+      } else if (res.status === 410 && ownProcess(r)) {
+        r.state = "ended";
+        r.why = "seat_gone_after_exit";
+        await goDormant(base, token, r, boundary);
+      } else
+        r.why = res.status === 410 ? "exec_suppression_unverified" : `exec_stop_unconfirmed_${res.status}`;
+    } catch {
+      r.why = "exec_stop_unknown";
+    }
+    writeRuns(authDir, runs);
+    if (r.state === "ended") await cleanupEndedTrees(authDir, runs);
+  }
+}
+
+// js/bridge/demand-rows.ts
+function object2(v) {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("invalid_object");
+  return v;
+}
+function text6(v) {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+function required(v) {
+  const s2 = text6(v);
+  if (!s2) throw new Error("missing_identifier");
+  return s2;
+}
+function seq2(v) {
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0)
+    throw new Error("invalid_sequence");
+  return v;
+}
+function startRow(v, realm) {
+  const x = object2(v);
+  const p = x.payload === void 0 ? {} : object2(x.payload);
+  const h = p.holon == null ? {} : object2(p.holon);
+  const a = x.attrs == null ? {} : object2(x.attrs);
+  return {
+    realm,
+    room: required(x.room_id),
+    invite: seq2(x.entry_id),
+    karta: seq2(x.karta_seq),
+    holon: typeof h.seq === "number" ? h.seq : null,
+    repository: text6(h.repository),
+    model: a.model == null ? null : text6(a.model) ?? "",
+    harness: a.harness == null ? null : text6(a.harness) ?? "",
+    launcher: a.launcher == null ? null : text6(a.launcher) ?? "",
+    author: text6(x.author),
+    // The platform's own invite after a seat's end (#10995): it is that call's share.
+    ...text6(p.cause) ? { cause: text6(p.cause), gone_standing: text6(p.gone_standing) } : {}
+  };
+}
+function openOrder(v) {
+  const x = object2(v);
+  return { order_id: required(x.id), standing_id: required(x.standing_id) };
+}
+function stopRow(v, realms) {
+  const x = object2(v);
+  const realm = required(x.realm);
+  if (!realms.includes(realm)) return null;
+  if (x.state !== "issued" && x.state !== "accepted") throw new Error("invalid_order_state");
+  return {
+    order_id: required(x.id),
+    standing_id: required(x.standing_id),
+    realm,
+    karta: seq2(x.karta_seq),
+    standing: text6(x.standing),
+    repository: text6(x.repository),
+    state: x.state,
+    reason_code: text6(x.reason_code),
+    answer_by: text6(x.answer_by)
+  };
+}
+
+// js/bridge/realmindex.ts
+function realmIndexOf(listed) {
+  const byShort = /* @__PURE__ */ new Map();
+  const bySlug = /* @__PURE__ */ new Map();
+  for (const it of listed) {
+    const x = it;
+    if (typeof x.slug !== "string" || typeof x.owner_handle !== "string") continue;
+    const canon2 = `@${x.owner_handle}/${x.slug}`;
+    if (typeof x.short_id === "number") byShort.set(x.short_id, canon2);
+    bySlug.set(x.slug, [...bySlug.get(x.slug) ?? [], canon2]);
+  }
+  return { byShort, bySlug };
+}
+function canonIn(index, name2) {
+  const t = name2.trim();
+  const n = /^r(\d+)$/i.exec(t);
+  if (n) return index.byShort.get(Number(n[1])) ?? null;
+  const hits = index.bySlug.get(t) ?? [];
+  return hits.length === 1 ? hits[0] : null;
+}
+
+// js/bridge/orchestra-demands.ts
+var LIMIT5 = 200;
+var MAX_PAGES2 = 50;
+async function get(base, token, path, control = false) {
+  const r = await namedFetch(`${base}${path}`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...!control ? { [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID } : {}
+    },
+    redirect: "error",
+    signal: AbortSignal.timeout(1e4)
+  });
+  if (!r.ok) throw new Error(`http_${r.status}`);
+  return object2(await r.json());
+}
+function items(body) {
+  if (!Array.isArray(body.items)) throw new Error("invalid_items");
+  return body.items;
+}
+function code(e) {
+  const s2 = e instanceof Error ? e.message : "";
+  return /^(http_\d{3}|invalid_\w+|missing_identifier|pagination_\w+)$/.test(s2) ? s2 : "read_failed";
+}
+async function readDemands(base, token, requested, boundary, gone, owned, invited) {
+  const realms = [...new Set(requested.map((s2) => s2.trim()))];
+  const result = {
+    schema_version: 1,
+    observed_at: (/* @__PURE__ */ new Date()).toISOString(),
+    scope: { realms, orders: "own_account" },
+    start: [],
+    stop: [],
+    complete: true,
+    errors: []
+  };
+  const error = (source, why, realm) => {
+    result.complete = false;
+    result.errors.push({ source, ...realm ? { realm } : {}, code: why });
+  };
+  if (realms.some((r) => !/^@[^/\s]+\/[^/\s]+$/.test(r))) {
+    error("scope", "invalid_realm");
+    return result;
+  }
+  let canonicalBoundary = boundary;
+  if (realms.some((r) => !boundary.includes(r)) && boundary.some((r) => /^r\d+$/i.test(r.trim()))) {
+    if (!base || !token) {
+      error("connection", "unavailable");
+      return result;
+    }
+    try {
+      const index = realmIndexOf(items(await get(base, token, `/realms?limit=${LIMIT5}`)));
+      canonicalBoundary = boundary.map((r) => {
+        if (!/^r\d+$/i.test(r.trim())) return r;
+        const canonical = canonIn(index, r);
+        if (!canonical) throw new Error("invalid_boundary");
+        return canonical;
+      });
+    } catch (e) {
+      error("scope", code(e));
+      return result;
+    }
+  }
+  if (!realms.length || realms.some((r) => !r || !canonicalBoundary.includes(r))) {
+    error("scope", "outside_boundary");
+    return result;
+  }
+  if (!base || !token) {
+    error("connection", "unavailable");
+    return result;
+  }
+  if (invited && (invited.base !== base || invited.token !== token || invited.responses.length !== realms.length || realms.some((realm) => invited.responses.filter((r) => r.realm === realm).length !== 1))) {
+    error("invites", "invalid_snapshot");
+    return result;
+  }
+  for (const realm of realms) {
+    if (gone?.gone) {
+      error("caller", "gone");
+      return result;
+    }
+    try {
+      const body = invited ? object2(invited.responses.find((r) => r.realm === realm)?.body) : await get(base, token, `/realms/${encodeURIComponent(realm)}/invites`);
+      const rows = items(body).map((v) => startRow(v, realm));
+      result.start.push(...rows);
+    } catch (e) {
+      error("invites", code(e), realm);
+    }
+  }
+  let since = 0;
+  try {
+    for (let n = 0; n < MAX_PAGES2; n++) {
+      if (gone?.gone) throw new Error("caller_gone");
+      const q = `open=true&limit=${LIMIT5}${since ? `&since=${since}` : ""}`;
+      const body = await get(base, token, `/me/orders?${q}`, true);
+      const rows = items(body);
+      if (!rows.length) return result;
+      const projected = rows.map((v) => stopRow(v, realms)).filter((v) => v !== null);
+      owned?.push(...rows.map(openOrder));
+      result.stop.push(...projected);
+      const next = body.next_since;
+      if (typeof next !== "number" || !Number.isSafeInteger(next) || next <= since)
+        throw new Error("pagination_stalled");
+      since = next;
+    }
+    throw new Error("pagination_limit");
+  } catch (e) {
+    error("orders", code(e));
+  }
+  return result;
+}
+
+// js/bridge/orchestra-door.ts
+import { chmodSync as chmodSync3, unlinkSync as unlinkSync20 } from "node:fs";
+import { connect as connect4, createServer as createServer4 } from "node:net";
+var w5 = () => words(ORCHESTRA);
+var OPS = ["on", "off", "status", "step", "plan", "demands"];
+var isOrchestraOp = (op) => OPS.includes(op);
+async function listenOrchestraDoor(authDir, serve) {
+  const path = orchestraDoorPath(authDir);
+  if (process.platform !== "win32") {
+    try {
+      unlinkSync20(path);
+    } catch {
+    }
+  }
+  const server = createServer4((socket) => {
+    let buf = "";
+    socket.on("error", () => {
+    });
+    socket.on("data", (chunk) => {
+      buf += chunk;
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      const line = buf.slice(0, nl);
+      buf = "";
+      let msg = {};
+      try {
+        msg = JSON.parse(line);
+      } catch {
+      }
+      const op = typeof msg.op === "string" ? msg.op : "";
+      const realms = Array.isArray(msg.realms) ? msg.realms.filter((x) => typeof x === "string") : [];
+      if (!isOrchestraOp(op)) {
+        socket.end(JSON.stringify({ ok: false, said: w5().unknownOp(op) }) + "\n");
+        return;
+      }
+      const gone = { gone: false };
+      socket.on("close", () => {
+        gone.gone = true;
+      });
+      void serve(op, realms, gone, {
+        launcher: msg.launcher,
+        consent: msg.consent === true,
+        only: msg.only
+      }).then((a) => socket.end(JSON.stringify(a) + "\n")).catch(
+        (e) => socket.end(JSON.stringify({ ok: false, said: w5().doorError(e.message) }) + "\n")
+      );
+    });
+  });
+  await new Promise((resolve15, reject) => {
+    server.once("error", reject);
+    server.listen(path, () => resolve15());
+  });
+  if (process.platform !== "win32") chmodSync3(path, 384);
+  return server;
+}
+function orchestraAsk(authDir, op, realms, timeoutMs = 5e3, extra = {}) {
+  return new Promise((resolve15) => {
+    let settled2 = false;
+    const done = (a) => {
+      if (settled2) return;
+      settled2 = true;
+      socket.destroy();
+      resolve15(a);
+    };
+    const socket = connect4(orchestraDoorPath(authDir, false));
+    socket.setTimeout(timeoutMs, () => done({ ok: false, said: w5().doorSilent() }));
+    socket.on("error", () => done({ ok: false, said: w5().noDaemon() }));
+    socket.on("connect", () => socket.write(JSON.stringify({ op, realms, ...extra }) + "\n"));
+    let buf = "";
+    socket.on("data", (c) => {
+      buf += c;
+      const nl = buf.indexOf("\n");
+      if (nl < 0) return;
+      try {
+        done(JSON.parse(buf.slice(0, nl)));
+      } catch {
+        done({ ok: false, said: w5().doorSilent() });
+      }
+    });
+  });
+}
+
+// js/bridge/orchestra-flag.ts
+import { mkdirSync as mkdirSync22, readFileSync as readFileSync36, writeFileSync as writeFileSync21 } from "node:fs";
+import { join as join37 } from "node:path";
+var ORCHESTRA_ENV = envName("ORCHESTRA");
+var envAdmitted = () => {
+  const v = process.env[ORCHESTRA_ENV]?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+};
+var flagFile = (authDir) => join37(seamRunDir(authDir), "orchestra.json");
+function readOrchestraFlag(authDir) {
+  try {
+    const f = JSON.parse(readFileSync36(flagFile(authDir), "utf8"));
+    if (f.on !== true && f.on !== false) return null;
+    if (!Array.isArray(f.realms) || f.realms.some((x) => typeof x !== "string")) return null;
+    const c = f.consent;
+    const consent = f.on && c?.by === "terminal" && typeof c.at === "string" ? { by: "terminal", at: c.at } : void 0;
+    return { on: f.on, realms: f.realms, ...consent ? { consent } : {} };
+  } catch {
+    return null;
+  }
+}
+function writeOrchestraFlag(authDir, flag) {
+  mkdirSync22(seamRunDir(authDir), { recursive: true, mode: 448 });
+  const { on, realms, consent } = flag;
+  writeFileSync21(
+    flagFile(authDir),
+    JSON.stringify({ on, realms, ...consent ? { consent } : {} }) + "\n",
+    {
+      mode: 384
+    }
+  );
+}
+var orchestraAdmitted = (authDir) => envAdmitted() || !!readOrchestraFlag(authDir)?.consent;
+
 // js/bridge/orchestra-cloning.ts
-import { spawn as spawn4 } from "node:child_process";
+import { spawn as spawn5 } from "node:child_process";
 import { createHash as createHash11 } from "node:crypto";
 import { mkdirSync as mkdirSync23, realpathSync as realpathSync10 } from "node:fs";
 var CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 6e5;
@@ -16690,7 +17684,7 @@ var TAIL = 64 * 1024;
 var DRAIN_MS2 = 2e3;
 function cloneRun(argv2, ms2) {
   return new Promise((resolve15) => {
-    const child = spawn4("orca", argv2, {
+    const child = spawn5("orca", argv2, {
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true
     });
@@ -16789,233 +17783,6 @@ function cloneTaken(authDir, repository, spec, found) {
   return `clone_failed (${why})`;
 }
 
-// js/bridge/orchestra-raise-gates.ts
-import { existsSync as existsSync15, statSync as statSync9 } from "node:fs";
-
-// js/shared/cover.ts
-import { readFileSync as readFileSync36 } from "node:fs";
-import { join as join37 } from "node:path";
-
-// js/shared/coverblock.ts
-var FIELDS = ["graph", "holon", "agent_role", "contract", "stamp"];
-var unquote = (v) => {
-  const t = v.trim();
-  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'"))
-    return t.slice(1, -1).replace(/''/g, "'");
-  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
-    try {
-      return String(JSON.parse(t));
-    } catch {
-      return t.slice(1, -1);
-    }
-  }
-  return t;
-};
-var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
-var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
-var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
-var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
-var bare2 = (v) => unquote(
-  /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
-);
-function fences(text7) {
-  const lines = text7.replace(/^\uFEFF/, "").split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  return end < 0 ? null : { lines, end };
-}
-function frontMatter(text7) {
-  const f = fences(text7);
-  if (!f) return null;
-  const raw = /* @__PURE__ */ new Map();
-  let last = null;
-  for (const line of f.lines.slice(1, f.end)) {
-    const kv = PAIR.exec(line);
-    if (kv) raw.set(last = unquote(kv[1]), kv[2] ?? "");
-    else if (last !== null && /^\s+[^\s#]/.test(line))
-      raw.set(last, `${raw.get(last)}
-${line.trim()}`);
-  }
-  return new Map([...raw].map(([k, v]) => [k, unquote(v)]));
-}
-function coverBlocks(text7) {
-  const blocks = /* @__PURE__ */ new Map();
-  const f = fences(text7);
-  let open = null;
-  for (const line of f ? f.lines.slice(1, f.end) : []) {
-    if (/^\s*(#|$)/.test(line)) continue;
-    const top = TOP.exec(line);
-    const child = open && CHILD.exec(line);
-    if (top) blocks.set(unquote(top[1]), open = /* @__PURE__ */ new Map());
-    else if (open && child) open.set(unquote(child[1]), bare2(child[2] ?? ""));
-    else open = null;
-  }
-  return blocks;
-}
-function repeatedKeys(text7) {
-  const f = fences(text7);
-  const [seen, twice] = [/* @__PURE__ */ new Set(), /* @__PURE__ */ new Set()];
-  let block = null;
-  for (const line of f ? f.lines.slice(1, f.end) : []) {
-    const kv = PAIR.exec(line);
-    const at3 = line.search(/\S/);
-    if (!kv || line[at3] === "-") continue;
-    const name2 = unquote(kv[1]);
-    if (at3 === 0) block = TOP.test(line) ? { root: name2, at: -1 } : null;
-    else if (!block || block.at >= 0 && block.at !== at3) continue;
-    else block.at = at3;
-    const key3 = at3 === 0 ? name2 : `${block?.root}.${name2}`;
-    (seen.has(key3) ? twice : seen).add(key3);
-  }
-  return [...twice];
-}
-var coverBlock = (text7, root) => coverBlocks(text7).get(root) ?? null;
-var stamped = (block) => /^\d+$/.test(block.get("contract") ?? "") && !!block.get("stamp");
-var foreignBlock = (text7, root) => [...coverBlocks(text7)].some(([k, b]) => k !== root && b.has("contract"));
-var RITUALS2 = ["start", "push", "merge", "guard", "turn"];
-function ritualsOf(block) {
-  const field = block?.get("rituals");
-  if (field === void 0) return { on: new Set(RITUALS2), unknown: [] };
-  const names2 = field.split(/\s+/).filter(Boolean);
-  const known2 = (n) => RITUALS2.includes(n);
-  return { on: new Set(names2.filter(known2)), unknown: names2.filter((n) => !known2(n)) };
-}
-
-// js/shared/graphslot.ts
-var SLUG = String.raw`@[\w.-]+\/[\w.-]*\w`;
-var ADDRESS = String.raw`(?:${SLUG}(?=[.-]*(?:$|[\s)\x60'",;.:]))|r\d+(?=$|[\s)\x60'",;.:]))`;
-var FRAME = String.raw`[\s\x60'"]*`;
-var HEAD = new RegExp(String.raw`^(${ADDRESS})(?:${FRAME}\(${FRAME}(${ADDRESS})${FRAME}\))?`);
-var ANY = new RegExp(String.raw`${SLUG}|(?<![\w/])r\d+(?!\w)`, "gu");
-var PROSE = new RegExp("^[—–\\-:.(]*\\s*(?!r\\d)\\p{L}", "u");
-var esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-var listing = (joins) => new RegExp(`^(?:[\\s\`'",;/+&|]${joins.map((j) => `|${esc(j)}(?=[\\s\`'"])`).join("")})*`, "u");
-var anyIn = (t) => [...t.matchAll(ANY)].map((m) => m[0]);
-function graphOfSlot(value, joins) {
-  const [line = "", ...more] = value.split("\n");
-  const list3 = listing(joins);
-  const heads = [];
-  let rest2 = line.replace(new RegExp(`^${FRAME}`), "");
-  for (let head = HEAD.exec(rest2); head; head = HEAD.exec(rest2)) {
-    heads.push(head.slice(1).filter((x) => !!x));
-    rest2 = rest2.slice(head[0].length);
-    rest2 = rest2.slice((list3.exec(rest2)?.[0] ?? "").length);
-  }
-  if (!heads.length) return null;
-  const pair = [...new Set(heads.flat())];
-  const slugs = pair.filter((n) => n.startsWith("@"));
-  const doubt = rest2 !== "" && !PROSE.test(rest2) ? anyIn(rest2) : [];
-  const after2 = anyIn(more.join("\n"));
-  const apart = heads.some((h) => !h.some((a) => heads[0]?.includes(a)));
-  const strange = doubt.some((a) => !pair.includes(a)) || after2.length > 0;
-  if (slugs.length > 1 || pair.length - slugs.length > 1 || apart || strange)
-    return { many: [.../* @__PURE__ */ new Set([...pair, ...doubt, ...after2])] };
-  return { realm: slugs[0] ?? pair[0] };
-}
-
-// js/shared/cover.ts
-var formsIn = (pairs, cover) => Object.entries(cover.forms).filter(([, f]) => pairs.has(f.graph) || pairs.has(f.role));
-function stampOf2(text7, cover = COVER) {
-  const block = coverBlock(text7, cover.root);
-  if (block && stamped(block) || Object.values(cover.forms).some((f) => f.stamp.test(text7)))
-    return "own";
-  if (block) return null;
-  return foreignBlock(text7, cover.root) || cover.stampShape.test(text7) ? "foreign" : null;
-}
-function hasCover(text7, cover = COVER) {
-  if (coverBlock(text7, cover.root)) return true;
-  const pairs = frontMatter(text7);
-  return !!pairs && formsIn(pairs, cover).length > 0;
-}
-function formOf2(pairs, cover = COVER) {
-  const W4 = words(ROOT_SEAT);
-  const listed = (keys) => keys.map((k) => `'${k}'`).join(", ");
-  const found = formsIn(pairs, cover);
-  if (found.length > 1)
-    return { why: W4.manyForms(cover.file, listed(found.map(([, f]) => f.graph))) };
-  const [lang2, form] = found[0] ?? [];
-  const all2 = [cover.root, ...Object.values(cover.forms).map((f) => f.graph)];
-  if (!lang2 || !form) return { why: W4.noForm(cover.file, listed(all2)) };
-  return { lang: lang2, form };
-}
-var LEAD2 = /^[\s`'"<]*/;
-var esc2 = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-var roleRef = (q, flags = "") => new RegExp(
-  `${flags.includes("g") ? "" : "^"}#(\\d+)\\s*${esc2(q[0])}[\\s\\S]*?${esc2(q[1])}`,
-  flags
-);
-var distinct = (re, v) => [
-  ...new Set([...v.matchAll(re)].map((m) => m[1]))
-];
-function seatOfBlock(block, cover = COVER) {
-  const W4 = words(ROOT_SEAT);
-  const key3 = (f) => `${cover.root}.${f}`;
-  const graph = block.get("graph")?.trim();
-  if (!graph) return { why: W4.noKey(cover.file, key3("graph")) };
-  if (!/^(?:r\d+|@[\w.-]+\/[\w.-]*\w)$/.test(graph))
-    return { why: W4.noGraph(cover.file, key3("graph")) };
-  const role = block.get("agent_role")?.trim();
-  if (!role) return { why: W4.noKey(cover.file, key3("agent_role")) };
-  if (!/^\d+$/.test(role)) return { why: W4.notNumber(cover.file, key3("agent_role")) };
-  return { realm: graph, karta: role };
-}
-function seatOfPairs(pairs, cover = COVER) {
-  const W4 = words(ROOT_SEAT);
-  const of = formOf2(pairs, cover);
-  if ("why" in of) return of;
-  const keys = of.form;
-  const graph = pairs.get(keys.graph)?.trim();
-  if (!graph) return { why: W4.noKey(cover.file, keys.graph) };
-  const role = pairs.get(keys.role)?.trim();
-  if (!role) return { why: W4.noKey(cover.file, keys.role) };
-  const g = graphOfSlot(graph.replace(LEAD2, ""), keys.graphJoins ?? []);
-  if (!g) return { why: W4.noGraph(cover.file, keys.graph) };
-  if ("many" in g) return { why: W4.manyGraphs(cover.file, keys.graph, g.many.join(", ")) };
-  const r = role.replace(LEAD2, "");
-  const roles = distinct(roleRef(keys.roleQuotes, "g"), r);
-  if (roles.length > 1)
-    return { why: W4.manyRoles(cover.file, keys.role, roles.map((n) => `#${n}`).join(", ")) };
-  const first2 = roleRef(keys.roleQuotes).exec(r);
-  if (!first2)
-    return {
-      why: W4.noRoleRef(cover.file, keys.role, `#N ${keys.roleQuotes[0]}…${keys.roleQuotes[1]}`)
-    };
-  return { realm: g.realm, karta: first2[1] };
-}
-function readCover(dir2, cover = COVER) {
-  let text7;
-  try {
-    text7 = readFileSync36(join37(dir2, cover.file), "utf8");
-  } catch {
-    return null;
-  }
-  if (stampOf2(text7, cover) === "foreign") return { foreign: true };
-  const block = coverBlock(text7, cover.root);
-  if (block) return seatOfBlock(block, cover);
-  const pairs = frontMatter(text7);
-  if (!pairs) return { why: words(ROOT_SEAT).noFrontmatter(cover.file) };
-  return seatOfPairs(pairs, cover);
-}
-
-// js/bridge/orchestra-raise-gates.ts
-var homeOf = (own, realm, karta) => own.homes?.[`${realm}#${karta}`];
-function checkoutFor(own, repository, orca, home) {
-  const named2 = home ?? own.checkouts[repository];
-  const got = named2 ? { path: named2 } : orca(repository);
-  if ("code" in got) return got;
-  if (!existsSync15(got.path) || !statSync9(got.path).isDirectory())
-    return { code: "checkout_absent" };
-  return got.path;
-}
-async function coverRefusal(worktree, realm, karta, canon2, home = false) {
-  const c = readCover(worktree);
-  if (!c || "why" in c || "foreign" in c) return "checkout_uncovered";
-  if (!home && Number(c.karta) !== karta) return "checkout_other_seat";
-  const graph = /^r\d+$/i.test(c.realm) ? await canon2(c.realm) : c.realm;
-  if (!graph) return "checkout_cover_unresolved";
-  return graph === realm ? null : "checkout_other_seat";
-}
-
 // js/bridge/orchestra-dsh-gate.ts
 async function dshCheckout(own, spec, row, canon2) {
   const got = dshReady(spec);
@@ -17028,172 +17795,6 @@ async function dshCheckout(own, spec, row, canon2) {
   if (typeof worktree !== "string") return worktree;
   const uncovered = await coverRefusal(worktree, realm, karta, canon2, !!home);
   return uncovered ? { code: uncovered } : { worktree, repository };
-}
-
-// js/bridge/orchestra-resolve.ts
-var text5 = (v) => typeof v === "string" && v.trim() ? v.trim() : null;
-var missing = (v) => v === null || v === void 0;
-var fits = (l, h) => harnessRefusal(l.adapter, h) === null;
-function resolveInvite(source, ls, runs) {
-  const caller = accountOf(source.author);
-  if (!caller || !ls.account) return { code: "caller_unknown" };
-  const allowed = (l) => caller === ls.account || l.callers.includes(caller);
-  const launcher = text5(source.launcher);
-  let own;
-  if (!missing(source.launcher)) {
-    own = launcher ? ls.own.get(launcher) : void 0;
-    if (!own) {
-      const broken = ls.refused.find((r) => r.what === launcher);
-      return {
-        code: broken?.code ?? (launcher && ls.elsewhere.has(launcher) ? "host_elsewhere" : "launcher_unknown")
-      };
-    }
-    if (!allowed(own)) return { code: "caller_not_allowed" };
-  } else {
-    const local = [...ls.own.values()];
-    const admitted = local.filter(allowed);
-    if (!admitted.length) return { code: local.length ? "caller_not_allowed" : "launcher_missing" };
-    const candidates = admitted.filter((l) => {
-      const harnesses2 = missing(source.harness) ? Object.keys(l.harnesses) : [text5(source.harness) ?? ""];
-      return harnesses2.some(
-        (h) => fits(l, h) && l.harnesses[h] && l.harnesses[h].models.length > 0 && (missing(source.model) || l.harnesses[h].models.includes(text5(source.model) ?? ""))
-      );
-    });
-    if (!candidates.length && admitted.length === 1) own = admitted[0];
-    else if (!candidates.length) {
-      const named2 = text5(source.harness) ?? "";
-      const offering = admitted.find((l) => l.harnesses[named2]);
-      const fitting = admitted.some((l) => l.harnesses[named2] && fits(l, named2));
-      return {
-        code: !missing(source.harness) && !offering ? "harness_not_offered" : offering && !fitting ? harnessRefusal(offering.adapter, named2) ?? "harness_unsupported" : !missing(source.model) ? "model_not_offered" : "launcher_missing"
-      };
-    } else if (candidates.length > 1) return { code: "launcher_ambiguous" };
-    else own = candidates[0];
-  }
-  const harnesses = Object.keys(own.harnesses).filter((h) => fits(own, h));
-  if (missing(source.harness) && harnesses.length !== 1)
-    return { code: harnesses.length ? "harness_ambiguous" : "harness_missing" };
-  const harness = missing(source.harness) ? harnesses[0] : text5(source.harness) ?? "";
-  const offer = own.harnesses[harness];
-  if (!offer) return { code: "harness_not_offered" };
-  const refused2 = harnessRefusal(own.adapter, harness);
-  if (refused2) return { code: refused2 };
-  const models = [...new Set(offer.models)];
-  if (missing(source.model) && models.length !== 1)
-    return { code: models.length ? "model_ambiguous" : "model_missing" };
-  const model = missing(source.model) ? models[0] : text5(source.model) ?? "";
-  if (!models.includes(model)) return { code: "model_not_offered" };
-  if (!text5(source.repository) && !homeOf(own, String(source.realm), Number(source.karta)))
-    return { code: own.clone ? "clone_refused (no_repository)" : "no_checkout" };
-  const live2 = Object.values(runs).filter(
-    (r) => r.launcher === own.launcher && LIVE.includes(r.state)
-  ).length;
-  if (live2 >= own.limit) return { code: "limit_reached" };
-  return { own, row: { ...source, launcher: own.launcher, harness, model } };
-}
-
-// js/bridge/orchestra-dsh-run.ts
-import { spawn as spawn5 } from "node:child_process";
-import { closeSync as closeSync4, openSync as openSync4 } from "node:fs";
-
-// js/bridge/orchestra-tree-drop.ts
-import { existsSync as existsSync16 } from "node:fs";
-async function dropUnlaunched(authDir, runs, key3, execute2 = git2) {
-  const r = runs[key3], t = r.tree;
-  if (!t || t.state !== "ready" || !t.identity || r.terminal || r.exec)
-    return "tree_drop_unverified";
-  try {
-    if (JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
-      return "tree_identity_unverified";
-    const changed = await treeContent(t, execute2);
-    if (changed) return changed;
-    t.state = "removing";
-    writeRuns(authDir, runs);
-    await execute2(t.source, ["worktree", "unlock", "--", t.path], 1e4);
-    const removed = await execute2(t.source, ["worktree", "remove", "--", t.path], 3e4);
-    if (removed.code !== 0 || existsSync16(t.path) || existsSync16(t.identity.gitDir)) {
-      t.state = "retained";
-      return "tree_remove_unverified";
-    }
-  } catch {
-    return "tree_drop_unverified";
-  }
-  delete runs[key3];
-  writeRuns(authDir, runs);
-  return null;
-}
-
-// js/bridge/orchestra-dsh-run.ts
-var SESSION_MS = Number(process.env[envName("DSH_SESSION_MS")]) || 6e4;
-async function launchDsh(authDir, runs, key3, spec, brief2) {
-  const run3 = runs[key3];
-  const fail2 = (why, state2 = "refused") => {
-    run3.state = state2;
-    run3.why = why;
-    writeRuns(authDir, runs);
-    return why;
-  };
-  const unstarted = async (why) => {
-    const kept3 = await dropUnlaunched(authDir, runs, key3);
-    return kept3 ? fail2(`${why}, ${kept3}`, "ambiguity") : `${why}, retry`;
-  };
-  const ready = dshReady(spec);
-  if ("code" in ready) return unstarted(ready.code);
-  const model = modelPatch(run3.model);
-  if (!model || !run3.tree) return unstarted(model ? "tree_unverified" : "dsh_model_invalid");
-  const files = dshFiles(authDir, run3.tree.operation);
-  writeModelPatch(files.model, files.dir, model);
-  const env2 = {
-    ...process.env,
-    [SPAWNED_FOR_ENV]: JSON.stringify({ invite: run3.invite, room: run3.room })
-  };
-  delete env2[envName("ORCHESTRA")];
-  const out7 = openSync4(files.events, "a", 384), err = openSync4(files.stderr, "a", 384);
-  let child;
-  try {
-    child = spawn5(ready.bin, dshArgv(ready.patch, files.model, brief2), {
-      cwd: run3.worktree,
-      env: env2,
-      detached: true,
-      windowsHide: true,
-      stdio: ["ignore", out7, err]
-    });
-  } finally {
-    closeSync4(out7);
-    closeSync4(err);
-  }
-  const started = await new Promise((resolve15) => {
-    child.once("spawn", () => resolve15(child.pid ?? null));
-    child.once("error", () => resolve15(null));
-  });
-  if (!started) return unstarted("dsh_spawn_failed");
-  children.add(started);
-  child.once("exit", (code2, signal) => {
-    children.delete(started);
-    exits.set(started, code2 !== null ? String(code2) : `${signal}`);
-  });
-  child.unref();
-  run3.dsh = { pid: started, events: files.events, model: files.model };
-  run3.state = "launched";
-  writeRuns(authDir, runs);
-  for (const until = Date.now() + SESSION_MS; Date.now() < until; ) {
-    const seen = dshEvents(files.events);
-    if (seen.session) {
-      run3.dsh.session = seen.session;
-      writeRuns(authDir, runs);
-      return "launched";
-    }
-    const exit = await dshExit(run3);
-    if (exit) {
-      run3.dsh.exit = exit;
-      run3.closed = "client_exited";
-      run3.tree.exit = (/* @__PURE__ */ new Date()).toISOString();
-      return fail2(`dsh_exit_${exit}`);
-    }
-    await new Promise((done) => setTimeout(done, 100));
-  }
-  await dshTerminate(run3, "no_session");
-  return fail2("dsh_no_session", "launched");
 }
 
 // js/bridge/orchestra-orca-bind.ts
@@ -17322,6 +17923,7 @@ var BRIEF_MAX = 220;
 async function startRun(authDir, row, own, repository, worktree, runs, key3, canon2, gone) {
   const run3 = {
     realm: String(row.realm),
+    ...typeof row.author === "string" ? { author: row.author } : {},
     room: String(row.room),
     invite: Number(row.invite),
     karta: Number(row.karta),
@@ -17367,7 +17969,7 @@ async function startRun(authDir, row, own, repository, worktree, runs, key3, can
       runs,
       key3,
       dsh,
-      words(ORCHESTRA).dshBrief(run3.realm, run3.karta, run3.room)
+      homeLine(own, run3) + words(ORCHESTRA).dshBrief(run3.realm, run3.karta, run3.room)
     );
   if (exec) {
     let outcome;
@@ -17415,7 +18017,7 @@ async function startRun(authDir, row, own, repository, worktree, runs, key3, can
 }
 
 // js/bridge/orchestra-raise.ts
-var w5 = () => words(ORCHESTRA);
+var w6 = () => words(ORCHESTRA);
 async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
   const said2 = [];
   let ready;
@@ -17425,14 +18027,18 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
     const realm = String(source.realm), room = String(source.room), invite = Number(source.invite);
     const key3 = runKey(realm, room, invite);
     if (runs[key3]) continue;
+    if (dormantShare(source, runs)) {
+      said2.push(w6().leadRow(realm, room, invite, "dormant_share"));
+      continue;
+    }
     const roleWhy = await role(source);
     if (roleWhy) {
-      said2.push(w5().leadRow(realm, room, invite, roleWhy));
+      said2.push(w6().leadRow(realm, room, invite, roleWhy));
       continue;
     }
     const resolved = resolveInvite(source, ls, runs);
     if ("code" in resolved) {
-      said2.push(w5().leadRow(realm, room, invite, resolved.code));
+      said2.push(w6().leadRow(realm, room, invite, resolved.code));
       continue;
     }
     const { row, own } = resolved;
@@ -17441,20 +18047,20 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       const got = await dshCheckout(own, dsh, row, canon2);
       if (gone?.gone) break;
       const why = "code" in got ? got.code : await startRun(authDir, row, own, got.repository, got.worktree, runs, key3, canon2, gone);
-      said2.push(w5().leadRow(realm, room, invite, why));
+      said2.push(w6().leadRow(realm, room, invite, why));
       continue;
     }
     ready = ready === void 0 ? await orcaReady((version) => said2.push(`Orca ${version}`)) : ready;
     if (ready) {
-      said2.push(w5().leadRow(realm, room, invite, ready));
+      said2.push(w6().leadRow(realm, room, invite, ready));
       continue;
     }
     if (own.harnesses[String(row.harness).trim()].exec && !execHost(own.host)) {
-      said2.push(w5().leadRow(realm, room, invite, "exec_host_unverified"));
+      said2.push(w6().leadRow(realm, room, invite, "exec_host_unverified"));
       continue;
     }
     if (own.harnesses[String(row.harness).trim()].exec && !await execRuntime()) {
-      said2.push(w5().leadRow(realm, room, invite, "exec_runtime_unverified"));
+      said2.push(w6().leadRow(realm, room, invite, "exec_runtime_unverified"));
       continue;
     }
     const repository = String(row.repository ?? "").trim();
@@ -17472,7 +18078,7 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       const turn = await cloneTurn(authDir, own.clone, spec, repository, gone);
       if (turn === "gone") break;
       if (turn !== "cloned") {
-        said2.push(w5().leadRow(realm, room, invite, turn));
+        said2.push(w6().leadRow(realm, room, invite, turn));
         continue;
       }
       orca = await orcaCheckouts();
@@ -17482,18 +18088,18 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
       if (why) worktree = { code: why };
     }
     if (typeof worktree !== "string") {
-      said2.push(w5().leadRow(realm, room, invite, worktree.code));
+      said2.push(w6().leadRow(realm, room, invite, worktree.code));
       continue;
     }
     cloneFound(authDir, repository);
     const uncovered = await coverRefusal(worktree, realm, Number(row.karta), canon2, !!home);
     if (uncovered) {
-      said2.push(w5().leadRow(realm, room, invite, uncovered));
+      said2.push(w6().leadRow(realm, room, invite, uncovered));
       continue;
     }
     if (gone?.gone) break;
     said2.push(
-      w5().leadRow(
+      w6().leadRow(
         realm,
         room,
         invite,
@@ -17504,42 +18110,12 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
   return said2;
 }
 
-// js/bridge/orchestra-role.ts
-async function roleRefusal(base, token, row) {
-  const seq4 = row.karta;
-  if (!Number.isSafeInteger(seq4) || Number(seq4) <= 0 || typeof row.realm !== "string")
-    return "role_unverified";
-  try {
-    const res = await namedFetch(`${base}/nodes/${seq4}`, {
-      headers: {
-        authorization: `Bearer ${token}`,
-        "x-nks-realm": row.realm,
-        [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
-      },
-      redirect: "error",
-      signal: AbortSignal.timeout(1e4)
-    });
-    if (!res.ok) return "role_unreadable";
-    const node = await res.json();
-    if (!node || node.seq !== seq4) return "role_unverified";
-    if (node.node_type !== "karta") return "role_not_karta";
-    if (node.is_active !== true) return "role_inactive";
-    if (node.manifested_as === "adhikarin") return null;
-    if (node.manifested_as === "svatantra") return "human_role_not_executable";
-    if (node.manifested_as === "pratibimba" || node.manifested_as === "agantuka")
-      return "role_not_executable";
-    return "role_kind_unknown";
-  } catch {
-    return "role_unreadable";
-  }
-}
-
 // js/bridge/orchestra-tact.ts
-import { mkdirSync as mkdirSync25, readFileSync as readFileSync37, writeFileSync as writeFileSync21 } from "node:fs";
+import { mkdirSync as mkdirSync25, readFileSync as readFileSync37, writeFileSync as writeFileSync22 } from "node:fs";
 import { join as join39 } from "node:path";
-var w6 = () => words(ORCHESTRA);
-var LIMIT5 = 200;
-var TIMEOUT_MS3 = 1e4;
+var w7 = () => words(ORCHESTRA);
+var LIMIT6 = 200;
+var TIMEOUT_MS4 = 1e4;
 var cursorsFile = (authDir) => join39(seamRunDir(authDir), "orchestra-cursors.json");
 function readTactState(authDir) {
   try {
@@ -17559,7 +18135,7 @@ async function getJson(base, token, path, redirect) {
       [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
     },
     redirect,
-    signal: AbortSignal.timeout(TIMEOUT_MS3)
+    signal: AbortSignal.timeout(TIMEOUT_MS4)
   });
   if (!res.ok) throw new Error(String(res.status));
   return res.json();
@@ -17574,7 +18150,7 @@ async function resolveRealms2(base, token, realms) {
   const short2 = realms.filter(isShort);
   if (!short2.length) return { realms: [...new Set(realms)] };
   if (!token) return { unresolved: short2[0], why: "no key to the server" };
-  const listed = itemsOf(await getJson(base, token, `/realms?limit=${LIMIT5}`));
+  const listed = itemsOf(await getJson(base, token, `/realms?limit=${LIMIT6}`));
   if (!listed) return { unresolved: short2[0], why: "realm list is not a list" };
   const canonById = realmIndexOf(listed).byShort;
   const out7 = [];
@@ -17592,7 +18168,7 @@ async function resolveRealms2(base, token, realms) {
 function realmCanon(base, token) {
   let index;
   return async (name2) => {
-    index ??= getJson(base, token, `/realms?limit=${LIMIT5}`).then((v) => {
+    index ??= getJson(base, token, `/realms?limit=${LIMIT6}`).then((v) => {
       const listed = itemsOf(v);
       return listed ? realmIndexOf(listed) : null;
     }).catch(() => null);
@@ -17601,7 +18177,7 @@ function realmCanon(base, token) {
   };
 }
 async function readTape(base, token, realm, since) {
-  const q = new URLSearchParams({ limit: String(LIMIT5) });
+  const q = new URLSearchParams({ limit: String(LIMIT6) });
   if (since) q.set("since", since);
   const tape = itemsOf(
     await getJson(base, token, `/realms/${encodeURIComponent(realm)}/raised?${q}`)
@@ -17618,7 +18194,7 @@ async function readRealm(base, token, realm, since) {
   );
   const invited = itemsOf(inviteResponse);
   if (!invited) throw new Error("invites: not a list");
-  const q = new URLSearchParams({ limit: String(LIMIT5) });
+  const q = new URLSearchParams({ limit: String(LIMIT6) });
   if (since) q.set("since", since);
   const raised = await getJson(
     base,
@@ -17645,31 +18221,31 @@ function causesOf(signals) {
   return [...counts].map(([cause, n]) => `${cause} ${n}`).join(", ");
 }
 async function stepTact(authDir, base, token, realms, gone, act) {
-  if (!base) return { ok: false, said: w6().stepNoApi() };
+  if (!base) return { ok: false, said: w7().stepNoApi() };
   let boundary = [...new Set(realms)];
   if (boundary.some((r) => /^r\d+$/i.test(r.trim()))) {
     try {
       const resolved = await resolveRealms2(base, token, boundary);
       if ("unresolved" in resolved)
-        return { ok: false, said: w6().stepUnresolvedRealm(resolved.unresolved, resolved.why) };
+        return { ok: false, said: w7().stepUnresolvedRealm(resolved.unresolved, resolved.why) };
       boundary = resolved.realms;
     } catch (e) {
       const first2 = boundary.find((r) => /^r\d+$/i.test(r.trim())) ?? "?";
-      return { ok: false, said: w6().stepUnresolvedRealm(first2, e.message) };
+      return { ok: false, said: w7().stepUnresolvedRealm(first2, e.message) };
     }
   }
   const state2 = readTactState(authDir);
   const reads = [];
   for (const realm of boundary) {
-    if (gone?.gone) return { ok: false, said: w6().stepGone() };
+    if (gone?.gone) return { ok: false, said: w7().stepGone() };
     try {
       if (!token) throw new Error("no key to the server");
       reads.push(await readRealm(base, token, realm, state2.realms[realm]?.cursor ?? null));
     } catch (e) {
-      return { ok: false, said: w6().stepReadError(realm, e.message) };
+      return { ok: false, said: w7().stepReadError(realm, e.message) };
     }
   }
-  if (gone?.gone) return { ok: false, said: w6().stepGone() };
+  if (gone?.gone) return { ok: false, said: w7().stepGone() };
   const lead = act ? await act(reads, boundary, gone, {
     base,
     token: token ?? "",
@@ -17688,24 +18264,24 @@ async function stepTact(authDir, base, token, realms, gone, act) {
       };
   try {
     mkdirSync25(seamRunDir(authDir), { recursive: true, mode: 448 });
-    writeFileSync21(cursorsFile(authDir), JSON.stringify(state2) + "\n", { mode: 384 });
+    writeFileSync22(cursorsFile(authDir), JSON.stringify(state2) + "\n", { mode: 384 });
   } catch (e) {
-    return { ok: false, said: w6().doorError(e.message) };
+    return { ok: false, said: w7().doorError(e.message) };
   }
-  if (left2) return { ok: false, said: w6().stepGone() };
+  if (left2) return { ok: false, said: w7().stepGone() };
   return {
     ok: true,
-    said: w6().step(
-      reads.map((r) => w6().tactRealm(r.realm, r.invites, r.signals.length, causesOf(r.signals))).join("; ")
+    said: w7().step(
+      reads.map((r) => w7().tactRealm(r.realm, r.invites, r.signals.length, causesOf(r.signals))).join("; ")
     ) + (state2.lead ? `
-${w6().lead(state2.lead)}` : "")
+${w7().lead(state2.lead)}` : "")
   };
 }
 
 // js/bridge/orchestra-lead.ts
-var w7 = () => words(ORCHESTRA);
+var w8 = () => words(ORCHESTRA);
 function leadAct(authDir, base, token, mcpUrl, admitted) {
-  return async (reads, boundary, gone, invited) => admitted ? { said: await lead(reads, boundary, gone, invited) } : { said: [w7().leadNotAdmitted()], hold: true };
+  return async (reads, boundary, gone, invited) => admitted ? { said: await lead(reads, boundary, gone, invited) } : { said: [w8().leadNotAdmitted()], hold: true };
   async function lead(reads, boundary, gone, invited) {
     const runs = readRuns(authDir);
     for (const r of reads) foldTape(r.realm, r.signals, runs);
@@ -17715,7 +18291,7 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
       const demands = await readDemands(base, token, boundary, boundary, void 0, owned, invited);
       if (!demands.complete) {
         said2.push(
-          w7().leadIncomplete(demands.errors.map((e) => `${e.source}:${e.code}`).join(", "))
+          w8().leadIncomplete(demands.errors.map((e) => `${e.source}:${e.code}`).join(", "))
         );
         return said2;
       }
@@ -17723,6 +18299,7 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
       said2.push(...foreign.said);
       said2.push(...await expireLaunches(runs, gone));
       said2.push(...settleStops(runs, owned, foreign.fresh));
+      await dormantFromEnds(base, token, runs, boundary);
       const cursorOf2 = (realm) => reads.find((r) => r.realm === realm)?.cursor ?? null;
       said2.push(
         ...await quench(
@@ -17742,10 +18319,10 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
       try {
         launchers = await readLaunchers(mcpUrl, token);
       } catch (e) {
-        said2.push(w7().leadNoLaunchers(e.message));
+        said2.push(w8().leadNoLaunchers(e.message));
         return said2;
       }
-      for (const r of launchers.refused) said2.push(w7().leadDescription(r.what, r.code));
+      for (const r of launchers.refused) said2.push(w8().leadDescription(r.what, r.code));
       const canon2 = realmCanon(base, token);
       said2.push(
         ...await raiseRows(
@@ -17758,6 +18335,21 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
           gone
         )
       );
+      said2.push(
+        ...await stepDormant(
+          authDir,
+          base,
+          token,
+          runs,
+          launchers,
+          gone,
+          void 0,
+          void 0,
+          boundary
+        )
+      );
+      writeRuns(authDir, runs);
+      await cleanupEndedTrees(authDir, runs);
       return said2;
     } finally {
       writeRuns(authDir, runs);
@@ -17806,12 +18398,12 @@ async function selectedStep(authDir, base, token, mcp, realms, boundary, only, g
 }
 
 // js/bridge/orchestra-plan-line.ts
-function planLine(w12, own, harness, worktree, model) {
+function planLine(w13, own, harness, worktree, model) {
   const offer = own.harnesses[harness];
   if (offer.dsh)
     return [
       offer.dsh.bin ?? "dsh",
-      ...dshArgv(offer.dsh.patch ?? "<dsh-profile.yml>", `<patch: model ${model}>`, w12.planBrief()),
+      ...dshArgv(offer.dsh.patch ?? "<dsh-profile.yml>", `<patch: model ${model}>`, w13.planBrief()),
       `(cwd ${worktree}, env spawned_for)`
     ].join(" ");
   if (offer.exec)
@@ -17825,27 +18417,27 @@ function planLine(w12, own, harness, worktree, model) {
       "<runtime-local prepare; API create/prompt; exec opencode --server --session>",
       "(exec_preflight_required)"
     ].join(" ");
-  return ["orca", ...launchArgv(harness, worktree, model, w12.planBrief())].join(" ");
+  return ["orca", ...launchArgv(harness, worktree, model, w13.planBrief())].join(" ");
 }
 
 // js/bridge/orchestra-plan.ts
-var w8 = () => words(ORCHESTRA);
+var w9 = () => words(ORCHESTRA);
 var ORCA = "orca";
 async function planTact(authDir, base, token, mcpUrl, requested, boundary, only) {
-  if (!base || !token) return { ok: false, said: w8().stepNoApi() };
-  if (!requested.length) return { ok: true, said: w8().stepEmpty() };
+  if (!base || !token) return { ok: false, said: w9().stepNoApi() };
+  if (!requested.length) return { ok: true, said: w9().stepEmpty() };
   const canon2 = realmCanon(base, token);
   const realms = [];
   for (const r of requested) {
     const c = /^r\d+$/i.test(r.trim()) ? await canon2(r) : r;
-    if (!c) return { ok: false, said: w8().stepUnresolvedRealm(r, "not in the realm list") };
+    if (!c) return { ok: false, said: w9().stepUnresolvedRealm(r, "not in the realm list") };
     realms.push(c);
   }
   const demands = await readDemands(base, token, realms, boundary);
   if (!demands.complete)
     return {
       ok: false,
-      said: w8().leadIncomplete(demands.errors.map((e) => `${e.source}:${e.code}`).join(", "))
+      said: w9().leadIncomplete(demands.errors.map((e) => `${e.source}:${e.code}`).join(", "))
     };
   const selected = only ? selectInvite(demands.start, only) : null;
   if (selected && "code" in selected) return { ok: false, said: String(selected.code) };
@@ -17853,31 +18445,31 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
   try {
     ls = await readLaunchers(mcpUrl, token);
   } catch (e) {
-    return { ok: false, said: w8().leadNoLaunchers(e.message) };
+    return { ok: false, said: w9().leadNoLaunchers(e.message) };
   }
   const runs = structuredClone(readRuns(authDir));
   const clones = readClones(authDir);
-  const rows = ls.refused.map((r) => w8().leadDescription(r.what, r.code));
+  const rows = ls.refused.map((r) => w9().leadDescription(r.what, r.code));
   for (const source of selected ? [selected] : demands.start) {
     let row = source;
     const realm = String(row.realm);
     const room = String(row.room);
     const invite = Number(row.invite);
-    const say3 = (what) => rows.push(w8().leadRow(realm, room, invite, what));
+    const say3 = (what) => rows.push(w9().leadRow(realm, room, invite, what));
     const key3 = runKey(realm, room, invite);
     const had = runs[key3];
     if (had) {
-      say3(w8().planAlready(had.state));
+      say3(w9().planAlready(had.state));
       continue;
     }
     const roleWhy = await roleRefusal(base, token, row);
     if (roleWhy) {
-      say3(w8().planRefuse(roleWhy));
+      say3(w9().planRefuse(roleWhy));
       continue;
     }
     const resolved = resolveInvite(row, ls, runs);
     if ("code" in resolved) {
-      say3(w8().planRefuse(resolved.code));
+      say3(w9().planRefuse(resolved.code));
       continue;
     }
     row = resolved.row;
@@ -17888,29 +18480,29 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
     const dsh = !!offer;
     const ready = offer ? dshReady(offer) : null;
     if (ready && "code" in ready) {
-      say3(w8().planRefuse(ready.code));
+      say3(w9().planRefuse(ready.code));
       continue;
     }
     const got = checkoutFor(own, repository, () => ({ code: dsh ? "no_checkout" : ORCA }), home);
     if (typeof got === "string") {
       const uncovered = await coverRefusal(got, realm, Number(row.karta), canon2, !!home);
       if (uncovered) {
-        say3(w8().planRefuse(uncovered));
+        say3(w9().planRefuse(uncovered));
         continue;
       }
     } else if (got.code === ORCA) {
       if (own.clone) {
         const kept3 = clones[repository];
         const c = cloneTarget(own.clone, repository);
-        if (kept3 && runtimeOver(kept3)) say3(w8().planNoClone("clone_failed (clone_timeout)"));
-        else if (kept3?.state === "cloning") say3(w8().planNoClone("cloning"));
+        if (kept3 && runtimeOver(kept3)) say3(w9().planNoClone("clone_failed (clone_timeout)"));
+        else if (kept3?.state === "cloning") say3(w9().planNoClone("cloning"));
         else if (kept3?.state === "failed" && kept3.spec === specOf(own))
-          say3(w8().planNoClone(`clone_failed_before (${kept3.why})`));
-        else if ("code" in c) say3(w8().planNoClone(c.code));
-        else say3(w8().planClone(c.url, c.destination));
+          say3(w9().planNoClone(`clone_failed_before (${kept3.why})`));
+        else if ("code" in c) say3(w9().planNoClone(c.code));
+        else say3(w9().planClone(c.url, c.destination));
       }
     } else {
-      say3(w8().planRefuse(got.code));
+      say3(w9().planRefuse(got.code));
       continue;
     }
     const worktree = `<own detached tree of ${repository}>`;
@@ -17929,30 +18521,34 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
       state: "launched",
       at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    say3(w8().planLaunch(planLine(w8(), own, harness, worktree, model)));
+    say3(w9().planLaunch(planLine(w9(), own, harness, worktree, model)));
   }
-  return { ok: true, said: w8().plan(rows.join("\n")) };
+  return { ok: true, said: w9().plan(rows.join("\n")) };
 }
 
 // js/bridge/orchestra-status.ts
 function orchestraStatus(authDir, discovered) {
-  const w12 = words(ORCHESTRA), flag = readOrchestraFlag(authDir), tact = tactStateOf(authDir);
+  const w13 = words(ORCHESTRA), flag = readOrchestraFlag(authDir), tact = tactStateOf(authDir);
   const lines = Object.entries(tact.realms).map(
-    ([realm, t]) => w12.tactOut(realm, t.invites, t.signals, t.cursor ?? "", t.at)
+    ([realm, t]) => w13.tactOut(realm, t.invites, t.signals, t.cursor ?? "", t.at)
   );
   for (const [repo, c] of Object.entries(readClones(authDir)))
-    lines.push(w12.cloneOut(repo, c.state, c.why ?? "", c.at));
-  if (tact.lead) lines.push(w12.lead(tact.lead));
+    lines.push(w13.cloneOut(repo, c.state, c.why ?? "", c.at));
+  if (tact.lead) lines.push(w13.lead(tact.lead));
   for (const r of Object.values(readRuns(authDir))) {
+    if (r.state === "dormant") {
+      lines.push(w13.leadRow(r.realm, r.room, r.invite, w13.dormant(String(r.dormant?.cursor ?? ""))));
+      continue;
+    }
     const failed = r.state === "ended" ? dshFailure(r) : void 0;
     if (failed && r.tree?.state !== "retained") {
-      lines.push(w12.leadRow(r.realm, r.room, r.invite, failed));
+      lines.push(w13.leadRow(r.realm, r.room, r.invite, failed));
       continue;
     }
     if (!r.tree || r.tree.state === "removed") continue;
     if (r.tree.state === "ready" && r.state !== "ambiguity" && r.state !== "ended") continue;
     lines.push(
-      w12.leadRow(
+      w13.leadRow(
         r.realm,
         r.room,
         r.invite,
@@ -17964,12 +18560,12 @@ function orchestraStatus(authDir, discovered) {
   const found = [...new Set(discovered)].filter((r) => !named2.includes(r));
   return {
     ok: true,
-    said: w12.status(!!flag?.on, named2.join(", "), found.join(", "), lines.join("; "))
+    said: w13.status(!!flag?.on, named2.join(", "), found.join(", "), lines.join("; "))
   };
 }
 
 // js/bridge/orchestra-describe.ts
-var w9 = () => words(ORCHESTRA);
+var w10 = () => words(ORCHESTRA);
 function launcherSpecOf(v) {
   const x = v ?? null;
   if (!x || typeof x !== "object" || typeof x.launcher !== "string" || !x.launcher.trim())
@@ -18005,8 +18601,8 @@ async function agentsHolon(s2) {
 }
 async function ensureLauncher(serverUrl, token, spec) {
   if (spec.launcher.length > LAUNCHER_MAX)
-    throw new Error(w9().describeTooLong(spec.launcher, LAUNCHER_MAX));
-  if (!serverUrl || !token) throw new Error(w9().describeFailed(spec.launcher, "no key"));
+    throw new Error(w10().describeTooLong(spec.launcher, LAUNCHER_MAX));
+  if (!serverUrl || !token) throw new Error(w10().describeFailed(spec.launcher, "no key"));
   const s2 = mcpSession(serverUrl, token, "orchestra");
   try {
     await s2.open();
@@ -18019,11 +18615,11 @@ async function ensureLauncher(serverUrl, token, spec) {
     for (const seq4 of new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))) {
       const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       if (parseLauncher(body).launcher === spec.launcher)
-        return w9().describeTaken(spec.launcher, `#${seq4}`);
+        return w10().describeTaken(spec.launcher, `#${seq4}`);
     }
-    if (!spec.models.length) throw new Error(w9().describeNoModel(spec.launcher));
+    if (!spec.models.length) throw new Error(w10().describeNoModel(spec.launcher));
     if (spec.limit !== void 0 && spec.limit < 0)
-      throw new Error(w9().describeFailed(spec.launcher, "limit"));
+      throw new Error(w10().describeFailed(spec.launcher, "limit"));
     const holon = await agentsHolon(s2);
     const description = JSON.stringify({
       launcher: spec.launcher,
@@ -18034,7 +18630,7 @@ async function ensureLauncher(serverUrl, token, spec) {
     });
     const made = await s2.call(tool("add_phenomenon"), {
       realm: "mind",
-      name: w9().describeName(spec.launcher),
+      name: w10().describeName(spec.launcher),
       given_as: "grundsatz",
       description,
       epistemic_mode: "pratyakshita",
@@ -18042,12 +18638,12 @@ async function ensureLauncher(serverUrl, token, spec) {
       volitive_mode: "adhimoksha",
       attrs: { slice: "orchestra" },
       ...holon ? { arrows: [{ arrow_type: "context", target: holon, volitive_mode: "adhimoksha" }] } : {},
-      reasoning: w9().describeReason()
+      reasoning: w10().describeReason()
     });
-    return w9().describeWritten(spec.launcher, /\(#(\d+)/.exec(made)?.[1] ?? "", holon);
+    return w10().describeWritten(spec.launcher, /\(#(\d+)/.exec(made)?.[1] ?? "", holon);
   } catch (e) {
     const m = e.message;
-    throw new Error(m.includes(spec.launcher) ? m : w9().describeFailed(spec.launcher, m), {
+    throw new Error(m.includes(spec.launcher) ? m : w10().describeFailed(spec.launcher, m), {
       cause: e
     });
   } finally {
@@ -18057,19 +18653,19 @@ async function ensureLauncher(serverUrl, token, spec) {
 
 // js/bridge/orchestra-switch.ts
 async function switchOrchestra(authDir, net, op, realms, extra) {
-  const w12 = words(ORCHESTRA);
+  const w13 = words(ORCHESTRA);
   if (op === "off") {
     writeOrchestraFlag(authDir, { on: false, realms: [] });
     net?.changed?.();
-    return { ok: true, said: w12.off() };
+    return { ok: true, said: w13.off() };
   }
   const prior = readOrchestraFlag(authDir);
   const terminal = extra?.consent === true;
   const widens = realms.some((r) => !(prior?.on ? prior.realms : []).includes(r));
   if (!envAdmitted() && !terminal && (!prior?.consent || widens))
-    return { ok: false, said: w12.notAdmitted() };
+    return { ok: false, said: w13.notAdmitted() };
   const short2 = realms.filter((r) => /^r\d+$/i.test(r.trim()));
-  if (short2.length) return { ok: false, said: w12.onShortRealm(short2.join(", ")) };
+  if (short2.length) return { ok: false, said: w13.onShortRealm(short2.join(", ")) };
   const spec = launcherSpecOf(extra?.launcher);
   let described = "";
   if (spec)
@@ -18082,7 +18678,7 @@ async function switchOrchestra(authDir, net, op, realms, extra) {
   const consent = terminal ? { by: "terminal", at: (/* @__PURE__ */ new Date()).toISOString() } : prior?.consent;
   writeOrchestraFlag(authDir, { on: true, realms: named2, ...consent ? { consent } : {} });
   net?.changed?.();
-  return { ok: true, said: [described, w12.on(named2.join(", "))].filter(Boolean).join("\n") };
+  return { ok: true, said: [described, w13.on(named2.join(", "))].filter(Boolean).join("\n") };
 }
 
 // js/bridge/orchestra-watch.ts
@@ -18102,7 +18698,7 @@ async function openOrchestraWatch(authDir, serve, paused, say3, active) {
 }
 
 // js/bridge/orchestra.ts
-var w10 = () => words(ORCHESTRA);
+var w11 = () => words(ORCHESTRA);
 var orchestraLeading = (authDir) => execPending(authDir) || orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true;
 async function openOrchestra(authDir, serve, paused, say3) {
   return openOrchestraWatch(
@@ -18119,7 +18715,11 @@ function orchestraServe(authDir, net) {
   setInterval(() => {
     if (observing || !execPending(authDir)) return;
     observing = true;
-    const next = tacting.then(() => observeExec(authDir, net?.base() ?? "", net?.token() ?? null));
+    const next = tacting.then(
+      () => observeExec(authDir, net?.base() ?? "", net?.token() ?? null, [
+        .../* @__PURE__ */ new Set([...readOrchestraFlag(authDir)?.realms ?? [], ...net?.realms?.() ?? []])
+      ])
+    );
     tacting = next.catch(() => {
     });
     void next.catch(() => process.stderr.write("exec_observer_failed\n")).finally(() => {
@@ -18134,14 +18734,14 @@ function orchestraServe(authDir, net) {
   };
   const stepOnce = async (gone) => {
     const flag = readOrchestraFlag(authDir);
-    if (!flag?.on) return { ok: true, said: w10().stepEmpty() };
+    if (!flag?.on) return { ok: true, said: w11().stepEmpty() };
     const n = net ?? {
       base: () => "",
       token: () => null,
       realms: () => []
     };
     const boundary = [.../* @__PURE__ */ new Set([...flag.realms, ...n.realms?.() ?? []])];
-    if (!boundary.length) return { ok: true, said: w10().stepEmpty() };
+    if (!boundary.length) return { ok: true, said: w11().stepEmpty() };
     const base = n.base();
     const token = n.token();
     const act = base && token ? leadAct(authDir, base, token, n.mcp?.() ?? "", orchestraAdmitted(authDir)) : void 0;
@@ -18289,7 +18889,7 @@ import {
   readFileSync as readFileSync38,
   renameSync as renameSync14,
   unlinkSync as unlinkSync21,
-  writeFileSync as writeFileSync22
+  writeFileSync as writeFileSync23
 } from "node:fs";
 import { join as join40 } from "node:path";
 var ANSWER_WINDOW_MS = 6e4;
@@ -18323,7 +18923,7 @@ function writeOrder(e) {
   try {
     mkdirSync26(dir(), { recursive: true, mode: 448 });
     const tmp = `${f}.tmp-${process.pid}`;
-    writeFileSync22(tmp, JSON.stringify(e), { mode: 384 });
+    writeFileSync23(tmp, JSON.stringify(e), { mode: 384 });
     renameSync14(tmp, f);
     return true;
   } catch {
@@ -18353,7 +18953,7 @@ function writeSince2(base, seq4) {
   try {
     mkdirSync26(dir(), { recursive: true, mode: 448 });
     const tmp = `${sincePath()}.tmp-${process.pid}`;
-    writeFileSync22(tmp, JSON.stringify({ ...all2, [base]: seq4 }), { mode: 384 });
+    writeFileSync23(tmp, JSON.stringify({ ...all2, [base]: seq4 }), { mode: 384 });
     renameSync14(tmp, sincePath());
   } catch {
   }
@@ -18396,7 +18996,7 @@ function windowEnd(o, at3) {
   const span = seconds2 > 0 ? seconds2 * 1e3 : ANSWER_WINDOW_MS;
   return (Number.isFinite(issued) ? issued : at3) + span;
 }
-var TIMEOUT_MS4 = 5e3;
+var TIMEOUT_MS5 = 5e3;
 var RETRY_MS2 = (process.env[envName("ORDER_RETRY_MS")] || "1000,2000,5000,15000,30000,60000").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0);
 function headers() {
   const h = { "content-type": "application/json" };
@@ -18414,7 +19014,7 @@ async function sendAck(base, id, state2, reason) {
         ...reason ? { reason_code: reason } : {},
         client_id: `${id}-${state2}`
       }),
-      signal: AbortSignal.timeout(TIMEOUT_MS4)
+      signal: AbortSignal.timeout(TIMEOUT_MS5)
     });
     const body = await res.text().catch(() => "");
     if (res.ok) return "taken";
@@ -18486,7 +19086,7 @@ async function clearSeatModel(realm) {
       method: "PATCH",
       headers: { ...headers(), "x-nks-realm": apiRealm(realm) },
       body: JSON.stringify({ model: null }),
-      signal: AbortSignal.timeout(TIMEOUT_MS4)
+      signal: AbortSignal.timeout(TIMEOUT_MS5)
     });
     if (res.ok) return null;
     const body = (await res.text().catch(() => "")).trim().slice(0, 160);
@@ -18589,13 +19189,13 @@ var isDirectory2 = (p) => {
 };
 
 // js/shared/mindslice.ts
-var LIMIT6 = 100;
+var LIMIT7 = 100;
 var NODE_ROW = /^\s+\S.* \(#\d+, /;
 var SLICE_ARGS = {
   realm: "mind",
   q: "",
   attrs_filter: "slice:agents,ways",
-  limit: LIMIT6,
+  limit: LIMIT7,
   include_description: true
 };
 var brief = (s2) => {
@@ -18604,9 +19204,9 @@ var brief = (s2) => {
 };
 async function mindSlice(call, options = {}) {
   const W4 = words(MIND_SLICE);
-  const unread = (text7) => {
-    if (options.strict) throw new Error(brief(text7));
-    return W4.unread(brief(text7));
+  const unread = (text8) => {
+    if (options.strict) throw new Error(brief(text8));
+    return W4.unread(brief(text8));
   };
   try {
     const ready = await call(tool("me"), { action: "readiness" });
@@ -18623,9 +19223,9 @@ async function mindSlice(call, options = {}) {
       const [, name2, seq4, line] = MIND_ROW.exec(l) ?? [];
       return name2 ? [`  ${name2} (#${seq4})${line ? ` — ${line}` : ""}`] : [];
     });
-    if (!rows.length) return listed >= LIMIT6 ? `${W4.empty()}
-${W4.foot(true, LIMIT6)}` : W4.empty();
-    return [W4.head(rows.length), ...rows, W4.foot(listed >= LIMIT6, LIMIT6)].join("\n");
+    if (!rows.length) return listed >= LIMIT7 ? `${W4.empty()}
+${W4.foot(true, LIMIT7)}` : W4.empty();
+    return [W4.head(rows.length), ...rows, W4.foot(listed >= LIMIT7, LIMIT7)].join("\n");
   } catch (e) {
     if (options.strict) throw e;
     return unread(e.message);
@@ -18682,24 +19282,24 @@ async function stopGuard(msg, run3) {
     if (word3) left2.push(word3);
   }
   forgetSeat(stop);
-  const text7 = [stop, ...left2].join("\n");
+  const text8 = [stop, ...left2].join("\n");
   return {
     jsonrpc: "2.0",
     id: msg.id,
-    result: { isError: true, content: [{ type: "text", text: text7 }] }
+    result: { isError: true, content: [{ type: "text", text: text8 }] }
   };
 }
 async function registerRefused(move2, r, realm, taken2, prior, addr, cleanupFresh = false, claimFailed = false) {
-  const text7 = short(r.text);
-  if (!taken2) return refusedWord("register", r, realm, sw().takenButRegister(text7));
+  const text8 = short(r.text);
+  if (!taken2) return refusedWord("register", r, realm, sw().takenButRegister(text8));
   if (!prior && cleanupFresh) {
     const refusal3 = refusedWord("register", r, realm);
     const left3 = await dropTaken(taken2);
     return left3 ? `${refusal3}
 ${left3}` : refusal3;
   }
-  if (!prior) return refusedWord("register", r, realm, sw().takenButRegister(text7));
-  const refusal2 = refusedWord("register", r, realm, sw().refused("register", text7));
+  if (!prior) return refusedWord("register", r, realm, sw().takenButRegister(text8));
+  const refusal2 = refusedWord("register", r, realm, sw().refused("register", text8));
   if (stoppedInMove()) return refusal2;
   const left2 = await dropTaken(taken2);
   if (left2) return `${refusal2}
@@ -18720,25 +19320,25 @@ ${back.isError ? `${word3} register: ${short(back.text, 160)}` : word3}`;
 var STAND_TOOL_NAME = tool("stand");
 var str4 = (description) => ({ type: "string", description });
 var standTool = () => {
-  const w12 = words(STAND_TOOL);
+  const w13 = words(STAND_TOOL);
   return {
     name: STAND_TOOL_NAME,
-    description: w12.description(),
+    description: w13.description(),
     inputSchema: {
       type: "object",
       properties: {
-        realm: str4(w12.realm()),
-        karta: str4(w12.karta()),
-        name: str4(w12.name()),
-        room: str4(w12.room()),
-        model: str4(w12.model()),
-        mute_siblings: { type: "boolean", description: w12.muteSiblings() },
-        take: { type: "boolean", description: w12.take() },
-        room_karta: str4(w12.roomKarta()),
-        repeat_knock: { type: "boolean", description: w12.repeatKnock() },
-        satellite_of: str4(w12.satelliteOf()),
-        status: str4(w12.status()),
-        cwd: str4(w12.cwd()),
+        realm: str4(w13.realm()),
+        karta: str4(w13.karta()),
+        name: str4(w13.name()),
+        room: str4(w13.room()),
+        model: str4(w13.model()),
+        mute_siblings: { type: "boolean", description: w13.muteSiblings() },
+        take: { type: "boolean", description: w13.take() },
+        room_karta: str4(w13.roomKarta()),
+        repeat_knock: { type: "boolean", description: w13.repeatKnock() },
+        satellite_of: str4(w13.satelliteOf()),
+        status: str4(w13.status()),
+        cwd: str4(w13.cwd()),
         spawned_for: spawnedForSchema(words(SPAWNED_FOR).schema()),
         context_restored: { type: "boolean", description: words(CONTEXT_GATE).field }
       },
@@ -19056,8 +19656,8 @@ async function standAs(id, place, cwd) {
       params: { name: tool("stand"), arguments: { realm, karta: String(karta), name: name2, ...where } }
     })
   );
-  const text7 = (r.result?.content ?? []).map((c) => c.text ?? "");
-  return { ok: !r.result?.isError, text: text7.join("\n") };
+  const text8 = (r.result?.content ?? []).map((c) => c.text ?? "");
+  return { ok: !r.result?.isError, text: text8.join("\n") };
 }
 wireEviction(
   (place, cwd) => serialized(
@@ -19088,27 +19688,27 @@ function dropUnsent(key3, doors2) {
   if (n) standingLog(`stopped ${key3}: ${n} undelivered frame(s) dropped, not given`);
 }
 function stopAgent(key3, how2, reason, order2) {
-  const text7 = stopWord(state.standing?.name ?? "", reason);
-  log(text7);
+  const text8 = stopWord(state.standing?.name ?? "", reason);
+  log(text8);
   standingLog(`stopped ${key3}: ${how2}${reason ? ` (${reason})` : ""}`);
   dropUnsent(key3, [H2.door, ...extraPlaces().map((p) => p.door)]);
-  H2.stopped = { n: H2.stopped.n + 1, key: key3, text: text7 };
+  H2.stopped = { n: H2.stopped.n + 1, key: key3, text: text8 };
   const ev = {
     kind: "stopped",
     key: key3,
-    text: text7,
+    text: text8,
     ...reason ? { reason } : {},
     ...order2 ? { order: order2 } : {}
   };
   broadcast(ev);
   notify("error", ev);
-  forgetSeat(text7);
+  forgetSeat(text8);
 }
 function stopBeside(beside, reason) {
-  const text7 = stopWord(beside.standing.name ?? "", reason);
-  log(`${text7} — that seat beside is forgotten, the rest are held`);
+  const text8 = stopWord(beside.standing.name ?? "", reason);
+  log(`${text8} — that seat beside is forgotten, the rest are held`);
   dropUnsent(beside.door.key, [beside.door]);
-  dropExtra(beside.door.key, text7, true, "beside");
+  dropExtra(beside.door.key, text8, true, "beside");
 }
 function stopSeatByOrder(id, by, order2, to = {}) {
   const reason = by ? `revoked:${by}` : "";
@@ -19188,8 +19788,8 @@ async function orcaCloseObserved(handle, runtime, current2, expected) {
     ["terminal", "wait", "--terminal", handle, "--for", "exit", "--timeout-ms", "5000", "--json"],
     7e3
   );
-  const observed = parse2(waited.out), w12 = observed.result?.wait;
-  if (waited.code !== 0 || !observed.ok || observed._meta?.runtimeId !== runtime || w12?.handle !== handle || w12.condition !== "exit" || w12.satisfied !== true || w12.status !== "exited")
+  const observed = parse2(waited.out), w13 = observed.result?.wait;
+  if (waited.code !== 0 || !observed.ok || observed._meta?.runtimeId !== runtime || w13?.handle !== handle || w13.condition !== "exit" || w13.satisfied !== true || w13.status !== "exited")
     return "client_exit_unconfirmed";
   const after2 = await show(), a = after2.result?.terminal;
   if (!after2.ok || after2._meta?.runtimeId !== runtime || a?.handle !== handle || a.incarnationId !== t.incarnationId || a.connected !== false || a.writable !== false)
@@ -19263,7 +19863,7 @@ async function ordersPage(base, since) {
     const q = `open=true&limit=${PAGE}${since ? `&since=${since}` : ""}`;
     const res = await namedFetch(`${base}/me/orders?${q}`, {
       headers: headers(),
-      signal: AbortSignal.timeout(TIMEOUT_MS4)
+      signal: AbortSignal.timeout(TIMEOUT_MS5)
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -19325,10 +19925,10 @@ function orderOf(frame2) {
   };
 }
 function journalRefused(id, outcome) {
-  const text7 = words(STOP).orderJournalRefused(id, outcome);
-  log(text7);
-  broadcast({ kind: "note", text: text7 });
-  notify("warning", { kind: "note", text: text7 });
+  const text8 = words(STOP).orderJournalRefused(id, outcome);
+  log(text8);
+  broadcast({ kind: "note", text: text8 });
+  notify("warning", { kind: "note", text: text8 });
 }
 async function stopOf(o, entry) {
   const confirms = confirmsHalts();
@@ -19426,7 +20026,7 @@ function refusedAudience(upstream) {
 var statusLine = () => words(MOMENT).status();
 var leaveLine = () => words(MOMENT).leave();
 var WRITE_TOOL = new RegExp(`^${escapeRe(TOOL_PREFIX)}(add_[a-z_]+|batch)$`);
-var FORMER_MOMENTS = Object.values(MOMENT).flatMap((w12) => w12.formerMoments());
+var FORMER_MOMENTS = Object.values(MOMENT).flatMap((w13) => w13.formerMoments());
 function withoutFormerMoment(d) {
   for (let changed = true; changed; ) {
     changed = false;
@@ -19481,15 +20081,15 @@ function outsideSetRefusal(msg) {
   const name2 = String(msg.params?.name ?? "");
   if (!set || set.has(name2)) return null;
   const list3 = [...set].sort().join(", ");
-  const text7 = words(NARROW).outsideSet(name2, list3);
+  const text8 = words(NARROW).outsideSet(name2, list3);
   return {
     jsonrpc: "2.0",
     id: msg.id,
-    result: { isError: true, content: [{ type: "text", text: text7 }] }
+    result: { isError: true, content: [{ type: "text", text: text8 }] }
   };
 }
-function withoutPlaceMoves(text7) {
-  return text7.replace(
+function withoutPlaceMoves(text8) {
+  return text8.replace(
     ACTION_LIST_RE,
     (_, head, list3) => head + list3.split("|").map((s2) => s2.trim()).filter((s2) => !PLACE_MOVES.has(s2)).join(" | ")
   );
@@ -20875,14 +21475,14 @@ function thinMain(argv2) {
   };
   const onWelcome = (l) => {
     if (leaving) return l.close();
-    const w12 = l.welcome;
-    const resumed = w12.resumed && !!sessionId && w12.session === sessionId;
-    sessionId = w12.session;
+    const w13 = l.welcome;
+    const resumed = w13.resumed && !!sessionId && w13.session === sessionId;
+    sessionId = w13.session;
     link = l;
     mode = "daemon";
     everAttached = true;
     log(
-      `through the machine's bridge daemon ${w12.build} (pid ${w12.pid}), session ${sessionId}` + (resumed ? " — resumed" : "")
+      `through the machine's bridge daemon ${w13.build} (pid ${w13.pid}), session ${sessionId}` + (resumed ? " — resumed" : "")
     );
     l.onFrame((f) => {
       if (f.t === "rpc") toHarness(f.msg);
@@ -20904,7 +21504,7 @@ function thinMain(argv2) {
       if (link !== l) return;
       link = null;
       if (leaving) return byeDone?.();
-      lost(!!w12.ack);
+      lost(!!w13.ack);
     });
     if (!resumed) replay2((m) => toDaemon(l, m));
     askRealms();
@@ -21091,8 +21691,8 @@ async function probeDaemon(args) {
       HELLO_MS2
     );
     l.close();
-    const w12 = l.welcome;
-    return { ok: true, socket, build: w12.build, pid: w12.pid, sessions: w12.sessions, path: w12.path };
+    const w13 = l.welcome;
+    return { ok: true, socket, build: w13.build, pid: w13.pid, sessions: w13.sessions, path: w13.path };
   } catch (e) {
     return { ok: false, socket, why: e.message };
   }
@@ -21105,7 +21705,7 @@ import { join as join42 } from "node:path";
 
 // js/watchdog/words.ts
 var wd = () => words(WATCHDOG);
-var doer = (text7) => wd().doer(text7);
+var doer = (text8) => wd().doer(text8);
 
 // js/watchdog/client.ts
 var ATTACH_WINDOW_MS = Number(process.env[envName("WATCHDOG_ATTACH_MS")]) || 6e4;
@@ -21410,22 +22010,22 @@ function runWatchdogCodex(argv2) {
     return ready;
   }
   const inFlight = /* @__PURE__ */ new Set();
-  function deliver3(text7, ids = []) {
+  function deliver3(text8, ids = []) {
     if (forgotten) return Promise.resolve();
     const reqId = nextId++;
     waiting2.set(reqId, ids);
-    const p = put(reqId, text7).finally(() => inFlight.delete(p));
+    const p = put(reqId, text8).finally(() => inFlight.delete(p));
     inFlight.add(p);
     return p;
   }
-  async function put(reqId, text7) {
+  async function put(reqId, text8) {
     try {
       const d = door ?? await open();
       if (forgotten) return void waiting2.delete(reqId);
       d.send({
         method: "turn/start",
         id: reqId,
-        params: { threadId, input: [{ type: "text", text: text7 }], turnTrigger: LOGGERS.channel }
+        params: { threadId, input: [{ type: "text", text: text8 }], turnTrigger: LOGGERS.channel }
       });
       note2(wd().frameSent(threadId));
     } catch (e) {
@@ -21472,7 +22072,7 @@ function runWatchdogCodex(argv2) {
   const withPend = (ids, carrier, raw = "") => {
     const got = holdOut(pend.map((p) => ({ ...p, stale: false })));
     pend = [];
-    const shown2 = carrier ? [{ frame: carrier, text: (w12) => frameToText(carrier, raw, w12) }] : [];
+    const shown2 = carrier ? [{ frame: carrier, text: (w13) => frameToText(carrier, raw, w13) }] : [];
     const keys = [...got.flatMap((g) => g.ids), ...ids];
     const lines = heldText([got.map((g) => g.frame)], (k) => seen.has(k), shown2).filter(Boolean);
     if (!lines.length) return void keys.forEach((k) => noteSeen(seenPath, k, seen));
@@ -21593,9 +22193,9 @@ var RingReplay = class {
 
 // js/watchdog/watchdog.ts
 var LINE_MAX = 400;
-function wrapLines(text7, max = LINE_MAX) {
+function wrapLines(text8, max = LINE_MAX) {
   const out7 = [];
-  for (const line of text7.split("\n")) {
+  for (const line of text8.split("\n")) {
     let rest2 = line;
     while ([...rest2].length > max) {
       const head = [...rest2].slice(0, max).join("");
@@ -21619,10 +22219,10 @@ var out2 = (lines, alone = false, after2, ready) => {
     await ready;
     const wait = lastAt && (alone || lastAlone) ? lastAt + ALONE_GAP_MS - Date.now() : 0;
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    const text7 = typeof lines === "function" ? lines() : lines;
-    if (!text7.length) return after2?.();
+    const text8 = typeof lines === "function" ? lines() : lines;
+    if (!text8.length) return after2?.();
     const failed = await new Promise(
-      (r) => process.stdout.write(text7.join("\n") + "\n", (e) => r(!!e))
+      (r) => process.stdout.write(text8.join("\n") + "\n", (e) => r(!!e))
     );
     lastAt = Date.now();
     lastAlone = alone;
@@ -21744,8 +22344,8 @@ function runWatchdog(argv2) {
                 cases.add(caseKey(f));
                 if (fromRing) ring.printed++;
                 const fold = ev.batch.fold;
-                const text7 = (w12) => wrapLines(batchLine(f, fold, first2, w12)).join("\n");
-                block.shown.push({ frame: f, text: text7 });
+                const text8 = (w13) => wrapLines(batchLine(f, fold, first2, w13)).join("\n");
+                block.shown.push({ frame: f, text: text8 });
                 block.marks.push(all2);
               }
             }
@@ -21764,8 +22364,8 @@ function runWatchdog(argv2) {
             if (fromRing) ring.printed++;
             const raw = ev.raw ?? "";
             if (heldCase(f)) {
-              const text7 = (w12) => wrapLines(frameToText(f, raw, w12)).join("\n");
-              const r = take3([{ frame: f, text: text7 }]);
+              const text8 = (w13) => wrapLines(frameToText(f, raw, w13)).join("\n");
+              const r = take3([{ frame: f, text: text8 }]);
               out2(r.lines, true, () => [...r.marks, mark].forEach((m) => m()));
             } else {
               const r = take3([], [f]);
@@ -21879,7 +22479,7 @@ function runWatchdogExit(argv2) {
           if (!ev.batch) {
             if (seen.has(id)) return note3(wd().seenEarlier(id));
             const raw = ev.raw ?? "";
-            const one = f ? [{ frame: f, text: (w12) => frameToText(f, raw, w12) }] : [];
+            const one = f ? [{ frame: f, text: (w13) => frameToText(f, raw, w13) }] : [];
             return deliver3(riders.splice(0), one, [id], f ? null : raw);
           }
           if (ev.batch.at === 1) {
@@ -21898,7 +22498,7 @@ function runWatchdogExit(argv2) {
               const first2 = !cases.has(caseKey(f));
               cases.add(caseKey(f));
               const fold = ev.batch.fold;
-              block.shown.push({ frame: f, text: (w12) => batchLine(f, fold, first2, w12) });
+              block.shown.push({ frame: f, text: (w13) => batchLine(f, fold, first2, w13) });
               block.ids.push(id, ...folded.splice(0));
             }
           }
@@ -21982,14 +22582,14 @@ function repoRoot(dir2) {
 }
 
 // js/shared/covercontract.ts
-function contractOf(text7, cover = COVER) {
-  if (stampOf2(text7, cover) === "foreign") return { kind: "foreign" };
-  if (repeatedKeys(text7).length) return { kind: "ambiguous" };
-  const block = coverBlock(text7, cover.root);
-  const pairs = frontMatter(text7);
+function contractOf(text8, cover = COVER) {
+  if (stampOf2(text8, cover) === "foreign") return { kind: "foreign" };
+  if (repeatedKeys(text8).length) return { kind: "ambiguous" };
+  const block = coverBlock(text8, cover.root);
+  const pairs = frontMatter(text8);
   const stamps = Object.values(cover.forms).flatMap((f) => {
     const re = f.contractStamp ?? f.stamp;
-    return [...text7.matchAll(new RegExp(re.source, `${re.flags.replace("g", "")}g`))].map(
+    return [...text8.matchAll(new RegExp(re.source, `${re.flags.replace("g", "")}g`))].map(
       (m) => m[1]
     );
   });
@@ -22122,9 +22722,9 @@ function splitFlow(body) {
 var KEY2 = /^("[^"]*"|'[^']*'|[^\s"'#{[-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
 var BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 var unquoteKey = (k) => k.startsWith('"') && k.endsWith('"') || k.startsWith("'") && k.endsWith("'") ? k.slice(1, -1) : k;
-function parseFrontmatter(text7) {
+function parseFrontmatter(text8) {
   const lines = [];
-  for (const raw of text7.split(/\r?\n/)) {
+  for (const raw of text8.split(/\r?\n/)) {
     if (!raw.trim() || /^\s*#/.test(raw)) continue;
     const indent = raw.length - raw.trimStart().length;
     lines.push({ indent, text: raw.trim() });
@@ -22193,7 +22793,7 @@ var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
 var cmdBase = (c) => basename6(c.replace(/\\/g, "/")).replace(/\.exe$/i, "").toLowerCase();
 var isToolList = (v) => !!v && v.split(",").some((s2) => s2.trim().length > 0);
 function toolsTail(e) {
-  const words2 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w12) => w12.replace(/^["']|["']$/g, "")) : e.args;
+  const words2 = SHELLS.has(cmdBase(e.command)) ? (e.args[e.args.indexOf("-c") + 1] ?? "").split(/\s+/).map((w13) => w13.replace(/^["']|["']$/g, "")) : e.args;
   const at3 = words2.indexOf("--tools");
   const v = at3 >= 0 ? words2[at3 + 1] : void 0;
   return isToolList(v) ? ["--tools", v] : [];
@@ -22426,8 +23026,8 @@ function agentFiles(dir2, scope) {
     const path = join47(dir2, f);
     let fm = {};
     try {
-      const text7 = frontmatterText(readFileSync44(path, "utf8"));
-      if (text7 !== null) fm = parseFrontmatter(text7);
+      const text8 = frontmatterText(readFileSync44(path, "utf8"));
+      if (text8 !== null) fm = parseFrontmatter(text8);
     } catch {
     }
     return { path, agent: str6(fm.name) || basename7(f, ".md"), scope, fm };
@@ -22750,10 +23350,10 @@ function claudeCode(out7) {
   for (const c of ever.map(String).filter((c2) => CONNECTOR_RE.test(c2)))
     out7(hw2().connector(c, file2));
 }
-function codexHttp(text7) {
+function codexHttp(text8) {
   const found = [];
   let section = null;
-  for (const line of text7.split("\n")) {
+  for (const line of text8.split("\n")) {
     const head = /^\s*\[mcp_servers\.(?:"([^"]+)"|([^\]\s.]+))\]\s*$/.exec(line);
     if (head) section = head[1] ?? head[2] ?? null;
     else if (/^\s*\[/.test(line)) section = null;
@@ -22767,13 +23367,13 @@ function secondPathReport(out7, codexHomes2) {
   for (const home of codexHomes2) {
     const file2 = join48(home, "config.toml");
     if (!existsSync22(file2)) continue;
-    let text7;
+    let text8;
     try {
-      text7 = readFileSync45(file2, "utf8");
+      text8 = readFileSync45(file2, "utf8");
     } catch {
       continue;
     }
-    for (const [n, url] of codexHttp(text7))
+    for (const [n, url] of codexHttp(text8))
       say(out7, `Codex (${file2})`, n, url, `codex mcp remove "${n}"`);
   }
 }
@@ -22844,9 +23444,9 @@ import { homedir as homedir19 } from "node:os";
 import { dirname as dirname18, join as join50 } from "node:path";
 
 // js/shared/jsonc.ts
-function parseJsonc(text7) {
+function parseJsonc(text8) {
   const STRING = '"(?:[^"\\\\]|\\\\.)*"';
-  const noComments = text7.replace(
+  const noComments = text8.replace(
     new RegExp(`${STRING}|/\\*[\\s\\S]*?\\*/|//[^\\n]*`, "g"),
     (m) => m.startsWith('"') ? m : ""
   );
@@ -22916,9 +23516,9 @@ function openCodeMcpEntries(out7) {
   if (process.env.OPENCODE_CONFIG_CONTENT)
     sources.unshift(["OPENCODE_CONFIG_CONTENT", process.env.OPENCODE_CONFIG_CONTENT]);
   let found = 0;
-  for (const [file2, text7] of sources) {
+  for (const [file2, text8] of sources) {
     try {
-      const cfg = parseJsonc(text7);
+      const cfg = parseJsonc(text8);
       for (const [name2, v] of Object.entries(cfg.mcp ?? {})) {
         const kind2 = kindOf3(v);
         if (!kind2) continue;
@@ -23233,8 +23833,8 @@ function harnessReport() {
     else out3(dw().codexDoorNone(door));
     const codex = join51(codexHome, "config.toml");
     if (existsSync25(codex)) {
-      const text7 = readFileSync48(codex, "utf8");
-      out3(dw().codexManual(CODEX_ENTRY_RE.test(text7)));
+      const text8 = readFileSync48(codex, "utf8");
+      out3(dw().codexManual(CODEX_ENTRY_RE.test(text8)));
     }
   }
   launchReport(out3, launches);
@@ -23288,7 +23888,7 @@ async function runDoctor(argv2) {
 }
 
 // js/cli/orchestra.ts
-var w11 = () => words(ORCHESTRA);
+var w12 = () => words(ORCHESTRA);
 var TACT_WAIT_MS = 15 * 6e4;
 function take(args, flag) {
   const i = args.indexOf(flag);
@@ -23315,15 +23915,15 @@ async function runOrchestra(argv2) {
   const dry = args.indexOf("--dry-run");
   if (dry >= 0) args.splice(dry, 1);
   const named2 = args.find((a) => !a.startsWith("--"));
-  const fail2 = (text7) => {
-    process.stderr.write(`${text7}
+  const fail2 = (text8) => {
+    process.stderr.write(`${text8}
 `);
     process.exitCode = 1;
   };
   const describes = launcher !== void 0;
   const loose2 = models.length || limit !== void 0 || host !== void 0;
   if (!named2 || named2 === "plan" || !isOrchestraOp(named2) || dry >= 0 && named2 !== "step" || (describes || loose2) && named2 !== "on" || loose2 && !describes || limit !== void 0 && !/^\d+$/.test(limit) || onlyCount > 0 && (onlyCount !== 1 || !parseOnly(only) || named2 !== "step" || realms.length !== 1 || args.length !== 1))
-    return fail2(w11().usage().trimEnd());
+    return fail2(w12().usage().trimEnd());
   const op = dry >= 0 ? "plan" : named2;
   parseArgs(["--auth-dir", authDir, ...args.filter((a) => a !== named2)]);
   const slow = op === "demands" || describes;
@@ -23356,7 +23956,7 @@ import {
   readFileSync as readFileSync53,
   readlinkSync,
   symlinkSync,
-  writeFileSync as writeFileSync25
+  writeFileSync as writeFileSync26
 } from "node:fs";
 import { join as join56 } from "node:path";
 
@@ -23371,12 +23971,12 @@ var renderCover = (root, data2) => [
     (k) => `  ${k}: ${scalar(data2[k])}`
   )
 ];
-function writeCover(text7, root, data2) {
-  const eol = text7?.includes("\r\n") ? "\r\n" : "\n";
-  const bom = text7?.startsWith("\uFEFF") ? "\uFEFF" : "";
+function writeCover(text8, root, data2) {
+  const eol = text8?.includes("\r\n") ? "\r\n" : "\n";
+  const bom = text8?.startsWith("\uFEFF") ? "\uFEFF" : "";
   const block = renderCover(root, data2);
-  const f = text7 ? fences(text7) : null;
-  if (!f) return bom + ["---", ...block, "---", ""].join(eol) + (text7 ?? "").slice(bom.length);
+  const f = text8 ? fences(text8) : null;
+  if (!f) return bom + ["---", ...block, "---", ""].join(eol) + (text8 ?? "").slice(bom.length);
   const inner = f.lines.slice(1, f.end);
   const at3 = inner.findIndex((l) => TOP.test(l) && unquote(TOP.exec(l)?.[1] ?? "") === root);
   const end = at3 < 0 ? at3 : blockEnd(inner, at3);
@@ -23407,8 +24007,8 @@ function others(lines) {
 // js/shared/ritualcover.ts
 import { readdirSync as readdirSync17, readFileSync as readFileSync49 } from "node:fs";
 import { join as join52 } from "node:path";
-function headings(text7) {
-  const lines = text7.split("\n");
+function headings(text8) {
+  const lines = text8.split("\n");
   let i = lines[0]?.trim() === "---" ? lines.findIndex((l, n) => n > 0 && l.trim() === "---") + 1 : 0;
   let fenced = false;
   const out7 = [];
@@ -23419,12 +24019,12 @@ function headings(text7) {
   }
   return out7;
 }
-function bodyLang(text7) {
-  const heads = headings(text7).map((h) => h.toLowerCase());
+function bodyLang(text8) {
+  const heads = headings(text8).map((h) => h.toLowerCase());
   return LANGS.find((l) => heads.some((h) => h.startsWith(RITES[l].lifecycle().toLowerCase())));
 }
-function sectionsOf(text7) {
-  const heads = headings(text7);
+function sectionsOf(text8) {
+  const heads = headings(text8);
   const out7 = {};
   for (const k of Object.keys(SECTIONS)) {
     const h = heads.find(SECTIONS[k]);
@@ -23435,21 +24035,21 @@ function sectionsOf(text7) {
 function ritualCover(dir2, cover = COVER) {
   const root = repoRoot(dir2);
   if (!root) return null;
-  let text7;
+  let text8;
   try {
-    text7 = readFileSync49(join52(root, cover.file), "utf8");
+    text8 = readFileSync49(join52(root, cover.file), "utf8");
   } catch {
     return null;
   }
-  if (stampOf2(text7, cover) === "foreign") return null;
-  const block = coverBlock(text7, cover.root);
+  if (stampOf2(text8, cover) === "foreign") return null;
+  const block = coverBlock(text8, cover.root);
   const graph = block?.get("graph");
   if (!block || !graph) return null;
   const holon = block.get("holon") || void 0;
   const role = block.get("agent_role") || void 0;
-  const lang2 = bodyLang(text7);
+  const lang2 = bodyLang(text8);
   const { on } = ritualsOf(block);
-  const sections = sectionsOf(text7);
+  const sections = sectionsOf(text8);
   return {
     root,
     graph,
@@ -23469,7 +24069,7 @@ function ownRitualsPlugin(root) {
 }
 
 // js/cli/preparehooks.ts
-import { existsSync as existsSync27, mkdirSync as mkdirSync29, readFileSync as readFileSync52, writeFileSync as writeFileSync24 } from "node:fs";
+import { existsSync as existsSync27, mkdirSync as mkdirSync29, readFileSync as readFileSync52, writeFileSync as writeFileSync25 } from "node:fs";
 import { join as join55 } from "node:path";
 
 // js/cli/preparescripts.ts
@@ -23495,7 +24095,7 @@ function isFile(path) {
     return false;
   }
 }
-function text6(path) {
+function text7(path) {
   try {
     return isFile(path) ? readFileSync50(path, "utf8") : "";
   } catch {
@@ -23503,7 +24103,7 @@ function text6(path) {
   }
 }
 function knownHook(root, command, known2) {
-  return known2(command) || scriptsOf(root, command).some((p) => known2(text6(p)));
+  return known2(command) || scriptsOf(root, command).some((p) => known2(text7(p)));
 }
 function runsOn(matcher, tool2) {
   try {
@@ -23548,7 +24148,7 @@ var knownOf = (root, s2, kind2, target) => {
 };
 
 // js/cli/preparequestions.ts
-import { existsSync as existsSync26, mkdirSync as mkdirSync28, readFileSync as readFileSync51, writeFileSync as writeFileSync23 } from "node:fs";
+import { existsSync as existsSync26, mkdirSync as mkdirSync28, readFileSync as readFileSync51, writeFileSync as writeFileSync24 } from "node:fs";
 import { dirname as dirname20, join as join54 } from "node:path";
 var QUESTION_POLICY = { action: "tool.use", resource: "question:*", effect: "deny" };
 function object3(value) {
@@ -23601,7 +24201,7 @@ function prepareQuestionPolicy(root, write = true) {
     cfg.$schema ??= "https://opencode.ai/config.json";
     if (!write) return null;
     mkdirSync28(dirname20(path), { recursive: true });
-    writeFileSync23(path, `${JSON.stringify(cfg, null, 2)}
+    writeFileSync24(path, `${JSON.stringify(cfg, null, 2)}
 `);
     return null;
   } catch {
@@ -23677,7 +24277,7 @@ function prepareHooks(root, addr, out7, on, preserve = false) {
   }
   if (changed) {
     mkdirSync29(dir2, { recursive: true });
-    writeFileSync24(path, `${JSON.stringify(s2, null, 2)}
+    writeFileSync25(path, `${JSON.stringify(s2, null, 2)}
 `);
   }
   return null;
@@ -23708,13 +24308,13 @@ function coverText(root, given) {
     const v = given[k] ?? (twice.includes(`${COVER.root}.${k}`) ? void 0 : had?.get(k));
     if (v !== void 0 && v !== "") data2[k] = v;
   }
-  const text7 = writeCover(before, COVER.root, data2);
-  const repeated = [.../* @__PURE__ */ new Set([...twice, ...repeatedKeys(text7)])];
-  if (repeated.length) return { file: file2, before, text: before ?? text7, data: data2, repeated };
-  const read = coverBlock(text7, COVER.root);
+  const text8 = writeCover(before, COVER.root, data2);
+  const repeated = [.../* @__PURE__ */ new Set([...twice, ...repeatedKeys(text8)])];
+  if (repeated.length) return { file: file2, before, text: before ?? text8, data: data2, repeated };
+  const read = coverBlock(text8, COVER.root);
   if (!read || FIELDS.some((k) => (read.get(k) ?? "") !== String(data2[k] ?? "")))
     return { why: W4.unparsed(COVER.file) };
-  return { file: file2, before, text: text7, data: data2, repeated };
+  return { file: file2, before, text: text8, data: data2, repeated };
 }
 function writeAgents(c, out7) {
   if (c.repeated.length) {
@@ -23722,7 +24322,7 @@ function writeAgents(c, out7) {
     out7.repeated = c.repeated;
   } else if (c.text === c.before) out7.kept.push(COVER.file);
   else {
-    writeFileSync25(c.file, c.text);
+    writeFileSync26(c.file, c.text);
     out7.done.push(COVER.file);
   }
   for (const k of ["graph", "holon", "agent_role", "contract"])
@@ -23742,7 +24342,7 @@ function writeReality(root, caseNo, out7) {
   const had = existsSync28(file2) ? readFileSync53(file2, "utf8") : null;
   if (had !== null && (had === stub || !caseNo || had !== words(PREPARE).reality()))
     return void out7.kept.push("REALITY.md");
-  writeFileSync25(file2, stub);
+  writeFileSync26(file2, stub);
   out7.done.push("REALITY.md");
 }
 function writeClaude(root, out7) {
@@ -23759,7 +24359,7 @@ function writeClaude(root, out7) {
   }
   const links = process.platform !== "win32" && git3(root, "config", "core.symlinks") !== "false";
   if (links) symlinkSync(COVER.file, file2);
-  else writeFileSync25(file2, `@${COVER.file}
+  else writeFileSync26(file2, `@${COVER.file}
 `);
   out7.done.push("CLAUDE.md");
 }
@@ -23770,7 +24370,7 @@ function checkOpencode(root, out7) {
 // js/cli/stopapi.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
 var sw4 = () => words(STOP_CLI);
-var TIMEOUT_MS5 = 1e4;
+var TIMEOUT_MS6 = 1e4;
 var sameServer = (a, b) => {
   const at3 = (u) => {
     const x = new URL(u);
@@ -23800,7 +24400,7 @@ async function ask2(url, method2, realm, token, body) {
       ...body ? { "content-type": "application/json" } : {}
     },
     ...body ? { body: JSON.stringify(body) } : {},
-    signal: AbortSignal.timeout(TIMEOUT_MS5)
+    signal: AbortSignal.timeout(TIMEOUT_MS6)
   });
   return { status: res.status, text: (await res.text().catch(() => "")).slice(0, 300) };
 }
@@ -23810,7 +24410,7 @@ async function realmForApi(base, token, realm) {
   try {
     const res = await namedFetch(`${base}/realms?limit=200`, {
       headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(TIMEOUT_MS5)
+      signal: AbortSignal.timeout(TIMEOUT_MS6)
     });
     const body = res.ok ? await res.json() : null;
     const listed = Array.isArray(body) ? body : body?.items;
@@ -23854,9 +24454,9 @@ async function stopSeat(p, id, base, token) {
 }
 
 // js/cli/preparegraph.ts
-var single = (text7, type) => {
+var single = (text8, type) => {
   const ids = [
-    ...new Set([...text7.matchAll(new RegExp(`\\(#(\\d+), ${type}\\b`, "g"))].map((m) => m[1]))
+    ...new Set([...text8.matchAll(new RegExp(`\\(#(\\d+), ${type}\\b`, "g"))].map((m) => m[1]))
   ];
   return ids.length === 1 ? ids[0] : null;
 };
@@ -24130,8 +24730,8 @@ async function probeWith(file2, own, alias, foreign) {
   dropPluginGlobals();
   const tag = ++probes;
   const who = ["mine", "twin", "theirs"];
-  const id = Object.fromEntries(who.map((w12) => [w12, `${w12}@${tag}`]));
-  const whoOf4 = (sessionID) => who.find((w12) => id[w12] === sessionID);
+  const id = Object.fromEntries(who.map((w13) => [w13, `${w13}@${tag}`]));
+  const whoOf4 = (sessionID) => who.find((w13) => id[w13] === sessionID);
   const dirs = { mine: own, twin: alias, theirs: foreign };
   const writes2 = { mine: 0, twin: 0, theirs: 0 };
   const hooks = {};
@@ -24182,7 +24782,7 @@ async function probeWith(file2, own, alias, foreign) {
       subscribe: ({ signal } = {}) => {
         subscribed = true;
         return (async function* () {
-          for (const w12 of who) yield created(id[w12], dirs[w12]);
+          for (const w13 of who) yield created(id[w13], dirs[w13]);
           if (signal) await new Promise((r) => signal.addEventListener("abort", r));
         })();
       }
@@ -24272,11 +24872,11 @@ async function auditQuestions(root) {
     const basis = layer === "question.plugin" ? W4.pluginBasis() : W4.fileBasis();
     rows.push({ layer, basis, file: file3, hole: !pass2, ...pass2 ? {} : { error: error2 } });
   };
-  const text7 = readFileSync54(join59(root, "AGENTS.md"), "utf8");
+  const text8 = readFileSync54(join59(root, "AGENTS.md"), "utf8");
   row(
     "question.instructions",
     join59(root, "AGENTS.md"),
-    /question/.test(text7) && /AskUserQuestion/.test(text7) && /\bask\b/.test(text7),
+    /question/.test(text8) && /AskUserQuestion/.test(text8) && /\bask\b/.test(text8),
     W4.instructions()
   );
   const cc = join59(root, ".claude/settings.json");
@@ -24478,15 +25078,15 @@ async function machine(authDir) {
         },
         3e3
       );
-      const w12 = link.welcome;
+      const w13 = link.welcome;
       link.close();
-      if (w12.snapshot) return { ...safeSnapshot(w12.snapshot), snapshot_available: true };
+      if (w13.snapshot) return { ...safeSnapshot(w13.snapshot), snapshot_available: true };
       return {
-        daemon: safeSnapshot({ daemon: w12 }).daemon,
+        daemon: safeSnapshot({ daemon: w13 }).daemon,
         sessions: [],
         snapshot_available: false,
-        ...w12.snapshot_error === "snapshot failed" ? { snapshot_error: w12.snapshot_error } : {},
-        ...typeof w12.sessions === "number" && Number.isInteger(w12.sessions) && w12.sessions >= 0 ? { session_count: w12.sessions } : {}
+        ...w13.snapshot_error === "snapshot failed" ? { snapshot_error: w13.snapshot_error } : {},
+        ...typeof w13.sessions === "number" && Number.isInteger(w13.sessions) && w13.sessions >= 0 ? { session_count: w13.sessions } : {}
       };
     } catch (e) {
       if (e instanceof SeamError && e.kind === "refused")
@@ -24502,37 +25102,37 @@ function formatSkills(label, skills) {
   return skills ? ` · ${label}=${printable(skills.name)} ${printable(skills.version)}${skills.stamp ? `+${printable(skills.stamp)}` : ""}` : "";
 }
 function render(s2) {
-  const w12 = words(MACHINE_STATUS);
+  const w13 = words(MACHINE_STATUS);
   const d = s2.daemon;
   const lines = [
-    d ? `${w12.daemon()}: pid=${d.pid} ${printable(d.build)} ${printable(d.path)}` : s2.daemon_error === "missing directory" ? w12.missing() : s2.daemon_error === "different protocol" ? w12.protocol() : s2.daemon_error === "refused" ? w12.refused() : w12.absent()
+    d ? `${w13.daemon()}: pid=${d.pid} ${printable(d.build)} ${printable(d.path)}` : s2.daemon_error === "missing directory" ? w13.missing() : s2.daemon_error === "different protocol" ? w13.protocol() : s2.daemon_error === "refused" ? w13.refused() : w13.absent()
   ];
   if (d && !s2.snapshot_available)
-    lines.push(s2.snapshot_error ? w12.snapshotFailed() : w12.unavailable());
+    lines.push(s2.snapshot_error ? w13.snapshotFailed() : w13.unavailable());
   if (d && !s2.snapshot_available && s2.session_count !== void 0)
-    lines.push(`${w12.sessions()}: ${s2.session_count}`);
-  if (!d || s2.snapshot_available) lines.push(`${w12.sessions()}: ${s2.sessions.length}`);
+    lines.push(`${w13.sessions()}: ${s2.session_count}`);
+  if (!d || s2.snapshot_available) lines.push(`${w13.sessions()}: ${s2.sessions.length}`);
   for (const session of s2.sessions) {
     const stamp = formatSkills("skills", session.skills);
     const diskStamp = formatSkills("installed_skills", session.installed_skills);
     lines.push(
-      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w12.attached() : w12.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}${diskStamp}${session.skills_mismatch ? " · skills_mismatch" : ""}`
+      `  ${printable(session.local_id)} pid=${session.thin_pid} ${session.attached ? w13.attached() : w13.detached()} ${printable(session.harness)} ${printable(session.harness_session ?? "-")} ${printable(session.build)} ${printable(session.cwd)}${stamp}${diskStamp}${session.skills_mismatch ? " · skills_mismatch" : ""}`
     );
     for (const p of session.places) {
       const declaration = formatSkills("skills", p.skills);
-      const mode = p.satellite_of ? `${w12.satellite()} ${printable(p.satellite_of)}` : p.primary ? w12.primary() : w12.beside();
+      const mode = p.satellite_of ? `${w13.satellite()} ${printable(p.satellite_of)}` : p.primary ? w13.primary() : w13.beside();
       lines.push(
-        `    ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} ${mode} · ${p.listening ? w12.listening() : w12.silent()} · ${w12.lastWork()}: ${printable(p.last_work_at ?? w12.unknown())}${p.usage ? ` · usage=${JSON.stringify(p.usage)}` : ""}${p.pulse ? ` · pulse=${JSON.stringify(p.pulse)}` : ""}${declaration}${p.skills_mismatch ? " · skills_mismatch" : ""}`
+        `    ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} ${mode} · ${p.listening ? w13.listening() : w13.silent()} · ${w13.lastWork()}: ${printable(p.last_work_at ?? w13.unknown())}${p.usage ? ` · usage=${JSON.stringify(p.usage)}` : ""}${p.pulse ? ` · pulse=${JSON.stringify(p.pulse)}` : ""}${declaration}${p.skills_mismatch ? " · skills_mismatch" : ""}`
       );
     }
   }
-  lines.push(`${w12.fallback()}: ${s2.fallback.length}`);
+  lines.push(`${w13.fallback()}: ${s2.fallback.length}`);
   for (const f of s2.fallback)
     lines.push(`  pid=${f.pid} ${printable(f.build)} ${printable(f.cwd)}`);
-  lines.push(`${w12.disk()}: ${s2.disk_only.length}`);
+  lines.push(`${w13.disk()}: ${s2.disk_only.length}`);
   for (const p of s2.disk_only)
     lines.push(
-      `  ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} — ${w12.record()} · ${w12.left(p.left)}`
+      `  ${printable(p.name)} ${printable(p.realm)} #${printable(p.karta)} — ${w13.record()} · ${w13.left(p.left)}`
     );
   return lines.join("\n") + "\n";
 }
@@ -24601,8 +25201,8 @@ async function runStop(argv2) {
   const realm = take2(args, "--realm");
   const authDir = take2(args, "--auth-dir") || process.env[envName("BRIDGE_AUTH_DIR")] || defaultAuthDir();
   const target = args.find((a) => !a.startsWith("--"));
-  const fail2 = (text7) => {
-    process.stderr.write(`${text7}
+  const fail2 = (text8) => {
+    process.stderr.write(`${text8}
 `);
     process.exitCode = 1;
   };

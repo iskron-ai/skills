@@ -387,7 +387,7 @@ function repoSigns(dir2, harness, keys = REPO_SIGNS, cover = COVER) {
   const any = signs.cover || signs.stamp || hooked;
   const block = agents === null ? null : coverBlock(agents, cover.root);
   const carried = !!block?.get("graph") && !!block.get("holon") && !!block.get("agent_role");
-  const complete = signs.cover && signs.stamp && (harness === null || carried || signs.hooks[harness]);
+  const complete = signs.cover && signs.stamp && (harness === null || harness === "dsh" || carried || signs.hooks[harness]);
   const verdict = stamped2 === "foreign" && !hooked ? "foreign" : !any ? "invite" : complete ? "aligned" : "partial";
   return { root, ...signs, verdict };
 }
