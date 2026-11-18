@@ -139,6 +139,40 @@ const launchStub = () => {
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
 
+test("a pending addressed word waits at the cursor and wakes once when its body arrives", async (t) => {
+  const pending = entry(10, "said", { to_standing_id: SEAT, body_pending: true });
+  const api = await caseApi(t, {
+    entries: [pending, entry(11, "said", { to_standing_id: OTHER })],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.dormant.cursor, 9);
+  api.state.entries = [{ ...pending, body_pending: false }, api.state.entries[1]];
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 1);
+  assert.equal(r.dormant.cursor, 10);
+});
+
+test("a pending word after a waking word cannot move the accepted cursor", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(10, "said", { to_standing_id: SEAT }),
+      entry(11, "said", { to_standing_id: SEAT, body_pending: true }),
+    ],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 1);
+  assert.equal(r.dormant.cursor, 10);
+});
+
 test("a clean exit without an open share does not sleep", async (t) => {
   const api = await caseApi(t, {
     entries: [

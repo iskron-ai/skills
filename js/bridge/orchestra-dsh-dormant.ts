@@ -176,6 +176,7 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   };
   let cursor = from;
   let wake: CaseEntry | undefined;
+  let pending: number | undefined;
   let end: { code: string; n: number } | undefined;
   for (const e of entries) {
     // A number at or behind the cursor replaces its predecessor — it never wakes twice.
@@ -196,8 +197,9 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
       cursor = Math.max(cursor, e.n);
       continue;
     }
-    if (!wake && wakes(e)) {
-      wake = e;
+    if (wakes(e)) {
+      if (e.body_pending) pending ??= e.n;
+      else if (!wake && pending === undefined) wake = e;
       continue;
     }
     cursor = Math.max(cursor, e.n);
@@ -206,7 +208,7 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   // continues a sleep whose own page says it is over (#10995 review).
   if (end) return { end: end.code, cursor: end.n };
   if (wake) return { wake };
-  return { cursor };
+  return { cursor: pending === undefined ? cursor : Math.min(cursor, pending - 1) };
 }
 
 /**
