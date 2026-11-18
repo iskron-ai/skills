@@ -5,11 +5,13 @@
 // 0.2.2-rc.1 to reach the system message of every model request of that agent and to go with
 // it. A resumed session hears why: its seat went with the last process. No cover, another
 // delivery's cover, the start ritual switched off — silence; an unsupported cover contract is
-// warned of all the same (#11071).
+// warned of all the same, and a repository with no sign of alignment (shared/reposigns.ts)
+// hears the onboarding invitation (#11071).
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK objects without a schema */
-import { DSH } from "../delivery/index.ts";
+import { DSH, ONBOARD_START } from "../delivery/index.ts";
 import { repoContractWarning } from "../shared/covercontract.ts";
 import { wordsIn } from "../shared/lang.ts";
+import { repoSigns } from "../shared/reposigns.ts";
 import { ritualCover, startWord } from "../shared/ritualcover.ts";
 
 /** The section's name in the agent's prompt registry. */
@@ -28,7 +30,10 @@ export function startText(dir: string, source: unknown): string | null {
   const start = cover?.on.has("start")
     ? [startWord(cover), source === "resume" ? W.startResumed() : W.startListen()].join("\n\n")
     : null;
-  return [warning, start].filter(Boolean).join("\n\n") || null;
+  // A repository never aligned for the agent: the invitation, after the seat's word (#11071).
+  const invite =
+    repoSigns(dir, "dsh").verdict === "invite" ? wordsIn(ONBOARD_START, cover?.lang).start() : null;
+  return [warning, start, invite].filter(Boolean).join("\n\n") || null;
 }
 
 /**

@@ -172,8 +172,10 @@ const CASES = [
   },
 ];
 
+// dsh gets no start hook from iskronify — the delivery's plugin carries its start (#11071):
+// it reads a repository as any other harness does.
 for (const c of CASES)
-  for (const [harness, verdict] of Object.entries(c.verdicts))
+  for (const [harness, verdict] of Object.entries({ ...c.verdicts, dsh: c.verdicts.other }))
     test(`repo signs: ${c.name} — ${harness}`, (t) => {
       const dir = lay(t, c.spec);
       assert.equal(repoSigns(dir, harness === "other" ? null : harness).verdict, verdict);
