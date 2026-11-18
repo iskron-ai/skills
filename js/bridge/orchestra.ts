@@ -74,7 +74,12 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
   setInterval(() => {
     if (observing || !execPending(authDir)) return;
     observing = true;
-    const next = tacting.then(() => observeExec(authDir, net?.base() ?? "", net?.token() ?? null));
+    // The boundary as the tact keeps it, read at the exit: a narrowed one arms no sleep (#10995).
+    const next = tacting.then(() =>
+      observeExec(authDir, net?.base() ?? "", net?.token() ?? null, [
+        ...new Set([...(readOrchestraFlag(authDir)?.realms ?? []), ...(net?.realms?.() ?? [])]),
+      ]),
+    );
     tacting = next.catch(() => {});
     void next
       .catch(() => process.stderr.write("exec_observer_failed\n"))

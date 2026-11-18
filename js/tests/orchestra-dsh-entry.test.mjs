@@ -6,8 +6,9 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
+import { observeExec } from "../bridge/exec-exit.ts";
 import { dormantFromEnds, goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
-import { writeRuns } from "../bridge/orchestra-runs.ts";
+import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
 import { cleanupEndedTrees } from "../bridge/orchestra-tree-clean.ts";
 import { fixture } from "./tree-fixture.mjs";
@@ -170,4 +171,74 @@ test("entry: an ended call of a graph outside the boundary @nks/other does not s
   assert.equal(f.row.state, "ended");
   await cleanupEndedTrees(f.auth, f.runs);
   assert.equal(f.row.tree.state, "removed", f.row.why);
+});
+
+/** The exit watcher's doors: no raised, no orders, the seat already ended (410); the case
+ * doors answer an open case with an open share and count their reads. */
+async function exitApi(t) {
+  const state = { caseReads: 0 };
+  const server = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url.includes("/raised?")) return res.end(JSON.stringify({ cursor: "c", items: [] }));
+    if (req.url.startsWith("/me/orders"))
+      return res.end(JSON.stringify({ items: [], next_since: 1 }));
+    if (req.url === `/standings/${SEAT}/stop`)
+      return res
+        .writeHead(410)
+        .end(JSON.stringify({ errors: [{ rule: "standing_already_ended" }] }));
+    if (req.url.startsWith("/rooms/")) {
+      state.caseReads++;
+      if (!req.url.includes("/history")) return res.end(JSON.stringify({ status: "open" }));
+      const items = [
+        entry(1, "invite", { to_karta_node_id: KARTA }),
+        entry(2, "progress", { author_standing_id: SEAT, line: { key: "s", verdict: "partial" } }),
+      ].filter((e) => e.id > Number(new URL(req.url, "http://x").searchParams.get("since")));
+      return res.end(JSON.stringify({ items, cursor: items.at(-1)?.id ?? 0, numbering: "case" }));
+    }
+    res.writeHead(404).end("{}");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => server.close());
+  return { base: `http://127.0.0.1:${server.address().port}`, state };
+}
+
+test("entry: the boundary narrowed after the raise — the exit watcher arms no sleep, reads no case, the tree goes", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  const { realm, room, invite, worktree, tree } = f.row;
+  assert.notEqual(realm, "@nks/other");
+  // Raised inside the boundary, seated; its dsh exited cleanly — the watcher's own path.
+  Object.assign(f.row, exited({ realm, room, invite, worktree, tree }), {
+    state: "raised",
+    closed: "client_exited",
+  });
+  delete f.row.why;
+  f.row.tree.exit = "observed-exit";
+  writeRuns(f.auth, f.runs);
+  const api = await exitApi(t);
+  await observeExec(f.auth, api.base, "synthetic", ["@nks/other"]);
+  const own = readRuns(f.auth).own;
+  assert.equal(api.state.caseReads, 0, "no case read outside the boundary");
+  assert.equal(own.state, "ended", own.why);
+  assert.equal(own.tree.state, "removed", own.why);
+});
+
+test("entry: the same exit inside the boundary still sleeps", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  const { realm, room, invite, worktree, tree } = f.row;
+  Object.assign(f.row, exited({ realm, room, invite, worktree, tree }), {
+    state: "raised",
+    closed: "client_exited",
+  });
+  delete f.row.why;
+  f.row.tree.exit = "observed-exit";
+  writeRuns(f.auth, f.runs);
+  const api = await exitApi(t);
+  await observeExec(f.auth, api.base, "synthetic", [realm]);
+  const own = readRuns(f.auth).own;
+  assert.ok(api.state.caseReads > 0);
+  assert.equal(own.state, "dormant", own.why);
+  assert.equal(own.tree.state, "ready");
 });

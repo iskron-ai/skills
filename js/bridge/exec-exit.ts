@@ -19,11 +19,13 @@ export const exitClientId = (r: Run): string =>
 export { execPending } from "./exec-pending.ts";
 
 /** Process exit is persisted before networking. For an exec client neither 410 nor timeout is
- * suppression proof; a tree run whose exact terminal exited ends on 410. */
+ * suppression proof; a tree run whose exact terminal exited ends on 410. `boundary` — the
+ * daemon's present one: a dsh call of a graph outside it ends without a sleep (#10995). */
 export async function observeExec(
   authDir: string,
   base: string,
   token: string | null,
+  boundary?: string[],
 ): Promise<void> {
   let runs = readRuns(authDir);
   for (const [key, r] of Object.entries(runs)) {
@@ -61,7 +63,7 @@ export async function observeExec(
     const latest = readRuns(authDir);
     await foreignStops(authDir, base, token, latest);
     writeRuns(authDir, latest);
-    await finishExits(authDir, base, token);
+    await finishExits(authDir, base, token, boundary);
     await cleanupEndedTrees(authDir, readRuns(authDir));
   } catch {
     process.stderr.write("exec_observer_graph_unreadable\n");
@@ -78,13 +80,18 @@ const ruleOf = (b: StopAnswer): unknown => b.errors?.[0]?.rule;
 const ownProcess = (r: Run): boolean =>
   !!r.tree && !r.exec && (r.harness === "opencode" || !!r.dsh);
 
-async function finishExits(authDir: string, base: string, token: string): Promise<void> {
+async function finishExits(
+  authDir: string,
+  base: string,
+  token: string,
+  boundary?: string[],
+): Promise<void> {
   const runs = readRuns(authDir);
   for (const [key, r] of Object.entries(runs)) {
     if (endDshUnseated(r, LIVE.includes(r.state))) {
       // A clean exit with the case still open sleeps instead of ending (#10995); the row's
       // recorded end proof stays on it for the sleep's own end.
-      await goDormant(base, token, r);
+      await goDormant(base, token, r, boundary);
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
       continue;
@@ -98,7 +105,7 @@ async function finishExits(authDir: string, base: string, token: string): Promis
       continue;
     if (r.stop_outcome === "stopped") {
       r.state = "ended";
-      await goDormant(base, token, r);
+      await goDormant(base, token, r, boundary);
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
       continue;
@@ -147,7 +154,7 @@ async function finishExits(authDir: string, base: string, token: string): Promis
         r.state = "ended";
         r.why = "seat_gone_after_exit";
         // Its case still open and the exit clean — the run sleeps instead of ending (#10995).
-        await goDormant(base, token, r);
+        await goDormant(base, token, r, boundary);
       } else
         r.why =
           res.status === 410

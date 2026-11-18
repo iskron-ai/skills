@@ -48,10 +48,17 @@ export const dshSleepable = (r: Run): boolean =>
  * journal is read whole once — the cursor takes its last number, the wake keeps the seat ids
  * (the row's own and every earlier one), the invite entry's role uuid and the seat's own asks.
  * True — the row sleeps; false — the end stands as it was decided. A failed read keeps the
- * end: nothing is slept on a guess.
+ * end: nothing is slept on a guess. A graph outside the daemon's present `boundary` is not read
+ * at all: its call ends as it was decided.
  */
-export async function goDormant(base: string, token: string, r: Run): Promise<boolean> {
+export async function goDormant(
+  base: string,
+  token: string,
+  r: Run,
+  boundary?: string[],
+): Promise<boolean> {
   if (!dshSleepable(r) || r.tree?.state !== "ready") return false;
+  if (boundary && !boundary.includes(r.realm)) return false;
   // A foreign stop, once read, is sticky (#10995 review 5): no sleep arms under it — the
   // row's end stands whatever the case says.
   if (r.foreign_stop) return false;
@@ -157,7 +164,7 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
 
 /** The tact's ended dsh rows sleep too (#10995) — except a stop ordered elsewhere, which is a
  * wind-down: its end stays an end. Called where a tact settles stops into ends synchronously.
- * A graph outside the daemon's present boundary is not read at all: its call ends as it was. */
+ * A graph outside the daemon's present boundary is not read at all (goDormant). */
 export async function dormantFromEnds(
   base: string,
   token: string,
@@ -165,13 +172,8 @@ export async function dormantFromEnds(
   boundary?: string[],
 ): Promise<void> {
   for (const r of Object.values(runs))
-    if (
-      r.state === "ended" &&
-      !r.foreign_stop &&
-      r.tree?.state === "ready" &&
-      (!boundary || boundary.includes(r.realm))
-    )
-      await goDormant(base, token, r);
+    if (r.state === "ended" && !r.foreign_stop && r.tree?.state === "ready")
+      await goDormant(base, token, r, boundary);
 }
 
 /** What a journal entry means for the sleep: the platform's addressing wakes — a said or an
