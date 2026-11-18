@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.13.1](https://github.com/iskron-ai/skills/compare/v8.13.0...v8.13.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* intake way and canvas notes, stand-run-reply cleanup exit ([#835](https://github.com/iskron-ai/skills/issues/835)) ([6eb0460](https://github.com/iskron-ai/skills/commit/6eb0460e608abd7cb6232ef98a1135571a916dcb))
+* **intake:** unread way stops the intake, named without its address ([#837](https://github.com/iskron-ai/skills/issues/837)) ([93d3cd1](https://github.com/iskron-ai/skills/commit/93d3cd135bf897f55ded7cf774f09b25fb8d0fde))
+
 ## [8.13.0](https://github.com/iskron-ai/skills/compare/v8.12.0...v8.13.0) (2026-11-18)
 
 
