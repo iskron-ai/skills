@@ -98,4 +98,7 @@ export interface Run {
   stop_outcome?: string;
   /** A failed order after the exact terminal exited was replaced once by the exit stop. */
   restop?: boolean;
+  /** The daemon's own close of the launch's terminal, tried once (#11099): client_exited or
+   * the refusal that left it untouched. */
+  reaped?: string;
 }

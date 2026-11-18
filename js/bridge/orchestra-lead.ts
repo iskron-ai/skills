@@ -13,6 +13,7 @@ import { foreignStops } from "./orchestra-foreign.ts";
 import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
+import { reapOwn } from "./orchestra-reap.ts";
 import { roleRefusal } from "./orchestra-role.ts";
 import { readRuns, syncClosed, writeRuns } from "./orchestra-runs.ts";
 import { readTape, realmCanon, type TactAct, type TactRead } from "./orchestra-tact.ts";
@@ -72,6 +73,7 @@ export function leadAct(
         )),
       );
       syncClosed(runs, readRuns(authDir));
+      said.push(...(await reapOwn(authDir, runs, gone)));
       said.push(...(await closeEnded(runs, gone)));
       if (gone?.gone) return said;
       writeRuns(authDir, runs);

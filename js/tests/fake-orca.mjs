@@ -255,6 +255,19 @@ if (args[0] === "terminal" && args[1] === "wait") {
   const hold = process.env.FAKE_ORCA_WAIT_HOLD;
   while (hold && existsSync(hold)) await new Promise((r) => setTimeout(r, 20));
 }
+// FAKE_ORCA_WAIT_AFTER_CLOSE=1 — the terminal lives until a close of it is logged: wait says
+// exited only after one. FAKE_ORCA_SHOW_INCARNATION_FILE — while the file stands, show answers
+// its content as the incarnation (another client in the same tab).
+const closedBefore = () =>
+  readFileSync(process.env.FAKE_ORCA_LOG, "utf8")
+    .trim()
+    .split("\n")
+    .map(JSON.parse)
+    .some((a) => a[0] === "terminal" && a[1] === "close" && a[3] === args[3]);
+const waitExits =
+  process.env.FAKE_ORCA_WAIT_EXIT !== "0" &&
+  (process.env.FAKE_ORCA_WAIT_AFTER_CLOSE !== "1" || closedBefore());
+const otherClient = process.env.FAKE_ORCA_SHOW_INCARNATION_FILE;
 const answer = {
   ok: true,
   result:
@@ -269,10 +282,12 @@ const answer = {
             terminal: {
               handle: args[3],
               incarnationId:
-                process.env.FAKE_ORCA_EXIT_INCARNATION &&
-                readFileSync(process.env.FAKE_ORCA_LOG, "utf8").includes('"wait"')
-                  ? process.env.FAKE_ORCA_EXIT_INCARNATION
-                  : "inc_fake",
+                otherClient && existsSync(otherClient)
+                  ? readFileSync(otherClient, "utf8").trim()
+                  : process.env.FAKE_ORCA_EXIT_INCARNATION &&
+                      readFileSync(process.env.FAKE_ORCA_LOG, "utf8").includes('"wait"')
+                    ? process.env.FAKE_ORCA_EXIT_INCARNATION
+                    : "inc_fake",
               connected: false,
               writable: false,
               executionHostId: "local",
@@ -293,8 +308,8 @@ const answer = {
                 wait: {
                   handle: args[3],
                   condition: "exit",
-                  satisfied: process.env.FAKE_ORCA_WAIT_EXIT !== "0",
-                  status: process.env.FAKE_ORCA_WAIT_EXIT === "0" ? "running" : "exited",
+                  satisfied: waitExits,
+                  status: waitExits ? "exited" : "running",
                 },
               }
             : {},

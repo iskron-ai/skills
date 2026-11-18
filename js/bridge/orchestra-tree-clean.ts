@@ -16,9 +16,10 @@ import {
 /** The client is over: the stop said stopped, or the seat was already over after the exact
  * terminal exited (#9256). A run that slept (#10995) had settled its seat at the exit that
  * armed the sleep — the sleep's own end needs no fresh proof; the seat's own farewell
- * (dormant_seat_left, #4929) is as final. */
+ * (dormant_seat_left, #4929) is as final; so is the daemon's own observed close (#11099). */
 const clientGone = (r: Run): boolean =>
   r.stop_outcome === "stopped" ||
+  r.reaped === "client_exited" ||
   r.why === "seat_gone_after_exit" ||
   r.why === "dormant_seat_left" ||
   (r.why === "dormant_share_claimed" && !!r.dsh?.exit) ||

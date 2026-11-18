@@ -1,5 +1,6 @@
 // Legacy launch expiry/close and ordinary stop settlement (#7522, #9256).
-// Exec attempts never free a limit or close a client on timeout/absence alone.
+// Exec and tree runs never free a limit or close a client here: their terminal closes only
+// under the exact-client proof (orchestra-reap.ts, #11099).
 import { ORCHESTRA } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
