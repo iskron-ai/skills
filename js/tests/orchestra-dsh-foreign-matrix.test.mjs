@@ -31,7 +31,9 @@ async function check(t, state, own, phase = "dormant") {
     env: { FAKE_DSH_HOLD_MS: phase === "live" || phase === "continuation" ? "10000" : "1000" },
     caseRoom: { status: "open", entries: [first] },
   });
-  const base = readFileSync(join(o.dir, "server"), "utf8").trim().replace(/\/mcp$/, "");
+  const base = readFileSync(join(o.dir, "server"), "utf8")
+    .trim()
+    .replace(/\/mcp$/, "");
   if (phase === "live-exited")
     await fetch(`${base}/control`, {
       method: "POST",
@@ -78,9 +80,7 @@ async function check(t, state, own, phase = "dormant") {
     method: "POST",
     body: JSON.stringify({
       stop_orders: [
-        ...(own
-          ? [{ id: "ord-own", standing_id: SEAT, realm: "@nks/nks-dev", frame: false }]
-          : []),
+        ...(own ? [{ id: "ord-own", standing_id: SEAT, realm: "@nks/nks-dev", frame: false }] : []),
         { id: "ord-foreign", standing_id: SEAT, realm: "@nks/nks-dev", frame: false },
       ],
     }),
@@ -125,27 +125,23 @@ async function check(t, state, own, phase = "dormant") {
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
     test(`foreign ${state} × dormant × exit observed × own order ${own}`, (t) =>
-      check(t, state, own),
-    );
+      check(t, state, own));
 
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
     test(`foreign ${state} × live × exit unobserved × own order ${own}`, (t) =>
-      check(t, state, own, "live"),
-    );
+      check(t, state, own, "live"));
 
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
     test(`foreign ${state} × live × exit observed × own order ${own}`, (t) =>
-      check(t, state, own, "live-exited"),
-    );
+      check(t, state, own, "live-exited"));
 
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
     for (const observed of [false, true])
       test(`foreign ${state} × continuation × exit ${observed ? "observed" : "unobserved"} × own order ${own}`, (t) =>
-        check(t, state, own, observed ? "continuation-exited" : "continuation"),
-      );
+        check(t, state, own, observed ? "continuation-exited" : "continuation"));
 
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
