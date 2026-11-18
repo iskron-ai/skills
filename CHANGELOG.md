@@ -1,5 +1,25 @@
 # Changelog
 
+## [8.14.0](https://github.com/iskron-ai/skills/compare/v8.13.1...v8.14.0) (2026-11-18)
+
+
+### Features
+
+* **bridge:** a raised dsh agent dozes after its exit and a word for it in its case continues the session ([#830](https://github.com/iskron-ai/skills/issues/830)) ([4933148](https://github.com/iskron-ai/skills/commit/4933148004e18b64539301a3982fb1527afdf502))
+* **dsh:** delivery rituals in dsh sessions — cover contract, onboarding, push and merge lines, turn end ([#841](https://github.com/iskron-ai/skills/issues/841)) ([ae551b2](https://github.com/iskron-ai/skills/commit/ae551b224735baa0c996e3a7d7ee15e75da206f5))
+* **dsh:** headless holds for the wake word and frames; the plugin seats the root by the cover ([#844](https://github.com/iskron-ai/skills/issues/844)) ([b641f3b](https://github.com/iskron-ai/skills/commit/b641f3b332cb4729540e30769fab61eb5a5d4459))
+* **establish-mcp:** dsh call dozes after a clean exit with an open share ([#842](https://github.com/iskron-ai/skills/issues/842)) ([f5dc706](https://github.com/iskron-ai/skills/commit/f5dc706c9bfdaf4cd2295592d8b2f1ab429f91bc))
+
+
+### Bug Fixes
+
+* **bridge:** dsh continuation registers on the call's ownerless invite ([#845](https://github.com/iskron-ai/skills/issues/845)) ([ff22573](https://github.com/iskron-ai/skills/commit/ff22573ecbc24908cf457dc5b1ea138f52b0b52a))
+* **bridge:** dsh dormancy waits for a pending word's body, reads the 8.13.1 own order ([#840](https://github.com/iskron-ai/skills/issues/840)) ([d17d7b9](https://github.com/iskron-ai/skills/commit/d17d7b969cc646e29812a7fd29c74cff5ea5f767))
+* **bridge:** dsh sleep entry keeps a word awaiting its body, no sleep outside the boundary; dsh start word ([#847](https://github.com/iskron-ai/skills/issues/847)) ([647b0a0](https://github.com/iskron-ai/skills/commit/647b0a0dbf0c4cfc6ee9e3066ba5a6d6fa88b21c))
+* **establish-mcp:** dormant wake outcomes and foreign stop codes as the bridge prints them ([#843](https://github.com/iskron-ai/skills/issues/843)) ([b9ac550](https://github.com/iskron-ai/skills/commit/b9ac550a1eb9c9cb1599ebfd9b99c68292884b29))
+* **intake:** source node and names keep the author's words; establish-mcp: dsh seat, headless wait, share codes ([#846](https://github.com/iskron-ai/skills/issues/846)) ([06ab8c0](https://github.com/iskron-ai/skills/commit/06ab8c01680e1b51b80646db16008e36543ae04e))
+* **scripts:** stand-run-reply cleanup and front-only person seat; intake canvas wording ([#839](https://github.com/iskron-ai/skills/issues/839)) ([542edc4](https://github.com/iskron-ai/skills/commit/542edc49b822c99d0a3a5bbfcb401fe6b2ebff28))
+
 ## [8.13.1](https://github.com/iskron-ai/skills/compare/v8.13.0...v8.13.1) (2026-11-18)
 
 
