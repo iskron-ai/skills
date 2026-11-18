@@ -4,17 +4,21 @@
 // the seat into next-turn messages of the live session (hearing.ts); the session's first
 // agent gets the start word in its system prompt (start.ts, #10921); a compacted session
 // gets its role back (compaction.ts); a shell call that pushed or merged gets its lines as a
-// turn (rites.ts, #11071); a disposed session hears nothing more.
+// turn (rites.ts, #11071); a frame's turn that lost its word in the console wakes the session
+// (turnend.ts); a disposed session hears nothing more.
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK events without a schema */
 import { DSH } from "../delivery/index.ts";
 import { markFrame } from "../shared/frame-text.ts";
 import { words } from "../shared/lang.ts";
+import { ritualCover } from "../shared/ritualcover.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
+import { TURN_RITE } from "../shared/turnend.ts";
 import { roleWord } from "./compaction.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
 import { riteLines } from "./rites.ts";
 import { createRoot } from "./root.ts";
 import { putStartWord } from "./start.ts";
+import { createTurnEnds } from "./turnend.ts";
 
 export interface DshCtx {
   on(event: string, fn: (...args: any[]) => unknown): unknown;
@@ -64,6 +68,22 @@ export function apply(ctx: DshCtx): void {
   const authDir = authDirFromEnv();
   let agent: DshAgent | null = null;
   let hearing: Hearing | null = null;
+  // No cover — on, a frame proves the seat; else by the cover's rituals field.
+  const turns = createTurnEnds({
+    on: () => ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true,
+    wake: (text) => void (agent && sendAfterPublish(agent, turnMessage(text))),
+  });
+  /** The root's agent as the hearing sees it: each frame it lays is known to the turn's end. */
+  const heard = (): DshAgent | null => {
+    const a = agent;
+    if (!a) return null;
+    return {
+      followup: (m: any) => {
+        turns.laid(m);
+        return a.followup(m);
+      },
+    };
+  };
 
   const on = (event: string, fn: (...args: any[]) => unknown): void => {
     try {
@@ -85,13 +105,14 @@ export function apply(ctx: DshCtx): void {
         log(W().notDelivered(why)),
       );
     agent = agentOf(payload?.agent) ?? agent;
-    if (!hearing) hearing = startHearing(() => agent, log, startedAt);
+    if (!hearing) hearing = startHearing(heard, log, startedAt);
   });
   on("session/disposed", (session) => {
     if (!root.ours(session)) return; // a subagent's session ended, the root's lives on
     hearing?.stop(); // the session is gone: nothing more goes into it
     hearing = null;
     agent = null;
+    turns.forget();
     root.end();
   });
   // A waterfall (exec, result, next): the decision passes unchanged, the lines go to the root.
@@ -107,7 +128,9 @@ export function apply(ctx: DshCtx): void {
   });
   on("session/event", (session, ev) => {
     // A failed compaction kept the context: no word about a compaction that did not happen.
-    if (!root.ours(session) || ev?.type !== "compaction/end" || ev.error) return;
+    if (!root.ours(session)) return;
+    turns.onEvent(ev);
+    if (ev?.type !== "compaction/end" || ev.error) return;
     const a = agent;
     if (!a || !hearing) return;
     sendAfterPublish(a, turnMessage(markFrame(roleWord(authDir, hearing.key()))));
