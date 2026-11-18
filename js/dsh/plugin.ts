@@ -13,6 +13,7 @@ import { authDirFromEnv } from "../shared/standings.ts";
 import { roleWord } from "./compaction.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
 import { riteLines } from "./rites.ts";
+import { createRoot } from "./root.ts";
 import { putStartWord } from "./start.ts";
 
 export interface DshCtx {
@@ -72,39 +73,41 @@ export function apply(ctx: DshCtx): void {
     }
   };
 
-  // The session's first agent is its root; later ones are its subagents. A disposed session
-  // makes the next agent/created a new session's root — a long process (dsh web) has many.
-  let started = false;
+  // The session's first agent is its root; a subagent spawned in the process takes none of
+  // its hearing, start word or rituals (root.ts). A disposed root session makes the next
+  // agent/created a new session's root — a long process (dsh web) has many.
+  const root = createRoot();
   on("agent/created", (payload) => {
-    if (!started) {
-      started = true;
+    const took = root.take(payload?.agent, payload?.source);
+    if (took === "child") return;
+    if (took === "root")
       putStartWord(payload?.agent, payload?.source, process.cwd(), (why) =>
         log(W().notDelivered(why)),
       );
-    }
     agent = agentOf(payload?.agent) ?? agent;
     if (!hearing) hearing = startHearing(() => agent, log, startedAt);
   });
-  on("session/disposed", () => {
+  on("session/disposed", (session) => {
+    if (!root.ours(session)) return; // a subagent's session ended, the root's lives on
     hearing?.stop(); // the session is gone: nothing more goes into it
     hearing = null;
     agent = null;
-    started = false;
+    root.end();
   });
-  // A waterfall (exec, result, next): the decision passes unchanged, the lines go as a turn.
+  // A waterfall (exec, result, next): the decision passes unchanged, the lines go to the root.
   on("tools/post-execute", (exec, result, next) => {
     try {
       const note = riteLines(exec, result, process.cwd());
-      const a = agentOf(exec?.agent) ?? agent;
+      const a = agent;
       if (note && a) sendAfterPublish(a, turnMessage(markFrame(note)));
     } catch (e) {
       log(W().notDelivered((e as Error).message));
     }
     return typeof next === "function" ? next() : undefined;
   });
-  on("session/event", (_session, ev) => {
+  on("session/event", (session, ev) => {
     // A failed compaction kept the context: no word about a compaction that did not happen.
-    if (ev?.type !== "compaction/end" || ev.error) return;
+    if (!root.ours(session) || ev?.type !== "compaction/end" || ev.error) return;
     const a = agent;
     if (!a || !hearing) return;
     sendAfterPublish(a, turnMessage(markFrame(roleWord(authDir, hearing.key()))));
