@@ -5,7 +5,9 @@
 // tree path, runIdentity); a proof that does not hold leaves the terminal untouched, said.
 import { ORCHESTRA } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import { type ApiCall, execApi } from "./exec-prepare.ts";
 import { orcaCloseObserved, ownClient } from "./orca-stop.ts";
+import { haltExecSession } from "./orchestra-exec-halt.ts";
 import { readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
 import { stopLapsed } from "./orchestra-window.ts";
 
@@ -40,32 +42,62 @@ export async function reapOwn(
   runs: Record<string, Run>,
   gone?: { gone: boolean },
   close: Close = orcaCloseObserved,
+  api: ApiCall = execApi,
   now = Date.now(),
 ): Promise<string[]> {
   const said: string[] = [];
   for (const [key, r] of Object.entries(runs)) {
     const cause = reapCause(r, now);
-    if (!cause) continue;
+    if (!cause && !exitedNoSeat(r)) continue;
     if (gone?.gone) break;
-    const expected = ownClient(r);
-    const identity = runIdentity(r);
-    const current = (): boolean => {
-      const latest = readRuns(authDir)[key];
-      return !!latest && runIdentity(latest) === identity && latest.closed !== "client_exited";
-    };
-    const outcome = expected
-      ? await close(r.terminal!, r.runtime!, current, expected)
-      : "client_unbound";
-    said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${settle(r, outcome, now)}`));
-    // Nothing else waits on this client: a launch that never sat has no wakes to stop, so its
-    // observed exit ends it; an ended row's end was already confirmed. Either way the close is
-    // the exit the tree cleanup asks for (#11099) — never for a row still stopping.
-    if (outcome === null && (cause === "no_seat" || cause === "ended")) {
-      r.state = "ended";
-      r.reaped = REAPED_OVER;
+    const row = (why: string): number => said.push(w().leadRow(r.realm, r.room, r.invite, why));
+    if (cause) {
+      const expected = ownClient(r);
+      const identity = runIdentity(r);
+      const current = (): boolean => {
+        const latest = readRuns(authDir)[key];
+        return !!latest && runIdentity(latest) === identity && latest.closed !== "client_exited";
+      };
+      const outcome = expected
+        ? await close(r.terminal!, r.runtime!, current, expected)
+        : "client_unbound";
+      row(`${cause}, ${settle(r, outcome, now)}`);
+      // An ended row's end was already confirmed: the close is the exit its tree cleanup asks
+      // for (#11099) — never for a row still stopping.
+      if (outcome === null && cause === "ended") r.reaped = REAPED_OVER;
     }
+    if (!exitedNoSeat(r)) continue;
+    // A launch that never sat has no seat to stop; a native exec one may still have its session
+    // on the shared server, prompted before any claim — it ends only once that session is halted
+    // and archived as the plugin does on a confirmed stop (#9256).
+    const halted = r.exec?.session
+      ? await haltExecSession(r.exec.server, r.exec.session, api)
+      : null;
+    if (halted !== null) {
+      row(`no_seat, ${retry(r, halted)}`);
+      continue;
+    }
+    r.state = "ended";
+    r.reaped = REAPED_OVER;
   }
   return said;
+}
+
+/** A launch that never sat whose client is seen gone; its end waits on nothing but its session. */
+const exitedNoSeat = (r: Run): boolean =>
+  r.harness === "opencode" &&
+  !r.dsh &&
+  r.state === "ambiguity" &&
+  NO_SEAT.has(r.why ?? "") &&
+  r.closed === "client_exited" &&
+  r.reaped !== "reap_exhausted";
+
+/** A transient refusal counted; past the bound the row is said exhausted and left alone. */
+function retry(r: Run, outcome: string): string {
+  r.reap_tries = (r.reap_tries ?? 0) + 1;
+  if (r.reap_tries < REAP_TRIES) return outcome;
+  r.reaped = "reap_exhausted";
+  return `reap_exhausted (${outcome})`;
 }
 
 /** Final: the observed exit, or a proof of ours that did not hold. Anything else is tried
@@ -82,8 +114,5 @@ function settle(r: Run, outcome: string | null, now: number): string {
     return (r.reaped = "client_exited");
   }
   if (NOT_OURS.has(outcome)) return (r.reaped = outcome);
-  r.reap_tries = (r.reap_tries ?? 0) + 1;
-  if (r.reap_tries < REAP_TRIES) return outcome;
-  r.reaped = "reap_exhausted";
-  return `reap_exhausted (${outcome})`;
+  return retry(r, outcome);
 }

@@ -44,6 +44,72 @@ for (const dirty of [false, true])
     assert.equal(existsSync(join(f.row.worktree, "unsaved.txt")), dirty);
   });
 
+/** A native exec launch whose seat never stood: its prompt went to the shared server first. */
+async function noSeatExec(t) {
+  const f = await endedTree(t, false);
+  Object.assign(f.row, { state: "ambiguity", why: "exec_no_seat_unverified" });
+  delete f.row.standing_id;
+  f.row.exec = {
+    attempt: "a",
+    receipt: "r",
+    server: "http://127.0.0.1:1",
+    model: {},
+    session: "ses_live",
+    incarnation: "inc",
+  };
+  writeRuns(f.auth, f.runs);
+  return f;
+}
+/** The shared server as `opencode api` answers it; `archives` — whether the archive holds. */
+const server = (archives, calls) => async (srv, method, path, body) => {
+  calls.push([method, path, body]);
+  if (path.endsWith("/interrupt?resume=false")) return { data: { interrupted: true } };
+  if (method === "patch") return {};
+  return { data: { id: "ses_live", time: archives ? { archived: 1 } : {} } };
+};
+const tactOf = async (f, api) => {
+  const runs = readRuns(f.auth);
+  const said = await reapOwn(f.auth, runs, undefined, async () => null, api);
+  writeRuns(f.auth, runs);
+  await cleanupEndedTrees(f.auth, runs);
+  return { said: said.join(), r: readRuns(f.auth).own };
+};
+
+// The review's counter-case: a session live on the shared server, no stop — no end, tree kept.
+test("reap: a no-seat exec launch with a live session is not ended until its session is halted", async (t) => {
+  const f = await noSeatExec(t);
+  const calls = [];
+  let got = await tactOf(f, server(false, calls));
+  assert.match(got.said, /no_seat, client_exited/);
+  assert.match(got.said, /no_seat, session_archive_unconfirmed/);
+  assert.notEqual(got.r.state, "ended", JSON.stringify(got.r));
+  assert.equal(got.r.tree.state, "ready");
+  assert.deepEqual(calls.slice(0, 2), [
+    ["post", "/api/session/ses_live/interrupt?resume=false", undefined],
+    ["patch", "/api/session/ses_live", { archived: true }],
+  ]);
+  assert.match((await tactOf(f, server(false, calls))).said, /no_seat, session_archive/);
+  got = await tactOf(f, server(false, calls));
+  assert.match(got.said, /no_seat, reap_exhausted \(session_archive_unconfirmed\)/);
+  assert.notEqual(got.r.state, "ended");
+  assert.equal(got.r.tree.state, "ready");
+  const before = calls.length;
+  await tactOf(f, server(true, calls));
+  assert.equal(calls.length, before, "exhausted — no more tries");
+});
+
+test("reap: a no-seat exec launch whose session halted ends and frees its tree", async (t) => {
+  const f = await noSeatExec(t);
+  let got = await tactOf(f, async () => {
+    throw new Error("exec_api_failed_or_unknown");
+  });
+  assert.match(got.said, /no_seat, session_halt_unknown/);
+  assert.notEqual(got.r.state, "ended");
+  got = await tactOf(f, server(true, []));
+  assert.equal(got.r.state, "ended", JSON.stringify(got.r));
+  assert.equal(got.r.tree.state, "removed");
+});
+
 const row = {
   realm: "@x/one",
   room: "r",
