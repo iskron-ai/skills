@@ -68,8 +68,10 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
     if ((await readCaseStatus(base, token, r.room)) !== "open") return false;
     read = await readCaseHistory(base, token, r.room);
   } catch (e) {
+    if (r.foreign_stop) return false;
     return sleepOnError(e);
   }
+  if (r.foreign_stop) return false;
   // The seat walked out of the case by itself: a left with reason leave after the call's
   // last joined is the agent's own farewell, and a leave does not end the standing (#4929) —
   // our stop after it may even answer stopped. No sleep either way; our own exit stop's left
@@ -283,6 +285,8 @@ export async function stepDormant(
         gone?.gone ||
         !latest ||
         latest.state !== "dormant" ||
+        !!latest.foreign_stop ||
+        !!r.foreign_stop ||
         runIdentity(latest) !== runIdentity(r)
       ) {
         out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));

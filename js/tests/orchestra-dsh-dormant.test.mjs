@@ -923,6 +923,62 @@ test("a foreign stop is sticky: set once, it outlives re-reads, rollbacks and me
   );
 });
 
+test("the run identity ignores the continuation's fields and counts its wakes", async (t) => {
+  const { runIdentity } = await import("../bridge/orchestra-runs-delta.ts");
+  const base = sleepingRow();
+  assert.equal(
+    runIdentity({ ...base, at: "2026-11-02T00:00:00Z" }),
+    runIdentity({ ...base, at: "2026-11-03T00:00:00Z" }),
+    "the continuation moves at — the identity must not notice",
+  );
+  assert.equal(
+    runIdentity({ ...base, stop_outcome: "stopped", sat: true, rooms: 1, n: 3 }),
+    runIdentity(base),
+    "the sleep snapshot's fields are not the identity's",
+  );
+  assert.notEqual(
+    runIdentity({ ...base, wakes: 2 }),
+    runIdentity({ ...base, wakes: 3 }),
+    "each continuation attempt is its own identity",
+  );
+});
+
+test("a failed continuation lands its rollback on the registry", async (t) => {
+  const { readRuns, writeRuns } = await import("../bridge/orchestra-runs.ts");
+  const { rememberRuns } = await import("../bridge/orchestra-runs-delta.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-rollback-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const slept = sleepingRow();
+  writeRuns(dir, { k: slept });
+  const lead = readRuns(dir); // the lead's tracked view, taken while the row slept
+  // The continuation's mid-state — written to disk before the attempt fails.
+  const mid = lead.k;
+  mid.at = "2026-11-02T00:00:00Z";
+  mid.wakes = 1;
+  mid.state = "launched";
+  mid.dsh = { pid: 4242, events: "/e2", model: "/m" };
+  delete mid.stop_outcome;
+  if (mid.tree) delete mid.tree.exit;
+  writeRuns(dir, lead);
+  // The rollback restores the slept fields; the re-snapshot lets the delta carry them.
+  rememberRuns(dir, lead);
+  mid.state = "dormant";
+  mid.why = "dormant_wake_probe";
+  mid.dsh = slept.dsh;
+  mid.at = slept.at;
+  mid.stop_outcome = slept.stop_outcome;
+  if (mid.tree) mid.tree.exit = slept.tree.exit;
+  writeRuns(dir, lead);
+  const disk = readRuns(dir).k;
+  assert.equal(disk.state, "dormant");
+  assert.equal(disk.dsh.session, slept.dsh.session, "the slept session returns to the registry");
+  assert.equal(disk.stop_outcome, slept.stop_outcome, "the slept stop outcome returns");
+  assert.equal(disk.tree.exit, slept.tree.exit, "the slept exit proof returns");
+});
+
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
   const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
   const ours = exitedRun();

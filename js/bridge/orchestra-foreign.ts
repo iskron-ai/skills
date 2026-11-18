@@ -59,18 +59,21 @@ export async function foreignStops(
   const said: string[] = [];
   const fresh = new Set<Run>();
   const bySeat = new Map<string, Run>();
+  const seatRuns = new Map<string, Run>();
   // A sleeping run's seat (#10995): an order naming it ends the sleep — the stop is not ours.
   const asleep = new Map<string, Run>();
   // Stopping runs wait for their order's closed state: the cursor holds before an open one.
   const stopping = new Map<string, Run>();
   let unseated = false;
-  for (const r of Object.values(runs))
+  for (const r of Object.values(runs)) {
+    if (r.state !== "ended" && r.standing_id) seatRuns.set(r.standing_id, r);
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);
       else unseated = true;
     } else if (r.state === "dormant" && r.standing_id) asleep.set(r.standing_id, r);
     else if (r.state === "stopping" && !r.stop_outcome && (r.exec || r.tree || !stopLapsed(r)))
       stopping.set(r.order_id ? `o:${r.order_id}` : `s:${r.standing_id ?? ""}`, r);
+  }
   const seen = new Set(Object.values(runs).map((r) => r.standing_id));
   let since = readSince(authDir);
   let held: number | undefined;
@@ -91,12 +94,14 @@ export async function foreignStops(
         const id = typeof v.id === "string" ? v.id : "";
         const state = String(v.state);
         const open = OPEN.has(state);
+        const seatRun = seatRuns.get(seat);
+        if (id && seatRun && !seatRun.orders?.includes(id))
+          seatRun.foreign_stop ??= { id, state, at: new Date().toISOString() };
         // An order on a sleeping run's seat is foreign unless its id is the row's own
         // (#10995): the sticky field is set at this first reading and never erased — the
         // dormant tact ends the sleep by the field alone, not here.
         const sleep = !run && asleep.get(seat);
         if (sleep) {
-          asleep.delete(seat);
           if (id && !sleep.orders?.includes(id))
             sleep.foreign_stop ??= { id, state, at: new Date().toISOString() };
           continue;
@@ -117,8 +122,7 @@ export async function foreignStops(
         if (
           !run ||
           !id ||
-          run.orders?.includes(id) ||
-          (id === run.order_id && run.foreign_stop?.id !== id)
+          run.orders?.includes(id)
         )
           continue;
         bySeat.delete(seat);

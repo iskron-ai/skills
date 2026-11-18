@@ -72,6 +72,8 @@ export interface Run {
    * not by re-reads, not by a continuation's rollback, not by the registry merge. While it
    * stands there is no sleep and no continuation: the run ends (#10995 review 5). */
   foreign_stop?: { id: string; state: string; at: string };
+  /** Monotonic continuation attempt number; never rolled back with the sleep snapshot. */
+  wakes?: number;
   state: RunState;
   at: string;
   why?: string;

@@ -17,6 +17,7 @@ import {
 } from "./orchestra-dsh.ts";
 import { children, dshEvents, dshExit, dshTerminate, exits } from "./orchestra-dsh-proc.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
+import { rememberRuns } from "./orchestra-runs-delta.ts";
 import { dropUnlaunched } from "./orchestra-tree-drop.ts";
 
 export { dshTerminate, observeDsh } from "./orchestra-dsh-proc.ts";
@@ -56,6 +57,7 @@ export async function launchDsh(
       : undefined;
   const fail = (why: string, state: Run["state"] = "refused"): string => {
     if (slept) {
+      rememberRuns(authDir, runs);
       run.state = "dormant";
       run.why = `dormant_wake_${why}`;
       run.dormant = slept.dormant;
@@ -69,7 +71,7 @@ export async function launchDsh(
       run.rooms = slept.rooms;
       run.n = slept.n;
       run.idle_due = slept.idle_due;
-      if (run.tree) run.tree.exit = slept.treeExit;
+      if (run.tree) run.tree.exit = slept.treeExit ?? run.tree.exit;
       writeRuns(authDir, runs);
       return why;
     }
@@ -91,6 +93,7 @@ export async function launchDsh(
   const files = dshFiles(authDir, run.tree.operation);
   writeModelPatch(files.model, files.dir, model);
   if (session) {
+    run.wakes = (run.wakes ?? 0) + 1;
     // The continuation's own client life (#10995): the slept life's exit marks must not end
     // the new process at once, and its event file starts over — the wait below observes THIS
     // process, not the slept one's leftovers. It is a new launch for every raise window too:

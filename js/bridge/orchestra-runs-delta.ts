@@ -21,7 +21,7 @@ export const runIdentity = (r: Run): string =>
     r.terminal,
     r.runtime,
     r.harness,
-    r.at,
+    r.dsh ? (r.wakes ?? 0) : r.at,
     r.exec?.attempt,
     r.exec?.session,
     r.exec?.incarnation,
@@ -64,6 +64,7 @@ export function mergeRuns(authDir: string, runs: Runs, latest: Runs): Runs {
     for (const field of new Set([...Object.keys(before), ...Object.keys(after)])) {
       const k = field as keyof Run;
       if (JSON.stringify(before[k]) === JSON.stringify(after[k])) continue;
+      if (k === "foreign_stop" && row.foreign_stop) continue;
       if (k === "exec" && before.exec && after.exec && current.exec) {
         const exec = { ...current.exec };
         for (const field of new Set([...Object.keys(before.exec), ...Object.keys(after.exec)])) {
