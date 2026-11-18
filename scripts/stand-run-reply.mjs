@@ -384,5 +384,5 @@ process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 spawnSync("pkill", ["-f", `daemon --auth-dir ${authDir}( |$)`]);
 await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-const exitCode = (setup, failed, report) => report.some((line) => line.startsWith("CLEANUP FAILED ")) ? 3 : setup || (failed ? 1 : 0);
+const exitCode = (setup, failed, report) => setup || (failed ? 1 : report.some((line) => line.startsWith("CLEANUP FAILED ")) ? 3 : 0);
 process.exit(exitCode(setup, failed, report));
