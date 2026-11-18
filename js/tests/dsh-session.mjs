@@ -37,8 +37,8 @@ const PLUGIN = (await import(`${SOURCE}?session`)).apply;
 
 process.env.ISKRON_BRIDGE_LANG = "ru";
 
-const KEY = "proba--931--r5";
-const SESSION = { id: "session-dsh-turn" };
+export const KEY = "proba--931--r5";
+export const SESSION = { id: "session-dsh-turn" };
 export const LONG = `${"Отчёт о сделанном, который никто не прочтёт в консоли. ".repeat(8)}Что дальше?`;
 export const until = async (fn, ms = 4000) => {
   for (const end = Date.now() + ms; Date.now() < end;) {
@@ -51,7 +51,7 @@ export const text = (t) => ({ type: "text", text: t });
 export const isWake = (m) => m.content[0].text === TURN.ru.wake();
 
 /** A working directory (cover — its AGENTS.md in a repository) and a live standing socket. */
-async function sandbox(t, cover) {
+export async function sandbox(t, cover) {
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-turn-")));
   const authDir = join(dir, "auth");
   mkdirSync(join(authDir, "standings"), { recursive: true });
