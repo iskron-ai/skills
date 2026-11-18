@@ -204,3 +204,39 @@ test("a disposed session drops its held first-step words: no other session gets 
   const marks = existsSync(seen) ? readFileSync(seen, "utf8") : "";
   assert.doesNotMatch(marks, /direct-held/, "not marked seen: the platform keeps it");
 });
+
+// The targeted review of 78c6afb7: the first step had taken the queue and awaited next() when
+// the session was disposed and a new root came; next() then settled — the old word went to the
+// new root as next-step and was marked seen. The queue stays its session's until next() returns.
+for (const settles of ["rejects", "enters"])
+  test(`a session disposed during its first step drops its held words: next() ${settles}`, async (t) => {
+    const s = await session(t, "startup");
+    await s.attach();
+    s.frame("direct-held");
+    await new Promise((r) => setTimeout(r, 100));
+    let settle;
+    const pending = new Promise((ok, no) => {
+      settle = () => (settles === "rejects" ? no(new Error("aborted")) : ok());
+    });
+    const next = async () => (await pending, { kind: "enter", messages: [TASK] });
+    const payload = { agent: s.root.agent, messages: [TASK], turn: 1, step: 1 };
+    const step = s.handlers.get("agent/pre-step")(
+      { ...payload, signal: new AbortController().signal },
+      next,
+    );
+    await new Promise((r) => setTimeout(r, 50)); // the first step awaits next()
+    s.handlers.get("session/disposed")?.(SESSION);
+    const fresh = agentOf({ id: "session-dsh-next" });
+    s.handlers.get("agent/created")?.({ agent: fresh.agent, source: "startup" });
+    fresh.agent.status = "running";
+    t.after(() => s.handlers.get("session/disposed")?.(fresh.agent.session));
+    settle();
+    const d = await step.catch(() => null);
+    if (d) assert.deepEqual(d.messages, [TASK], "no word of the closed session enters its step");
+    await new Promise((r) => setTimeout(r, 200));
+    assert.deepEqual(fresh.got, [], "the new root gets no word of the old session");
+    assert.deepEqual(s.root.got, [], "nor does the disposed one");
+    const seen = seenFilePathOf(s.box.authDir, KEY);
+    const marks = existsSync(seen) ? readFileSync(seen, "utf8") : "";
+    assert.doesNotMatch(marks, /direct-held/, "not marked seen: the platform keeps it");
+  });

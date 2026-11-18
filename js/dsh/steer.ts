@@ -62,6 +62,7 @@ export interface FirstStep {
 /** route — where a word goes once the first step is gone (toTurn and the hold). */
 export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
   let gate: Gate | null = null;
+  let stepping: Gate | null = null; // its first step awaits next(): still its session's words
   // A word held for a session that ended goes to no other session: it is rejected, so the
   // hearing does not mark it seen and the platform keeps it, as a frame undelivered at close.
   const gone = (h: Held): void => h.fail(new Error("the session ended before its first step"));
@@ -76,10 +77,16 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
     for (const h of g.held.splice(0)) pass(g, h);
     g.wake();
   };
+  /** The session ended: its queue and the one its first step holds close, words not given. */
+  const close = (): void => {
+    drop(gate);
+    drop(stepping);
+    gate = stepping = null;
+  };
 
   return {
     begin(agent) {
-      drop(gate);
+      close();
       gate = { agent, held: [], wake: () => undefined, ended: false };
     },
     take(m, running) {
@@ -115,11 +122,14 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
       const held = g.held.splice(0);
       held.forEach((h) => clearTimeout(h.timer));
       let d: any;
+      stepping = g;
       try {
         d = await next();
       } catch (e) {
         held.forEach((h) => pass(g, h));
         throw e;
+      } finally {
+        if (stepping === g) stepping = null;
       }
       const into = !g.ended && d?.kind === "enter" && Array.isArray(d.messages);
       if (!held.length || !into) {
@@ -133,10 +143,7 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
       held.forEach((h) => h.done());
       return { ...d, messages: [...msgs.slice(0, cut), ...words, ...msgs.slice(cut)] };
     },
-    end() {
-      drop(gate);
-      gate = null;
-    },
+    end: close,
   };
 }
 
