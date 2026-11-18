@@ -21,6 +21,7 @@ appendFileSync(
   }) + "\n",
 );
 const mode = process.env.FAKE_DSH_MODE || "ok";
+if (mode === "fail-continue" && argv.includes("--session-id")) process.exit(7);
 // As the real dsh 0.2.2-rc.1: --patch is a launcher option, before the app's --json; after it
 // the app refuses it (observed live, case 5308 stage 3).
 const json = argv.indexOf("--json");
