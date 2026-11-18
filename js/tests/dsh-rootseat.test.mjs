@@ -1,0 +1,302 @@
+// Behavioural probe for the root seating of the dsh plugin (graph @nks/nks-dev, node #11076): on
+// the root's agent/created (startup, resume) the plugin seats the session on the cover's role in
+// its graph through the session's own bridge, and the root's first model request waits for it.
+//
+// The stand-in surface, by the installed dsh 0.2.2-rc.1, NOT observed from a plugin: the tool
+// registry is the service `tools` (ctx.get, as headless.ts reads `headlessStartup` — observed),
+// ToolsService.get(name) (dsh-tools/lib/types/index.d.ts); an MCP tool's definition is
+// {name, execute(args, exec)} — dsh-mcp-client lib/index.js:180-254, execute calls the server's
+// tool and throws a refusal's text; its name mcp__<serverName>__<tool> with serverName of
+// references/dsh-profile.yml (the prefix observed, #10657); agent/request is a waterfall
+// (payload {agent, turn, step, signal}, next) — dsh-agent/lib/types/runtime-types.d.ts:362-367;
+// agent.model.current() → {provider, model} — dsh-agent/lib/types/model-selection.d.ts:37. The
+// bridge's answer is played by the stand-in: it writes the hold record the session's bridge
+// writes (client dsh-mcp-client, this directory, now).
+//
+// ISKRON_DSH_PLUGIN points the probe at any copy (a past revision) so it can be shown red
+// before a fix. Run with `make test-dsh`.
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+
+import { DSH, envName, ROOT_SEAT } from "../delivery/index.ts";
+import { holdFilePathOf, keyFilePathOf } from "../shared/standings.ts";
+import { BUILT } from "./built.mjs";
+
+const SOURCE =
+  process.env.ISKRON_DSH_PLUGIN ||
+  join(BUILT, "skills", "establish-mcp", "references", "dsh-plugin", "index.js");
+const PLUGIN = (await import(`${SOURCE}?rootseat`)).apply;
+
+process.env.ISKRON_BRIDGE_LANG = "ru";
+
+const STAND = "mcp__iskron__iskron_stand";
+const COVER = "---\niskron:\n  graph: '@probe/seat'\n  holon: 4057\n  agent_role: 931\n---\n# p\n";
+const W = ROOT_SEAT.ru;
+
+/** A repository root with the cover, the process standing in it, its own auth directory. */
+function repo(t) {
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "iskron-dsh-seat-")));
+  const auth = join(dir, "auth");
+  mkdirSync(join(dir, ".git"));
+  mkdirSync(join(auth, "standings"), { recursive: true });
+  writeFileSync(join(dir, "AGENTS.md"), COVER);
+  const was = { cwd: process.cwd(), auth: process.env.ISKRON_BRIDGE_AUTH_DIR };
+  process.env.ISKRON_BRIDGE_AUTH_DIR = auth;
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(was.cwd);
+    if (was.auth === undefined) delete process.env.ISKRON_BRIDGE_AUTH_DIR;
+    else process.env.ISKRON_BRIDGE_AUTH_DIR = was.auth;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return { dir, auth };
+}
+
+/** The hold record the session's bridge writes on a stand. */
+function holdRecord(auth, { realm, karta, name }) {
+  const key = `${name}--${karta}--probe`;
+  writeFileSync(keyFilePathOf(auth, key), key + "\n");
+  writeFileSync(
+    holdFilePathOf(auth, key),
+    JSON.stringify({
+      realm,
+      karta: Number(karta),
+      name,
+      url: "https://example.invalid/",
+      at: Date.now(),
+      cwd: process.cwd(),
+      client: "dsh-mcp-client",
+    }) + "\n",
+  );
+}
+
+/** The plugin over a stand-in dsh whose registry holds the bridge's stand tool; task — the
+ * headless run's task in its service `headlessStartup` {json, sessionId, task} (keys observed
+ * live on agent/created, dsh 0.2.2-rc.1). */
+function dsh(t, auth, task) {
+  const handlers = new Map();
+  const logs = [];
+  const order = [];
+  const stands = [];
+  const stand = {
+    name: STAND,
+    async execute(args, exec) {
+      assert.ok(exec?.signal instanceof AbortSignal, "the call carries a signal");
+      order.push("stand");
+      stands.push(args);
+      if (registry.refuse) throw new Error("отказ моста");
+      holdRecord(auth, { realm: "@probe/seat", karta: String(args.karta), name: "glm.p" });
+      return { content: [{ type: "text", text: "стою" }] };
+    },
+  };
+  // registered — the MCP client has published its tools; a probe may hold it back.
+  const registry = { registered: true, refuse: false };
+  const tools = { get: (name) => (name === STAND && registry.registered ? stand : undefined) };
+  PLUGIN({
+    on: (name, fn) => handlers.set(name, fn),
+    get: (name) =>
+      name === "tools"
+        ? tools
+        : name === "headlessStartup" && task !== undefined
+          ? { json: true, sessionId: undefined, task }
+          : undefined,
+    logger: { info: (l) => logs.push(String(l)) },
+  });
+  t.after(() => handlers.get("session/disposed")?.({ id: "s-root" }));
+  const agent = (header) => ({
+    session: { id: header ? "s-child" : "s-root", ...(header ? { header } : {}) },
+    followup: () => undefined,
+    model: { current: () => ({ provider: "probe", model: "glm-5.3" }) },
+    ctx: { systemPrompt: { section: () => undefined } },
+  });
+  return {
+    logs,
+    order,
+    stands,
+    agent,
+    registry,
+    created: (a, source) => handlers.get("agent/created")?.({ agent: a, source }),
+    disposed: () => handlers.get("session/disposed")?.({ id: "s-root" }),
+    /**
+     * One prompt assembly of the agent through the presentation waterfall system-prompt/assemble
+     * (assembly, context {agent, scope: agent}, next) — dsh-system-prompt lib/index.js:401,
+     * dsh-agent lib/index.js:407-412; the start section as start.ts registered it.
+     */
+    async assemble(a) {
+      const assembly = {
+        sections: [{ name: "delivery:start", text: "слово старта как было" }],
+        contexts: [],
+        variables: {},
+      };
+      const next = async () => (order.push("assemble"), assembly);
+      const h = handlers.get("system-prompt/assemble");
+      const out = h ? await h(assembly, { agent: a, scope: a }, next) : await next();
+      return out.sections[0].text;
+    },
+    /** One model request of the agent: the waterfall, or the request alone without a listener. */
+    async request(a) {
+      const next = async () => (order.push("request"), { provider: "probe", model: "glm-5.3" });
+      const h = handlers.get("agent/request");
+      return h
+        ? h({ agent: a, turn: 1, step: 1, signal: new AbortController().signal }, next)
+        : next();
+    },
+  };
+}
+
+const seatedLine = (logs) => logs.find((l) => l.includes("своим местом glm.p"));
+
+test("startup: the seat stands before the first model request", async (t) => {
+  const { auth } = repo(t);
+  const d = dsh(t, auth);
+  const a = d.agent();
+  d.created(a, "startup");
+  await d.request(a);
+  assert.deepEqual(d.order, ["stand", "request"]);
+  assert.deepEqual(d.stands, [{ realm: "@probe/seat", karta: "931", model: "glm-5.3" }]);
+  assert.ok(seatedLine(d.logs), d.logs.join("\n"));
+  await d.request(a); // later requests go straight
+  assert.deepEqual(d.order, ["stand", "request", "request"]);
+});
+
+test("resume: a new process seats the continued session again", async (t) => {
+  const { auth } = repo(t);
+  const first = dsh(t, auth);
+  first.created(first.agent(), "startup");
+  await first.request(first.agent());
+  await new Promise((r) => setTimeout(r, 5)); // the next process starts after the last record
+  const again = dsh(t, auth);
+  const a = again.agent();
+  again.created(a, "resume");
+  await again.request(a);
+  assert.deepEqual(again.order, ["stand", "request"]);
+  assert.equal(again.stands.length, 1);
+});
+
+test("a subagent is not seated; the root is", async (t) => {
+  const { auth } = repo(t);
+  const d = dsh(t, auth);
+  const root = d.agent();
+  d.created(root, "startup");
+  await d.request(root);
+  const child = d.agent({ parentSession: "s-root", origin: "subagent", delegationDepth: 1 });
+  d.created(child, "startup");
+  await d.request(child);
+  assert.equal(d.stands.length, 1, "only the root stood");
+});
+
+test("the switch off: no seating; on: the seating", async (t) => {
+  const { auth } = repo(t);
+  const was = process.env[envName("ROOT_SEAT")];
+  t.after(() =>
+    was === undefined
+      ? delete process.env[envName("ROOT_SEAT")]
+      : (process.env[envName("ROOT_SEAT")] = was),
+  );
+  process.env[envName("ROOT_SEAT")] = "1";
+  const on = dsh(t, auth);
+  on.created(on.agent(), "startup");
+  await on.request(on.agent());
+  assert.equal(on.stands.length, 1);
+  rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
+  process.env[envName("ROOT_SEAT")] = "0";
+  const off = dsh(t, auth);
+  const a = off.agent();
+  off.created(a, "startup");
+  await off.request(a);
+  assert.deepEqual(off.order, ["request"]);
+});
+
+// The orchestrator's task of a call raised in its role's home (bridge/orchestra-raise-gates.ts
+// homeLine): the pair line with the role, then the brief.
+const ROOM = "725414c2-7078-4dfa-a5b9-140adb3b3422";
+const homeTask = (karta) =>
+  `iskron/spawned_for: {"invite":9,"room":"${ROOM}","karta":${karta}} start @probe/seat #${karta} дело ${ROOM}.`;
+
+test("a task naming the call's role seats that role; a task without it — the cover's", async (t) => {
+  const { auth } = repo(t);
+  const called = dsh(t, auth, homeTask(77));
+  const a = called.agent();
+  called.created(a, "startup");
+  await called.request(a);
+  assert.deepEqual(called.stands, [{ realm: "@probe/seat", karta: "77", model: "glm-5.3" }]);
+  rmSync(holdFilePathOf(auth, "glm.p--77--probe"));
+  await new Promise((r) => setTimeout(r, 5));
+  const plain = dsh(t, auth, `start @probe/seat #77 дело ${ROOM}.`);
+  const b = plain.agent();
+  plain.created(b, "startup");
+  await plain.request(b);
+  assert.deepEqual(plain.stands, [{ realm: "@probe/seat", karta: "931", model: "glm-5.3" }]);
+});
+
+// The review's case (PR 844, P2): the registry is late, the first request has begun waiting, the
+// session is disposed, then the tool appears — the disposed session's seating is aborted, no stand.
+test("a disposed session aborts its pending seat: no stand after the tool appears", async (t) => {
+  const { auth } = repo(t);
+  const was = process.env[envName("ROOT_SEAT_MS")];
+  process.env[envName("ROOT_SEAT_MS")] = "2000";
+  t.after(() =>
+    was === undefined
+      ? delete process.env[envName("ROOT_SEAT_MS")]
+      : (process.env[envName("ROOT_SEAT_MS")] = was),
+  );
+  const d = dsh(t, auth);
+  d.registry.registered = false;
+  const a = d.agent();
+  d.created(a, "startup");
+  void d.request(a);
+  await new Promise((r) => setTimeout(r, 50));
+  d.disposed();
+  d.registry.registered = true;
+  await new Promise((r) => setTimeout(r, 400));
+  assert.deepEqual(d.stands, [], "no stand for a disposed session");
+});
+
+// Observed live on LAB (92feef19): the continued session's start word said «встань снова» though
+// the plugin had seated it. A seating done before the first prompt is named by the start word.
+test("the start word names the seat the plugin took, and keeps the old word when it failed", async (t) => {
+  const { auth } = repo(t);
+  const seated = dsh(t, auth);
+  const a = seated.agent();
+  seated.created(a, "resume");
+  const text = await seated.assemble(a);
+  assert.deepEqual(seated.order, ["stand", "assemble"], "the assembly waited for the seating");
+  assert.ok(text.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), text);
+  assert.ok(!text.includes(DSH.ru.startResumed()), text);
+  rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
+  await new Promise((r) => setTimeout(r, 5));
+  const refused = dsh(t, auth);
+  refused.registry.refuse = true;
+  const b = refused.agent();
+  refused.created(b, "resume");
+  assert.equal(await refused.assemble(b), "слово старта как было");
+  assert.equal(refused.stands.length, 1);
+});
+
+// The review's case (PR 844, P2 on c7da11ee): the hold record is gone after the seating — the
+// next prompt must not still say the seat stands; it asks to stand again.
+test("the seated start word follows the live hold: a removed record brings the old word back", async (t) => {
+  const { auth } = repo(t);
+  const d = dsh(t, auth);
+  const a = d.agent();
+  d.created(a, "resume");
+  const first = await d.assemble(a);
+  assert.ok(first.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), first);
+  rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
+  assert.equal(await d.assemble(a), "слово старта как было");
+});
+
+test("a seat already held in another graph: refused, not stood over", async (t) => {
+  const { auth } = repo(t);
+  const d = dsh(t, auth);
+  holdRecord(auth, { realm: "@other/graph", karta: "931", name: "held.p" });
+  const a = d.agent();
+  d.created(a, "startup");
+  await d.request(a);
+  assert.equal(d.stands.length, 0);
+  const said = W.ownOther("held.p", "931", "@other/graph");
+  assert.ok(d.logs.includes(said), d.logs.join("\n"));
+});

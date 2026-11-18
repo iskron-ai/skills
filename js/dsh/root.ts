@@ -7,6 +7,15 @@
 // child's payload itself not observed. A header saying nothing: a fresh agent (source startup or
 // resume, #10657) while the root lives is a child as well; clear and compact replace the root's.
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK objects without a schema */
+import type { DshAgent } from "./hearing.ts";
+
+/** followup is send(message, "next-turn", true) — the observed surface (#10776 stage 1). */
+export function agentOf(a: any): DshAgent | null {
+  if (!a || typeof a !== "object") return null;
+  if (typeof a.followup === "function") return { followup: (m) => a.followup(m) };
+  if (typeof a.send === "function") return { followup: (m) => a.send(m, "next-turn", true) };
+  return null;
+}
 
 /** The agent's session says it is a delegated child. */
 export function childAgent(a: any): boolean {

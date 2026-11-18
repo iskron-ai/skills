@@ -36,7 +36,7 @@ export interface Seat {
 }
 
 /** The hold record of a key, as written by the bridge; null — none readable. */
-function holdOf(authDir: string, key: string): Record<string, unknown> | null {
+export function holdOf(authDir: string, key: string): Record<string, unknown> | null {
   try {
     return JSON.parse(readFileSync(holdFilePathOf(authDir, key), "utf8")) as Record<
       string,

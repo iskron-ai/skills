@@ -23,6 +23,8 @@ export interface DshAgent {
 export interface Hearing {
   /** The standing this hearing attached to; null while unknown or deaf. */
   key(): string | null;
+  /** Attached or still waiting for its seat — not stopped. */
+  live(): boolean;
   /** The session ended: detach and send nothing more into it. */
   stop(): void;
 }
@@ -137,6 +139,7 @@ export function startHearing(
   cancelWait = awaitSeat(startedAt, listen, log);
   return {
     key: () => state.key,
+    live: () => !stopped,
     stop,
   };
 }

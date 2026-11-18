@@ -47,6 +47,12 @@ export function createTurnEnds(opts: {
   /** The ritual is switched on (the cover's list of rituals, no cover — on). */
   on: () => boolean;
   wake: (text: string) => void;
+  /**
+   * A human may watch the console (default yes). A headless run has none by construction: its
+   * task arrives as a user message of source user (dsh-headless lib/index.js:369-375) and is not
+   * a watching human's word (#11071, observed live on LAB: the task's time hushed the wake).
+   */
+  watched?: () => boolean;
 }): TurnEnds {
   let turn: (TurnSeen & { woken: boolean }) | null = null;
   let heard: number | null = null;
@@ -78,7 +84,7 @@ export function createTurnEnds(opts: {
     if (byId || take(text)) {
       if (!quiet(text)) t.framed = true;
     } else if (WAKES.has(text.trim())) t.woken = true;
-    else if (m?.source?.kind === "user" && !marked(text)) {
+    else if (m?.source?.kind === "user" && !marked(text) && (opts.watched?.() ?? true)) {
       t.human = true;
       heard = Date.now();
     }

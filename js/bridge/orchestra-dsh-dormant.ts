@@ -17,6 +17,7 @@ import {
 } from "./orchestra-dsh-reinvite.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
+import { homeLine } from "./orchestra-raise-gates.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
 import { roleRefusal } from "./orchestra-role.ts";
 import { readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
@@ -412,7 +413,8 @@ export async function stepDormant(
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      const why = await launch(authDir, runs, key, spec, w().dshContinue(r.room, verdict.wake.n));
+      const task = homeLine(resolved.own, r) + w().dshContinue(r.room, verdict.wake.n);
+      const why = await launch(authDir, runs, key, spec, task);
       // The cursor lands on the waking entry only when the continuation truly launched: a
       // refused one keeps the sleep, and the same word is tried again next tact (#10995).
       if (why === "launched") r.dormant = { ...r.dormant, cursor: verdict.wake.n };
