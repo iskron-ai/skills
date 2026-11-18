@@ -156,14 +156,21 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
 }
 
 /** The tact's ended dsh rows sleep too (#10995) — except a stop ordered elsewhere, which is a
- * wind-down: its end stays an end. Called where a tact settles stops into ends synchronously. */
+ * wind-down: its end stays an end. Called where a tact settles stops into ends synchronously.
+ * A graph outside the daemon's present boundary is not read at all: its call ends as it was. */
 export async function dormantFromEnds(
   base: string,
   token: string,
   runs: Record<string, Run>,
+  boundary?: string[],
 ): Promise<void> {
   for (const r of Object.values(runs))
-    if (r.state === "ended" && !r.foreign_stop && r.tree?.state === "ready")
+    if (
+      r.state === "ended" &&
+      !r.foreign_stop &&
+      r.tree?.state === "ready" &&
+      (!boundary || boundary.includes(r.realm))
+    )
       await goDormant(base, token, r);
 }
 

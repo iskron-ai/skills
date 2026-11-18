@@ -1,11 +1,16 @@
 // The entry into a dsh call's sleep (graph @nks/nks-dev, #10995; full review of the 8.14.0
-// candidate): a waking word whose body has not landed holds the entry cursor before it.
+// candidate): a waking word whose body has not landed holds the entry cursor before it, and a
+// call of a graph outside the daemon's boundary does not sleep and reads nothing.
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { test } from "node:test";
 
-import { goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
+import { dormantFromEnds, goDormant, stepDormant } from "../bridge/orchestra-dsh-dormant.ts";
+import { writeRuns } from "../bridge/orchestra-runs.ts";
+import { prepareTree } from "../bridge/orchestra-tree.ts";
+import { cleanupEndedTrees } from "../bridge/orchestra-tree-clean.ts";
+import { fixture } from "./tree-fixture.mjs";
 
 const SEAT = "11111111-1111-4111-8111-111111111111";
 const KARTA = "22222222-2222-4222-8222-222222222222";
@@ -90,7 +95,6 @@ test("entry: a said still waiting for its body before the seat's partial wakes o
   const { mkdtempSync, rmSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const { writeRuns } = await import("../bridge/orchestra-runs.ts");
   // The reviewer's scenario: said[902] body_pending, then the seat's progress[903] partial.
   const pending = entry(902, "said", { to_standing_id: SEAT, body_pending: true });
   const partial = entry(903, "progress", {
@@ -142,4 +146,28 @@ test("entry: words the agent had behind the pending one do not wake again", asyn
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.equal(r.dormant.cursor, 901);
   assert.deepEqual(r.dormant.seen, [903], "the had word is kept as seen");
+});
+
+test("entry: an ended call of a graph outside the boundary @nks/other does not sleep, reads nothing, its tree goes", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  // The fixture's tree belongs to its own graph, room and invite: the row keeps them.
+  const { realm, room, invite, worktree, tree } = f.row;
+  assert.notEqual(realm, "@nks/other");
+  Object.assign(f.row, exited({ realm, room, invite, worktree, tree }), {
+    stop_outcome: "stopped",
+    closed: "client_exited",
+  });
+  f.row.tree.exit = "observed-exit";
+  writeRuns(f.auth, f.runs);
+  // An open share the call would sleep on inside the boundary.
+  const api = await caseApi(t, [
+    entry(900, "invite", { to_karta_node_id: KARTA }),
+    entry(901, "progress", { author_standing_id: SEAT, line: { key: "s", verdict: "partial" } }),
+  ]);
+  await dormantFromEnds(api.base, "key", f.runs, ["@nks/other"]);
+  assert.equal(api.state.requests, 0, "nothing read outside the boundary");
+  assert.equal(f.row.state, "ended");
+  await cleanupEndedTrees(f.auth, f.runs);
+  assert.equal(f.row.tree.state, "removed", f.row.why);
 });

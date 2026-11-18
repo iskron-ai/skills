@@ -59,7 +59,7 @@ export function leadAct(
       said.push(...settleStops(runs, owned, foreign.fresh));
       // A dsh run the tact just ended sleeps when its case stays open (#10995) — before any
       // write, so the tree cleanup below sees a dormant row, not an ended one.
-      await dormantFromEnds(base, token, runs);
+      await dormantFromEnds(base, token, runs, boundary);
       const cursorOf = (realm: string): string | null =>
         reads.find((r) => r.realm === realm)?.cursor ?? null;
       said.push(
