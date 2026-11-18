@@ -1,6 +1,7 @@
 // One in-memory offer resolution for actual and dry tacts (#5042, #10096).
+import { authorOf, listed, sameAccount } from "./orchestra-account.ts";
 import { harnessRefusal } from "./orchestra-harnesses.ts";
-import { accountOf, type Launcher, type Launchers } from "./orchestra-launchers.ts";
+import { type Launcher, type Launchers } from "./orchestra-launchers.ts";
 import { homeOf } from "./orchestra-raise-gates.ts";
 import { LIVE, type Run } from "./orchestra-runs.ts";
 
@@ -15,9 +16,10 @@ export function resolveInvite(
   ls: Launchers,
   runs: Record<string, Run>,
 ): { row: Row; own: Launcher } | { code: string } {
-  const caller = accountOf(source.author);
-  if (!caller || !ls.account) return { code: "caller_unknown" };
-  const allowed = (l: Launcher): boolean => caller === ls.account || l.callers.includes(caller);
+  const caller = authorOf(source);
+  const self = caller && sameAccount(caller, { id: ls.accountId ?? "", handle: ls.account });
+  if (!caller || self == null) return { code: "caller_unknown" };
+  const allowed = (l: Launcher): boolean => self || listed(l.callers, caller);
   const launcher = text(source.launcher);
   let own: Launcher | undefined;
   if (!missing(source.launcher)) {
