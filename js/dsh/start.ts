@@ -4,9 +4,11 @@
 // prompt — an agent-local section of payload.agent.ctx.systemPrompt, observed live on
 // 0.2.2-rc.1 to reach the system message of every model request of that agent and to go with
 // it. A resumed session hears why: its seat went with the last process. No cover, another
-// delivery's cover, the start ritual switched off — silence.
+// delivery's cover, the start ritual switched off — silence; an unsupported cover contract is
+// warned of all the same (#11071).
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK objects without a schema */
 import { DSH } from "../delivery/index.ts";
+import { repoContractWarning } from "../shared/covercontract.ts";
 import { wordsIn } from "../shared/lang.ts";
 import { ritualCover, startWord } from "../shared/ritualcover.ts";
 
@@ -15,13 +17,18 @@ export const START_SECTION = "delivery:start";
 /** After the persona's suffix (10200): the word closes the system prompt. */
 const ORDER = 10300;
 
-/** The word for a session started (startup) or continued (resume) in dir; else null. */
+/** The word for a session started (startup) or continued (resume) in dir; else null. An
+ * unsupported cover contract is warned of first, the start ritual on or off — as OpenCode's
+ * and Claude Code's start (shared/covercontract.ts). */
 export function startText(dir: string, source: unknown): string | null {
   if (source !== "startup" && source !== "resume") return null;
   const cover = ritualCover(dir);
-  if (!cover?.on.has("start")) return null;
-  const W = wordsIn(DSH, cover.lang);
-  return [startWord(cover), source === "resume" ? W.startResumed() : W.startListen()].join("\n\n");
+  const warning = repoContractWarning(dir, cover?.lang);
+  const W = wordsIn(DSH, cover?.lang);
+  const start = cover?.on.has("start")
+    ? [startWord(cover), source === "resume" ? W.startResumed() : W.startListen()].join("\n\n")
+    : null;
+  return [warning, start].filter(Boolean).join("\n\n") || null;
 }
 
 /**

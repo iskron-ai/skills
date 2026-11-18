@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { DSH } from "../delivery/index.ts";
+import { CONTRACT_SUPPORT, CONTRACT_WORDS, DSH } from "../delivery/index.ts";
 import { BUILT } from "./built.mjs";
 
 const SOURCE =
@@ -134,4 +134,29 @@ test("another delivery's cover — silence", (t) => {
   const a = d.agent();
   d.created(a, "startup");
   assert.equal(a.sections.length, 0);
+});
+
+// The cover's contract below the supported minimum is warned of in the same section, before the
+// start word — as OpenCode's first prompt (opencode/rites.ts) and Claude Code's SessionStart
+// (cli/rituals-hook.ts) do (#11071).
+const withContract = (n) =>
+  OWN.replace("  agent_role: 931\n", `  agent_role: 931\n  contract: ${n}\n`);
+
+test("an unsupported cover contract is warned of before the start word", (t) => {
+  repo(t, withContract(16));
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  const text = textOf(a);
+  const warning = CONTRACT_WORDS.ru.unsupported(16, CONTRACT_SUPPORT.target);
+  assert.ok(text.startsWith(warning), text);
+  assert.match(text, /#931/);
+});
+
+test("a supported cover contract — no warning", (t) => {
+  repo(t, withContract(CONTRACT_SUPPORT.target));
+  const d = dsh(t);
+  const a = d.agent();
+  d.created(a, "startup");
+  assert.doesNotMatch(textOf(a), /больше не поддерживается/);
 });
