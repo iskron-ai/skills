@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.13.0](https://github.com/iskron-ai/skills/compare/v8.12.0...v8.13.0) (2026-11-18)
+
+
+### Features
+
+* **intake:** a canvas is read as claims, groups and labelled relations in creation order; a target's way is read and followed ([#832](https://github.com/iskron-ai/skills/issues/832)) ([a771ef4](https://github.com/iskron-ai/skills/commit/a771ef476ea0f07570eec1d2390f7a54582702b5))
+
+
+### Bug Fixes
+
+* **intake:** canvas by its spec, way read by the doer, author's words kept as said ([#834](https://github.com/iskron-ai/skills/issues/834)) ([de32b8d](https://github.com/iskron-ai/skills/commit/de32b8d17c7d221eae7afb49f2d18549c82177bf))
+
 ## [8.12.0](https://github.com/iskron-ai/skills/compare/v8.11.0...v8.12.0) (2026-11-17)
 
 
