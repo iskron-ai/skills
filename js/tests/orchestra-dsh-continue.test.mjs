@@ -201,6 +201,32 @@ test("dsh: a continuation process that survives its no-session window keeps the 
   assert.equal(again.dsh.session, SESSION, "the slept session survives for the next continuation");
 });
 
+test("dsh: a failed continuation rolls the whole sleep back — a later close still cleans the tree", async (t) => {
+  const { chmodSync, existsSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { o, row } = await asleep(t, 131);
+  const bin = join(o.dir, "bin", "dsh");
+  // The binary turns into an exec failure: readable and executable, but its interpreter is
+  // gone — the spawn itself refuses after the sleep's marks were already cleared.
+  writeFileSync(bin, "#!/nonexistent/interpreter\n");
+  chmodSync(bin, 0o755);
+  await o.room("open", [inviteEntry(131), said(132, SEAT)]);
+  assert.match((await o.step()).out, /invite 131: dormant_woken_132, dsh_spawn_failed/);
+  const kept = o.run(131);
+  assert.equal(kept.state, "dormant", "the sleep rolls back");
+  assert.equal(kept.why, "dormant_wake_dsh_spawn_failed");
+  assert.equal(kept.tree.exit, row.tree.exit, "the slept life's exit proof returns with it");
+  assert.equal(kept.stop_outcome, row.stop_outcome);
+  // The case then closes: the ordinary end and cleanup must still take the tree — no launch
+  // happens, so the broken binary needs no mending.
+  await o.room("closed", [inviteEntry(131)]);
+  await o.step();
+  const ended = await o.until(131, (r) => r.state === "ended");
+  assert.equal(ended.why, "dormant_case_closed");
+  await o.until(131, (r) => r.tree?.state === "removed");
+  assert.equal(existsSync(ended.worktree), false);
+});
+
 test("dsh: a new invite raises a fresh call and never wakes the sleeping one", async (t) => {
   const { o } = await asleep(t, 101, { options: { limit: 2 } });
   // A new invite for the same role: the ordinary raising takes it — the sleeping run must

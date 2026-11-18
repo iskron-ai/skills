@@ -33,12 +33,26 @@ export async function launchDsh(
   const run = runs[key];
   // A continuation (#10995) carries the slept run's session id into the same session again.
   // Its failure is not a launch failure: the sleep stands and the waking word waits for the
-  // next tact — the tree, the session and the cursor are the sleep's own (#10995 review 3).
+  // next tact. The snapshot takes EVERY field the continuation clears, so the rollback
+  // returns the slept life whole — exit proofs and stop outcomes included (#10995 review 4).
   const sleptDsh = run.dsh;
   const session = sleptDsh?.session;
   const slept =
     sleptDsh?.session !== undefined
-      ? { dormant: run.dormant, dsh: { ...sleptDsh }, at: run.at }
+      ? {
+          dormant: run.dormant,
+          dsh: { ...sleptDsh },
+          at: run.at,
+          stop_outcome: run.stop_outcome,
+          order_id: run.order_id,
+          stopping_at: run.stopping_at,
+          restop: run.restop,
+          sat: run.sat,
+          rooms: run.rooms,
+          n: run.n,
+          idle_due: run.idle_due,
+          treeExit: run.tree?.exit,
+        }
       : undefined;
   const fail = (why: string, state: Run["state"] = "refused"): string => {
     if (slept) {
@@ -47,6 +61,15 @@ export async function launchDsh(
       run.dormant = slept.dormant;
       run.dsh = slept.dsh;
       run.at = slept.at;
+      run.stop_outcome = slept.stop_outcome;
+      run.order_id = slept.order_id;
+      run.stopping_at = slept.stopping_at;
+      run.restop = slept.restop;
+      run.sat = slept.sat;
+      run.rooms = slept.rooms;
+      run.n = slept.n;
+      run.idle_due = slept.idle_due;
+      if (run.tree) run.tree.exit = slept.treeExit;
       writeRuns(authDir, runs);
       return why;
     }
