@@ -1,7 +1,7 @@
 // The delivery's ear inside a dsh (DeepSeek Harness) session — a Cordis bundle entry
 // applied as `apply(ctx)` (graph @nks/nks-dev, node #10776). No bridge and no tools of
 // its own: the machine bridge holds the standing, and the ear turns frames addressed to
-// the seat into next-turn messages of the live session (hearing.ts); the session's first
+// the seat into messages of the live session (hearing.ts) — into its running turn (steer.ts); the session's first
 // agent gets the start word in its system prompt (start.ts, #10921) and its seat by the cover
 // before the first model request (rootseat.ts, #11076); a compacted session
 // gets its role back (compaction.ts); a shell call that pushed or merged gets its lines as a
@@ -25,6 +25,7 @@ import { riteLines } from "./rites.ts";
 import { agentOf, createRoot } from "./root.ts";
 import { createRootSeat } from "./rootseat.ts";
 import { putStartWord, seatedStart } from "./start.ts";
+import { createFirstStep, toTurn } from "./steer.ts";
 import { createTurnEnds } from "./turnend.ts";
 
 export type { DshCtx } from "./console.ts";
@@ -49,17 +50,15 @@ export function apply(ctx: DshCtx): void {
     wake: (text) => hold.wake(turnMessage(text)),
     watched: () => !headless,
   });
+  // A word of the hearing: into the root's first step, the turn running, a held idle, a new turn.
+  const route = (m: unknown): unknown =>
+    agent ? (hold.through(m) ?? toTurn(raw, agent.followup, m)) : notDelivered("no live agent");
+  const first = createFirstStep(route);
   /** The root's agent as the hearing sees it: each frame it lays is known to the turn's end. */
-  const heard = (): DshAgent | null => {
-    const a = agent;
-    if (!a) return null;
-    return {
-      followup: (m: any) => {
-        turns.laid(m);
-        return hold.through(m) ?? a.followup(m);
-      },
+  const heard = (): DshAgent | null =>
+    agent && {
+      followup: (m: any) => (turns.laid(m), first.take(m, raw?.status === "running") ?? route(m)),
     };
-  };
 
   const on = listenerOf(ctx, notDelivered);
 
@@ -79,6 +78,7 @@ export function apply(ctx: DshCtx): void {
     if (took === "root" && fresh) {
       source = payload.source;
       seats.begin(payload?.agent, process.cwd());
+      first.begin(payload.agent);
     }
     headless = isHeadless(ctx);
     if (!hearing) hearing = startHearing(heard, log, startedAt);
@@ -93,6 +93,12 @@ export function apply(ctx: DshCtx): void {
     const out = typeof next === "function" ? await next() : _assembly;
     return a && a === raw ? seatedStart(out, process.cwd(), source, seats.seated()) : out;
   });
+  // The root's first step takes the words laid before it; a continued seated session waits there
+  // for its hearing to give what waited for the seat (steer.ts).
+  on("agent/pre-step", (payload, next) => {
+    const wait = source === "resume" && !!seats.seated();
+    return first.preStep(payload, next, wait, () => !!hearing?.key() || !hearing?.live());
+  });
   on("agent/request", async (payload, next) => {
     await seats.request(payload?.agent);
     return typeof next === "function" ? next() : undefined;
@@ -104,6 +110,7 @@ export function apply(ctx: DshCtx): void {
     agent = null;
     raw = null;
     hold.end();
+    first.end();
     seats.end();
     turns.forget();
     root.end();
