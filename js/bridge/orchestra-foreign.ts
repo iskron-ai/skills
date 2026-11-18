@@ -66,6 +66,8 @@ export async function foreignStops(
   const stopping = new Map<string, Run>();
   let unseated = false;
   for (const r of Object.values(runs)) {
+    // Before the orders list existed, order_id was the run's own order in the registry.
+    if (!r.orders && r.order_id && !r.foreign_stop) r.orders = [r.order_id];
     if (r.state !== "ended" && r.standing_id) seatRuns.set(r.standing_id, r);
     if (r.state === "launched" || r.state === "raised") {
       if (r.standing_id) bySeat.set(r.standing_id, r);

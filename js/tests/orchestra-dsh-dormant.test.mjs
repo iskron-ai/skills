@@ -954,18 +954,57 @@ test("dormancy: an api-defect standing_required is a named transient — the sle
 
 /** A stand-in orders door: the probe switches the order's state between reads. */
 async function ordersApi(t, order) {
-  const state = { order };
+  const state = { order, extra: [] };
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     const since = Number(new URL(req.url, "http://x").searchParams.get("since") ?? 0);
-    const items = state.order.seq > since ? [state.order] : [];
-    res.end(JSON.stringify({ items, next_since: items.length ? state.order.seq : since }));
+    const items = [state.order, ...state.extra].filter((o) => o.seq > since);
+    res.end(JSON.stringify({ items, next_since: items.length ? items.at(-1).seq : since }));
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   t.after(() => server.close());
   return { base: `http://127.0.0.1:${server.address().port}/api`, state };
 }
+
+test("an 8.13.1 own order is migrated before checking a foreign stop", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "legacy-own-order-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const api = await ordersApi(t, {
+    id: "ord-own",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  const r = sleepingRow({
+    state: "stopping",
+    order_id: "ord-own",
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+  });
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.equal(r.foreign_stop, undefined);
+  assert.deepEqual(r.orders, ["ord-own"]);
+  assert.equal(r.state, "stopping");
+  const secondDir = mkdtempSync(join(tmpdir(), "legacy-own-page-"));
+  t.after(() => rmSync(secondDir, { recursive: true, force: true }));
+  api.state.extra = [{ ...api.state.order, id: "ord-other", seq: 2 }];
+  const alongside = sleepingRow({
+    state: "stopping",
+    order_id: "ord-own",
+    closed: "client_exited",
+    tree: { state: "ready", exit: "2026-11-01T01:30:00Z" },
+  });
+  await foreignStops(secondDir, api.base, "key", { k: alongside });
+  assert.equal(alongside.foreign_stop?.id, "ord-other");
+  assert.equal(alongside.state, "ended");
+});
 
 test("a foreign stop order ends the run in any reading order of its states", async (t) => {
   const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
