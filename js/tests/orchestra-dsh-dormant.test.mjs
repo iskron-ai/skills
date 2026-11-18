@@ -845,11 +845,82 @@ test("the run's own stop order, re-read, never ends the sleep", async (t) => {
   const runs = { k: r };
   await foreignStops(dir, api.base, "key", runs);
   assert.equal(r.state, "dormant", "the row's own order, re-read, ends nothing");
-  // A genuinely foreign order on the same seat still ends the sleep.
+  // A genuinely foreign order on the same seat still ends the sleep — by the field, in the tact.
   api.state.order = { ...api.state.order, id: "ord-else", seq: 2 };
   await foreignStops(dir, api.base, "key", runs);
+  assert.ok(r.foreign_stop, "a foreign order sets the field");
+  await stepDormant(
+    dir,
+    (await caseApi(t, { entries: [entry(9, "invite")] })).base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
   assert.equal(r.state, "ended");
   assert.equal(r.why, "stop_stopped_elsewhere");
+});
+
+test("a foreign stop is sticky: set once, it outlives re-reads, rollbacks and merges", async (t) => {
+  const { foreignStops } = await import("../bridge/orchestra-foreign.ts");
+  const { goDormant, stepDormant } = await import("../bridge/orchestra-dsh-dormant.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { readRuns, writeRuns } = await import("../bridge/orchestra-runs.ts");
+  const dir = mkdtempSync(join(tmpdir(), "dormant-sticky-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const api = await ordersApi(t, {
+    id: "ord-foreign",
+    seq: 1,
+    kind: "stop",
+    standing_id: SEAT,
+    state: "issued",
+    issued_at: "2026-11-01T01:30:00Z",
+  });
+  // First reading, while the row sleeps: the field is set; the tact ends the sleep by it.
+  const r = sleepingRow();
+  writeRuns(dir, { k: r });
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.ok(r.foreign_stop, "the first reading sets the sticky field");
+  assert.deepEqual(
+    { id: r.foreign_stop.id, state: r.foreign_stop.state },
+    { id: "ord-foreign", state: "issued" },
+  );
+  // The order closes: a later state never overwrites the first reading's field.
+  api.state.order = { ...api.state.order, state: "stopped" };
+  await foreignStops(dir, api.base, "key", { k: r });
+  assert.equal(r.foreign_stop.state, "issued", "the first reading wins and holds");
+  // A stale tracked writer whose snapshot predates the field cannot merge it away.
+  const stale = readRuns(dir); // a second writer's snapshot, taken now — before any field
+  r.foreign_stop = { id: "ord-foreign", state: "issued", at: "2026-11-01T01:31:00Z" };
+  writeRuns(dir, { k: r });
+  stale.k.rooms = 1; // the stale writer touches the row and writes its own delta
+  writeRuns(dir, stale);
+  assert.ok(readRuns(dir).k.foreign_stop, "the registry merge does not erase the field");
+  // While the field stands: no sleep arms and no continuation launches.
+  const ended = { ...r, state: "dormant" };
+  const said = await stepDormant(
+    dir,
+    (await caseApi(t, { entries: [entry(9, "invite"), entry(10, "said", { to_standing_id: SEAT })] })).base,
+    "key",
+    { k: ended },
+    launchers(),
+    undefined,
+    AWAKE_NOW,
+    launchStub().run,
+  );
+  assert.equal(ended.state, "ended", "the tact ends the sleep by the field alone");
+  assert.equal(ended.why, "stop_ordered_elsewhere");
+  assert.ok(said.join("; ").includes("stop_ordered_elsewhere"));
+  const fresh = exitedRun({ foreign_stop: { id: "o", state: "stopped", at: "2026-11-01T01:30:00Z" } });
+  assert.equal(
+    await goDormant((await caseApi(t, { entries: [entry(9, "invite")] })).base, "key", fresh),
+    false,
+    "no sleep arms under a foreign stop",
+  );
 });
 
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
@@ -857,7 +928,9 @@ test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere 
   const ours = exitedRun();
   await dormantFromEnds(api.base, "key", { ours });
   assert.equal(ours.state, "dormant", "the tact's own ended row sleeps when the case is open");
-  const elsewhere = exitedRun({ why: "stopped_elsewhere" });
+  const elsewhere = exitedRun({
+    foreign_stop: { id: "ord-x", state: "stopped", at: "2026-11-01T01:30:00Z" },
+  });
   await dormantFromEnds(api.base, "key", { elsewhere });
-  assert.equal(elsewhere.state, "ended", "a stop ordered elsewhere is a wind-down, not a sleep");
+  assert.equal(elsewhere.state, "ended", "a foreign stop is a wind-down, not a sleep");
 });

@@ -68,6 +68,10 @@ export interface Run {
   /** The ids of the run's own stop orders — the call's exit stop and every continuation's.
    * An order naming the seat outside this list is someone else's (#10995 review 4). */
   orders?: string[];
+  /** A foreign stop order on the call's seat, set at its FIRST reading and never erased —
+   * not by re-reads, not by a continuation's rollback, not by the registry merge. While it
+   * stands there is no sleep and no continuation: the run ends (#10995 review 5). */
+  foreign_stop?: { id: string; state: string; at: string };
   state: RunState;
   at: string;
   why?: string;

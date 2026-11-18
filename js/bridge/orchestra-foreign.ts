@@ -91,20 +91,14 @@ export async function foreignStops(
         const id = typeof v.id === "string" ? v.id : "";
         const state = String(v.state);
         const open = OPEN.has(state);
-        // An order on a sleeping run's seat ends the sleep (#10995): the continuation is not
-        // wanted, whatever the order's own state — unless the order is the row's own: the
-        // call's exit stop, re-read while another open order holds the cursor, is not
-        // foreign (#10995 review 4).
+        // An order on a sleeping run's seat is foreign unless its id is the row's own
+        // (#10995): the sticky field is set at this first reading and never erased — the
+        // dormant tact ends the sleep by the field alone, not here.
         const sleep = !run && asleep.get(seat);
         if (sleep) {
-          if (id && sleep.orders?.includes(id)) {
-            asleep.delete(seat);
-            continue;
-          }
           asleep.delete(seat);
-          sleep.state = "ended";
-          sleep.why = open ? "stop_ordered_elsewhere" : `stop_${state}_elsewhere`;
-          said.push(w().leadRow(sleep.realm, sleep.room, sleep.invite, sleep.why));
+          if (id && !sleep.orders?.includes(id))
+            sleep.foreign_stop ??= { id, state, at: new Date().toISOString() };
           continue;
         }
         if (!run && unseated && seat && !seen.has(seat)) held ??= since;
@@ -124,14 +118,15 @@ export async function foreignStops(
           !run ||
           !id ||
           run.orders?.includes(id) ||
-          (id === run.order_id && !run.why?.endsWith("_elsewhere"))
+          (id === run.order_id && run.foreign_stop?.id !== id)
         )
           continue;
         bySeat.delete(seat);
         run.order_id = id;
         // A foreign order on the call's seat is a final end in any reading order of its
-        // states: the mark is set at the first reading — issued — and holds to the end, so
-        // no later path sleeps the row (#10995 review 3).
+        // states: the sticky field is set at the first reading — issued or already closed —
+        // and holds to the end, so no later path sleeps the row (#10995 review 5).
+        run.foreign_stop ??= { id, state, at: new Date().toISOString() };
         if (open) run.why = "stop_ordered_elsewhere";
         // Only a carried-out stop ends the run; a closed order of another outcome keeps it
         // stopping until its window passes (settleStops, #7522). A carried-out one is a

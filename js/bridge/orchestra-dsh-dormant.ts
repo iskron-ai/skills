@@ -14,6 +14,13 @@ import { DORMANT_WINDOW_MS } from "./orchestra-window.ts";
 
 const w = () => words(ORCHESTRA);
 
+/** The status word of a foreign stop's end: an open order was merely ordered, a closed one
+ * says its outcome (#10995). */
+const stopElsewhere = (state: string): string =>
+  state === "issued" || state === "accepted"
+    ? "stop_ordered_elsewhere"
+    : `stop_${state}_elsewhere`;
+
 /** A read refusal's row word: the holder says a 409 standing_required cannot come under
  * advance=false — its arrival is an api defect and is named as itself; everything else is a
  * plain transient (#10995 review 3). */
@@ -35,10 +42,9 @@ export const dshSleepable = (r: Run): boolean =>
  */
 export async function goDormant(base: string, token: string, r: Run): Promise<boolean> {
   if (!dshSleepable(r) || r.tree?.state !== "ready") return false;
-  // A stop ordered elsewhere is a wind-down in any reading order of its states: the foreign
-  // mark, set at the order's first reading, holds to the end — such a row never sleeps
-  // (#10995 review 3).
-  if (r.why?.endsWith("_elsewhere")) return false;
+  // A foreign stop, once read, is sticky (#10995 review 5): no sleep arms under it — the
+  // row's end stands whatever the case says.
+  if (r.foreign_stop) return false;
   const seats = [
     ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
   ];
@@ -124,7 +130,7 @@ export async function dormantFromEnds(
   runs: Record<string, Run>,
 ): Promise<void> {
   for (const r of Object.values(runs))
-    if (r.state === "ended" && !r.why?.endsWith("_elsewhere") && r.tree?.state === "ready")
+    if (r.state === "ended" && !r.foreign_stop && r.tree?.state === "ready")
       await goDormant(base, token, r);
 }
 
@@ -216,6 +222,14 @@ export async function stepDormant(
   for (const [key, r] of Object.entries(runs)) {
     if (r.state !== "dormant" || !r.dsh || !r.dormant) continue;
     if (gone?.gone) break;
+    // The sticky foreign stop ends the sleep before anything else: no read, no wake, no
+    // window — the row ends by the field alone (#10995 review 5).
+    if (r.foreign_stop) {
+      r.state = "ended";
+      r.why = stopElsewhere(r.foreign_stop.state);
+      out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
+      continue;
+    }
     const sleep = r.dormant;
     if (now - Date.parse(sleep.since) > DORMANT_WINDOW_MS) {
       r.state = "ended";

@@ -76,8 +76,12 @@ export function mergeRuns(authDir: string, runs: Runs, latest: Runs): Runs {
         row.exec = exec;
         continue;
       }
-      if (after[k] === undefined) delete row[k];
-      else Object.assign(row, { [k]: after[k] });
+      if (after[k] === undefined) {
+        // A foreign stop, once read, is never erased — a writer whose snapshot predates it
+        // cannot merge it away (#10995 review 5).
+        if (k === "foreign_stop" && row.foreign_stop) continue;
+        delete row[k];
+      } else Object.assign(row, { [k]: after[k] });
     }
     const firstSeat =
       !!(before.exec || before.tree) &&
