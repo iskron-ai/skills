@@ -268,6 +268,10 @@ const waitExits =
   process.env.FAKE_ORCA_WAIT_EXIT !== "0" &&
   (process.env.FAKE_ORCA_WAIT_AFTER_CLOSE !== "1" || closedBefore());
 const otherClient = process.env.FAKE_ORCA_SHOW_INCARNATION_FILE;
+// FAKE_ORCA_SHOW_FAIL_FILE — while the file stands, terminal show fails (Orca unreachable).
+const showDown = process.env.FAKE_ORCA_SHOW_FAIL_FILE;
+if (args[0] === "terminal" && args[1] === "show" && showDown && existsSync(showDown))
+  process.exit(1);
 const answer = {
   ok: true,
   result:

@@ -34,6 +34,33 @@ const row = {
   tree: { state: "ready", path: "/nowhere/.worktrees/orchestra-x", incarnation: "inc" },
 };
 
+test("reap: a transient refusal is tried again across a daemon restart; ours unproven — never", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeRuns(dir, { own: structuredClone(row), other: { ...structuredClone(row), invite: 2 } });
+  const calls = [];
+  const close = (answer) => async (handle, runtime, current, expected) => {
+    calls.push(expected.incarnation);
+    return typeof answer === "function" ? answer(calls.length) : answer;
+  };
+  // Each tact reads the registry anew — as a restarted daemon does.
+  const tact = async (answer) => {
+    const runs = readRuns(dir);
+    await reapOwn(dir, runs, undefined, close(answer));
+    writeRuns(dir, runs);
+    return readRuns(dir);
+  };
+  let got = await tact((n) =>
+    n === 1 ? "terminal_binding_unconfirmed" : "terminal_binding_changed",
+  );
+  assert.equal(got.own.reaped, undefined, "a transient refusal is not final");
+  assert.equal(got.other.reaped, "terminal_binding_changed", "a failed proof of ours is final");
+  got = await tact(null);
+  assert.equal(got.own.reaped, "client_exited");
+  assert.equal(got.own.closed, "client_exited");
+  assert.equal(calls.length, 3, "the unproven one is not asked again");
+});
+
 test("reap: an expired exec run whose terminal closed is not ended — halt unconfirmed (#9256)", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "reap-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

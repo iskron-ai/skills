@@ -12,8 +12,13 @@ import { stopLapsed } from "./orchestra-window.ts";
 const w = () => words(ORCHESTRA);
 const NO_SEAT = new Set(["tree_no_seat_unverified", "exec_no_seat_unverified"]);
 type Close = typeof orcaCloseObserved;
+/** The proof of ours did not hold: the terminal is never touched again. */
+const NOT_OURS = new Set(["terminal_binding_changed", "client_unbound"]);
+/** Tacts a transient refusal (Orca unreachable, an exit not seen) is tried before it is said
+ * exhausted. */
+const REAP_TRIES = 3;
 
-/** Why the daemon must close this run's terminal itself; null — not its turn, or tried. */
+/** Why the daemon must close this run's terminal itself; null — not its turn, or settled. */
 export function reapCause(r: Run, now = Date.now()): string | null {
   if (r.harness !== "opencode" || r.dsh || !(r.tree || r.exec) || !r.terminal || !r.runtime)
     return null;
@@ -27,7 +32,7 @@ export function reapCause(r: Run, now = Date.now()): string | null {
   return r.state === "ambiguity" && NO_SEAT.has(r.why ?? "") ? "no_seat" : null;
 }
 
-/** Close what is due once per row; the closed client's exit is recorded on the row. */
+/** Close what is due; the closed client's exit is recorded on the row. */
 export async function reapOwn(
   authDir: string,
   runs: Record<string, Run>,
@@ -49,16 +54,27 @@ export async function reapOwn(
     const outcome = expected
       ? await close(r.terminal!, r.runtime!, current, expected)
       : "client_unbound";
-    r.reaped = outcome ?? "client_exited";
-    // The observed exit is a fact, not an end: the run ends by the path #9256 asks for — the
-    // order confirmed, or one stop for the exit answered (exec-exit.ts finishExits).
-    if (outcome === null) {
-      const at = new Date(now).toISOString();
-      r.closed = "client_exited";
-      if (r.exec) r.exec.exit = at;
-      if (r.tree) r.tree.exit = at;
-    }
-    said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${r.reaped}`));
+    said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${settle(r, outcome, now)}`));
   }
   return said;
+}
+
+/** Final: the observed exit, or a proof of ours that did not hold. Anything else is tried
+ * again on later tacts — the count lies in the registry, so a restart keeps it. */
+function settle(r: Run, outcome: string | null, now: number): string {
+  if (outcome === null) {
+    // The observed exit is a fact, not an end: the run ends by the path #9256 asks for — the
+    // order confirmed, or one stop for the exit answered (exec-exit.ts finishExits).
+    const at = new Date(now).toISOString();
+    r.closed = "client_exited";
+    if (r.exec) r.exec.exit = at;
+    if (r.tree) r.tree.exit = at;
+    delete r.reap_tries;
+    return (r.reaped = "client_exited");
+  }
+  if (NOT_OURS.has(outcome)) return (r.reaped = outcome);
+  r.reap_tries = (r.reap_tries ?? 0) + 1;
+  if (r.reap_tries < REAP_TRIES) return outcome;
+  r.reaped = "reap_exhausted";
+  return `reap_exhausted (${outcome})`;
 }

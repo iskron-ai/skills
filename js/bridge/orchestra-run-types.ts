@@ -98,7 +98,9 @@ export interface Run {
   stop_outcome?: string;
   /** A failed order after the exact terminal exited was replaced once by the exit stop. */
   restop?: boolean;
-  /** The daemon's own close of the launch's terminal, tried once (#11099): client_exited or
-   * the refusal that left it untouched. */
+  /** The daemon's own close of the launch's terminal, settled (#11099): client_exited, a proof
+   * of ours that did not hold, or reap_exhausted. */
   reaped?: string;
+  /** Transient refusals of that close so far; it is tried again until a bound. */
+  reap_tries?: number;
 }
