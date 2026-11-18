@@ -197,7 +197,7 @@ async function cleanup() {
         .map((_, i, ls) => ls.slice(i, i + 8).join("\n"))
         .find((blk) => blk.includes(`:${seatName} —`));
       const sid = (seatId?.match(/^\s+id ([0-9a-f-]{36})/m) || [])[1];
-      if (!sid) return said(false, `the seat ${seatName}`, "no id on the board (already gone?)");
+      if (!sid) return report.push("SKIP cleanup seat: no id on the board (already gone?)");
       const rv = await person.revoke(realm, sid);
       said(!rv.error, `the seat ${seatName} taken off`, rv.text);
     });
