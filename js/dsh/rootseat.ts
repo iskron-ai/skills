@@ -134,7 +134,8 @@ export function createRootSeat(
       const late = await Promise.race([s.done.then(() => false), pause(ms).then(() => true)]);
       if (late) log(lateWord(ms));
     },
-    seated: () => took,
+    // Only while this session's hold record of that very seat lives (held(), as at seating).
+    seated: () => (took && JSON.stringify(held()) === JSON.stringify(took) ? took : null),
     end() {
       seating?.abort.abort();
       seating = null;

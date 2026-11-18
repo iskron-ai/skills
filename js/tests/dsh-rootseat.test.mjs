@@ -276,6 +276,19 @@ test("the start word names the seat the plugin took, and keeps the old word when
   assert.equal(refused.stands.length, 1);
 });
 
+// The review's case (PR 844, P2 on c7da11ee): the hold record is gone after the seating — the
+// next prompt must not still say the seat stands; it asks to stand again.
+test("the seated start word follows the live hold: a removed record brings the old word back", async (t) => {
+  const { auth } = repo(t);
+  const d = dsh(t, auth);
+  const a = d.agent();
+  d.created(a, "resume");
+  const first = await d.assemble(a);
+  assert.ok(first.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), first);
+  rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
+  assert.equal(await d.assemble(a), "слово старта как было");
+});
+
 test("a seat already held in another graph: refused, not stood over", async (t) => {
   const { auth } = repo(t);
   const d = dsh(t, auth);
