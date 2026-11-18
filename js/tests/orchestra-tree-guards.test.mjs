@@ -112,7 +112,8 @@ test("tree: an unknown ref backend cannot rely on a files-backend HEAD lock", as
   assert.equal(f.row.tree, undefined);
 });
 
-test("tree: status exposes a named retained residue without its private path", async (t) => {
+// #11099: the residue is said with its path — the holder finds the unsaved work by it.
+test("tree: status names a retained residue with its path", async (t) => {
   const f = fixture(t);
   assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
   stopped(f);
@@ -120,5 +121,5 @@ test("tree: status exposes a named retained residue without its private path", a
   assert.equal(await cleanupTree(f.auth, f.runs, "own"), "tree_dirty_retained");
   const status = orchestraStatus(f.auth, []);
   assert.match(status.said, /tree_dirty_retained/);
-  assert.equal(status.said.includes(f.row.worktree), false);
+  assert.equal(status.said.includes(`tree_dirty_retained: ${f.row.worktree}`), true);
 });

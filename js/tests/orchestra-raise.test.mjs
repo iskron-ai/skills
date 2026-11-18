@@ -817,9 +817,16 @@ test("raise: a cover naming the graph by its short form is the call's graph", as
 
 // №4050 [56]: no seat within the window — the terminal the orchestrator opened is closed by its
 // own handle from the launch answer; the cause the harness refused with is not the daemon's to see.
-test("raise: no seat within the window retains an ambiguous tree and occupied runtime", async (t) => {
+// #11099: the agent's bridge never sat, so nobody else closes it — the daemon closes its own
+// terminal under the exact-client proof. A launch that never sat has no wakes to stop: its
+// observed exit ends it, frees the slot, and the tree goes by the ordinary cleanup.
+test("raise: no seat within the window — the daemon closes its own terminal by the exact proof", async (t) => {
   const o = await leading(t, {
-    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe1" },
+    env: {
+      ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500",
+      FAKE_ORCA_HANDLE: "term_probe1",
+      FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    },
   });
   await o.queue([invite(9, GOOD)]);
   await o.step();
@@ -828,16 +835,42 @@ test("raise: no seat within the window retains an ambiguous tree and occupied ru
   await o.queue([]);
   const r = await o.step();
   assert.match(r.out, /invite 9: tree_no_seat_unverified/, r.out);
-  assert.deepEqual(o.closes(), []);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "ambiguity");
+  assert.match(r.out, /invite 9: no_seat, client_exited/, r.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_probe1", "--json"]]);
+  const run = await waitEnded(o);
+  assert.equal(run.closed, "client_exited");
+  // The slot is free: the next call of the same description is launched.
+  await o.queue([invite(10, GOOD), invite(11, GOOD)]);
+  const next = await o.step();
+  assert.match(next.out, /invite 10: launched/, next.out);
+  assert.match(next.out, /invite 11: launched/, next.out);
+  assert.equal(o.closes().length, 1, "closed once");
+});
+
+test("raise: no seat within the window — a dirty tree outlives the ended launch, named", async (t) => {
+  const o = await leading(t, {
+    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_WAIT_AFTER_CLOSE: "1" },
+  });
+  await o.queue([invite(9, GOOD)]);
   await o.step();
-  assert.equal(o.closes().length, 0, "no unverified close");
+  writeFileSync(join(o.runs()[`${REALM}|${ROOM}|9`].worktree, "unsaved.txt"), "work\n");
+  await new Promise((done) => setTimeout(done, 2_000));
+  await o.queue([]);
+  const r = await o.step();
+  assert.match(r.out, /invite 9: no_seat, client_exited/, r.out);
+  const run = await runUntil(o, (x) => x.tree?.state === "retained", "the retained tree");
+  assert.equal(run.state, "ended");
+  assert.equal(run.tree.why, "tree_dirty_retained");
 });
 
 // №4050 [71] item 2: an incomplete snapshot acts on nothing — not even the expiry's close.
-test("raise: incomplete snapshot does not expire; complete snapshot names unknown exit without closing", async (t) => {
+test("raise: incomplete snapshot does not expire; complete snapshot expires and closes by the proof", async (t) => {
   const o = await leading(t, {
-    env: { ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500", FAKE_ORCA_HANDLE: "term_probe2" },
+    env: {
+      ISKRON_ORCHESTRA_RAISE_WINDOW_MS: "1500",
+      FAKE_ORCA_HANDLE: "term_probe2",
+      FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    },
   });
   await o.queue([invite(9, GOOD)]);
   await o.step();
@@ -851,7 +884,8 @@ test("raise: incomplete snapshot does not expire; complete snapshot names unknow
   await o.queue([]);
   const after = await o.step();
   assert.match(after.out, /invite 9: tree_no_seat_unverified/, after.out);
-  assert.equal(o.closes().length, 0);
+  assert.match(after.out, /invite 9: no_seat, client_exited/, after.out);
+  assert.equal(o.closes().length, 1);
 });
 
 test("raise: no seat and no handle in the launch answer — said, nothing closed", async (t) => {
@@ -1535,27 +1569,153 @@ const ack = (o, order, state) =>
     body: JSON.stringify({ state }),
   });
 
-// A closed order that did not carry the stop out (#7522): the agent may still live — the run
-// stays stopping and its tab open until the window passes, then frees its slot, tab untouched.
-test("quench: a failed stop retains its runtime and tree past the window", async (t) => {
-  const window = 6000;
-  // The agent may live: its terminal is not seen to exit (an exited one ends on a failed stop).
+// A closed order that did not carry the stop out (#7522, #11099): the agent's bridge will not
+// close it, so the daemon closes its own tab by the exact proof; a close whose exit is not seen
+// is tried again a bounded number of tacts, then said exhausted — the run stays stopping with
+// its runtime and tree.
+test("quench: a failed stop's tab is closed by the daemon; an exit never seen is tried, then exhausted", async (t) => {
+  // The terminal is never seen to exit, even after the close.
   const o = await stopping(t, { status: 201, body: { id: "ord-f" } }, "ord-f", {
-    ISKRON_ORCHESTRA_RAISE_WINDOW_MS: String(window),
     FAKE_ORCA_WAIT_EXIT: "0",
   });
-  const since = Date.now();
   assert.equal((await ack(o, "ord-f", "failed")).status, 200);
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", r.out);
-  assert.equal(o.closes().length, 0, "a failed stop closes no tab");
-  await new Promise((done) => setTimeout(done, Math.max(0, window + 500 - (Date.now() - since))));
-  const late = await o.step();
-  assert.equal(late.code, 0, late.err + late.out);
-  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping", late.out);
+  assert.match(r.out, /invite 9: stop_failed, client_exit_unconfirmed/, r.out);
+  assert.equal(o.closes().length, 1, "the daemon closed its own tab");
+  await o.step();
+  const third = await o.step();
+  assert.match(third.out, /stop_failed, reap_exhausted \(client_exit_unconfirmed\)/, third.out);
+  await o.step();
+  assert.equal(o.closes().length, 3, "tried three tacts, not more");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "stopping");
   assert.notEqual(o.runs()[`${REALM}|${ROOM}|9`].tree.state, "removed");
-  assert.equal(o.closes().length, 0, "the tab of an agent that may live is never closed");
+});
+
+/** Polls the run until `ok` holds; the exec observer acts on its own 5 s timer. */
+async function runUntil(o, ok, what) {
+  const end = Date.now() + 15_000;
+  while (Date.now() < end) {
+    if (ok(o.runs()[`${REALM}|${ROOM}|9`])) return o.runs()[`${REALM}|${ROOM}|9`];
+    await new Promise((done) => setTimeout(done, 50));
+  }
+  assert.fail(`${what} not observed: ${JSON.stringify(o.runs())}`);
+}
+const exitStops = (o) =>
+  o.fake.state.orders.human.filter(
+    (h) => h.method === "POST" && h.body?.reason_code === "client_exited",
+  );
+
+// #11099, #9256 (а): the agent's bridge let its order expire — the daemon closes its own
+// terminal through Orca by the exact-client proof. The closed client alone ends nothing: the
+// expired order is replaced once by a stop for the exit, and only its confirmation ends the run.
+test("reap: an expired stop's terminal closed by the daemon ends the run only with a confirmed exit stop", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-e" } }, "ord-e", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  await o.fake.control({ orders_stop_answer: { status: 201, body: { id: "ord-x" } } });
+  assert.equal((await ack(o, "ord-e", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_expired, client_exited/, r.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  // The stop for the exit goes out unconfirmed: the run stays observed, its tree intact.
+  await runUntil(o, () => exitStops(o).length === 1, "the exit stop");
+  await o.step();
+  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.closed, "client_exited");
+  assert.notEqual(run.state, "ended", "a closed client without a confirmed stop is no end");
+  assert.equal(run.tree.state, "ready");
+  await o.fake.control({
+    stop_order: { id: "ord-x", standing_id: "seat-raised", realm: REALM, frame: false },
+  });
+  assert.equal((await ack(o, "ord-x", "stopped")).status, 200);
+  await o.step();
+  assert.equal((await waitEnded(o)).closed, "client_exited");
+  assert.equal(exitStops(o).length, 1, "one stop for the exit");
+  assert.equal(o.closes().length, 1, "closed once");
+});
+
+// #11099: a tree kept for what it holds is said by status with its path; its client is gone.
+test("reap: status names a retained tree with its path once its client exited", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-d" } }, "ord-d", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  const path = o.runs()[`${REALM}|${ROOM}|9`].worktree;
+  writeFileSync(join(path, "unsaved.txt"), "work\n");
+  // The seat is over at the stop for the exit (410): the run ends, its dirty tree stays.
+  await o.fake.control({ orders_stop_answer: { status: 410, body: {} } });
+  assert.equal((await ack(o, "ord-d", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  const run = await runUntil(o, (x) => x.tree?.state === "retained", "the retained tree");
+  assert.equal(run.state, "ended", r.out);
+  assert.equal(existsSync(join(path, "unsaved.txt")), true, "the unsaved work stays");
+  const status = await cli(o.dir, ["status"]);
+  assert.match(status.out, new RegExp(`invite 9: tree_dirty_retained: ${path}, client_exited`));
+});
+
+// #11099: Orca unreachable at the close is a transient refusal — the next tact tries again, and
+// the recovered one closes the terminal; a refusal that lasts ends in a named exhaustion.
+test("reap: a transient Orca refusal is tried again and the recovered tact closes the terminal", async (t) => {
+  const down = join(tmpdir(), `iskron-down-${process.pid}-${Date.now()}`);
+  t.after(() => rmSync(down, { force: true }));
+  const o = await stopping(t, { status: 201, body: { id: "ord-t" } }, "ord-t", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    FAKE_ORCA_SHOW_FAIL_FILE: down,
+  });
+  writeFileSync(down, "");
+  assert.equal((await ack(o, "ord-t", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_expired, terminal_binding_unconfirmed/, r.out);
+  assert.equal(o.closes().length, 0);
+  rmSync(down);
+  const back = await o.step();
+  assert.equal(back.code, 0, back.err + back.out);
+  assert.match(back.out, /invite 9: stop_expired, client_exited/, back.out);
+  assert.equal(o.closes().length, 1);
+});
+
+test("reap: a lasting Orca refusal is tried a bounded number of times, then named exhausted", async (t) => {
+  const down = join(tmpdir(), `iskron-down-${process.pid}-${Date.now()}`);
+  t.after(() => rmSync(down, { force: true }));
+  const o = await stopping(t, { status: 201, body: { id: "ord-l" } }, "ord-l", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    FAKE_ORCA_SHOW_FAIL_FILE: down,
+  });
+  writeFileSync(down, "");
+  assert.equal((await ack(o, "ord-l", "expired")).status, 200);
+  const outs = [];
+  for (let i = 0; i < 4; i++) outs.push((await o.step()).out);
+  assert.match(outs[0], /stop_expired, terminal_binding_unconfirmed/, outs[0]);
+  assert.match(outs[2], /stop_expired, reap_exhausted \(terminal_binding_unconfirmed\)/, outs[2]);
+  assert.doesNotMatch(outs[3], /stop_expired/, "exhausted — no more tries");
+  rmSync(down);
+  assert.doesNotMatch((await o.step()).out, /stop_expired/);
+  assert.equal(o.closes().length, 0);
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].reaped, "reap_exhausted");
+});
+
+// #11099 (б): the tab now holds another client — the proof of ours fails, nothing is touched.
+test("reap: a terminal whose client is not ours is left untouched, the refusal said", async (t) => {
+  const other = join(tmpdir(), `iskron-other-${process.pid}-${Date.now()}`);
+  t.after(() => rmSync(other, { force: true }));
+  const o = await stopping(t, { status: 201, body: { id: "ord-o" } }, "ord-o", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    FAKE_ORCA_SHOW_INCARNATION_FILE: other,
+  });
+  writeFileSync(other, "inc_other");
+  assert.equal((await ack(o, "ord-o", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_expired, terminal_binding_changed/, r.out);
+  await o.step();
+  assert.equal(o.closes().length, 0, "another client's terminal is never closed");
+  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.state, "stopping");
+  assert.equal(run.tree.state, "ready");
 });
 
 // Review of PR #724 п.3: an order left issued for good holds neither the slot nor the orders

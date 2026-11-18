@@ -110,9 +110,15 @@ async function finishExits(
       await cleanupEndedTrees(authDir, runs);
       continue;
     }
-    // A failed order after the exact terminal exited (Orca may refuse closing a tab that then
-    // exits, #9966) proves no ended seat: stop once more by the exit reason (#9256).
-    if (r.stop_outcome === "failed" && ownProcess(r) && r.closed === "client_exited" && !r.restop) {
+    // A failed or expired order after the exact terminal exited (Orca may refuse closing a tab
+    // that then exits, #9966; the daemon closed it itself, #11099) proves no ended seat: stop
+    // once more by the exit reason (#9256).
+    if (
+      (r.stop_outcome === "failed" || r.stop_outcome === "expired") &&
+      ownProcess(r) &&
+      r.closed === "client_exited" &&
+      !r.restop
+    ) {
       r.restop = true;
       delete r.order_id;
       delete r.stop_outcome;
