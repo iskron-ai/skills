@@ -20,7 +20,7 @@
 // The token: a file, one line, mode 0600 or stricter; handed to the bridge only through its
 // own isolated auth dir, never argv, never printed. The seats and roles of the scene are the
 // run graph's own fixture: taken off and deleted at the end.
-// Exit 0 — every check passed; 1 — a check failed (the report names it); 2 — setup failed.
+// Exit 0 — every check passed; 1 — a check failed; 2 — setup failed; 3 — cleanup failed.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -178,7 +178,7 @@ const board = async () => {
 };
 
 // Seats and roles off — the scene was this run's own fixture. Every way out runs it once; a
-// step that fails is said in the report, the run's outcome stays its checks'.
+// step that fails is said in the report; all remaining cleanup steps still run.
 async function cleanup() {
   const said = (ok, what, seen) => report.push(`${ok ? "CLEANUP" : "CLEANUP FAILED"} ${what}${seen ? ` — ${String(seen).slice(0, 200)}` : ""}`);
   const step = async (what, fn) => {
@@ -384,4 +384,5 @@ process.stdout.write(`\nrun dir: ${run}${keep ? "" : " (removed)"}\n`);
 spawnSync("pkill", ["-f", `daemon --auth-dir ${authDir}( |$)`]);
 await new Promise((r) => setTimeout(r, 1500));
 if (!keep) rmSync(run, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-process.exit(setup || (failed ? 1 : 0));
+const exitCode = (setup, failed, report) => report.some((line) => line.startsWith("CLEANUP FAILED ")) ? 3 : setup || (failed ? 1 : 0);
+process.exit(exitCode(setup, failed, report));
