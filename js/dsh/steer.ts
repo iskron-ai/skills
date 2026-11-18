@@ -69,7 +69,8 @@ export function createFirstStep(route: (m: unknown) => unknown): FirstStep {
   const pass = (g: Gate, h: Held): void => {
     clearTimeout(h.timer);
     if (g.ended) return gone(h);
-    void Promise.resolve(route(h.m)).then(h.done, h.done);
+    // A rejected send is not a delivery: the hearing says it and the platform keeps the frame.
+    void new Promise((ok) => ok(route(h.m))).then(h.done, h.fail);
   };
   const drop = (g: Gate | null): void => {
     if (!g) return;

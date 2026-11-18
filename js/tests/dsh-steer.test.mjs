@@ -205,6 +205,21 @@ test("a disposed session drops its held first-step words: no other session gets 
   assert.doesNotMatch(marks, /direct-held/, "not marked seen: the platform keeps it");
 });
 
+// The release review of f44ebe17 (reproduced on the built plugin): a held word whose window ran
+// out went its way and the send rejected — yet it was confirmed, and the hearing marked it seen:
+// an undelivered frame lost without a word. A rejected send leaves it to the platform, said.
+test("a held word whose send rejects is not marked seen, and the refusal is said", async (t) => {
+  const s = await session(t, "startup");
+  await s.attach();
+  s.root.agent.steer = () => Promise.reject(new Error("steer refused"));
+  s.frame("direct-refused"); // the root runs, its first step not yet proposed: held
+  await new Promise((r) => setTimeout(r, 3400)); // past the first-step window (3 s)
+  assert(await until(() => s.logs.some((l) => l.includes("steer refused"))), s.logs.join("\n"));
+  const seen = seenFilePathOf(s.box.authDir, KEY);
+  const marks = existsSync(seen) ? readFileSync(seen, "utf8") : "";
+  assert.doesNotMatch(marks, /direct-refused/, "not marked seen: the platform keeps it");
+});
+
 // The targeted review of 78c6afb7: the first step had taken the queue and awaited next() when
 // the session was disposed and a new root came; next() then settled — the old word went to the
 // new root as next-step and was marked seen. The queue stays its session's until next() returns.
