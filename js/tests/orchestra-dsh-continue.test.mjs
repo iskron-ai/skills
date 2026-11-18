@@ -169,6 +169,38 @@ test("dsh: a failed continuation keeps the sleep, the tree and the session for t
   assert.equal(o.run(111).dormant.cursor, 112);
 });
 
+test("dsh: a continuation process that survives its no-session window keeps the row live", async (t) => {
+  // SIGTERM proves no exit: the failed attempt's process may still live. The row must not
+  // sleep back onto the old pid — it stays live with the NEW pid, holds the slot, and the
+  // ordinary exit path decides again; a clean exit with the case open re-arms the sleep
+  // (#10995 review 4).
+  const o = await leadingDsh(t, {
+    env: {
+      FAKE_DSH_MODE: "noterm-continue",
+      FAKE_DSH_HOLD_MS: "5000",
+      ISKRON_DSH_SESSION_MS: "1500",
+    },
+    caseRoom: { status: "open", entries: [inviteEntry(121)] },
+  });
+  await o.queue([invite(121)]);
+  assert.match((await o.step()).out, /invite 121: launched/);
+  await o.queue([], [seatSignal(121)]);
+  await o.step();
+  const slept = await o.until(121, (r) => r.state === "dormant", 30_000);
+  const oldPid = slept.dsh.pid;
+  await o.room("open", [inviteEntry(121), said(122, SEAT)]);
+  await o.step();
+  const live = o.run(121);
+  assert.equal(live.state, "launched", "an unproven process is not the sleep's");
+  assert.notEqual(live.dsh.pid, oldPid, "the row holds the attempt's own pid");
+  assert.equal(live.why, "dsh_no_session");
+  assert.equal(o.dshCalls().length, 2, "the continuation process did start");
+  // The process exits cleanly on its own: the ordinary path takes it, and the sleep re-arms.
+  const again = await o.until(121, (r) => r.state === "dormant" && r.dsh.exit === "0", 30_000);
+  assert.notEqual(again.dsh.pid, oldPid);
+  assert.equal(again.dsh.session, SESSION, "the slept session survives for the next continuation");
+});
+
 test("dsh: a new invite raises a fresh call and never wakes the sleeping one", async (t) => {
   const { o } = await asleep(t, 101, { options: { limit: 2 } });
   // A new invite for the same role: the ordinary raising takes it — the sleeping run must

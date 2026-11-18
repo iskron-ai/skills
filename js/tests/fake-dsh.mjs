@@ -3,8 +3,9 @@
 // argv, cwd, the spawned-for environment and the model patch, then answers as dsh 0.2.2-rc.1
 // headless --json does — a `session` event, later `final` — or refuses before any session.
 // FAKE_DSH_LOG — the record file; FAKE_DSH_MODE — ok | fail | hang | crash (exit 5 after the
-// session, no final); FAKE_DSH_HOLD_MS — the
-// time between session and final.
+// session, no final) | noterm-continue (a continuation that never says session, ignores
+// SIGTERM and exits cleanly after the hold; first launches behave as ok); FAKE_DSH_HOLD_MS —
+// the time between session and final.
 import { appendFileSync, readFileSync } from "node:fs";
 
 const argv = process.argv.slice(2);
@@ -33,8 +34,14 @@ if (mode === "fail") {
   process.stdout.write(JSON.stringify({ type: "error", message: "probe refusal" }) + "\n");
   process.exit(3);
 }
+// noterm-continue: a continuation (argv carries --session-id) that never says session, pays
+// no heed to SIGTERM and exits cleanly only after its hold — the unproven-exit probe (#10995
+// review 4); every first launch behaves as ok.
+const unproven = mode === "noterm-continue" && argv.includes("--session-id");
 const id = "session-0b6f1c2e-probe";
-process.stdout.write(JSON.stringify({ type: "session", sessionId: id, cwd: process.cwd() }) + "\n");
+if (!unproven)
+  process.stdout.write(JSON.stringify({ type: "session", sessionId: id, cwd: process.cwd() }) + "\n");
+if (unproven) process.on("SIGTERM", () => {});
 if (mode === "hang") setInterval(() => {}, 1000);
 else if (mode === "crash") setTimeout(() => process.exit(5), 200);
 else

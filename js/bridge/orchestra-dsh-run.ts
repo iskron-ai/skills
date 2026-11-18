@@ -143,5 +143,15 @@ export async function launchDsh(
   }
   // No session within the window: the process is ours and ends; its exit frees the slot.
   await dshTerminate(run, "no_session");
+  if (slept && !exits.has(run.dsh.pid)) {
+    // SIGTERM proves no exit, and the attempt's process may still live: restoring the sleep
+    // here would orphan it and free its slot. The row stays live with the new pid and holds
+    // the slot; the ordinary observer leads it, and the exit path decides again — a clean
+    // exit with the case open re-arms the sleep, anything else ends as usual (#10995 rev 4).
+    run.state = "launched";
+    run.why = "dsh_no_session";
+    writeRuns(authDir, runs);
+    return "dsh_no_session";
+  }
   return fail("dsh_no_session", "launched");
 }
