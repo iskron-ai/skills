@@ -1,7 +1,7 @@
 // The hearing of a dsh session (graph @nks/nks-dev, node #10776): the machine bridge
 // holds the standing, and this local client attaches to the standing's socket the way
 // the watchdogs do (watchdog/client.ts). Each frame addressed to the seat becomes ONE
-// next-turn message of the live session; the rest — hello, status, unaddressed case
+// message of the live session (where it goes — steer.ts); the rest — hello, status, unaddressed case
 // records — passes by. No bridge and no tools of its own live here.
 import { randomUUID } from "node:crypto";
 

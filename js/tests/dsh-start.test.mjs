@@ -122,8 +122,12 @@ test("a resumed session hears why it stands again", (t) => {
   assert.match(text, /Загрузи скилл iskron тулом skill/);
   assert.doesNotMatch(text, /не показан/);
   // LAB probe #8419: the model went into the Start and never reached the stale word — the
-  // word to the seat after the exit is answered first, the Start after.
-  assert.match(text, /придёт следующим сообщением — ответь на него первым, «Старт» — после/);
+  // word to the seat after the exit is answered first, the Start after; it comes within this
+  // turn (steer.ts), not as the next message — the LAB run of f1ff1e3a saw it a turn late.
+  assert.match(
+    text,
+    /придёт в этот же ход, как только встанешь, — ответь на него первым, «Старт» — после/,
+  );
   assert.match(text, /закрой строку исходом/);
 });
 

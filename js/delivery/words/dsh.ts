@@ -19,9 +19,9 @@ export interface DshWords {
   notDelivered: (why: string) => string;
   /** Хвост слова старта новой сессии (dsh/start.ts): место слушает плагин; скилл iskron — тулом skill (каталог с описаниями в system несёт профиль-патч поставки, проба #8419), задача — доля в деле до исхода строки. */
   startListen: () => string;
-  /** Хвост слова старта продолженной сессии: место снято с прошлым процессом; лежалое слово месту придёт следующим сообщением — ему первый ответ, «Старт» после (проба #8419: модель ушла в «Старт» и до слова не дошла); те же две обязанности, что у startListen. */
+  /** Хвост слова старта продолженной сессии: место снято с прошлым процессом; лежалое слово месту приходит в этот же ход шагом (dsh/steer.ts) — ему первый ответ, «Старт» после (проба #8419: модель ушла в «Старт» и до слова не дошла); те же две обязанности, что у startListen. */
   startResumed: () => string;
-  /** Хвост слова старта, когда посадка плагина удалась до первого запроса (#11076): место place роли karta в realm уже стоит — не вставать; resumed — сессия продолжена: лежалое слово первым, как у startResumed; те же две обязанности. */
+  /** Хвост слова старта, когда посадка плагина удалась до первого запроса (#11076): место place роли karta в realm уже стоит — не вставать; resumed — сессия продолжена: лежалое слово ложится рядом с задачей в первый шаг или следующим шагом того же хода (dsh/steer.ts) — ему первый ответ; те же две обязанности. */
   startSeated: (place: string, karta: string, realm: string, resumed: boolean) => string;
 }
 
@@ -38,9 +38,9 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
     startListen: () =>
       "Место этой сессии слушает плагин поставки: встань на него (iskron_stand), и кадры дела придут ходами. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
     startResumed: () =>
-      "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand). Сказанное месту после выхода придёт следующим сообщением — ответь на него первым, «Старт» — после. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
+      "Сессия продолжена новым процессом: место снято с прошлым — встань снова (iskron_stand). Сказанное месту после выхода, если было, придёт в этот же ход, как только встанешь, — ответь на него первым, «Старт» — после. Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.",
     startSeated: (place, karta, realm, resumed) =>
-      `Место этой сессии уже стоит: ${place}, роль #${karta} в ${realm} — его посадил плагин поставки, вставать заново (iskron_stand) не нужно; кадры дела придут ходами.${resumed ? " Сказанное месту после выхода придёт следующим сообщением — ответь на него первым, «Старт» — после." : ""} Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.`,
+      `Место этой сессии уже стоит: ${place}, роль #${karta} в ${realm} — его посадил плагин поставки, вставать заново (iskron_stand) не нужно; кадры дела придут ходами.${resumed ? " Сказанное месту после выхода, если было, приходит в этот же ход — рядом с задачей или следующим шагом; ответь на него первым, «Старт» — после." : ""} Загрузи скилл iskron тулом skill и иди по его «Старту». Задача этой сессии — твоя доля в деле до исхода её строки, а не вход в дело: вошёл — делай работу и закрой строку исходом.`,
   },
   en: {
     listening: (key) => `listening on standing ${key}`,
@@ -54,8 +54,8 @@ export const DSH: Readonly<Record<Lang, DshWords>> = {
     startListen: () =>
       "The delivery's plugin hears this session's seat: take it (iskron_stand), and case frames arrive as turns. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
     startResumed: () =>
-      "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand). What was said to the seat after the exit comes as the next message — answer it first, the Start after. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
+      "The session is continued by a new process: its seat went with the last one — take it again (iskron_stand). What was said to the seat after the exit, if anything, comes within this turn once you take it — answer it first, the Start after. Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.",
     startSeated: (place, karta, realm, resumed) =>
-      `This session's seat already stands: ${place}, role #${karta} in ${realm} — the delivery's plugin seated it, no need to take it again (iskron_stand); case frames arrive as turns.${resumed ? " What was said to the seat after the exit comes as the next message — answer it first, the Start after." : ""} Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.`,
+      `This session's seat already stands: ${place}, role #${karta} in ${realm} — the delivery's plugin seated it, no need to take it again (iskron_stand); case frames arrive as turns.${resumed ? " What was said to the seat after the exit, if anything, comes within this turn — beside the task or as a next step; answer it first, the Start after." : ""} Load the iskron skill with the skill tool and follow its Start. This session's task is your share in the case until its line's outcome, not entering the case: once in — do the work and close the line with the outcome.`,
   },
 };
