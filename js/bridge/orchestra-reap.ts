@@ -27,7 +27,7 @@ export function reapCause(r: Run, now = Date.now()): string | null {
   return r.state === "ambiguity" && NO_SEAT.has(r.why ?? "") ? "no_seat" : null;
 }
 
-/** Close what is due once per row; a closed client ends the row for the tree cleanup. */
+/** Close what is due once per row; the closed client's exit is recorded on the row. */
 export async function reapOwn(
   authDir: string,
   runs: Record<string, Run>,
@@ -50,12 +50,13 @@ export async function reapOwn(
       ? await close(r.terminal!, r.runtime!, current, expected)
       : "client_unbound";
     r.reaped = outcome ?? "client_exited";
+    // The observed exit is a fact, not an end: the run ends by the path #9256 asks for — the
+    // order confirmed, or one stop for the exit answered (exec-exit.ts finishExits).
     if (outcome === null) {
       const at = new Date(now).toISOString();
       r.closed = "client_exited";
       if (r.exec) r.exec.exit = at;
       if (r.tree) r.tree.exit = at;
-      r.state = "ended";
     }
     said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${r.reaped}`));
   }
