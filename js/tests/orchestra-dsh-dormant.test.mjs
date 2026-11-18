@@ -35,10 +35,22 @@ const entry = (id, kind, fields = {}) => ({
 /** A stand-in case server whose status and entries the probe may switch mid-flight;
  * refuse: true — both doors, "status" / "history" — one of them (a transient 5xx);
  * onHistory runs while a history read is being answered — the probe's race hook. */
-async function caseApi(t, { status = "open", entries = [], refuse = 0, onHistory = null } = {}) {
+async function caseApi(
+  t,
+  { status = "open", entries = [], refuse = 0, onHistory = null, active = true } = {},
+) {
   const state = { status, entries, refuse };
   const server = createServer((req, res) => {
     res.setHeader("content-type", "application/json");
+    if (req.url.startsWith("/nodes/"))
+      return res.end(
+        JSON.stringify({
+          seq: 931,
+          node_type: "karta",
+          is_active: active,
+          manifested_as: "adhikarin",
+        }),
+      );
     const history = req.url.includes("/history");
     if (
       state.refuse === true ||
@@ -126,6 +138,21 @@ const launchStub = () => {
 
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
+
+test("an inactive role ends the sleep without a continuation", async (t) => {
+  const api = await caseApi(t, {
+    active: false,
+    entries: [entry(10, "said", { to_standing_id: SEAT })],
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.state, "ended");
+  assert.equal(r.why, "role_inactive");
+});
 
 test("a removed model ends a sleep without launching its continuation", async (t) => {
   const api = await caseApi(t, { entries: [entry(10, "said", { to_standing_id: SEAT })] });

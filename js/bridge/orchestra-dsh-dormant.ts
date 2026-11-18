@@ -10,6 +10,7 @@ import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-cas
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
+import { roleRefusal } from "./orchestra-role.ts";
 import { readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
 import { DORMANT_WINDOW_MS } from "./orchestra-window.ts";
 
@@ -315,6 +316,25 @@ export async function stepDormant(
         runIdentity(current) !== runIdentity(r)
       ) {
         out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      const roleWhy = await roleRefusal(base, token, { ...r });
+      const afterRole = readRuns(authDir)[key];
+      if (
+        gone?.gone ||
+        !afterRole ||
+        afterRole.state !== "dormant" ||
+        afterRole.foreign_stop ||
+        r.foreign_stop ||
+        runIdentity(afterRole) !== runIdentity(r)
+      ) {
+        out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      if (roleWhy) {
+        r.state = "ended";
+        r.why = roleWhy;
+        out.push(w().leadRow(r.realm, r.room, r.invite, roleWhy));
         continue;
       }
       const resolved = resolveInvite({ ...r }, ls, runs);
