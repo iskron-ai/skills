@@ -63,6 +63,7 @@ delete env.ISKRON_BRIDGE_LANG; // the default language is the live one: the repl
 
 const report = [];
 let failed = 0;
+const classifyPersonSeat = (hs, id) => hs.status === 201 && !!id ? "pass" : hs.status === 403 && Array.isArray(hs.body?.errors) && hs.body.errors.some((e) => e?.rule === "human_seat_needs_front") ? "skip" : "fail";
 const check = (ok, what, seen) => {
   report.push(`${ok ? "PASS" : "FAIL"} ${what}${seen ? ` — ${String(seen).slice(0, 400)}` : ""}`);
   if (!ok) failed++;
@@ -210,7 +211,7 @@ async function cleanup() {
     await step(`роль #${k}`, async () => {
       const look = await P.call("iskron_look", { realm, node_id: `#${k}` });
       const v = (look.text.match(/, v(\d+)\)/) || [])[1];
-      if (!v) return report.push(`SKIP cleanup роли #${k}: версия не прочитана — ${look.text.split("\n")[0].slice(0, 160)}`);
+      if (!v) return said(false, `роль #${k}: версия не прочитана`, look.text.split("\n")[0]);
       const del = await P.call("iskron_delete_node", { realm, node_id: `#${k}`, basis_version: v, reasoning: "прогон строки ответа: фикстура снята" });
       said(!del.error, `роль #${k} снята`, del.text.split("\n")[0]);
     });
@@ -255,7 +256,10 @@ try {
   // address only when it stands (#48: no such seat — the word goes without one, by design).
   const hs = await api("POST", "/channels", { body: { karta: humanKarta } });
   humanSeatId = hs.body?.standing_id ?? hs.body?.id ?? null;
-  check(hs.status === 201 && !!humanSeatId, "the person's unnamed seat on their role", `${hs.status} ${JSON.stringify(hs.body).slice(0, 200)}`);
+  const seatResult = classifyPersonSeat(hs, humanSeatId);
+  const frontRequired = seatResult === "skip";
+  if (frontRequired) report.push("SKIP person's seat, provenance.from_standing_id, #9171 from_standing, reply line under the word — deployment requires a front for the person's seat — human_seat_needs_front");
+  else check(seatResult === "pass", "the person's unnamed seat on their role", `${hs.status} ${JSON.stringify(hs.body).slice(0, 200)}`);
 
   // The agent stands; the real watchdog attaches — the frame's text comes out of it.
   const st = await A.call("iskron_stand", { realm, karta: `#${agentKarta}`, name: seatName, model: "stand-run-reply" });
@@ -298,9 +302,9 @@ try {
     report.push(`INFO provenance кадра дословно: ${JSON.stringify(frame.provenance ?? {})}`);
     report.push(`INFO кадр целиком: ${JSON.stringify(frame).slice(0, 1200)}`);
     const p = frame.provenance ?? {};
-    check("from_standing_id" in p || "from_standing_id" in frame, "provenance carries from_standing_id (#9128 form)", `keys: ${Object.keys(p).join(",")}`);
+    if (!frontRequired) check("from_standing_id" in p || "from_standing_id" in frame, "provenance carries from_standing_id (#9128 form)", `keys: ${Object.keys(p).join(",")}`);
     // #9171: the unnamed seat's from_standing as it is, an empty string included — its own line.
-    check(
+    if (!frontRequired) check(
       p.from_standing !== "" && p.from_standing != null,
       "#9171: from_standing непуст (пустая строка безымянного места — риск #9171)",
       `from_standing=${JSON.stringify(p.from_standing)}`,
@@ -325,8 +329,8 @@ try {
   if (noAddress) report.push(`INFO мост сказал явно: ${noAddress.trim()}`);
   const val = (k) => (line ? ((line.match(new RegExp(` ${k}=([^,]*)`)) || [])[1] ?? "") : "");
   const parts = line ? { realm: val("realm"), karta: val("karta"), standing: val("standing"), in_reply_to: val("in_reply_to") } : {};
-  check(!!line, "the reply line is printed under the word", line?.trim() ?? noAddress?.trim() ?? "no line");
-  if (line)
+  if (!frontRequired) check(!!line, "the reply line is printed under the word", line?.trim() ?? noAddress?.trim() ?? "no line");
+  if (line && !frontRequired)
     check(
       Object.values(parts).every((v) => v !== ""),
       "the reply line is whole: realm, karta, standing, in_reply_to",
@@ -335,7 +339,7 @@ try {
 
   // Execute the line as it stands, from the agent's seat.
   let replyAnswer = null;
-  if (line && Object.values(parts).every((v) => v !== "")) {
+  if (!frontRequired && line && Object.values(parts).every((v) => v !== "")) {
     const r = await A.call("iskron_channel", {
       realm: parts.realm,
       action: "send",
@@ -346,7 +350,7 @@ try {
     });
     replyAnswer = r;
     check(!r.error, "the executed line answered", r.text.split("\n")[0].slice(0, 250));
-  } else report.push("SKIP the line was not executed — it was not printed whole");
+  } else if (!frontRequired) report.push("SKIP the line was not executed — it was not printed whole");
 
   // Through the api: the answer lies under the person's word, addressed to their seat.
   if (replyAnswer && !replyAnswer.error) {
