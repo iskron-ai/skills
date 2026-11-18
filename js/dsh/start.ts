@@ -30,7 +30,7 @@ export function startText(dir: string, source: unknown, seat?: HeldSeat | null):
   const W = wordsIn(DSH, cover?.lang);
   // The plugin's seating took the seat before the first prompt (#11076): name it, no stand.
   const tail = seat
-    ? W.startSeated(seat.name, seat.karta, seat.realm)
+    ? W.startSeated(seat.name, seat.karta, seat.realm, source === "resume")
     : source === "resume"
       ? W.startResumed()
       : W.startListen();

@@ -264,8 +264,11 @@ test("the start word names the seat the plugin took, and keeps the old word when
   seated.created(a, "resume");
   const text = await seated.assemble(a);
   assert.deepEqual(seated.order, ["stand", "assemble"], "the assembly waited for the seating");
-  assert.ok(text.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), text);
+  assert.ok(text.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat", true)), text);
   assert.ok(!text.includes(DSH.ru.startResumed()), text);
+  // A resumed seated session answers the stale word first (LAB probe #8419); a fresh one has none.
+  assert.match(text, /ответь на него первым, «Старт» — после/);
+  assert.doesNotMatch(DSH.ru.startSeated("glm.p", "931", "@probe/seat", false), /первым/);
   rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
   await new Promise((r) => setTimeout(r, 5));
   const refused = dsh(t, auth);
@@ -284,7 +287,7 @@ test("the seated start word follows the live hold: a removed record brings the o
   const a = d.agent();
   d.created(a, "resume");
   const first = await d.assemble(a);
-  assert.ok(first.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat")), first);
+  assert.ok(first.includes(DSH.ru.startSeated("glm.p", "931", "@probe/seat", true)), first);
   rmSync(holdFilePathOf(auth, "glm.p--931--probe"));
   assert.equal(await d.assemble(a), "слово старта как было");
 });
