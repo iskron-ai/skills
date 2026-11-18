@@ -68,6 +68,7 @@ async function caseApi(t, { status = "open", entries = [], refuse = 0, onHistory
 
 const exitedRun = (over = {}) => ({
   realm: "@nks/test",
+  author: "@tester:lead",
   room: "room-1",
   invite: 9,
   karta: 931,
@@ -94,11 +95,14 @@ const sleepingRow = (over = {}) => ({
 
 /** The launcher of the tact: one dsh offer, limit 1; launch records and stays a stub. */
 const launchers = (limit = 1) => ({
+  account: "tester",
   own: new Map([
     [
       "l",
       {
         launcher: "l",
+        adapter: "bridge",
+        callers: [],
         limit,
         harnesses: { dsh: { models: ["m"], dsh: { bin: null, patch: null } } },
       },
@@ -122,6 +126,58 @@ const launchStub = () => {
 
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
+
+test("a removed model ends a sleep without launching its continuation", async (t) => {
+  const api = await caseApi(t, { entries: [entry(10, "said", { to_standing_id: SEAT })] });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const ls = launchers();
+  ls.own.get("l").harnesses.dsh.models = ["other"];
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, ls, undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.state, "ended");
+  assert.equal(r.why, "model_not_offered");
+});
+
+test("an older sleep recovers its invite author and applies the caller gate", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(9, "invite", { author: "@visitor:lead" }),
+      entry(10, "said", { to_standing_id: SEAT }),
+    ],
+  });
+  const r = sleepingRow({ author: undefined });
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.author, "@visitor:lead");
+  assert.equal(r.state, "ended");
+  assert.equal(r.why, "caller_not_allowed");
+});
+
+test("a sleep outside the boundary is not read or woken, but resumes when its realm returns", async (t) => {
+  let reads = 0;
+  const api = await caseApi(t, {
+    entries: [entry(10, "said", { to_standing_id: SEAT })],
+    onHistory: () => reads++,
+  });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run, []);
+  assert.equal(reads, 0);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.state, "dormant");
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run, [
+    r.realm,
+  ]);
+  assert.equal(stub.calls.length, 1);
+});
 
 /** A registry dir holding the rows as the daemon would: the wake path re-reads the row from
  * disk before launching (#10995 review 2). */
@@ -557,7 +613,7 @@ test("dormancy: the arming cursor is the seat's last word that is not a left", a
   assert.equal(launch.calls.length, 1);
 });
 
-test("dormant tact: the window, the taken slot and the gone launcher hold the sleep", async (t) => {
+test("dormant tact: the window and gone launcher end, while a taken slot holds", async (t) => {
   const api = await caseApi(t, {
     entries: [
       entry(9, "invite", { to_karta_node_id: KARTA }),
@@ -602,21 +658,21 @@ test("dormant tact: the window, the taken slot and the gone launcher hold the sl
   );
   assert.equal(sleeping.state, "dormant", "the waking word waits for the slot");
   assert.equal(sleeping.dormant.cursor, 9, "the cursor does not move past an unwoken word");
-  assert.equal(sleeping.why, "dormant_limit_reached");
-  // The launcher description gone: the word waits as well.
+  assert.equal(sleeping.why, "limit_reached");
+  // A removed launcher is a permanent refusal.
   const gone = sleepingRow();
   await stepDormant(
     await dormantDir(t, { k: gone }),
     api.base,
     "key",
     { k: gone },
-    { own: new Map(), elsewhere: new Map(), refused: [] },
+    { account: "tester", own: new Map(), elsewhere: new Map(), refused: [] },
     undefined,
     AWAKE_NOW,
     launchStub().run,
   );
-  assert.equal(gone.state, "dormant");
-  assert.equal(gone.why, "dormant_launcher_gone");
+  assert.equal(gone.state, "ended");
+  assert.equal(gone.why, "launcher_unknown");
   assert.equal(gone.dormant.cursor, 9);
 });
 

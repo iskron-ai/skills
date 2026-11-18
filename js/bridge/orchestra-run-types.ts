@@ -49,6 +49,8 @@ export interface Run {
     terminated?: string;
   };
   realm: string;
+  /** Original invite author, retained for the same caller gate on a continuation. */
+  author?: string;
   room: string;
   invite: number;
   karta: number;

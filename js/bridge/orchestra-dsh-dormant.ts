@@ -9,7 +9,8 @@ import { words } from "../shared/lang.ts";
 import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-case-read.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
-import { LIVE, readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
+import { resolveInvite } from "./orchestra-resolve.ts";
+import { readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
 import { DORMANT_WINDOW_MS } from "./orchestra-window.ts";
 
 const w = () => words(ORCHESTRA);
@@ -217,10 +218,12 @@ export async function stepDormant(
   gone?: { gone: boolean },
   now = Date.now(),
   launch: typeof launchDsh = launchDsh,
+  boundary?: string[],
 ): Promise<string[]> {
   const out: string[] = [];
   for (const [key, r] of Object.entries(runs)) {
     if (r.state !== "dormant" || !r.dsh || !r.dormant) continue;
+    if (boundary && !boundary.includes(r.realm)) continue;
     if (gone?.gone) break;
     // The sticky foreign stop ends the sleep before anything else: no read, no wake, no
     // window — the row ends by the field alone (#10995 review 5).
@@ -290,18 +293,41 @@ export async function stepDormant(
         out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
         continue;
       }
-      const own = ls.own.get(r.launcher);
-      const spec = own?.harnesses[r.harness]?.dsh;
-      if (!own || !spec) {
-        r.why = "dormant_launcher_gone";
+      if (!r.author) {
+        try {
+          const history = await readCaseHistory(base, token, r.room, Math.max(0, r.invite - 1));
+          r.author =
+            history.entries.find((e) => e.n === r.invite && e.kind === "invite")?.author ??
+            undefined;
+        } catch (e) {
+          r.why = readErrorWhy(e);
+          out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
+          continue;
+        }
+      }
+      const current = readRuns(authDir)[key];
+      if (
+        gone?.gone ||
+        !current ||
+        current.state !== "dormant" ||
+        current.foreign_stop ||
+        r.foreign_stop ||
+        runIdentity(current) !== runIdentity(r)
+      ) {
+        out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      const resolved = resolveInvite({ ...r }, ls, runs);
+      if ("code" in resolved) {
+        r.why = resolved.code;
+        if (resolved.code !== "limit_reached") r.state = "ended";
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      const live = Object.values(runs).filter(
-        (x) => x.launcher === r.launcher && LIVE.includes(x.state),
-      ).length;
-      if (live >= own.limit) {
-        r.why = "dormant_limit_reached";
+      const spec = resolved.own.harnesses[r.harness].dsh;
+      if (!spec) {
+        r.state = "ended";
+        r.why = "harness_not_offered";
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }

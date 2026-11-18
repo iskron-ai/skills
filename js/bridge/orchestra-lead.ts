@@ -98,7 +98,19 @@ export function leadAct(
       );
       // The dormant rows take their turn after the new calls: a word in the case wakes the
       // continuation, a closed case or a passed window ends the sleep (#10995).
-      said.push(...(await stepDormant(authDir, base, token, runs, launchers, gone)));
+      said.push(
+        ...(await stepDormant(
+          authDir,
+          base,
+          token,
+          runs,
+          launchers,
+          gone,
+          undefined,
+          undefined,
+          boundary,
+        )),
+      );
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
       return said;
