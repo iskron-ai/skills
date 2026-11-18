@@ -110,11 +110,14 @@ async function finishExits(
       await cleanupEndedTrees(authDir, runs);
       continue;
     }
-    // A failed or expired order after the exact terminal exited (Orca may refuse closing a tab
-    // that then exits, #9966; the daemon closed it itself, #11099) proves no ended seat: stop
-    // once more by the exit reason (#9256).
+    // A failed, expired or refused order after the exact terminal exited (Orca may refuse closing
+    // a tab that then exits, #9966; the daemon closed it itself, #11099) proves no ended seat:
+    // stop once more by the exit reason (#9256). Refused is the executing bridge's seat_not_held
+    // (stoporder.ts carry) — the order not carried out, not a seat the platform kept alive.
     if (
-      (r.stop_outcome === "failed" || r.stop_outcome === "expired") &&
+      (r.stop_outcome === "failed" ||
+        r.stop_outcome === "expired" ||
+        r.stop_outcome === "refused") &&
       ownProcess(r) &&
       r.closed === "client_exited" &&
       !r.restop

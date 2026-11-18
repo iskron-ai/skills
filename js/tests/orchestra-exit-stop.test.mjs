@@ -16,7 +16,7 @@ import { ORCHESTRA, SPAWN_LINE } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { fixture } from "./tree-fixture.mjs";
 
-async function api(t, answer) {
+async function api(t, answer, orders = () => []) {
   const stops = [];
   const server = createServer(async (req, res) => {
     let body = "";
@@ -24,8 +24,11 @@ async function api(t, answer) {
     let status = 200,
       out = {};
     if (req.url.includes("/raised?")) out = { cursor: "c", items: [] };
-    else if (req.url.startsWith("/me/orders")) out = { items: [], next_since: 1 };
-    else if (req.url === "/standings/seat/stop") {
+    else if (req.url.startsWith("/me/orders")) {
+      const since = Number(new URL(req.url, "http://x").searchParams.get("since"));
+      const items = since ? [] : orders(stops);
+      out = { items, next_since: items.length ? 1 : since };
+    } else if (req.url === "/standings/seat/stop") {
       const payload = JSON.parse(body || "{}");
       stops.push(payload);
       [status, out] = answer(payload, stops.length);
@@ -116,6 +119,43 @@ test("exit stop: a failed order after the exit stops once more and ends only on 
   writeRuns(g.auth, g.runs);
   await observeExec(g.auth, a.url, "synthetic");
   assert.equal(readRuns(g.auth).own.state, "stopping");
+});
+
+// The release review of f44ebe17: the seat's bridge refused the order (seat_not_held), the window
+// passed, the daemon closed the terminal (reaped: closed client_exited) — and the kept order_id
+// held the run stopping for good, no stop by the exit reason, its slot and tree taken.
+test("exit stop: a refused order after the daemon closed the client stops once more and ends on its confirmation", async (t) => {
+  const f = await exited(t);
+  const a = await api(
+    t,
+    () => [201, { id: "order-exit" }],
+    (stops) =>
+      stops.length
+        ? [
+            {
+              id: "order-exit",
+              standing_id: "seat",
+              state: "stopped",
+              issued_at: new Date().toISOString(),
+            },
+          ]
+        : [],
+  );
+  Object.assign(f.row, {
+    state: "stopping",
+    order_id: "order",
+    orders: ["order"],
+    stop_outcome: "refused",
+    stopping_at: "2026-11-18T00:00:00Z",
+    reaped: "client_exited",
+  });
+  writeRuns(f.auth, f.runs);
+  for (let i = 0; i < 3; i++) await observeExec(f.auth, a.url, "synthetic");
+  assert.equal(a.stops.length, 1, "one stop by the exit reason replaces the refused order");
+  assert.equal(a.stops[0].reason_code, "client_exited");
+  const own = readRuns(f.auth).own;
+  assert.equal(own.state, "ended", JSON.stringify(own));
+  assert.equal(own.tree.state, "removed", "the clean tree of a gone client goes");
 });
 
 test("exit stop: another harness's exited tree run does not end on a 410", async (t) => {
