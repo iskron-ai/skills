@@ -67,7 +67,7 @@ var COVER = {
 var LAUNCH_WORD = "start";
 var word = LAUNCH_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var LAUNCH_LINE = new RegExp(
-  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(@\\S+))?(?=\\s|$)`,
+  `^[ \\t]*${word}\\s+(\\S+)\\s+(\\S+)\\s+(?:(?:дело|case)\\s+)?[№#]\\s?(\\d+)(?:[ \\t]+(?:от|from)[ \\t]+(\\S+))?(?=\\s|$)`,
   "imu"
 );
 
@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.14.0";
+var VERSION = "8.14.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -1302,7 +1302,7 @@ function seatIs(frame, ...named2) {
   if (!myId && !myAddr) return null;
   const id = named2.map((v) => str(obj(v).id)).find(Boolean);
   if (id && myId) return id === myId;
-  const addr = named2.map((v) => addresseeOf(v)?.addr.filter((a) => a.startsWith("@"))[0]).find(Boolean);
+  const addr = named2.map((v) => addresseeOf(v)?.addr.filter((a) => a !== str(obj(v).id))[0]).find(Boolean);
   if (addr) return addr === myAddr;
   return id ? false : null;
 }
@@ -1310,7 +1310,7 @@ function addresseeOf(v) {
   if (typeof v === "string") return v ? { addr: [v], label: v } : null;
   const o = obj(v);
   const handle = str(o.handle).replace(/^@/, "");
-  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : "");
+  const standing = str(o.standing) || (handle ? `@${handle}${str(o.name) ? `:${str(o.name)}` : ""}` : str(o.name));
   const id = str(o.id);
   const label = standing || str(o.name) || id;
   const addr = [standing, id].filter(Boolean);
@@ -2080,13 +2080,19 @@ function caseHead(frame, withZachin) {
   const no = W().case(need(c.room));
   return withZachin && c.zachin ? `${no} «${c.zachin}»` : no;
 }
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function userTag(user) {
+  const u = typeof user === "string" ? user.trim().replace(/^@/, "") : "";
+  if (!u) return "";
+  return /^[\w.-]+$/.test(u) && !UUID.test(u) ? ` @${u}` : ` ${u}`;
+}
 function whoOf2(frame, withPlace) {
   const p = frame.provenance ?? {};
   const origin2 = frame.origin ?? classifyOrigin(frame);
   if (origin2 === "platform") return W().whoPlatform();
   if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin2 === "human") return W().whoHuman(opt(" @", p.user)) + place;
+  if (origin2 === "human") return W().whoHuman(userTag(p.user)) + place;
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
   return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
@@ -2834,6 +2840,12 @@ function isSatelliteOf(base, name) {
 
 // js/shared/seat.ts
 var normKarta = (k) => String(k ?? "").trim().replace(/^#/, "");
+function seatName(address) {
+  const t = typeof address === "string" ? address.trim() : "";
+  const colon = t.indexOf(":");
+  if (colon >= 0) return t.slice(colon + 1);
+  return t.startsWith("@") ? "" : t;
+}
 function sameSeat(a, b) {
   const realm = String(a.realm ?? "").trim();
   const name = String(a.name ?? "").trim();
@@ -8335,19 +8347,18 @@ function spawnReceipt(structured, expected, identity) {
   if (!identity.seat_id && !identity.standing && !identity.name) return null;
   const seats = s.seats;
   if (seats.some(
-    (v2) => !v2 || typeof v2 !== "object" || typeof v2.seat_id !== "string" || !v2.seat_id || typeof v2.standing !== "string" || !/^@[^:]+:.+$/.test(v2.standing)
+    (v2) => !v2 || typeof v2 !== "object" || typeof v2.seat_id !== "string" || !v2.seat_id || typeof v2.standing !== "string" || !seatName(v2.standing)
   ))
     return null;
   const matches = seats.filter((v2) => {
     if (identity.seat_id) return v2.seat_id === identity.seat_id;
     if (identity.standing) return v2.standing === identity.standing;
-    return v2.standing.slice(v2.standing.indexOf(":") + 1) === identity.name;
+    return seatName(v2.standing) === identity.name;
   });
   if (matches.length !== 1) return null;
   const v = matches[0];
   if (identity.standing && v.standing !== identity.standing) return null;
-  if (identity.name && v.standing.slice(v.standing.indexOf(":") + 1) !== identity.name)
-    return null;
+  if (identity.name && seatName(v.standing) !== identity.name) return null;
   try {
     const pair = parseSpawn(v.spawned_for);
     return sameSpawn(pair, expected) ? { seat_id: v.seat_id, standing: v.standing, spawned_for: pair } : null;
