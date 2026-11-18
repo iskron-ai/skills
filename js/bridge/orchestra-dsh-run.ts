@@ -118,7 +118,7 @@ export async function launchDsh(
   }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    [SPAWNED_FOR_ENV]: JSON.stringify({ invite: run.invite, room: run.room }),
+    [SPAWNED_FOR_ENV]: JSON.stringify({ invite: run.pair ?? run.invite, room: run.room }),
   };
   delete env[envName("ORCHESTRA")]; // the raised agent's bridge gets no raising consent
   const out = openSync(files.events, "a", 0o600),
