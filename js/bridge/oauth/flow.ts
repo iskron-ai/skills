@@ -19,7 +19,7 @@ import {
 import { bindCallback, type Callback } from "./callback.ts";
 import { deviceSide } from "./device.ts";
 import { type DeviceCode } from "./devicecode.ts";
-import { callerCode, joinedPending } from "./devicehandout.ts";
+import { callerCode, callerCodeDead, joinedPending } from "./devicehandout.ts";
 import {
   CALLBACK_PORT_RUNGS,
   callbackPort,
@@ -382,7 +382,10 @@ function runFlow(
         writeAuthLock({ ...current, device: code ?? undefined, device_unset: unset });
       }
     },
-    () => callerCode(login.state),
+    {
+      latest: () => callerCode(login.state),
+      dead: (code) => callerCodeDead(login.state, code),
+    },
   );
   let flow: Promise<void> | null = null;
   flow = (async () => {

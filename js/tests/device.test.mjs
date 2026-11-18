@@ -106,6 +106,40 @@ test("a caller after the code's end gets one new code, and the poll goes on with
   );
 });
 
+test("a refused code a caller issued is dead in its copy too: the next caller gets a new one", async () => {
+  await withFake(
+    { device: { interval: 1, client: "iskron-bridge" } },
+    async ({ fake, dir, bridge }) => {
+      const dev = fake.state.device;
+      const refusedNow = async () => {
+        const seen = dev.polls.length;
+        await fake.control({ device_expire: true });
+        await waitFor(
+          () => dev.polls.slice(seen).some((p) => p.answer === "expired_token"),
+          "the server to refuse the code",
+        );
+      };
+      offered(await bridge.call("initialize", 1, INIT));
+      await refusedNow();
+      const second = linksIn((await bridge.call("initialize", 2, INIT)).error?.message);
+      await waitFor(
+        () => dev.polls.some((p) => p.user_code === second.userCode),
+        "the poll to take the caller's code",
+      );
+      await refusedNow();
+      const third = linksIn((await bridge.call("initialize", 3, INIT)).error?.message);
+      assert.notEqual(third.userCode, second.userCode, "the refused code is not handed out again");
+      assert.equal(dev.issued.length, 3, "one new code for the caller after the refusal");
+      await waitFor(
+        () => dev.polls.some((p) => p.user_code === third.userCode),
+        "the poll to go on with it",
+      );
+      await fake.control({ device_approve: third.userCode });
+      await grantLanded(dir);
+    },
+  );
+});
+
 test("slow_down widens the pace for good, and no poll comes early", async () => {
   const step = 600;
   await withFake(

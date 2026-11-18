@@ -4,15 +4,15 @@ import { debug, log } from "../streams.ts";
 import { type Meta } from "../types.ts";
 import { codeThrough, DeviceUnset } from "./deviceclient.ts";
 import { DEVICE_GRANT, type DeviceCode, deviceOffered } from "./devicecode.ts";
+import { type CallerCodes } from "./devicehandout.ts";
 import { resourceOf } from "./discovery.ts";
 import { pauseUntil } from "./pacing.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
 // RFC 8628 §3.5: slow_down widens the interval by five seconds for good.
 const SLOW_DOWN_MS = Number(process.env[envName("BRIDGE_DEVICE_SLOW_DOWN_MS")]) || 5_000;
-// A first code the server would not issue is asked for again after this long: with
-// no code standing a caller has nothing dead to renew (devicehandout.ts). Only
-// the device_authorization endpoint is asked; a code once issued is never renewed here.
+// A first code the server would not issue is asked for again after this long: with no
+// code standing a caller has nothing dead to renew. An issued code is never renewed here.
 const REISSUE_PAUSE_MS = Number(process.env[envName("BRIDGE_DEVICE_REISSUE_MS")]) || 30_000;
 
 /** The device side of one published login. */
@@ -36,17 +36,16 @@ const never = new Promise<never>(() => {});
  * stopped. `onCode` hears every code issued (null when none stands, with the
  * word why when the server has no client for it — then the side stops asking),
  * so the login's record — what every bridge of the machine hands out — stays current.
- * `called` reads the code a caller issued: one that found the record's code
+ * `caller` reads the code a caller issued: one that found the record's code
  * dead asks a fresh one (devicehandout.ts), and that one is polled
- * from then on, the old one never again. A dead code is renewed only so: the
- * poll itself never asks for a new one.
+ * from then on, the old one never again; the poll itself never asks for one.
  */
 export function deviceSide(
   meta: Meta,
   redirectUri: string,
   resume: DeviceCode | undefined,
   onCode: (code: DeviceCode | null, unset?: string) => void,
-  called: () => DeviceCode | undefined,
+  caller: CallerCodes,
 ): DeviceSide {
   const halt = new AbortController();
   let tellFirst: (c: DeviceCode | string | null) => void = () => {};
@@ -73,8 +72,15 @@ export function deviceSide(
   };
   // A newer code a caller issued, if there is one.
   const newer = (code: DeviceCode): DeviceCode | null => {
-    const r = called();
+    const r = caller.latest();
     return r && r.device_code !== code.device_code && r.expires_at > code.expires_at ? r : null;
+  };
+  // A refused code is dead wherever it lies, so the next caller issues a fresh one.
+  const dies = (code: DeviceCode): DeviceCode => {
+    const dead = { ...code, expires_at: Date.now() };
+    onCode(dead);
+    caller.dead(dead);
+    return dead;
   };
 
   const run = async (): Promise<void> => {
@@ -125,10 +131,7 @@ export function deviceSide(
             code = { ...code, interval_ms: code.interval_ms + SLOW_DOWN_MS };
             onCode(code);
           } else if (word && word !== "authorization_pending") {
-            // expired_token, or a code the server no longer knows: dead in the record
-            // too, so the next caller issues a fresh one (devicehandout.ts)
-            code = { ...code, expires_at: Date.now() };
-            onCode(code);
+            code = dies(code); // expired_token, or a code the server no longer knows
           } else if (!word) debug(`device poll: ${errorMessage(e)} — asking again`);
         }
       }
