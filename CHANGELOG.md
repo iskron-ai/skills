@@ -1,5 +1,17 @@
 # Changelog
 
+## [8.14.1](https://github.com/iskron-ai/skills/compare/v8.14.0...v8.14.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* a refused dsh send leaves the word to the platform; a refused stop order ends by the exit stop ([#855](https://github.com/iskron-ai/skills/issues/855)) ([5371bf2](https://github.com/iskron-ai/skills/commit/5371bf2ec24837abe39848b65cb3b7ba208e101b))
+* **bridge:** a bare seat name is a seat address ([#854](https://github.com/iskron-ai/skills/issues/854)) ([dd8307b](https://github.com/iskron-ai/skills/commit/dd8307be18567952d89523b720cd82f99ba5caaa))
+* **bridge:** a sign-in code is renewed only by a call, not by its own poll ([#849](https://github.com/iskron-ai/skills/issues/849)) ([0db90e1](https://github.com/iskron-ai/skills/commit/0db90e157784786a4bca87e8e208fd894b82e0e9))
+* **bridge:** the orchestrator ends the OpenCode agents it raised ([#850](https://github.com/iskron-ai/skills/issues/850)) ([51681bd](https://github.com/iskron-ai/skills/commit/51681bd5f3abdaa641bfcf2eff9f2410ae3a5d9d))
+* **dsh:** a frame during a turn steers that turn; the stale word lands in the first step on resume ([#848](https://github.com/iskron-ai/skills/issues/848)) ([e476c7e](https://github.com/iskron-ai/skills/commit/e476c7ebf410e01f955cbd5f158c60880eba3c0d))
+* **skills:** callers name a handle; delegation names a bare seat ([#856](https://github.com/iskron-ai/skills/issues/856)) ([779ca75](https://github.com/iskron-ai/skills/commit/779ca757038ce2142d56929e635b4921a5701394))
+
 ## [8.14.0](https://github.com/iskron-ai/skills/compare/v8.13.1...v8.14.0) (2026-11-18)
 
 
