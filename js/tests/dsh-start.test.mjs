@@ -81,9 +81,12 @@ test("an own cover puts the start word with the graph and role into the system p
   assert.match(text, /#931/);
   assert.ok(text.includes(DSH.ru.startListen()));
   assert.ok(!text.includes(DSH.ru.startResumed()));
-  // Headless dsh shows no skills catalog and owes the case its line's outcome (#10921):
-  // the word says to load the iskron skill by name and to close the line, not to linger in the case.
-  assert.match(text, /загрузи скилл iskron тулом skill/);
+  // The word owes the case its line's outcome (#10921): load the iskron skill, close the line,
+  // not linger in the case. The catalog with descriptions is in the system prompt (the
+  // delivery's profile patch, LAB probe #8419): the word does not say it is missing.
+  assert.match(text, /Загрузи скилл iskron тулом skill/);
+  assert.doesNotMatch(text, /не показан/);
+  assert.doesNotMatch(text, /первым/, "a fresh session has no stale word to answer first");
   assert.match(text, /закрой строку исходом/);
   // A later agent of the process is a subagent: no second word.
   const sub = d.agent();
@@ -116,7 +119,11 @@ test("a resumed session hears why it stands again", (t) => {
   assert.ok(text.includes(DSH.ru.startResumed()));
   assert.ok(!text.includes(DSH.ru.startListen()));
   // The same two duties reach a resumed session (#10921): load the skill, close the line.
-  assert.match(text, /загрузи скилл iskron тулом skill/);
+  assert.match(text, /Загрузи скилл iskron тулом skill/);
+  assert.doesNotMatch(text, /не показан/);
+  // LAB probe #8419: the model went into the Start and never reached the stale word — the
+  // word to the seat after the exit is answered first, the Start after.
+  assert.match(text, /придёт следующим сообщением — ответь на него первым, «Старт» — после/);
   assert.match(text, /закрой строку исходом/);
 });
 
