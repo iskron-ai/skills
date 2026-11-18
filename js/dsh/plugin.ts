@@ -3,7 +3,8 @@
 // its own: the machine bridge holds the standing, and the ear turns frames addressed to
 // the seat into next-turn messages of the live session (hearing.ts); the session's first
 // agent gets the start word in its system prompt (start.ts, #10921); a compacted session
-// gets its role back (compaction.ts); a disposed session hears nothing more.
+// gets its role back (compaction.ts); a shell call that pushed or merged gets its lines as a
+// turn (rites.ts, #11071); a disposed session hears nothing more.
 /* eslint-disable @typescript-eslint/no-explicit-any -- dsh SDK events without a schema */
 import { DSH } from "../delivery/index.ts";
 import { markFrame } from "../shared/frame-text.ts";
@@ -11,10 +12,11 @@ import { words } from "../shared/lang.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
 import { roleWord } from "./compaction.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
+import { riteLines } from "./rites.ts";
 import { putStartWord } from "./start.ts";
 
 export interface DshCtx {
-  on(event: string, fn: (...args: any[]) => void): unknown;
+  on(event: string, fn: (...args: any[]) => unknown): unknown;
   logger?: { info?: (...args: unknown[]) => void };
 }
 
@@ -62,7 +64,7 @@ export function apply(ctx: DshCtx): void {
   let agent: DshAgent | null = null;
   let hearing: Hearing | null = null;
 
-  const on = (event: string, fn: (...args: any[]) => void): void => {
+  const on = (event: string, fn: (...args: any[]) => unknown): void => {
     try {
       ctx.on(event, fn);
     } catch (e) {
@@ -88,6 +90,17 @@ export function apply(ctx: DshCtx): void {
     hearing = null;
     agent = null;
     started = false;
+  });
+  // A waterfall (exec, result, next): the decision passes unchanged, the lines go as a turn.
+  on("tools/post-execute", (exec, result, next) => {
+    try {
+      const note = riteLines(exec, result, process.cwd());
+      const a = agentOf(exec?.agent) ?? agent;
+      if (note && a) sendAfterPublish(a, turnMessage(markFrame(note)));
+    } catch (e) {
+      log(W().notDelivered((e as Error).message));
+    }
+    return typeof next === "function" ? next() : undefined;
   });
   on("session/event", (_session, ev) => {
     // A failed compaction kept the context: no word about a compaction that did not happen.
