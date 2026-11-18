@@ -28,7 +28,7 @@ async function check(t, state, own, phase = "dormant") {
   if (process.env.ISKRON_NODE) return t.skip("the accelerated clock requires NODE_OPTIONS");
   const first = entry(31, "invite", { to_karta_node_id: KARTA });
   const o = await leadingDsh(t, {
-    env: { FAKE_DSH_HOLD_MS: phase === "live" ? "10000" : "1000" },
+    env: { FAKE_DSH_HOLD_MS: phase === "live" || phase === "continuation" ? "10000" : "1000" },
     caseRoom: { status: "open", entries: [first] },
   });
   const base = readFileSync(join(o.dir, "server"), "utf8").trim().replace(/\/mcp$/, "");
@@ -41,17 +41,30 @@ async function check(t, state, own, phase = "dormant") {
   assert.match((await o.step()).out, /invite 31: launched/);
   await o.queue([], [{ cursor: "s-31", spawned_for: { invite: 31, room: ROOM }, standing: SEAT }]);
   await o.step();
+  if (phase.startsWith("continuation")) {
+    await o.until(31, (r) => r.state === "dormant", 30_000);
+    if (phase === "continuation-exited")
+      await fetch(`${base}/control`, {
+        method: "POST",
+        body: JSON.stringify({ orders_stop_answer: { status: 201, body: { id: "ord-own" } } }),
+      });
+    await o.room("open", [first, entry(32, "said", { to_standing_id: SEAT })]);
+    assert.match((await o.step()).out, /dormant_woken_32.*launched/);
+  }
   const before = await o.until(
     31,
     (r) =>
       phase === "dormant"
         ? r.state === "dormant"
-        : phase === "live-exited"
+        : phase.endsWith("-exited")
           ? r.state === "stopping" && !!r.tree?.exit
-          : r.state === "raised",
+          : phase === "continuation"
+            ? r.state === "launched"
+            : r.state === "raised",
     30_000,
   );
-  if (phase !== "live") assert.ok(before.tree.exit, "the process exit was observed");
+  if (phase === "dormant" || phase.endsWith("-exited"))
+    assert.ok(before.tree.exit, "the process exit was observed");
   else assert.equal(before.tree.exit, undefined, "the live process has not exited");
 
   // The fake has no seat to accept our exit stop; seed the known own id on the persisted run,
@@ -84,7 +97,7 @@ async function check(t, state, own, phase = "dormant") {
     });
     assert.ok(ack.ok, `foreign stop ack: ${ack.status}`);
   }
-  await o.room("open", [first, entry(32, "said", { to_standing_id: SEAT })]);
+  await o.room("open", [first, entry(33, "said", { to_standing_id: SEAT })]);
   const calls = o.dshCalls().length;
   await o.step();
   if (phase !== "dormant" && state === "issued") {
@@ -126,6 +139,13 @@ for (const state of ["issued", "stopped"])
     test(`foreign ${state} × live × exit observed × own order ${own}`, (t) =>
       check(t, state, own, "live-exited"),
     );
+
+for (const state of ["issued", "stopped"])
+  for (const own of [true, false])
+    for (const observed of [false, true])
+      test(`foreign ${state} × continuation × exit ${observed ? "observed" : "unobserved"} × own order ${own}`, (t) =>
+        check(t, state, own, observed ? "continuation-exited" : "continuation"),
+      );
 
 for (const state of ["issued", "stopped"])
   for (const own of [true, false])
