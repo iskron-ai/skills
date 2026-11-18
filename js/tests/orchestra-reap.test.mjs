@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
+import { execApi } from "../bridge/exec-prepare.ts";
 import { reapOwn } from "../bridge/orchestra-reap.ts";
 import { LIVE, readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
@@ -60,12 +61,23 @@ async function noSeatExec(t) {
   writeRuns(f.auth, f.runs);
   return f;
 }
-/** The shared server as `opencode api` answers it; `archives` — whether the archive holds. */
+/** The shared server as `opencode api` answered it on OpenCode 2.2.7 (18.11, isolated serve,
+ * API-only session): interrupt — bare `{"interrupted":false}`; PATCH archived — 204, no output,
+ * exit 0 (execApi: undefined); read-back — wrapped in `data`, `time.archived` once archived.
+ * `archives` — whether the archive holds. */
 const server = (archives, calls) => async (srv, method, path, body) => {
   calls.push([method, path, body]);
-  if (path.endsWith("/interrupt?resume=false")) return { data: { interrupted: true } };
-  if (method === "patch") return {};
-  return { data: { id: "ses_live", time: archives ? { archived: 1 } : {} } };
+  if (path.endsWith("/interrupt?resume=false")) return { interrupted: false };
+  if (method === "patch") return undefined;
+  const time = { created: 1795023652877, updated: 1795023657762 };
+  return {
+    data: {
+      id: "ses_live",
+      cost: 0,
+      time: archives ? { ...time, archived: 1795023657762 } : time,
+      location: { directory: "/tmp/proj" },
+    },
+  };
 };
 const tactOf = async (f, api) => {
   const runs = readRuns(f.auth);
@@ -108,6 +120,20 @@ test("reap: a no-seat exec launch whose session halted ends and frees its tree",
   got = await tactOf(f, server(true, []));
   assert.equal(got.r.state, "ended", JSON.stringify(got.r));
   assert.equal(got.r.tree.state, "removed");
+});
+
+// OpenCode 2.2.7's `opencode api` prints nothing for a 204 and exits 0 — no content, not a
+// refusal; any output is still read as JSON.
+test("reap: execApi reads an empty answer of opencode api as no content", async (t) => {
+  const bin = mkdtempSync(join(tmpdir(), "reap-bin-"));
+  const path = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = path;
+    rmSync(bin, { recursive: true, force: true });
+  });
+  writeFileSync(join(bin, "opencode"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  process.env.PATH = `${bin}:${path}`;
+  assert.equal(await execApi("http://127.0.0.1:1", "patch", "/api/session/ses_x", {}), undefined);
 });
 
 const row = {
