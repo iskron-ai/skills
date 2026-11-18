@@ -181,6 +181,10 @@ function judge(entries: CaseEntry[], from: number, r: Run): Verdict {
   for (const e of entries) {
     // A number at or behind the cursor replaces its predecessor — it never wakes twice.
     if (e.n <= from) continue;
+    if (e.aborted) {
+      cursor = Math.max(cursor, e.n);
+      continue;
+    }
     if (e.kind === "closed") {
       end ??= { code: "dormant_case_closed", n: e.n };
       continue;

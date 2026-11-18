@@ -173,6 +173,21 @@ test("a pending word after a waking word cannot move the accepted cursor", async
   assert.equal(r.dormant.cursor, 10);
 });
 
+test("a pending word later aborted is consumed without waking", async (t) => {
+  const pending = entry(10, "said", { to_standing_id: SEAT, body_pending: true });
+  const api = await caseApi(t, { entries: [pending] });
+  const r = sleepingRow();
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  const stub = launchStub();
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(r.dormant.cursor, 9);
+  api.state.entries = [{ ...pending, body_pending: false, aborted: true }];
+  await stepDormant(dir, api.base, "key", runs, launchers(), undefined, AWAKE_NOW, stub.run);
+  assert.equal(stub.calls.length, 0);
+  assert.equal(r.dormant.cursor, 10);
+});
+
 test("a clean exit without an open share does not sleep", async (t) => {
   const api = await caseApi(t, {
     entries: [
