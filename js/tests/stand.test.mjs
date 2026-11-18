@@ -3161,7 +3161,7 @@ test("two graphs: before any hello the busy line of a place beside names the pla
   assert.ok(!text.split("\n")[0].includes("proba-b--48--"), `the record key stands in:\n${text}`);
   assert.equal(
     text.split("\n")[0],
-    "занятость места «proba-b» (адреса @handle:name ещё нет — hello не пришёл): до hello",
+    "занятость места «proba-b» (адреса места ещё нет — hello не пришёл): до hello",
     text,
   );
   // The socket reopens, the hello lists the places: the address is the platform's now.
