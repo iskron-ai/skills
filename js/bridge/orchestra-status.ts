@@ -30,6 +30,13 @@ export function orchestraStatus(authDir: string, discovered: string[]): Orchestr
     }
     if (!r.tree || r.tree.state === "removed") continue;
     if (r.tree.state === "ready" && r.state !== "ambiguity" && r.state !== "ended") continue;
+    // A tree kept for what it holds is said with its path and whether its client is gone (#11099).
+    if (r.tree.state === "retained") {
+      const gone = r.closed === "client_exited" ? ", client_exited" : "";
+      const why = r.tree.why ?? "tree_retained";
+      lines.push(w.leadRow(r.realm, r.room, r.invite, `${why}: ${r.tree.path}${gone}`));
+      continue;
+    }
     lines.push(
       w.leadRow(
         r.realm,

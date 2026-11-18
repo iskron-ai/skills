@@ -1648,6 +1648,24 @@ test("reap: an expired stop's own terminal is closed by the daemon through Orca,
   assert.equal(run.reaped, "client_exited");
 });
 
+// #11099: a tree kept for what it holds is said by status with its path; its client is gone.
+test("reap: status names a retained tree with its path once its client exited", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-d" } }, "ord-d", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  const path = o.runs()[`${REALM}|${ROOM}|9`].worktree;
+  writeFileSync(join(path, "unsaved.txt"), "work\n");
+  assert.equal((await ack(o, "ord-d", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  const run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.state, "ended", r.out);
+  assert.equal(run.tree.state, "retained");
+  assert.equal(existsSync(join(path, "unsaved.txt")), true, "the unsaved work stays");
+  const status = await cli(o.dir, ["status"]);
+  assert.match(status.out, new RegExp(`invite 9: tree_dirty_retained: ${path}, client_exited`));
+});
+
 // #11099 (б): the tab now holds another client — the proof of ours fails, nothing is touched.
 test("reap: a terminal whose client is not ours is left untouched, the refusal said", async (t) => {
   const other = join(tmpdir(), `iskron-other-${process.pid}-${Date.now()}`);
