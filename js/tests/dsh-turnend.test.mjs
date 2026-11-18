@@ -80,13 +80,17 @@ async function sandbox(t, cover) {
 }
 
 /** The plugin over a stand-in dsh, its root agent hearing the seat; sent — what reached it. */
-async function hearingSession(t, cover) {
+async function hearingSession(t, cover, extra = {}) {
   const box = await sandbox(t, cover);
   const handlers = new Map();
   const logs = [];
   const sent = [];
   const agent = { session: SESSION, followup: (m) => void sent.push(m) };
-  PLUGIN({ on: (n, fn) => handlers.set(n, fn), logger: { info: (l) => logs.push(String(l)) } });
+  PLUGIN({
+    on: (n, fn) => handlers.set(n, fn),
+    logger: { info: (l) => logs.push(String(l)) },
+    ...extra,
+  });
   t.after(() => handlers.get("session/disposed")?.(SESSION));
   writeFileSync(
     holdFilePathOf(box.authDir, KEY),
@@ -196,4 +200,47 @@ test("a cover whose rituals leave the turn out keeps it silent", async (t) => {
   const laid = await s.frame("turn-6");
   await s.turn({ entered: [laid], steps: [[text(LONG)]] });
   assert.equal(s.sent.filter(isWake).length, 0);
+});
+
+// A headless run has no human at the console by construction; the word after its turn is the
+// orchestrator's continuation (#10995). Observed live on LAB (dsh 0.2.2-rc.1): a wake word after
+// turn/end completed starts a turn the run disposes, and headless exits 1 (#11071). Its signs:
+// the headless app's service `headlessStartup` through ctx.get(name, strict) — the form from the
+// types of the installed @deepseek-ai/dsh-headless 0.2.2-rc.1 (startup.d.ts) and cordis
+// (reflect.d.ts), NOT observed from a plugin; and the launcher profile in argv (`dsh headless …`,
+// the orchestrator's own argv, bridge/orchestra-dsh.ts dshArgv; `--profile headless`).
+const HEADLESS_SERVICE = { task: "brief", sessionId: undefined, json: true };
+test("headless by its startup service: no send at all on turn/end", async (t) => {
+  const s = await hearingSession(t, null, {
+    get: (name) => (name === "headlessStartup" ? HEADLESS_SERVICE : undefined),
+  });
+  const laid = await s.frame("turn-7");
+  const before = s.sent.length;
+  await s.turn({ entered: [laid], steps: [[text(LONG)]] });
+  assert.equal(s.sent.length, before);
+});
+
+for (const argv of [
+  ["headless", "--patch", "p.yml", "--json", "brief"],
+  ["--patch", "p.yml", "--profile", "headless", "brief"],
+])
+  test(`headless by the launcher's profile in argv (${argv.join(" ")}): no send on turn/end`, async (t) => {
+    const was = process.argv;
+    process.argv = [was[0], "/opt/dsh/lib/bin.js", ...argv];
+    t.after(() => (process.argv = was));
+    const s = await hearingSession(t);
+    const laid = await s.frame("turn-8");
+    const before = s.sent.length;
+    await s.turn({ entered: [laid], steps: [[text(LONG)]] });
+    assert.equal(s.sent.length, before);
+  });
+
+test("another profile (web) keeps the wake word", async (t) => {
+  const was = process.argv;
+  process.argv = [was[0], "/opt/dsh/lib/bin.js", "web", "--port", "1"];
+  t.after(() => (process.argv = was));
+  const s = await hearingSession(t);
+  const laid = await s.frame("turn-9");
+  await s.turn({ entered: [laid], steps: [[text(LONG)]] });
+  assert.equal(s.sent.filter(isWake).length, 1);
 });

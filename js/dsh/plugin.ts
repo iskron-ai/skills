@@ -14,6 +14,7 @@ import { ritualCover } from "../shared/ritualcover.ts";
 import { authDirFromEnv } from "../shared/standings.ts";
 import { TURN_RITE } from "../shared/turnend.ts";
 import { roleWord } from "./compaction.ts";
+import { isHeadless } from "./headless.ts";
 import { type DshAgent, type Hearing, startHearing, turnMessage } from "./hearing.ts";
 import { riteLines } from "./rites.ts";
 import { createRoot } from "./root.ts";
@@ -68,9 +69,10 @@ export function apply(ctx: DshCtx): void {
   const authDir = authDirFromEnv();
   let agent: DshAgent | null = null;
   let hearing: Hearing | null = null;
-  // No cover — on, a frame proves the seat; else by the cover's rituals field.
+  // Never in a headless run (headless.ts); no cover — on, a frame proves the seat; else by the
+  // cover's rituals field.
   const turns = createTurnEnds({
-    on: () => ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true,
+    on: () => !isHeadless(ctx) && (ritualCover(process.cwd())?.on.has(TURN_RITE) ?? true),
     wake: (text) => void (agent && sendAfterPublish(agent, turnMessage(text))),
   });
   /** The root's agent as the hearing sees it: each frame it lays is known to the turn's end. */
