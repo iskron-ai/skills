@@ -21,6 +21,7 @@ const clientGone = (r: Run): boolean =>
   r.stop_outcome === "stopped" ||
   r.why === "seat_gone_after_exit" ||
   r.why === "dormant_seat_left" ||
+  (r.why === "dormant_share_claimed" && !!r.dsh?.exit) ||
   (!!r.dsh?.exit && !r.standing_id) ||
   (!!r.dormant && !!r.dsh?.exit);
 /** Ended — or a dsh launch refused by its own exit before any session (#10777). */

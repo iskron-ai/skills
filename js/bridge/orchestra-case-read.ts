@@ -53,6 +53,9 @@ export interface CaseEntry {
   aborted: boolean;
   /** The left's own reason, from payload (revoked, expired, unheard). */
   reason: string | null;
+  /** A platform invite's cause and the seat whose end opened it, from payload (ownerless). */
+  cause: string | null;
+  gone_standing: string | null;
 }
 
 const text = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
@@ -70,10 +73,9 @@ function entryOf(v: unknown): CaseEntry {
     e.line && typeof e.line === "object" && !Array.isArray(e.line)
       ? (e.line as Record<string, unknown>)
       : {};
-  const reason =
-    payload && typeof payload === "object" && !Array.isArray(payload)
-      ? text((payload as { reason?: unknown }).reason)
-      : null;
+  const p = (
+    payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {}
+  ) as Record<string, unknown>;
   return {
     n,
     kind,
@@ -86,7 +88,9 @@ function entryOf(v: unknown): CaseEntry {
     verdict: text(line.verdict),
     body_pending: e.body_pending === true,
     aborted: e.aborted === true,
-    reason,
+    reason: text(p.reason),
+    cause: text(p.cause),
+    gone_standing: text(p.gone_standing),
   };
 }
 

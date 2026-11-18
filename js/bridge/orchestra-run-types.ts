@@ -55,6 +55,9 @@ export interface Run {
   author?: string;
   room: string;
   invite: number;
+  /** The invite a continuation registers on (#10995): the ownerless invite the call's ended
+   * seat left; absent — the call's own invite. The row keeps its key by `invite`. */
+  pair?: number;
   karta: number;
   launcher: string;
   harness: string;

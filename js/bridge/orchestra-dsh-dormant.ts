@@ -8,6 +8,13 @@ import { ORCHESTRA } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-case-read.ts";
 import { hasOpenShare } from "./orchestra-case-share.ts";
+import {
+  callSeats,
+  claimedOnPage,
+  ownInvite,
+  pairFor,
+  SHARE_CLAIMED,
+} from "./orchestra-dsh-reinvite.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
@@ -46,9 +53,7 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
   // A foreign stop, once read, is sticky (#10995 review 5): no sleep arms under it — the
   // row's end stands whatever the case says.
   if (r.foreign_stop) return false;
-  const seats = [
-    ...new Set([...(r.dormant?.seats ?? []), r.standing_id].filter((s): s is string => !!s)),
-  ];
+  const seats = callSeats(r);
   const sleepOnError = (e: unknown): boolean => {
     // A transient refusal names neither open nor closed: only a definitive closed|abandoned
     // may end the run. The row sleeps on the invite floor with the error named, the tree
@@ -98,6 +103,13 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
     )
   ) {
     r.why = "dormant_seat_left";
+    return false;
+  }
+  // The call's ownerless invite already holds another live seat — the platform's 409
+  // spawned_for_claimed to a continuation on it: the share went on without this call.
+  const own = ownInvite(read.entries, seats);
+  if (own && "claimed" in own) {
+    r.why = SHARE_CLAIMED;
     return false;
   }
   // The cursor lands on the seat's own last word that is not a left: a said that came after
@@ -255,6 +267,7 @@ export async function stepDormant(
       continue;
     }
     let entries: CaseEntry[];
+    let claimed: boolean;
     try {
       if ((await readCaseStatus(base, token, r.room)) !== "open") {
         r.state = "ended";
@@ -297,9 +310,18 @@ export async function stepDormant(
         r.dormant = { ...sleep, ...(karta ? { karta } : {}), asks };
         delete r.why;
       }
+      claimed = await claimedOnPage(base, token, r, entries);
     } catch (e) {
       r.why = readErrorWhy(e);
       out.push(w().leadRow(r.realm, r.room, r.invite, `${r.why} (${(e as Error).message})`));
+      continue;
+    }
+    // Another seat came in on the call's ownerless invite: the share is carried, the sleep ends
+    // on the page alone, waking word or not (PR review, #10995).
+    if (claimed) {
+      r.state = "ended";
+      r.why = SHARE_CLAIMED;
+      out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
       continue;
     }
     const verdict = judge(entries, sleep.cursor ?? 0, r);
@@ -331,6 +353,14 @@ export async function stepDormant(
           continue;
         }
       }
+      let claimed: string | null;
+      try {
+        claimed = await pairFor(base, token, r);
+      } catch (e) {
+        r.why = readErrorWhy(e);
+        out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
+        continue;
+      }
       const current = readRuns(authDir)[key];
       if (
         gone?.gone ||
@@ -341,6 +371,12 @@ export async function stepDormant(
         runIdentity(current) !== runIdentity(r)
       ) {
         out.push(w().leadRow(r.realm, r.room, r.invite, "dormant_wake_superseded"));
+        continue;
+      }
+      if (claimed) {
+        r.state = "ended";
+        r.why = claimed;
+        out.push(w().leadRow(r.realm, r.room, r.invite, claimed));
         continue;
       }
       const roleWhy = await roleRefusal(base, token, { ...r });

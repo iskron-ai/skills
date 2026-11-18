@@ -11,7 +11,8 @@ import { createHash } from "node:crypto";
 import { ORCHESTRA, type OrchestraWords } from "../delivery/index.ts";
 import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
-import { type Run, runKey } from "./orchestra-runs.ts";
+import { signalRun } from "./orchestra-dsh-reinvite.ts";
+import type { Run } from "./orchestra-runs.ts";
 import { RAISE_WINDOW_MS } from "./orchestra-window.ts";
 export { closeEnded, expireLaunches, settleStops } from "./orchestra-run-ends.ts";
 export { stopLapsed } from "./orchestra-window.ts";
@@ -33,9 +34,7 @@ function runOf(realm: string, s: Signal, runs: Record<string, Run>): Run | null 
   const invite = Number(sf.invite);
   const room = idOf(sf.room) ?? idOf(s.room);
   if (!Number.isSafeInteger(invite) || !room) return null;
-  return (
-    runs[runKey(realm, room.toLowerCase(), invite)] ?? runs[runKey(realm, room, invite)] ?? null
-  );
+  return signalRun(realm, room, invite, runs);
 }
 
 /** Fold one realm's tape into the registry: seats found, compositions at their greatest n. */
