@@ -57,8 +57,10 @@ export async function reapOwn(
       ? await close(r.terminal!, r.runtime!, current, expected)
       : "client_unbound";
     said.push(w().leadRow(r.realm, r.room, r.invite, `${cause}, ${settle(r, outcome, now)}`));
-    // A launch that never sat has no wakes to stop: its observed exit ends it (#11099).
-    if (outcome === null && cause === "no_seat") {
+    // Nothing else waits on this client: a launch that never sat has no wakes to stop, so its
+    // observed exit ends it; an ended row's end was already confirmed. Either way the close is
+    // the exit the tree cleanup asks for (#11099) — never for a row still stopping.
+    if (outcome === null && (cause === "no_seat" || cause === "ended")) {
       r.state = "ended";
       r.reaped = REAPED_OVER;
     }

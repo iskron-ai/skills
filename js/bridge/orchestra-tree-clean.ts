@@ -18,7 +18,7 @@ import {
  * terminal exited (#9256). A run that slept (#10995) had settled its seat at the exit that
  * armed the sleep — the sleep's own end needs no fresh proof; the seat's own farewell
  * (dormant_seat_left, #4929) is as final; so is the daemon's observed close of a launch that
- * never sat (#11099). */
+ * never sat or of a row already ended (#11099). */
 const clientGone = (r: Run): boolean =>
   r.stop_outcome === "stopped" ||
   r.reaped === REAPED_OVER ||

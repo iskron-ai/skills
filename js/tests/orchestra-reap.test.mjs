@@ -2,14 +2,47 @@
 // observed exit is recorded, but an exec run whose halt/drop is not confirmed stays observed —
 // its order expired, its session on the shared server may still be woken. Orca is injected.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { reapOwn } from "../bridge/orchestra-reap.ts";
 import { LIVE, readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
+import { prepareTree } from "../bridge/orchestra-tree.ts";
 import { cleanupEndedTrees } from "../bridge/orchestra-tree-clean.ts";
+import { fixture } from "./tree-fixture.mjs";
+
+/** An ended row of an older bridge — its end confirmed, its terminal never seen to exit. */
+async function endedTree(t, dirty) {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  Object.assign(f.row, {
+    state: "ended",
+    harness: "opencode",
+    standing_id: "seat",
+    terminal: "term_own",
+    runtime: "rt",
+  });
+  f.row.tree.incarnation = "inc";
+  if (dirty) writeFileSync(join(f.row.worktree, "unsaved.txt"), "work\n");
+  writeRuns(f.auth, f.runs);
+  return f;
+}
+
+for (const dirty of [false, true])
+  test(`reap: an ended row's terminal closed by the daemon frees its ${dirty ? "dirty" : "clean"} tree by the cleanup`, async (t) => {
+    const f = await endedTree(t, dirty);
+    const runs = readRuns(f.auth);
+    const said = await reapOwn(f.auth, runs, undefined, async () => null);
+    assert.match(said.join(), /ended, client_exited/);
+    writeRuns(f.auth, runs);
+    await cleanupEndedTrees(f.auth, runs);
+    const r = readRuns(f.auth).own;
+    assert.equal(r.tree.state, dirty ? "retained" : "removed", JSON.stringify(r));
+    if (dirty) assert.equal(r.tree.why, "tree_dirty_retained");
+    assert.equal(existsSync(join(f.row.worktree, "unsaved.txt")), dirty);
+  });
 
 const row = {
   realm: "@x/one",
