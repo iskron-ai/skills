@@ -23,6 +23,8 @@ export interface Run {
     karta?: string;
     /** The seat's own asks — entry number → the ask author's standing id; an answer to one wakes. */
     asks?: Record<string, string>;
+    /** Entry share could not be read; retry once the journal is available. */
+    share_pending?: boolean;
   };
   tree?: RunTree;
   exec?: {

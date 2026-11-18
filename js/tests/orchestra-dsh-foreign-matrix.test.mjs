@@ -27,9 +27,13 @@ const entry = (id, kind, extra = {}) => ({
 async function check(t, state, own, phase = "dormant") {
   if (process.env.ISKRON_NODE) return t.skip("the accelerated clock requires NODE_OPTIONS");
   const first = entry(31, "invite", { to_karta_node_id: KARTA });
+  const share = entry(30, "progress", {
+    author_standing_id: SEAT,
+    line: { key: "probe-share", verdict: "partial" },
+  });
   const o = await leadingDsh(t, {
     env: { FAKE_DSH_HOLD_MS: phase === "live" || phase === "continuation" ? "10000" : "1000" },
-    caseRoom: { status: "open", entries: [first] },
+    caseRoom: { status: "open", entries: [share, first] },
   });
   const base = readFileSync(join(o.dir, "server"), "utf8")
     .trim()
@@ -50,7 +54,7 @@ async function check(t, state, own, phase = "dormant") {
         method: "POST",
         body: JSON.stringify({ orders_stop_answer: { status: 201, body: { id: "ord-own" } } }),
       });
-    await o.room("open", [first, entry(32, "said", { to_standing_id: SEAT })]);
+    await o.room("open", [share, first, entry(32, "said", { to_standing_id: SEAT })]);
     assert.match((await o.step()).out, /dormant_woken_32.*launched/);
   }
   const before = await o.until(
@@ -97,7 +101,7 @@ async function check(t, state, own, phase = "dormant") {
     });
     assert.ok(ack.ok, `foreign stop ack: ${ack.status}`);
   }
-  await o.room("open", [first, entry(33, "said", { to_standing_id: SEAT })]);
+  await o.room("open", [share, first, entry(33, "said", { to_standing_id: SEAT })]);
   const calls = o.dshCalls().length;
   await o.step();
   if (phase !== "dormant" && state === "issued") {

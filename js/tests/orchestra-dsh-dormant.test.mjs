@@ -139,6 +139,64 @@ const launchStub = () => {
 /** Inside the sleep's window: the rows lie down at 01:00, the window is three hours. */
 const AWAKE_NOW = Date.parse("2026-11-01T02:00:00Z");
 
+test("a clean exit without an open share does not sleep", async (t) => {
+  const api = await caseApi(t, {
+    entries: [
+      entry(1, "joined", { author_standing_id: SEAT }),
+      entry(2, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "ok" } }),
+    ],
+  });
+  const r = exitedRun();
+  assert.equal(await goDormant(api.base, "key", r), false);
+  assert.equal(r.state, "ended");
+});
+
+for (const [label, entries, sleeps] of [
+  [
+    "partial progress",
+    [entry(1, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "partial" } })],
+    true,
+  ],
+  [
+    "partial closed by ok",
+    [
+      entry(1, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "partial" } }),
+      entry(2, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "ok" } }),
+    ],
+    false,
+  ],
+  ["question to call", [entry(1, "ask", { to_standing_id: SEAT })], true],
+  ["question from call", [entry(1, "ask", { author_standing_id: SEAT })], true],
+])
+  test(`clean exit share: ${label}`, async (t) => {
+    const api = await caseApi(t, { entries });
+    const r = exitedRun();
+    assert.equal(await goDormant(api.base, "key", r), sleeps);
+    assert.equal(r.state, sleeps ? "dormant" : "ended");
+  });
+
+test("an unread entry share is retried at the first dormant tact", async (t) => {
+  const api = await caseApi(t, { refuse: "history", entries: [] });
+  const r = exitedRun();
+  assert.equal(await goDormant(api.base, "key", r), true);
+  assert.equal(r.dormant.share_pending, true);
+  api.state.refuse = 0;
+  const runs = { k: r };
+  const dir = await dormantDir(t, runs);
+  await stepDormant(
+    dir,
+    api.base,
+    "key",
+    runs,
+    launchers(),
+    undefined,
+    Date.now(),
+    launchStub().run,
+  );
+  assert.equal(r.state, "ended");
+  assert.equal(r.why, "dormant_no_open_share");
+});
+
 test("an inactive role ends the sleep without a continuation", async (t) => {
   const api = await caseApi(t, {
     active: false,
@@ -244,7 +302,7 @@ test("dormancy: the cursor keeps a said that came after the seat's last word, an
   const api = await caseApi(t, {
     entries: [
       entry(9, "invite", { to_karta_node_id: KARTA }),
-      entry(10, "line", { author_standing_id: SEAT }),
+      entry(10, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "partial" } }),
       entry(11, "said", { to_standing_id: SEAT }),
     ],
   });
@@ -266,14 +324,21 @@ test("dormancy: the cursor keeps a said that came after the seat's last word, an
 });
 
 test("dormancy: no word of the call's own seats — the invite's number is the cursor floor", async (t) => {
-  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+  const api = await caseApi(t, {
+    entries: [
+      entry(1, "ask", { to_standing_id: SEAT }),
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+    ],
+  });
   const r = exitedRun();
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.equal(r.dormant.cursor, 9);
 });
 
 test("dormancy: the seats collect the row's own id and every earlier one", async (t) => {
-  const api = await caseApi(t, { entries: [entry(9, "invite")] });
+  const api = await caseApi(t, {
+    entries: [entry(1, "ask", { to_standing_id: SEAT }), entry(9, "invite")],
+  });
   const r = exitedRun({ dormant: { since: "2026-11-01T00:00:00Z", cursor: 3, seats: [OTHER] } });
   assert.equal(await goDormant(api.base, "key", r), true);
   assert.deepEqual(r.dormant.seats, [OTHER, SEAT]);
@@ -584,6 +649,7 @@ test("dormancy: no sleep when the seat left the case before the process exited",
   // Our own exit stop's left is revoked, not leave — it never blocks the sleep.
   const revoked = await caseApi(t, {
     entries: [
+      entry(1, "ask", { to_standing_id: SEAT }),
       invite,
       entry(10, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } }),
     ],
@@ -594,6 +660,7 @@ test("dormancy: no sleep when the seat left the case before the process exited",
   // A leave superseded by a later joined of the call's seat does not block: the seat came back.
   const rejoined = await caseApi(t, {
     entries: [
+      entry(1, "ask", { to_standing_id: SEAT }),
       invite,
       entry(10, "left", { author_standing_id: SEAT, payload: { reason: "leave" } }),
       entry(11, "joined", { author_standing_id: SEAT }),
@@ -611,7 +678,7 @@ test("dormancy: the arming cursor is the seat's last word that is not a left", a
   const api = await caseApi(t, {
     entries: [
       entry(9, "invite", { to_karta_node_id: KARTA }),
-      entry(10, "progress", { author_standing_id: SEAT }),
+      entry(10, "progress", { author_standing_id: SEAT, line: { key: "k1", verdict: "partial" } }),
       entry(11, "said", { to_standing_id: SEAT }),
       entry(12, "left", { author_standing_id: SEAT, payload: { reason: "revoked" } }),
     ],
@@ -1069,7 +1136,12 @@ test("a failed continuation lands its rollback on the registry", async (t) => {
 });
 
 test("dormant from ends: an ordinary ended row sleeps, a stop ordered elsewhere stays an end", async (t) => {
-  const api = await caseApi(t, { entries: [entry(9, "invite", { to_karta_node_id: KARTA })] });
+  const api = await caseApi(t, {
+    entries: [
+      entry(1, "ask", { to_standing_id: SEAT }),
+      entry(9, "invite", { to_karta_node_id: KARTA }),
+    ],
+  });
   const ours = exitedRun();
   await dormantFromEnds(api.base, "key", { ours });
   assert.equal(ours.state, "dormant", "the tact's own ended row sleeps when the case is open");

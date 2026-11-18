@@ -7,6 +7,7 @@
 import { ORCHESTRA } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { type CaseEntry, readCaseHistory, readCaseStatus } from "./orchestra-case-read.ts";
+import { hasOpenShare } from "./orchestra-case-share.ts";
 import { launchDsh } from "./orchestra-dsh-run.ts";
 import type { Launchers } from "./orchestra-launcher-types.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
@@ -60,6 +61,7 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
       since: new Date().toISOString(),
       cursor: Math.max(r.invite, r.dormant?.cursor ?? 0),
       seats,
+      share_pending: true,
     };
     return true;
   };
@@ -113,6 +115,11 @@ export async function goDormant(base: string, token: string, r: Run): Promise<bo
     if (e.kind === "ask" && e.author_standing_id && seats.includes(e.author_standing_id))
       asks[e.n] = e.author_standing_id;
   const karta = read.entries.find((e) => e.n === r.invite)?.to_karta_node_id;
+  try {
+    if (!hasOpenShare(read.entries, seats, karta ?? r.dormant?.karta)) return false;
+  } catch (e) {
+    return sleepOnError(e);
+  }
   r.state = "dormant";
   r.dormant = {
     since: new Date().toISOString(),
@@ -234,7 +241,7 @@ export async function stepDormant(
       out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
       continue;
     }
-    const sleep = r.dormant;
+    let sleep = r.dormant;
     if (now - Date.parse(sleep.since) > DORMANT_WINDOW_MS) {
       r.state = "ended";
       r.why = "dormant_window";
@@ -248,6 +255,18 @@ export async function stepDormant(
         r.why = "dormant_case_closed";
         out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
+      }
+      if (sleep.share_pending) {
+        const history = await readCaseHistory(base, token, r.room);
+        const karta = history.entries.find((e) => e.n === r.invite)?.to_karta_node_id;
+        if (!hasOpenShare(history.entries, sleep.seats ?? [], karta ?? sleep.karta)) {
+          r.state = "ended";
+          r.why = "dormant_no_open_share";
+          out.push(w().leadRow(r.realm, r.room, r.invite, r.why));
+          continue;
+        }
+        sleep = { ...sleep, share_pending: false };
+        r.dormant = sleep;
       }
       // A sleep armed on a transient refusal carries no wake caches: one read from the invite
       // itself re-establishes them — the role's uuid from the invite entry, the seat's own

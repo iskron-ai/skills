@@ -34,6 +34,13 @@ const inviteEntry = (n) => ({
   author: "@tester:lead",
   payload: {},
 });
+const openShare = (n) => ({
+  id: n - 1,
+  kind: "progress",
+  author_standing_id: SEAT,
+  line: { key: "probe-share", verdict: "partial" },
+  payload: { verdict: "partial" },
+});
 /** The seat signal folds the run's standing id in before the process exits. */
 const seatSignal = (n) => ({
   cursor: `s-${n}`,
@@ -41,11 +48,34 @@ const seatSignal = (n) => ({
   standing: SEAT,
 });
 
+test("dsh: a clean exit with only completed work ends and removes the tree", async (t) => {
+  const n = 141;
+  const done = {
+    ...openShare(n),
+    line: { key: "probe-share", verdict: "ok" },
+    payload: { verdict: "ok" },
+  };
+  const o = await leadingDsh(t, {
+    env: { FAKE_DSH_HOLD_MS: "1000" },
+    caseRoom: {
+      status: "open",
+      entries: [{ id: n - 2, kind: "joined", author_standing_id: SEAT }, done, inviteEntry(n)],
+    },
+  });
+  await o.queue([invite(n)]);
+  assert.match((await o.step()).out, /launched/);
+  await o.queue([], [seatSignal(n)]);
+  await o.step();
+  const ended = await o.until(n, (r) => r.state === "ended" && r.tree?.state === "removed", 30_000);
+  assert.equal(existsSync(ended.worktree), false);
+  assert.equal(o.dshCalls().length, 1);
+});
+
 /** Raised, seated, exited cleanly, asleep: the registry row in dormancy. */
 async function asleep(t, n, extra = {}) {
   const o = await leadingDsh(t, {
     env: { FAKE_DSH_HOLD_MS: "6000", ...extra.env },
-    caseRoom: { status: "open", entries: [inviteEntry(n)] },
+    caseRoom: { status: "open", entries: [openShare(n), inviteEntry(n)] },
     ...extra.options,
   });
   await o.queue([invite(n)]);
@@ -60,6 +90,8 @@ async function asleep(t, n, extra = {}) {
   assert.equal(row.dormant.karta, KARTA, "the invited role's uuid comes from the invite entry");
   assert.equal(row.tree.state, "ready", "the tree sleeps with the run");
   assert.ok(existsSync(row.worktree));
+  const room = o.room;
+  o.room = (status, entries) => room(status, [openShare(n), ...entries]);
   return { o, row };
 }
 
@@ -180,7 +212,7 @@ test("dsh: a continuation process that survives its no-session window keeps the 
       FAKE_DSH_HOLD_MS: "5000",
       ISKRON_DSH_SESSION_MS: "1500",
     },
-    caseRoom: { status: "open", entries: [inviteEntry(121)] },
+    caseRoom: { status: "open", entries: [openShare(121), inviteEntry(121)] },
   });
   await o.queue([invite(121)]);
   assert.match((await o.step()).out, /invite 121: launched/);
@@ -188,7 +220,7 @@ test("dsh: a continuation process that survives its no-session window keeps the 
   await o.step();
   const slept = await o.until(121, (r) => r.state === "dormant", 30_000);
   const oldPid = slept.dsh.pid;
-  await o.room("open", [inviteEntry(121), said(122, SEAT)]);
+  await o.room("open", [openShare(121), inviteEntry(121), said(122, SEAT)]);
   await o.step();
   const live = o.run(121);
   assert.equal(live.state, "launched", "an unproven process is not the sleep's");

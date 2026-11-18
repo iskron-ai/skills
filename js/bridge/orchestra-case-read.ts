@@ -47,6 +47,8 @@ export interface CaseEntry {
   in_reply_to: number | null;
   author_standing_id: string | null;
   author: string | null;
+  key: string | null;
+  verdict: string | null;
   /** The left's own reason, from payload (revoked, expired, unheard). */
   reason: string | null;
 }
@@ -62,6 +64,10 @@ function entryOf(v: unknown): CaseEntry {
   const kind = text(e.kind);
   if (!n || !kind) throw new Error("invalid_entry");
   const payload = e.payload;
+  const line =
+    e.line && typeof e.line === "object" && !Array.isArray(e.line)
+      ? (e.line as Record<string, unknown>)
+      : {};
   const reason =
     payload && typeof payload === "object" && !Array.isArray(payload)
       ? text((payload as { reason?: unknown }).reason)
@@ -74,6 +80,8 @@ function entryOf(v: unknown): CaseEntry {
     in_reply_to: number(e.in_reply_to),
     author_standing_id: text(e.author_standing_id),
     author: text(e.author),
+    key: text(line.key),
+    verdict: text(line.verdict),
     reason,
   };
 }
