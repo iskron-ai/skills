@@ -86,11 +86,15 @@ function writeRecord(p: Place, ch: Channel, status?: string): void {
   });
 }
 
-/** A beside seat's address from the main seat's handle (one channel, same handle) — marked derived. */
+/**
+ * A beside seat's address from the main seat's handle (one channel, same handle) — marked
+ * derived. A bare main address (an account without a handle, #11011) gives a bare one.
+ */
 function deriveAddress(p: Place, primaryAddress: string | null | undefined): void {
-  const handle = primaryAddress?.match(/^(.*):/)?.[1];
-  if (!handle || !p.standing.name) return;
-  p.door.address = `${handle}:${p.standing.name}`;
+  if (!primaryAddress || !p.standing.name) return;
+  const handle = primaryAddress.match(/^(.*):/)?.[1];
+  if (!handle && primaryAddress.startsWith("@")) return;
+  p.door.address = handle ? `${handle}:${p.standing.name}` : p.standing.name;
   p.door.addressDerived = true;
 }
 
