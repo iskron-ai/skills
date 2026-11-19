@@ -3,7 +3,7 @@
 // case here is closed: a clean exit sleeps only while its case stays open (#10995) — with the
 // case over the ordinary end and cleanup take the run.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -33,10 +33,16 @@ test("dsh: a call is raised as the bridge's own dsh process in its own tree, the
   assert.deepEqual(call.argv.slice(0, 3), ["headless", "--patch", o.patch]);
   assert.equal(call.argv[3], "--patch");
   assert.ok(!call.argv[4].startsWith(run.worktree), "the model patch lies outside the tree");
-  assert.equal(call.argv[5], "--json");
+  // The tree's shared git-dir, physical, is writable for the run's commits (#10777).
+  assert.deepEqual(call.argv.slice(5, 7), [
+    "--add-dir",
+    realpathSync.native(join(o.checkout, ".git")),
+  ]);
+  assert.equal(call.argv[6], realpathSync.native(run.tree.commonDir));
+  assert.equal(call.argv[7], "--json");
   assert.match(call.model, /provider: "local-probe"\n {4}model: "mock"/);
   const brief = call.argv.at(-1);
-  assert.equal(call.argv.length, 7);
+  assert.equal(call.argv.length, 9);
   assert.doesNotMatch(brief, /spawned_for/, brief);
   assert.ok(brief.startsWith(`start ${REALM} #931 `), brief);
   assert.ok(brief.includes(`room="${ROOM}"`), brief);

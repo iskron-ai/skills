@@ -105,6 +105,9 @@ test("dsh: a clean exit sleeps while the case is open; a said to the call's seat
   assert.ok(at > 0, "the continuation names the session");
   assert.equal(calls[1].argv[at + 1], SESSION);
   assert.equal(calls[1].cwd, calls[0].cwd, "the continuation runs in the same tree");
+  const gitDir = (argv) => argv[argv.indexOf("--add-dir") + 1];
+  assert.ok(calls[0].argv.includes("--add-dir"), calls[0].argv.join(" "));
+  assert.equal(gitDir(calls[1].argv), gitDir(calls[0].argv), "the same shared git-dir (#10777)");
   const brief = calls[1].argv.at(-1);
   assert.ok(brief.includes("[32]"), brief);
   assert.ok(!brief.startsWith("start "), "the continuation brief is not the first brief");

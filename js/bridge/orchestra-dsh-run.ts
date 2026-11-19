@@ -13,6 +13,7 @@ import {
   dshReady,
   type DshSpec,
   modelPatch,
+  sharedGitDir,
   writeModelPatch,
 } from "./orchestra-dsh.ts";
 import { children, dshEvents, dshExit, dshTerminate, exits } from "./orchestra-dsh-proc.ts";
@@ -125,7 +126,14 @@ export async function launchDsh(
     err = openSync(files.stderr, "a", 0o600);
   let child;
   try {
-    child = spawn(ready.bin, dshArgv(ready.patch, files.model, brief, session), {
+    const argv = dshArgv(
+      ready.patch,
+      files.model,
+      brief,
+      session,
+      sharedGitDir(run.tree.commonDir),
+    );
+    child = spawn(ready.bin, argv, {
       cwd: run.worktree,
       env,
       detached: true,
