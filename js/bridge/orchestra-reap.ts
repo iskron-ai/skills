@@ -55,9 +55,9 @@ export async function reapOwn(
     if (gone?.gone) break;
     const row = (why: string): number => said.push(w().leadRow(r.realm, r.room, r.invite, why));
     if (cause) {
-      const seat = await held(r.terminal!);
-      if (seat) {
-        row(`${cause}, client_holds_seat ${seat}`);
+      const kept = await held(r.terminal!);
+      if (kept) {
+        row(`${cause}, ${kept}`);
         continue;
       }
       const expected = ownClient(r);
