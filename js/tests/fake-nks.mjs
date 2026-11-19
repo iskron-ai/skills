@@ -484,6 +484,8 @@ export async function startFakeNks(opts = {}) {
   };
   const fielded = (result, whole, garbled) => {
     if (!st.structured || (st.structuredGate && !st.initAsked)) return result;
+    // structured: "null" — поле есть и равно null, как ответ LAB 0.159.0 учётке без хэндла.
+    if (st.structured === "null") return { ...result, structuredContent: null };
     const fields = damaged(whole);
     st.lastStructured = structuredClone(fields);
     return {
@@ -1631,10 +1633,12 @@ export async function startFakeNks(opts = {}) {
             if (p.incoming) lines.push(`     📥 ${p.incoming}`);
           }
           for (const r of st.rooms) {
+            // r.line — строка места как есть (безымянное место без адреса, LAB 0.159.0).
             lines.push(
-              en
-                ? `  #${r.karta} 👑 Human 主 · ${r.address} — live · idle 6h · listening · opened by @tester`
-                : `  #${r.karta} 👑 Человек 主 · ${r.address} — живой · простой 6h · слушает · открыл @tester`,
+              r.line ??
+                (en
+                  ? `  #${r.karta} 👑 Human 主 · ${r.address} — live · idle 6h · listening · opened by @tester`
+                  : `  #${r.karta} 👑 Человек 主 · ${r.address} — живой · простой 6h · слушает · открыл @tester`),
             );
             lines.push(`     📥 ${base}/api/channel/in/room-${r.karta}`);
           }
@@ -1644,7 +1648,7 @@ export async function startFakeNks(opts = {}) {
               seat_id: (r.id ??= randomUUID()),
               karta_seq: Number(r.karta),
               karta_name: "Человек",
-              standing: r.address,
+              ...(r.address === undefined ? {} : { standing: r.address }),
               state: "active",
               listening: true,
               pending: 0,

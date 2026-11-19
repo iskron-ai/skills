@@ -6305,3 +6305,29 @@ test("bare seat: register with spawned_for on a channel with a bare seat is not 
   assert.ok(!(r.error || r.result?.isError), `${textOf(r)}\n${bridge.stderr}`);
   assert.equal(placeOf(r), "receipt-probe", textOf(r));
 });
+
+// The unnamed seat of a human without a handle has no address at all (LAB, MCP 0.159.0; the
+// MCP holder: its seats[] row has no standing key at all, the prose line no «· address —»): a
+// lawful entry, counted, matching no seat looked up by address. An empty standing is read alike.
+const UNNAMED_HUMAN = "  #1 👤 Человек 主 — живой · приёмник";
+for (const [kind, structured, address] of [
+  ["prose only", false, undefined],
+  ["fields standing empty", true, ""],
+  ["fields standing missing", true, undefined],
+  ["structuredContent null", "null", undefined],
+])
+  test(`seat without address: the human's unnamed seat on the board — iskron_stand of the agent's own seat passes, the count holds (${kind})`, async (t) => {
+    const { fake, bridge } = await ready(t, structured ? ASKS_FIELDS : INIT);
+    fake.state.structured = structured;
+    await fake.control({ seatHandle: "", rooms: [{ karta: "1", line: UNNAMED_HUMAN, address }] });
+    const args = { realm: "nks-dev", karta: 3, name: "proba" };
+    const r = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!r.result?.isError, `${textOf(r)}\n${bridge.stderr}`);
+    assert.equal(placeOf(r), "proba", textOf(r));
+    assert.doesNotMatch(textOf(r), /разобрано|объявляет/, textOf(r));
+    const connects = fake.state.counts.connect;
+    const again = await bridge.call("tools/call", { name: "iskron_stand", arguments: args });
+    assert.ok(!again.result?.isError, textOf(again));
+    assert.equal(placeOf(again), "proba", textOf(again));
+    assert.equal(fake.state.counts.connect, connects, "the own seat comes back, no connect");
+  });
