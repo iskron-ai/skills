@@ -754,6 +754,22 @@ test("raise: a caller named in the description's callers is raised, others still
   assert.equal(o.launches().length, 1);
 });
 
+// 16-m3: two descriptions of one launcher on this machine (#76, #79) turn both off, and the
+// refusal names both mind nodes — the human sees what to take down.
+test("raise: two descriptions of one launcher on this machine raise nothing and the refusal names both nodes", async (t) => {
+  const o = await leading(t, {
+    descriptions: () => [describe({ seq: 76 }), describe({ seq: 79 })],
+  });
+  await o.queue([invite(1, GOOD)]);
+  const r = await o.step();
+  assert.match(
+    r.out,
+    /probe-mac in mind: launcher_duplicate \(#76, #79\) — nothing is raised/,
+    r.out,
+  );
+  assert.equal(o.launches().length, 0);
+});
+
 test("raise: a malformed callers list is a broken description, raising nothing", async (t) => {
   const o = await leading(t, {
     descriptions: () => [describe({ body: { callers: "@stranger" } })],
