@@ -1,5 +1,14 @@
 # Changelog
 
+## [8.14.2](https://github.com/iskron-ai/skills/compare/v8.14.1...v8.14.2) (2026-11-19)
+
+
+### Bug Fixes
+
+* **bridge:** an unread seat holder's environment keeps the terminal, said client_hold_unknown ([#862](https://github.com/iskron-ai/skills/issues/862)) ([e289d18](https://github.com/iskron-ai/skills/commit/e289d18af988df9433dd6e1616913fb0eb488178))
+* **bridge:** the orchestrator never closes a terminal whose client holds a live seat ([#860](https://github.com/iskron-ai/skills/issues/860)) ([5c1a306](https://github.com/iskron-ai/skills/commit/5c1a306d52127a6ddd015255c35f8f3cdd62838e))
+* **opencode:** a stop leaves a shared client open while it holds other seats ([#859](https://github.com/iskron-ai/skills/issues/859)) ([10bec73](https://github.com/iskron-ai/skills/commit/10bec73152db8b69c79e4fba04aaf1f010c426cd))
+
 ## [8.14.1](https://github.com/iskron-ai/skills/compare/v8.14.0...v8.14.1) (2026-11-18)
 
 
