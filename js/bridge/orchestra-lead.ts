@@ -87,7 +87,8 @@ export function leadAct(
         said.push(w().leadNoLaunchers((e as Error).message));
         return said;
       }
-      for (const r of launchers.refused) said.push(w().leadDescription(r.what, r.code, r.nodes));
+      for (const r of launchers.refused)
+        said.push(w().leadDescription(r.what, r.code, r.nodes?.join(", ")));
       const canon = realmCanon(base, token);
       said.push(
         ...(await raiseRows(
