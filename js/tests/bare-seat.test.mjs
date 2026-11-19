@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseBoard } from "../bridge/board.ts";
+import { nameOf, parseBoard, readBoard } from "../bridge/board.ts";
 import { frameToText } from "../shared/frame-text.ts";
 import { parseLaunch } from "../shared/launch.ts";
 import { addresseeOf, seatIs } from "../shared/room-fields.ts";
@@ -24,6 +24,55 @@ test("a board line with a bare seat is read beside @-seats", () => {
       ["931", `${BARE}.opus`],
     ],
   );
+});
+
+// The unnamed seat of a human without a handle (LAB, MCP 0.159.0): no address at all.
+test("a seat line without an address is an entry with address null; 📥 and id hang on it; headers are no seats", () => {
+  const text = [
+    "Каналы #1 (3):",
+    "  #1 👤 Человек 主 — живой · приёмник",
+    "     📥 https://lab.example/api/channel/in/cap1",
+    "     id 9499a342-4b74-486f-848c-b7236b36384d",
+    "  #1 👑 Человек 主 · @alari:16-m3.skills — живой · слушает",
+    `  #3 👨‍💻 Роль 能 · ${BARE}.opus — живой · слушает`,
+  ].join("\n");
+  assert.deepEqual(
+    parseBoard(text).map((e) => [e.karta, e.address, e.rest, e.incoming, e.id]),
+    [
+      [
+        "1",
+        null,
+        "живой · приёмник",
+        "https://lab.example/api/channel/in/cap1",
+        "9499a342-4b74-486f-848c-b7236b36384d",
+      ],
+      ["1", "@alari:16-m3.skills", "живой · слушает", null, null],
+      ["3", `${BARE}.opus`, "живой · слушает", null, null],
+    ],
+  );
+});
+
+test("board fields: a seat without the standing key (or with an empty one) is an entry with address null", () => {
+  const seat = (over) => ({
+    seat_id: "s",
+    karta_seq: 1,
+    listening: true,
+    state: "active",
+    ...over,
+  });
+  const board = readBoard({
+    text: "",
+    structured: {
+      action: "list",
+      seats: [seat({}), seat({ standing: "" }), seat({ karta_seq: 3, standing: `${BARE}.opus` })],
+    },
+  });
+  assert.equal(board.recognized, true);
+  assert.deepEqual(
+    board.entries.map((e) => e.address),
+    [null, null, `${BARE}.opus`],
+  );
+  assert.equal(nameOf(null), null);
 });
 
 test("the launch line's «from» tail takes a bare seat as well as @handle:name", () => {
