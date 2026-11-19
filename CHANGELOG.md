@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.14.3](https://github.com/iskron-ai/skills/compare/v8.14.2...v8.14.3) (2026-11-19)
+
+
+### Bug Fixes
+
+* **bridge:** a board seat without an address is a lawful entry, counted and matching no lookup ([#863](https://github.com/iskron-ai/skills/issues/863)) ([6e1c2d6](https://github.com/iskron-ai/skills/commit/6e1c2d6b2f5b9e0021435c4d87d0af7d49fdbbb3))
+
 ## [8.14.2](https://github.com/iskron-ai/skills/compare/v8.14.1...v8.14.2) (2026-11-19)
 
 
