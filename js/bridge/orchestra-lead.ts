@@ -14,6 +14,7 @@ import { readLaunchers } from "./orchestra-launchers.ts";
 import { closeEnded, expireLaunches, foldTape, quench, settleStops } from "./orchestra-quench.ts";
 import { raiseRows } from "./orchestra-raise.ts";
 import { reapOwn } from "./orchestra-reap.ts";
+import { type Held, noHeld } from "./orchestra-reap-held.ts";
 import { roleRefusal } from "./orchestra-role.ts";
 import { readRuns, syncClosed, writeRuns } from "./orchestra-runs.ts";
 import { readTape, realmCanon, type TactAct, type TactRead } from "./orchestra-tact.ts";
@@ -27,6 +28,7 @@ export function leadAct(
   token: string,
   mcpUrl: string,
   admitted: boolean,
+  held: Held = noHeld,
 ): TactAct {
   // Without consent the tape is not folded, so its cursors hold: the signals of our own
   // launches wait for the consent's return instead of being lost (#7514, #8202).
@@ -56,7 +58,7 @@ export function leadAct(
       // the run it marks stopping now waits for the next tact's read (review of №4050 [105]).
       const foreign = await foreignStops(authDir, base, token, runs);
       said.push(...foreign.said);
-      said.push(...(await expireLaunches(runs, gone)));
+      said.push(...(await expireLaunches(runs, gone, undefined, undefined, held)));
       said.push(...settleStops(runs, owned, foreign.fresh));
       // A dsh run the tact just ended sleeps when its case stays open (#10995) — before any
       // write, so the tree cleanup below sees a dormant row, not an ended one.
@@ -73,8 +75,8 @@ export function leadAct(
         )),
       );
       syncClosed(runs, readRuns(authDir));
-      said.push(...(await reapOwn(authDir, runs, gone)));
-      said.push(...(await closeEnded(runs, gone)));
+      said.push(...(await reapOwn(authDir, runs, gone, undefined, undefined, undefined, held)));
+      said.push(...(await closeEnded(runs, gone, undefined, held)));
       if (gone?.gone) return said;
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);

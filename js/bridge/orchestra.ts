@@ -17,6 +17,7 @@ import { envAdmitted, orchestraAdmitted, readOrchestraFlag } from "./orchestra-f
 import { leadAct } from "./orchestra-lead.ts";
 import { parseOnly, selectedStep } from "./orchestra-only.ts";
 import { planTact } from "./orchestra-plan.ts";
+import { heldBy, type SeatHolder } from "./orchestra-reap-held.ts";
 import { orchestraStatus } from "./orchestra-status.ts";
 import { switchOrchestra } from "./orchestra-switch.ts";
 import { stepTact } from "./orchestra-tact.ts";
@@ -37,6 +38,8 @@ export interface OrchestraNet {
   mcp?: () => string;
   /** The flag moved: the daemon re-reads whether it is held by leading. */
   changed?: () => void;
+  /** The daemon's live sessions standing a seat — a launch's client among them is not reaped. */
+  seats?: () => SeatHolder[];
 }
 
 /** Keep the daemon for consented raising OR an owned exec lifecycle; step still checks the flag. */
@@ -106,7 +109,14 @@ export function orchestraServe(authDir: string, net?: OrchestraNet): OrchestraSe
     const token = n.token();
     const act =
       base && token
-        ? leadAct(authDir, base, token, n.mcp?.() ?? "", orchestraAdmitted(authDir))
+        ? leadAct(
+            authDir,
+            base,
+            token,
+            n.mcp?.() ?? "",
+            orchestraAdmitted(authDir),
+            heldBy(n.seats ?? (() => [])),
+          )
         : undefined;
     return stepTact(authDir, base, token, boundary, gone, act);
   };

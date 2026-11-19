@@ -50,7 +50,7 @@ import { beginHandover, beginSessionHandover, H } from "./holdstate.ts";
 import { foldInto } from "./journal-fold.ts";
 import { openOrchestra, orchestraLeading, orchestraServe } from "./orchestra.ts";
 import { pauseForHandover } from "./pauserecord.ts";
-import { extraPlaces } from "./places.ts";
+import { extraPlaces, seatHolders } from "./places.ts";
 import { endDeadRun, endUnreturnedPause } from "./runend.ts";
 import { type BridgeSession, openSession } from "./session.ts";
 import { sessionSnapshot } from "./snapshot.ts";
@@ -399,6 +399,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
         return freshest?.url ? apiBase(freshest.url) : "";
       },
       token: bearer,
+      seats: () => seatHolders(engines, bridgePids, attached),
       // The discovered half of the boundary (#8202): realms of live sessions' places plus hold records
       // live by age or departure, spelled as written (rN resolves downstream); a dead record leaves by liveness.
       realms: (): string[] => {

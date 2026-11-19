@@ -203,7 +203,10 @@ async function leading(
   });
   let derr = "";
   daemon.stderr.on("data", (c) => (derr += c));
+  /** What must end while the daemon still lives — the probe's own clients of it. */
+  const beforeCleanup = [];
   t.after(async () => {
+    for (const end of beforeCleanup.splice(0)) await end();
     if (daemon.exitCode === null && daemon.signalCode === null) {
       const ended = new Promise((r) => daemon.once("exit", r));
       daemon.kill("SIGKILL");
@@ -222,6 +225,7 @@ async function leading(
     dir,
     fake,
     checkout,
+    beforeCleanup,
     step: () => cli(dir, ["step"]),
     launches: () => orcaCalls(log).filter((a) => a[0] === "agent"),
     closes: () => orcaCalls(log).filter((a) => a[0] === "terminal" && a[1] === "close"),
@@ -1776,6 +1780,154 @@ test("reap: a terminal whose client is not ours is left untouched, the refusal s
   const run = o.runs()[`${REALM}|${ROOM}|9`];
   assert.equal(run.state, "stopping");
   assert.equal(run.tree.state, "ready");
+});
+
+/** A thin bridge of this daemon started inside the Orca terminal `handle` — as OpenCode's own
+ * bridge inherits the terminal's environment; `seat` — the place it stands, none if absent. */
+async function terminalBridge(o, handle, seat) {
+  const proc = spawn(NODE, [BRIDGE, `${o.fake.base}/mcp`, "--no-browser", "--auth-dir", o.dir], {
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_TOKEN: "probe-pat",
+      ORCA_TERMINAL_HANDLE: handle,
+    },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const exited = new Promise((r) => proc.once("exit", r));
+  const stop = () => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.stdin.end();
+    return exited;
+  };
+  // Before the daemon is killed: a thin bridge that loses its daemon raises another one into
+  // the same run/ (thin.ts), and the fixture's removal races it.
+  o.beforeCleanup.push(() => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+    return exited;
+  });
+  const waiters = new Map();
+  let out = "";
+  proc.stdout.on("data", (c) => {
+    out += c;
+    for (let nl; (nl = out.indexOf("\n")) >= 0;) {
+      const line = out.slice(0, nl).trim();
+      out = out.slice(nl + 1);
+      if (line) waiters.get(JSON.parse(line).id)?.(JSON.parse(line));
+    }
+  });
+  let id = 0;
+  const call = (method, params) =>
+    new Promise((resolve, reject) => {
+      const n = ++id;
+      waiters.set(n, resolve);
+      setTimeout(() => reject(new Error(`no answer for ${method}`)), 20_000).unref();
+      proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: n, method, params }) + "\n");
+    });
+  const init = await call("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "reap-probe", version: "0" },
+  });
+  assert.ok(init.result, JSON.stringify(init));
+  if (seat) {
+    const r = await call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: seat },
+    });
+    assert.ok(r.result && !r.result.isError, JSON.stringify(r));
+  }
+  return { stop };
+}
+
+// 8.14.1 on 16-m3: the call's seat was over, but the same OpenCode process in that terminal
+// had stood another place through this daemon — the expired order's reap killed a live agent.
+// The client holds a live seat: the terminal stays, the reason named, no try counted; once the
+// seat is gone the next tact closes it as before.
+test("reap: a terminal whose client holds a live seat through the daemon is not closed until it leaves", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-h" } }, "ord-h", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  const agent = await terminalBridge(o, "term_fake", "16-m3.infra.opus-5-5");
+  assert.equal((await ack(o, "ord-h", "expired")).status, 200);
+  for (let i = 0; i < 4; i++) {
+    const r = await o.step();
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, /invite 9: stop_expired, client_holds_seat 16-m3\.infra\.opus-5-5/, r.out);
+  }
+  assert.equal(o.closes().length, 0, "a live agent's terminal is never closed");
+  let run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.state, "stopping");
+  assert.equal(run.reaped, undefined, "no reap_exhausted");
+  assert.equal(run.reap_tries, undefined, "no try counted");
+  await agent.stop();
+  for (let i = 0; i < 100 && !o.closes().length; i++) {
+    const r = await o.step();
+    assert.equal(r.code, 0, r.err + r.out);
+    if (!/client_holds_seat/.test(r.out)) break;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.closed, "client_exited");
+});
+
+// The same decision on the older close paths (orchestra-run-ends.ts): a launch with neither tree
+// nor exec, its window passed or its row ended — a client standing a seat through the daemon
+// keeps its terminal and the row as it was; standing nowhere, it is closed as before.
+const legacyRow = (o, state) => ({
+  realm: REALM,
+  room: ROOM,
+  invite: 9,
+  karta: 931,
+  launcher: "probe-mac",
+  harness: "opencode",
+  model: "anthropic/claude-opus-5-5",
+  repository: REPO,
+  worktree: o.checkout,
+  terminal: "term_fake",
+  runtime: "rt_fake",
+  state,
+  at: "2026-01-01T00:00:00Z",
+});
+for (const [state, line] of [
+  ["launched", "no_seat (cause_unseen), terminal_closed"],
+  ["ended", "ended, terminal_closed"],
+])
+  for (const seat of ["16-m3.infra.opus-5-5", undefined])
+    test(`legacy close: a ${state} launch's terminal ${seat ? "is kept while its client holds a seat" : "is closed when its client holds none"}`, async (t) => {
+      const o = await leading(t);
+      writeFileSync(
+        join(o.dir, "run", "orchestra-runs.json"),
+        JSON.stringify({ runs: { [`${REALM}|${ROOM}|9`]: legacyRow(o, state) } }),
+      );
+      await terminalBridge(o, "term_fake", seat);
+      const r = await o.step();
+      assert.equal(r.code, 0, r.err + r.out);
+      const run = o.runs()[`${REALM}|${ROOM}|9`];
+      if (seat) {
+        assert.match(r.out, new RegExp(`invite 9: [a-z_]+, client_holds_seat ${seat}`), r.out);
+        assert.equal(o.closes().length, 0, "a live agent's terminal is never closed");
+        assert.equal(run.state, state, "the row stays as it was");
+        assert.equal(run.closed, undefined);
+      } else {
+        assert.ok(r.out.includes(`invite 9: ${line}`), r.out);
+        assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+      }
+    });
+
+// The control: the same client in that terminal, attached to the daemon but standing nowhere —
+// closed as before.
+test("reap: a terminal whose client holds no seat is closed as before", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-n" } }, "ord-n", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  await terminalBridge(o, "term_fake");
+  assert.equal((await ack(o, "ord-n", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_expired, client_exited/, r.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
 });
 
 // Review of PR #724 п.3: an order left issued for good holds neither the slot nor the orders

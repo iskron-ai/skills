@@ -6,6 +6,7 @@ import { words } from "../shared/lang.ts";
 import type { OpenOrder } from "./demand-rows.ts";
 import { dshTerminate } from "./orchestra-dsh-proc.ts";
 import { orcaClose } from "./orchestra-orca.ts";
+import { type Held, noHeld } from "./orchestra-reap-held.ts";
 import type { Run } from "./orchestra-runs.ts";
 import { RAISE_WINDOW_MS, stopLapsed } from "./orchestra-window.ts";
 
@@ -16,6 +17,7 @@ export async function expireLaunches(
   gone?: { gone: boolean },
   close: Close = orcaClose,
   now = Date.now(),
+  held: Held = noHeld,
 ): Promise<string[]> {
   const said: string[] = [];
   for (const r of Object.values(runs))
@@ -35,6 +37,12 @@ export async function expireLaunches(
         said.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
+      // The client in the terminal stands a seat through this daemon: the row stays as it was.
+      const seat = r.terminal ? await held(r.terminal) : null;
+      if (seat) {
+        said.push(w().leadRow(r.realm, r.room, r.invite, `no_seat, client_holds_seat ${seat}`));
+        continue;
+      }
       r.state = "no_seat";
       const closed = !r.terminal
         ? "no_terminal_handle"
@@ -50,6 +58,7 @@ export async function closeEnded(
   runs: Record<string, Run>,
   gone?: { gone: boolean },
   close: Close = orcaClose,
+  held: Held = noHeld,
 ): Promise<string[]> {
   const said: string[] = [];
   for (const r of Object.values(runs))
@@ -57,6 +66,11 @@ export async function closeEnded(
       if (gone?.gone) break;
       if (r.exec || r.tree) {
         r.why = r.exec ? "exec_client_unverified" : "tree_client_unverified";
+        continue;
+      }
+      const seat = await held(r.terminal);
+      if (seat) {
+        said.push(w().leadRow(r.realm, r.room, r.invite, `ended, client_holds_seat ${seat}`));
         continue;
       }
       r.closed = await close(r.terminal, r.runtime);
