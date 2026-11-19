@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.14.3";
+var VERSION = "8.14.4";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -15305,6 +15305,21 @@ function writeClone(authDir, repository, row) {
 import { lstatSync as lstatSync7, readFileSync as readFileSync31, realpathSync as realpathSync8 } from "node:fs";
 import { isAbsolute as isAbsolute3, join as join30, relative as relative2 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+
+// js/bridge/orchestra-tree-saved.ts
+var OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+var TRUNKS = ["refs/remotes/origin/main", "refs/heads/main"];
+async function savedInTrunk(tree, head, execute2) {
+  for (const trunk of TRUNKS) {
+    const found = await execute2(tree.path, ["rev-parse", "--verify", "-q", `${trunk}^{commit}`]);
+    if (found.code !== 0 || !OID.test(found.out.trim())) continue;
+    const kept3 = await execute2(tree.path, ["merge-base", "--is-ancestor", head, trunk]);
+    if (kept3.code === 0) return true;
+  }
+  return false;
+}
+
+// js/bridge/orchestra-tree-check.ts
 var git2 = (cwd, args, timeout = 1e4) => run2(
   ["--no-optional-locks", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", ...args],
   timeout,
@@ -15316,7 +15331,7 @@ async function gitText(cwd, args, execute2 = git2) {
   if (result.code !== 0) throw new Error("git_read_unverified");
   return result.out.trim();
 }
-var OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+var OID2 = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 async function filesRefs(cwd, execute2 = git2) {
   const storage = await execute2(cwd, ["config", "--local", "--get", "extensions.refStorage"]);
   return storage.code === 1 && !storage.out.trim() || storage.code === 0 && storage.out.trim() === "files";
@@ -15358,10 +15373,11 @@ async function inspectTree(tree, execute2 = git2) {
     commonIno: shared.ino
   };
 }
-async function treeContent(tree, execute2 = git2) {
+async function treeContent(tree, execute2 = git2, saved = false) {
   if (!await filesRefs(tree.path, execute2)) return "tree_ref_storage_unverified";
   const head = await gitText(tree.path, ["rev-parse", "--verify", "HEAD^{commit}"], execute2);
-  if (head !== tree.baseOID) return "tree_commits_retained";
+  if (head !== tree.baseOID && !(saved && await savedInTrunk(tree, head, execute2)))
+    return "tree_commits_retained";
   const branch = await execute2(tree.path, ["symbolic-ref", "-q", "HEAD"]);
   if (branch.code !== 1 || branch.out.trim()) return "tree_not_detached";
   const dirty = await execute2(tree.path, [
@@ -15374,7 +15390,7 @@ async function treeContent(tree, execute2 = git2) {
 }
 async function readyTree(authDir, key3, r, source) {
   const t = r.tree;
-  if (!t || t.state !== "ready" || r.state !== "preparing" || r.exec || r.closed || !t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || !OID.test(t.baseOID) || key3 !== runKey(r.realm, r.room, r.invite) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || t.source !== source || !directory2(source) || r.worktree !== t.path || t.path !== join30(source, ".worktrees", `orchestra-${t.operation}`))
+  if (!t || t.state !== "ready" || r.state !== "preparing" || r.exec || r.closed || !t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || !OID2.test(t.baseOID) || key3 !== runKey(r.realm, r.room, r.invite) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || t.source !== source || !directory2(source) || r.worktree !== t.path || t.path !== join30(source, ".worktrees", `orchestra-${t.operation}`))
     return false;
   try {
     return await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) === t.commonDir && isDeepStrictEqual(await inspectTree(t), t.identity) && await treeContent(t) === null && isDeepStrictEqual(readRuns(authDir)[key3], r);
@@ -17522,8 +17538,35 @@ function settle(r, outcome, now2) {
   return retry(r, outcome);
 }
 
+// js/bridge/orchestra-tree-proof.ts
+var provenNow = (r) => r.stop_outcome === "stopped" || r.reaped === REAPED_OVER || r.why === "seat_gone_after_exit" || r.why === "dormant_seat_left" || r.why === "dormant_share_claimed" && !!r.dsh?.exit || !!r.dsh?.exit && !r.standing_id || !!r.dormant && !!r.dsh?.exit;
+var clientGone = (r) => provenNow(r) || !!r.client_gone && r.client_gone.identity === runIdentity(r);
+function keepProof(r) {
+  if (!provenNow(r) || r.client_gone?.identity === runIdentity(r)) return;
+  const proof = r.stop_outcome === "stopped" ? "stopped" : r.reaped === REAPED_OVER ? r.reaped : r.why;
+  r.client_gone = { proof: proof ?? "dsh_exit", identity: runIdentity(r) };
+}
+
+// js/bridge/orchestra-tree-recheck.ts
+var RECHECK_MS = 10 * 6e4;
+var passing2 = (why = "") => why === "tree_commits_retained" || why === "tree_dirty_retained" || why.endsWith("_unverified");
+var recheckDue = (r, now2) => r.tree?.state === "retained" && passing2(r.tree.why) && !(now2 - Date.parse(r.tree.checked ?? "") < RECHECK_MS);
+async function recheckKept(authDir, runs, key3, now2, cleanup) {
+  const r = runs[key3], t = r.tree;
+  const before = t.why;
+  t.checked = new Date(now2).toISOString();
+  t.state = "ready";
+  const why = await cleanup(authDir, runs, key3);
+  if (t.state === "ready") {
+    t.state = "retained";
+    t.why = before;
+  } else if (t.state === "removed" && r.why === before) delete r.why;
+  else if (why && t.state === "retained") r.why = why;
+  const latest = readRuns(authDir)[key3];
+  if (latest && runIdentity(latest) === runIdentity(r)) writeRuns(authDir, runs);
+}
+
 // js/bridge/orchestra-tree-clean.ts
-var clientGone = (r) => r.stop_outcome === "stopped" || r.reaped === REAPED_OVER || r.why === "seat_gone_after_exit" || r.why === "dormant_seat_left" || r.why === "dormant_share_claimed" && !!r.dsh?.exit || !!r.dsh?.exit && !r.standing_id || !!r.dormant && !!r.dsh?.exit;
 var over = (r) => r.state === "ended" || r.state === "refused" && !!r.dsh?.exit;
 async function cleanupTree(authDir, runs, key3, execute2 = git2) {
   const r = runs[key3], t = r.tree;
@@ -17531,6 +17574,7 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
   if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
   if (!over(r) || !clientGone(r) || r.closed !== "client_exited" || !t.exit)
     return "tree_client_unverified";
+  keepProof(r);
   const identity2 = runIdentity(r);
   const current2 = () => {
     const latest = readRuns(authDir)[key3];
@@ -17543,7 +17587,7 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
     return why;
   };
   if (!current2()) return "tree_superseded";
-  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || t.path !== r.worktree || t.path !== join36(t.source, ".worktrees", `orchestra-${t.operation}`) || !OID.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
+  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || t.path !== r.worktree || t.path !== join36(t.source, ".worktrees", `orchestra-${t.operation}`) || !OID2.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
     return retain("tree_identity_unverified");
   let lock;
   try {
@@ -17554,7 +17598,7 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
     );
     if (common !== t.commonDir || JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
       return retain("tree_identity_unverified");
-    const invalid2 = await treeContent(t, execute2);
+    const invalid2 = await treeContent(t, execute2, true);
     if (invalid2) return retain(invalid2);
     if (!current2()) return "tree_superseded";
     const lockPath = join36(t.identity.gitDir, "HEAD.lock");
@@ -17567,7 +17611,7 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
     }
     if (JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
       return retain("tree_identity_unverified");
-    const changed = await treeContent(t, execute2);
+    const changed = await treeContent(t, execute2, true);
     if (changed) return retain(changed);
     if (!current2()) return "tree_superseded";
     t.state = "removing";
@@ -17594,12 +17638,13 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
     }
   }
 }
-async function cleanupEndedTrees(authDir, runs) {
+async function cleanupEndedTrees(authDir, runs, now2 = Date.now()) {
   for (const [key3, r] of Object.entries(runs))
     if (r.tree?.state === "ready" && over(r)) {
       const why = await cleanupTree(authDir, runs, key3);
       if (why) r.why = why;
-    }
+    } else if (over(r) && recheckDue(r, now2))
+      await recheckKept(authDir, runs, key3, now2, cleanupTree);
 }
 
 // js/bridge/exec-pending.ts
@@ -18225,7 +18270,7 @@ async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
       ["rev-parse", "--verify", "refs/remotes/origin/main^{commit}"],
       execute2
     );
-    if (!directory2(commonDir) || !OID.test(baseOID)) return "tree_base_unverified";
+    if (!directory2(commonDir) || !OID2.test(baseOID)) return "tree_base_unverified";
   } catch {
     return "tree_base_unverified";
   }
