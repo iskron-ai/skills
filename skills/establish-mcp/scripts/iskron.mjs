@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.14.1";
+var VERSION = "8.14.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -8993,6 +8993,19 @@ var extras = scoped(() => /* @__PURE__ */ new Map());
 var keyOfPlace = (s2) => keyOf(s2.realm, s2.karta, s2.name ?? "");
 var extraPlaces = () => [...extras.values()];
 var besideSeats = () => state.places.map((place) => ({ place, id: heldIdOf(place) }));
+var standingNames = () => [state.standing, ...extraPlaces().map((x) => x.standing)].flatMap(
+  (s2) => s2 ? [s2.name ?? `${s2.realm}#${s2.karta}`] : []
+);
+function seatHolders(sessions, pids, attached) {
+  const out7 = [];
+  for (const [id, s2] of sessions) {
+    const pid = pids.get(id);
+    if (!pid || !attached.has(id) && !ownPidAlive(pid)) continue;
+    const seats2 = s2.scope ? runIn(s2.scope, standingNames) : standingNames();
+    if (seats2.length) out7.push({ pid, seats: seats2 });
+  }
+  return out7;
+}
 function heldIdOf(s2) {
   const key3 = keyOfPlace(s2);
   const beside = extras.get(key3);
@@ -15664,9 +15677,53 @@ function endDshUnseated(r, live2) {
   return true;
 }
 
+// js/bridge/orchestra-reap-held.ts
+import { execFile as execFile3 } from "node:child_process";
+import { readFile as readFile2 } from "node:fs/promises";
+var noHeld = () => Promise.resolve(null);
+var KEY = "ORCA_TERMINAL_HANDLE=";
+var ENV_WORD = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var fromProc = (pid) => readFile2(`/proc/${pid}/environ`, "utf8").then(
+  (s2) => s2 ? { words: s2.split("\0") } : { refused: "environ_empty" },
+  (e) => ({ refused: `environ_${e.code ?? "unreadable"}` })
+);
+var fromPs = (pid) => new Promise(
+  (done) => execFile3(
+    "ps",
+    ["eww", "-o", "command=", "-p", String(pid)],
+    { windowsHide: true, timeout: 5e3 },
+    (e, out7) => {
+      if (e)
+        return done({
+          refused: e.killed || e.signal ? "ps_timeout" : `ps_exit_${String(e.code ?? "unknown")}`
+        });
+      const words2 = String(out7).trim().split(/\s+/).filter(Boolean);
+      if (!words2.length) return done({ refused: "ps_empty" });
+      done(words2.some((s2) => ENV_WORD.test(s2)) ? { words: words2 } : { refused: "ps_no_environment" });
+    }
+  )
+);
+var environOf = (pid) => process.platform === "linux" ? fromProc(pid) : fromPs(pid);
+async function terminalOf(pid) {
+  const env2 = await environOf(pid);
+  if ("refused" in env2) return env2;
+  const found = env2.words.find((s2) => s2.startsWith(KEY));
+  return { terminal: found ? found.slice(KEY.length) : null };
+}
+var heldBy = (holders, terminalOfPid = terminalOf) => async (terminal) => {
+  let unknown = null;
+  for (const h of holders()) {
+    if (!h.seats.length) continue;
+    const read = await terminalOfPid(h.pid);
+    if ("refused" in read) unknown ??= read.refused;
+    else if (read.terminal === terminal) return `client_holds_seat ${h.seats[0]}`;
+  }
+  return unknown ? `client_hold_unknown (${unknown})` : null;
+};
+
 // js/bridge/orchestra-run-ends.ts
 var w = () => words(ORCHESTRA);
-async function expireLaunches(runs, gone, close = orcaClose, now2 = Date.now()) {
+async function expireLaunches(runs, gone, close = orcaClose, now2 = Date.now(), held2 = noHeld) {
   const said2 = [];
   for (const r of Object.values(runs))
     if (r.state === "launched" && now2 - Date.parse(r.at) > RAISE_WINDOW_MS) {
@@ -15684,6 +15741,11 @@ async function expireLaunches(runs, gone, close = orcaClose, now2 = Date.now()) 
         said2.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
+      const kept3 = r.terminal ? await held2(r.terminal) : null;
+      if (kept3) {
+        said2.push(w().leadRow(r.realm, r.room, r.invite, `no_seat, ${kept3}`));
+        continue;
+      }
       r.state = "no_seat";
       const closed = !r.terminal ? "no_terminal_handle" : r.runtime ? await close(r.terminal, r.runtime) : "terminal_runtime_unknown";
       if (r.terminal) r.closed = closed;
@@ -15691,13 +15753,18 @@ async function expireLaunches(runs, gone, close = orcaClose, now2 = Date.now()) 
     }
   return said2;
 }
-async function closeEnded(runs, gone, close = orcaClose) {
+async function closeEnded(runs, gone, close = orcaClose, held2 = noHeld) {
   const said2 = [];
   for (const r of Object.values(runs))
     if (r.state === "ended" && r.terminal && r.runtime && !r.closed) {
       if (gone?.gone) break;
       if (r.exec || r.tree) {
         r.why = r.exec ? "exec_client_unverified" : "tree_client_unverified";
+        continue;
+      }
+      const kept3 = await held2(r.terminal);
+      if (kept3) {
+        said2.push(w().leadRow(r.realm, r.room, r.invite, `ended, ${kept3}`));
         continue;
       }
       r.closed = await close(r.terminal, r.runtime);
@@ -16170,10 +16237,10 @@ var unquote = (v) => {
   }
   return t;
 };
-var KEY = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
-var PAIR = new RegExp(String.raw`^\s*${KEY}\s*:(?:\s+(.*))?$`);
-var TOP = new RegExp(String.raw`^${KEY}\s*:(?:\s+#.*)?\s*$`);
-var CHILD = new RegExp(String.raw`^\s+${KEY}\s*:(?:\s+(.*))?$`);
+var KEY2 = String.raw`('(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|[^\s'"#][^:]*?)`;
+var PAIR = new RegExp(String.raw`^\s*${KEY2}\s*:(?:\s+(.*))?$`);
+var TOP = new RegExp(String.raw`^${KEY2}\s*:(?:\s+#.*)?\s*$`);
+var CHILD = new RegExp(String.raw`^\s+${KEY2}\s*:(?:\s+(.*))?$`);
 var bare2 = (v) => unquote(
   /^['"]/.test(v.trim()) ? v.trim().replace(/^('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")\s+#.*$/, "$1") : v.replace(/\s+#.*$/, "")
 );
@@ -17218,12 +17285,12 @@ import { closeSync as closeSync4, existsSync as existsSync16, fstatSync as fstat
 import { join as join36 } from "node:path";
 
 // js/bridge/exec-prepare.ts
-import { execFile as execFile3 } from "node:child_process";
+import { execFile as execFile4 } from "node:child_process";
 import { realpathSync as realpathSync10 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
 var shellQuote = (s2) => `'${s2.replaceAll("'", "'\\''")}'`;
 var execApi = (server, method2, path, body) => new Promise((resolve15, reject) => {
-  execFile3(
+  execFile4(
     "opencode",
     [
       "api",
@@ -17393,7 +17460,7 @@ function reapCause(r, now2 = Date.now()) {
   if (r.state === "ended") return "ended";
   return r.state === "ambiguity" && NO_SEAT.has(r.why ?? "") ? "no_seat" : null;
 }
-async function reapOwn(authDir, runs, gone, close = orcaCloseObserved, api = execApi, now2 = Date.now()) {
+async function reapOwn(authDir, runs, gone, close = orcaCloseObserved, api = execApi, now2 = Date.now(), held2 = noHeld) {
   const said2 = [];
   for (const [key3, r] of Object.entries(runs)) {
     const cause = reapCause(r, now2);
@@ -17401,6 +17468,11 @@ async function reapOwn(authDir, runs, gone, close = orcaCloseObserved, api = exe
     if (gone?.gone) break;
     const row = (why) => said2.push(w5().leadRow(r.realm, r.room, r.invite, why));
     if (cause) {
+      const kept3 = await held2(r.terminal);
+      if (kept3) {
+        row(`${cause}, ${kept3}`);
+        continue;
+      }
       const expected = ownClient(r);
       const identity2 = runIdentity(r);
       const current2 = () => {
@@ -18558,7 +18630,7 @@ ${w8().lead(state2.lead)}` : "")
 
 // js/bridge/orchestra-lead.ts
 var w9 = () => words(ORCHESTRA);
-function leadAct(authDir, base, token, mcpUrl, admitted) {
+function leadAct(authDir, base, token, mcpUrl, admitted, held2 = noHeld) {
   return async (reads, boundary, gone, invited) => admitted ? { said: await lead(reads, boundary, gone, invited) } : { said: [w9().leadNotAdmitted()], hold: true };
   async function lead(reads, boundary, gone, invited) {
     const runs = readRuns(authDir);
@@ -18575,7 +18647,7 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
       }
       const foreign = await foreignStops(authDir, base, token, runs);
       said2.push(...foreign.said);
-      said2.push(...await expireLaunches(runs, gone));
+      said2.push(...await expireLaunches(runs, gone, void 0, void 0, held2));
       said2.push(...settleStops(runs, owned, foreign.fresh));
       await dormantFromEnds(base, token, runs, boundary);
       const cursorOf2 = (realm) => reads.find((r) => r.realm === realm)?.cursor ?? null;
@@ -18589,8 +18661,8 @@ function leadAct(authDir, base, token, mcpUrl, admitted) {
         )
       );
       syncClosed(runs, readRuns(authDir));
-      said2.push(...await reapOwn(authDir, runs, gone));
-      said2.push(...await closeEnded(runs, gone));
+      said2.push(...await reapOwn(authDir, runs, gone, void 0, void 0, void 0, held2));
+      said2.push(...await closeEnded(runs, gone, void 0, held2));
       if (gone?.gone) return said2;
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
@@ -19029,7 +19101,14 @@ function orchestraServe(authDir, net) {
     if (!boundary.length) return { ok: true, said: w12().stepEmpty() };
     const base = n.base();
     const token = n.token();
-    const act = base && token ? leadAct(authDir, base, token, n.mcp?.() ?? "", orchestraAdmitted(authDir)) : void 0;
+    const act = base && token ? leadAct(
+      authDir,
+      base,
+      token,
+      n.mcp?.() ?? "",
+      orchestraAdmitted(authDir),
+      heldBy(n.seats ?? (() => []))
+    ) : void 0;
     return stepTact(authDir, base, token, boundary, gone, act);
   };
   return async (op, realms, gone, extra) => {
@@ -21280,6 +21359,7 @@ async function daemonMain(argv2) {
         return freshest?.url ? apiBase(freshest.url) : "";
       },
       token: bearer,
+      seats: () => seatHolders(engines, bridgePids, attached),
       // The discovered half of the boundary (#8202): realms of live sessions' places plus hold records
       // live by age or departure, spelled as written (rN resolves downstream); a dead record leaves by liveness.
       realms: () => {
@@ -22183,20 +22263,20 @@ function runWatchdogCodex(argv2) {
       note2(wd().frameNotPut(e.message));
     }
   }
-  const heldBy = /* @__PURE__ */ new Map();
+  const heldBy2 = /* @__PURE__ */ new Map();
   const again = [];
   function holdOut(items2) {
     return items2.filter((h) => {
       if (eventIn(h.frame, (k) => seen.has(k))) return true;
       const r = [...waiting2].find(([, ids]) => eventIn(h.frame, (k) => ids.includes(k)))?.[0];
       if (r === void 0) return true;
-      heldBy.set(r, [...heldBy.get(r) ?? [], h]);
+      heldBy2.set(r, [...heldBy2.get(r) ?? [], h]);
       return false;
     });
   }
   function settle3(reqId, ok) {
-    const held2 = heldBy.get(reqId) ?? [];
-    heldBy.delete(reqId);
+    const held2 = heldBy2.get(reqId) ?? [];
+    heldBy2.delete(reqId);
     if (ok) return held2.forEach((h) => h.ids.forEach((k) => noteSeen(seenPath, k, seen)));
     pend.unshift(...held2.filter((h) => !h.stale).map(({ frame: frame2, ids }) => ({ frame: frame2, ids })));
     const stale = held2.filter((h) => h.stale).map((h) => h.frame);
@@ -22827,7 +22907,7 @@ function parseScalar(raw) {
   if (s2.startsWith("{") && s2.endsWith("}")) {
     const out7 = {};
     for (const part of splitFlow(s2.slice(1, -1))) {
-      const m = KEY2.exec(part);
+      const m = KEY3.exec(part);
       if (m) out7[unquoteKey(m[1].trim())] = m[2] === void 0 ? null : parseScalar(m[2]);
     }
     return out7;
@@ -22869,7 +22949,7 @@ function splitFlow(body) {
   if (cur.trim()) parts.push(cur.trim());
   return parts;
 }
-var KEY2 = /^("[^"]*"|'[^']*'|[^\s"'#{[-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
+var KEY3 = /^("[^"]*"|'[^']*'|[^\s"'#{[-][^:]*?|-[^\s:][^:]*?)\s*:(?:\s+(.*))?$/;
 var BLOCK_SCALAR = /^[|>][-+0-9]*$/;
 var unquoteKey = (k) => k.startsWith('"') && k.endsWith('"') || k.startsWith("'") && k.endsWith("'") ? k.slice(1, -1) : k;
 function parseFrontmatter(text9) {
@@ -22896,7 +22976,7 @@ function parseFrontmatter(text9) {
   const map = (indent) => {
     const outMap = {};
     while (i < lines.length && lines[i].indent === indent && !isItem(lines[i])) {
-      const m = KEY2.exec(lines[i].text);
+      const m = KEY3.exec(lines[i].text);
       i++;
       if (!m) {
         while (i < lines.length && lines[i].indent > indent) i++;
@@ -22921,7 +23001,7 @@ function parseFrontmatter(text9) {
         items2.push(next && next.indent > indent ? block(next.indent) : null);
         continue;
       }
-      if (KEY2.test(content)) {
+      if (KEY3.test(content)) {
         lines[i] = { indent: indent + (lines[i].text.length - content.length), text: content };
         items2.push(map(lines[i].indent));
         continue;

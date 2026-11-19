@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.14.1";
+var VERSION = "8.14.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -218,7 +218,7 @@ var ASK = {
 var BRIDGE_CLIENT = {
   ru: {
     failedToStart: (message) => `мост не запустился: ${message}`,
-    exited: (code2, signal, why) => `мост вышел (code=${code2}, signal=${signal})${why}`,
+    exited: (code2, signal2, why) => `мост вышел (code=${code2}, signal=${signal2})${why}`,
     lastFromBridge: (lines) => `; последнее от моста: ${lines}`,
     aborted: () => "вызов отменён",
     noAnswer: (method2, ms, why) => `${method2}: нет ответа за ${ms} мс${why}`,
@@ -228,7 +228,7 @@ var BRIDGE_CLIENT = {
   },
   en: {
     failedToStart: (message) => `the bridge failed to start: ${message}`,
-    exited: (code2, signal, why) => `the bridge exited (code=${code2}, signal=${signal})${why}`,
+    exited: (code2, signal2, why) => `the bridge exited (code=${code2}, signal=${signal2})${why}`,
     lastFromBridge: (lines) => `; last from the bridge: ${lines}`,
     aborted: () => "call aborted",
     noAnswer: (method2, ms, why) => `${method2}: no answer in ${ms} ms${why}`,
@@ -573,6 +573,7 @@ var OPENCODE = {
     notDelivered: (frame, id, message) => `Искрон: ${frame} не вложился в сессию ${id}: ${message}`,
     sessionLeftOpen: (id, why) => `Искрон: сессия ${id} остановлена, но её окно осталось открытым — ${why ?? "клиента этой сессии плагину не найти"}; закройте его в OpenCode`,
     clientClosed: (id, pid) => `Искрон: сессия ${id} остановлена, её клиент закрыт (pid ${pid})`,
+    clientKept: (id, pid, places) => `Искрон: сессия ${id} остановлена, клиент не закрыт: в нём ещё места ${places} (pid ${pid})`,
     held: (key) => `Искрон: мост держит место ${key}`,
     released: (key, text3) => `Искрон: мост отпустил место ${key} — ${text3}`,
     endUnrevoked: (seats) => `Искрон: сессия удалена, но её место не снято (${seats}) — запись держания оставлена; мост машины повторит снятие после окна, иначе место уйдёт сроком платформы`,
@@ -634,6 +635,7 @@ var OPENCODE = {
     notDelivered: (frame, id, message) => `Iskron: ${frame} was not delivered into session ${id}: ${message}`,
     sessionLeftOpen: (id, why) => `Iskron: session ${id} is stopped but its window is left open — ${why ?? "the plugin finds no client of this session"}; close it in OpenCode`,
     clientClosed: (id, pid) => `Iskron: session ${id} is stopped, its client closed (pid ${pid})`,
+    clientKept: (id, pid, places) => `Iskron: session ${id} is stopped, the client is not closed: it still holds the seats ${places} (pid ${pid})`,
     held: (key) => `Iskron: the bridge holds the seat ${key}`,
     released: (key, text3) => `Iskron: the bridge released the seat ${key} — ${text3}`,
     endUnrevoked: (seats) => `Iskron: the session is deleted but its seat is not revoked (${seats}) — the hold record is kept; the machine's bridge repeats the revoke after the window, else the seat goes by the platform's term`,
@@ -2375,7 +2377,7 @@ var Bridge = class {
       }
     });
     proc.on("error", (e) => this.die(new Error(W2().failedToStart(e.message))));
-    proc.on("exit", (code2, signal) => this.die(new Error(W2().exited(code2, signal, this.why()))));
+    proc.on("exit", (code2, signal2) => this.die(new Error(W2().exited(code2, signal2, this.why()))));
   }
   why() {
     return this.tail.length ? W2().lastFromBridge(this.tail.slice(-3).join(" | ")) : "";
@@ -3056,19 +3058,19 @@ var late = () => words(STATUS_POST).noAnswer(words(STATUS_POST).late());
 async function postStatus(url, text3, until, standingId) {
   const left = until - Date.now();
   if (left <= 0) return { ok: false, body: late() };
-  const signal = AbortSignal.timeout(left);
+  const signal2 = AbortSignal.timeout(left);
   const post2 = () => namedFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(
       typeof standingId === "string" ? { text: text3, standing_id: standingId } : { text: text3 }
     ),
-    signal
+    signal: signal2
   });
   let res;
   try {
     res = await post2().catch((e) => {
-      if (!closedUnder(e) || signal.aborted) throw e;
+      if (!closedUnder(e) || signal2.aborted) throw e;
       return post2();
     });
   } catch (e) {
@@ -3287,13 +3289,13 @@ function forget(id) {
   outcomes().delete(id);
   wake(id);
 }
-function outcomeOf(id, stopOf, signal) {
+function outcomeOf(id, stopOf, signal2) {
   const gen = stopOf(id);
   const o = outcomes().get(id);
   if (gen === null) return Promise.resolve(null);
   if (o?.[0] === gen) return Promise.resolve(o[1]);
   return new Promise((done) => {
-    if (signal?.aborted) return;
+    if (signal2?.aborted) return;
     const set = waiters().get(id) ?? /* @__PURE__ */ new Set();
     const off = () => {
       const now2 = waiters().get(id);
@@ -3301,10 +3303,10 @@ function outcomeOf(id, stopOf, signal) {
       if (now2?.size === 0) waiters().delete(id);
     };
     const w = () => {
-      signal?.removeEventListener("abort", off);
-      void outcomeOf(id, stopOf, signal).then(done);
+      signal2?.removeEventListener("abort", off);
+      void outcomeOf(id, stopOf, signal2).then(done);
     };
-    signal?.addEventListener("abort", off, { once: true });
+    signal2?.addEventListener("abort", off, { once: true });
     set.add(w);
     waiters().set(id, set);
   });
@@ -3420,15 +3422,15 @@ function createCuts(d) {
      * born during the wait) is waited for too, until the set stands still. `signal` or this
      * instance's stop drops the wait.
      */
-    async outcome(ids2, signal) {
+    async outcome(ids2, signal2) {
       const own = new AbortController();
       const off = () => {
         waits.delete(own);
         own.abort();
       };
       waits.add(own);
-      signal?.addEventListener("abort", off, { once: true });
-      if (signal?.aborted) off();
+      signal2?.addEventListener("abort", off, { once: true });
+      if (signal2?.aborted) off();
       try {
         const asked = /* @__PURE__ */ new Set();
         let first = null;
@@ -3442,7 +3444,7 @@ function createCuts(d) {
         return first;
       } finally {
         waits.delete(own);
-        signal?.removeEventListener("abort", off);
+        signal2?.removeEventListener("abort", off);
       }
     },
     /**
@@ -3514,10 +3516,23 @@ function stamp(pid) {
     return failure.status === 1 && !failure.stdout?.trim() && !failure.stderr?.trim() ? null : void 0;
   }
 }
-async function closeClient(client, current) {
+var closing = () => globalThis[`${GLOBAL_PREFIX}ClientCloses`] ??= /* @__PURE__ */ new Map();
+function closeClient(client, current) {
+  const key = `${client.pid} ${client.born}`;
+  const was = closing().get(key);
+  if (was) return was;
+  const close = signal(client, current).finally(() => {
+    if (closing().get(key) === close) closing().delete(key);
+  });
+  closing().set(key, close);
+  return close;
+}
+async function signal(client, current) {
   const { pid, born } = client;
+  const before = stamp(pid);
+  if (before === null || typeof before === "string" && before !== born) return true;
   const now2 = processes().find((p) => p.pid === pid);
-  if (stamp(pid) !== born || now2?.uid !== client.uid || now2.command !== client.command || !current())
+  if (before !== born || now2?.uid !== client.uid || now2.command !== client.command || !current())
     return false;
   try {
     process.kill(pid, "SIGTERM");
@@ -3535,29 +3550,315 @@ async function closeClient(client, current) {
   return false;
 }
 
+// js/shared/canon.ts
+import { realpathSync as realpathSync2 } from "node:fs";
+import { sep } from "node:path";
+function canonDir(p) {
+  let real2 = p;
+  try {
+    real2 = realpathSync2.native(p);
+  } catch {
+  }
+  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
+  return real2;
+}
+
+// js/opencode/marker.ts
+import { createHash as createHash4 } from "node:crypto";
+import { mkdirSync as mkdirSync3, readdirSync as readdirSync3, readFileSync as readFileSync7, statSync as statSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join7 } from "node:path";
+
+// js/opencode/procstart.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { readFileSync as readFileSync6 } from "node:fs";
+var CLK_TCK = 100;
+function linuxStart(pid) {
+  const stat = readFileSync6(`/proc/${pid}/stat`, "utf8");
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const ticks = Number(fields[19]);
+  const btime = Number(/^btime (\d+)$/m.exec(readFileSync6("/proc/stat", "utf8"))?.[1]);
+  return Number.isFinite(ticks) && btime ? (btime + ticks / CLK_TCK) * 1e3 : null;
+}
+function psStart(pid) {
+  const out2 = execFileSync2("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "ignore"],
+    windowsHide: true,
+    timeout: 2e3
+  }).trim();
+  const at2 = Date.parse(out2);
+  return Number.isNaN(at2) ? null : at2;
+}
+function processStart(pid) {
+  try {
+    return process.platform === "linux" ? linuxStart(pid) : psStart(pid);
+  } catch {
+    return null;
+  }
+}
+
+// js/opencode/records.ts
+var entryOf2 = (e) => ({
+  session: e.session,
+  dir: e.dir ?? null,
+  key: e.key ?? null,
+  child: !!e.child,
+  ...typeof e.stoodAt === "number" ? { stoodAt: e.stoodAt } : {},
+  ...e.moved ? { moved: true } : {},
+  ...e.child ? {
+    of: e.of ?? null,
+    ...e.noted ? { noted: true } : {},
+    ...e.name ? { name: e.name } : {},
+    ...e.last ? { last: e.last } : {},
+    ...e.leaving ? { leaving: e.leaving } : {}
+  } : {}
+});
+
+// js/opencode/marker.ts
+var PREFIX2 = "opencode-lost";
+var LEGACY_MS = 2 * 6e4;
+var START_SLACK_MS = 1e3;
+var hash = (s) => createHash4("sha256").update(s).digest("hex").slice(0, 12);
+var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
+var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
+var otherLive = (f, path) => {
+  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
+  if (!pid || pid === process.pid) return false;
+  const started = processStart(pid);
+  if (started === null) return false;
+  try {
+    return started <= statSync3(path).mtimeMs + START_SLACK_MS;
+  } catch {
+    return false;
+  }
+};
+function stoodAtOf(authDir2, key) {
+  try {
+    const at2 = JSON.parse(readFileSync7(holdFilePathOf(authDir2, key), "utf8"))?.stoodAt;
+    return typeof at2 === "number" ? at2 : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function writeLostMarker(authDir2, slots, home) {
+  const entries = [...slots].filter((s) => s.holding && s.session).map(
+    (s) => entryOf2({
+      ...s,
+      session: s.session,
+      of: s.satelliteOf,
+      name: s.place?.name,
+      stoodAt: s.key ? stoodAtOf(authDir2, s.key) : void 0
+    })
+  );
+  if (!entries.length) return [];
+  try {
+    mkdirSync3(authDir2, { recursive: true, mode: 448 });
+    const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
+    const rand = Math.random().toString(36).slice(2, 8);
+    const name = `${PREFIX2}.@${tagOf(home)}.${process.pid}.${rand}.json`;
+    writeFileSync4(join7(authDir2, name), JSON.stringify(lost), { mode: 384 });
+    return entries;
+  } catch {
+    return [];
+  }
+}
+function markerWaits(authDir2, home) {
+  try {
+    return readdirSync3(authDir2).some(
+      (f) => f.startsWith(`${PREFIX2}.@${tagOf(home)}.`) && !otherLive(f, join7(authDir2, f))
+    );
+  } catch {
+    return false;
+  }
+}
+function readOwn(path, tag, home) {
+  const drop2 = () => {
+    try {
+      unlinkSync2(path);
+    } catch {
+    }
+  };
+  let lost = null;
+  try {
+    const text3 = readFileSync7(path, "utf8");
+    if (tag !== null) drop2();
+    lost = JSON.parse(text3);
+  } catch {
+  }
+  if (tag === null && !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS)) drop2();
+  if (!lost) return null;
+  const mine = (e) => tag !== null || !home || !e.dir || e.dir === home.directory;
+  return { at: lost.at, entries: (lost.entries ?? []).filter(mine) };
+}
+function takeLostMarker(authDir2, home) {
+  const entries = [];
+  let at2 = "";
+  let files;
+  try {
+    files = readdirSync3(authDir2).filter((f) => f.startsWith(PREFIX2) && f.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  const mine = tagOf(home);
+  const read = [];
+  for (const f of files) {
+    const tag = tagIn(f);
+    if (tag !== null && tag !== mine) continue;
+    if (otherLive(f, join7(authDir2, f))) continue;
+    const lost = readOwn(join7(authDir2, f), tag, home);
+    if (lost) read.push({ tagged: tag !== null, lost });
+  }
+  const eraOf = (e, lost) => e.stoodAt ?? (Date.parse(lost.at) || 0);
+  const best = /* @__PURE__ */ new Map();
+  for (const { tagged, lost } of read) {
+    const stale = !(Date.now() - Date.parse(lost.at ?? "") < LEGACY_MS);
+    for (const e of lost.entries ?? []) {
+      if (!e?.session || e.moved && stale) continue;
+      const era = eraOf(e, lost);
+      const had = best.get(e.session);
+      if (had && (Number(had.tagged) - Number(tagged) || had.era - era) >= 0) continue;
+      best.set(e.session, { tagged, era, e, lost });
+    }
+  }
+  for (const { e, lost } of best.values()) {
+    if (lost.at > at2) at2 = lost.at;
+    entries.push(entryOf2(e));
+  }
+  if (!entries.length) return null;
+  const when = new Date(at2);
+  const hhmm = Number.isNaN(when.getTime()) ? at2 : when.toTimeString().slice(0, 5);
+  const word2 = (of) => {
+    const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
+    return where ? words(OPENCODE_KEEP).lostWord(hhmm, where) : null;
+  };
+  return {
+    text: word2(entries),
+    // the log gets all
+    entries,
+    wordFor: (s) => word2(entries.filter((e) => e.session === s))
+  };
+}
+
+// js/opencode/twins.ts
+var WAKE_MS = Number(process.env[envName("WAKE_MS")]) || 15e3;
+var PAUSE_MS = Math.min(1e3, WAKE_MS / 5);
+var registry = () => globalThis[`${GLOBAL_PREFIX}Twins`] ??= /* @__PURE__ */ new Set();
+var handing = () => globalThis[`${GLOBAL_PREFIX}Handing`] ??= /* @__PURE__ */ new Map();
+function handOver(session, p) {
+  handing().set(session, p);
+  void p.finally(() => handing().get(session) === p && handing().delete(session));
+}
+var handedOver = (session) => handing().get(session);
+function adoptIn(to) {
+  for (const t of registry()) if (t.home && sameSpelling(t.home, to)) t.adopt();
+}
+function sweepAll() {
+  for (const t of registry()) t.sweep();
+}
+function heldInProcess(root) {
+  for (const t of registry()) {
+    const s = t.holds(root);
+    if (s) return s;
+  }
+  return null;
+}
+var folderOf = (h) => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
+var sameSpelling = (a, b) => a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
+var sleep3 = (ms) => new Promise((r) => setTimeout(r, ms));
+function createTwins(ctx, home, d) {
+  const W5 = words(OPENCODE_KEEP);
+  let gone = false;
+  const me = {
+    home,
+    wake: (h, e) => void wake2(h, e),
+    holds: (r) => d.holds(r),
+    holders: () => d.holders(),
+    adopt: () => d.adopt(),
+    sweep: () => d.sweep()
+  };
+  registry().add(me);
+  async function wake2(h, entries) {
+    const roots = entries.filter((e) => !e.child && !e.moved && e.session);
+    await sleep3(PAUSE_MS);
+    if (gone || !roots.length) return;
+    const up = [...registry()].some((t) => t.home && sameSpelling(t.home, h));
+    if (up || !markerWaits(authDir(), h)) return;
+    let why = "";
+    for (const e of roots) {
+      try {
+        const args = { sessionID: e.session, directory: h.directory, delivery: "queue" };
+        await ctx.session.move(args);
+        why = "";
+        break;
+      } catch (err) {
+        why = err.message;
+      }
+    }
+    if (!why) {
+      await sleep3(WAKE_MS);
+      if (!markerWaits(authDir(), h)) {
+        d.say(W5.twinUp(h.directory), "info");
+        return;
+      }
+      why = W5.markerUntaken(Math.round(WAKE_MS / 1e3));
+    }
+    if (gone) return;
+    const named2 = roots.map((e) => e.key ?? e.session).join(", ");
+    d.say(W5.unloaded(h.directory, named2, why), "error");
+    for (const e of roots)
+      d.lost(e.session, W5.seatLost(e.key ?? W5.thisSession(), h.directory, why));
+  }
+  return {
+    /** The instance stops — out of the registry, nobody to wake it and no need. */
+    leave() {
+      gone = true;
+      registry().delete(me);
+    },
+    /** A stop with seats entries (the marker landed): a live twin wakes this spelling. */
+    left(entries) {
+      if (!home || !entries.length) return;
+      const live = [...registry()].filter((t) => t.home);
+      if (live.some((t) => sameSpelling(t.home, home))) return;
+      live.find((t) => folderOf(t.home) === folderOf(home))?.wake(home, entries);
+    }
+  };
+}
+
+// js/opencode/sameclient.ts
+function seatsOfClient(id, pid) {
+  const seated = /* @__PURE__ */ new Map();
+  for (const t of registry())
+    for (const s of t.holders()) {
+      const slot = t.holds(s);
+      if (slot && !slot.child && slot.place) seated.set(s, slot.place.name);
+    }
+  return [...seated].filter(([s]) => s !== id && clientOf(s)?.pid === pid).map(([, name]) => name);
+}
+
 // js/opencode/skillread.ts
-import { existsSync as existsSync2, lstatSync as lstatSync2, readdirSync as readdirSync3, realpathSync as realpathSync3 } from "node:fs";
+import { existsSync as existsSync2, lstatSync as lstatSync2, readdirSync as readdirSync4, realpathSync as realpathSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { basename as basename4, dirname as dirname3, isAbsolute as isAbsolute2, join as join8, relative, resolve as resolve6 } from "node:path";
+import { basename as basename4, dirname as dirname3, isAbsolute as isAbsolute2, join as join9, relative, resolve as resolve6 } from "node:path";
 
 // js/shared/skilllock.ts
-import { existsSync, readFileSync as readFileSync6, realpathSync as realpathSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync8, realpathSync as realpathSync3 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { basename as basename3, dirname as dirname2, join as join7, resolve as resolve5 } from "node:path";
+import { basename as basename3, dirname as dirname2, join as join8, resolve as resolve5 } from "node:path";
 var canon = (p) => {
   try {
-    return realpathSync2(p);
+    return realpathSync3(p);
   } catch {
     return resolve5(p);
   }
 };
 function lockPlaces(root, stateHome = process.env.XDG_STATE_HOME) {
   const places = [];
-  if (stateHome && canon(root) === canon(join7(homedir4(), ".agents", "skills")))
-    places.push(join7(stateHome, "skills", ".skill-lock.json"));
-  places.push(join7(dirname2(root), ".skill-lock.json"));
+  if (stateHome && canon(root) === canon(join8(homedir4(), ".agents", "skills")))
+    places.push(join8(stateHome, "skills", ".skill-lock.json"));
+  places.push(join8(dirname2(root), ".skill-lock.json"));
   if (basename3(root) === "skills" && basename3(dirname2(root)) === ".agents")
-    places.push(join7(dirname2(dirname2(root)), "skills-lock.json"));
+    places.push(join8(dirname2(dirname2(root)), "skills-lock.json"));
   return places;
 }
 var hasSkillLock = (root, stateHome = process.env.XDG_STATE_HOME) => lockPlaces(root, stateHome).some((p) => existsSync(p));
@@ -3565,7 +3866,7 @@ function skillLock(root, stateHome = process.env.XDG_STATE_HOME) {
   const place = lockPlaces(root, stateHome).find((p) => existsSync(p));
   if (!place) return null;
   try {
-    const lock = JSON.parse(readFileSync6(place, "utf8"));
+    const lock = JSON.parse(readFileSync8(place, "utf8"));
     return lock.skills ?? {};
   } catch {
     return null;
@@ -3578,7 +3879,7 @@ var CALLS = 256;
 var WALK = 4096;
 var canon2 = (p) => {
   try {
-    return realpathSync3(p);
+    return realpathSync4(p);
   } catch {
     return null;
   }
@@ -3595,7 +3896,7 @@ function canonReach(p) {
   let at2 = p;
   for (; ; ) {
     const c = canon2(at2);
-    if (c) return tail2.length ? join8(c, ...tail2.reverse()) : c;
+    if (c) return tail2.length ? join9(c, ...tail2.reverse()) : c;
     if (!absent(at2)) return null;
     const name = basename4(at2);
     const up = dirname3(at2);
@@ -3616,7 +3917,7 @@ function bridgeRoot(s) {
   const path = typeof s?.path === "string" ? s.path : null;
   if (s?.id !== BRIDGE_SKILL || !path || !isAbsolute2(path)) return null;
   const dir = dirname3(path);
-  if (basename4(dir) !== BRIDGE_SKILL || !existsSync2(join8(dir, "scripts", BRIDGE_FILE))) return null;
+  if (basename4(dir) !== BRIDGE_SKILL || !existsSync2(join9(dir, "scripts", BRIDGE_FILE))) return null;
   return dirname3(dir);
 }
 async function skillDirs(ctx) {
@@ -3653,13 +3954,13 @@ function leadsOut(dir) {
     const d = stack.pop();
     let entries;
     try {
-      entries = readdirSync3(d, { withFileTypes: true });
+      entries = readdirSync4(d, { withFileTypes: true });
     } catch {
       return true;
     }
     for (const e of entries) {
       if (++seen > WALK) return true;
-      const p = join8(d, e.name);
+      const p = join9(d, e.name);
       if (e.isSymbolicLink()) {
         const c = canon2(p);
         if (!c || !within(c, dir)) return true;
@@ -3669,7 +3970,7 @@ function leadsOut(dir) {
   return false;
 }
 function absolute(p, base) {
-  if (p === "~" || p.startsWith("~/")) return join8(homedir5(), p.slice(1));
+  if (p === "~" || p.startsWith("~/")) return join9(homedir5(), p.slice(1));
   if (isAbsolute2(p)) return p;
   return base ? resolve6(base, p) : null;
 }
@@ -3813,6 +4114,8 @@ function archiver(ctx, tell) {
     }
     await new Promise((r) => setTimeout(r, CLOSE_AFTER_MS));
     if (!current()) return;
+    const kept2 = seatsOfClient(id, client.pid);
+    if (kept2.length) return tell(W5.clientKept(id, client.pid, kept2.join(", ")));
     const closed = await closeClient(client, current);
     if (!current()) return;
     tell(
@@ -4007,183 +4310,6 @@ function handRiders(ps, put, note) {
   }
 }
 
-// js/opencode/marker.ts
-import { createHash as createHash4 } from "node:crypto";
-import { mkdirSync as mkdirSync3, readdirSync as readdirSync4, readFileSync as readFileSync8, statSync as statSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join9 } from "node:path";
-
-// js/opencode/procstart.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { readFileSync as readFileSync7 } from "node:fs";
-var CLK_TCK = 100;
-function linuxStart(pid) {
-  const stat = readFileSync7(`/proc/${pid}/stat`, "utf8");
-  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-  const ticks = Number(fields[19]);
-  const btime = Number(/^btime (\d+)$/m.exec(readFileSync7("/proc/stat", "utf8"))?.[1]);
-  return Number.isFinite(ticks) && btime ? (btime + ticks / CLK_TCK) * 1e3 : null;
-}
-function psStart(pid) {
-  const out2 = execFileSync2("ps", ["-o", "lstart=", "-p", String(pid)], {
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    stdio: ["ignore", "pipe", "ignore"],
-    windowsHide: true,
-    timeout: 2e3
-  }).trim();
-  const at2 = Date.parse(out2);
-  return Number.isNaN(at2) ? null : at2;
-}
-function processStart(pid) {
-  try {
-    return process.platform === "linux" ? linuxStart(pid) : psStart(pid);
-  } catch {
-    return null;
-  }
-}
-
-// js/opencode/records.ts
-var entryOf2 = (e) => ({
-  session: e.session,
-  dir: e.dir ?? null,
-  key: e.key ?? null,
-  child: !!e.child,
-  ...typeof e.stoodAt === "number" ? { stoodAt: e.stoodAt } : {},
-  ...e.moved ? { moved: true } : {},
-  ...e.child ? {
-    of: e.of ?? null,
-    ...e.noted ? { noted: true } : {},
-    ...e.name ? { name: e.name } : {},
-    ...e.last ? { last: e.last } : {},
-    ...e.leaving ? { leaving: e.leaving } : {}
-  } : {}
-});
-
-// js/opencode/marker.ts
-var PREFIX2 = "opencode-lost";
-var LEGACY_MS = 2 * 6e4;
-var START_SLACK_MS = 1e3;
-var hash = (s) => createHash4("sha256").update(s).digest("hex").slice(0, 12);
-var tagOf = (home) => home ? hash(`${home.directory}\0${home.workspace ?? ""}`) : "any";
-var tagIn = (f) => /^opencode-lost\.@([^.]+)\./.exec(f)?.[1] ?? null;
-var otherLive = (f, path) => {
-  const pid = Number(/\.(\d+)\.[^.]+\.json$/.exec(f)?.[1]);
-  if (!pid || pid === process.pid) return false;
-  const started = processStart(pid);
-  if (started === null) return false;
-  try {
-    return started <= statSync3(path).mtimeMs + START_SLACK_MS;
-  } catch {
-    return false;
-  }
-};
-function stoodAtOf(authDir2, key) {
-  try {
-    const at2 = JSON.parse(readFileSync8(holdFilePathOf(authDir2, key), "utf8"))?.stoodAt;
-    return typeof at2 === "number" ? at2 : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function writeLostMarker(authDir2, slots, home) {
-  const entries = [...slots].filter((s) => s.holding && s.session).map(
-    (s) => entryOf2({
-      ...s,
-      session: s.session,
-      of: s.satelliteOf,
-      name: s.place?.name,
-      stoodAt: s.key ? stoodAtOf(authDir2, s.key) : void 0
-    })
-  );
-  if (!entries.length) return [];
-  try {
-    mkdirSync3(authDir2, { recursive: true, mode: 448 });
-    const lost = { at: (/* @__PURE__ */ new Date()).toISOString(), entries };
-    const rand = Math.random().toString(36).slice(2, 8);
-    const name = `${PREFIX2}.@${tagOf(home)}.${process.pid}.${rand}.json`;
-    writeFileSync4(join9(authDir2, name), JSON.stringify(lost), { mode: 384 });
-    return entries;
-  } catch {
-    return [];
-  }
-}
-function markerWaits(authDir2, home) {
-  try {
-    return readdirSync4(authDir2).some(
-      (f) => f.startsWith(`${PREFIX2}.@${tagOf(home)}.`) && !otherLive(f, join9(authDir2, f))
-    );
-  } catch {
-    return false;
-  }
-}
-function readOwn(path, tag, home) {
-  const drop2 = () => {
-    try {
-      unlinkSync2(path);
-    } catch {
-    }
-  };
-  let lost = null;
-  try {
-    const text3 = readFileSync8(path, "utf8");
-    if (tag !== null) drop2();
-    lost = JSON.parse(text3);
-  } catch {
-  }
-  if (tag === null && !(Date.now() - Date.parse(lost?.at ?? "") < LEGACY_MS)) drop2();
-  if (!lost) return null;
-  const mine = (e) => tag !== null || !home || !e.dir || e.dir === home.directory;
-  return { at: lost.at, entries: (lost.entries ?? []).filter(mine) };
-}
-function takeLostMarker(authDir2, home) {
-  const entries = [];
-  let at2 = "";
-  let files;
-  try {
-    files = readdirSync4(authDir2).filter((f) => f.startsWith(PREFIX2) && f.endsWith(".json"));
-  } catch {
-    return null;
-  }
-  const mine = tagOf(home);
-  const read = [];
-  for (const f of files) {
-    const tag = tagIn(f);
-    if (tag !== null && tag !== mine) continue;
-    if (otherLive(f, join9(authDir2, f))) continue;
-    const lost = readOwn(join9(authDir2, f), tag, home);
-    if (lost) read.push({ tagged: tag !== null, lost });
-  }
-  const eraOf = (e, lost) => e.stoodAt ?? (Date.parse(lost.at) || 0);
-  const best = /* @__PURE__ */ new Map();
-  for (const { tagged, lost } of read) {
-    const stale = !(Date.now() - Date.parse(lost.at ?? "") < LEGACY_MS);
-    for (const e of lost.entries ?? []) {
-      if (!e?.session || e.moved && stale) continue;
-      const era = eraOf(e, lost);
-      const had = best.get(e.session);
-      if (had && (Number(had.tagged) - Number(tagged) || had.era - era) >= 0) continue;
-      best.set(e.session, { tagged, era, e, lost });
-    }
-  }
-  for (const { e, lost } of best.values()) {
-    if (lost.at > at2) at2 = lost.at;
-    entries.push(entryOf2(e));
-  }
-  if (!entries.length) return null;
-  const when = new Date(at2);
-  const hhmm = Number.isNaN(when.getTime()) ? at2 : when.toTimeString().slice(0, 5);
-  const word2 = (of) => {
-    const where = of.filter((e) => !e.child && !e.moved).map((e) => e.key ?? e.dir ?? e.session).join(", ");
-    return where ? words(OPENCODE_KEEP).lostWord(hhmm, where) : null;
-  };
-  return {
-    text: word2(entries),
-    // the log gets all
-    entries,
-    wordFor: (s) => word2(entries.filter((e) => e.session === s))
-  };
-}
-
 // js/opencode/adopt.ts
 function createAdopt(d) {
   const moved = /* @__PURE__ */ new Map();
@@ -4227,103 +4353,6 @@ var W3 = () => words(LEAD);
 var shown = (last) => last.length > SUMMARY_MAX ? `${last.slice(0, SUMMARY_MAX)}${W3().cut(SUMMARY_MAX, last.length)}` : last;
 var endWord = (who, why, last, kept2) => W3().end(who, why, kept2 ? W3().endKept(who, kept2) : W3().endPlain(), shown(last));
 var unrevokedWord = (who, failed) => failed === null ? W3().unrevokedUnknown(who) : W3().unrevoked(who, failed.join(", "), String(failed[0]));
-
-// js/shared/canon.ts
-import { realpathSync as realpathSync4 } from "node:fs";
-import { sep } from "node:path";
-function canonDir(p) {
-  let real2 = p;
-  try {
-    real2 = realpathSync4.native(p);
-  } catch {
-  }
-  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
-  return real2;
-}
-
-// js/opencode/twins.ts
-var WAKE_MS = Number(process.env[envName("WAKE_MS")]) || 15e3;
-var PAUSE_MS = Math.min(1e3, WAKE_MS / 5);
-var registry = () => globalThis[`${GLOBAL_PREFIX}Twins`] ??= /* @__PURE__ */ new Set();
-var handing = () => globalThis[`${GLOBAL_PREFIX}Handing`] ??= /* @__PURE__ */ new Map();
-function handOver(session, p) {
-  handing().set(session, p);
-  void p.finally(() => handing().get(session) === p && handing().delete(session));
-}
-var handedOver = (session) => handing().get(session);
-function adoptIn(to) {
-  for (const t of registry()) if (t.home && sameSpelling(t.home, to)) t.adopt();
-}
-function sweepAll() {
-  for (const t of registry()) t.sweep();
-}
-function heldInProcess(root) {
-  for (const t of registry()) {
-    const s = t.holds(root);
-    if (s) return s;
-  }
-  return null;
-}
-var folderOf = (h) => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
-var sameSpelling = (a, b) => a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
-var sleep3 = (ms) => new Promise((r) => setTimeout(r, ms));
-function createTwins(ctx, home, d) {
-  const W5 = words(OPENCODE_KEEP);
-  let gone = false;
-  const me = {
-    home,
-    wake: (h, e) => void wake2(h, e),
-    holds: (r) => d.holds(r),
-    adopt: () => d.adopt(),
-    sweep: () => d.sweep()
-  };
-  registry().add(me);
-  async function wake2(h, entries) {
-    const roots = entries.filter((e) => !e.child && !e.moved && e.session);
-    await sleep3(PAUSE_MS);
-    if (gone || !roots.length) return;
-    const up = [...registry()].some((t) => t.home && sameSpelling(t.home, h));
-    if (up || !markerWaits(authDir(), h)) return;
-    let why = "";
-    for (const e of roots) {
-      try {
-        const args = { sessionID: e.session, directory: h.directory, delivery: "queue" };
-        await ctx.session.move(args);
-        why = "";
-        break;
-      } catch (err) {
-        why = err.message;
-      }
-    }
-    if (!why) {
-      await sleep3(WAKE_MS);
-      if (!markerWaits(authDir(), h)) {
-        d.say(W5.twinUp(h.directory), "info");
-        return;
-      }
-      why = W5.markerUntaken(Math.round(WAKE_MS / 1e3));
-    }
-    if (gone) return;
-    const named2 = roots.map((e) => e.key ?? e.session).join(", ");
-    d.say(W5.unloaded(h.directory, named2, why), "error");
-    for (const e of roots)
-      d.lost(e.session, W5.seatLost(e.key ?? W5.thisSession(), h.directory, why));
-  }
-  return {
-    /** The instance stops — out of the registry, nobody to wake it and no need. */
-    leave() {
-      gone = true;
-      registry().delete(me);
-    },
-    /** A stop with seats entries (the marker landed): a live twin wakes this spelling. */
-    left(entries) {
-      if (!home || !entries.length) return;
-      const live = [...registry()].filter((t) => t.home);
-      if (live.some((t) => sameSpelling(t.home, home))) return;
-      live.find((t) => folderOf(t.home) === folderOf(home))?.wake(home, entries);
-    }
-  };
-}
 
 // js/opencode/children.ts
 var BACK_MS = Number(process.env[envName("CHILD_BACK_MS")]) || 75e3;
@@ -5963,7 +5992,7 @@ async function setupTools(ctx, say, onChannel, rootOf, flushUsage = async () => 
           const answered = answerHalt(
             slot.bridge,
             params?.data,
-            (signal) => halted(slot.session, signal)
+            (signal2) => halted(slot.session, signal2)
           );
           if (lead) void answered.then(() => leads.heard(session, kind2, slot.place));
           return;
@@ -6549,13 +6578,13 @@ function setupChannel(ctx, say, freshestRoot, parents = /* @__PURE__ */ new Map(
     },
     // Each reading cuts the descendants this instance serves, a child born during the wait too;
     // other instances cut theirs by the same stops (plugin.ts sweep).
-    async halted(session2, signal) {
+    async halted(session2, signal2) {
       const gen = session2 ? halts.stopOf(session2) : null;
       const outcome2 = await cuts.outcome(() => {
         if (!session2) return [];
         this.halt(session2);
         return [session2, ...covered(processDescendants(session2))];
-      }, signal);
+      }, signal2);
       return session2 && halts.stopOf(session2) !== gen ? "stop_superseded" : outcome2;
     },
     halt(session2) {
@@ -9017,7 +9046,7 @@ async function setup(ctx) {
       (s) => flushUsage(s),
       closed,
       // No channel half — no interrupt: the order's stop is refused, not reported executed.
-      (s, signal) => ch ? ch.halted(s, signal) : Promise.resolve(CHANNEL_DOWN),
+      (s, signal2) => ch ? ch.halted(s, signal2) : Promise.resolve(CHANNEL_DOWN),
       (s, name, args, holding) => spawnStarts.apply(s, name, args, holding),
       (s) => spawnStarts.has(s),
       (s, args, result) => spawnStarts.verify(s, args, result)
@@ -9266,6 +9295,7 @@ async function setup(ctx) {
     say,
     lost: (s, text3) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text: text3 } }),
     holds: (r) => half.held(r),
+    holders: () => half.holders(),
     adopt: () => half.adopt(),
     sweep: () => void sweep()
   });
