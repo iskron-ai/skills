@@ -1483,6 +1483,94 @@ for (const how of ["tui", "run", "stand again"])
     }
   });
 
+// One OpenCode process holding two root seats: the full stop of one archives it and takes its
+// seat off, but the shared client is not closed — the other seat lives on, named in the word.
+test("the full stop of one of two seated roots of one client archives it and keeps the client", async () => {
+  const client = spawn(process.execPath, [standIn()], { stdio: "ignore" });
+  const b = bridgeEnv("stopped-shared-client", { ISKRON_OPENCODE_CLIENT_PID: client.pid });
+  const rec = await plugin(b.env, {
+    app: { name: "opencode", version: "2.2.1", channel: "latest" },
+    sessions: [
+      { id: "s-shared-a", time: {} },
+      { id: "s-shared-b", time: {} },
+    ],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-shared-a");
+    await rec.call("iskron_channel", { action: "connect" }, "s-shared-b");
+    const [pidA, pidB] = pidsOf(b.log);
+    await rootHolds(rec, b, { pid: pidA, key: "k-a", place: { ...ROOT_PLACE, name: "host.a" } });
+    await rootHolds(rec, b, { pid: pidB, key: "k-b", place: { ...ROOT_PLACE, name: "host.b" } });
+    appendFileSync(
+      `${b.events}.${pidA}`,
+      event("stopped", { order: "shared-order", key: "k-a", text: "место host.a снято" }),
+    );
+    await until(() => rec.archives.length === 1, "the archive of the stopped session");
+    assert.deepEqual(rec.archives[0], { sessionID: "s-shared-a", archived: true });
+    await until(() => /клиент не закрыт/.test(rec.said()), "the word of the kept client", 8000);
+    assert.match(rec.said(), /клиент не закрыт: в нём ещё места host\.b/);
+    await delay(500);
+    assert.equal(client.signalCode, null, "the shared client is not signalled");
+    assert.equal(client.exitCode, null, "the shared client is not signalled");
+    assert.ok(alive(pidB), "the other seat's bridge lives on");
+    assert.doesNotMatch(rec.said(), /клиент закрыт \(pid/);
+  } finally {
+    client.kill();
+    await rec.stop();
+  }
+});
+
+// Both seats of one client stopped at once: neither keeps the client for the other — both
+// sessions archived, the client signalled once, the second close sees it gone without an error.
+test("two stops of both seated roots of one client close it once", async () => {
+  const script = standIn();
+  const terms = join(dirname(script), "terms");
+  writeFileSync(
+    script,
+    `process.on('SIGTERM',()=>{require('node:fs').appendFileSync(${JSON.stringify(terms)},'x\\n');setTimeout(()=>process.exit(0),300)});setTimeout(()=>{},60000);\n`,
+  );
+  const client = spawn(process.execPath, [script], { stdio: "ignore" });
+  const b = bridgeEnv("stopped-both-shared", { ISKRON_OPENCODE_CLIENT_PID: client.pid });
+  const rec = await plugin(b.env, {
+    app: { name: "opencode", version: "2.2.1", channel: "latest" },
+    sessions: [
+      { id: "s-both-a", time: {} },
+      { id: "s-both-b", time: {} },
+    ],
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-both-a");
+    await rec.call("iskron_channel", { action: "connect" }, "s-both-b");
+    const [pidA, pidB] = pidsOf(b.log);
+    await rootHolds(rec, b, { pid: pidA, key: "k-a", place: { ...ROOT_PLACE, name: "host.a" } });
+    await rootHolds(rec, b, { pid: pidB, key: "k-b", place: { ...ROOT_PLACE, name: "host.b" } });
+    appendFileSync(
+      `${b.events}.${pidA}`,
+      event("stopped", { order: "both-a", key: "k-a", text: "a" }),
+    );
+    appendFileSync(
+      `${b.events}.${pidB}`,
+      event("stopped", { order: "both-b", key: "k-b", text: "b" }),
+    );
+    await until(() => rec.archives.length === 2, "both sessions archived");
+    await until(
+      () => (rec.said().match(/её клиент закрыт \(pid/g) ?? []).length === 2,
+      "both stops report the closed client",
+      10000,
+    );
+    for (const s of ["s-both-a", "s-both-b"])
+      assert.match(rec.said(), new RegExp(`сессия ${s} остановлена, её клиент закрыт`));
+    assert.doesNotMatch(rec.said(), /клиент не закрыт|осталось открытым/);
+    await delay(500);
+    assert.equal(readFileSync(terms, "utf8"), "x\n", "the client is signalled exactly once");
+  } finally {
+    client.kill("SIGKILL");
+    await rec.stop();
+  }
+});
+
 // #7519: a stop order executed by the bridge says the same "stopped" as the owner's 4001 — no
 // close code, the order's reason — and the plugin halts the session the same way.
 test("the stop by an order halts the session as the stop by taking the seat off", async () => {
