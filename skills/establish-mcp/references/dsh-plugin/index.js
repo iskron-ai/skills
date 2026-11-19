@@ -165,7 +165,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.14.4";
+var VERSION = "8.15.0";
 
 // js/delivery/words/asks.ts
 var ASK = {
@@ -1672,7 +1672,12 @@ function whoOf2(frame, withPlace) {
   if (origin2 === "platform") return W().whoPlatform();
   if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin2 === "human") return W().whoHuman(userTag(p.user)) + place;
+  if (origin2 === "human") {
+    const user = typeof p.user === "string" ? p.user.trim().replace(/^@/, "") : "";
+    const seat = (p.from_standing ?? "").trim();
+    const repeats = !!user && !seat.includes(":") && seat.replace(/^@/, "") === user;
+    return W().whoHuman(userTag(p.user)) + (repeats ? "" : place);
+  }
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
   return (origin2 === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
