@@ -1866,6 +1866,50 @@ test("reap: a terminal whose client holds a live seat through the daemon is not 
   assert.equal(run.closed, "client_exited");
 });
 
+// The same decision on the older close paths (orchestra-run-ends.ts): a launch with neither tree
+// nor exec, its window passed or its row ended — a client standing a seat through the daemon
+// keeps its terminal and the row as it was; standing nowhere, it is closed as before.
+const legacyRow = (o, state) => ({
+  realm: REALM,
+  room: ROOM,
+  invite: 9,
+  karta: 931,
+  launcher: "probe-mac",
+  harness: "opencode",
+  model: "anthropic/claude-opus-5-5",
+  repository: REPO,
+  worktree: o.checkout,
+  terminal: "term_fake",
+  runtime: "rt_fake",
+  state,
+  at: "2026-01-01T00:00:00Z",
+});
+for (const [state, line] of [
+  ["launched", "no_seat (cause_unseen), terminal_closed"],
+  ["ended", "ended, terminal_closed"],
+])
+  for (const seat of ["16-m3.infra.opus-5-5", undefined])
+    test(`legacy close: a ${state} launch's terminal ${seat ? "is kept while its client holds a seat" : "is closed when its client holds none"}`, async (t) => {
+      const o = await leading(t);
+      writeFileSync(
+        join(o.dir, "run", "orchestra-runs.json"),
+        JSON.stringify({ runs: { [`${REALM}|${ROOM}|9`]: legacyRow(o, state) } }),
+      );
+      await terminalBridge(t, o, "term_fake", seat);
+      const r = await o.step();
+      assert.equal(r.code, 0, r.err + r.out);
+      const run = o.runs()[`${REALM}|${ROOM}|9`];
+      if (seat) {
+        assert.match(r.out, new RegExp(`invite 9: [a-z_]+, client_holds_seat ${seat}`), r.out);
+        assert.equal(o.closes().length, 0, "a live agent's terminal is never closed");
+        assert.equal(run.state, state, "the row stays as it was");
+        assert.equal(run.closed, undefined);
+      } else {
+        assert.ok(r.out.includes(`invite 9: ${line}`), r.out);
+        assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+      }
+    });
+
 // The control: the same client in that terminal, attached to the daemon but standing nowhere —
 // closed as before.
 test("reap: a terminal whose client holds no seat is closed as before", async (t) => {

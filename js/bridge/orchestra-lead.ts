@@ -58,7 +58,7 @@ export function leadAct(
       // the run it marks stopping now waits for the next tact's read (review of №4050 [105]).
       const foreign = await foreignStops(authDir, base, token, runs);
       said.push(...foreign.said);
-      said.push(...(await expireLaunches(runs, gone)));
+      said.push(...(await expireLaunches(runs, gone, undefined, undefined, held)));
       said.push(...settleStops(runs, owned, foreign.fresh));
       // A dsh run the tact just ended sleeps when its case stays open (#10995) — before any
       // write, so the tree cleanup below sees a dormant row, not an ended one.
@@ -76,7 +76,7 @@ export function leadAct(
       );
       syncClosed(runs, readRuns(authDir));
       said.push(...(await reapOwn(authDir, runs, gone, undefined, undefined, undefined, held)));
-      said.push(...(await closeEnded(runs, gone)));
+      said.push(...(await closeEnded(runs, gone, undefined, held)));
       if (gone?.gone) return said;
       writeRuns(authDir, runs);
       await cleanupEndedTrees(authDir, runs);
