@@ -52,8 +52,8 @@ export interface OrchestraWords {
   leadIncomplete: (errors: string) => string;
   /** Описания запускателей в mind не прочитаны — подъёма нет. */
   leadNoLaunchers: (why: string) => string;
-  /** Описание запускателя в mind не годится — по нему ничего не поднимается. */
-  leadDescription: (what: string, code: string) => string;
+  /** Описание запускателя в mind не годится — по нему ничего не поднимается; nodes — узлы mind отказа. */
+  leadDescription: (what: string, code: string, nodes?: string[]) => string;
   /** Приказы учётки не прочитаны — останов по требованию не замечен в этом такте. */
   leadOrdersUnread: (why: string) => string;
   /** Бриф поднимаемого агента после строки spawned_for. */
@@ -142,8 +142,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
     leadIncomplete: (errors) =>
       `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
     leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
-    leadDescription: (what, code) =>
-      `описание запускателя ${what} в mind: ${code} — по нему подъёма нет`,
+    leadDescription: (what, code, nodes) =>
+      `описание запускателя ${what} в mind: ${code}${nodes?.length ? ` (${nodes.join(", ")})` : ""} — по нему подъёма нет`,
     leadOrdersUnread: (why) =>
       `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
@@ -227,8 +227,8 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
     leadNoLaunchers: (why) =>
       `the launcher descriptions in mind did not read (${why}) — nothing is raised`,
-    leadDescription: (what, code) =>
-      `the launcher description ${what} in mind: ${code} — nothing is raised by it`,
+    leadDescription: (what, code, nodes) =>
+      `the launcher description ${what} in mind: ${code}${nodes?.length ? ` (${nodes.join(", ")})` : ""} — nothing is raised by it`,
     leadOrdersUnread: (why) =>
       `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).

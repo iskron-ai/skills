@@ -34,5 +34,6 @@ export interface Launchers {
   accountId?: string;
   own: Map<string, Launcher>;
   elsewhere: Map<string, string>;
-  refused: { what: string; code: string }[];
+  /** nodes — the mind nodes a refusal is about (`#N`), when it names several: launcher_duplicate. */
+  refused: { what: string; code: string; nodes?: string[] }[];
 }

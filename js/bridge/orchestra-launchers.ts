@@ -105,6 +105,8 @@ export async function readLaunchers(serverUrl: string, token: string): Promise<L
     });
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine: Launcher[] = [];
+    // The mind node of each description of this machine: a duplicate names them all.
+    const nodeOf = new Map<Launcher, string>();
     for (const seq of seqs) {
       const body = await nodeBody(s.call, tool("look"), "mind", seq);
       const l = parseLauncher(body);
@@ -113,13 +115,20 @@ export async function readLaunchers(serverUrl: string, token: string): Promise<L
         continue;
       }
       // Host names are case-insensitive: the human writes what the machine shows, in any case.
-      if (l.host === null || l.host.toLowerCase() === here) mine.push(l);
-      else out.elsewhere.set(l.launcher, l.host);
+      if (l.host === null || l.host.toLowerCase() === here) {
+        mine.push(l);
+        nodeOf.set(l, `#${seq}`);
+      } else out.elsewhere.set(l.launcher, l.host);
     }
     for (const l of mine) {
-      if (mine.filter((x) => x.launcher === l.launcher).length > 1) {
+      const same = mine.filter((x) => x.launcher === l.launcher);
+      if (same.length > 1) {
         if (!out.refused.some((r) => r.what === l.launcher))
-          out.refused.push({ what: l.launcher, code: "launcher_duplicate" });
+          out.refused.push({
+            what: l.launcher,
+            code: "launcher_duplicate",
+            nodes: same.map((x) => nodeOf.get(x) ?? "?"),
+          });
         continue;
       }
       out.own.set(l.launcher, l);
