@@ -7,6 +7,7 @@ import { clientOf, closeClient } from "./client.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
 import { bridgeRoot } from "./skillread.ts";
+import { seatedRoots } from "./twins.ts";
 
 /**
  * What the bridge learns of the host only by environment (#6226): OpenCode's own version (the
@@ -59,7 +60,7 @@ const CLOSE_AFTER_MS = 1_000;
 /**
  * The stopped session archived (`on`) or taken out of the archive (#9256) — archived, not
  * removed: the human reads what the agent got to. A root session's client is closed as well
- * (client.ts); archive refusal or unobserved exit refuses the full stop, never a false success.
+ * (client.ts), unless it still serves another root holding a seat in this process; archive refusal or unobserved exit refuses the full stop, never a false success.
  */
 export function archiver(
   ctx: Context,
@@ -115,6 +116,11 @@ export function archiver(
     }
     await new Promise((r) => setTimeout(r, CLOSE_AFTER_MS));
     if (!current()) return;
+    // One process may serve other seated roots (a shared run): their client is not this stop's.
+    const kept = seatedRoots()
+      .filter((r) => r.session !== id && clientOf(r.session)?.pid === client.pid)
+      .map((r) => r.name);
+    if (kept.length) return tell(W.clientKept(id, client.pid, kept));
     const closed = await closeClient(client, current);
     if (!current()) return;
     tell(

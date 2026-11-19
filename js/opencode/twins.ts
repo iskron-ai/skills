@@ -27,6 +27,8 @@ interface Twin {
   wake(home: Home, entries: LostEntry[]): void;
   /** A root's slot holding a seat in this instance; none — null. */
   holds(root: string): Slot | null;
+  /** Sessions with a held seat in this instance (half.ts holders). */
+  holders(): string[];
   /** Take this location's marker now (adopt.ts). */
   adopt(): void;
   /** Take down the seats of this instance's children under a stopped session (plugin.ts). */
@@ -65,6 +67,17 @@ export function heldInProcess(root: string): Slot | null {
   return null;
 }
 
+/** Root sessions holding a seat in any instance of this process, with their seat names (host.ts). */
+export function seatedRoots(): { session: string; name: string }[] {
+  const out = new Map<string, string>();
+  for (const t of registry())
+    for (const s of t.holders()) {
+      const slot = t.holds(s);
+      if (slot && !slot.child && slot.place) out.set(s, slot.place.name);
+    }
+  return [...out].map(([session, name]) => ({ session, name }));
+}
+
 const folderOf = (h: Home): string => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
 const sameSpelling = (a: Home, b: Home): boolean =>
   a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
@@ -76,6 +89,8 @@ export interface TwinDoors {
   lost(session: string, text: string): void;
   /** A root's slot holding a seat in this instance (tools.ts). */
   holds(root: string): Slot | null;
+  /** Sessions with a held seat in this instance (tools.ts). */
+  holders(): string[];
   /** Take this location's marker now (adopt.ts). */
   adopt(): void;
   /** Take down the seats of children under a stopped session (plugin.ts). */
@@ -89,6 +104,7 @@ export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
     home,
     wake: (h, e) => void wake(h, e),
     holds: (r) => d.holds(r),
+    holders: () => d.holders(),
     adopt: () => d.adopt(),
     sweep: () => d.sweep(),
   };

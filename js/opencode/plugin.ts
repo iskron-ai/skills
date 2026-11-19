@@ -469,6 +469,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     say,
     lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     holds: (r) => half.held(r),
+    holders: () => half.holders(),
     adopt: () => half.adopt(),
     sweep: () => void sweep(),
   });
