@@ -2,7 +2,6 @@
 import { closeSync, existsSync, fstatSync, lstatSync, openSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { REAPED_OVER } from "./orchestra-reap.ts";
 import { readRuns, type Run, runIdentity, writeRuns } from "./orchestra-runs.ts";
 import {
   directory,
@@ -13,21 +12,9 @@ import {
   OID,
   treeContent,
 } from "./orchestra-tree-check.ts";
+import { clientGone, keepProof } from "./orchestra-tree-proof.ts";
 import { recheckDue, recheckKept } from "./orchestra-tree-recheck.ts";
 
-/** The client is over: the stop said stopped, or the seat was already over after the exact
- * terminal exited (#9256). A run that slept (#10995) had settled its seat at the exit that
- * armed the sleep — the sleep's own end needs no fresh proof; the seat's own farewell
- * (dormant_seat_left, #4929) is as final; so is the daemon's observed close of a launch that
- * never sat or of a row already ended (#11099). */
-const clientGone = (r: Run): boolean =>
-  r.stop_outcome === "stopped" ||
-  r.reaped === REAPED_OVER ||
-  r.why === "seat_gone_after_exit" ||
-  r.why === "dormant_seat_left" ||
-  (r.why === "dormant_share_claimed" && !!r.dsh?.exit) ||
-  (!!r.dsh?.exit && !r.standing_id) ||
-  (!!r.dormant && !!r.dsh?.exit);
 /** Ended — or a dsh launch refused by its own exit before any session (#10777). */
 const over = (r: Run): boolean => r.state === "ended" || (r.state === "refused" && !!r.dsh?.exit);
 
@@ -43,6 +30,7 @@ export async function cleanupTree(
   if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
   if (!over(r) || !clientGone(r) || r.closed !== "client_exited" || !t.exit)
     return "tree_client_unverified";
+  keepProof(r);
   const identity = runIdentity(r);
   const current = () => {
     const latest = readRuns(authDir)[key];

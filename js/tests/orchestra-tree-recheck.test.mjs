@@ -8,7 +8,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { readRuns } from "../bridge/orchestra-runs.ts";
+import { readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
 import * as clean from "../bridge/orchestra-tree-clean.ts";
 import { command, fixture, stopped } from "./tree-fixture.mjs";
@@ -87,6 +87,50 @@ test("tree recheck: a merge commit's own file keeps the tree though every patch 
   const r = await tact(f, T0 + RECHECK_MS);
   assert.equal(r.tree.state, "retained", JSON.stringify(r));
   assert.equal(existsSync(join(f.tree, "unique.txt")), true, "the merge's own work stays");
+});
+
+// The review's second case: the client's end proven only by `why` (the stop answered 410 after
+// the exact exit, exec-exit.ts), which the kept tree's reason overwrites as orchestra-lead
+// writes the registry; the next look must still see the end.
+test("tree recheck: an end proven by seat_gone_after_exit survives the kept reason", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  Object.assign(f.row, { state: "ended", why: "seat_gone_after_exit", closed: "client_exited" });
+  f.row.tree.exit = "observed-exit";
+  writeRuns(f.auth, f.runs);
+  const tree = f.row.worktree;
+  writeFileSync(join(tree, "work.txt"), "work\n");
+  command(tree, "add", "work.txt");
+  command(tree, ...ID, "commit", "-m", "work");
+  const leadTact = async (at) => {
+    const runs = readRuns(f.auth);
+    await cleanupEndedTrees(f.auth, runs, at);
+    writeRuns(f.auth, runs);
+    return readRuns(f.auth).own;
+  };
+  let r = await leadTact(T0);
+  assert.equal(r.tree.state, "retained", JSON.stringify(r));
+  assert.equal(r.why, "tree_commits_retained", "the kept reason took the why");
+  command(f.source, "merge", "--ff-only", command(tree, "rev-parse", "HEAD"));
+  r = await leadTact(T0 + RECHECK_MS);
+  assert.equal(r.tree.state, "removed", JSON.stringify(r));
+  assert.equal(existsSync(tree), false);
+});
+
+// No proof, or a kept proof of another run (a continuation, another seat): the tree is not touched.
+test("tree recheck: a kept proof of another run proves nothing", async (t) => {
+  const f = fixture(t);
+  assert.equal(await prepareTree(f.auth, f.runs, "own", f.source), null);
+  Object.assign(f.row, {
+    state: "ended",
+    why: "tree_commits_retained",
+    closed: "client_exited",
+    client_gone: { proof: "seat_gone_after_exit", identity: "another run" },
+  });
+  f.row.tree.exit = "observed-exit";
+  writeRuns(f.auth, f.runs);
+  assert.equal(await clean.cleanupTree(f.auth, readRuns(f.auth), "own"), "tree_client_unverified");
+  assert.equal(existsSync(f.row.worktree), true);
 });
 
 test("tree recheck: an unmerged commit keeps the tree, said as before", async (t) => {
