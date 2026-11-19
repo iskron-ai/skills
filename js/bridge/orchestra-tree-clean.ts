@@ -13,6 +13,7 @@ import {
   OID,
   treeContent,
 } from "./orchestra-tree-check.ts";
+import { recheckDue, recheckKept } from "./orchestra-tree-recheck.ts";
 
 /** The client is over: the stop said stopped, or the seat was already over after the exact
  * terminal exited (#9256). A run that slept (#10995) had settled its seat at the exit that
@@ -84,7 +85,7 @@ export async function cleanupTree(
       JSON.stringify(await inspectTree(t, execute)) !== JSON.stringify(t.identity)
     )
       return retain("tree_identity_unverified");
-    const invalid = await treeContent(t, execute);
+    const invalid = await treeContent(t, execute, true);
     if (invalid) return retain(invalid);
     if (!current()) return "tree_superseded";
     // A detached commit updates this HEAD through HEAD.lock. Hold it across the final check
@@ -99,7 +100,7 @@ export async function cleanupTree(
     }
     if (JSON.stringify(await inspectTree(t, execute)) !== JSON.stringify(t.identity))
       return retain("tree_identity_unverified");
-    const changed = await treeContent(t, execute);
+    const changed = await treeContent(t, execute, true);
     if (changed) return retain(changed);
     if (!current()) return "tree_superseded";
     t.state = "removing";
@@ -130,10 +131,16 @@ export async function cleanupTree(
   }
 }
 
-export async function cleanupEndedTrees(authDir: string, runs: Record<string, Run>): Promise<void> {
+/** Ready trees of ended runs are cleaned; kept ones are looked at again (orchestra-tree-recheck.ts). */
+export async function cleanupEndedTrees(
+  authDir: string,
+  runs: Record<string, Run>,
+  now = Date.now(),
+): Promise<void> {
   for (const [key, r] of Object.entries(runs))
     if (r.tree?.state === "ready" && over(r)) {
       const why = await cleanupTree(authDir, runs, key);
       if (why) r.why = why;
-    }
+    } else if (over(r) && recheckDue(r, now))
+      await recheckKept(authDir, runs, key, now, cleanupTree);
 }
