@@ -157,6 +157,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
   let counter = 0;
   let lastNotice: string | null = null;
   let server: Server | null = null;
+  let door: Server | null = null;
 
   const idle = idleWatch(
     IDLE_MS,
@@ -175,6 +176,7 @@ export async function daemonMain(argv: string[]): Promise<void> {
     log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
     beginHandover(why);
     server?.close();
+    door?.close();
     // Thin bridges wait for the successor instead of raising a daemon themselves.
     for (const so of sockets) writeFrame(so, { t: "handover", why });
     spawnDaemon(to, authDir, true); // the successor waits for this one to release the entrance
@@ -373,14 +375,10 @@ export async function daemonMain(argv: string[]): Promise<void> {
     }
   }
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
-  // The orchestrator's local door (bridge/orchestra-door.ts): on, off, status and the step
-  // tact of the flag the daemon owns; refused aloud when there is no daemon to ask — so it
-  // listens with the seam. The tact reads the api BESIDE THE CHANNEL with the daemon's own
-  // key (transport's bearer): a live session's channel names it, else the freshest hold
-  // record on disk; neither — "" and the tact refuses aloud, never guessing from the mcp
-  // server url (live probe 2026-10-20: the api beside the channel answers, the mcp origin
-  // does not).
-  let door: Server | null = null;
+  // The orchestration door (bridge/orchestra-door.ts): on, off, status, step; no daemon — refusal.
+  // It listens with the seam. The tact reads the api BESIDE THE CHANNEL with the daemon's bearer:
+  // a live session's channel, else the freshest hold record; neither — "" and refusal, never mcp url
+  // (live probe 2026-10-20: api beside the channel answers, mcp origin does not).
   try {
     const serve = orchestraServe(authDir, {
       mcp: (): string => cfg.serverUrl,
@@ -425,7 +423,8 @@ export async function daemonMain(argv: string[]): Promise<void> {
         return [...found];
       },
     });
-    door = await openOrchestra(authDir, serve, () => draining, log);
+    const doorWait = successor ? SUCCESSOR_WAIT_MS : 0; // the former daemon may still hold the name
+    door = await openOrchestra(authDir, serve, () => draining, log, doorWait);
   } catch (e) {
     log(`the orchestration door does not open: ${errorMessage(e)}`);
   }
