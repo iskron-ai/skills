@@ -13,7 +13,7 @@ import { isAbsolute } from "node:path";
 
 import { tool } from "../delivery/index.ts";
 import { scoped, sessionCwd } from "../shared/scope.ts";
-import { alive, listens, nameOf, readBoard } from "./board.ts";
+import { alive, type BoardEntry, listens, nameOf, readBoard } from "./board.ts";
 import {
   type AskedHearing,
   besideRefusal,
@@ -292,8 +292,8 @@ async function standOnce(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
       .map((x) => sanitize(x.trim()))
       .filter(Boolean),
   );
-  const legacy = entries.filter((e) => {
-    if (sat) return false; // the caller's former seats are not the satellite's business
+  const legacy = entries.filter((e): e is BoardEntry & { address: string } => {
+    if (sat || e.address === null) return false; // the caller's former seats are not the satellite's business
     if (e.karta !== karta || nameOf(e.address) === name) return false;
     const own = nameOf(e.address);
     if (!own.startsWith(`${stem}.`)) return false;
