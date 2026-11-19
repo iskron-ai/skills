@@ -203,7 +203,10 @@ async function leading(
   });
   let derr = "";
   daemon.stderr.on("data", (c) => (derr += c));
+  /** What must end while the daemon still lives — the probe's own clients of it. */
+  const beforeCleanup = [];
   t.after(async () => {
+    for (const end of beforeCleanup.splice(0)) await end();
     if (daemon.exitCode === null && daemon.signalCode === null) {
       const ended = new Promise((r) => daemon.once("exit", r));
       daemon.kill("SIGKILL");
@@ -222,6 +225,7 @@ async function leading(
     dir,
     fake,
     checkout,
+    beforeCleanup,
     step: () => cli(dir, ["step"]),
     launches: () => orcaCalls(log).filter((a) => a[0] === "agent"),
     closes: () => orcaCalls(log).filter((a) => a[0] === "terminal" && a[1] === "close"),
@@ -1780,7 +1784,7 @@ test("reap: a terminal whose client is not ours is left untouched, the refusal s
 
 /** A thin bridge of this daemon started inside the Orca terminal `handle` — as OpenCode's own
  * bridge inherits the terminal's environment; `seat` — the place it stands, none if absent. */
-async function terminalBridge(t, o, handle, seat) {
+async function terminalBridge(o, handle, seat) {
   const proc = spawn(NODE, [BRIDGE, `${o.fake.base}/mcp`, "--no-browser", "--auth-dir", o.dir], {
     env: {
       ...process.env,
@@ -1796,7 +1800,9 @@ async function terminalBridge(t, o, handle, seat) {
     if (proc.exitCode === null && proc.signalCode === null) proc.stdin.end();
     return exited;
   };
-  t.after(() => {
+  // Before the daemon is killed: a thin bridge that loses its daemon raises another one into
+  // the same run/ (thin.ts), and the fixture's removal races it.
+  o.beforeCleanup.push(() => {
     if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
     return exited;
   });
@@ -1842,7 +1848,7 @@ test("reap: a terminal whose client holds a live seat through the daemon is not 
   const o = await stopping(t, { status: 201, body: { id: "ord-h" } }, "ord-h", {
     FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
   });
-  const agent = await terminalBridge(t, o, "term_fake", "16-m3.infra.opus-5-5");
+  const agent = await terminalBridge(o, "term_fake", "16-m3.infra.opus-5-5");
   assert.equal((await ack(o, "ord-h", "expired")).status, 200);
   for (let i = 0; i < 4; i++) {
     const r = await o.step();
@@ -1895,7 +1901,7 @@ for (const [state, line] of [
         join(o.dir, "run", "orchestra-runs.json"),
         JSON.stringify({ runs: { [`${REALM}|${ROOM}|9`]: legacyRow(o, state) } }),
       );
-      await terminalBridge(t, o, "term_fake", seat);
+      await terminalBridge(o, "term_fake", seat);
       const r = await o.step();
       assert.equal(r.code, 0, r.err + r.out);
       const run = o.runs()[`${REALM}|${ROOM}|9`];
@@ -1916,7 +1922,7 @@ test("reap: a terminal whose client holds no seat is closed as before", async (t
   const o = await stopping(t, { status: 201, body: { id: "ord-n" } }, "ord-n", {
     FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
   });
-  await terminalBridge(t, o, "term_fake");
+  await terminalBridge(o, "term_fake");
   assert.equal((await ack(o, "ord-n", "expired")).status, 200);
   const r = await o.step();
   assert.equal(r.code, 0, r.err + r.out);
