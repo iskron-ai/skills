@@ -118,7 +118,7 @@ export function archiver(
     if (!current()) return;
     // One process may serve other seated roots (a shared run): their client is not this stop's.
     const kept = seatsOfClient(id, client.pid);
-    if (kept.length) return tell(W.clientKept(id, client.pid, kept));
+    if (kept.length) return tell(W.clientKept(id, client.pid, kept.join(", ")));
     const closed = await closeClient(client, current);
     if (!current()) return;
     tell(

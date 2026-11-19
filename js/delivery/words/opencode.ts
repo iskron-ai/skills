@@ -74,7 +74,7 @@ export interface OpencodeWords {
   /** A stopped session's client closed (#9256). */
   clientClosed: (id: string, pid: number) => string;
   /** A stopped session's client kept: it still serves other seats of this process. */
-  clientKept: (id: string, pid: number, places: string[]) => string;
+  clientKept: (id: string, pid: number, places: string) => string;
   held: (key: string) => string;
   released: (key: string, text: string) => string;
   /** seats — not revoked by the deleted session's bridge, or its word when it did not answer. */
@@ -166,7 +166,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Искрон: сессия ${id} остановлена, но её окно осталось открытым — ${why ?? "клиента этой сессии плагину не найти"}; закройте его в OpenCode`,
     clientClosed: (id, pid) => `Искрон: сессия ${id} остановлена, её клиент закрыт (pid ${pid})`,
     clientKept: (id, pid, places) =>
-      `Искрон: сессия ${id} остановлена, клиент не закрыт: в нём ещё места ${places.join(", ")} (pid ${pid})`,
+      `Искрон: сессия ${id} остановлена, клиент не закрыт: в нём ещё места ${places} (pid ${pid})`,
     held: (key) => `Искрон: мост держит место ${key}`,
     released: (key, text) => `Искрон: мост отпустил место ${key} — ${text}`,
     endUnrevoked: (seats) =>
@@ -261,7 +261,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Iskron: session ${id} is stopped but its window is left open — ${why ?? "the plugin finds no client of this session"}; close it in OpenCode`,
     clientClosed: (id, pid) => `Iskron: session ${id} is stopped, its client closed (pid ${pid})`,
     clientKept: (id, pid, places) =>
-      `Iskron: session ${id} is stopped, the client is not closed: it still holds the seats ${places.join(", ")} (pid ${pid})`,
+      `Iskron: session ${id} is stopped, the client is not closed: it still holds the seats ${places} (pid ${pid})`,
     held: (key) => `Iskron: the bridge holds the seat ${key}`,
     released: (key, text) => `Iskron: the bridge released the seat ${key} — ${text}`,
     endUnrevoked: (seats) =>
