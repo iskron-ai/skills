@@ -116,6 +116,7 @@ export async function readyTree(
   key: string,
   r: Run,
   source: string,
+  execute: Git = git,
 ): Promise<boolean> {
   const t = r.tree;
   if (
@@ -141,11 +142,11 @@ export async function readyTree(
   try {
     return (
       sameTreePath(
-        await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], execute),
         t.commonDir,
       ) &&
-      isDeepStrictEqual(await inspectTree(t), t.identity) &&
-      (await treeContent(t)) === null &&
+      isDeepStrictEqual(await inspectTree(t, execute), t.identity) &&
+      (await treeContent(t, execute)) === null &&
       isDeepStrictEqual(readRuns(authDir)[key], r)
     );
   } catch {
