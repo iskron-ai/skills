@@ -53,6 +53,19 @@ test("tree recheck: a commit fast-forwarded into main lets the next look remove 
   assert.notEqual(r.why, "tree_commits_retained");
 });
 
+// A squash merge: another commit in main carries the same patch, the tree's own is no ancestor.
+test("tree recheck: a commit squashed into main lets the next look remove the tree", async (t) => {
+  const f = await kept(t, "commit");
+  command(f.source, "merge", "--squash", f.head);
+  command(f.source, ...ID, "commit", "-m", "squashed (#1)");
+  const main = command(f.source, "rev-parse", "main");
+  assert.notEqual(main, f.head);
+  assert.throws(() => command(f.source, "merge-base", "--is-ancestor", f.head, "main"));
+  const r = await tact(f, T0 + RECHECK_MS);
+  assert.equal(r.tree.state, "removed", JSON.stringify(r));
+  assert.equal(existsSync(f.tree), false);
+});
+
 test("tree recheck: an unmerged commit keeps the tree, said as before", async (t) => {
   const f = await kept(t, "commit");
   for (const at of [T0, T0 + RECHECK_MS, T0 + 2 * RECHECK_MS]) {
