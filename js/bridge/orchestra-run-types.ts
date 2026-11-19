@@ -105,4 +105,7 @@ export interface Run {
   reaped?: string;
   /** Transient refusals of that close so far; it is tried again until a bound. */
   reap_tries?: number;
+  /** The proof of the client's end a tree cleanup saw, kept apart from `why` (a kept tree's
+   * reason overwrites it) and bound to this very run (#11189). */
+  client_gone?: { proof: string; identity: string };
 }
