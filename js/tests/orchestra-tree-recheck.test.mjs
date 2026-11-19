@@ -54,16 +54,39 @@ test("tree recheck: a commit fast-forwarded into main lets the next look remove 
 });
 
 // A squash merge: another commit in main carries the same patch, the tree's own is no ancestor.
-test("tree recheck: a commit squashed into main lets the next look remove the tree", async (t) => {
+// Saved means ancestry only — the squash stays kept, said, for the human to decide.
+test("tree recheck: a commit squashed into main keeps the tree, said", async (t) => {
   const f = await kept(t, "commit");
   command(f.source, "merge", "--squash", f.head);
   command(f.source, ...ID, "commit", "-m", "squashed (#1)");
-  const main = command(f.source, "rev-parse", "main");
-  assert.notEqual(main, f.head);
   assert.throws(() => command(f.source, "merge-base", "--is-ancestor", f.head, "main"));
   const r = await tact(f, T0 + RECHECK_MS);
-  assert.equal(r.tree.state, "removed", JSON.stringify(r));
-  assert.equal(existsSync(f.tree), false);
+  assert.equal(r.tree.state, "retained", JSON.stringify(r));
+  assert.equal(r.tree.why, "tree_commits_retained");
+  assert.equal(existsSync(join(f.tree, "work.txt")), true);
+});
+
+// The review's counter-case: every ordinary commit's patch is in main, but a merge in the tree
+// brings a file of its own — patch equivalence does not see it; the tree and the file stay.
+test("tree recheck: a merge commit's own file keeps the tree though every patch is in main", async (t) => {
+  const f = await kept(t, "commit");
+  command(f.tree, "switch", "-q", "-c", "side", f.base);
+  writeFileSync(join(f.tree, "side.txt"), "side\n");
+  command(f.tree, "add", "side.txt");
+  command(f.tree, ...ID, "commit", "-m", "side");
+  const side = command(f.tree, "rev-parse", "HEAD");
+  command(f.tree, "switch", "-q", "--detach", f.head);
+  command(f.tree, ...ID, "merge", "-q", "--no-ff", "--no-commit", "side");
+  writeFileSync(join(f.tree, "unique.txt"), "only in the merge\n");
+  command(f.tree, "add", "unique.txt");
+  command(f.tree, ...ID, "commit", "-q", "-m", "merge side");
+  command(f.tree, "branch", "-q", "-D", "side");
+  for (const c of [f.head, side]) command(f.source, ...ID, "cherry-pick", "-x", c);
+  const cherry = command(f.tree, "cherry", "main", "HEAD", f.base);
+  assert.ok(!/^\+/m.test(cherry), `every ordinary patch is in main: ${cherry}`);
+  const r = await tact(f, T0 + RECHECK_MS);
+  assert.equal(r.tree.state, "retained", JSON.stringify(r));
+  assert.equal(existsSync(join(f.tree, "unique.txt")), true, "the merge's own work stays");
 });
 
 test("tree recheck: an unmerged commit keeps the tree, said as before", async (t) => {
