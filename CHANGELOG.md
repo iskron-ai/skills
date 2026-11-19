@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.15.0](https://github.com/iskron-ai/skills/compare/v8.14.4...v8.15.0) (2026-11-19)
+
+
+### Features
+
+* **onboarding:** a readiness step's lesson by its key, after the window shows the step's widget ([#870](https://github.com/iskron-ai/skills/issues/870)) ([48b58ac](https://github.com/iskron-ai/skills/commit/48b58acaa53b9a00c725f11a50254193cf19473b))
+
+
+### Bug Fixes
+
+* **bridge:** a human's word names an unnamed seat once — no brackets repeating the account ([#873](https://github.com/iskron-ai/skills/issues/873)) ([b0f46ed](https://github.com/iskron-ai/skills/commit/b0f46ed741f0a2258a2379e0ce7cb13389511550))
+* **onboarding:** the step lesson lives in the body — three entry cases, optional as readiness marks it ([#872](https://github.com/iskron-ai/skills/issues/872)) ([48665e8](https://github.com/iskron-ai/skills/commit/48665e8e321d5e10a14ba1b67e1c187752082aac))
+
 ## [8.14.4](https://github.com/iskron-ai/skills/compare/v8.14.3...v8.14.4) (2026-11-19)
 
 
