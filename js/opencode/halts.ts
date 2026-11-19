@@ -60,6 +60,9 @@ const words = (): Map<string, string | null> =>
 const alones = (): Set<string> => ((globalThis as any)[`${GLOBAL_PREFIX}StopAlone`] ??= new Set());
 const fulls = (): Set<string> => ((globalThis as any)[`${GLOBAL_PREFIX}StopFull`] ??= new Set());
 
+/** The session's own stop lies in this process's registry: its seat does not hold a client (host.ts). */
+export const stoppedInProcess = (session: string): boolean => stops().has(session);
+
 const code = (e: unknown): string | undefined => (e as NodeJS.ErrnoException).code;
 
 /** A stop that bans: its id and word; `word` undefined — recorded before words were kept. */

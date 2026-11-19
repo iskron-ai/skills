@@ -4,6 +4,7 @@ import { GLOBAL_PREFIX, OPENCODE } from "../delivery/index.ts";
 import { HARNESS_VERSION_ENV, SKILLS_ROOT_ENV } from "../shared/clients.ts";
 import { words } from "../shared/lang.ts";
 import { clientOf, closeClient } from "./client.ts";
+import { stoppedInProcess } from "./halts.ts";
 import type { Context } from "./plugin.ts";
 import type { Home } from "./records.ts";
 import { bridgeRoot } from "./skillread.ts";
@@ -118,7 +119,12 @@ export function archiver(
     if (!current()) return;
     // One process may serve other seated roots (a shared run): their client is not this stop's.
     const kept = seatedRoots()
-      .filter((r) => r.session !== id && clientOf(r.session)?.pid === client.pid)
+      .filter(
+        (r) =>
+          r.session !== id &&
+          !stoppedInProcess(r.session) &&
+          clientOf(r.session)?.pid === client.pid,
+      )
       .map((r) => r.name);
     if (kept.length) return tell(W.clientKept(id, client.pid, kept));
     const closed = await closeClient(client, current);
