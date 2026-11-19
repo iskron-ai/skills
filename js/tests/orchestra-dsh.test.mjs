@@ -152,7 +152,9 @@ test("dsh: the dry run says the dsh command, launching nothing", async (t) => {
   assert.equal(r.code, 0, r.err + r.out);
   assert.match(
     r.out,
-    new RegExp(`would launch: \\S+ headless --patch ${o.patch} --patch .+ --json `),
+    new RegExp(
+      `would launch: \\S+ headless --patch ${o.patch} --patch .+ --add-dir <shared git-dir of the tree> --json `,
+    ),
     r.out,
   );
   assert.match(r.out, new RegExp(`model ${MODEL}`), r.out);
