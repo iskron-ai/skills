@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.14.2";
+var VERSION = "8.14.3";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -9869,7 +9869,7 @@ function boardField(sc) {
   if (!list3) return null;
   const folded = sc.folded;
   const whole = list3.every(
-    (s2) => typeof s2.karta_seq === "number" && typeof s2.standing === "string" && s2.standing.trim() !== "" && typeof s2.listening === "boolean"
+    (s2) => typeof s2.karta_seq === "number" && typeof s2.listening === "boolean"
   );
   if (!whole || !is.num(folded)) return fallback(`${tool("channel")} list`, sc);
   return { seats: list3, folded: typeof folded === "number" ? folded : 0 };
@@ -9883,7 +9883,7 @@ function seatField(sc, action) {
 // js/bridge/board.ts
 var fromField = (s2) => ({
   karta: String(s2.karta_seq),
-  address: s2.standing ?? "",
+  address: s2.standing?.trim() || null,
   rest: "",
   incoming: s2.inbound ?? null,
   id: s2.seat_id ?? null,
@@ -9916,6 +9916,11 @@ function parseBoard(text9) {
       out7.push({ karta: m[1], address: m[2], rest: m[3], incoming: null, id: null });
       continue;
     }
+    const bare3 = /^\s*#(\d+)\s[^·—]*?\s—\s(.*)$/.exec(line);
+    if (bare3) {
+      out7.push({ karta: bare3[1], address: null, rest: bare3[2], incoming: null, id: null });
+      continue;
+    }
     const inc = /📥\s*(https?:\/\/\S+)/.exec(line);
     if (inc && out7.length) out7[out7.length - 1].incoming = inc[1];
     const id = /^\s*id\s+([0-9a-f][0-9a-f-]{7,})\s*$/i.exec(line);
@@ -9923,7 +9928,9 @@ function parseBoard(text9) {
   }
   return out7;
 }
-var nameOf = (address) => address.slice(address.indexOf(":") + 1);
+function nameOf(address) {
+  return address === null ? null : address.slice(address.indexOf(":") + 1);
+}
 var FORM = BOARD_FORM;
 var listens = (e) => e.listening ?? FORM.listens.test(e.rest);
 var alive = (e) => e.alive ?? FORM.alive.test(e.rest);
@@ -11538,8 +11545,9 @@ function pickSatellite(entries2, of, karta, led, claim = () => true) {
   const base = address ? nameOf(address) : of.replace(/^@/, "");
   const fault = base ? nameFault(base) : sw2().empty();
   if (fault) return { ok: false, refusal: sw2().notSeatName(of, fault) };
-  const exact = entries2.filter((e) => e.address === of);
-  const callers = address || exact.length ? exact : entries2.filter((e) => nameOf(e.address) === base);
+  const named2 = entries2.filter((e) => e.address !== null);
+  const exact = named2.filter((e) => e.address === of);
+  const callers = address || exact.length ? exact : named2.filter((e) => nameOf(e.address) === base);
   if (!callers.length) return { ok: false, refusal: sw2().noCaller(of) };
   const same2 = callers.length > 1 ? callers.filter((e) => e.karta === normKarta(karta)) : callers;
   if (same2.length !== 1) return { ok: false, refusal: sw2().ambiguous(callers.length, base) };
@@ -19853,7 +19861,7 @@ async function standOnce(msg) {
     git(["branch", "--format=%(refname:short)"], cwd).split("\n").map((x) => sanitize(x.trim())).filter(Boolean)
   );
   const legacy = entries2.filter((e) => {
-    if (sat) return false;
+    if (sat || e.address === null) return false;
     if (e.karta !== karta || nameOf(e.address) === name2) return false;
     const own2 = nameOf(e.address);
     if (!own2.startsWith(`${stem}.`)) return false;
