@@ -1,12 +1,15 @@
 // Read-only Git facts; mutation commands also disable repository hooks for this call (#7517).
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import { run } from "./orchestra-orca.ts";
 import { readRuns, type Run, runKey } from "./orchestra-runs.ts";
+import { sameTreePath, treeMetadataPath, treePath } from "./orchestra-tree-path.ts";
 import { savedInTrunk } from "./orchestra-tree-saved.ts";
 import type { RunTree, TreeIdentity } from "./orchestra-tree-types.ts";
+
+export { sameTreePath, treeMetadataPath } from "./orchestra-tree-path.ts";
 
 export const git = (cwd: string, args: string[], timeout = 10_000) =>
   run(
@@ -40,7 +43,7 @@ export function directory(path: string): boolean {
       isAbsolute(path) &&
       s.isDirectory() &&
       !s.isSymbolicLink() &&
-      realpathSync.native(path) === path
+      sameTreePath(realpathSync.native(path), path)
     );
   } catch {
     return false;
@@ -52,26 +55,24 @@ export async function inspectTree(tree: RunTree, execute: Git = git): Promise<Tr
     throw new Error("tree_identity_unverified");
   const marker = lstatSync(join(tree.path, ".git"));
   if (!marker.isFile() || marker.isSymbolicLink()) throw new Error("tree_identity_unverified");
-  const common = await gitText(
-    tree.path,
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    execute,
+  const common = treePath(
+    await gitText(tree.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], execute),
   );
-  const gitDir = await gitText(tree.path, ["rev-parse", "--absolute-git-dir"], execute);
+  const gitDir = treePath(await gitText(tree.path, ["rev-parse", "--absolute-git-dir"], execute));
   if (
-    common !== tree.commonDir ||
+    !sameTreePath(common, tree.commonDir) ||
     !directory(gitDir) ||
-    !/^worktrees\/[^/]+$/.test(relative(common, gitDir))
+    !treeMetadataPath(common, gitDir)
   )
     throw new Error("tree_identity_unverified");
   const back = join(gitDir, "gitdir");
   if (
     !lstatSync(back).isFile() ||
     lstatSync(back).isSymbolicLink() ||
-    readFileSync(back, "utf8").trim() !== join(tree.path, ".git")
+    !sameTreePath(readFileSync(back, "utf8").trim(), join(tree.path, ".git"))
   )
     throw new Error("tree_identity_unverified");
-  if ((await gitText(tree.path, ["rev-parse", "--show-toplevel"], execute)) !== tree.path)
+  if (!sameTreePath(await gitText(tree.path, ["rev-parse", "--show-toplevel"], execute), tree.path))
     throw new Error("tree_identity_unverified");
   const path = lstatSync(tree.path),
     metadata = lstatSync(gitDir),
@@ -130,16 +131,19 @@ export async function readyTree(
     t.realm !== r.realm ||
     t.room !== r.room ||
     t.invite !== r.invite ||
-    t.source !== source ||
+    !sameTreePath(t.source, source) ||
     !directory(source) ||
-    r.worktree !== t.path ||
-    t.path !== join(source, ".worktrees", `orchestra-${t.operation}`)
+    !r.worktree ||
+    !sameTreePath(r.worktree, t.path) ||
+    !sameTreePath(t.path, join(source, ".worktrees", `orchestra-${t.operation}`))
   )
     return false;
   try {
     return (
-      (await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) ===
-        t.commonDir &&
+      sameTreePath(
+        await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        t.commonDir,
+      ) &&
       isDeepStrictEqual(await inspectTree(t), t.identity) &&
       (await treeContent(t)) === null &&
       isDeepStrictEqual(readRuns(authDir)[key], r)
