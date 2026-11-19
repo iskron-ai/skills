@@ -22,7 +22,7 @@ const WAKE_MS = Number(process.env[envName("WAKE_MS")]) || 15_000;
 /** A pause before waking: a plugin reload stops the twins right after — nothing to wake. */
 const PAUSE_MS = Math.min(1_000, WAKE_MS / 5);
 
-interface Twin {
+export interface Twin {
   home: Home | null;
   wake(home: Home, entries: LostEntry[]): void;
   /** A root's slot holding a seat in this instance; none — null. */
@@ -35,7 +35,7 @@ interface Twin {
   sweep(): void;
 }
 
-const registry = (): Set<Twin> =>
+export const registry = (): Set<Twin> =>
   ((globalThis as any)[`${GLOBAL_PREFIX}Twins`] ??= new Set<Twin>());
 /** Satellites of children moved to another folder whose marker has not landed yet (children.ts, #6695). */
 const handing = (): Map<string, Promise<unknown>> =>
@@ -67,34 +67,16 @@ export function heldInProcess(root: string): Slot | null {
   return null;
 }
 
-/** Root sessions holding a seat in any instance of this process, with their seat names (host.ts). */
-export function seatedRoots(): { session: string; name: string }[] {
-  const out = new Map<string, string>();
-  for (const t of registry())
-    for (const s of t.holders()) {
-      const slot = t.holds(s);
-      if (slot && !slot.child && slot.place) out.set(s, slot.place.name);
-    }
-  return [...out].map(([session, name]) => ({ session, name }));
-}
-
 const folderOf = (h: Home): string => `${canonDir(h.directory)}\0${h.workspace ?? ""}`;
 const sameSpelling = (a: Home, b: Home): boolean =>
   a.directory === b.directory && (a.workspace ?? null) === (b.workspace ?? null);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export interface TwinDoors {
+/** An instance's doors: its seats (tools.ts), marker (adopt.ts) and sweep (plugin.ts), as Twin's. */
+export interface TwinDoors extends Omit<Twin, "home" | "wake"> {
   say(text: string, level: "info" | "warning" | "error"): void;
   /** A loud word into the session (channel.ts, kind=lost). */
   lost(session: string, text: string): void;
-  /** A root's slot holding a seat in this instance (tools.ts). */
-  holds(root: string): Slot | null;
-  /** Sessions with a held seat in this instance (tools.ts). */
-  holders(): string[];
-  /** Take this location's marker now (adopt.ts). */
-  adopt(): void;
-  /** Take down the seats of children under a stopped session (plugin.ts). */
-  sweep(): void;
 }
 
 export function createTwins(ctx: Context, home: Home | null, d: TwinDoors) {
