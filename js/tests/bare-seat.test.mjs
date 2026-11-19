@@ -112,3 +112,23 @@ test("a human's account: «@» only before a handle", () => {
   assert.match(said(id), new RegExp(`человек ${id}`), said(id));
   assert.doesNotMatch(said(id), /@/, said(id));
 });
+
+// LAB, live run 8.15.0: «человек @x (@x)» — the unnamed seat of a human repeats the account;
+// each fact once (REALITY.md). A seat with a name is printed beside as before.
+test("a human's word: the seat in brackets only when it says more than the account", () => {
+  const said = (user, from_standing) =>
+    frameToText(
+      {
+        type: "message",
+        id: "m-2",
+        body: "слово",
+        provenance: { auth: "oidc", user, from_standing, from_person: true },
+      },
+      "",
+      false,
+    ).split("\n")[0];
+  assert.equal(said("x", "@x"), "человек @x");
+  assert.equal(said("@x", "@x"), "человек @x");
+  assert.equal(said("x", "@x:window"), "человек @x (@x:window)");
+  assert.equal(said("x", "window"), "человек @x (window)");
+});

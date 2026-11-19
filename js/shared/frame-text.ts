@@ -80,7 +80,13 @@ function whoOf(frame: Frame, withPlace: boolean): string {
   if (origin === "platform") return W().whoPlatform();
   if (p.via === "graph" && p.from_karta_seq == null && !p.from_standing) return W().whoGraph();
   const place = withPlace && p.from_standing ? ` (${p.from_standing})` : "";
-  if (origin === "human") return W().whoHuman(userTag(p.user)) + place;
+  if (origin === "human") {
+    // The unnamed seat of a human is the bare account (`@handle`): said once, no brackets.
+    const user = typeof p.user === "string" ? p.user.trim().replace(/^@/, "") : "";
+    const seat = (p.from_standing ?? "").trim();
+    const repeats = !!user && !seat.includes(":") && seat.replace(/^@/, "") === user;
+    return W().whoHuman(userTag(p.user)) + (repeats ? "" : place);
+  }
   const karta = p.from_karta_seq;
   if (karta == null) return p.from_standing ?? "";
   return (origin === "sibling" ? W().whoSibling : W().whoRole)(need(karta)) + place;
