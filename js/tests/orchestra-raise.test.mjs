@@ -1778,6 +1778,108 @@ test("reap: a terminal whose client is not ours is left untouched, the refusal s
   assert.equal(run.tree.state, "ready");
 });
 
+/** A thin bridge of this daemon started inside the Orca terminal `handle` — as OpenCode's own
+ * bridge inherits the terminal's environment; `seat` — the place it stands, none if absent. */
+async function terminalBridge(t, o, handle, seat) {
+  const proc = spawn(NODE, [BRIDGE, `${o.fake.base}/mcp`, "--no-browser", "--auth-dir", o.dir], {
+    env: {
+      ...process.env,
+      ISKRON_BRIDGE_NO_BROWSER: "1",
+      ISKRON_BRIDGE_NO_UPDATE: "1",
+      ISKRON_BRIDGE_TOKEN: "probe-pat",
+      ORCA_TERMINAL_HANDLE: handle,
+    },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const exited = new Promise((r) => proc.once("exit", r));
+  const stop = () => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.stdin.end();
+    return exited;
+  };
+  t.after(() => {
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+    return exited;
+  });
+  const waiters = new Map();
+  let out = "";
+  proc.stdout.on("data", (c) => {
+    out += c;
+    for (let nl; (nl = out.indexOf("\n")) >= 0;) {
+      const line = out.slice(0, nl).trim();
+      out = out.slice(nl + 1);
+      if (line) waiters.get(JSON.parse(line).id)?.(JSON.parse(line));
+    }
+  });
+  let id = 0;
+  const call = (method, params) =>
+    new Promise((resolve, reject) => {
+      const n = ++id;
+      waiters.set(n, resolve);
+      setTimeout(() => reject(new Error(`no answer for ${method}`)), 20_000).unref();
+      proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: n, method, params }) + "\n");
+    });
+  const init = await call("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "reap-probe", version: "0" },
+  });
+  assert.ok(init.result, JSON.stringify(init));
+  if (seat) {
+    const r = await call("tools/call", {
+      name: "iskron_stand",
+      arguments: { realm: "nks-dev", karta: 931, name: seat },
+    });
+    assert.ok(r.result && !r.result.isError, JSON.stringify(r));
+  }
+  return { stop };
+}
+
+// 8.14.1 on 16-m3: the call's seat was over, but the same OpenCode process in that terminal
+// had stood another place through this daemon — the expired order's reap killed a live agent.
+// The client holds a live seat: the terminal stays, the reason named, no try counted; once the
+// seat is gone the next tact closes it as before.
+test("reap: a terminal whose client holds a live seat through the daemon is not closed until it leaves", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-h" } }, "ord-h", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  const agent = await terminalBridge(t, o, "term_fake", "16-m3.infra.opus-5-5");
+  assert.equal((await ack(o, "ord-h", "expired")).status, 200);
+  for (let i = 0; i < 4; i++) {
+    const r = await o.step();
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, /invite 9: stop_expired, client_holds_seat 16-m3\.infra\.opus-5-5/, r.out);
+  }
+  assert.equal(o.closes().length, 0, "a live agent's terminal is never closed");
+  let run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.state, "stopping");
+  assert.equal(run.reaped, undefined, "no reap_exhausted");
+  assert.equal(run.reap_tries, undefined, "no try counted");
+  await agent.stop();
+  for (let i = 0; i < 100 && !o.closes().length; i++) {
+    const r = await o.step();
+    assert.equal(r.code, 0, r.err + r.out);
+    if (!/client_holds_seat/.test(r.out)) break;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  run = o.runs()[`${REALM}|${ROOM}|9`];
+  assert.equal(run.closed, "client_exited");
+});
+
+// The control: the same client in that terminal, attached to the daemon but standing nowhere —
+// closed as before.
+test("reap: a terminal whose client holds no seat is closed as before", async (t) => {
+  const o = await stopping(t, { status: 201, body: { id: "ord-n" } }, "ord-n", {
+    FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+  });
+  await terminalBridge(t, o, "term_fake");
+  assert.equal((await ack(o, "ord-n", "expired")).status, 200);
+  const r = await o.step();
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /invite 9: stop_expired, client_exited/, r.out);
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+});
+
 // Review of PR #724 п.3: an order left issued for good holds neither the slot nor the orders
 // cursor past the window — the run ends said so, its tab untouched (#7522).
 test("quench: an open stop past the window keeps its runtime, tree and held cursor", async (t) => {

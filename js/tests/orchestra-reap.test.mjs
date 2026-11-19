@@ -2,6 +2,7 @@
 // observed exit is recorded, but an exec run whose halt/drop is not confirmed stays observed —
 // its order expired, its session on the shared server may still be woken. Orca is injected.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import { test } from "node:test";
 
 import { execApi } from "../bridge/exec-prepare.ts";
 import { reapOwn } from "../bridge/orchestra-reap.ts";
+import { heldBy, terminalOf } from "../bridge/orchestra-reap-held.ts";
 import { LIVE, readRuns, writeRuns } from "../bridge/orchestra-runs.ts";
 import { prepareTree } from "../bridge/orchestra-tree.ts";
 import { cleanupEndedTrees } from "../bridge/orchestra-tree-clean.ts";
@@ -184,6 +186,40 @@ test("reap: a transient refusal is tried again across a daemon restart; ours unp
   assert.equal(got.own.reaped, "client_exited");
   assert.equal(got.own.closed, "client_exited");
   assert.equal(calls.length, 3, "the unproven one is not asked again");
+});
+
+test("reap: a client holding a live seat is not closed and no try is counted", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const runs = { own: structuredClone(row) };
+  let closes = 0;
+  const close = async () => (closes++, null);
+  const held = async (terminal) => (terminal === "term_own" ? "16-m3.infra.opus-5-5" : null);
+  for (let i = 0; i < 4; i++) {
+    const said = await reapOwn(dir, runs, undefined, close, undefined, undefined, held);
+    assert.match(said.join(), /stop_expired, client_holds_seat 16-m3\.infra\.opus-5-5/);
+  }
+  assert.equal(closes, 0);
+  assert.equal(runs.own.reaped, undefined);
+  assert.equal(runs.own.reap_tries, undefined);
+  assert.match((await reapOwn(dir, runs, undefined, close)).join(), /stop_expired, client_exited/);
+  assert.equal(closes, 1);
+});
+
+test("reap: a process's Orca terminal is read from its own environment", async (t) => {
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+    env: { ...process.env, ORCA_TERMINAL_HANDLE: "term_probe" },
+    stdio: "ignore",
+  });
+  t.after(() => child.kill("SIGKILL"));
+  await new Promise((r) => child.once("spawn", r));
+  assert.equal(await terminalOf(child.pid), "term_probe");
+  const holders = () => [
+    { pid: process.pid, seats: ["elsewhere"] },
+    { pid: child.pid, seats: [] },
+  ];
+  assert.equal(await heldBy(holders)("term_probe"), null, "no seat, or another terminal");
+  assert.equal(await heldBy(() => [{ pid: child.pid, seats: ["s"] }])("term_probe"), "s");
 });
 
 test("reap: an expired exec run whose terminal closed is not ended — halt unconfirmed (#9256)", async (t) => {

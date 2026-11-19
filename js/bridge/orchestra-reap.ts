@@ -8,6 +8,7 @@ import { words } from "../shared/lang.ts";
 import { type ApiCall, execApi } from "./exec-prepare.ts";
 import { orcaCloseObserved, ownClient } from "./orca-stop.ts";
 import { haltExecSession } from "./orchestra-exec-halt.ts";
+import { type Held, noHeld } from "./orchestra-reap-held.ts";
 import { readRuns, type Run, runIdentity } from "./orchestra-runs.ts";
 import { stopLapsed } from "./orchestra-window.ts";
 
@@ -36,7 +37,8 @@ export function reapCause(r: Run, now = Date.now()): string | null {
   return r.state === "ambiguity" && NO_SEAT.has(r.why ?? "") ? "no_seat" : null;
 }
 
-/** Close what is due; the closed client's exit is recorded on the row. */
+/** Close what is due; the closed client's exit is recorded on the row. A client still holding a
+ * live seat through the daemon (`held`) is never closed: said, no try counted. */
 export async function reapOwn(
   authDir: string,
   runs: Record<string, Run>,
@@ -44,6 +46,7 @@ export async function reapOwn(
   close: Close = orcaCloseObserved,
   api: ApiCall = execApi,
   now = Date.now(),
+  held: Held = noHeld,
 ): Promise<string[]> {
   const said: string[] = [];
   for (const [key, r] of Object.entries(runs)) {
@@ -52,6 +55,11 @@ export async function reapOwn(
     if (gone?.gone) break;
     const row = (why: string): number => said.push(w().leadRow(r.realm, r.room, r.invite, why));
     if (cause) {
+      const seat = await held(r.terminal!);
+      if (seat) {
+        row(`${cause}, client_holds_seat ${seat}`);
+        continue;
+      }
       const expected = ownClient(r);
       const identity = runIdentity(r);
       const current = (): boolean => {
