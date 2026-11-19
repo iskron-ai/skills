@@ -1,5 +1,13 @@
 # Changelog
 
+## [8.14.4](https://github.com/iskron-ai/skills/compare/v8.14.3...v8.14.4) (2026-11-19)
+
+
+### Bug Fixes
+
+* **bridge:** a kept orchestra tree is looked at again; a squashed patch counts as saved ([#865](https://github.com/iskron-ai/skills/issues/865)) ([4d5c030](https://github.com/iskron-ai/skills/commit/4d5c030936e7c5d0a40d20b9e59ea826e60b3582))
+* **bridge:** a kept tree is saved only by ancestry; its client-gone proof survives the kept reason ([#868](https://github.com/iskron-ai/skills/issues/868)) ([636a1c2](https://github.com/iskron-ai/skills/commit/636a1c2ab568294c3a327035d4d7ef47fb59621f))
+
 ## [8.14.3](https://github.com/iskron-ai/skills/compare/v8.14.2...v8.14.3) (2026-11-19)
 
 
