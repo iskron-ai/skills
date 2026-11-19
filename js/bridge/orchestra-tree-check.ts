@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { run } from "./orchestra-orca.ts";
 import { readRuns, type Run, runKey } from "./orchestra-runs.ts";
+import { savedInTrunk } from "./orchestra-tree-saved.ts";
 import type { RunTree, TreeIdentity } from "./orchestra-tree-types.ts";
 
 export const git = (cwd: string, args: string[], timeout = 10_000) =>
@@ -86,10 +87,17 @@ export async function inspectTree(tree: RunTree, execute: Git = git): Promise<Tr
   };
 }
 
-export async function treeContent(tree: RunTree, execute: Git = git): Promise<string | null> {
+/** Why the tree must stay, null — nothing would be lost. `saved` (the cleanup's word): commits
+ * past the base a trunk already keeps lose nothing; a tree being prepared sits on its base. */
+export async function treeContent(
+  tree: RunTree,
+  execute: Git = git,
+  saved = false,
+): Promise<string | null> {
   if (!(await filesRefs(tree.path, execute))) return "tree_ref_storage_unverified";
   const head = await gitText(tree.path, ["rev-parse", "--verify", "HEAD^{commit}"], execute);
-  if (head !== tree.baseOID) return "tree_commits_retained";
+  if (head !== tree.baseOID && !(saved && (await savedInTrunk(tree, head, execute))))
+    return "tree_commits_retained";
   const branch = await execute(tree.path, ["symbolic-ref", "-q", "HEAD"]);
   if (branch.code !== 1 || branch.out.trim()) return "tree_not_detached";
   const dirty = await execute(tree.path, [
