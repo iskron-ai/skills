@@ -2,12 +2,11 @@
 // process may hold several seated roots (a shared run), and its client is not one stop's to close.
 // Read from the process's instances (twins.ts registry), no registry of its own.
 import { clientOf } from "./client.ts";
-import { stoppedInProcess } from "./halts.ts";
 import { registry } from "./twins.ts";
 
 /**
  * Seat names of the roots, other than `id`, holding a seat in any instance of this process and
- * served by the client `pid`; a root whose own stop is under way in this process holds none.
+ * served by the client `pid`; a stopped root's seat is already off the list.
  */
 export function seatsOfClient(id: string, pid: number): string[] {
   const seated = new Map<string, string>();
@@ -16,7 +15,5 @@ export function seatsOfClient(id: string, pid: number): string[] {
       const slot = t.holds(s);
       if (slot && !slot.child && slot.place) seated.set(s, slot.place.name);
     }
-  return [...seated]
-    .filter(([s]) => s !== id && !stoppedInProcess(s) && clientOf(s)?.pid === pid)
-    .map(([, name]) => name);
+  return [...seated].filter(([s]) => s !== id && clientOf(s)?.pid === pid).map(([, name]) => name);
 }
