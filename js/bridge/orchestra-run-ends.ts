@@ -37,10 +37,11 @@ export async function expireLaunches(
         said.push(w().leadRow(r.realm, r.room, r.invite, r.why));
         continue;
       }
-      // The client in the terminal stands a seat through this daemon: the row stays as it was.
-      const seat = r.terminal ? await held(r.terminal) : null;
-      if (seat) {
-        said.push(w().leadRow(r.realm, r.room, r.invite, `no_seat, client_holds_seat ${seat}`));
+      // The client in the terminal stands a seat through this daemon, or that is not known: the
+      // row stays as it was.
+      const kept = r.terminal ? await held(r.terminal) : null;
+      if (kept) {
+        said.push(w().leadRow(r.realm, r.room, r.invite, `no_seat, ${kept}`));
         continue;
       }
       r.state = "no_seat";
@@ -68,9 +69,9 @@ export async function closeEnded(
         r.why = r.exec ? "exec_client_unverified" : "tree_client_unverified";
         continue;
       }
-      const seat = await held(r.terminal);
-      if (seat) {
-        said.push(w().leadRow(r.realm, r.room, r.invite, `ended, client_holds_seat ${seat}`));
+      const kept = await held(r.terminal);
+      if (kept) {
+        said.push(w().leadRow(r.realm, r.room, r.invite, `ended, ${kept}`));
         continue;
       }
       r.closed = await close(r.terminal, r.runtime);

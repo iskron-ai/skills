@@ -1872,6 +1872,54 @@ test("reap: a terminal whose client holds a live seat through the daemon is not 
   assert.equal(run.closed, "client_exited");
 });
 
+/** A `ps` before the real one on the daemon's PATH whose `ps eww` refuses while the returned
+ * file stands — the environment of a seat holder not read. */
+function psRefusing(o) {
+  const down = join(o.dir, "ps-down");
+  writeFileSync(
+    join(o.dir, "bin", "ps"),
+    `#!/bin/sh\nif [ "$1" = eww ] && [ -e "${down}" ]; then exit 1; fi\nexec /bin/ps "$@"\n`,
+    { mode: 0o755 },
+  );
+  writeFileSync(down, "");
+  return down;
+}
+
+// Closed by default (#11208): the live seat holder's environment not read is no "not here" —
+// every path keeps the terminal, the refusal named, no try counted; read again, the ordinary
+// fork returns. Linux reads /proc, not ps: the substitute has nothing to refuse there.
+const psOnly = { skip: process.platform === "linux" && "the reader is /proc on Linux" };
+test(
+  "reap: a seat holder whose environment is not read keeps the terminal until it is read",
+  psOnly,
+  async (t) => {
+    const o = await stopping(t, { status: 201, body: { id: "ord-u" } }, "ord-u", {
+      FAKE_ORCA_WAIT_AFTER_CLOSE: "1",
+    });
+    const agent = await terminalBridge(o, "term_fake", "16-m3.infra.opus-5-5");
+    const down = psRefusing(o);
+    assert.equal((await ack(o, "ord-u", "expired")).status, 200);
+    for (let i = 0; i < 4; i++) {
+      const r = await o.step();
+      assert.equal(r.code, 0, r.err + r.out);
+      assert.match(r.out, /invite 9: stop_expired, client_hold_unknown \(ps_exit_1\)/, r.out);
+    }
+    assert.equal(o.closes().length, 0, "a terminal whose holder is unknown is never closed");
+    const run = o.runs()[`${REALM}|${ROOM}|9`];
+    assert.equal(run.reaped, undefined, "no reap_exhausted");
+    assert.equal(run.reap_tries, undefined, "no try counted");
+    rmSync(down);
+    const back = await o.step();
+    assert.match(back.out, /invite 9: stop_expired, client_holds_seat 16-m3\.infra\.opus-5-5/);
+    await agent.stop();
+    for (let i = 0; i < 100 && !o.closes().length; i++) {
+      if (!/client_holds_seat/.test((await o.step()).out)) break;
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    assert.equal(o.closes().length, 1, "no seat holder left — closed as before");
+  },
+);
+
 // The same decision on the older close paths (orchestra-run-ends.ts): a launch with neither tree
 // nor exec, its window passed or its row ended — a client standing a seat through the daemon
 // keeps its terminal and the row as it was; standing nowhere, it is closed as before.
@@ -1915,6 +1963,38 @@ for (const [state, line] of [
         assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
       }
     });
+// Unread environments on the older paths: a live seat holder unread keeps the row as it was; no
+// live seat holder at all — nothing unread matters, closed as before.
+for (const [state, line] of [
+  ["launched", "no_seat (cause_unseen), terminal_closed"],
+  ["ended", "ended, terminal_closed"],
+])
+  for (const seat of ["16-m3.infra.opus-5-5", undefined])
+    test(
+      `legacy close: a ${state} launch's terminal ${seat ? "is kept while a seat holder is unread" : "is closed when no client holds a seat, ps refusing"}`,
+      psOnly,
+      async (t) => {
+        const o = await leading(t);
+        writeFileSync(
+          join(o.dir, "run", "orchestra-runs.json"),
+          JSON.stringify({ runs: { [`${REALM}|${ROOM}|9`]: legacyRow(o, state) } }),
+        );
+        await terminalBridge(o, "term_fake", seat);
+        psRefusing(o);
+        const r = await o.step();
+        assert.equal(r.code, 0, r.err + r.out);
+        const run = o.runs()[`${REALM}|${ROOM}|9`];
+        if (seat) {
+          assert.match(r.out, /invite 9: [a-z_]+, client_hold_unknown \(ps_exit_1\)/, r.out);
+          assert.equal(o.closes().length, 0, "an unknown holder's terminal is never closed");
+          assert.equal(run.state, state, "the row stays as it was");
+          assert.equal(run.closed, undefined);
+        } else {
+          assert.ok(r.out.includes(`invite 9: ${line}`), r.out);
+          assert.equal(o.closes().length, 1);
+        }
+      },
+    );
 
 // The control: the same client in that terminal, attached to the daemon but standing nowhere —
 // closed as before.

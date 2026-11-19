@@ -194,7 +194,8 @@ test("reap: a client holding a live seat is not closed and no try is counted", a
   const runs = { own: structuredClone(row) };
   let closes = 0;
   const close = async () => (closes++, null);
-  const held = async (terminal) => (terminal === "term_own" ? "16-m3.infra.opus-5-5" : null);
+  const held = async (terminal) =>
+    terminal === "term_own" ? "client_holds_seat 16-m3.infra.opus-5-5" : null;
   for (let i = 0; i < 4; i++) {
     const said = await reapOwn(dir, runs, undefined, close, undefined, undefined, held);
     assert.match(said.join(), /stop_expired, client_holds_seat 16-m3\.infra\.opus-5-5/);
@@ -213,13 +214,76 @@ test("reap: a process's Orca terminal is read from its own environment", async (
   });
   t.after(() => child.kill("SIGKILL"));
   await new Promise((r) => child.once("spawn", r));
-  assert.equal(await terminalOf(child.pid), "term_probe");
+  assert.deepEqual(await terminalOf(child.pid), { terminal: "term_probe" });
   const holders = () => [
     { pid: process.pid, seats: ["elsewhere"] },
     { pid: child.pid, seats: [] },
   ];
   assert.equal(await heldBy(holders)("term_probe"), null, "no seat, or another terminal");
-  assert.equal(await heldBy(() => [{ pid: child.pid, seats: ["s"] }])("term_probe"), "s");
+  assert.equal(
+    await heldBy(() => [{ pid: child.pid, seats: ["s"] }])("term_probe"),
+    "client_holds_seat s",
+  );
+  // A process gone between the sessions' read and its own: its environment is not read.
+  const dead = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  await new Promise((r) => dead.once("exit", r));
+  const read = await terminalOf(dead.pid);
+  assert.ok("refused" in read, JSON.stringify(read));
+  assert.match(
+    await heldBy(() => [{ pid: dead.pid, seats: ["s"] }])("term_probe"),
+    /^client_hold_unknown \((environ|ps)_\w+\)$/,
+  );
+});
+
+// Closed by default (#11208): one live seat holder whose environment is not read leaves the
+// answer unknown — the terminal is kept by every path, no try counted; read again, the ordinary
+// held / not held fork returns. No live seat holder at all — nothing to see, closed as before.
+test("reap: a seat holder whose environment is not read keeps the terminal, said unknown", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "reap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  let reads = { 1: { refused: "ps_exit_1" }, 2: { terminal: "term_other" } };
+  const holders = [
+    { pid: 1, seats: ["live"] },
+    { pid: 2, seats: ["other"] },
+  ];
+  const held = heldBy(
+    () => holders,
+    async (pid) => reads[pid],
+  );
+  assert.equal(await held("term_own"), "client_hold_unknown (ps_exit_1)");
+  assert.equal(await held("term_other"), "client_holds_seat other", "a seen holder still wins");
+  const runs = { own: structuredClone(row) };
+  let closes = 0;
+  const close = async () => (closes++, null);
+  for (let i = 0; i < 4; i++) {
+    const said = await reapOwn(dir, runs, undefined, close, undefined, undefined, held);
+    assert.match(said.join(), /stop_expired, client_hold_unknown \(ps_exit_1\)/);
+  }
+  assert.equal(closes, 0, "a terminal whose holder is unknown is never closed");
+  assert.equal(runs.own.reaped, undefined, "no reap_exhausted");
+  assert.equal(runs.own.reap_tries, undefined, "no try counted");
+  reads = { 1: { terminal: "term_own" }, 2: { terminal: "term_other" } };
+  assert.match(
+    (await reapOwn(dir, runs, undefined, close, undefined, undefined, held)).join(),
+    /stop_expired, client_holds_seat live/,
+  );
+  reads = { 1: { terminal: null }, 2: { terminal: "term_other" } };
+  assert.match(
+    (await reapOwn(dir, runs, undefined, close, undefined, undefined, held)).join(),
+    /stop_expired, client_exited/,
+  );
+  assert.equal(closes, 1);
+});
+
+test("reap: no live seat holder — nothing to read, the terminal is closed as before", async () => {
+  const asked = [];
+  const none = heldBy(
+    () => [{ pid: 7, seats: [] }],
+    async (pid) => (asked.push(pid), { refused: "ps_exit_1" }),
+  );
+  assert.equal(await none("term_own"), null);
+  assert.deepEqual(asked, [], "a session without a seat is not read");
+  assert.equal(await heldBy(() => [])("term_own"), null);
 });
 
 test("reap: an expired exec run whose terminal closed is not ended — halt unconfirmed (#9256)", async (t) => {
