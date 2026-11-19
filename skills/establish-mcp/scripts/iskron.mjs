@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.15.0";
+var VERSION = "8.15.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1094,7 +1094,7 @@ var ORCHESTRA = {
     leadNotAdmitted: () => "флаг лежит, но машина не допустила оркестратора (orchestra on, набранная в терминале, или ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
     leadIncomplete: (errors) => `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
     leadNoLaunchers: (why) => `описания запускателей в mind не прочитаны (${why}) — подъёма нет`,
-    leadDescription: (what, code2) => `описание запускателя ${what} в mind: ${code2} — по нему подъёма нет`,
+    leadDescription: (what, code2, nodes) => `описание запускателя ${what} в mind: ${code2}${nodes ? ` (${nodes})` : ""} — по нему подъёма нет`,
     leadOrdersUnread: (why) => `приказы учётки не прочитаны (${why}) — останов поднятых по требованию увидит следующий такт`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) => `Сначала: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
@@ -1143,7 +1143,7 @@ ${rows}` : " зовов нет"}`,
     leadNotAdmitted: () => "the flag lies, but the machine has not admitted the orchestrator (orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
     leadIncomplete: (errors) => `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
     leadNoLaunchers: (why) => `the launcher descriptions in mind did not read (${why}) — nothing is raised`,
-    leadDescription: (what, code2) => `the launcher description ${what} in mind: ${code2} — nothing is raised by it`,
+    leadDescription: (what, code2, nodes) => `the launcher description ${what} in mind: ${code2}${nodes ? ` (${nodes})` : ""} — nothing is raised by it`,
     leadOrdersUnread: (why) => `the account's orders did not read (${why}) — a stop on demand of a raised seat is seen by the next tact`,
     // Short: a long line reaches the terminal as a paste that is never sent (#9966).
     brief: (realm, _karta, room) => `First: ${tool("case")}(action="join", realm="${realm}", room="${room}").`,
@@ -15990,7 +15990,15 @@ import { spawn as spawn4 } from "node:child_process";
 import { closeSync as closeSync3, openSync as openSync3, writeFileSync as writeFileSync19 } from "node:fs";
 
 // js/bridge/orchestra-dsh.ts
-import { accessSync, constants as constants2, existsSync as existsSync12, mkdirSync as mkdirSync20, statSync as statSync8, writeFileSync as writeFileSync18 } from "node:fs";
+import {
+  accessSync,
+  constants as constants2,
+  existsSync as existsSync12,
+  mkdirSync as mkdirSync20,
+  realpathSync as realpathSync10,
+  statSync as statSync8,
+  writeFileSync as writeFileSync18
+} from "node:fs";
 import { homedir as homedir11 } from "node:os";
 import { delimiter, isAbsolute as isAbsolute4, join as join32 } from "node:path";
 var KEYS = ["models", "bin", "patch"];
@@ -16039,13 +16047,23 @@ function writeModelPatch(path, dir2, text9) {
   mkdirSync20(dir2, { recursive: true, mode: 448 });
   writeFileSync18(path, text9, { mode: 384 });
 }
-var dshArgv = (patch, model, brief2, session) => [
+function sharedGitDir(commonDir) {
+  if (typeof commonDir !== "string" || !isAbsolute4(commonDir)) return null;
+  try {
+    return realpathSync10.native(commonDir);
+  } catch {
+    return null;
+  }
+}
+var dshArgv = (patch, model, brief2, session, gitDir) => [
   "headless",
   "--patch",
   patch,
   "--patch",
   model,
   ...session ? ["--session-id", session] : [],
+  // workspace-write admits only the cwd; a linked tree commits into the shared git-dir (#10777).
+  ...gitDir ? ["--add-dir", gitDir] : [],
   "--json",
   brief2
 ];
@@ -16160,7 +16178,14 @@ async function launchDsh(authDir, runs, key3, spec, brief2) {
   const out7 = openSync3(files.events, "a", 384), err = openSync3(files.stderr, "a", 384);
   let child;
   try {
-    child = spawn4(ready.bin, dshArgv(ready.patch, files.model, brief2, session), {
+    const argv2 = dshArgv(
+      ready.patch,
+      files.model,
+      brief2,
+      session,
+      sharedGitDir(run3.tree.commonDir)
+    );
+    child = spawn4(ready.bin, argv2, {
       cwd: run3.worktree,
       env: env2,
       detached: true,
@@ -16787,6 +16812,7 @@ async function readLaunchers(serverUrl, token) {
     });
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine = [];
+    const nodeOf = /* @__PURE__ */ new Map();
     for (const seq4 of seqs) {
       const body = await nodeBody(s2.call, tool("look"), "mind", seq4);
       const l = parseLauncher(body);
@@ -16794,13 +16820,20 @@ async function readLaunchers(serverUrl, token) {
         out7.refused.push({ what: l.launcher ?? `#${seq4}`, code: l.code });
         continue;
       }
-      if (l.host === null || l.host.toLowerCase() === here) mine.push(l);
-      else out7.elsewhere.set(l.launcher, l.host);
+      if (l.host === null || l.host.toLowerCase() === here) {
+        mine.push(l);
+        nodeOf.set(l, `#${seq4}`);
+      } else out7.elsewhere.set(l.launcher, l.host);
     }
     for (const l of mine) {
-      if (mine.filter((x) => x.launcher === l.launcher).length > 1) {
+      const same2 = mine.filter((x) => x.launcher === l.launcher);
+      if (same2.length > 1) {
         if (!out7.refused.some((r) => r.what === l.launcher))
-          out7.refused.push({ what: l.launcher, code: "launcher_duplicate" });
+          out7.refused.push({
+            what: l.launcher,
+            code: "launcher_duplicate",
+            nodes: same2.map((x) => nodeOf.get(x) ?? "?")
+          });
         continue;
       }
       out7.own.set(l.launcher, l);
@@ -17315,7 +17348,7 @@ import { join as join36 } from "node:path";
 
 // js/bridge/exec-prepare.ts
 import { execFile as execFile4 } from "node:child_process";
-import { realpathSync as realpathSync10 } from "node:fs";
+import { realpathSync as realpathSync11 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
 var shellQuote = (s2) => `'${s2.replaceAll("'", "'\\''")}'`;
 var execApi = (server, method2, path, body) => new Promise((resolve15, reject) => {
@@ -17358,7 +17391,7 @@ async function prepareExec(path, api = execApi) {
   if (r.phase !== "planned") throw new Error("attempt_already_started");
   claimAttempt(path);
   try {
-    if (!parseExec({ server: r.server, modelRefs: { own: r.model } }, ["own"]) || realpathSync10(r.location) !== r.location || !["darwin", "linux"].includes(process.platform))
+    if (!parseExec({ server: r.server, modelRefs: { own: r.model } }, ["own"]) || realpathSync11(r.location) !== r.location || !["darwin", "linux"].includes(process.platform))
       throw new Error("exec_context_invalid");
     const info = await api(r.server, "get", "/api/info");
     if (info.version !== "2.2.7" || info.hostname?.toLowerCase() !== hostname4().toLowerCase())
@@ -18084,7 +18117,7 @@ var orchestraAdmitted = (authDir) => envAdmitted() || !!readOrchestraFlag(authDi
 // js/bridge/orchestra-cloning.ts
 import { spawn as spawn5 } from "node:child_process";
 import { createHash as createHash11 } from "node:crypto";
-import { mkdirSync as mkdirSync23, realpathSync as realpathSync11 } from "node:fs";
+import { mkdirSync as mkdirSync23, realpathSync as realpathSync12 } from "node:fs";
 var CLONE_MS = Number(process.env[envName("ORCHESTRA_CLONE_MS")]) || 6e5;
 var specOf = (launcher) => createHash11("sha256").update(JSON.stringify(launcher)).digest("hex").slice(0, 16);
 var TAIL = 64 * 1024;
@@ -18152,7 +18185,7 @@ async function cloneTurn(authDir, policy, spec, repository, gone) {
   let parent;
   try {
     mkdirSync23(target.parent, { recursive: true });
-    parent = realpathSync11.native(target.parent);
+    parent = realpathSync12.native(target.parent);
   } catch {
     return "clone_failed (clone_root_unwritable)";
   }
@@ -18248,14 +18281,14 @@ async function orcaSeesTree(path) {
 
 // js/bridge/orchestra-tree.ts
 import { randomUUID as randomUUID6 } from "node:crypto";
-import { existsSync as existsSync17, mkdirSync as mkdirSync24, realpathSync as realpathSync12 } from "node:fs";
+import { existsSync as existsSync17, mkdirSync as mkdirSync24, realpathSync as realpathSync13 } from "node:fs";
 import { join as join38 } from "node:path";
 var LOCK_REASON = "do not remove or unlock: the agent raised here dies with this tree; its orchestrator frees it after the agent ends";
 async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
   const r = runs[key3];
   if (r.tree) return "tree_intent_exists";
   try {
-    source = realpathSync12.native(source);
+    source = realpathSync13.native(source);
   } catch {
     return "tree_source_unverified";
   }
@@ -18731,7 +18764,8 @@ function leadAct(authDir, base, token, mcpUrl, admitted, held2 = noHeld) {
         said2.push(w9().leadNoLaunchers(e.message));
         return said2;
       }
-      for (const r of launchers.refused) said2.push(w9().leadDescription(r.what, r.code));
+      for (const r of launchers.refused)
+        said2.push(w9().leadDescription(r.what, r.code, r.nodes?.join(", ")));
       const canon2 = realmCanon(base, token);
       said2.push(
         ...await raiseRows(
@@ -18858,7 +18892,7 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
   }
   const runs = structuredClone(readRuns(authDir));
   const clones = readClones(authDir);
-  const rows = ls.refused.map((r) => w10().leadDescription(r.what, r.code));
+  const rows = ls.refused.map((r) => w10().leadDescription(r.what, r.code, r.nodes?.join(", ")));
   for (const source of selected ? [selected] : demands.start) {
     let row = source;
     const realm = String(row.realm);
@@ -19098,8 +19132,20 @@ async function switchOrchestra(authDir, net, op, realms, extra) {
 
 // js/bridge/orchestra-watch.ts
 var TACT_MS = Number(process.env[envName("ORCHESTRA_TACT_MS")]) || 6e4;
-async function openOrchestraWatch(authDir, serve, paused, say3, active) {
-  const door = await listenOrchestraDoor(authDir, serve);
+async function openOrchestraWatch(authDir, serve, paused, say3, active, waitMs) {
+  const started = Date.now();
+  let door;
+  for (; ; ) {
+    try {
+      door = await listenOrchestraDoor(authDir, serve);
+      if (paused()) door.close();
+      break;
+    } catch (e) {
+      if (e.code !== "EADDRINUSE" || paused() || Date.now() - started >= waitMs)
+        throw e;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
   let busy = false;
   setInterval(() => {
     if (busy || paused() || !active()) return;
@@ -19115,13 +19161,14 @@ async function openOrchestraWatch(authDir, serve, paused, say3, active) {
 // js/bridge/orchestra.ts
 var w12 = () => words(ORCHESTRA);
 var orchestraLeading = (authDir) => execPending(authDir) || orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true;
-async function openOrchestra(authDir, serve, paused, say3) {
+async function openOrchestra(authDir, serve, paused, say3, waitMs) {
   return openOrchestraWatch(
     authDir,
     serve,
     paused,
     say3,
-    () => orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true
+    () => orchestraAdmitted(authDir) && readOrchestraFlag(authDir)?.on === true,
+    waitMs
   );
 }
 function orchestraServe(authDir, net) {
@@ -21203,6 +21250,7 @@ async function daemonMain(argv2) {
   let counter2 = 0;
   let lastNotice = null;
   let server = null;
+  let door = null;
   const idle = idleWatch(
     IDLE_MS2,
     () => draining2 || sessions.size > 0 || dying.size > 0 || orchestraLeading(authDir),
@@ -21219,6 +21267,7 @@ async function daemonMain(argv2) {
     log(`handing over to ${to}: ${why} — ${sessions.size} session(s)`);
     beginHandover(why);
     server?.close();
+    door?.close();
     for (const so of sockets) writeFrame(so, { t: "handover", why });
     spawnDaemon(to, authDir, true);
     const paused = [];
@@ -21398,7 +21447,6 @@ async function daemonMain(argv2) {
     }
   }
   log(`listening ${seamSocketPath(authDir)}${successor ? " (successor)" : ""}`);
-  let door = null;
   try {
     const serve = orchestraServe(authDir, {
       mcp: () => cfg.serverUrl,
@@ -21437,7 +21485,8 @@ async function daemonMain(argv2) {
         return [...found];
       }
     });
-    door = await openOrchestra(authDir, serve, () => draining2, log);
+    const doorWait = successor ? SUCCESSOR_WAIT_MS : 0;
+    door = await openOrchestra(authDir, serve, () => draining2, log, doorWait);
   } catch (e) {
     log(`the orchestration door does not open: ${errorMessage(e)}`);
   }
@@ -24889,7 +24938,7 @@ ${W4.usage()}` });
 }
 
 // js/cli/rituals.ts
-import { mkdtempSync as mkdtempSync3, readdirSync as readdirSync18, realpathSync as realpathSync13, rmSync as rmSync4, statSync as statSync15 } from "node:fs";
+import { mkdtempSync as mkdtempSync3, readdirSync as readdirSync18, realpathSync as realpathSync14, rmSync as rmSync4, statSync as statSync15 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
 import { join as join60, resolve as resolve14 } from "node:path";
 
@@ -25224,7 +25273,7 @@ var out4 = (s2) => {
 };
 var rw2 = () => words(RITUALS);
 async function auditRepo(repo) {
-  const own = realpathSync13(repo);
+  const own = realpathSync14(repo);
   const layers = await auditQuestions(own);
   const dir2 = join60(own, ".opencode", "plugins");
   let names2;
@@ -25233,7 +25282,7 @@ async function auditRepo(repo) {
   } catch {
     return layers;
   }
-  const foreign = realpathSync13(mkdtempSync3(join60(tmpdir3(), "ritual-scope-foreign-")));
+  const foreign = realpathSync14(mkdtempSync3(join60(tmpdir3(), "ritual-scope-foreign-")));
   const verdicts = [];
   try {
     for (const name2 of names2.sort()) {
