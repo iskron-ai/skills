@@ -127,6 +127,21 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
 }
 
 /**
+ * A satellite's next run in the same process after this run's end (Claude Code shares the process
+ * by entry name; graph @nks/nks-dev, node #11271): the seat the end closed is not returned to,
+ * its revoke confirmed or not — unconfirmed, it lapses by the channel's term. The end (capped)
+ * is awaited, then forgotten: the next run stands as a fresh one.
+ */
+export async function nextRunAfterEnd(): Promise<void> {
+  if (!CFG.satellite || !R.run || R.late !== "now") return;
+  await R.run.catch(() => {});
+  if (!R.run) return; // a parallel stand forgot it first
+  log(`a run after the end of ${state.standing?.name ?? "the former run"} stands anew (#11271)`);
+  Object.assign(R, { run: null, late: null });
+  Object.assign(state, { standing: null, standingSession: null });
+}
+
+/**
  * A connect answered after the run's end (case №677) never opens a socket — nobody is left to
  * listen. The agent died while it was in flight: the seat joins the death window, which ends it
  * by that socket's token; a satellite's goes the same way at once — it has no window, its end is

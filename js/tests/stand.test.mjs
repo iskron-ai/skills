@@ -3868,6 +3868,33 @@ test("satellite: iskron/end names the places it revoked and those it could not; 
   assert.doesNotMatch(sat.stderr + sat2.stderr, /unhandled rejection/);
 });
 
+// #11271: Claude Code runs the next run of the same role file in the same satellite process. The
+// first run's end closed its place, but the revoke went unanswered: the place still hangs on the
+// board until the channel's term. The next run stands anew (the next free .sub-N), not on the
+// closed place, and its own end revokes its own; a parallel run while the first lives shares it.
+test("satellite: a run after an end whose revoke went unanswered stands anew, not on the closed place; a parallel run still shares the live one", async (t) => {
+  const fake = await withCaller(t);
+  const sat = await satelliteBridge(t, fake);
+  const held = () => (sat.stderr.match(/мост уже держит/g) ?? []).length;
+  const r1 = await standAs(sat, SAT_ARGS);
+  assert.equal(placeOf(r1), `${CALLER}.sub-1`, `${textOf(r1)}\n${sat.stderr}`);
+  const par = await standAs(sat, SAT_ARGS);
+  assert.equal(placeOf(par), `${CALLER}.sub-1`, "a parallel run shares the live place");
+  assert.equal(held(), 1, sat.stderr);
+  await fake.control({ mcpDrop: 2, mcpDropAction: "iskron_channel:revoke" });
+  const end = (await sat.call("iskron/end", {})).result;
+  assert.deepEqual(end?.failed, [`${CALLER}.sub-1`], `${JSON.stringify(end)}\n${sat.stderr}`);
+  const connects = fake.state.counts.connect;
+  const r2 = await standAs(sat, SAT_ARGS);
+  assert.ok(!r2.result?.isError, `${textOf(r2)}\n${sat.stderr}`);
+  assert.equal(placeOf(r2), `${CALLER}.sub-2`, `${textOf(r2)}\n${sat.stderr}`);
+  assert.equal(held(), 1, `the next run is no parallel one:\n${sat.stderr}`);
+  assert.ok(fake.state.counts.connect > connects, "a new connect for the new place");
+  await sat.stop();
+  assert.ok(revokes(fake).includes(`${CALLER}.sub-2`), `its end revokes its own:\n${sat.stderr}`);
+  assert.doesNotMatch(sat.stderr, /unhandled rejection/);
+});
+
 // №664: iskron/end names as revoked only a confirmed revoke — success, 410, 404 without a rule.
 // Prose that only looks like «already gone» is no confirmation: the place is neither revoked
 // nor failed for the plugin — it is named apart, as probably (№677) — and the launcher's
