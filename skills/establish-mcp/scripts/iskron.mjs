@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.15.2";
+var VERSION = "8.15.3";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -11583,6 +11583,7 @@ async function satelliteGate(a, realm, karta, asked) {
   if (!CFG.satellite) return refuse2(sw2().notSatellite());
   if (asked || a.take === true || typeof a.room === "string" && a.room.trim())
     return refuse2(sw2().derivesName());
+  await nextRunAfterEnd();
   const b = await callTool(tool("channel"), { action: "list", realm });
   if (b.isError) return refuse2(sw2().boardUnread(short(b.text)));
   const s2 = state.standing;
@@ -14044,6 +14045,15 @@ function closeRun(why, handover, now2 = false) {
     if (line === "tick") await released(1e3);
     return end;
   })();
+}
+async function nextRunAfterEnd() {
+  if (!CFG.satellite || !R4.run || R4.late !== "now") return;
+  await R4.run.catch(() => {
+  });
+  if (!R4.run) return;
+  log(`a run after the end of ${state.standing?.name ?? "the former run"} stands anew (#11271)`);
+  Object.assign(R4, { run: null, late: null });
+  Object.assign(state, { standing: null, standingSession: null });
 }
 function lateSeat(seat2, socket, status, id) {
   if (!R4.run || !R4.late) return false;
