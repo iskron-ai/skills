@@ -1,5 +1,14 @@
 # Changelog
 
+## [8.15.1](https://github.com/iskron-ai/skills/compare/v8.15.0...v8.15.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **bridge:** a dsh run may write its tree's shared git metadata ([#875](https://github.com/iskron-ai/skills/issues/875)) ([af24870](https://github.com/iskron-ai/skills/commit/af248702b1ea0cc327c34dd71dfd9164aefe2713))
+* **bridge:** launcher_duplicate names every mind node of the launcher ([#874](https://github.com/iskron-ai/skills/issues/874)) ([8ba8123](https://github.com/iskron-ai/skills/commit/8ba81238bea2240657a9b0f31a54469ed5517b21))
+* **bridge:** the orchestration door survives a planned daemon handover on Windows ([#877](https://github.com/iskron-ai/skills/issues/877)) ([ed8325b](https://github.com/iskron-ai/skills/commit/ed8325b5a88737bae5d71cfceccb9e1fa0ac7541))
+
 ## [8.15.0](https://github.com/iskron-ai/skills/compare/v8.14.4...v8.15.0) (2026-11-19)
 
 
