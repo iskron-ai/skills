@@ -12,6 +12,7 @@ import {
   OID,
   treeContent,
 } from "./orchestra-tree-check.ts";
+import { sameTreePath } from "./orchestra-tree-path.ts";
 import { clientGone, keepProof } from "./orchestra-tree-proof.ts";
 import { recheckDue, recheckKept } from "./orchestra-tree-recheck.ts";
 
@@ -23,6 +24,7 @@ export async function cleanupTree(
   runs: Record<string, Run>,
   key: string,
   execute: Git = git,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string | null> {
   const r = runs[key],
     t = r.tree;
@@ -49,11 +51,13 @@ export async function cleanupTree(
     return why;
   };
   if (!current()) return "tree_superseded";
+  if (platform === "win32") return retain("tree_clean_win32_unverified");
   if (
     !t.identity ||
     !/^[a-f0-9-]{36}$/.test(t.operation) ||
-    t.path !== r.worktree ||
-    t.path !== join(t.source, ".worktrees", `orchestra-${t.operation}`) ||
+    !r.worktree ||
+    !sameTreePath(t.path, r.worktree) ||
+    !sameTreePath(t.path, join(t.source, ".worktrees", `orchestra-${t.operation}`)) ||
     !OID.test(t.baseOID) ||
     t.realm !== r.realm ||
     t.room !== r.room ||
@@ -69,7 +73,7 @@ export async function cleanupTree(
       execute,
     );
     if (
-      common !== t.commonDir ||
+      !sameTreePath(common, t.commonDir) ||
       JSON.stringify(await inspectTree(t, execute)) !== JSON.stringify(t.identity)
     )
       return retain("tree_identity_unverified");
