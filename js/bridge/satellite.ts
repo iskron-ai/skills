@@ -29,6 +29,7 @@ import { CFG } from "./config.ts";
 import { NAME_MAX, nameFault, normKarta } from "./names.ts";
 import { noteSatelliteOf } from "./placefields.ts";
 import { otherRealm } from "./realms.ts";
+import { nextRunAfterEnd } from "./runend.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
 
@@ -291,6 +292,7 @@ export async function satelliteGate(
   if (!CFG.satellite) return refuse(sw().notSatellite());
   if (asked || a.take === true || (typeof a.room === "string" && a.room.trim()))
     return refuse(sw().derivesName());
+  await nextRunAfterEnd(); // a closed seat is no `led` (graph @nks/nks-dev, node #11271)
   const b = await call(tool("channel"), { action: "list", realm });
   if (b.isError) return refuse(sw().boardUnread(short(b.text)));
   const s = state.standing;
