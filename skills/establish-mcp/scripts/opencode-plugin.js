@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.15.1";
+var VERSION = "8.15.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts

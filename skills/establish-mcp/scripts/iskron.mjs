@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.15.1";
+var VERSION = "8.15.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -456,7 +456,7 @@ var CLI = {
        ISKRON_BRIDGE_DAEMON=0 — полный мост в своём процессе, без демона машины;
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `,
-    homeUpdated: (path) => `[iskron-bridge] дом обновлён этой сборкой: ${path}
+    homeUpdated: (path2) => `[iskron-bridge] дом обновлён этой сборкой: ${path2}
 `,
     updateTitle: (build) => `iskron update — ${build}`,
     updateServer: (url, source, fresh3) => `сервер: ${url} (${source}) — ${fresh3}`,
@@ -465,14 +465,14 @@ var CLI = {
     lag: (cmp) => cmp > 0 ? " — отстал" : cmp < 0 ? " — новее релиза (сборка из ветки)" : " — не отстал",
     latest: (version, tag, mine, lag) => `свежий релиз: v${version} (${tag}); этот файл: v${mine}${lag}`,
     downloadFailed: (error) => `скачать не вышло: ${error}`,
-    placed: (path) => `положено: ${path}`,
+    placed: (path2) => `положено: ${path2}`,
     nothingPlaced: (home) => `в дом ничего не клалось: ${home} не старше релиза`,
     next: () => "Дальше:",
     stepSkills: (setup, fetched) => `  1. Скиллы обновляет канал харнеса — порядок в свежем установщике ${setup}${fetched ? "" : " (не скачан — возьмите из релиза)"}: прочтите его и выполните шаги обновления для этого харнеса.`,
     stepRestart: () => "  2. Перезапустите сессии харнеса: мост, поднятый прежней сборкой, живёт до конца своей сессии.",
     stepDoctor: () => "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — сверка, что стоит и работает.",
     useNoAddress: () => "use: укажите адрес — en (mcp.iskron.ai), ru (mcp.iskron.ru) или полный URL инстанса",
-    useWritten: (url, path, fresh3) => `мост смотрит на ${url} — записано в ${path}; ${fresh3}`,
+    useWritten: (url, path2, fresh3) => `мост смотрит на ${url} — записано в ${path2}; ${fresh3}`,
     useEffect: () => "Действует с нового процесса моста: перезапустите сессии харнеса. Грант раздельный по адресу — первый вызов на новом адресе ведёт во вход."
   },
   en: {
@@ -498,7 +498,7 @@ var CLI = {
        ISKRON_BRIDGE_DAEMON=0 — the full bridge in its own process, without the machine daemon;
        ISKRON_BRIDGE_URL, ISKRON_BRIDGE_AUTH_DIR, ISKRON_BRIDGE_NO_BROWSER, ISKRON_BRIDGE_DEBUG
 `,
-    homeUpdated: (path) => `[iskron-bridge] home updated by this build: ${path}
+    homeUpdated: (path2) => `[iskron-bridge] home updated by this build: ${path2}
 `,
     updateTitle: (build) => `iskron update — ${build}`,
     updateServer: (url, source, fresh3) => `server: ${url} (${source}) — ${fresh3}`,
@@ -507,14 +507,14 @@ var CLI = {
     lag: (cmp) => cmp > 0 ? " — behind" : cmp < 0 ? " — newer than the release (a branch build)" : " — not behind",
     latest: (version, tag, mine, lag) => `latest release: v${version} (${tag}); this file: v${mine}${lag}`,
     downloadFailed: (error) => `download failed: ${error}`,
-    placed: (path) => `placed: ${path}`,
+    placed: (path2) => `placed: ${path2}`,
     nothingPlaced: (home) => `nothing was placed in the home: ${home} is not older than the release`,
     next: () => "Next:",
     stepSkills: (setup, fetched) => `  1. Skills are updated by the harness channel — the order is in the fresh installer ${setup}${fetched ? "" : " (not downloaded — take it from the release)"}: read it and carry out the update steps for this harness.`,
     stepRestart: () => "  2. Restart the harness sessions: a bridge started by the previous build lives until the end of its session.",
     stepDoctor: () => "  3. node ~/.iskron-bridge/iskron-bridge.mjs doctor — a check of what is installed and working.",
     useNoAddress: () => "use: name an address — en (mcp.iskron.ai), ru (mcp.iskron.ru) or the full URL of an instance",
-    useWritten: (url, path, fresh3) => `the bridge looks at ${url} — written to ${path}; ${fresh3}`,
+    useWritten: (url, path2, fresh3) => `the bridge looks at ${url} — written to ${path2}; ${fresh3}`,
     useEffect: () => "Takes effect from a new bridge process: restart the harness sessions. The grant is separate per address — the first call at a new address leads to login."
   }
 };
@@ -559,8 +559,8 @@ var DOCTOR = {
     patRejected: () => "  ТОКЕН ОТВЕРГНУТ (HTTP 401) — отозван, истёк или без прав на этот граф: выпустите новый на странице токенов графа",
     patAccepted: (status) => `  токен принят сервером (HTTP ${status})`,
     patOther: (status) => `  сервер ответил HTTP ${status} — не отказ токена, см. строку «сервер»`,
-    patStore: (path) => `  хранилище OAuth ${path} есть, но не читается, пока стоит PAT`,
-    grant: (path) => `грант: ${path}`,
+    patStore: (path2) => `  хранилище OAuth ${path2} есть, но не читается, пока стоит PAT`,
+    grant: (path2) => `грант: ${path2}`,
     noStore: () => "  хранилища нет — мост ещё ни разу не входил на этот сервер",
     noTokens: () => "  токенов нет",
     access: (usable, left2, span) => `  access: ${usable ? "годен" : "не годен"}${left2 !== null ? ` (${left2 > 0 ? "истекает через" : "истёк"} ${span})` : ""}`,
@@ -581,7 +581,7 @@ var DOCTOR = {
     entryNotFound: () => "запись моста в манифесте не найдена",
     entryFound: (name2) => `запись «${name2}» → мост из плагина`,
     unreadable: (p) => `${p} не читается`,
-    pluginLine: (key3, v, scope, entry, path) => `Claude Code: плагин ${key3} v${v} (${scope}) — ${entry}; ${path}`,
+    pluginLine: (key3, v, scope, entry, path2) => `Claude Code: плагин ${key3} v${v} (${scope}) — ${entry}; ${path2}`,
     claudeUnreadable: (p) => `Claude Code: ${p} не читается`,
     codexNoManifest: () => "манифеста нет",
     codexManifest: (v, hit) => `v${v}, ${hit ? "запись моста в манифесте есть" : "записи моста в манифесте нет"}`,
@@ -606,7 +606,7 @@ var DOCTOR = {
     fallbackNone: () => "  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) не идёт ни одна сессия",
     fallbackCount: (n) => `  мимо демона (полным мостом в своём процессе — запасным путём или выключателем) идут сессий: ${n} — демон их не видит и в «сессий» не считает`,
     fallbackOne: (pid, build, since, cwd, why) => `    pid ${pid}, сборка ${build}, с ${since}, каталог ${cwd}: ${why}`,
-    daemonAnswers: (pid, build, other, v, sessions, path) => `  отвечает: pid ${String(pid)}, сборка ${build}${other ? ` — ДРУГАЯ, чем этот файл (v${v})` : ""}, сессий ${String(sessions ?? "?")}${path ? `, файл ${path}` : ""}`,
+    daemonAnswers: (pid, build, other, v, sessions, path2) => `  отвечает: pid ${String(pid)}, сборка ${build}${other ? ` — ДРУГАЯ, чем этот файл (v${v})` : ""}, сессий ${String(sessions ?? "?")}${path2 ? `, файл ${path2}` : ""}`,
     daemonUnsafe: (why) => `  вход не личный: ${String(why)} — тонкий мост пойдёт полным`,
     daemonSilent: (socket, why) => `  сокет: ${String(socket)} — не отвечает (${String(why)})`,
     thisFile: (p) => `этот файл: ${p}`
@@ -635,8 +635,8 @@ var DOCTOR = {
     patRejected: () => "  TOKEN REJECTED (HTTP 401) — revoked, expired or without rights to this graph: issue a new one on the graph's token page",
     patAccepted: (status) => `  the token is accepted by the server (HTTP ${status})`,
     patOther: (status) => `  the server answered HTTP ${status} — not a token refusal, see the "server" line`,
-    patStore: (path) => `  the OAuth store ${path} exists but is not read while a PAT is set`,
-    grant: (path) => `grant: ${path}`,
+    patStore: (path2) => `  the OAuth store ${path2} exists but is not read while a PAT is set`,
+    grant: (path2) => `grant: ${path2}`,
     noStore: () => "  no store — the bridge has never logged in to this server",
     noTokens: () => "  no tokens",
     access: (usable, left2, span) => `  access: ${usable ? "usable" : "not usable"}${left2 !== null ? ` (${left2 > 0 ? "expires in" : "expired"} ${span})` : ""}`,
@@ -657,7 +657,7 @@ var DOCTOR = {
     entryNotFound: () => "no bridge entry found in the manifest",
     entryFound: (name2) => `entry "${name2}" → the bridge from the plugin`,
     unreadable: (p) => `${p} is unreadable`,
-    pluginLine: (key3, v, scope, entry, path) => `Claude Code: plugin ${key3} v${v} (${scope}) — ${entry}; ${path}`,
+    pluginLine: (key3, v, scope, entry, path2) => `Claude Code: plugin ${key3} v${v} (${scope}) — ${entry}; ${path2}`,
     claudeUnreadable: (p) => `Claude Code: ${p} is unreadable`,
     codexNoManifest: () => "no manifest",
     codexManifest: (v, hit) => `v${v}, ${hit ? "the bridge entry is in the manifest" : "no bridge entry in the manifest"}`,
@@ -682,7 +682,7 @@ var DOCTOR = {
     fallbackNone: () => "  no session goes around the daemon (the full bridge in its own process — the fallback path or the switch)",
     fallbackCount: (n) => `  sessions around the daemon (the full bridge in its own process — the fallback path or the switch): ${n} — the daemon does not see them nor count them in "sessions"`,
     fallbackOne: (pid, build, since, cwd, why) => `    pid ${pid}, build ${build}, since ${since}, directory ${cwd}: ${why}`,
-    daemonAnswers: (pid, build, other, v, sessions, path) => `  answers: pid ${String(pid)}, build ${build}${other ? ` — DIFFERENT from this file (v${v})` : ""}, sessions ${String(sessions ?? "?")}${path ? `, file ${path}` : ""}`,
+    daemonAnswers: (pid, build, other, v, sessions, path2) => `  answers: pid ${String(pid)}, build ${build}${other ? ` — DIFFERENT from this file (v${v})` : ""}, sessions ${String(sessions ?? "?")}${path2 ? `, file ${path2}` : ""}`,
     daemonUnsafe: (why) => `  the entrance is not private: ${String(why)} — the thin bridge will go full`,
     daemonSilent: (socket, why) => `  socket: ${String(socket)} — not answering (${String(why)})`,
     thisFile: (p) => `this file: ${p}`
@@ -715,7 +715,7 @@ var HARNESS = {
     skillsBehind: (root, v, why, how2) => `скиллы: ${root} — v${v}, ${why} → обновите набор: ${how2}; затем новая сессия`,
     ocUnreadable: (file2) => `OpenCode: ${file2} не читается`,
     ocDisabled: (name2, file2) => `OpenCode: запись mcp «${name2}» в ${file2} ведёт Искрон, но выключена — не в игре`,
-    ocBridge: (name2, file2, path) => `OpenCode: запись mcp «${name2}» в ${file2} зовёт ${path} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда удалите её из этого файла вручную: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
+    ocBridge: (name2, file2, path2) => `OpenCode: запись mcp «${name2}» в ${file2} зовёт ${path2} — похоже на мост поставки. Если это он, её тулы namespaced, а мост общий для сессий сервиса: запись может уйти под подписью соседней сессии. Тогда удалите её из этого файла вручную: у opencode mcp есть list, add, auth, logout — команды remove нет. Поверхность поставки это плагин`,
     ocHttp: (name2, file2) => `OpenCode: запись mcp «${name2}» в ${file2} ведёт Искрон напрямую по http, мимо моста — её тулы namespaced, места на канале у неё нет, и записи уходят без места. Путь к графу один — мост, его приносит плагин поставки. Удалите её из этого файла вручную: у opencode mcp есть list, add, auth, logout — команды remove нет`,
     ocNone: (unreadable, cwd) => `OpenCode: записей mcp Искрона не нашёл${unreadable ? ` в том, что прочёл (${unreadable} файл(а) не разобрались — см. строки выше)` : ""} — смотрел вверх от ${cwd}, глобальный слой и переменные; запись в другом дереве этим не проверена, запустите doctor из каталога проекта`
   },
@@ -743,7 +743,7 @@ var HARNESS = {
     skillsBehind: (root, v, why, how2) => `skills: ${root} — v${v}, ${why} → update the set: ${how2}; then a new session`,
     ocUnreadable: (file2) => `OpenCode: ${file2} is unreadable`,
     ocDisabled: (name2, file2) => `OpenCode: the mcp entry "${name2}" in ${file2} leads to Iskron but is disabled — not in play`,
-    ocBridge: (name2, file2, path) => `OpenCode: the mcp entry "${name2}" in ${file2} calls ${path} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
+    ocBridge: (name2, file2, path2) => `OpenCode: the mcp entry "${name2}" in ${file2} calls ${path2} — it looks like the delivery bridge. If it is, its tools are namespaced, and the bridge is shared by the service's sessions: the entry may go out under a neighbouring session's signature. Then remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command. The delivery surface is the plugin`,
     ocHttp: (name2, file2) => `OpenCode: the mcp entry "${name2}" in ${file2} leads to Iskron directly over http, around the bridge — its tools are namespaced, it has no seat on the channel, and its writes go out without a seat. The one path to the graph is the bridge, brought by the delivery plugin. Remove it from this file by hand: opencode mcp has list, add, auth, logout — there is no remove command`,
     ocNone: (unreadable, cwd) => `OpenCode: found no Iskron mcp entries${unreadable ? ` in what I read (${unreadable} file(s) could not be parsed — see the lines above)` : ""} — looked upward from ${cwd}, the global layer and variables; an entry in another tree is not checked by this, call doctor from the project directory`
   }
@@ -1776,7 +1776,7 @@ var SEPARATE = {
 // js/delivery/words/skillcatchup.ts
 var SKILL_CATCHUP = {
   en: {
-    gate: (root, installed2, target, path, reason) => `SKILLS DELIVERY BLOCKED: ${JSON.stringify(root)} installed v${installed2}, bridge v${target}; writer gate exists: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}not updated successfully (completion is unconfirmed). First confirm that the updater process group for this HOME has stopped and that the gate belongs to this catch-up. Release the gate only after a complete pinned post-read (ref/source/stamp and every blob), never merely a fresh bridge version or exit 0. npx may outlive a SIGKILLed bridge daemon; repeating stand does not repair this gate. Automatic deletion and bypass are forbidden.`,
+    gate: (root, installed2, target, path2, reason) => `SKILLS DELIVERY BLOCKED: ${JSON.stringify(root)} installed v${installed2}, bridge v${target}; writer gate exists: ${JSON.stringify(path2)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}not updated successfully (completion is unconfirmed). First confirm that the updater process group for this HOME has stopped and that the gate belongs to this catch-up. Release the gate only after a complete pinned post-read (ref/source/stamp and every blob), never merely a fresh bridge version or exit 0. npx may outlive a SIGKILLed bridge daemon; repeating stand does not repair this gate. Automatic deletion and bypass are forbidden.`,
     failed: (root, installed2, target, error, command) => `SKILLS BEHIND: ${JSON.stringify(root)} v${installed2} < bridge v${target}; ${JSON.stringify(error)}; not updated successfully (partial own files may remain). Next command: ${command}.`,
     updated: (root, installed2, target, sha2, stamp, removed) => `SKILLS UPDATED: ${JSON.stringify(root)} v${installed2} → v${target}, source SHA ${sha2}, stamp ${stamp}; reread the entry and role skills now. Names absent from this release (left installed): ${JSON.stringify(removed)}. Disk installation is not loaded context.`,
     notice: (root, source, installed2, target, reason, command) => `SKILLS BEHIND: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed2} < bridge v${target}; ${{
@@ -1787,7 +1787,7 @@ var SKILL_CATCHUP = {
     }[reason]}; not updated. Next command: ${command}. After updating, reread the entry and role skills; disk installation is not loaded context.`
   },
   ru: {
-    gate: (root, installed2, target, path, reason) => `ДОСТАВКА СКИЛЛОВ ЗАБЛОКИРОВАНА: ${JSON.stringify(root)} установлен v${installed2}, мост v${target}; найдена блокировка записи: ${JSON.stringify(path)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}обновление не подтверждено. Сначала подтверди, что группа процессов updater для этого HOME остановлена и что блокировка относится к этому догону. Снять её можно лишь после полного повторного чтения закреплённого набора (ref/source/stamp и байты всех файлов), не по свежей версии моста или exit 0. npx может пережить SIGKILL демона моста; повтор стояния не снимает блокировку. Автоматическое удаление и обход запрещены.`,
+    gate: (root, installed2, target, path2, reason) => `ДОСТАВКА СКИЛЛОВ ЗАБЛОКИРОВАНА: ${JSON.stringify(root)} установлен v${installed2}, мост v${target}; найдена блокировка записи: ${JSON.stringify(path2)}; ${reason ? `${JSON.stringify(reason)}; ` : ""}обновление не подтверждено. Сначала подтверди, что группа процессов updater для этого HOME остановлена и что блокировка относится к этому догону. Снять её можно лишь после полного повторного чтения закреплённого набора (ref/source/stamp и байты всех файлов), не по свежей версии моста или exit 0. npx может пережить SIGKILL демона моста; повтор стояния не снимает блокировку. Автоматическое удаление и обход запрещены.`,
     failed: (root, installed2, target, error, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} v${installed2} < мост v${target}; ${JSON.stringify(error)}; обновление не подтверждено (свои файлы могли измениться частично). Следующая команда: ${command}.`,
     updated: (root, installed2, target, sha2, stamp, removed) => `СКИЛЛЫ ОБНОВЛЕНЫ: ${JSON.stringify(root)} v${installed2} → v${target}, SHA источника ${sha2}, штамп ${stamp}; перечитай дверь и скилл роли сейчас. Снятые из выпуска имена (оставлены на диске): ${JSON.stringify(removed)}. Установка на диске не означает загрузку в контекст.`,
     notice: (root, source, installed2, target, reason, command) => `СКИЛЛЫ ОТСТАЛИ: ${JSON.stringify(root)} (${JSON.stringify(source)}) v${installed2} < мост v${target}; ${{
@@ -1815,7 +1815,7 @@ var left = (window, waited) => Math.ceil((window - waited) / 1e3);
 var STAND = {
   ru: {
     needRealmKarta: (tail2) => "Отказано (мост): iskron_stand требует realm и karta — граф и роль из AGENTS.md или строки запуска." + tail2,
-    badCwd: (cwd, relative3) => `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative3 ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
+    badCwd: (cwd, relative2) => `Отказано (мост): cwd должен быть существующим абсолютным каталогом — получено «${cwd}»${relative2 ? " (относительный путь резолвился бы от cwd моста, не сессии)" : ""}.`,
     badName: (asked, fault, max) => `Отказано (мост): name «${asked}» — ${fault}; правило имени: строчные латинские буквы, цифры, точка, подчёркивание, дефис, первый знак — буква или цифра, не длиннее ${max} знаков. Имя не укорачивается молча: короткое имя адресовало бы другое место.`,
     cutPart: (k) => k === "repo" ? "репо" : k === "host" ? "машина" : "модель",
     nameCut: (full, max, name2, what) => `выведенное имя ${full} длиннее предела ${max} знаков — укорочено до ${name2} (срезано: ${what}); нужно другое — передай name`,
@@ -1859,7 +1859,7 @@ var STAND = {
   },
   en: {
     needRealmKarta: (tail2) => "Refused (bridge): iskron_stand needs realm and karta — the graph and the role from AGENTS.md or the launch line." + tail2,
-    badCwd: (cwd, relative3) => `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative3 ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`,
+    badCwd: (cwd, relative2) => `Refused (bridge): cwd must be an existing absolute directory — got "${cwd}"${relative2 ? " (a relative path would resolve against the bridge's cwd, not the session's)" : ""}.`,
     badName: (asked, fault, max) => `Refused (bridge): name "${asked}" — ${fault}; the name rule: lowercase latin letters, digits, dot, underscore, hyphen, the first sign a letter or digit, at most ${max} signs. A name is never cut silently: a shorter name would address another seat.`,
     cutPart: (k) => k === "repo" ? "repo" : k === "host" ? "host" : "model",
     nameCut: (full, max, name2, what) => `the derived name ${full} is longer than the ${max}-sign limit — cut to ${name2} (dropped: ${what}); want another — pass name`,
@@ -2163,7 +2163,7 @@ var SUBAGENT = {
     osJudged: (platform3) => `ОС под суд: ${platform3}`,
     header: (root, os) => `субагенты: проект ${root} (${os})`,
     noFiles: (dirs) => `  файлов агентов нет (${dirs}) — запустите doctor из каталога проекта, если субагенты там`,
-    shadowed: (path, agent) => `  ${path}: затенён файлом проекта с тем же именем «${agent}» — Claude Code берёт проектный`,
+    shadowed: (path2, agent) => `  ${path2}: затенён файлом проекта с тем же именем «${agent}» — Claude Code берёт проектный`,
     withBlock: (ready) => `блоком ниже вместо прежних mcpServers и disallowedTools:
 ${ready}`,
     proposed: (name2) => `${name2} (предложенная форма)`,
@@ -2186,7 +2186,7 @@ ${ready}`,
     unnamed: () => "без записи моста-спутника",
     fine: () => " — в порядке",
     ocKeys: (keys) => `; ${TODO.ru} ключ ${keys} OpenCode в файле агента не читает → уберите его`,
-    ocAgent: (path, keyNote) => `  ${path}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
+    ocAgent: (path2, keyNote) => `  ${path2}: OpenCode — мост-спутник даёт дочерней сессии плагин поставки (строка OpenCode выше), записи в файле не нужно${keyNote}`,
     trustNear: (near, here) => `доверие к папке принято для «${near}», а проект открыт как «${here}» — Claude Code сравнивает путь буква в букву (C:/ и c:/ — разные папки), и в недоверенной папке сервер из фронтматтера не поднимается без диалога → запустите claude в терминале из этой папки и примите диалог доверия либо откройте папку тем же написанием пути`,
     trustNone: (here) => `доверие к папке «${here}» и её родителям в ~/.claude.json не отмечено — в недоверенной папке сервер из фронтматтера не поднимается, и диалога об этом нет → запустите claude в этой папке и примите диалог доверия`
   },
@@ -2211,7 +2211,7 @@ ${ready}`,
     osJudged: (platform3) => `OS under judgment: ${platform3}`,
     header: (root, os) => `subagents: project ${root} (${os})`,
     noFiles: (dirs) => `  no agent files (${dirs}) — call doctor from the project directory if the subagents are there`,
-    shadowed: (path, agent) => `  ${path}: shadowed by the project file with the same name "${agent}" — Claude Code takes the project one`,
+    shadowed: (path2, agent) => `  ${path2}: shadowed by the project file with the same name "${agent}" — Claude Code takes the project one`,
     withBlock: (ready) => `with the block below instead of the former mcpServers and disallowedTools:
 ${ready}`,
     proposed: (name2) => `${name2} (proposed form)`,
@@ -2234,7 +2234,7 @@ ${ready}`,
     unnamed: () => "no satellite bridge entry",
     fine: () => " — fine",
     ocKeys: (keys) => `; ${TODO.en} the key ${keys} is not read by OpenCode in an agent file → remove it`,
-    ocAgent: (path, keyNote) => `  ${path}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`,
+    ocAgent: (path2, keyNote) => `  ${path2}: OpenCode — the delivery plugin gives the child session a satellite bridge (the OpenCode line above), no entry is needed in the file${keyNote}`,
     trustNear: (near, here) => `folder trust was accepted for "${near}", but the project is opened as "${here}" — Claude Code compares the path letter for letter (C:/ and c:/ are different folders), and in an untrusted folder the frontmatter server does not start without a dialog → run claude in a terminal from this folder and accept the trust dialog, or open the folder with the same spelling of the path`,
     trustNone: (here) => `trust for the folder "${here}" and its parents is not marked in ~/.claude.json — in an untrusted folder the frontmatter server does not start, and there is no dialog about it → run claude in this folder and accept the trust dialog`
   }
@@ -2275,7 +2275,7 @@ var UNNAMED = {
 // js/delivery/words/update.ts
 var UPDATE = {
   ru: {
-    reexecNewer: (homeVersion, version, path) => `домашняя копия новее этой сборки (v${homeVersion} > v${version}) — запускаюсь ею: ${path}`,
+    reexecNewer: (homeVersion, version, path2) => `домашняя копия новее этой сборки (v${homeVersion} > v${version}) — запускаюсь ею: ${path2}`,
     restartFailed: (error) => `перезапуск не удался: ${error}`,
     versionMismatch: (got, version) => `скачанный мост называет v${got}, релиз — v${version}`,
     bridgeDownloaded: () => `Свежий мост уже скачан в ~/${HOME_DIR} и поднимется новой сессией.`,
@@ -2290,7 +2290,7 @@ var UPDATE = {
     moveCodex: () => "codex plugin marketplace upgrade iskron, затем codex plugin remove iskron@iskron и codex plugin add iskron@iskron"
   },
   en: {
-    reexecNewer: (homeVersion, version, path) => `the home copy is newer than this build (v${homeVersion} > v${version}) — restarting with it: ${path}`,
+    reexecNewer: (homeVersion, version, path2) => `the home copy is newer than this build (v${homeVersion} > v${version}) — restarting with it: ${path2}`,
     restartFailed: (error) => `restart failed: ${error}`,
     versionMismatch: (got, version) => `the downloaded bridge names v${got}, the release — v${version}`,
     bridgeDownloaded: () => `The fresh bridge is already downloaded into ~/${HOME_DIR} and comes up with a new session.`,
@@ -2337,8 +2337,8 @@ var WATCHDOG = {
     noHeld: () => "мост без места: iskron_stand(realm, karta, model); команда слушания — в ответе",
     severalHeld: (held2) => `мост держит несколько стояний — назови нужное: ${held2}`,
     bridgeLetGo: () => "мост отпустил стояние или ушёл — сессия кончилась?",
-    seatNotBack: (s2, path) => `место не вернулось за ${s2}s после смены демона — сокет ${path} не поднят; вернуть — iskron_stand`,
-    noSocket: (path, s2) => `мост не поднял локальный сокет ${path} за ${s2}s`,
+    seatNotBack: (s2, path2) => `место не вернулось за ${s2}s после смены демона — сокет ${path2} не поднят; вернуть — iskron_stand`,
+    noSocket: (path2, s2) => `мост не поднял локальный сокет ${path2} за ${s2}s`,
     bridgeReleasedSocket: (text9) => `мост отпустил сокет: ${text9}`,
     notWakeup: (type) => `кадр ${type ?? "не разобран"} — не повод будить`,
     seenEarlier: (id) => `кадр ${id} уже отдан прежним взводом — не повод будить`,
@@ -2348,7 +2348,7 @@ var WATCHDOG = {
     codexLost: () => "Искрон: стояние потеряно — назовись заново: iskron_stand",
     codexAlive: () => "Искрон: сокет рвут, а служба отвечает — мост держит место",
     noThread: () => "ДЕЛАТЕЛЬ: нет CODEX_THREAD_ID — запускай сторожа из оболочки сессии Codex",
-    noDoor: (path) => `ДЕЛАТЕЛЬ: двери нет (${path}). Скажи человеку: ход ЧЕЛОВЕКА — запустить демон app-server и сессию с одним коротким CODEX_HOME (SETUP, Codex). Пока слушай watchdog-exit`,
+    noDoor: (path2) => `ДЕЛАТЕЛЬ: двери нет (${path2}). Скажи человеку: ход ЧЕЛОВЕКА — запустить демон app-server и сессию с одним коротким CODEX_HOME (SETUP, Codex). Пока слушай watchdog-exit`,
     threadRefused: (why) => `ДЕЛАТЕЛЬ: тред не принял кадр — ${why}`,
     refusal: () => "отказ",
     framePut: (thread) => `кадр вложен в тред ${thread}`,
@@ -2369,8 +2369,8 @@ var WATCHDOG = {
     noHeld: () => "the bridge holds no standing — name yourself with one call to iskron_stand(realm, karta, model): its answer names the listening command",
     severalHeld: (held2) => `the bridge holds several standings — name the one you need: ${held2}`,
     bridgeLetGo: () => "the bridge released the standing or went away — did the session end?",
-    seatNotBack: (s2, path) => `the seat did not return within ${s2}s after the daemon change — socket ${path} is not up; to bring it back use iskron_stand`,
-    noSocket: (path, s2) => `the bridge did not bring up the local socket ${path} within ${s2}s`,
+    seatNotBack: (s2, path2) => `the seat did not return within ${s2}s after the daemon change — socket ${path2} is not up; to bring it back use iskron_stand`,
+    noSocket: (path2, s2) => `the bridge did not bring up the local socket ${path2} within ${s2}s`,
     bridgeReleasedSocket: (text9) => `the bridge released the socket: ${text9}`,
     notWakeup: (type) => `frame ${type ?? "unparsed"} — not a reason to wake`,
     seenEarlier: (id) => `frame ${id} was already delivered by an earlier arming — not a reason to wake`,
@@ -2380,7 +2380,7 @@ var WATCHDOG = {
     codexLost: () => "Iskron: the standing is lost — name yourself again: iskron_stand",
     codexAlive: () => "Iskron: the socket keeps being cut while the service answers — the bridge holds the seat",
     noThread: () => "DOER: no CODEX_THREAD_ID — run this watchdog from the Codex session shell: that is where Codex puts the thread id into the environment",
-    noDoor: (path) => `DOER: no door (${path}) — this thread is not under an app-server daemon. This is the HUMAN's move before the session starts, not yours: the daemon and the Codex session must start with one short CODEX_HOME (recipe in SETUP, section Codex). Tell them so; until there is a door, listen with watchdog-exit`,
+    noDoor: (path2) => `DOER: no door (${path2}) — this thread is not under an app-server daemon. This is the HUMAN's move before the session starts, not yours: the daemon and the Codex session must start with one short CODEX_HOME (recipe in SETUP, section Codex). Tell them so; until there is a door, listen with watchdog-exit`,
     threadRefused: (why) => `DOER: the thread did not accept the frame — ${why}`,
     refusal: () => "refusal",
     framePut: (thread) => `frame put into thread ${thread}`,
@@ -2661,12 +2661,12 @@ function readServerChoice(authDir) {
   }
 }
 function writeServerChoice(authDir, url) {
-  const path = serverChoicePath(authDir);
+  const path2 = serverChoicePath(authDir);
   mkdirSync2(authDir, { recursive: true, mode: 448 });
-  const tmp = `${path}.tmp-${process.pid}`;
+  const tmp = `${path2}.tmp-${process.pid}`;
   writeFileSync(tmp, url + "\n", { mode: 384 });
-  renameSync(tmp, path);
-  return path;
+  renameSync(tmp, path2);
+  return path2;
 }
 var cfgSlot = scoped(() => ({ cfg: null }));
 var CFG = new Proxy({}, {
@@ -3240,9 +3240,9 @@ var SeamError = class extends Error {
   }
 };
 var ABSENT = /* @__PURE__ */ new Set(["ENOENT", "ECONNREFUSED", "ENOTSOCK", "ENOTDIR"]);
-function connectSeam(path, hello, timeoutMs) {
+function connectSeam(path2, hello, timeoutMs) {
   return new Promise((resolveLink, reject) => {
-    const socket = connect(path);
+    const socket = connect(path2);
     let welcome = null;
     const early = [];
     let frameCb = null;
@@ -3374,29 +3374,29 @@ var ownPidAlive = (pid) => {
     return false;
   }
 };
-var readLock = (path) => {
+var readLock = (path2) => {
   try {
-    return JSON.parse(readFileSync4(path, "utf8"));
+    return JSON.parse(readFileSync4(path2, "utf8"));
   } catch {
     return null;
   }
 };
-function takeFileLock(path, staleMs) {
+function takeFileLock(path2, staleMs) {
   const token = `${process.pid}-${randomBytes(8).toString("hex")}`;
   const body = JSON.stringify({ pid: process.pid, token, started_at: Date.now() });
   const release = () => {
-    if (readLock(path)?.token === token) {
+    if (readLock(path2)?.token === token) {
       try {
-        unlinkSync(path);
+        unlinkSync(path2);
       } catch {
       }
     }
   };
   const claim = () => {
-    const tmp = `${path}.${token}`;
+    const tmp = `${path2}.${token}`;
     writeFileSync2(tmp, body, { mode: 384 });
     try {
-      linkSync(tmp, path);
+      linkSync(tmp, path2);
       return true;
     } catch (e) {
       if (e.code === "EEXIST") return false;
@@ -3410,30 +3410,30 @@ function takeFileLock(path, staleMs) {
   };
   try {
     if (claim()) return { held: true, release };
-    const held2 = readLock(path);
+    const held2 = readLock(path2);
     if (held2 && ownPidAlive(held2.pid) && Date.now() - held2.started_at < staleMs)
       return { held: false, fault: null, holder: { pid: held2.pid, started_at: held2.started_at } };
-    const mistake = carryAwayStale(path, held2?.token);
+    const mistake = carryAwayStale(path2, held2?.token);
     if (mistake) return { held: false, fault: mistake.putBack ? null : mistake.word };
     return claim() ? { held: true, release } : { held: false, fault: null };
   } catch (e) {
-    return { held: false, fault: `${path}: ${e.message}` };
+    return { held: false, fault: `${path2}: ${e.message}` };
   }
 }
-function carryAwayStale(path, staleToken) {
-  const away = `${path}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
+function carryAwayStale(path2, staleToken) {
+  const away = `${path2}.stale-${process.pid}-${randomBytes(6).toString("hex")}`;
   try {
-    renameSync2(path, away);
+    renameSync2(path2, away);
   } catch {
     return null;
   }
   if (readLock(away)?.token !== staleToken) {
     try {
-      linkSync(away, path);
+      linkSync(away, path2);
     } catch {
       return {
         putBack: false,
-        word: `a live lock was carried away by mistake and could not be put back (${path} is taken again); it is left as ${away}`
+        word: `a live lock was carried away by mistake and could not be put back (${path2} is taken again); it is left as ${away}`
       };
     }
     try {
@@ -3442,7 +3442,7 @@ function carryAwayStale(path, staleToken) {
     }
     return {
       putBack: true,
-      word: `a live lock was carried away by mistake and put back — ${path} is held`
+      word: `a live lock was carried away by mistake and put back — ${path2} is held`
     };
   }
   try {
@@ -3637,8 +3637,8 @@ function streamSeamSession(id, open, onLost, onLog) {
 }
 var fail = (code2, message) => Object.assign(new Error(message), { code: code2 });
 var DAEMON_RISE_MS = 15e3;
-var socketAnswers = (path) => new Promise((r) => {
-  const probe = connect2(path);
+var socketAnswers = (path2) => new Promise((r) => {
+  const probe = connect2(path2);
   probe.once("connect", () => {
     probe.destroy();
     r(true);
@@ -3648,8 +3648,8 @@ var socketAnswers = (path) => new Promise((r) => {
 async function listenSeam(authDir, onSocket) {
   const bad = seamEntranceProblem(authDir);
   if (bad) throw fail("EUNSAFE", `the seam entrance is not private: ${bad}`);
-  const path = seamSocketPath(authDir);
-  if (await socketAnswers(path)) throw fail("EADDRINUSE", `a daemon already listens on ${path}`);
+  const path2 = seamSocketPath(authDir);
+  if (await socketAnswers(path2)) throw fail("EADDRINUSE", `a daemon already listens on ${path2}`);
   const lockPath = seamDaemonLockPath(authDir);
   const lock = takeFileLock(lockPath, DAEMON_RISE_MS);
   if (!lock.held)
@@ -3661,16 +3661,16 @@ async function listenSeam(authDir, onSocket) {
   try {
     if (!win) {
       try {
-        unlinkSync2(path);
+        unlinkSync2(path2);
       } catch {
       }
     }
     const server = createServer(onSocket);
     await new Promise((r, reject) => {
       server.once("error", reject);
-      server.listen(path, () => r());
+      server.listen(path2, () => r());
     });
-    if (!win) chmodSync(path, 384);
+    if (!win) chmodSync(path2, 384);
     server.once("close", lock.release);
     process.once("exit", lock.release);
     return server;
@@ -3836,9 +3836,9 @@ function createFold(now2 = Date.now, windowMs = WINDOW_MS) {
   };
 }
 var folds = /* @__PURE__ */ new Map();
-function foldInto(path, line) {
-  let fold = folds.get(path);
-  if (!fold) folds.set(path, fold = createFold());
+function foldInto(path2, line) {
+  let fold = folds.get(path2);
+  if (!fold) folds.set(path2, fold = createFold());
   return fold(line);
 }
 
@@ -3904,20 +3904,20 @@ function grantLogPath() {
 function grantLog(msg) {
   appendJournal(grantLogPath(), msg);
 }
-function rotateJournal(path, max) {
+function rotateJournal(path2, max) {
   try {
-    if (statSync(path).size > max) renameSync3(path, `${path}.1`);
+    if (statSync(path2).size > max) renameSync3(path2, `${path2}.1`);
   } catch {
   }
 }
-function appendJournal(path, msg) {
+function appendJournal(path2, msg) {
   try {
-    const lines = foldInto(path, msg);
+    const lines = foldInto(path2, msg);
     if (!lines.length) return;
     mkdirSync4(CFG.authDir, { recursive: true, mode: 448 });
-    rotateJournal(path, 128e3);
+    rotateJournal(path2, 128e3);
     const at3 = `${(/* @__PURE__ */ new Date()).toISOString()} pid=${process.pid} ${BUILD}`;
-    appendFileSync(path, lines.map((l) => `${at3} ${l}
+    appendFileSync(path2, lines.map((l) => `${at3} ${l}
 `).join(""), { mode: 384 });
   } catch {
   }
@@ -4361,8 +4361,8 @@ async function discoverMeta(wwwAuthenticate) {
   const candidates = [];
   const m = /resource_metadata="?([^",\s]+)"?/.exec(wwwAuthenticate || "");
   if (m) candidates.push(m[1]);
-  const path = u.pathname === "/" ? "" : u.pathname;
-  candidates.push(`${u.origin}/.well-known/oauth-protected-resource${path}`);
+  const path2 = u.pathname === "/" ? "" : u.pathname;
+  candidates.push(`${u.origin}/.well-known/oauth-protected-resource${path2}`);
   candidates.push(`${u.origin}/.well-known/oauth-protected-resource`);
   let prm = null;
   for (const c of candidates) {
@@ -6006,10 +6006,10 @@ function note(m, k) {
   const at3 = k.indexOf("=");
   if (at3 > 0) m.index.set(k.slice(0, at3), k.slice(at3 + 1));
 }
-function load(path) {
+function load(path2) {
   const m = { set: /* @__PURE__ */ new Set(), index: /* @__PURE__ */ new Map(), room: 0 };
   try {
-    for (const k of readFileSync10(path, "utf8").split("\n").filter(Boolean)) {
+    for (const k of readFileSync10(path2, "utf8").split("\n").filter(Boolean)) {
       m.set.add(k);
       note(m, k);
     }
@@ -6017,7 +6017,7 @@ function load(path) {
   }
   return m;
 }
-function trim(path, m) {
+function trim(path2, m) {
   const drop = (k) => {
     m.set.delete(k);
     const at3 = k.indexOf("=");
@@ -6032,11 +6032,11 @@ function trim(path, m) {
     drop(k);
     drop(k.slice(4));
   }
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = `${path2}.${process.pid}.tmp`;
   try {
     writeFileSync8(tmp, [...m.set].map((k) => `${k}
 `).join(""));
-    renameSync7(tmp, path);
+    renameSync7(tmp, path2);
   } catch {
     try {
       unlinkSync6(tmp);
@@ -6045,9 +6045,9 @@ function trim(path, m) {
   }
 }
 function diskAsks(seenPath) {
-  const path = asksPathOf(seenPath);
-  let m = loaded.get(path);
-  if (!m) loaded.set(path, m = load(path));
+  const path2 = asksPathOf(seenPath);
+  let m = loaded.get(path2);
+  if (!m) loaded.set(path2, m = load(path2));
   const mem = m;
   return {
     has: (k) => mem.set.has(k),
@@ -6056,13 +6056,13 @@ function diskAsks(seenPath) {
       mem.set.add(k);
       note(mem, k);
       try {
-        appendFileSync3(path, `${k}
+        appendFileSync3(path2, `${k}
 `);
       } catch {
       }
       if (++mem.room > kept2() / 4) {
         mem.room = 0;
-        trim(path, mem);
+        trim(path2, mem);
       }
     },
     keys: () => mem.set,
@@ -7193,19 +7193,19 @@ var Backlog = class {
 
 // js/bridge/doorfiles.ts
 import { lstatSync as lstatSync2, renameSync as renameSync8, unlinkSync as unlinkSync7, writeFileSync as writeFileSync9 } from "node:fs";
-function stampOf(path) {
+function stampOf(path2) {
   try {
-    const s2 = lstatSync2(path, { bigint: true });
+    const s2 = lstatSync2(path2, { bigint: true });
     return `${s2.dev}:${s2.ino}:${s2.birthtimeNs}`;
   } catch {
     return null;
   }
 }
-function writeOwned(path, content) {
-  const tmp = `${path}.${process.pid}.tmp`;
+function writeOwned(path2, content) {
+  const tmp = `${path2}.${process.pid}.tmp`;
   writeFileSync9(tmp, content, { mode: 384 });
   try {
-    renameSync8(tmp, path);
+    renameSync8(tmp, path2);
   } catch (e) {
     try {
       unlinkSync7(tmp);
@@ -7213,25 +7213,25 @@ function writeOwned(path, content) {
     }
     throw e;
   }
-  return stampOf(path);
+  return stampOf(path2);
 }
-function unlinkOwned(path, stamp) {
-  if (!stamp || stampOf(path) !== stamp) return;
+function unlinkOwned(path2, stamp) {
+  if (!stamp || stampOf(path2) !== stamp) return;
   try {
-    unlinkSync7(path);
+    unlinkSync7(path2);
   } catch {
   }
 }
-function closeServerKeeping(path, stamp, close) {
-  const now2 = stampOf(path);
+function closeServerKeeping(path2, stamp, close) {
+  const now2 = stampOf(path2);
   if (!now2 || now2 === stamp) {
     close();
-    unlinkOwned(path, stamp);
+    unlinkOwned(path2, stamp);
     return;
   }
-  const aside = `${path}.${process.pid}.aside`;
+  const aside = `${path2}.${process.pid}.aside`;
   try {
-    renameSync8(path, aside);
+    renameSync8(path2, aside);
   } catch {
     close();
     return;
@@ -7240,7 +7240,7 @@ function closeServerKeeping(path, stamp, close) {
     close();
   } finally {
     try {
-      renameSync8(aside, path);
+      renameSync8(aside, path2);
     } catch {
     }
   }
@@ -7312,10 +7312,10 @@ function checkRetirements(entries2) {
   }
   if (keys > SEEN_KEEP) throw new Error("graph retirement key limit reached");
 }
-function readRetirements(path) {
+function readRetirements(path2) {
   let text9;
   try {
-    text9 = readFileSync11(path, "utf8");
+    text9 = readFileSync11(path2, "utf8");
   } catch (e) {
     if (e.code === "ENOENT") return [];
     throw e;
@@ -7327,12 +7327,12 @@ function readRetirements(path) {
   checkRetirements(entries2);
   return entries2;
 }
-function writeRetirements(path, entries2) {
+function writeRetirements(path2, entries2) {
   checkRetirements(entries2);
-  const tmp = `${path}.${randomUUID()}.tmp`;
+  const tmp = `${path2}.${randomUUID()}.tmp`;
   try {
     writeFileSync10(tmp, JSON.stringify({ version: 1, entries: entries2 }) + "\n", { mode: 384, flag: "wx" });
-    renameSync9(tmp, path);
+    renameSync9(tmp, path2);
   } finally {
     try {
       unlinkSync8(tmp);
@@ -7431,9 +7431,9 @@ function noteSeatBase(key3, base) {
   B.set(key3, base);
   if (CFG.satellite) return;
   try {
-    const path = baseFilePathOf(CFG.authDir, key3);
-    mkdirSync7(dirname4(path), { recursive: true, mode: 448 });
-    writeFileSync11(path, base + "\n", { mode: 384 });
+    const path2 = baseFilePathOf(CFG.authDir, key3);
+    mkdirSync7(dirname4(path2), { recursive: true, mode: 448 });
+    writeFileSync11(path2, base + "\n", { mode: 384 });
   } catch (e) {
     log(`seat base not written: ${e.message}`);
   }
@@ -7948,12 +7948,12 @@ var Door = class {
     }
   }
   open() {
-    const path = this.socketPath;
+    const path2 = this.socketPath;
     const key3 = this.key;
     const authDir = this.authDir;
     mkdirSync8(standingsDirOf(authDir), { recursive: true, mode: 448 });
-    if (process.platform !== "win32" && dirname5(path) === shortSocketDir()) {
-      const bad = privateDirProblem(dirname5(path));
+    if (process.platform !== "win32" && dirname5(path2) === shortSocketDir()) {
+      const bad = privateDirProblem(dirname5(path2));
       if (bad) {
         this.listenError = bad;
         this.hooks.onError(words(DOOR).privateDir(bad));
@@ -7964,7 +7964,7 @@ var Door = class {
     this.stamps = { key: writeOwned(keyFilePathOf(authDir, key3), key3 + "\n"), sock: null };
     if (process.platform !== "win32") {
       try {
-        unlinkSync11(path);
+        unlinkSync11(path2);
       } catch {
       }
     }
@@ -8017,21 +8017,21 @@ var Door = class {
       this.hooks.onError(words(DOOR).listenFailed(e.message));
     });
     srv.listen(
-      path,
+      path2,
       bindScope(() => {
         if (process.platform !== "win32") {
           try {
-            chmodSync2(path, 384);
+            chmodSync2(path2, 384);
           } catch {
           }
         }
-        this.stamps.sock = stampOf(path);
-        log(`standing socket held; local listeners attach at ${path}`);
-        if (dirname5(path) === shortSocketDir()) {
+        this.stamps.sock = stampOf(path2);
+        log(`standing socket held; local listeners attach at ${path2}`);
+        if (dirname5(path2) === shortSocketDir()) {
           const touch = () => {
             const now2 = /* @__PURE__ */ new Date();
-            const mine = stampOf(path) === this.stamps.sock;
-            for (const p of mine ? [dirname5(path), path] : [dirname5(path)])
+            const mine = stampOf(path2) === this.stamps.sock;
+            for (const p of mine ? [dirname5(path2), path2] : [dirname5(path2)])
               try {
                 utimesSync(p, now2, now2);
               } catch {
@@ -8046,26 +8046,26 @@ var Door = class {
     for (const alias of this.aliases) this.listenAlias(socketPathOf(authDir, alias), onClient);
   }
   /** One more path to the same door: an earlier key's socket, clients and ring shared. */
-  listenAlias(path, onClient) {
+  listenAlias(path2, onClient) {
     if (process.platform !== "win32") {
-      if (dirname5(path) === shortSocketDir() && privateDirProblem(dirname5(path))) return;
+      if (dirname5(path2) === shortSocketDir() && privateDirProblem(dirname5(path2))) return;
       try {
-        unlinkSync11(path);
+        unlinkSync11(path2);
       } catch {
       }
     }
-    const a = { path, srv: createServer3(onClient), stamp: null };
-    a.srv.on("error", (e) => log(`earlier key's door ${path} not up: ${e.message}`));
+    const a = { path: path2, srv: createServer3(onClient), stamp: null };
+    a.srv.on("error", (e) => log(`earlier key's door ${path2} not up: ${e.message}`));
     a.srv.listen(
-      path,
+      path2,
       bindScope(() => {
         if (process.platform !== "win32") {
           try {
-            chmodSync2(path, 384);
+            chmodSync2(path2, 384);
           } catch {
           }
         }
-        a.stamp = stampOf(path);
+        a.stamp = stampOf(path2);
       })
     );
     this.aliasServers.push(a);
@@ -9169,23 +9169,23 @@ var HANDOFF_MS = Number(process.env[envName("BRIDGE_DAEMON_HANDOFF_MS")]) || 12e
 var DRAIN_MS = HANDOFF_MS + 5e3;
 var DRAIN_TICK_MS = 200;
 var SPOOL_LIVE_MS = DRAIN_MS;
-function append(path, entry) {
+function append(path2, entry) {
   try {
-    appendFileSync4(path, JSON.stringify(entry) + "\n", { mode: 384 });
+    appendFileSync4(path2, JSON.stringify(entry) + "\n", { mode: 384 });
   } catch (e) {
     const id = entry.frame === void 0 ? "" : `, frame ${String(parseFrame(entry.frame)?.id ?? "?")}`;
-    log(`handover spool not written (${path}${id}): ${e.message}`);
+    log(`handover spool not written (${path2}${id}): ${e.message}`);
   }
 }
-function openSpool(path) {
+function openSpool(path2) {
   try {
-    mkdirSync9(dirname6(path), { recursive: true, mode: 448 });
+    mkdirSync9(dirname6(path2), { recursive: true, mode: 448 });
   } catch {
   }
-  append(path, { open: Date.now() });
+  append(path2, { open: Date.now() });
 }
-var spoolFrame = (path, raw) => append(path, { frame: raw, at: Date.now() });
-var closeSpool = (path) => append(path, { done: Date.now() });
+var spoolFrame = (path2, raw) => append(path2, { frame: raw, at: Date.now() });
+var closeSpool = (path2) => append(path2, { done: Date.now() });
 var draining = /* @__PURE__ */ new Set();
 function parseFrame(raw) {
   try {
@@ -9195,10 +9195,10 @@ function parseFrame(raw) {
     return null;
   }
 }
-function entries(path) {
+function entries(path2) {
   let text9;
   try {
-    text9 = readFileSync14(path, "utf8");
+    text9 = readFileSync14(path2, "utf8");
   } catch {
     return null;
   }
@@ -9216,15 +9216,15 @@ function aged(raw, at3) {
   const stale = { ...frame2, stale: true };
   return [JSON.stringify(stale), stale];
 }
-function drainSpool(path, feed) {
-  if (draining.has(path)) return;
+function drainSpool(path2, feed) {
+  if (draining.has(path2)) return;
   const give = bindScope((raw, at3) => feed(...aged(raw, at3)));
   const until = Date.now() + DRAIN_MS;
   let taken2 = 0;
   let openedAt = 0;
   const tick = () => {
-    const all2 = entries(path);
-    if (!all2) return void draining.delete(path);
+    const all2 = entries(path2);
+    if (!all2) return void draining.delete(path2);
     const fresh3 = [];
     for (const e of all2.slice(taken2)) {
       if (e.open) openedAt = e.open;
@@ -9239,13 +9239,13 @@ function drainSpool(path, feed) {
       setTimeout(tick, DRAIN_TICK_MS).unref?.();
       return;
     }
-    draining.delete(path);
+    draining.delete(path2);
     try {
-      unlinkSync12(path);
+      unlinkSync12(path2);
     } catch {
     }
   };
-  draining.add(path);
+  draining.add(path2);
   tick();
 }
 
@@ -9357,9 +9357,9 @@ onFellBack(
 // js/bridge/handoff.ts
 var pending = /* @__PURE__ */ new Set();
 function keepUntilEvicted(holder, key3, statusUrl2) {
-  const path = spoolFilePathOf(CFG.authDir, key3);
+  const path2 = spoolFilePathOf(CFG.authDir, key3);
   const door = socketPathOf(CFG.authDir, key3);
-  openSpool(path);
+  openSpool(path2);
   let timer;
   let over2 = false;
   const done = new Promise((resolve15) => {
@@ -9367,7 +9367,7 @@ function keepUntilEvicted(holder, key3, statusUrl2) {
       if (over2) return;
       over2 = true;
       clearTimeout(timer);
-      closeSpool(path);
+      closeSpool(path2);
       log(`place ${key3} handed over: ${why}`);
       void Promise.resolve(after2).then(() => resolve15());
     };
@@ -9377,7 +9377,7 @@ function keepUntilEvicted(holder, key3, statusUrl2) {
       holder.close("the successor did not take the place");
     }, HANDOFF_MS);
     holder.handOff(
-      (raw) => spoolFrame(path, raw),
+      (raw) => spoolFrame(path2, raw),
       (code2) => end(
         code2 === EVICTED_CODE ? "the successor took the socket (close 4000)" : `the socket closed (${code2})`
       )
@@ -10465,10 +10465,10 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { mkdirSync as mkdirSync10, readFileSync as readFileSync15, unlinkSync as unlinkSync13 } from "node:fs";
 import { dirname as dirname7 } from "node:path";
 var pathOf = (seat2) => `${seenFilePathOf(CFG.authDir, seat2, CFG.serverUrl)}.context-gate.json`;
-function readMark(path, seat2) {
+function readMark(path2, seat2) {
   let text9;
   try {
-    text9 = readFileSync15(path, "utf8");
+    text9 = readFileSync15(path2, "utf8");
   } catch (e) {
     if (e.code === "ENOENT") return null;
     throw e;
@@ -10489,9 +10489,9 @@ function readContextMark(seat2) {
   return { ...mark, pending: false };
 }
 function writeContextMark(mark) {
-  const path = pathOf(mark.seat);
-  mkdirSync10(dirname7(path), { recursive: true, mode: 448 });
-  writeOwned(path, JSON.stringify(mark) + "\n");
+  const path2 = pathOf(mark.seat);
+  mkdirSync10(dirname7(path2), { recursive: true, mode: 448 });
+  writeOwned(path2, JSON.stringify(mark) + "\n");
 }
 var newContextMark = (seat2) => ({
   version: 1,
@@ -10503,12 +10503,12 @@ function clearContextMark(mark) {
   const now2 = readContextMark(mark.seat);
   if (!now2 || now2.generation !== mark.generation || !now2.pending)
     throw new Error("context recovery generation changed");
-  const path = proofPath(mark);
+  const path2 = proofPath(mark);
   try {
-    writeOwned(path, JSON.stringify({ ...mark, pending: false }) + "\n");
+    writeOwned(path2, JSON.stringify({ ...mark, pending: false }) + "\n");
   } finally {
     try {
-      unlinkSync13(`${path}.${process.pid}.tmp`);
+      unlinkSync13(`${path2}.${process.pid}.tmp`);
     } catch {
     }
   }
@@ -11076,12 +11076,12 @@ function noteSkills(p, skills) {
   const s2 = safeSkills(skills);
   if (s2) W2.announced.set(key(p), s2);
 }
-var modified = (path) => {
+var modified = (path2) => {
   try {
-    const s2 = statSync5(path);
-    return `${path}:${s2.mtimeMs}:${s2.size}`;
+    const s2 = statSync5(path2);
+    return `${path2}:${s2.mtimeMs}:${s2.size}`;
   } catch {
-    return `${path}:missing`;
+    return `${path2}:missing`;
   }
 };
 function diskVersion() {
@@ -12321,11 +12321,11 @@ var RELEASES_URL = process.env[envName("BRIDGE_RELEASES_URL")]?.trim() || `https
 var RELEASES_PAGE_URL = process.env[envName("BRIDGE_RELEASES_PAGE_URL")]?.trim() || (process.env[envName("BRIDGE_RELEASES_URL")]?.trim() ? null : `https://github.com/${SKILL_SET}/releases/latest`);
 var TAG_TTL_MS = 60 * 60 * 1e3;
 var releaseTagPath = () => join20(dirname10(homeBridgePath()), "release-tag.json");
-function writeAtomic(path, bytes) {
-  mkdirSync12(dirname10(path), { recursive: true, mode: 448 });
-  const tmp = `${path}.tmp-${process.pid}`;
+function writeAtomic(path2, bytes) {
+  mkdirSync12(dirname10(path2), { recursive: true, mode: 448 });
+  const tmp = `${path2}.tmp-${process.pid}`;
   writeFileSync13(tmp, bytes, { mode: 420 });
-  renameSync12(tmp, path);
+  renameSync12(tmp, path2);
 }
 var RateLimitError = class extends Error {
   limit;
@@ -12448,8 +12448,8 @@ async function resolveTag(force) {
 // js/bridge/skillcatchup-manifest.ts
 var safeSkillName = (s2) => /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(s2);
 var sha = (v) => typeof v === "string" && /^[a-f0-9]{40}$/.test(v);
-async function json(path) {
-  const url = new URL(`/repos/${SKILL_SET}/${path}`, RELEASES_URL);
+async function json(path2) {
+  const url = new URL(`/repos/${SKILL_SET}/${path2}`, RELEASES_URL);
   const r = await namedFetch(url.toString(), {
     headers: { accept: "application/vnd.github+json" },
     signal: AbortSignal.timeout(5e3)
@@ -12471,20 +12471,20 @@ async function pinnedSkillManifest() {
   const names2 = [];
   for (const entry of body.tree) {
     if (typeof entry?.path !== "string") throw new Error("invalid_tree_path");
-    const path = entry.path;
-    if (path.includes("\\") || path.includes("\0") || path.split("/").some((p) => p === "." || p === ".." || !p))
+    const path2 = entry.path;
+    if (path2.includes("\\") || path2.includes("\0") || path2.split("/").some((p) => p === "." || p === ".." || !p))
       throw new Error("invalid_tree_path");
-    if (path.startsWith("skills/") && (entry.mode === "120000" || entry.mode === "160000"))
+    if (path2.startsWith("skills/") && (entry.mode === "120000" || entry.mode === "160000"))
       throw new Error("source_link_or_submodule");
-    if (path.startsWith("skills/") && entry.type === "blob") {
-      if (!sha(entry.sha) || entry.mode !== "100644" && entry.mode !== "100755" || files[path.slice(7)])
+    if (path2.startsWith("skills/") && entry.type === "blob") {
+      if (!sha(entry.sha) || entry.mode !== "100644" && entry.mode !== "100755" || files[path2.slice(7)])
         throw new Error("invalid_or_duplicate_source_blob");
-      files[path.slice(7)] = entry.sha;
+      files[path2.slice(7)] = entry.sha;
     }
-    if (/^skills\/[^/]+$/.test(path) && entry.type === "tree" && sha(entry.sha))
-      hashes[path.slice(7)] = entry.sha;
-    if (!path.startsWith("skills/") || !path.endsWith("/SKILL.md")) continue;
-    const m = /^skills\/([^/]+)\/SKILL\.md$/.exec(path);
+    if (/^skills\/[^/]+$/.test(path2) && entry.type === "tree" && sha(entry.sha))
+      hashes[path2.slice(7)] = entry.sha;
+    if (!path2.startsWith("skills/") || !path2.endsWith("/SKILL.md")) continue;
+    const m = /^skills\/([^/]+)\/SKILL\.md$/.exec(path2);
     const name2 = m?.[1];
     if (!name2 || !safeSkillName(name2) || entry.type !== "blob" || entry.mode !== "100644")
       throw new Error("unsafe_or_ambiguous_skill_name");
@@ -12504,8 +12504,8 @@ function conflictingSkillSource(value) {
   const item = value;
   return item.source !== void 0 && item.source !== SKILL_SET || item.sourceType !== void 0 && item.sourceType !== "github" || item.sourceUrl !== void 0 && item.sourceUrl !== `https://github.com/${SKILL_SET}` && item.sourceUrl !== `https://github.com/${SKILL_SET}.git`;
 }
-function realHomePath(path) {
-  const home = homedir7(), rel = relative(home, resolve7(path));
+function realHomePath(path2) {
+  const home = homedir7(), rel = relative(home, resolve7(path2));
   if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep2}`))
     throw new Error("path_outside_home");
   let at3 = home;
@@ -12519,12 +12519,12 @@ function realHomePath(path) {
     }
   }
 }
-function noLinks(path, budget2) {
+function noLinks(path2, budget2) {
   if (--budget2.left < 0) throw new Error("destination_too_large");
-  const stat = lstatSync3(path);
+  const stat = lstatSync3(path2);
   if (stat.isSymbolicLink()) throw new Error("destination_symlink");
   if (stat.isFile() && stat.nlink !== 1) throw new Error("destination_hardlink");
-  if (stat.isDirectory()) for (const name2 of readdirSync10(path)) noLinks(join21(path, name2), budget2);
+  if (stat.isDirectory()) for (const name2 of readdirSync10(path2)) noLinks(join21(path2, name2), budget2);
   else if (!stat.isFile()) throw new Error("destination_special_file");
 }
 function flatScope(root) {
@@ -12576,10 +12576,10 @@ function confirmFlat(root, manifest2) {
     const actual = readdirSync10(join21(root, name2), { recursive: true, encoding: "utf8" }).filter((p) => lstatSync3(join21(root, name2, p)).isFile()).map((p) => `${name2}/${p.split(sep2).join("/")}`).sort();
     if (JSON.stringify(actual) !== JSON.stringify(expected))
       throw new Error("post_read_file_inventory");
-    for (const path of expected) {
-      const bytes = readFileSync24(join21(root, path));
+    for (const path2 of expected) {
+      const bytes = readFileSync24(join21(root, path2));
       const hash = createHash8("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-      if (hash !== manifest2.files[path]) throw new Error("post_read_file_bytes");
+      if (hash !== manifest2.files[path2]) throw new Error("post_read_file_bytes");
     }
   }
   return removed;
@@ -12793,22 +12793,22 @@ var selfPath = () => fileURLToPath4(import.meta.url);
 var opencodePluginPath = () => join23(homedir9(), ".config", "opencode", "plugins", PLUGIN_COPY_FILE);
 var setupPathOf = (authDir) => join23(authDir, "SETUP.md");
 var latestPathOf = (authDir) => join23(authDir, "latest.json");
-var isSymlink = (path) => {
+var isSymlink = (path2) => {
   try {
-    return lstatSync4(path).isSymbolicLink();
+    return lstatSync4(path2).isSymbolicLink();
   } catch {
     return false;
   }
 };
-var readBytes = (path) => {
+var readBytes = (path2) => {
   try {
-    return readFileSync25(path);
+    return readFileSync25(path2);
   } catch {
     return Buffer.alloc(0);
   }
 };
-var readText = (path) => readBytes(path).toString("utf8");
-var versionOf2 = (path) => versionIn(readText(path));
+var readText = (path2) => readBytes(path2).toString("utf8");
+var versionOf2 = (path2) => versionIn(readText(path2));
 function syncHome(self = selfPath()) {
   const out7 = { copied: [] };
   const home = homeBridgePath();
@@ -12841,10 +12841,10 @@ function syncHome(self = selfPath()) {
   }
   return out7;
 }
-function reexec(path, argv2) {
-  log(uw().reexecNewer(versionOf2(path) ?? "?", VERSION, path));
+function reexec(path2, argv2) {
+  log(uw().reexecNewer(versionOf2(path2) ?? "?", VERSION, path2));
   const root = skillsRoot();
-  const child = spawn3(process.execPath, [path, ...argv2], {
+  const child = spawn3(process.execPath, [path2, ...argv2], {
     stdio: "inherit",
     windowsHide: true,
     env: {
@@ -13543,17 +13543,17 @@ function writeIntent(key3) {
   const session = sessionOfBridge();
   if (!session || CFG.satellite) return () => {
   };
-  const path = pathOf2(key3);
+  const path2 = pathOf2(key3);
   try {
-    mkdirSync14(dirname12(path), { recursive: true, mode: 448 });
-    writeFileSync14(path, JSON.stringify({ session, pid: process.pid }) + "\n", { mode: 384 });
+    mkdirSync14(dirname12(path2), { recursive: true, mode: 448 });
+    writeFileSync14(path2, JSON.stringify({ session, pid: process.pid }) + "\n", { mode: 384 });
   } catch {
     return () => {
     };
   }
   return () => {
     try {
-      unlinkSync16(path);
+      unlinkSync16(path2);
     } catch {
     }
   };
@@ -14671,7 +14671,7 @@ var safeCode = (code2) => code2 !== null && /^[a-z0-9_]{1,48}$/.test(code2) ? co
 var HOST = /^[a-z0-9][a-z0-9.-]*$/i;
 async function sshRepository(remote, run3) {
   let host;
-  let path;
+  let path2;
   let user;
   let port = "";
   const url = remote.trim();
@@ -14682,7 +14682,7 @@ async function sshRepository(remote, run3) {
       host = u.hostname;
       user = u.username;
       port = u.port;
-      path = u.pathname.replace(/^\//, "");
+      path2 = u.pathname.replace(/^\//, "");
     } catch {
       return { code: "ssh_remote_invalid" };
     }
@@ -14690,16 +14690,16 @@ async function sshRepository(remote, run3) {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return null;
     const m = /^(?:([^@/:]+)@)?([^/:]+):(.+)$/.exec(url);
     if (!m) return null;
-    [, user = "", host, path] = m;
+    [, user = "", host, path2] = m;
   }
-  if (!HOST.test(host) || user && !/^[a-z0-9._-]+$/i.test(user) || !path || /[\s?#]/.test(path))
+  if (!HOST.test(host) || user && !/^[a-z0-9._-]+$/i.test(user) || !path2 || /[\s?#]/.test(path2))
     return { code: "ssh_remote_invalid" };
   const args = ["-G", ...port ? ["-p", port] : [], ...user ? ["-l", user] : [], "--", host];
   const result = await run3(args, 1e4, "ssh");
   if (result.code !== 0) return { code: "ssh_config_unreadable" };
   const names2 = [...result.out.matchAll(/^hostname\s+(\S+)\s*$/gim)].map((m) => m[1]);
   if (names2.length !== 1 || !HOST.test(names2[0])) return { code: "ssh_hostname_unverified" };
-  return `${names2[0].toLowerCase()}/${path.replace(/\/+$/, "").replace(/\.git$/, "")}`;
+  return `${names2[0].toLowerCase()}/${path2.replace(/\/+$/, "").replace(/\.git$/, "")}`;
 }
 
 // js/bridge/orchestra-orca.ts
@@ -14984,17 +14984,17 @@ import {
   writeSync
 } from "node:fs";
 import { dirname as dirname13, join as join27 } from "node:path";
-function directory(path) {
-  const s2 = lstatSync6(path);
-  if (!s2.isDirectory() || s2.isSymbolicLink() || realpathSync6(path) !== path || s2.uid !== process.getuid?.() || (s2.mode & 511) !== 448)
+function directory(path2) {
+  const s2 = lstatSync6(path2);
+  if (!s2.isDirectory() || s2.isSymbolicLink() || realpathSync6(path2) !== path2 || s2.uid !== process.getuid?.() || (s2.mode & 511) !== 448)
     throw new Error("attempt_directory_untrusted");
 }
-function fdOf(path, create = false) {
-  directory(dirname13(path));
-  if (path.slice(path.lastIndexOf("/") + 1) !== "receipt.json")
+function fdOf(path2, create = false) {
+  directory(dirname13(path2));
+  if (path2.slice(path2.lastIndexOf("/") + 1) !== "receipt.json")
     throw new Error("attempt_path_invalid");
   const fd = openSync(
-    path,
+    path2,
     constants.O_RDWR | constants.O_NOFOLLOW | (create ? constants.O_CREAT | constants.O_EXCL : 0),
     384
   );
@@ -15005,24 +15005,24 @@ function fdOf(path, create = false) {
   }
   return fd;
 }
-function syncDirectory(path) {
-  const fd = openSync(dirname13(path), constants.O_RDONLY | constants.O_NOFOLLOW);
+function syncDirectory(path2) {
+  const fd = openSync(dirname13(path2), constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
 }
-function readAttemptFile(path) {
-  const fd = fdOf(path);
+function readAttemptFile(path2) {
+  const fd = fdOf(path2);
   try {
     return readFileSync29(fd, "utf8");
   } finally {
     closeSync(fd);
   }
 }
-function writeAttemptFile(path, value, create, check) {
-  const fd = fdOf(path, create);
+function writeAttemptFile(path2, value, create, check) {
+  const fd = fdOf(path2, create);
   try {
     if (!create) check(readFileSync29(fd, "utf8"));
     const bytes = Buffer.from(value);
@@ -15034,12 +15034,12 @@ function writeAttemptFile(path, value, create, check) {
   } finally {
     closeSync(fd);
   }
-  syncDirectory(path);
+  syncDirectory(path2);
 }
-function claimAttempt(path) {
-  directory(dirname13(path));
+function claimAttempt(path2) {
+  directory(dirname13(path2));
   const fd = openSync(
-    join27(dirname13(path), "prepare.lock"),
+    join27(dirname13(path2), "prepare.lock"),
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
     384
   );
@@ -15049,7 +15049,7 @@ function claimAttempt(path) {
   } finally {
     closeSync(fd);
   }
-  syncDirectory(path);
+  syncDirectory(path2);
 }
 
 // js/bridge/exec-receipt.ts
@@ -15085,16 +15085,16 @@ function validate(v) {
   ))
     throw new Error("attempt_schema_invalid");
 }
-function readReceipt(path) {
-  const v = JSON.parse(readAttemptFile(path));
+function readReceipt(path2) {
+  const v = JSON.parse(readAttemptFile(path2));
   validate(v);
-  if (dirname14(path).split("/").at(-1) !== `exec-${v.attempt}`)
+  if (dirname14(path2).split("/").at(-1) !== `exec-${v.attempt}`)
     throw new Error("attempt_path_invalid");
   return v;
 }
-function saveReceipt(path, v, create = false) {
+function saveReceipt(path2, v, create = false) {
   validate(v);
-  writeAttemptFile(path, JSON.stringify(v), create, (raw) => {
+  writeAttemptFile(path2, JSON.stringify(v), create, (raw) => {
     const before = JSON.parse(raw);
     validate(before);
     if (["ready", "ambiguity"].includes(before.phase) || v.phase !== "ambiguity" && phases.indexOf(v.phase) !== phases.indexOf(before.phase) + 1 || before.attempt !== v.attempt || before.identity !== v.identity || before.server !== v.server || before.location !== v.location || before.prompt !== v.prompt || JSON.stringify(before.model) !== JSON.stringify(v.model) || before.session !== void 0 && before.session !== v.session)
@@ -15308,8 +15308,22 @@ function writeClone(authDir, repository, row) {
 
 // js/bridge/orchestra-tree-check.ts
 import { lstatSync as lstatSync7, readFileSync as readFileSync31, realpathSync as realpathSync8 } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join30, relative as relative2 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join30 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+
+// js/bridge/orchestra-tree-path.ts
+import path from "node:path";
+function treePath(value, paths = path) {
+  if (paths.sep !== "\\") return value;
+  return value.replaceAll("/", "\\").replace(/^[a-z]:/, (drive) => drive.toUpperCase());
+}
+function sameTreePath(a, b, paths = path) {
+  return treePath(a, paths) === treePath(b, paths);
+}
+function treeMetadataPath(common, gitDir, paths = path) {
+  const parts = paths.relative(treePath(common, paths), treePath(gitDir, paths)).split(paths.sep);
+  return parts.length === 2 && parts[0] === "worktrees" && !!parts[1] && parts[1] !== ".." && sameTreePath(paths.join(common, ...parts), gitDir, paths);
+}
 
 // js/bridge/orchestra-tree-saved.ts
 var OID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
@@ -15341,10 +15355,10 @@ async function filesRefs(cwd, execute2 = git2) {
   const storage = await execute2(cwd, ["config", "--local", "--get", "extensions.refStorage"]);
   return storage.code === 1 && !storage.out.trim() || storage.code === 0 && storage.out.trim() === "files";
 }
-function directory2(path) {
+function directory2(path2) {
   try {
-    const s2 = lstatSync7(path);
-    return isAbsolute3(path) && s2.isDirectory() && !s2.isSymbolicLink() && realpathSync8.native(path) === path;
+    const s2 = lstatSync7(path2);
+    return isAbsolute3(path2) && s2.isDirectory() && !s2.isSymbolicLink() && sameTreePath(realpathSync8.native(path2), path2);
   } catch {
     return false;
   }
@@ -15354,24 +15368,22 @@ async function inspectTree(tree, execute2 = git2) {
     throw new Error("tree_identity_unverified");
   const marker = lstatSync7(join30(tree.path, ".git"));
   if (!marker.isFile() || marker.isSymbolicLink()) throw new Error("tree_identity_unverified");
-  const common = await gitText(
-    tree.path,
-    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    execute2
+  const common = treePath(
+    await gitText(tree.path, ["rev-parse", "--path-format=absolute", "--git-common-dir"], execute2)
   );
-  const gitDir = await gitText(tree.path, ["rev-parse", "--absolute-git-dir"], execute2);
-  if (common !== tree.commonDir || !directory2(gitDir) || !/^worktrees\/[^/]+$/.test(relative2(common, gitDir)))
+  const gitDir = treePath(await gitText(tree.path, ["rev-parse", "--absolute-git-dir"], execute2));
+  if (!sameTreePath(common, tree.commonDir) || !directory2(gitDir) || !treeMetadataPath(common, gitDir))
     throw new Error("tree_identity_unverified");
   const back = join30(gitDir, "gitdir");
-  if (!lstatSync7(back).isFile() || lstatSync7(back).isSymbolicLink() || readFileSync31(back, "utf8").trim() !== join30(tree.path, ".git"))
+  if (!lstatSync7(back).isFile() || lstatSync7(back).isSymbolicLink() || !sameTreePath(readFileSync31(back, "utf8").trim(), join30(tree.path, ".git")))
     throw new Error("tree_identity_unverified");
-  if (await gitText(tree.path, ["rev-parse", "--show-toplevel"], execute2) !== tree.path)
+  if (!sameTreePath(await gitText(tree.path, ["rev-parse", "--show-toplevel"], execute2), tree.path))
     throw new Error("tree_identity_unverified");
-  const path = lstatSync7(tree.path), metadata = lstatSync7(gitDir), shared = lstatSync7(common);
+  const path2 = lstatSync7(tree.path), metadata = lstatSync7(gitDir), shared = lstatSync7(common);
   return {
     gitDir,
-    pathDev: path.dev,
-    pathIno: path.ino,
+    pathDev: path2.dev,
+    pathIno: path2.ino,
     gitDev: metadata.dev,
     gitIno: metadata.ino,
     commonDev: shared.dev,
@@ -15393,12 +15405,15 @@ async function treeContent(tree, execute2 = git2, saved = false) {
   ]);
   return dirty.code !== 0 ? "tree_status_unverified" : dirty.out ? "tree_dirty_retained" : null;
 }
-async function readyTree(authDir, key3, r, source) {
+async function readyTree(authDir, key3, r, source, execute2 = git2) {
   const t = r.tree;
-  if (!t || t.state !== "ready" || r.state !== "preparing" || r.exec || r.closed || !t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || !OID2.test(t.baseOID) || key3 !== runKey(r.realm, r.room, r.invite) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || t.source !== source || !directory2(source) || r.worktree !== t.path || t.path !== join30(source, ".worktrees", `orchestra-${t.operation}`))
+  if (!t || t.state !== "ready" || r.state !== "preparing" || r.exec || r.closed || !t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || !OID2.test(t.baseOID) || key3 !== runKey(r.realm, r.room, r.invite) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !sameTreePath(t.source, source) || !directory2(source) || !r.worktree || !sameTreePath(r.worktree, t.path) || !sameTreePath(t.path, join30(source, ".worktrees", `orchestra-${t.operation}`)))
     return false;
   try {
-    return await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) === t.commonDir && isDeepStrictEqual(await inspectTree(t), t.identity) && await treeContent(t) === null && isDeepStrictEqual(readRuns(authDir)[key3], r);
+    return sameTreePath(
+      await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], execute2),
+      t.commonDir
+    ) && isDeepStrictEqual(await inspectTree(t, execute2), t.identity) && await treeContent(t, execute2) === null && isDeepStrictEqual(readRuns(authDir)[key3], r);
   } catch {
     return false;
   }
@@ -15501,8 +15516,8 @@ var ORCHESTRA_SESSION_ID = randomUUID5();
 var LIMIT2 = 200;
 var TIMEOUT_MS = 1e4;
 var historyPath = (room, since) => `/rooms/${encodeURIComponent(room)}/history?since=${since}&limit=${LIMIT2}&advance=false`;
-async function caseGet(base, token, path) {
-  const res = await namedFetch(`${base}${path}`, {
+async function caseGet(base, token, path2) {
+  const res = await namedFetch(`${base}${path2}`, {
     headers: {
       authorization: `Bearer ${token}`,
       [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
@@ -15646,10 +15661,10 @@ async function ours(r) {
   if (!d.model) return false;
   return (await commandOf(d.pid))?.includes(d.model) ?? false;
 }
-function dshEvents(path) {
+function dshEvents(path2) {
   let text9;
   try {
-    text9 = readFileSync32(path, "utf8");
+    text9 = readFileSync32(path2, "utf8");
   } catch {
     return {};
   }
@@ -15916,10 +15931,10 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
 
 // js/bridge/exec-raised.ts
 async function bindExecRaised(authDir, base, token, realms) {
-  const path = join31(seamRunDir(authDir), "exec-raised-cursors.json");
+  const path2 = join31(seamRunDir(authDir), "exec-raised-cursors.json");
   let cursors = {};
   try {
-    const value = JSON.parse(readFileSync33(path, "utf8"));
+    const value = JSON.parse(readFileSync33(path2, "utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value) || Object.values(value).some((v) => v !== null && (typeof v !== "string" || !v)))
       throw new Error("exec_cursor_invalid");
     cursors = value;
@@ -15955,7 +15970,7 @@ async function bindExecRaised(authDir, base, token, realms) {
   writeRuns(authDir, runs);
   for (const read of reads) if (read.cursor) cursors[read.realm] = read.cursor;
   mkdirSync19(seamRunDir(authDir), { recursive: true, mode: 448 });
-  writeOwned(path, JSON.stringify(cursors) + "\n");
+  writeOwned(path2, JSON.stringify(cursors) + "\n");
 }
 
 // js/bridge/orchestra-case-share.ts
@@ -16004,8 +16019,8 @@ import { delimiter, isAbsolute as isAbsolute4, join as join32 } from "node:path"
 var KEYS = ["models", "bin", "patch"];
 function parseDsh(offer) {
   if (Object.keys(offer).some((k) => !KEYS.includes(k))) return null;
-  const path = (v) => v === void 0 ? null : typeof v === "string" && isAbsolute4(v.trim()) ? v.trim() : void 0;
-  const bin = path(offer.bin), patch = path(offer.patch);
+  const path2 = (v) => v === void 0 ? null : typeof v === "string" && isAbsolute4(v.trim()) ? v.trim() : void 0;
+  const bin = path2(offer.bin), patch = path2(offer.patch);
   if (bin === void 0 || patch === void 0) return null;
   return { bin, patch };
 }
@@ -16043,9 +16058,9 @@ function dshFiles(authDir, operation) {
     stderr: join32(dir2, `${operation}.stderr`)
   };
 }
-function writeModelPatch(path, dir2, text9) {
+function writeModelPatch(path2, dir2, text9) {
   mkdirSync20(dir2, { recursive: true, mode: 448 });
-  writeFileSync18(path, text9, { mode: 384 });
+  writeFileSync18(path2, text9, { mode: 384 });
 }
 function sharedGitDir(commonDir) {
   if (typeof commonDir !== "string" || !isAbsolute4(commonDir)) return null;
@@ -16070,10 +16085,16 @@ var dshArgv = (patch, model, brief2, session, gitDir) => [
 
 // js/bridge/orchestra-tree-drop.ts
 import { existsSync as existsSync13 } from "node:fs";
-async function dropUnlaunched(authDir, runs, key3, execute2 = git2) {
+async function dropUnlaunched(authDir, runs, key3, execute2 = git2, platform3 = process.platform) {
   const r = runs[key3], t = r.tree;
   if (!t || t.state !== "ready" || !t.identity || r.terminal || r.exec)
     return "tree_drop_unverified";
+  if (platform3 === "win32") {
+    t.state = "retained";
+    t.why = "tree_clean_win32_unverified";
+    writeRuns(authDir, runs);
+    return t.why;
+  }
   try {
     if (JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
       return "tree_identity_unverified";
@@ -16766,17 +16787,17 @@ function parseLauncher(raw) {
   const checkouts = {};
   const c = d.checkouts ?? {};
   if (typeof c !== "object" || Array.isArray(c)) return { code: "checkouts_invalid", launcher };
-  for (const [repo, path] of Object.entries(c)) {
-    if (!str3(path) || !isAbsolute6(path)) return { code: "checkouts_invalid", launcher };
-    checkouts[repo] = path;
+  for (const [repo, path2] of Object.entries(c)) {
+    if (!str3(path2) || !isAbsolute6(path2)) return { code: "checkouts_invalid", launcher };
+    checkouts[repo] = path2;
   }
   const homes = {};
   const m = d.homes ?? {};
   if (typeof m !== "object" || Array.isArray(m)) return { code: "homes_invalid", launcher };
-  for (const [role, path] of Object.entries(m)) {
-    if (!/^\S+#[1-9]\d*$/.test(role) || !str3(path) || !isAbsolute6(path))
+  for (const [role, path2] of Object.entries(m)) {
+    if (!/^\S+#[1-9]\d*$/.test(role) || !str3(path2) || !isAbsolute6(path2))
       return { code: "homes_invalid", launcher };
-    homes[role] = path;
+    homes[role] = path2;
   }
   const callers = d.callers ?? [];
   if (!Array.isArray(callers) || !callers.every((h) => str3(h) && (HANDLE.test(h.trim()) || UUID3.test(h.trim()))))
@@ -17351,7 +17372,7 @@ import { execFile as execFile4 } from "node:child_process";
 import { realpathSync as realpathSync11 } from "node:fs";
 import { hostname as hostname4 } from "node:os";
 var shellQuote = (s2) => `'${s2.replaceAll("'", "'\\''")}'`;
-var execApi = (server, method2, path, body) => new Promise((resolve15, reject) => {
+var execApi = (server, method2, path2, body) => new Promise((resolve15, reject) => {
   execFile4(
     "opencode",
     [
@@ -17359,7 +17380,7 @@ var execApi = (server, method2, path, body) => new Promise((resolve15, reject) =
       "--server",
       server,
       method2,
-      path,
+      path2,
       ...body === void 0 ? [] : ["--data", JSON.stringify(body)]
     ],
     { timeout: 3e4, maxBuffer: 1024 * 1024, windowsHide: true },
@@ -17386,10 +17407,10 @@ function checkSession(v, r) {
   if (s2.id !== r.session || s2.parentID !== void 0 && s2.parentID !== null || model?.providerID !== r.model.providerID || model?.id !== r.model.id || model?.variant !== (r.model.variant ?? "default") || location?.directory !== r.location)
     throw new Error("exec_session_mismatch");
 }
-async function prepareExec(path, api = execApi) {
-  const r = readReceipt(path);
+async function prepareExec(path2, api = execApi) {
+  const r = readReceipt(path2);
   if (r.phase !== "planned") throw new Error("attempt_already_started");
-  claimAttempt(path);
+  claimAttempt(path2);
   try {
     if (!parseExec({ server: r.server, modelRefs: { own: r.model } }, ["own"]) || realpathSync11(r.location) !== r.location || !["darwin", "linux"].includes(process.platform))
       throw new Error("exec_context_invalid");
@@ -17397,7 +17418,7 @@ async function prepareExec(path, api = execApi) {
     if (info.version !== "2.2.7" || info.hostname?.toLowerCase() !== hostname4().toLowerCase())
       throw new Error("exec_server_unverified");
     r.phase = "create-sent";
-    saveReceipt(path, r);
+    saveReceipt(path2, r);
     const made = data(
       await api(r.server, "post", "/api/session", {
         model: r.model,
@@ -17408,12 +17429,12 @@ async function prepareExec(path, api = execApi) {
       throw new Error("exec_session_unreadable");
     r.session = made.id;
     r.phase = "session-created";
-    saveReceipt(path, r);
+    saveReceipt(path2, r);
     checkSession(await api(r.server, "get", `/api/session/${r.session}`), r);
     const context2 = (await api(r.server, "get", `/api/session/${r.session}/context`)).data;
     if (!Array.isArray(context2) || context2.length !== 0) throw new Error("exec_session_not_empty");
     r.phase = "prompt-sent";
-    saveReceipt(path, r);
+    saveReceipt(path2, r);
     const accepted = data(
       await api(r.server, "post", `/api/session/${r.session}/prompt`, { text: r.prompt })
     );
@@ -17421,12 +17442,12 @@ async function prepareExec(path, api = execApi) {
       throw new Error("exec_prompt_unconfirmed");
     checkSession(await api(r.server, "get", `/api/session/${r.session}`), r);
     r.phase = "ready";
-    saveReceipt(path, r);
+    saveReceipt(path2, r);
     return ["opencode", "--server", r.server, "--session", r.session, r.location];
   } catch (e) {
     r.phase = "ambiguity";
     try {
-      saveReceipt(path, r);
+      saveReceipt(path2, r);
     } catch {
     }
     throw e;
@@ -17491,13 +17512,13 @@ async function orcaCloseObserved(handle, runtime, current2, expected) {
 
 // js/bridge/orchestra-exec-halt.ts
 async function haltExecSession(server, session, api = execApi) {
-  const path = `/api/session/${encodeURIComponent(session)}`;
+  const path2 = `/api/session/${encodeURIComponent(session)}`;
   try {
-    const cut = await api(server, "post", `${path}/interrupt?resume=false`);
+    const cut = await api(server, "post", `${path2}/interrupt?resume=false`);
     if (typeof cut?.interrupted !== "boolean") return "session_interrupt_unconfirmed";
-    if (await api(server, "patch", path, { archived: true }) !== void 0)
+    if (await api(server, "patch", path2, { archived: true }) !== void 0)
       return "session_archive_unconfirmed";
-    const s2 = await api(server, "get", path);
+    const s2 = await api(server, "get", path2);
     return s2?.data?.id === session && typeof s2.data.time?.archived === "number" ? null : "session_archive_unconfirmed";
   } catch {
     return "session_halt_unknown";
@@ -17606,7 +17627,7 @@ async function recheckKept(authDir, runs, key3, now2, cleanup) {
 
 // js/bridge/orchestra-tree-clean.ts
 var over = (r) => r.state === "ended" || r.state === "refused" && !!r.dsh?.exit;
-async function cleanupTree(authDir, runs, key3, execute2 = git2) {
+async function cleanupTree(authDir, runs, key3, execute2 = git2, platform3 = process.platform) {
   const r = runs[key3], t = r.tree;
   if (!t || t.state === "removed") return null;
   if (t.state !== "ready") return t.why ?? "tree_cleanup_unverified";
@@ -17625,7 +17646,8 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
     return why;
   };
   if (!current2()) return "tree_superseded";
-  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || t.path !== r.worktree || t.path !== join36(t.source, ".worktrees", `orchestra-${t.operation}`) || !OID2.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
+  if (platform3 === "win32") return retain("tree_clean_win32_unverified");
+  if (!t.identity || !/^[a-f0-9-]{36}$/.test(t.operation) || !r.worktree || !sameTreePath(t.path, r.worktree) || !sameTreePath(t.path, join36(t.source, ".worktrees", `orchestra-${t.operation}`)) || !OID2.test(t.baseOID) || t.realm !== r.realm || t.room !== r.room || t.invite !== r.invite || !directory2(t.source))
     return retain("tree_identity_unverified");
   let lock;
   try {
@@ -17634,7 +17656,7 @@ async function cleanupTree(authDir, runs, key3, execute2 = git2) {
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
       execute2
     );
-    if (common !== t.commonDir || JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
+    if (!sameTreePath(common, t.commonDir) || JSON.stringify(await inspectTree(t, execute2)) !== JSON.stringify(t.identity))
       return retain("tree_identity_unverified");
     const invalid2 = await treeContent(t, execute2, true);
     if (invalid2) return retain(invalid2);
@@ -17892,8 +17914,8 @@ function canonIn(index, name2) {
 // js/bridge/orchestra-demands.ts
 var LIMIT5 = 200;
 var MAX_PAGES2 = 50;
-async function get(base, token, path, control = false) {
-  const r = await namedFetch(`${base}${path}`, {
+async function get(base, token, path2, control = false) {
+  const r = await namedFetch(`${base}${path2}`, {
     headers: {
       authorization: `Bearer ${token}`,
       ...!control ? { [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID } : {}
@@ -18005,10 +18027,10 @@ var w6 = () => words(ORCHESTRA);
 var OPS = ["on", "off", "status", "step", "plan", "demands"];
 var isOrchestraOp = (op) => OPS.includes(op);
 async function listenOrchestraDoor(authDir, serve) {
-  const path = orchestraDoorPath(authDir);
+  const path2 = orchestraDoorPath(authDir);
   if (process.platform !== "win32") {
     try {
-      unlinkSync20(path);
+      unlinkSync20(path2);
     } catch {
     }
   }
@@ -18048,9 +18070,9 @@ async function listenOrchestraDoor(authDir, serve) {
   });
   await new Promise((resolve15, reject) => {
     server.once("error", reject);
-    server.listen(path, () => resolve15());
+    server.listen(path2, () => resolve15());
   });
-  if (process.platform !== "win32") chmodSync3(path, 384);
+  if (process.platform !== "win32") chmodSync3(path2, 384);
   return server;
 }
 function orchestraAsk(authDir, op, realms, timeoutMs = 5e3, extra = {}) {
@@ -18268,12 +18290,12 @@ var shown = (out7) => {
     return void 0;
   }
 };
-async function orcaSeesTree(path) {
+async function orcaSeesTree(path2) {
   const until = Date.now() + budget();
   for (; ; ) {
     const left2 = Math.max(1e3, Math.min(1e4, until - Date.now()));
-    const r = await run2(["worktree", "show", "--worktree", `path:${path}`, "--json"], left2);
-    if (r.code === 0 && shown(r.out) === path) return null;
+    const r = await run2(["worktree", "show", "--worktree", `path:${path2}`, "--json"], left2);
+    if (r.code === 0 && shown(r.out) === path2) return null;
     if (Date.now() + PAUSE_MS > until) return "orca_tree_unseen";
     await new Promise((resolve15) => setTimeout(resolve15, PAUSE_MS));
   }
@@ -18288,20 +18310,18 @@ async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
   const r = runs[key3];
   if (r.tree) return "tree_intent_exists";
   try {
-    source = realpathSync13.native(source);
+    source = treePath(realpathSync13.native(source));
   } catch {
     return "tree_source_unverified";
   }
-  if (process.platform === "win32" || !directory2(source)) return "tree_source_unverified";
+  if (!directory2(source)) return "tree_source_unverified";
   let commonDir, baseOID;
   try {
-    if (await gitText(source, ["rev-parse", "--show-toplevel"], execute2) !== source)
+    if (!sameTreePath(await gitText(source, ["rev-parse", "--show-toplevel"], execute2), source))
       return "tree_source_unverified";
     if (!await filesRefs(source, execute2)) return "tree_ref_storage_unverified";
-    commonDir = await gitText(
-      source,
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      execute2
+    commonDir = treePath(
+      await gitText(source, ["rev-parse", "--path-format=absolute", "--git-common-dir"], execute2)
     );
     baseOID = await gitText(
       source,
@@ -18316,12 +18336,12 @@ async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
   if (!existsSync17(parent)) mkdirSync24(parent, { mode: 448 });
   if (!directory2(parent)) return "tree_parent_unverified";
   const operation = randomUUID6();
-  const path = join38(parent, `orchestra-${operation}`);
-  if (existsSync17(path)) return "tree_path_exists";
+  const path2 = join38(parent, `orchestra-${operation}`);
+  if (existsSync17(path2)) return "tree_path_exists";
   r.tree = {
     operation,
     source,
-    path,
+    path: path2,
     commonDir,
     baseOID,
     realm: r.realm,
@@ -18329,14 +18349,14 @@ async function prepareTree(authDir, runs, key3, source, execute2 = git2) {
     invite: r.invite,
     state: "creating"
   };
-  r.worktree = path;
+  r.worktree = path2;
   r.state = "preparing";
   writeRuns(authDir, runs);
   const current2 = () => readRuns(authDir)[key3]?.tree?.operation === operation;
   if (!current2()) return "tree_intent_superseded";
   const added = await execute2(
     source,
-    ["worktree", "add", "--lock", "--reason", LOCK_REASON, "--detach", path, baseOID],
+    ["worktree", "add", "--lock", "--reason", LOCK_REASON, "--detach", path2, baseOID],
     3e4
   );
   try {
@@ -18569,8 +18589,8 @@ function readTactState(authDir) {
 function tactStateOf(authDir) {
   return readTactState(authDir);
 }
-async function getJson(base, token, path, redirect) {
-  const res = await namedFetch(`${base}${path}`, {
+async function getJson(base, token, path2, redirect) {
+  const res = await namedFetch(`${base}${path2}`, {
     headers: {
       authorization: `Bearer ${token}`,
       [ORCHESTRA_SESSION_HEADER]: ORCHESTRA_SESSION_ID
@@ -18846,7 +18866,13 @@ function planLine(w14, own, harness, worktree, model) {
   if (offer.dsh)
     return [
       offer.dsh.bin ?? "dsh",
-      ...dshArgv(offer.dsh.patch ?? "<dsh-profile.yml>", `<patch: model ${model}>`, w14.planBrief()),
+      ...dshArgv(
+        offer.dsh.patch ?? "<dsh-profile.yml>",
+        `<patch: model ${model}>`,
+        w14.planBrief(),
+        void 0,
+        "<shared git-dir of the tree>"
+      ),
       `(cwd ${worktree}, env spawned_for)`
     ].join(" ");
   if (offer.exec)
@@ -21201,9 +21227,9 @@ var SELF = (() => {
     return process.argv[1] ?? "";
   }
 })();
-var versionOfFile = (path) => {
+var versionOfFile = (path2) => {
   try {
-    return versionIn(readFileSync39(path, "utf8"));
+    return versionIn(readFileSync39(path2, "utf8"));
   } catch {
     return null;
   }
@@ -22109,7 +22135,7 @@ function heldText(groups, marks, shown2 = [], apart = []) {
   const counted = groups.flatMap((g) => g.filter((f) => carriers.includes(f) || !eventIn(f, has)));
   return countsWithShown(counted, shown2);
 }
-function attach(path, o) {
+function attach(path2, o) {
   let startedAt = Date.now();
   let attached = false;
   let handover = false;
@@ -22122,7 +22148,7 @@ function attach(path, o) {
   let live2 = null;
   function tryOnce() {
     if (dead) return;
-    const sock = connect5(path);
+    const sock = connect5(path2);
     live2 = sock;
     let buf = "";
     sock.setEncoding("utf8");
@@ -22177,7 +22203,7 @@ function attach(path, o) {
       if (attached) return o.onGone(wd().bridgeLetGo());
       if (Date.now() - startedAt > ATTACH_WINDOW_MS) {
         const s2 = ATTACH_WINDOW_MS / 1e3;
-        return o.onGone(waitingBack ? wd().seatNotBack(s2, path) : wd().noSocket(path, s2));
+        return o.onGone(waitingBack ? wd().seatNotBack(s2, path2) : wd().noSocket(path2, s2));
       }
       retry2 = setTimeout(tryOnce, RETRY_MS3);
     });
@@ -22900,9 +22926,9 @@ import { join as join45 } from "node:path";
 // js/shared/reposigns.ts
 import { readFileSync as readFileSync42, statSync as statSync12 } from "node:fs";
 import { dirname as dirname15, join as join44, resolve as resolve11 } from "node:path";
-var exists = (path) => {
+var exists = (path2) => {
   try {
-    statSync12(path);
+    statSync12(path2);
     return true;
   } catch {
     return false;
@@ -23360,14 +23386,14 @@ function agentFiles(dir2, scope) {
     return [];
   }
   return names2.sort().map((f) => {
-    const path = join47(dir2, f);
+    const path2 = join47(dir2, f);
     let fm = {};
     try {
-      const text9 = frontmatterText(readFileSync44(path, "utf8"));
+      const text9 = frontmatterText(readFileSync44(path2, "utf8"));
       if (text9 !== null) fm = parseFrontmatter(text9);
     } catch {
     }
-    return { path, agent: str6(fm.name) || basename7(f, ".md"), scope, fm };
+    return { path: path2, agent: str6(fm.name) || basename7(f, ".md"), scope, fm };
   });
 }
 function projectRoot() {
@@ -23981,13 +24007,13 @@ async function patReport() {
   if (res.status === 401) out3(dw().patRejected());
   else if (res.ok) out3(dw().patAccepted(res.status));
   else out3(dw().patOther(res.status));
-  const path = storePath();
-  if (existsSync25(path)) out3(dw().patStore(path));
+  const path2 = storePath();
+  if (existsSync25(path2)) out3(dw().patStore(path2));
 }
 function grantReport() {
-  const path = storePath();
-  out3(dw().grant(path));
-  if (!existsSync25(path)) {
+  const path2 = storePath();
+  out3(dw().grant(path2));
+  if (!existsSync25(path2)) {
     out3(dw().noStore());
     return;
   }
@@ -24019,7 +24045,7 @@ function grantReport() {
   if (st.refused_since)
     out3(dw().refusedSince(new Date(st.refused_since).toISOString(), st.reason ?? ""));
   for (const suffix of [".auth-pending", ".refreshing"]) {
-    if (existsSync25(path + suffix)) out3(dw().lock(path + suffix));
+    if (existsSync25(path2 + suffix)) out3(dw().lock(path2 + suffix));
   }
   const logPath = grantLogPath();
   if (existsSync25(logPath)) {
@@ -24425,16 +24451,16 @@ function scriptsOf(root, command) {
     (t, i) => SCRIPT.test(t) || t.includes("CLAUDE_PROJECT_DIR") || i > 0 && INTERPRETER.test(words2[i - 1] ?? "") && /^[\w.~]/.test(t) || t.includes("/") && isFile(at3(t))
   ).map(at3);
 }
-function isFile(path) {
+function isFile(path2) {
   try {
-    return statSync14(path).isFile();
+    return statSync14(path2).isFile();
   } catch {
     return false;
   }
 }
-function text8(path) {
+function text8(path2) {
   try {
-    return isFile(path) ? readFileSync50(path, "utf8") : "";
+    return isFile(path2) ? readFileSync50(path2, "utf8") : "";
   } catch {
     return "";
   }
@@ -24508,16 +24534,16 @@ function hasQuestionDeny(policies) {
   );
 }
 function questionConfig(root) {
-  const path = join54(root, ".opencode", "opencode.json");
-  const jsoncPath = `${path}c`;
+  const path2 = join54(root, ".opencode", "opencode.json");
+  const jsoncPath = `${path2}c`;
   const jsonc = existsSync26(jsoncPath);
-  const file2 = jsonc ? jsoncPath : path;
+  const file2 = jsonc ? jsoncPath : path2;
   const fail2 = (reason) => ({
     path: file2,
     jsonc,
     error: words(QUESTIONS).manual(file2, reason)
   });
-  if (jsonc && existsSync26(path)) return fail2("both");
+  if (jsonc && existsSync26(path2)) return fail2("both");
   try {
     const cfg = existsSync26(file2) ? parseJsonc(readFileSync51(file2, "utf8")) : {};
     if (!object3(cfg) || cfg.policies !== void 0 && !Array.isArray(cfg.policies))
@@ -24529,7 +24555,7 @@ function questionConfig(root) {
   }
 }
 function prepareQuestionPolicy(root, write = true) {
-  const { path, cfg, error, jsonc } = questionConfig(root);
+  const { path: path2, cfg, error, jsonc } = questionConfig(root);
   if (error) return error;
   if (!cfg || jsonc || hasQuestionDeny(cfg.policies)) return null;
   try {
@@ -24537,12 +24563,12 @@ function prepareQuestionPolicy(root, write = true) {
     cfg.policies = [...policies, QUESTION_POLICY];
     cfg.$schema ??= "https://opencode.ai/config.json";
     if (!write) return null;
-    mkdirSync28(dirname20(path), { recursive: true });
-    writeFileSync24(path, `${JSON.stringify(cfg, null, 2)}
+    mkdirSync28(dirname20(path2), { recursive: true });
+    writeFileSync24(path2, `${JSON.stringify(cfg, null, 2)}
 `);
     return null;
   } catch {
-    return words(QUESTIONS).manual(path, "parse");
+    return words(QUESTIONS).manual(path2, "parse");
   }
 }
 
@@ -24560,10 +24586,10 @@ var written = (c) => {
   return /^(?:[^']|'\\'')*$/.test(c.slice(head.length, c.length - tail2.length));
 };
 var CARRIED = ["hook.start", "hook.push", "hook.merge"];
-function load2(path) {
-  if (!existsSync27(path)) return {};
+function load2(path2) {
+  if (!existsSync27(path2)) return {};
   try {
-    const s2 = JSON.parse(readFileSync52(path, "utf8"));
+    const s2 = JSON.parse(readFileSync52(path2, "utf8"));
     return s2 && typeof s2 === "object" && !Array.isArray(s2) ? s2 : null;
   } catch {
     return null;
@@ -24594,14 +24620,14 @@ function guard(root, s2, addr, out7, preserve) {
 }
 function prepareHooks(root, addr, out7, on, preserve = false) {
   const dir2 = join55(root, ".claude");
-  const path = join55(dir2, "settings.json");
-  const s2 = load2(path);
-  if (!s2) return path;
+  const path2 = join55(dir2, "settings.json");
+  const s2 = load2(path2);
+  if (!s2) return path2;
   let questionChanged;
   try {
     questionChanged = denyClaudeQuestion(s2);
   } catch {
-    return path;
+    return path2;
   }
   const changed = on.has("guard") && guard(root, s2, addr, out7, preserve) || questionChanged;
   const carried = CARRIED.filter((kind2) => on.has(kind2.slice("hook.".length)));
@@ -24614,7 +24640,7 @@ function prepareHooks(root, addr, out7, on, preserve = false) {
   }
   if (changed) {
     mkdirSync29(dir2, { recursive: true });
-    writeFileSync25(path, `${JSON.stringify(s2, null, 2)}
+    writeFileSync25(path2, `${JSON.stringify(s2, null, 2)}
 `);
   }
   return null;
@@ -24630,8 +24656,8 @@ function repositoryOf(root) {
   const url = git3(root, "remote", "get-url", "origin");
   if (!url) return null;
   const scp = /^[^/:]+@([^/:]+):(.+)$/.exec(url);
-  const path = scp ? `${scp[1]}/${scp[2]}` : url.replace(/^[a-z][\w+.-]*:\/\//i, "").replace(/^[^/@]+@/, "").replace(/:\d+\//, "/");
-  return path.replace(/\.git$/, "").replace(/\/+$/, "") || null;
+  const path2 = scp ? `${scp[1]}/${scp[2]}` : url.replace(/^[a-z][\w+.-]*:\/\//i, "").replace(/^[^/@]+@/, "").replace(/:\d+\//, "/");
+  return path2.replace(/\.git$/, "").replace(/\/+$/, "") || null;
 }
 function coverText(root, given) {
   const W4 = words(PREPARE);
@@ -25169,9 +25195,9 @@ async function probeWith(file2, own, alias, foreign) {
 }
 
 // js/cli/questionaudit.ts
-function json2(path) {
+function json2(path2) {
   try {
-    const v = JSON.parse(readFileSync54(path, "utf8"));
+    const v = JSON.parse(readFileSync54(path2, "utf8"));
     return object3(v) ? v : null;
   } catch {
     return null;
@@ -25194,8 +25220,8 @@ function manifest() {
   const reg = installed();
   if (reg) return reg;
   for (let dir2 = dirname21(SELF2); ; ) {
-    const path = join59(dir2, "hooks/hooks.json");
-    if (existsSync29(path)) return path;
+    const path2 = join59(dir2, "hooks/hooks.json");
+    if (existsSync29(path2)) return path2;
     const up = dirname21(dir2);
     if (up === dir2) return null;
     dir2 = up;
@@ -25223,15 +25249,15 @@ async function auditQuestions(root) {
   const blocked = !oc.error && hasQuestionDeny(oc.cfg?.policies);
   row("question.project", cc, !!denied, W4.claudeProject());
   row("question.project", oc.path, blocked, oc.error ?? W4.manual(oc.path, "missing"));
-  const path = manifest();
-  const hooks = path ? json2(path)?.hooks : null;
+  const path2 = manifest();
+  const hooks = path2 ? json2(path2)?.hooks : null;
   const entries2 = object3(hooks) ? hooks.PreToolUse : null;
   const hook = Array.isArray(entries2) && entries2.some(
     (e) => object3(e) && e.matcher === "AskUserQuestion" && Array.isArray(e.hooks) && e.hooks.some(
       (h) => object3(h) && typeof h.command === "string" && /permissionDecision:'deny'/.test(h.command)
     )
   );
-  row("question.plugin", path ?? W4.claudeFile(), hook, W4.claudePlugin());
+  row("question.plugin", path2 ?? W4.claudeFile(), hook, W4.claudePlugin());
   const file2 = [
     process.env.OPENCODE_CONFIG_DIR && join59(process.env.OPENCODE_CONFIG_DIR, "plugins", PLUGIN_COPY_FILE),
     join59(dirname21(SELF2), PLUGIN_FILE),
@@ -25624,9 +25650,9 @@ function runUse(argv2) {
     process.exitCode = 2;
     return;
   }
-  const path = writeServerChoice(CFG.authDir, url);
+  const path2 = writeServerChoice(CFG.authDir, url);
   setServerLang(url);
-  out6(cw2().useWritten(url, path, freshnessWord(url)));
+  out6(cw2().useWritten(url, path2, freshnessWord(url)));
   out6(cw2().useEffect());
 }
 
