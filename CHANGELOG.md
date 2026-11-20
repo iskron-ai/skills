@@ -1,5 +1,14 @@
 # Changelog
 
+## [8.15.2](https://github.com/iskron-ai/skills/compare/v8.15.1...v8.15.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **bridge:** the dsh dry-run plan names the run's --add-dir ([#881](https://github.com/iskron-ai/skills/issues/881)) ([d574dcc](https://github.com/iskron-ai/skills/commit/d574dcc131a0f1696392a5c9a9bdb21048cff8ac))
+* **bridge:** the orchestrator prepares its launch tree on Windows; cleanup there refuses aloud until a live check ([#878](https://github.com/iskron-ai/skills/issues/878)) ([4599caa](https://github.com/iskron-ai/skills/commit/4599caa83b15e9c8d7abcaa87b03fa1c3b45447d))
+* **onboarding:** the readiness speech samples carry no gender — «Вы записаны как …» ([#880](https://github.com/iskron-ai/skills/issues/880)) ([6eb1133](https://github.com/iskron-ai/skills/commit/6eb1133253317967e6f7c3457ccb5c851701a2eb))
+
 ## [8.15.1](https://github.com/iskron-ai/skills/compare/v8.15.0...v8.15.1) (2026-11-19)
 
 
