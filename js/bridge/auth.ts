@@ -4,8 +4,9 @@ import { CFG } from "./config.ts";
 import { DeadGrantError, errorMessage, HoldOffError, TokenRefused } from "./errors.ts";
 import { discover, resourceOf } from "./oauth/discovery.ts";
 import { interactiveFlow, loginPublished } from "./oauth/flow.ts";
-import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
-import { judgedDead, refreshShared, refusalStands } from "./oauth/refresh.ts";
+import { judgedDead, lostRotation } from "./oauth/grantmarks.ts";
+import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS, LOST_RETRY_MS } from "./oauth/pacing.ts";
+import { refreshShared, refusalStands } from "./oauth/refresh.ts";
 import { loadStore, sleep, storePath } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "./tokens.ts";
@@ -201,10 +202,23 @@ export function startTokenKeepalive(): void {
       debug("the grant stands refused — the machine's control knock is not due yet");
       return;
     }
+    if (lostRotation(t)) return; // the quick knock below owns it
     ensureAuth(null, { force: true, interactive: false, proactive: true, publish: true })
       .then(() => debug("background token refresh ok"))
       .catch((e) => log(`background token refresh: ${errorMessage(e)}`));
   };
+  // A rotation whose answer was lost is presented again as soon as the token
+  // endpoint answers, not a minute on: the server's grace for the old refresh
+  // token is narrow and unknown here (graph @nks/nks-dev, node #11292).
+  const again = () => {
+    const t = loadStore().tokens;
+    if (!lostRotation(t) || judgedDead(t)) return;
+    ensureAuth(null, { force: true, interactive: false, publish: true })
+      .then(() => log("a refresh whose answer was lost is settled"))
+      .catch((e) => debug(`a lost refresh answer, presented again: ${errorMessage(e)}`));
+  };
   tick(); // an already-expired store refreshes on startup, before the first call
   setInterval(tick, 60_000).unref();
+  again(); // a lost answer outlives the process that lost it
+  setInterval(again, LOST_RETRY_MS).unref();
 }

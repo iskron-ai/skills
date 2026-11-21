@@ -8,20 +8,12 @@ import {
   HoldOffError,
   TokenError,
 } from "../errors.ts";
-import {
-  b64url,
-  grantLog,
-  loadGrantState,
-  loadStore,
-  saveGrantState,
-  saveStore,
-  sha256,
-  sleep,
-} from "../store.ts";
+import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep } from "../store.ts";
 import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import { discoverMeta, resourceOf } from "./discovery.ts";
+import { answerLost, forgetLost, judgedDead, noteDead, noteLost } from "./grantmarks.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
@@ -107,7 +99,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
       dropRegistration(clientId);
       // The verdict is the machine's from here on: no path knocks this grant
       // again, and none reads the same 404 as a move (graph @nks/nks-dev, node #11291).
-      saveGrantState({ dead_refresh: printOf(cur) });
+      noteDead(cur);
       throw new DeadGrantError(message, true);
     }
     if (gone) {
@@ -132,6 +124,14 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
         DEFINITIVE_OAUTH_ERRORS.has(e.oauthError ?? "") ||
         e.status === 400 ||
         e.status === 401);
+    if (!(e instanceof TokenError) && answerLost(e)) {
+      // Rotated or not, nobody knows: the same refresh goes out again the moment
+      // the endpoint answers, inside the server's grace for it (graph @nks/nks-dev, node #11292).
+      noteLost(cur, message);
+      throw new Error(`token refresh answer lost (${message}) — presenting it again at once`, {
+        cause: e,
+      });
+    }
     if (!definitive) {
       throw new Error(`token refresh failed transiently (${message}) — grant kept, will retry`, {
         cause: e,
@@ -286,6 +286,7 @@ export async function refreshShared(
           // Record the verdict under the lock: a sibling waiting on that lock
           // reads the refusal rather than emptiness and does not knock next.
           if (e instanceof DeadGrantError) noteRefusal(e.message);
+          if (e instanceof DeadGrantError || e instanceof HoldOffError) forgetLost();
           throw e;
         }
       } finally {
@@ -312,15 +313,6 @@ function noteRefusal(reason: string): void {
   const first = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...(first ? { refused_since: local, reason } : {}) });
   if (first) grantLog(`grant refused: ${reason}`);
-}
-
-const printOf = (t: Tokens): string => b64url(sha256(t.refresh_token ?? "")).slice(0, 16);
-
-// The grant on disk is the one the server judged dead where nothing moved (#11291).
-// A grant that lands clears the record; the print keeps any other grant clear of it.
-export function judgedDead(t: Tokens | null | undefined): boolean {
-  const dead = loadGrantState().dead_refresh;
-  return !!dead && !!t?.refresh_token && printOf(t) === dead;
 }
 
 // The machine already holds a verdict on this grant, recorded moments ago by
