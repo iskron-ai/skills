@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.15.3";
+var VERSION = "8.16.0";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -339,6 +339,22 @@ var COMPACTION = {
     bare: () => `Iskron: the context was compacted. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
     restand: (karta, name, realm) => ` As the first move call iskron_stand(realm="${realm}", karta="${role(karta, "<role>")}", name="${name}") without take: the seat stays, and its answer carries the human's rules.`,
     returned: (sessionID) => `Iskron: the role word after the compaction was inserted into the current request's system for session ${sessionID}`
+  }
+};
+
+// js/delivery/words/diskfloor.ts
+var DISK_FLOOR = {
+  ru: {
+    refused: (path, free, total, pct, floor, move) => `на томе ${path} свободно ${free} ГБ из ${total} (${pct}%) — ниже пола ${floor}%: ${move}. Сначала убери своё: target/ и node_modules своих слитых деревьев, git worktree remove слитых; чужое не трогай. Затем повтори.`,
+    moveRaise: () => "подъём агента не запущен",
+    moveSubagent: () => "субагент не запущен",
+    moveBuild: (command) => `сборка «${command}» не запущена`
+  },
+  en: {
+    refused: (path, free, total, pct, floor, move) => `the volume of ${path} has ${free} GB free of ${total} (${pct}%) — below the ${floor}% floor: ${move}. First clear your own: target/ and node_modules of your merged trees, git worktree remove the merged ones; leave others' alone. Then retry.`,
+    moveRaise: () => "the agent was not raised",
+    moveSubagent: () => "the subagent was not started",
+    moveBuild: (command) => `the build «${command}» was not started`
   }
 };
 
@@ -526,6 +542,7 @@ var OPENCODE = {
     commandsDown: (message) => `Искрон: команды скиллов не встали — ${message}`,
     noPermissionHooks: () => "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
     skillReadsDown: (message) => `Искрон: чтение файлов скиллов поставки не открылось — ${message}`,
+    diskFloorDown: (message) => `Искрон: пол диска не встал — субагенты и сборки на почти полном томе не отказываются — ${message}`,
     hearingLost: (hhmm, message) => `Искрон: слух потерян в ${hhmm} — мост стояния вышел (${message}). Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.`,
     fromCache: () => "из прошлого списка",
     fromServer: () => "с сервера",
@@ -588,6 +605,7 @@ var OPENCODE = {
     commandsDown: (message) => `Iskron: the skill commands did not come up — ${message}`,
     noPermissionHooks: () => "Iskron: this OpenCode has no permission hooks — files of the delivery's skills outside the working copy are read with an ask.",
     skillReadsDown: (message) => `Iskron: reading the delivery's skill files did not open — ${message}`,
+    diskFloorDown: (message) => `Iskron: the disk floor did not come up — subagents and builds on a nearly full volume are not refused — ${message}`,
     hearingLost: (hhmm, message) => `Iskron: hearing lost at ${hhmm} — the standing's bridge exited (${message}). The hearing watchdog raises the bridge and returns the seat from disk; if you will not wait — iskron_stand.`,
     fromCache: () => "from the previous list",
     fromServer: () => "from the server",
@@ -2765,6 +2783,8 @@ var REGISTRATION_REUSE_MS = 45 * 6e4;
 // js/bridge/oauth/pacing.ts
 var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n2) => Number.isFinite(n2) && n2 >= 0);
 var DEAD_RECHECK_MS = pauses(process.env[envName("BRIDGE_DEAD_RECHECK_MS")], "1000,2000");
+var LOST_RETRY_MS = Number(process.env[envName("BRIDGE_LOST_RETRY_MS")]) || 1e3;
+var KEEPALIVE_MS = Number(process.env[envName("BRIDGE_KEEPALIVE_MS")]) || 6e4;
 var IN_CALL_WAIT_MS = Number(process.env[envName("BRIDGE_IN_CALL_WAIT_MS")]) || 1e4;
 var ORPHAN_FLOW_MS = Number(process.env[envName("BRIDGE_ORPHAN_FLOW_MS")]) || 5 * 6e4;
 
@@ -3275,9 +3295,9 @@ var waiters = () => globalThis[`${GLOBAL_PREFIX}CutWaiters`] ??= /* @__PURE__ */
 var executors = () => globalThis[`${GLOBAL_PREFIX}CutExecutors`] ??= /* @__PURE__ */ new Map();
 var lineages = () => globalThis[`${GLOBAL_PREFIX}Lineages`] ??= /* @__PURE__ */ new Set();
 function wake(id) {
-  const set = waiters().get(id);
+  const set2 = waiters().get(id);
   waiters().delete(id);
-  for (const w of set ?? []) w();
+  for (const w of set2 ?? []) w();
 }
 function claim(id) {
   const token = /* @__PURE__ */ Symbol();
@@ -3301,7 +3321,7 @@ function outcomeOf(id, stopOf, signal2) {
   if (o?.[0] === gen) return Promise.resolve(o[1]);
   return new Promise((done) => {
     if (signal2?.aborted) return;
-    const set = waiters().get(id) ?? /* @__PURE__ */ new Set();
+    const set2 = waiters().get(id) ?? /* @__PURE__ */ new Set();
     const off = () => {
       const now2 = waiters().get(id);
       now2?.delete(w);
@@ -3312,8 +3332,8 @@ function outcomeOf(id, stopOf, signal2) {
       void outcomeOf(id, stopOf, signal2).then(done);
     };
     signal2?.addEventListener("abort", off, { once: true });
-    set.add(w);
-    waiters().set(id, set);
+    set2.add(w);
+    waiters().set(id, set2);
   });
 }
 function shareLineage(parents) {
@@ -6933,6 +6953,271 @@ var standDirect = (ctx) => ctx.tool.transform((editor) => {
   for (const id of DIRECT) editor.update(id, (t) => void (t.options = { codemode: false }));
 });
 
+// js/shared/shellwords.ts
+var BLANK = /* @__PURE__ */ new Set([" ", "	"]);
+var ENDS = /* @__PURE__ */ new Set([";", "(", ")"]);
+var IN_DOUBLE = /* @__PURE__ */ new Set(['"', "\\", "$", "`", "\n"]);
+var REDIRECT = /^(?:&>>?|>>|>&|>\||>|<<<|<<-|<<|<&|<>|<)/;
+function skipHeredocs(line, i, docs) {
+  for (let d = docs.shift(); d; d = docs.shift()) {
+    while (i < line.length) {
+      const end = line.indexOf("\n", i + 1);
+      const body = line.slice(i + 1, end < 0 ? line.length : end);
+      i = end < 0 ? line.length : end;
+      if ((d.tabs ? body.replace(/^\t+/, "") : body) === d.delim) break;
+    }
+  }
+  return i;
+}
+function shellCommands(line) {
+  const out2 = [];
+  const docs = [];
+  let words4 = [];
+  let word2 = "";
+  let open = false;
+  let quoted = false;
+  let quote2 = "";
+  let target = "";
+  const endWord2 = () => {
+    if (open && target) {
+      if (target !== "word") docs.push({ delim: word2, tabs: target === "<<-" });
+      target = "";
+    } else if (open) words4.push(word2);
+    word2 = "";
+    open = quoted = false;
+  };
+  const endCommand = () => {
+    endWord2();
+    target = "";
+    if (words4.length) out2.push(words4);
+    words4 = [];
+  };
+  for (let i = 0; i < line.length; i++) {
+    const c = line.charAt(i);
+    const next = line.charAt(i + 1);
+    if (quote2 === "'") {
+      if (c === "'") quote2 = "";
+      else word2 += c;
+    } else if (quote2 === '"') {
+      if (c === '"') quote2 = "";
+      else if (c === "\\" && next === "\n") i++;
+      else if (c === "\\" && IN_DOUBLE.has(next)) word2 += line.charAt(++i);
+      else word2 += c;
+    } else if (c === "'" || c === '"') {
+      quote2 = c;
+      open = quoted = true;
+    } else if (c === "\\" && next === "\n") i++;
+    else if (c === "\\") {
+      if (i + 1 < line.length) word2 += line.charAt(++i);
+      open = quoted = true;
+    } else if (c === "#" && !open) {
+      while (i + 1 < line.length && line.charAt(i + 1) !== "\n") i++;
+    } else if (c === ">" || c === "<" || c === "&" && next === ">") {
+      if (open && !quoted && /^\d+$/.test(word2) && !target) word2 = "";
+      else endWord2();
+      open = false;
+      const op = REDIRECT.exec(line.slice(i))?.[0] ?? c;
+      i += op.length - 1;
+      target = op === "<<" || op === "<<-" ? op : "word";
+    } else if (c === "\n") {
+      endCommand();
+      i = skipHeredocs(line, i, docs);
+    } else if (BLANK.has(c)) endWord2();
+    else if (ENDS.has(c) && !(c === "(" && open)) endCommand();
+    else if (c === "|") {
+      if (next === "|") i++;
+      endCommand();
+    } else if (c === "&") {
+      if (next === "&") i++;
+      endCommand();
+    } else {
+      word2 += c;
+      open = true;
+    }
+  }
+  endCommand();
+  return out2;
+}
+
+// js/shared/buildcmd.ts
+var set = (...s) => new Set(s);
+var PREFIXES = {
+  env: { valued: set("-u", "--unset", "-C", "--chdir"), split: set("-S", "--split-string") },
+  nice: { valued: set("-n", "--adjustment") },
+  time: { valued: set("-o", "--output", "-f", "--format") },
+  command: { valued: set(), names: set("-v", "-V") },
+  exec: { valued: set("-a") },
+  nohup: { valued: set() }
+};
+var RESERVED = set("!", "{", "}", "if", "then", "else", "elif", "do", "while", "until");
+var ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+function split(o, takes) {
+  const eq = o.indexOf("=");
+  if (o.startsWith("--") && eq > 0) return [o.slice(0, eq), o.slice(eq + 1)];
+  if (!o.startsWith("--") && o.length > 2 && takes(o.slice(0, 2)))
+    return [o.slice(0, 2), o.slice(2)];
+  return [o, void 0];
+}
+function unwrap(words4) {
+  let w = words4;
+  for (; ; ) {
+    const head2 = w[0] ?? "";
+    if (ASSIGN.test(head2) || RESERVED.has(head2)) {
+      w = w.slice(1);
+      continue;
+    }
+    const p = PREFIXES[head2.split("/").pop() ?? ""];
+    if (!p) return w;
+    w = w.slice(1);
+    while ((w[0] ?? "").startsWith("-") && w[0] !== "-") {
+      const o = w[0] ?? "";
+      if (o === "--") {
+        w = w.slice(1);
+        break;
+      }
+      const [name, value] = split(o, (n2) => p.valued.has(n2) || !!p.split?.has(n2));
+      if (p.names?.has(name)) return [];
+      if (p.split?.has(name)) {
+        const command = value ?? w[1] ?? "";
+        w = [...command.split(/\s+/).filter(Boolean), ...w.slice(value === void 0 ? 2 : 1)];
+        break;
+      }
+      w = w.slice(value === void 0 && p.valued.has(name) ? 2 : 1);
+    }
+    if (w[0] === "-") w = w.slice(1);
+  }
+}
+function positionals(words4, valued) {
+  const out2 = [];
+  for (let i = 0; i < words4.length; i++) {
+    const w = words4[i] ?? "";
+    if (!w.startsWith("-") || w === "-") out2.push(w);
+    else if (split(w, (n2) => valued.has(n2))[1] === void 0 && valued.has(w)) i++;
+  }
+  return out2;
+}
+var CARGO = set("build", "test", "check", "clippy", "run", "bench");
+var NODE_PM = set("ci", "install", "i", "test", "build");
+var CLEAN = set("clean", "distclean", "mostlyclean");
+var PM_VALUED = {
+  npm: set("--prefix", "-C", "-w", "--workspace"),
+  pnpm: set("-C", "--dir", "--filter", "-F"),
+  yarn: set("--cwd")
+};
+var MAKE_VALUED = set(
+  ...["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir"],
+  ...["-o", "--old-file", "--assume-old", "-W", "--what-if", "--new-file", "--assume-new"],
+  ...["-E", "--eval"]
+);
+var MAKE_NUMERIC = set("-j", "-l");
+var NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
+function getopt(words4) {
+  return words4.flatMap((w) => {
+    if (!/^-[^-]./.test(w)) return [w];
+    const out2 = [];
+    for (let k = 1; k < w.length; k++) {
+      const f = `-${w.charAt(k)}`;
+      if (MAKE_VALUED.has(f) || MAKE_NUMERIC.has(f)) return [...out2, f + w.slice(k + 1)];
+      out2.push(f);
+    }
+    return out2;
+  });
+}
+var CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
+var DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
+function heavy(words4) {
+  const program = (words4[0] ?? "").split("/").pop() ?? "";
+  const args = words4.slice(1);
+  switch (program) {
+    case "cargo":
+      return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
+    case "make":
+    case "gmake": {
+      const targets2 = positionals(getopt(args), MAKE_VALUED).filter(
+        (t) => !ASSIGN.test(t) && !NUMBER.test(t)
+      );
+      return !targets2.every((t) => CLEAN.has(t)) || !targets2.length;
+    }
+    case "npm":
+    case "pnpm":
+    case "yarn": {
+      const [sub = "", script = ""] = positionals(args, PM_VALUED[program] ?? set());
+      return NODE_PM.has(sub) || (sub === "run" || sub === "run-script") && NODE_PM.has(script);
+    }
+    case "go":
+      return set("build", "test").has(positionals(args, set("-C"))[0] ?? "");
+    case "docker": {
+      const [sub = "", then = ""] = positionals(args, DOCKER_VALUED);
+      return sub === "build" || set("buildx", "image", "builder").has(sub) && then === "build";
+    }
+    default:
+      return false;
+  }
+}
+function buildCommand(line) {
+  for (const words4 of shellCommands(line)) if (heavy(unwrap(words4))) return words4.join(" ");
+  return null;
+}
+
+// js/shared/diskfloor.ts
+import { statfsSync } from "node:fs";
+var DISK_FLOOR_PCT = 10;
+var GB = 1024 ** 3;
+function floorPct() {
+  const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
+  const n2 = raw ? Number(raw) : NaN;
+  return Number.isFinite(n2) ? n2 : DISK_FLOOR_PCT;
+}
+function belowFloor(path) {
+  const floor = floorPct();
+  try {
+    const s = statfsSync(path);
+    const total = Number(s.blocks) * Number(s.bsize);
+    const free = Number(s.bavail) * Number(s.bsize);
+    if (!(total > 0) || !Number.isFinite(free)) return null;
+    const pct = free / total * 100;
+    return pct < floor ? { path, free, total, pct, floor } : null;
+  } catch {
+    return null;
+  }
+}
+var SHOWN = 80;
+var clip = (s) => s.length > SHOWN ? `${s.slice(0, SHOWN - 1)}…` : s;
+function callRefusal(dir, call, lang2) {
+  const build = "shell" in call ? buildCommand(call.shell) : null;
+  if (!dir || "shell" in call && !build) return null;
+  const short2 = belowFloor(dir);
+  if (!short2) return null;
+  return floorWord(short2, (w) => build ? w.moveBuild(clip(build)) : w.moveSubagent(), lang2?.());
+}
+function floorWord(short2, move, lang2) {
+  const w = wordsIn(DISK_FLOOR, lang2);
+  return w.refused(
+    short2.path,
+    (short2.free / GB).toFixed(1),
+    (short2.total / GB).toFixed(0),
+    short2.pct.toFixed(1),
+    String(short2.floor),
+    move(w)
+  );
+}
+
+// js/opencode/diskfloor.ts
+var SUBAGENT2 = /* @__PURE__ */ new Set(["subagent", "task"]);
+var SHELL = /* @__PURE__ */ new Set(["shell", "bash"]);
+async function setupDiskFloor(ctx) {
+  const loc = ctx.location;
+  const own = typeof loc?.directory === "string" && loc.directory ? loc.directory : null;
+  await ctx.tool.hook("execute.before", async (t) => {
+    const shell = SHELL.has(t.tool);
+    const command = String(t.input?.command ?? "");
+    if (shell ? !buildCommand(command) : !SUBAGENT2.has(t.tool)) return;
+    const dir = await sessionDirectory(ctx, String(t.sessionID)) ?? own;
+    const word2 = callRefusal(dir, shell ? { shell: command } : { subagent: true });
+    if (word2) throw new Error(word2);
+  });
+}
+
 // js/opencode/hook-context.ts
 var record = (x) => typeof x === "object" && x !== null;
 function checkpoint(m) {
@@ -7493,7 +7778,7 @@ var ACTS = /* @__PURE__ */ new Set([
   "session.step.ended",
   "session.step.failed"
 ]);
-var ENDS = /* @__PURE__ */ new Map([
+var ENDS2 = /* @__PURE__ */ new Map([
   ["session.execution.succeeded", "idle"],
   ["session.execution.failed", "failed"],
   ["session.execution.interrupted", "interrupted"]
@@ -7520,7 +7805,7 @@ function createPulseFeed(opts) {
       if (typeof session !== "string") return;
       const type = ev?.type;
       if (ACTS.has(type)) return tell(session, { act_at: at2() });
-      const end = ENDS.get(type);
+      const end = ENDS2.get(type);
       if (end) return ended2(session, end);
       switch (type) {
         case "session.execution.started":
@@ -8666,7 +8951,7 @@ function quiet2(text3) {
 }
 
 // js/opencode/turnend.ts
-var ENDS2 = /* @__PURE__ */ new Set(["session.execution.succeeded", "session.idle"]);
+var ENDS3 = /* @__PURE__ */ new Set(["session.execution.succeeded", "session.idle"]);
 var CUTS = /* @__PURE__ */ new Set(["session.execution.failed", "session.execution.interrupted"]);
 function createTurnEnds(ctx, opts) {
   const turns = /* @__PURE__ */ new Map();
@@ -8737,7 +9022,7 @@ function createTurnEnds(ctx, opts) {
         const t = turn(s);
         t.text = t.text ? `${t.text}
 ${said2}` : said2;
-      } else if (ENDS2.has(type)) void end(s);
+      } else if (ENDS3.has(type)) void end(s);
       else if (CUTS.has(type)) turns.delete(s);
     },
     forget(session) {
@@ -9184,6 +9469,7 @@ async function setup(ctx) {
   });
   flushUsage = (s) => usage.flush(s);
   await setupContextGate(ctx, { bridgeOf: (s) => half.bridgeOf(s), flush: flushUsage });
+  await setupDiskFloor(ctx).catch((e) => say(W5.diskFloorDown(e.message), "error"));
   const keepalive = createKeepAlive(ctx, {
     holders: () => half.holders(),
     owns: (s) => half.owns(s),

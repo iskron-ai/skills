@@ -1,5 +1,20 @@
 # Changelog
 
+## [8.16.0](https://github.com/iskron-ai/skills/compare/v8.15.3...v8.16.0) (2026-11-21)
+
+
+### Features
+
+* heavy work is refused on a nearly full disk, with the move named ([#886](https://github.com/iskron-ai/skills/issues/886)) ([71ec264](https://github.com/iskron-ai/skills/commit/71ec26451991b73c4c1e5254c1f1b68a9c819b8a))
+
+
+### Bug Fixes
+
+* a line continuation and make's load limit never decide what a build line is ([#889](https://github.com/iskron-ai/skills/issues/889)) ([be283ff](https://github.com/iskron-ai/skills/commit/be283fff9babe2b875dd68cb8f2b53806bc15083))
+* **bridge:** a dead grant is judged once and the login published at once; a lost rotation answer is presented again ([#884](https://github.com/iskron-ai/skills/issues/884)) ([85a451e](https://github.com/iskron-ai/skills/commit/85a451e5f01518421444ca3ecd0db384dfce4fae))
+* **bridge:** a dead grant's login is published after a restart; a cut 200 is a lost rotation answer ([#888](https://github.com/iskron-ai/skills/issues/888)) ([228bd0f](https://github.com/iskron-ai/skills/commit/228bd0fc58eb67ec7e1ff0ba8217971bd6f853d7))
+* **bridge:** a satellite name whose release went unconfirmed is not given to a new satellite until its channel term ([#885](https://github.com/iskron-ai/skills/issues/885)) ([953754d](https://github.com/iskron-ai/skills/commit/953754d703d21a72704ee002f6a9dd151a3d2ceb))
+
 ## [8.15.3](https://github.com/iskron-ai/skills/compare/v8.15.2...v8.15.3) (2026-11-20)
 
 
