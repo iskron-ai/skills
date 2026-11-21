@@ -1025,15 +1025,16 @@ function buildCommand(line) {
 }
 
 // js/shared/diskfloor.ts
-var DISK_FLOOR_PCT = 10;
 var GB = 1024 ** 3;
 function floorPct() {
   const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : DISK_FLOOR_PCT;
+  return Number.isFinite(n) ? n : null;
 }
+var floorOn = () => floorPct() !== null;
 function belowFloor(path) {
   const floor = floorPct();
+  if (floor === null) return null;
   try {
     const s = statfsSync(path);
     const total = Number(s.blocks) * Number(s.bsize);
@@ -1048,6 +1049,7 @@ function belowFloor(path) {
 var SHOWN = 80;
 var clip = (s) => s.length > SHOWN ? `${s.slice(0, SHOWN - 1)}…` : s;
 function callRefusal(dir, call, lang2) {
+  if (!floorOn()) return null;
   const build = "shell" in call ? buildCommand(call.shell) : null;
   if (!dir || "shell" in call && !build) return null;
   const short = belowFloor(dir);

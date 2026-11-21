@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.16.1";
+var VERSION = "8.16.2";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -16684,16 +16684,16 @@ var CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
 var DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
 
 // js/shared/diskfloor.ts
-var DISK_FLOOR_PCT = 10;
 var DISK_FLOOR_CODE = "disk_floor";
 var GB = 1024 ** 3;
 function floorPct() {
   const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : DISK_FLOOR_PCT;
+  return Number.isFinite(n) ? n : null;
 }
 function belowFloor(path2) {
   const floor = floorPct();
+  if (floor === null) return null;
   try {
     const s2 = statfsSync(path2);
     const total = Number(s2.blocks) * Number(s2.bsize);
