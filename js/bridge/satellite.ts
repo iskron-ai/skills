@@ -84,7 +84,10 @@ function claimName(name: string): boolean {
   const file = claimFile(name);
   let pid = 0;
   try {
-    pid = Number(readFileSync(file, "utf8").trim());
+    const contents = readFileSync(file, "utf8").trim();
+    if (contents.startsWith("until ")) {
+      if (Number(contents.slice(6)) > Date.now()) return false;
+    } else pid = Number(contents);
   } catch {
     // no claim
   }
@@ -108,9 +111,19 @@ const dropClaim = (f: string, pid: number): void => {
 };
 
 /** Drop this bridge's claims: the seat is released, the name is free for the next run. */
-export function releaseSatelliteClaims(): void {
+export function releaseSatelliteClaims(unconfirmed = false): void {
   const me = sessionPid();
-  for (const f of claims) dropClaim(f, me);
+  for (const f of claims) {
+    if (unconfirmed) {
+      try {
+        if (Number(readFileSync(f, "utf8").trim()) === me)
+          writeFileSync(f, `until ${Date.now() + SATELLITE_TTL_S * 1000}\n`, { mode: 0o600 });
+      } catch (e) {
+        log(`satellite claim not retained: ${(e as Error).message}`);
+      }
+    }
+    dropClaim(f, me);
+  }
   claims.clear();
 }
 
