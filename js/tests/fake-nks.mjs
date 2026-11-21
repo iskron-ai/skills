@@ -858,6 +858,7 @@ export async function startFakeNks(opts = {}) {
         "refreshGraceMs", // окно, в котором прежний refresh после ротации предъявляется снова (Rauthy REFRESH_TOKEN_GRACE_TIME)
         "refreshDropNext", // столько ближайших refresh: ротация сделана, соединение рвётся до ответа
         "tokenDownMs", // после такого разрыва token endpoint столько мс рвёт каждый запрос (связь ушла)
+        "refreshCutNext", // столько ближайших refresh: ротация сделана, 200 с заголовками ушёл, тело оборвано
         "mcpStatus",
         "mcpHangMs",
         "deleteStatus",
@@ -1105,6 +1106,26 @@ export async function startFakeNks(opts = {}) {
           st.refresh = mintRefresh(st);
           st.tokenDownUntil = Date.now() + (st.tokenDownMs || 0);
           return req.socket.destroy(); // ротация сделана, ответ потерян
+        }
+        if (st.refreshCutNext > 0 && f.get("refresh_token") === st.refresh) {
+          st.refreshCutNext--;
+          st.counts.refresh_cut = (st.counts.refresh_cut ?? 0) + 1;
+          st.prevRefresh = st.refresh;
+          st.rotatedAt = Date.now();
+          st.access = mintAccess(st);
+          st.refresh = mintRefresh(st);
+          const whole = JSON.stringify({
+            access_token: st.access,
+            refresh_token: st.refresh,
+            expires_in: st.accessTtl,
+            token_type: "Bearer",
+          });
+          res.writeHead(200, {
+            "content-type": "application/json",
+            "content-length": Buffer.byteLength(whole),
+          });
+          res.write(whole.slice(0, 24)); // заголовки и начало тела ушли
+          return setTimeout(() => req.socket.destroy(), 50); // остальное тело — нет
         }
         if (f.get("refresh_token") !== st.refresh) {
           st.counts.stale_refresh++;
