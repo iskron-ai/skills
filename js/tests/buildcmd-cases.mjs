@@ -49,6 +49,10 @@ export const REFUSED = [
   ["make 1>&2 check", "make check"],
   ["npm ci </dev/null", "npm ci"],
   ["make>log", "make"],
+  // a backslash before a newline continues the line: the words join across it
+  ["cargo \\\nbuild --release", "cargo build --release"],
+  ["make \\\n-j4", "make -j4"],
+  ['make "\\\ntest"', "make test"],
 ];
 
 export const PASSED = [
@@ -88,4 +92,13 @@ export const PASSED = [
   "cat <<< 'make test'",
   "cat <<EOF\nmake test\ncargo build\nEOF",
   "cat <<-'END'\n\tmake test\n\tEND",
+  // make's flag values — a load limit, a file, an expression — are never targets
+  "make -l 0.5 clean",
+  "make -l0.5 clean",
+  "make --load-average=2.5 clean",
+  "make -o foo clean",
+  "make -sC js clean",
+  "make --eval 'X := 1' clean",
+  // in single quotes a backslash and newline stay as written: one word for echo
+  "echo 'a \\\nmake'",
 ];

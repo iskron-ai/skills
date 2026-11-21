@@ -88,7 +88,25 @@ const PM_VALUED: Readonly<Record<string, ReadonlySet<string>>> = {
 const MAKE_VALUED = set(
   ...["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir"],
   ...["-o", "--old-file", "--assume-old", "-W", "--what-if", "--new-file", "--assume-new"],
+  ...["-E", "--eval"],
 );
+/** -j and -l take a number, attached or as the next word (`-l 0.5`, `-j8`, `--load-average=2`). */
+const MAKE_NUMERIC = set("-j", "-l");
+const NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
+
+/** make's short flags run together, as getopt reads them: `-sC js` is -s and -C js. */
+function getopt(words: string[]): string[] {
+  return words.flatMap((w) => {
+    if (!/^-[^-]./.test(w)) return [w];
+    const out: string[] = [];
+    for (let k = 1; k < w.length; k++) {
+      const f = `-${w.charAt(k)}`;
+      if (MAKE_VALUED.has(f) || MAKE_NUMERIC.has(f)) return [...out, f + w.slice(k + 1)];
+      out.push(f);
+    }
+    return out;
+  });
+}
 const CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
 const DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
 
@@ -100,9 +118,9 @@ function heavy(words: string[]): boolean {
       return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
     case "make":
     case "gmake": {
-      // A number after -j or -l is its value; an assignment is a variable, not a target.
-      const targets = positionals(args, MAKE_VALUED).filter(
-        (t) => !ASSIGN.test(t) && !/^\d+$/.test(t),
+      // A number is the value of -j or -l; an assignment is a variable, not a target.
+      const targets = positionals(getopt(args), MAKE_VALUED).filter(
+        (t) => !ASSIGN.test(t) && !NUMBER.test(t),
       );
       return !targets.every((t) => CLEAN.has(t)) || !targets.length;
     }
