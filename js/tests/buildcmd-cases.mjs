@@ -37,7 +37,18 @@ export const REFUSED = [
   // the shell's own grammar
   ["(cd js && make)", "make"],
   ["if make test; then echo ok; fi", "if make test"],
-  ["make test 2>&1 | tail -5", "make test 2>&1"],
+  ["make test 2>&1 | tail -5", "make test"],
+  // a redirection never decides: it leaves the command with its target, wherever it stands
+  ["2>/dev/null cargo build", "cargo build"],
+  ["cargo build > log 2>&1", "cargo build"],
+  [">out make", "make"],
+  ["2> err.log make test", "make test"],
+  ["make >>build.log -j4", "make -j4"],
+  ["cargo build &>/dev/null", "cargo build"],
+  ["cargo build &>> log", "cargo build"],
+  ["make 1>&2 check", "make check"],
+  ["npm ci </dev/null", "npm ci"],
+  ["make>log", "make"],
 ];
 
 export const PASSED = [
@@ -65,4 +76,16 @@ export const PASSED = [
   'git commit -m "fix: make test green; cargo build"',
   'grep -r "make test" .',
   "# make test",
+  // cleanup under a redirection stays cleanup; a target named build is a file, not a command
+  "make clean 2>&1",
+  "make clean > /dev/null",
+  "cargo clean &>/dev/null",
+  "make clean >> log 2>&1",
+  "2>/dev/null make clean",
+  "echo 'make' > f",
+  "echo hi > make",
+  "cat < Makefile",
+  "cat <<< 'make test'",
+  "cat <<EOF\nmake test\ncargo build\nEOF",
+  "cat <<-'END'\n\tmake test\n\tEND",
 ];
