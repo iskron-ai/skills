@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 
 import { SPAWN_LINE } from "../delivery/index.ts";
 import { readCover } from "../shared/cover.ts";
+import { belowFloor, DISK_FLOOR_CODE, floorWord } from "../shared/diskfloor.ts";
 import type { Launcher } from "./orchestra-launchers.ts";
 import type { CheckoutOf } from "./orchestra-orca.ts";
 
@@ -34,6 +35,13 @@ export function checkoutFor(
   if (!existsSync(got.path) || !statSync(got.path).isDirectory())
     return { code: "checkout_absent" };
   return got.path;
+}
+
+/** A raise into a nearly full volume is refused before its tree (graph @nks/nks-dev, node
+ * #11288): the code and the word naming the cleanup; above the floor or unread — none. */
+export function floorRefusal(worktree: string): string | null {
+  const short = belowFloor(worktree);
+  return short ? `${DISK_FLOOR_CODE} — ${floorWord(short, (d) => d.moveRaise())}` : null;
 }
 
 export async function coverRefusal(
