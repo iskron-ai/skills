@@ -201,12 +201,13 @@ for (const [graph, own] of [
       );
     try {
       await until(() => rec.tools().has("iskron_channel"), "the server's tools", 15000);
-      const name = "proba.sub-1";
+      const rootName = own ? "proba-two-other" : "proba-two-own";
+      const name = `${rootName}.sub-1`;
       for (const realm of ["@nks/nks-dev", "@nks/drugoy"]) {
-        const root = await rec.call("iskron_stand", { realm, karta: 931, name: "proba" }, "root");
+        const root = await rec.call("iskron_stand", { realm, karta: 931, name: rootName }, "root");
         assert.match(root.content, /стояние/, root.content);
         const sat = await rec.call("iskron_stand", { realm }, "child");
-        assert.match(sat.content, /proba\.sub-1/, `one name in both graphs:\n${sat.content}`);
+        assert.ok(sat.content.includes(name), `one name in both graphs:\n${sat.content}`);
       }
       const refused = { realm: "@nks/nks-dev", text: "Отказано.", status: 409, rule: "busy" };
       await fake.control({ revokeRefuseNext: [refused, refused] });

@@ -24,6 +24,7 @@ import { H } from "./holdstate.ts";
 import { holdLate } from "./latehold.ts";
 import { leavingLine, released } from "./muxhold.ts";
 import { handoverPauseKey, suspended } from "./pauserecord.ts";
+import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
 import { sleep } from "./store.ts";
@@ -107,6 +108,8 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     let end: RunEnd = paused
       ? { failed: [], revoked: [], probably: [] }
       : await revokeSatellitePlaces(places);
+    if (CFG.satellite && !paused)
+      releaseSatelliteClaims(end.failed.length > 0 || end.probably.length > 0);
     const status = addr?.url ?? null;
     // The end awaited its exits: a seat another bridge of this home took meanwhile is not ended
     // and its record not touched — the death window's guard (notHeldAgain); one of another
