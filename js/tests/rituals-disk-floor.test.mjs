@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { PASSED, REFUSED } from "./buildcmd-cases.mjs";
+import { fullVolume } from "./full-volume.mjs";
 import { claudeRaw, repo, ritesOf } from "./rites-kit.mjs";
 
 const VAR = "ISKRON_DISK_FLOOR_PCT";
@@ -68,6 +69,24 @@ test("claude code: below the floor the build table — builds denied with their 
     if (said !== null) wrong.push(`allowed? ${command} → ${JSON.stringify(said).slice(0, 120)}`);
   }
   assert.deepEqual(wrong, []);
+});
+
+// Off until the owner accepts it (#11288): without the variable a real volume below any floor
+// (full-volume.mjs) denies nothing and says nothing.
+test("claude code: without the variable a full volume denies nothing", (t) => {
+  delete process.env[VAR];
+  const dir = fullVolume();
+  if (!dir) return t.skip("no real volume below 10% free on this machine");
+  for (const [tool, input] of [
+    ["Task", { prompt: "x" }],
+    ["Agent", { prompt: "x" }],
+    ["Bash", { command: "cargo build" }],
+  ])
+    assert.equal(
+      claudeRaw(dir, { hook_event_name: "PreToolUse", tool_name: tool, tool_input: input }),
+      null,
+      tool,
+    );
 });
 
 test("claude code: with the floor at 0 nothing is denied", (t) => {
