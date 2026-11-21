@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.2](https://github.com/iskron-ai/skills/compare/v8.16.1...v8.16.2) (2026-11-21)
+
+
+### Bug Fixes
+
+* the disk floor is off unless ISKRON_DISK_FLOOR_PCT names it ([#892](https://github.com/iskron-ai/skills/issues/892)) ([3c9db4b](https://github.com/iskron-ai/skills/commit/3c9db4b9177d12d61ef6294d4a661a2e99566962))
+
 ## [8.16.1](https://github.com/iskron-ai/skills/compare/v8.16.0...v8.16.1) (2026-11-21)
 
 
