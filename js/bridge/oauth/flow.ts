@@ -124,12 +124,6 @@ export function loginPublished(): boolean {
   return published(readAuthLock());
 }
 
-/** …and is its bridge alive to catch the click? */
-export function loginLive(): boolean {
-  const l = readAuthLock();
-  return (published(l) || older(l)) && pidAlive(l.pid);
-}
-
 // A login's one tab: opened by whichever bridge needs a human for it and wins
 // its marker; a bridge that cannot open a browser claims nothing, leaving the
 // tab to one that can.
@@ -206,14 +200,11 @@ async function linkOn(port: number): Promise<(AuthLock & { authorize_url: string
 // grant: any other one in the store — a login that landed, a grant that came
 // back — is handed back instead of a login while none is out yet, and once one
 // is, makes it moot, however narrow the moment it appeared in.
-// `renew` false is the background's: a login it takes over keeps a code past
-// its end as it is — a new code goes out only on a call.
 export async function interactiveFlow(
   meta: Meta,
   judged: Tokens | null | undefined,
   note?: string,
   wantTab = true,
-  renew = true,
 ): Promise<Tokens> {
   const over = grantPrint(judged);
   const back = grantBack(over);
@@ -251,12 +242,12 @@ export async function interactiveFlow(
       grantLog(
         `authorization flow of pid ${standing.pid} (gone) taken over on the same link — waiting for the human`,
       );
-      const first = runFlow(meta, cb, still, wantTab, renew);
+      const first = runFlow(meta, cb, still, wantTab);
       throw new AuthPending(still.authorize_url, note, await firstCode(first));
     }
     if (cb && published(still)) {
       cb.close(); // another login went out meanwhile: that one is joined, not a second
-      return interactiveFlow(meta, judged, note, wantTab, renew);
+      return interactiveFlow(meta, judged, note, wantTab);
     }
     callback = cb; // the login ended meanwhile: the port serves a new one
   }
@@ -341,7 +332,6 @@ function runFlow(
   cb: Callback,
   login: Published,
   openTab: boolean,
-  renew = true,
 ): Promise<DeviceCode | string | null> {
   const ours = (l: AuthLock) => l.pid === process.pid && l.state === login.state;
   const redirectUri = redirectFor(login.callback_port);
@@ -396,7 +386,6 @@ function runFlow(
       latest: () => callerCode(login.state),
       dead: (code) => callerCodeDead(login.state, code),
     },
-    renew,
   );
   let flow: Promise<void> | null = null;
   flow = (async () => {

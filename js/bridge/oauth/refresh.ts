@@ -13,7 +13,6 @@ import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
 import { discoverMeta, resourceOf } from "./discovery.ts";
-import { answerLost, forgetLost, judgedDead, noteDead, noteLost } from "./grantmarks.ts";
 import { acquireRefreshLock, releaseRefreshLock } from "./refreshlock.ts";
 import { tokenRequest } from "./tokenrequest.ts";
 
@@ -97,10 +96,7 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`,
       );
       dropRegistration(clientId);
-      // The verdict is the machine's from here on: no path knocks this grant
-      // again, and none reads the same 404 as a move (graph @nks/nks-dev, node #11291).
-      noteDead(cur);
-      throw new DeadGrantError(message, true);
+      throw new DeadGrantError(message);
     }
     if (gone) {
       saveStore({ meta: null });
@@ -124,14 +120,6 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
         DEFINITIVE_OAUTH_ERRORS.has(e.oauthError ?? "") ||
         e.status === 400 ||
         e.status === 401);
-    if (!(e instanceof TokenError) && answerLost(e)) {
-      // Rotated or not, nobody knows: the same refresh goes out again the moment
-      // the endpoint answers, inside the server's grace for it (graph @nks/nks-dev, node #11292).
-      noteLost(cur, message);
-      throw new Error(`token refresh answer lost (${message}) — presenting it again at once`, {
-        cause: e,
-      });
-    }
     if (!definitive) {
       throw new Error(`token refresh failed transiently (${message}) — grant kept, will retry`, {
         cause: e,
@@ -254,12 +242,6 @@ export async function refreshShared(
     // grant to a rotating sibling. Either way, presenting our own copy now is
     // the one move that could burn it: we fail this call instead, and the grant
     // stays whole for the next one.
-    if (judgedDead(loadStore().tokens)) {
-      throw new DeadGrantError(
-        "the server judged this grant dead at an endpoint that did not move — only a new login brings it back",
-        true,
-      );
-    }
     if (Date.now() > deadline) {
       throw new Error("the shared grant could not be refreshed in time — grant kept, will retry");
     }
@@ -286,7 +268,6 @@ export async function refreshShared(
           // Record the verdict under the lock: a sibling waiting on that lock
           // reads the refusal rather than emptiness and does not knock next.
           if (e instanceof DeadGrantError) noteRefusal(e.message);
-          if (e instanceof DeadGrantError || e instanceof HoldOffError) forgetLost();
           throw e;
         }
       } finally {

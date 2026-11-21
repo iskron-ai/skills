@@ -854,11 +854,6 @@ export async function startFakeNks(opts = {}) {
         "refreshStatus",
         "refreshError",
         "refreshMessage",
-        "discoveryStatus", // e.g. 503: discovery не отвечает (сеть машины рвётся), token endpoint — как был
-        "refreshGraceMs", // окно, в котором прежний refresh после ротации предъявляется снова (Rauthy REFRESH_TOKEN_GRACE_TIME)
-        "refreshDropNext", // столько ближайших refresh: ротация сделана, соединение рвётся до ответа
-        "tokenDownMs", // после такого разрыва token endpoint столько мс рвёт каждый запрос (связь ушла)
-        "refreshCutNext", // столько ближайших refresh: ротация сделана, 200 с заголовками ушёл, тело оборвано
         "mcpStatus",
         "mcpHangMs",
         "deleteStatus",
@@ -971,9 +966,6 @@ export async function startFakeNks(opts = {}) {
       return json(res, 200, { counts: st.counts });
     }
 
-    if (st.discoveryStatus && p.startsWith("/.well-known/")) {
-      return json(res, st.discoveryStatus, { error: "discovery down by /control" });
-    }
     if (p === "/.well-known/oauth-protected-resource/mcp") {
       return json(res, 200, {
         resource: `${base}/mcp`,
@@ -1025,10 +1017,6 @@ export async function startFakeNks(opts = {}) {
 
     if (p === st.tokenPath && req.method === "POST") {
       const f = new URLSearchParams(await body(req));
-      if (st.tokenDownUntil && Date.now() < st.tokenDownUntil) {
-        st.counts.token_down = (st.counts.token_down ?? 0) + 1;
-        return req.socket.destroy(); // ушло и пропало: ответа нет
-      }
       if (f.get("grant_type") === "authorization_code") {
         st.counts.code_exchange++;
         if (st.codeDelayMs) await new Promise((r) => setTimeout(r, st.codeDelayMs));
@@ -1078,54 +1066,6 @@ export async function startFakeNks(opts = {}) {
             error: st.refreshError || "server_error",
             ...(st.refreshMessage ? { message: st.refreshMessage } : {}),
           });
-        }
-        // Прежний refresh после ротации: внутри окна — новая пара, за окном — отказ
-        // словами Rauthy, наблюдёнными в поле (#11291, #11292).
-        if (st.refreshGraceMs && st.prevRefresh && f.get("refresh_token") === st.prevRefresh) {
-          if (Date.now() - st.rotatedAt > st.refreshGraceMs) {
-            st.counts.grace_refused = (st.counts.grace_refused ?? 0) + 1;
-            return json(res, 404, { error: "NotFound", message: "Refresh Token not found" });
-          }
-          st.counts.grace_reuse = (st.counts.grace_reuse ?? 0) + 1;
-          st.prevRefresh = null;
-          st.access = mintAccess(st);
-          st.refresh = mintRefresh(st);
-          return json(res, 200, {
-            access_token: st.access,
-            refresh_token: st.refresh,
-            expires_in: st.accessTtl,
-            token_type: "Bearer",
-          });
-        }
-        if (st.refreshDropNext > 0 && f.get("refresh_token") === st.refresh) {
-          st.refreshDropNext--;
-          st.counts.refresh_dropped = (st.counts.refresh_dropped ?? 0) + 1;
-          st.prevRefresh = st.refresh;
-          st.rotatedAt = Date.now();
-          st.access = mintAccess(st);
-          st.refresh = mintRefresh(st);
-          st.tokenDownUntil = Date.now() + (st.tokenDownMs || 0);
-          return req.socket.destroy(); // ротация сделана, ответ потерян
-        }
-        if (st.refreshCutNext > 0 && f.get("refresh_token") === st.refresh) {
-          st.refreshCutNext--;
-          st.counts.refresh_cut = (st.counts.refresh_cut ?? 0) + 1;
-          st.prevRefresh = st.refresh;
-          st.rotatedAt = Date.now();
-          st.access = mintAccess(st);
-          st.refresh = mintRefresh(st);
-          const whole = JSON.stringify({
-            access_token: st.access,
-            refresh_token: st.refresh,
-            expires_in: st.accessTtl,
-            token_type: "Bearer",
-          });
-          res.writeHead(200, {
-            "content-type": "application/json",
-            "content-length": Buffer.byteLength(whole),
-          });
-          res.write(whole.slice(0, 24)); // заголовки и начало тела ушли
-          return setTimeout(() => req.socket.destroy(), 50); // остальное тело — нет
         }
         if (f.get("refresh_token") !== st.refresh) {
           st.counts.stale_refresh++;
