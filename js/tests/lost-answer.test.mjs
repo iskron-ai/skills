@@ -83,6 +83,32 @@ test("the link back past the server's grace: one login at once, no rediscovery",
   });
 });
 
+test("a 200 whose body was cut is a lost answer: nothing stored, the same refresh again, the grant alive", async () => {
+  await withGrant({}, async ({ fake, dir, spawnBridge }) => {
+    const before = readStore(dir).tokens.refresh_token;
+    const logins = published(dir);
+    await fake.control({ refreshGraceMs: 3000, refreshCutNext: 1, revoke_access: true });
+    spawnBridge(QUICK);
+    let emptied = false; // a store holding a grant with no access token in it
+    await waitFor(
+      () => {
+        const t = readStore(dir).tokens;
+        if (t?.refresh_token && !t.access_token) emptied = true;
+        return t?.refresh_token !== before;
+      },
+      "the grant to come back through the cut answer",
+      6000,
+    );
+    assert.equal(fake.state.counts.refresh_cut, 1, "the rotation's body was cut once");
+    assert.equal(fake.state.counts.grace_reuse, 1, "the old refresh presented again, in time");
+    assert.equal(emptied, false, "nothing stored from the cut answer");
+    assert.ok(readStore(dir).tokens.access_token, "the grant in hand carries its access token");
+    assert.equal(published(dir) - logins, 0, "no login");
+    assert.equal(grantState(dir).lost_refresh, undefined, "the outcome is known now");
+    assert.match(grantLog(dir), /refresh answer lost/);
+  });
+});
+
 test("a refresh refused before it went out is not a lost answer", async () => {
   await withGrant({}, async ({ fake, dir, spawnBridge }) => {
     const s = readStore(dir);

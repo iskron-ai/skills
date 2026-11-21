@@ -59,6 +59,10 @@ export class TokenError extends Error {
   }
 }
 
+// The token endpoint said 200 and its answer did not come whole: what it did is
+// as unknown as if no answer had come at all.
+export class AnswerCut extends Error {}
+
 // Only these OAuth errors prove the grant itself is dead; anything else
 // (network, 5xx, temporarily_unavailable) must NOT burn the refresh token
 // or drag the user into the browser.

@@ -4,6 +4,7 @@
 // was lost on the wire (graph @nks/nks-dev, node #11292). Both name the refresh
 // token they are about by its print; a grant that lands clears the state, and
 // the print keeps any other grant clear of them.
+import { AnswerCut } from "../errors.ts";
 import { b64url, grantLog, loadGrantState, saveGrantState, sha256 } from "../store.ts";
 import { type Tokens } from "../types.ts";
 
@@ -24,10 +25,12 @@ export const judgedDead = (t: Tokens | null | undefined): boolean =>
 // pair exists nowhere but in that lost answer — the old refresh token lives on
 // only within the server's grace for it, whose width the bridge does not know.
 // A refusal before the request went out (ECONNREFUSED, ENOTFOUND) is not this.
+// Nor is it only the wire: a 200 whose body was cut or carries no token is the same.
 const LOST = new Set(["UND_ERR_SOCKET", "ECONNRESET", "EPIPE", "UND_ERR_HEADERS_TIMEOUT"]);
 export function answerLost(e: unknown): boolean {
   const err = e as { name?: string; code?: string; cause?: { code?: string; name?: string } };
   return (
+    e instanceof AnswerCut ||
     err?.name === "TimeoutError" ||
     err?.cause?.name === "TimeoutError" ||
     LOST.has(err?.code ?? "") ||
