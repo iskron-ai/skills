@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { PASSED, REFUSED } from "./buildcmd-cases.mjs";
 import { opencode, repo } from "./rites-kit.mjs";
 
 const VAR = "ISKRON_DISK_FLOOR_PCT";
@@ -35,30 +36,18 @@ test("opencode: below the floor a subagent and a build are refused, cleanup and 
     assert.match(said ?? "", WORD, `${tool}: ${said}`);
     assert.match(said, /субагент не запущен/);
   }
-  const build = await refusal(run, "shell", { command: "cd js && cargo build --release" });
-  assert.match(build ?? "", WORD, String(build));
-  assert.match(build, /сборка «cargo build --release» не запущена/);
-  for (const command of [
-    "make test",
-    "npm ci",
-    "pnpm run build",
-    "go test ./...",
-    "docker build .",
-    "RUSTFLAGS=-Dwarnings env CI=1 cargo clippy",
-    "npm --prefix js ci",
-  ])
-    assert.match((await refusal(run, "shell", { command })) ?? "", WORD, command);
-  for (const command of [
-    "cargo clean",
-    "ls -la",
-    "rm -rf target",
-    "git worktree remove .worktrees/x",
-    "du -sh .",
-    "df -h",
-    "make clean",
-    "npm view x",
-  ])
-    assert.equal(await refusal(run, "shell", { command }), null, command);
+  // The table (buildcmd-cases.mjs): every line that misjudges is named at once.
+  const wrong = [];
+  for (const [command, named] of REFUSED) {
+    const said = await refusal(run, "shell", { command });
+    if (!WORD.test(said ?? "") || !said.includes(`сборка «${named}» не запущена`))
+      wrong.push(`refused? ${command} → ${said}`);
+  }
+  for (const command of PASSED) {
+    const said = await refusal(run, "shell", { command });
+    if (said !== null) wrong.push(`passed? ${command} → ${said.slice(0, 120)}`);
+  }
+  assert.deepEqual(wrong, []);
   assert.equal(await refusal(run, "read", { path: "x" }), null);
 });
 

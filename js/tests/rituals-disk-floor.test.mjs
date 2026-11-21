@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { PASSED, REFUSED } from "./buildcmd-cases.mjs";
 import { claudeRaw, repo, ritesOf } from "./rites-kit.mjs";
 
 const VAR = "ISKRON_DISK_FLOOR_PCT";
@@ -50,6 +51,23 @@ test("claude code: below the floor a subagent and a build are denied with the wo
     ])
       assert.equal(pre(dir, "Bash", { command }), null, command);
   }
+});
+
+test("claude code: below the floor the build table — builds denied with their name, cleanup allowed", (t) => {
+  process.env[VAR] = "100";
+  t.after(() => delete process.env[VAR]);
+  const dir = repo();
+  const wrong = [];
+  for (const [command, named] of REFUSED) {
+    const why = pre(dir, "Bash", { command })?.permissionDecisionReason ?? null;
+    if (!WORD.test(why ?? "") || !why.includes(`сборка «${named}» не запущена`))
+      wrong.push(`denied? ${command} → ${why}`);
+  }
+  for (const command of PASSED) {
+    const said = pre(dir, "Bash", { command });
+    if (said !== null) wrong.push(`allowed? ${command} → ${JSON.stringify(said).slice(0, 120)}`);
+  }
+  assert.deepEqual(wrong, []);
 });
 
 test("claude code: with the floor at 0 nothing is denied", (t) => {
