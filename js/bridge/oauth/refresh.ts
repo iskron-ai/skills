@@ -8,7 +8,16 @@ import {
   HoldOffError,
   TokenError,
 } from "../errors.ts";
-import { grantLog, loadGrantState, loadStore, saveGrantState, saveStore, sleep } from "../store.ts";
+import {
+  b64url,
+  grantLog,
+  loadGrantState,
+  loadStore,
+  saveGrantState,
+  saveStore,
+  sha256,
+  sleep,
+} from "../store.ts";
 import { debug, log } from "../streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "../tokens.ts";
 import { type Meta, type Tokens } from "../types.ts";
@@ -96,7 +105,10 @@ async function refreshOnce(meta: Meta, cur: Tokens, proactive: boolean): Promise
         `refresh refused by an endpoint discovery still names (${message}) — registration dropped`,
       );
       dropRegistration(clientId);
-      throw new DeadGrantError(message);
+      // The verdict is the machine's from here on: no path knocks this grant
+      // again, and none reads the same 404 as a move (graph @nks/nks-dev, node #11291).
+      saveGrantState({ dead_refresh: printOf(cur) });
+      throw new DeadGrantError(message, true);
     }
     if (gone) {
       saveStore({ meta: null });
@@ -242,6 +254,12 @@ export async function refreshShared(
     // grant to a rotating sibling. Either way, presenting our own copy now is
     // the one move that could burn it: we fail this call instead, and the grant
     // stays whole for the next one.
+    if (judgedDead(loadStore().tokens)) {
+      throw new DeadGrantError(
+        "the server judged this grant dead at an endpoint that did not move — only a new login brings it back",
+        true,
+      );
+    }
     if (Date.now() > deadline) {
       throw new Error("the shared grant could not be refreshed in time — grant kept, will retry");
     }
@@ -294,6 +312,15 @@ function noteRefusal(reason: string): void {
   const first = !loadGrantState().refused_since;
   saveGrantState({ refused_at: local, ...(first ? { refused_since: local, reason } : {}) });
   if (first) grantLog(`grant refused: ${reason}`);
+}
+
+const printOf = (t: Tokens): string => b64url(sha256(t.refresh_token ?? "")).slice(0, 16);
+
+// The grant on disk is the one the server judged dead where nothing moved (#11291).
+// A grant that lands clears the record; the print keeps any other grant clear of it.
+export function judgedDead(t: Tokens | null | undefined): boolean {
+  const dead = loadGrantState().dead_refresh;
+  return !!dead && !!t?.refresh_token && printOf(t) === dead;
 }
 
 // The machine already holds a verdict on this grant, recorded moments ago by

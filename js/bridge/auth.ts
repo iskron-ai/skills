@@ -5,7 +5,7 @@ import { DeadGrantError, errorMessage, HoldOffError, TokenRefused } from "./erro
 import { discover, resourceOf } from "./oauth/discovery.ts";
 import { interactiveFlow, loginPublished } from "./oauth/flow.ts";
 import { DEAD_RECHECK_MS, IN_CALL_WAIT_MS } from "./oauth/pacing.ts";
-import { refreshShared, refusalStands } from "./oauth/refresh.ts";
+import { judgedDead, refreshShared, refusalStands } from "./oauth/refresh.ts";
 import { loadStore, sleep, storePath } from "./store.ts";
 import { debug, log } from "./streams.ts";
 import { refreshHours, tokenUsable, usableTokens } from "./tokens.ts";
@@ -20,6 +20,8 @@ export interface AuthOptions {
   interactive?: boolean;
   /** a top-up the caller does not actually need yet */
   proactive?: boolean;
+  /** a background caller that publishes the login (link and code, no tab) on a settled verdict */
+  publish?: boolean;
 }
 
 // One token round per grant (the server's store), not per session: daemon sessions share it.
@@ -100,6 +102,13 @@ export async function ensureAuth(
             if (!interactive) {
               // The background opens no browser and sits out nothing: its knock
               // did not land, and the next tick or a caller's own call tries again.
+              if (e instanceof DeadGrantError && e.settled && opts.publish) {
+                // A verdict no knock can change owes the human the login now,
+                // whoever heard it: the link and its code go out at once — no
+                // tab, the background opens no browser (graph @nks/nks-dev, node #11291).
+                log(`refresh grant is dead (${e.message}) — publishing the login`);
+                return await interactiveFlow(meta, s.tokens, undefined, false);
+              }
               if (e instanceof DeadGrantError) {
                 throw new Error(
                   "authorization required (refresh grant dead, browser flow deferred)",
@@ -128,9 +137,9 @@ export async function ensureAuth(
             if (e instanceof DeadGrantError) {
               // A server mid-restart words a live grant's death the same way, so
               // knock again ourselves before a human is called in — unless the
-              // grant's own hour has passed, or a login is already out: then the
-              // verdict is already in.
-              if (!e.expired && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
+              // grant's own hour has passed, the server refused it where nothing
+              // moved, or a login is already out: then the verdict is already in.
+              if (!e.settled && rechecks < DEAD_RECHECK_MS.length && !loginPublished()) {
                 const pause = DEAD_RECHECK_MS[rechecks++] ?? 0;
                 debug(`refresh refused (${e.message}) — knocking again in ${pause}ms`);
                 await sleep(pause);
@@ -184,11 +193,15 @@ export function startTokenKeepalive(): void {
       debug("the grant is past its own expiry — only a human can mend it now");
       return; // spending refusals on a grant whose hour has passed teaches nobody anything
     }
+    if (judgedDead(t)) {
+      debug("the server judged this grant dead — no knock brings it back, the login does");
+      return;
+    }
     if (refusalStands()) {
       debug("the grant stands refused — the machine's control knock is not due yet");
       return;
     }
-    ensureAuth(null, { force: true, interactive: false, proactive: true })
+    ensureAuth(null, { force: true, interactive: false, proactive: true, publish: true })
       .then(() => debug("background token refresh ok"))
       .catch((e) => log(`background token refresh: ${errorMessage(e)}`));
   };

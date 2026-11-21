@@ -854,6 +854,7 @@ export async function startFakeNks(opts = {}) {
         "refreshStatus",
         "refreshError",
         "refreshMessage",
+        "discoveryStatus", // e.g. 503: discovery не отвечает (сеть машины рвётся), token endpoint — как был
         "mcpStatus",
         "mcpHangMs",
         "deleteStatus",
@@ -966,6 +967,9 @@ export async function startFakeNks(opts = {}) {
       return json(res, 200, { counts: st.counts });
     }
 
+    if (st.discoveryStatus && p.startsWith("/.well-known/")) {
+      return json(res, st.discoveryStatus, { error: "discovery down by /control" });
+    }
     if (p === "/.well-known/oauth-protected-resource/mcp") {
       return json(res, 200, {
         resource: `${base}/mcp`,

@@ -1,0 +1,84 @@
+// A dead grant is judged once on every path, and the login goes out at once
+// (graph @nks/nks-dev, node #11291). Witnessed on a machine's daemon: the server
+// refused the refresh with 404 NotFound "Refresh Token not found" at an endpoint
+// discovery still named; the background knock judged it and published nothing,
+// and for fifty minutes the next knocks read the same 404 as a moved endpoint
+// whenever discovery flickered — the login went out only when a call happened to
+// land between flickers.
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  ageRefusal,
+  grantLog,
+  INIT,
+  linkIn,
+  lock,
+  pause,
+  published,
+  waitFor,
+  withGrant,
+} from "./grant-kit.mjs";
+
+const DEAD = {
+  refreshStatus: 404,
+  refreshError: "NotFound",
+  refreshMessage: "Refresh Token not found",
+};
+
+test("a caller hears a dead grant once: one knock, one login at once, no rediscovery after", async () => {
+  await withGrant({}, async ({ fake, dir, spawnBridge }) => {
+    const knocks = fake.state.counts.refresh;
+    const logins = published(dir);
+    await fake.control({ ...DEAD, revoke_access: true });
+    const b = spawnBridge();
+    const url = linkIn((await b.call("initialize", 2, INIT)).error?.message);
+    assert.ok(url, "the verdict must answer with the login");
+    assert.equal(fake.state.counts.refresh - knocks, 1, "one knock judges the grant");
+
+    // Discovery flickers and the stretch of the refusal has passed: the same 404
+    // must not be read as a moved endpoint, and the grant is not knocked again.
+    await fake.control({ discoveryStatus: 503 });
+    ageRefusal(dir);
+    const again = await b.call("tools/call", 3, { name: "nks_orient", arguments: {} });
+    assert.equal(linkIn(again.error?.message), url, `the same login: ${again.error?.message}`);
+    assert.equal(fake.state.counts.refresh - knocks, 1, "a dead grant is not knocked again");
+    assert.doesNotMatch(grantLog(dir), /token endpoint is gone/);
+    assert.equal(published(dir) - logins, 1, "one login");
+  });
+});
+
+test("the background hears a dead grant once and publishes the login at once, without a call", async () => {
+  const device = { interval: 1, client: "iskron-bridge" };
+  await withGrant({ device }, async ({ fake, dir, spawnBridge }) => {
+    const knocks = fake.state.counts.refresh;
+    const logins = published(dir);
+    await fake.control({ ...DEAD, revoke_access: true });
+    spawnBridge(); // its keepalive knocks on startup: the store is expired
+    await waitFor(() => !!lock(dir)?.authorize_url, "the background to publish the login");
+    await waitFor(() => !!lock(dir)?.device, "the login's code from another device");
+    assert.equal(fake.state.counts.refresh - knocks, 1, "one knock judges the grant");
+
+    // Another background on the machine, after the stretch: nothing to knock.
+    await fake.control({ discoveryStatus: 503 });
+    ageRefusal(dir);
+    spawnBridge();
+    await pause(1500);
+    assert.equal(fake.state.counts.refresh - knocks, 1, "no background knocks a dead grant");
+    assert.doesNotMatch(grantLog(dir), /token endpoint is gone/);
+    assert.equal(published(dir) - logins, 1, "one login");
+  });
+});
+
+test("an endpoint that moved is still rediscovered with the grant kept", async () => {
+  await withGrant({}, async ({ fake, dir, spawnBridge }) => {
+    await fake.control({ tokenPath: "/token-v2", revoke_access: true });
+    const b = spawnBridge();
+    const served = await b
+      .call("initialize", 2, INIT)
+      .then((a) => (a.result ? a : b.call("initialize", 3, INIT)));
+    assert.ok(served.result, `the moved endpoint must serve: ${JSON.stringify(served.error)}`);
+    assert.match(grantLog(dir), /token endpoint is gone/, "the move is read as a move");
+    assert.equal(lock(dir), null, "and costs no login");
+  });
+});
