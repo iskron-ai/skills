@@ -59,3 +59,28 @@ test("claude code: with the floor at 0 nothing is denied", (t) => {
   assert.equal(pre(dir, "Task", { prompt: "x" }), null);
   assert.equal(pre(dir, "Bash", { command: "cargo build" }), null);
 });
+
+// The hook stands before every Bash: a call it lets pass prints nothing at all — neither a
+// decision nor a word — and leaves at once, above the floor and below it alike.
+test("claude code: a Bash it lets pass prints nothing and leaves fast", (t) => {
+  t.after(() => delete process.env[VAR]);
+  const dir = repo();
+  const calls = [
+    ["0", "cargo build"],
+    ["0", "git status"],
+    ["100", "git status"],
+    ["100", "ls -la && du -sh ."],
+  ];
+  for (const [floor, command] of calls) {
+    process.env[VAR] = floor;
+    const at = Date.now();
+    const raw = claudeRaw(dir, {
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command },
+    });
+    const ms = Date.now() - at;
+    assert.equal(raw, null, `floor ${floor}, ${command}: ${JSON.stringify(raw)}`);
+    assert.ok(ms < 3000, `floor ${floor}, ${command}: ${ms} ms`);
+  }
+});

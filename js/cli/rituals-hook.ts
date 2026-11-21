@@ -89,7 +89,6 @@ function turnWord(input: HookInput, dir: string): string | null {
 
 /** PreToolUse: a subagent or a build on a nearly full volume — the refusal word (#11288). */
 function floorDenial(input: HookInput, dir: string): string | null {
-  if (input.hook_event_name !== "PreToolUse") return null;
   const tool = input.tool_name;
   const call =
     tool === "Bash"
@@ -97,7 +96,8 @@ function floorDenial(input: HookInput, dir: string): string | null {
       : SUBAGENT_TOOLS.has(String(tool))
         ? ({ subagent: true } as const)
         : null;
-  return call ? callRefusal(dir, call, ritualCover(dir)?.lang) : null;
+  // The cover is read for the word's language only when the call is refused.
+  return call ? callRefusal(dir, call, () => ritualCover(dir)?.lang) : null;
 }
 
 try {
@@ -106,14 +106,17 @@ try {
     typeof input.cwd === "string" && input.cwd
       ? input.cwd
       : process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  const denied = floorDenial(input, dir);
-  if (denied)
-    process.stdout.write(
-      `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: denied } })}\n`,
-    );
+  // Before a tool only the floor speaks: no rite of PreToolUse, no cover read for one.
+  if (input.hook_event_name === "PreToolUse") {
+    const denied = floorDenial(input, dir);
+    if (denied)
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: denied } })}\n`,
+      );
+  }
   const reason = input.hook_event_name === "Stop" ? turnWord(input, dir) : null;
   if (reason) process.stdout.write(`${JSON.stringify({ decision: "block", reason })}\n`);
-  const said = riteWords(input, dir);
+  const said = input.hook_event_name === "PreToolUse" ? [] : riteWords(input, dir);
   if (said.length) {
     const hookEventName = String(input.hook_event_name);
     const additionalContext = said.join("\n\n");

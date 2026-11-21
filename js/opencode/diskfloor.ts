@@ -1,12 +1,13 @@
 // Heavy work is refused on a nearly full disk (graph @nks/nks-dev, node #11288): a subagent
-// (the task tool) and a shell build command (shared/buildcmd.ts) throw the refusal word before
+// (the subagent tool) and a shell build command (shared/buildcmd.ts) throw the refusal word before
 // they run; the volume is that of the session's directory. Any other call passes.
 import { buildCommand } from "../shared/buildcmd.ts";
 import { callRefusal } from "../shared/diskfloor.ts";
 import { sessionDirectory } from "./host.ts";
 import type { Context } from "./plugin.ts";
 
-const SUBAGENT = new Set(["task"]);
+/** The subagent tool: `subagent` in OpenCode 2 (its tool renderer), `task` before. */
+const SUBAGENT = new Set(["subagent", "task"]);
 const SHELL = new Set(["shell", "bash"]);
 
 export async function setupDiskFloor(ctx: Context): Promise<void> {

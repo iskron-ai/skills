@@ -50,18 +50,19 @@ const clip = (s: string): string => (s.length > SHOWN ? `${s.slice(0, SHOWN - 1)
 
 /**
  * A harness's call in `dir` (OpenCode and Claude Code plugins): a subagent, or a shell line
- * holding a build command (buildcmd.ts), below the floor — the refusal word; else null.
+ * holding a build command (buildcmd.ts), below the floor — the refusal word; else null. `lang`
+ * is asked only for a refusal: a call that passes reads nothing beyond the volume.
  */
 export function callRefusal(
   dir: string | null,
   call: { subagent: true } | { shell: string },
-  lang?: Lang,
+  lang?: () => Lang | undefined,
 ): string | null {
   const build = "shell" in call ? buildCommand(call.shell) : null;
   if (!dir || ("shell" in call && !build)) return null;
   const short = belowFloor(dir);
   if (!short) return null;
-  return floorWord(short, (w) => (build ? w.moveBuild(clip(build)) : w.moveSubagent()), lang);
+  return floorWord(short, (w) => (build ? w.moveBuild(clip(build)) : w.moveSubagent()), lang?.());
 }
 
 /** The refusal word for a move below the floor, in the session's language or the given one. */

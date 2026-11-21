@@ -1,5 +1,5 @@
 // The OpenCode plugin refuses heavy work on a nearly full volume (graph @nks/nks-dev, node
-// #11288): a subagent (task) and a shell build command throw the word naming the cleanup before
+// #11288): a subagent (subagent, task) and a shell build command throw the word naming the cleanup before
 // they run; cleanup and other commands pass. The floor is moved by its variable — above the real
 // free space refuses, 0 lets everything pass; the real disk is never filled. The plugin is the
 // built copy (opencode-kit.mjs; ISKRON_OPENCODE_PLUGIN points it at a past release).
@@ -29,9 +29,12 @@ test("opencode: below the floor a subagent and a build are refused, cleanup and 
   t.after(() => delete process.env[VAR]);
   const { rec, run } = await opencode(repo());
   t.after(() => rec.stop());
-  const task = await refusal(run, "task", { description: "x", prompt: "y" });
-  assert.match(task ?? "", WORD, String(task));
-  assert.match(task, /субагент не запущен/);
+  // OpenCode 2's subagent tool is `subagent` (its tool renderer on this machine); `task` before.
+  for (const tool of ["subagent", "task"]) {
+    const said = await refusal(run, tool, { description: "x", prompt: "y" });
+    assert.match(said ?? "", WORD, `${tool}: ${said}`);
+    assert.match(said, /субагент не запущен/);
+  }
   const build = await refusal(run, "shell", { command: "cd js && cargo build --release" });
   assert.match(build ?? "", WORD, String(build));
   assert.match(build, /сборка «cargo build --release» не запущена/);
@@ -64,6 +67,7 @@ test("opencode: with the floor at 0 nothing is refused", async (t) => {
   t.after(() => delete process.env[VAR]);
   const { rec, run } = await opencode(repo());
   t.after(() => rec.stop());
-  assert.equal(await refusal(run, "task", { prompt: "y" }), null);
+  for (const tool of ["subagent", "task"])
+    assert.equal(await refusal(run, tool, { prompt: "y" }), null, tool);
   assert.equal(await refusal(run, "shell", { command: "cargo build" }), null);
 });
