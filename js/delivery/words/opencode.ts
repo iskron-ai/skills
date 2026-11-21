@@ -14,6 +14,8 @@ export interface OpencodeWords {
   commandsDown: (message: string) => string;
   noPermissionHooks: () => string;
   skillReadsDown: (message: string) => string;
+  /** Хук тулов пола диска не встал: субагенты и сборки на почти полном томе не отказываются. */
+  diskFloorDown: (message: string) => string;
   hearingLost: (hhmm: string, message: string) => string;
   fromCache: () => string;
   fromServer: () => string;
@@ -96,6 +98,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     noPermissionHooks: () =>
       "Искрон: у этого OpenCode нет хуков разрешений — файлы скиллов поставки вне рабочей копии читаются со спросом.",
     skillReadsDown: (message) => `Искрон: чтение файлов скиллов поставки не открылось — ${message}`,
+    diskFloorDown: (message) =>
+      `Искрон: пол диска не встал — субагенты и сборки на почти полном томе не отказываются — ${message}`,
     hearingLost: (hhmm, message) =>
       `Искрон: слух потерян в ${hhmm} — мост стояния вышел (${message}). ` +
       "Сторож слуха поднимет мост и вернёт место с диска; не ждёшь — iskron_stand.",
@@ -187,6 +191,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       "Iskron: this OpenCode has no permission hooks — files of the delivery's skills outside the working copy are read with an ask.",
     skillReadsDown: (message) =>
       `Iskron: reading the delivery's skill files did not open — ${message}`,
+    diskFloorDown: (message) =>
+      `Iskron: the disk floor did not come up — subagents and builds on a nearly full volume are not refused — ${message}`,
     hearingLost: (hhmm, message) =>
       `Iskron: hearing lost at ${hhmm} — the standing's bridge exited (${message}). ` +
       "The hearing watchdog raises the bridge and returns the seat from disk; if you will not wait — iskron_stand.",

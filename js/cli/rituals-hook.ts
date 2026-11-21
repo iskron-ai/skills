@@ -1,7 +1,8 @@
 // The plugin's ritual hooks in Claude Code (hooks/hooks.json; graph @nks/nks-dev, node #9319,
 // section RITUALS): one entry for every event it is wired to. SessionStart — the start word with
 // the cover's addresses, or the early word while it names only the graph (#8018); PostToolUse of Bash — the push and merge words by outcome
-// (shared/ritualjudge.ts), a push to the trunk the merge word (#8362); Stop — the turn's end on a watch (shared/turnend.ts, #9342). Switched on by the cover of the session's repository
+// (shared/ritualjudge.ts), a push to the trunk the merge word (#8362); Stop — the turn's end on a watch (shared/turnend.ts, #9342);
+// PreToolUse of Task, Agent and Bash — a subagent or a build on a nearly full volume denied, cover or not (shared/diskfloor.ts, #11288). The rest is switched on by the cover of the session's repository
 // (shared/ritualcover.ts), each kind its rituals field leaves out silent; a kind the repository's own settings hold on this event's source or
 // tool (hookkinds.ts, by matcher) keeps it silent there — no word twice, none lost. The memory guard stays the repository's hook: a plugin hook's blocking
 // exit was not observed on the carrier. After a compaction the onboarding hook speaks, not this.
@@ -10,12 +11,16 @@ import { readFileSync } from "node:fs";
 
 import { TURN } from "../delivery/index.ts";
 import { repoContractWarning } from "../shared/covercontract.ts";
+import { callRefusal } from "../shared/diskfloor.ts";
 import { wordsIn } from "../shared/lang.ts";
 import { shellNotes } from "../shared/ritenotes.ts";
 import { ritualCover, startWord } from "../shared/ritualcover.ts";
 import { lostWord, TURN_RITE } from "../shared/turnend.ts";
 import { standingRites } from "./hookkinds.ts";
 import { lastTurn } from "./turnread.ts";
+
+/** Claude Code's subagent tool: Task, named Agent in later versions. */
+const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
 
 interface HookInput {
   hook_event_name?: unknown;
@@ -82,15 +87,36 @@ function turnWord(input: HookInput, dir: string): string | null {
   return turn && lostWord(turn) ? wordsIn(TURN, cover?.lang).wake() : null;
 }
 
+/** PreToolUse: a subagent or a build on a nearly full volume — the refusal word (#11288). */
+function floorDenial(input: HookInput, dir: string): string | null {
+  const tool = input.tool_name;
+  const call =
+    tool === "Bash"
+      ? { shell: String(input.tool_input?.command ?? "") }
+      : SUBAGENT_TOOLS.has(String(tool))
+        ? ({ subagent: true } as const)
+        : null;
+  // The cover is read for the word's language only when the call is refused.
+  return call ? callRefusal(dir, call, () => ritualCover(dir)?.lang) : null;
+}
+
 try {
   const input = hookInput();
   const dir =
     typeof input.cwd === "string" && input.cwd
       ? input.cwd
       : process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  // Before a tool only the floor speaks: no rite of PreToolUse, no cover read for one.
+  if (input.hook_event_name === "PreToolUse") {
+    const denied = floorDenial(input, dir);
+    if (denied)
+      process.stdout.write(
+        `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: denied } })}\n`,
+      );
+  }
   const reason = input.hook_event_name === "Stop" ? turnWord(input, dir) : null;
   if (reason) process.stdout.write(`${JSON.stringify({ decision: "block", reason })}\n`);
-  const said = riteWords(input, dir);
+  const said = input.hook_event_name === "PreToolUse" ? [] : riteWords(input, dir);
   if (said.length) {
     const hookEventName = String(input.hook_event_name);
     const additionalContext = said.join("\n\n");
