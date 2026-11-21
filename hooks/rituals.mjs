@@ -966,7 +966,18 @@ var MAKE_VALUED = set(
   ...["-E", "--eval"]
 );
 var MAKE_NUMERIC = set("-j", "-l");
+var MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
 var NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
+function makeTargets(words3) {
+  const out = [];
+  for (let i = 0; i < words3.length; i++) {
+    const w = words3[i] ?? "";
+    const numeric = MAKE_NUMERIC.has(w) || MAKE_NUMERIC_LONG.has(w);
+    if (!w.startsWith("-") || w === "-") out.push(w);
+    else if (MAKE_VALUED.has(w) || numeric && NUMBER.test(words3[i + 1] ?? "")) i++;
+  }
+  return out.filter((t) => !ASSIGN.test(t));
+}
 function getopt(words3) {
   return words3.flatMap((w) => {
     if (!/^-[^-]./.test(w)) return [w];
@@ -989,9 +1000,7 @@ function heavy(words3) {
       return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
     case "make":
     case "gmake": {
-      const targets2 = positionals(getopt(args), MAKE_VALUED).filter(
-        (t) => !ASSIGN.test(t) && !NUMBER.test(t)
-      );
+      const targets2 = makeTargets(getopt(args));
       return !targets2.every((t) => CLEAN.has(t)) || !targets2.length;
     }
     case "npm":

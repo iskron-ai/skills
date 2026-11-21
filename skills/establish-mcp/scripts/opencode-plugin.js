@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.16.0";
+var VERSION = "8.16.1";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -7110,7 +7110,18 @@ var MAKE_VALUED = set(
   ...["-E", "--eval"]
 );
 var MAKE_NUMERIC = set("-j", "-l");
+var MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
 var NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
+function makeTargets(words4) {
+  const out2 = [];
+  for (let i = 0; i < words4.length; i++) {
+    const w = words4[i] ?? "";
+    const numeric = MAKE_NUMERIC.has(w) || MAKE_NUMERIC_LONG.has(w);
+    if (!w.startsWith("-") || w === "-") out2.push(w);
+    else if (MAKE_VALUED.has(w) || numeric && NUMBER.test(words4[i + 1] ?? "")) i++;
+  }
+  return out2.filter((t) => !ASSIGN.test(t));
+}
 function getopt(words4) {
   return words4.flatMap((w) => {
     if (!/^-[^-]./.test(w)) return [w];
@@ -7133,9 +7144,7 @@ function heavy(words4) {
       return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
     case "make":
     case "gmake": {
-      const targets2 = positionals(getopt(args), MAKE_VALUED).filter(
-        (t) => !ASSIGN.test(t) && !NUMBER.test(t)
-      );
+      const targets2 = makeTargets(getopt(args));
       return !targets2.every((t) => CLEAN.has(t)) || !targets2.length;
     }
     case "npm":

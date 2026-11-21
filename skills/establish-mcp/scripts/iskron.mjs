@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.16.0";
+var VERSION = "8.16.1";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -16679,6 +16679,7 @@ var MAKE_VALUED = set(
   ...["-E", "--eval"]
 );
 var MAKE_NUMERIC = set("-j", "-l");
+var MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
 var CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
 var DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
 

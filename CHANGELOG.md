@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.1](https://github.com/iskron-ai/skills/compare/v8.16.0...v8.16.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* a number is make's flag value only right after -j or -l ([#890](https://github.com/iskron-ai/skills/issues/890)) ([45f341a](https://github.com/iskron-ai/skills/commit/45f341a42af5bc32fe5cba04b13442d2cd10c4ec))
+
 ## [8.16.0](https://github.com/iskron-ai/skills/compare/v8.15.3...v8.16.0) (2026-11-21)
 
 
