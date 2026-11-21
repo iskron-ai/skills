@@ -1,4 +1,6 @@
-// Heavy work is refused on a nearly full disk (graph @nks/nks-dev, node #11288): the free space
+// Heavy work is refused on a nearly full disk (graph @nks/nks-dev, node #11288) — only when the
+// variable <prefix>DISK_FLOOR_PCT names the floor (DISK_FLOOR_PCT, 10, is recommended); without
+// it the floor is off until the owner accepts it and the volume is not read. The free space
 // of the working tree's volume is read before the move; below the floor the move is refused
 // with the word naming the cleanup; above it, or when the volume did not read, nothing changes.
 import { statfsSync } from "node:fs";
@@ -7,7 +9,7 @@ import { DISK_FLOOR, type DiskFloorWords, envName, type Lang } from "../delivery
 import { buildCommand } from "./buildcmd.ts";
 import { wordsIn } from "./lang.ts";
 
-/** The floor: free space under this share of the volume refuses heavy work. */
+/** The recommended floor for switching it on: free space under this share refuses heavy work. */
 export const DISK_FLOOR_PCT = 10;
 
 /** The refusal's code where moves are said by code (the orchestrator's lead rows). */
@@ -15,12 +17,16 @@ export const DISK_FLOOR_CODE = "disk_floor";
 
 const GB = 1024 ** 3;
 
-/** The floor in effect: the constant, or the probes' variable when it names a number. */
-function floorPct(): number {
+/** The floor in effect: off (null) until the owner accepts it, unless the variable names a
+ * number (DISK_FLOOR_PCT is the recommended one). */
+function floorPct(): number | null {
   const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
   const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : DISK_FLOOR_PCT;
+  return Number.isFinite(n) ? n : null;
 }
+
+/** Whether the floor is on: callers leave before any read when it is off. */
+export const floorOn = (): boolean => floorPct() !== null;
 
 export interface DiskShort {
   path: string;
@@ -30,9 +36,10 @@ export interface DiskShort {
   floor: number;
 }
 
-/** The volume of `path` when its free space is below the floor; null above it or unread. */
+/** The volume of `path` when its free space is below the floor; null above it, unread or off. */
 export function belowFloor(path: string): DiskShort | null {
   const floor = floorPct();
+  if (floor === null) return null;
   try {
     const s = statfsSync(path);
     const total = Number(s.blocks) * Number(s.bsize);
@@ -58,6 +65,7 @@ export function callRefusal(
   call: { subagent: true } | { shell: string },
   lang?: () => Lang | undefined,
 ): string | null {
+  if (!floorOn()) return null;
   const build = "shell" in call ? buildCommand(call.shell) : null;
   if (!dir || ("shell" in call && !build)) return null;
   const short = belowFloor(dir);

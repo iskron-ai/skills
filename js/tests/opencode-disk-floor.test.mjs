@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { PASSED, REFUSED } from "./buildcmd-cases.mjs";
+import { fullVolume } from "./full-volume.mjs";
 import { opencode, repo } from "./rites-kit.mjs";
 
 const VAR = "ISKRON_DISK_FLOOR_PCT";
@@ -49,6 +50,19 @@ test("opencode: below the floor a subagent and a build are refused, cleanup and 
   }
   assert.deepEqual(wrong, []);
   assert.equal(await refusal(run, "read", { path: "x" }), null);
+});
+
+// Off until the owner accepts it (#11288): without the variable a real volume below any floor
+// (full-volume.mjs) refuses nothing.
+test("opencode: without the variable a full volume refuses nothing", async (t) => {
+  delete process.env[VAR];
+  const dir = fullVolume();
+  if (!dir) return t.skip("no real volume below 10% free on this machine");
+  const { rec, run } = await opencode(dir);
+  t.after(() => rec.stop());
+  for (const tool of ["subagent", "task"])
+    assert.equal(await refusal(run, tool, { prompt: "y" }), null, tool);
+  assert.equal(await refusal(run, "shell", { command: "cargo build" }), null);
 });
 
 test("opencode: with the floor at 0 nothing is refused", async (t) => {
