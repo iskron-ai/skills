@@ -165,7 +165,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.15.3";
+var VERSION = "8.16.0";
 
 // js/delivery/words/asks.ts
 var ASK = {
@@ -2323,6 +2323,8 @@ var REGISTRATION_REUSE_MS = 45 * 6e4;
 // js/bridge/oauth/pacing.ts
 var pauses = (v, fallback) => (v || fallback).split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0);
 var DEAD_RECHECK_MS = pauses(process.env[envName("BRIDGE_DEAD_RECHECK_MS")], "1000,2000");
+var LOST_RETRY_MS = Number(process.env[envName("BRIDGE_LOST_RETRY_MS")]) || 1e3;
+var KEEPALIVE_MS = Number(process.env[envName("BRIDGE_KEEPALIVE_MS")]) || 6e4;
 var IN_CALL_WAIT_MS = Number(process.env[envName("BRIDGE_IN_CALL_WAIT_MS")]) || 1e4;
 var ORPHAN_FLOW_MS = Number(process.env[envName("BRIDGE_ORPHAN_FLOW_MS")]) || 5 * 6e4;
 
