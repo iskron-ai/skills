@@ -92,7 +92,22 @@ const MAKE_VALUED = set(
 );
 /** -j and -l take a number, attached or as the next word (`-l 0.5`, `-j8`, `--load-average=2`). */
 const MAKE_NUMERIC = set("-j", "-l");
+const MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
 const NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
+
+/** make's targets: a flag's value is left out, a number only right after -j or -l (alone they
+ * mean no limit, so the next word is theirs only when it is a number); an assignment is a
+ * variable. Anywhere else a number is a target. */
+function makeTargets(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i] ?? "";
+    const numeric = MAKE_NUMERIC.has(w) || MAKE_NUMERIC_LONG.has(w);
+    if (!w.startsWith("-") || w === "-") out.push(w);
+    else if (MAKE_VALUED.has(w) || (numeric && NUMBER.test(words[i + 1] ?? ""))) i++;
+  }
+  return out.filter((t) => !ASSIGN.test(t));
+}
 
 /** make's short flags run together, as getopt reads them: `-sC js` is -s and -C js. */
 function getopt(words: string[]): string[] {
@@ -118,10 +133,7 @@ function heavy(words: string[]): boolean {
       return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
     case "make":
     case "gmake": {
-      // A number is the value of -j or -l; an assignment is a variable, not a target.
-      const targets = positionals(getopt(args), MAKE_VALUED).filter(
-        (t) => !ASSIGN.test(t) && !NUMBER.test(t),
-      );
+      const targets = makeTargets(getopt(args));
       return !targets.every((t) => CLEAN.has(t)) || !targets.length;
     }
     case "npm":

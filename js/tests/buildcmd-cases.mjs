@@ -22,6 +22,11 @@ export const REFUSED = [
   ["make --directory=js test", "make --directory=js test"],
   ["make -Cjs", "make -Cjs"],
   ["make -j 8", "make -j 8"],
+  // a number is make's flag value only right after -j or -l; anywhere else it is a target
+  ["make clean 1.2", "make clean 1.2"],
+  ["make -f - clean 1.2", "make -f - clean 1.2"],
+  ["make 2", "make 2"],
+  ["make -j 4 clean 3", "make -j 4 clean 3"],
   ["cargo --color always build", "cargo --color always build"],
   ["go -C js build", "go -C js build"],
   // prefixes are looked through with their own options
@@ -93,6 +98,9 @@ export const PASSED = [
   "cat <<EOF\nmake test\ncargo build\nEOF",
   "cat <<-'END'\n\tmake test\n\tEND",
   // make's flag values — a load limit, a file, an expression — are never targets
+  "make -j 4 clean",
+  "make -j4 clean",
+  "make --jobs 8 clean",
   "make -l 0.5 clean",
   "make -l0.5 clean",
   "make --load-average=2.5 clean",
