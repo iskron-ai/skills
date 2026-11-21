@@ -39,6 +39,7 @@ const never = new Promise<never>(() => {});
  * `caller` reads the code a caller issued: one that found the record's code
  * dead asks a fresh one (devicehandout.ts), and that one is polled
  * from then on, the old one never again; the poll itself never asks for one.
+ * `renew` false resumes a code past its end as it is, for a caller to renew.
  */
 export function deviceSide(
   meta: Meta,
@@ -46,6 +47,7 @@ export function deviceSide(
   resume: DeviceCode | undefined,
   onCode: (code: DeviceCode | null, unset?: string) => void,
   caller: CallerCodes,
+  renew = true,
 ): DeviceSide {
   const halt = new AbortController();
   let tellFirst: (c: DeviceCode | string | null) => void = () => {};
@@ -88,7 +90,10 @@ export function deviceSide(
       tellFirst(null);
       return never;
     }
-    let code = resume && resume.expires_at > Date.now() ? resume : await fresh(resume?.client_id);
+    let code =
+      resume && (!renew || resume.expires_at > Date.now())
+        ? resume
+        : await fresh(resume?.client_id);
     tellFirst(code ?? unset ?? null);
     if (unset) return giveUp();
     onCode(code);

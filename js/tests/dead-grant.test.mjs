@@ -6,6 +6,8 @@
 // whenever discovery flickered — the login went out only when a call happened to
 // land between flickers.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -16,6 +18,8 @@ import {
   lock,
   pause,
   published,
+  readStore,
+  storeFile,
   waitFor,
   withGrant,
 } from "./grant-kit.mjs";
@@ -66,6 +70,48 @@ test("the background hears a dead grant once and publishes the login at once, wi
     await pause(1500);
     assert.equal(fake.state.counts.refresh - knocks, 1, "no background knocks a dead grant");
     assert.doesNotMatch(grantLog(dir), /token endpoint is gone/);
+    assert.equal(published(dir) - logins, 1, "one login");
+  });
+});
+
+// A verdict heard before a restart: the machine's mark stands in the grant state,
+// and no login is out — the process that judged it died before it published one.
+const markDead = (dir) => {
+  const print = createHash("sha256")
+    .update(readStore(dir).tokens.refresh_token)
+    .digest("base64url")
+    .slice(0, 16);
+  const path = storeFile(dir) + ".grant-state";
+  writeFileSync(path, JSON.stringify({ dead_refresh: print, refused_at: Date.now() }));
+};
+const QUICK_TICK = { ISKRON_BRIDGE_KEEPALIVE_MS: "300" };
+
+test("a grant judged dead before a restart: the background publishes its login at once, no knock", async () => {
+  await withGrant({}, async ({ fake, dir, spawnBridge }) => {
+    await fake.control({ ...DEAD, revoke_access: true });
+    markDead(dir);
+    const knocks = fake.state.counts.refresh;
+    const logins = published(dir);
+    spawnBridge(QUICK_TICK); // no call: only its keepalive
+    await waitFor(() => !!lock(dir)?.authorize_url, "the login, without a call", 3000);
+    await pause(1000); // ticks go on: the login went out once
+    assert.equal(published(dir) - logins, 1, "one login");
+    assert.equal(fake.state.counts.refresh - knocks, 0, "a dead grant is not knocked");
+  });
+});
+
+test("a login the background could not publish is published on its next tick", async () => {
+  await withGrant({}, async ({ fake, dir, spawnBridge }) => {
+    await fake.control({ ...DEAD, revoke_access: true, discoveryStatus: 503 });
+    markDead(dir);
+    const s = readStore(dir);
+    writeFileSync(storeFile(dir), JSON.stringify({ ...s, meta: null })); // discovery must be walked
+    const logins = published(dir);
+    spawnBridge(QUICK_TICK);
+    await pause(1000);
+    assert.equal(published(dir) - logins, 0, "nothing to publish with while discovery is down");
+    await fake.control({ discoveryStatus: null });
+    await waitFor(() => !!lock(dir)?.authorize_url, "the login, once discovery answers", 3000);
     assert.equal(published(dir) - logins, 1, "one login");
   });
 });
