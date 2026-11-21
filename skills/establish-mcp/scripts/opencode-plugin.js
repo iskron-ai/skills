@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.16.1";
+var VERSION = "8.16.2";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -7170,15 +7170,16 @@ function buildCommand(line) {
 
 // js/shared/diskfloor.ts
 import { statfsSync } from "node:fs";
-var DISK_FLOOR_PCT = 10;
 var GB = 1024 ** 3;
 function floorPct() {
   const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
   const n2 = raw ? Number(raw) : NaN;
-  return Number.isFinite(n2) ? n2 : DISK_FLOOR_PCT;
+  return Number.isFinite(n2) ? n2 : null;
 }
+var floorOn = () => floorPct() !== null;
 function belowFloor(path) {
   const floor = floorPct();
+  if (floor === null) return null;
   try {
     const s = statfsSync(path);
     const total = Number(s.blocks) * Number(s.bsize);
@@ -7193,6 +7194,7 @@ function belowFloor(path) {
 var SHOWN = 80;
 var clip = (s) => s.length > SHOWN ? `${s.slice(0, SHOWN - 1)}…` : s;
 function callRefusal(dir, call, lang2) {
+  if (!floorOn()) return null;
   const build = "shell" in call ? buildCommand(call.shell) : null;
   if (!dir || "shell" in call && !build) return null;
   const short2 = belowFloor(dir);
@@ -7218,6 +7220,7 @@ async function setupDiskFloor(ctx) {
   const loc = ctx.location;
   const own = typeof loc?.directory === "string" && loc.directory ? loc.directory : null;
   await ctx.tool.hook("execute.before", async (t) => {
+    if (!floorOn()) return;
     const shell = SHELL.has(t.tool);
     const command = String(t.input?.command ?? "");
     if (shell ? !buildCommand(command) : !SUBAGENT2.has(t.tool)) return;
