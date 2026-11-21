@@ -3606,9 +3606,9 @@ async function withCaller(t) {
   await fake.control({ places: [{ karta: "931", name: CALLER, listening: true }] });
   return fake;
 }
-async function satelliteBridge(t, fake, { dir, args = [] } = {}) {
+async function satelliteBridge(t, fake, { dir, args = [], env = {} } = {}) {
   const home = dir ?? mkdtempSync(join(tmpdir(), "iskron-sat-"));
-  const b = startBridge(fake.mcpUrl, home, process.cwd(), {}, ["--satellite", ...args]);
+  const b = startBridge(fake.mcpUrl, home, process.cwd(), env, ["--satellite", ...args]);
   t.after(() => b.stop());
   assert.ok((await b.call("initialize", INIT)).result);
   return b;
@@ -4489,14 +4489,16 @@ test("satellite: two bridges of one caller standing in parallel take different p
   );
 });
 
-// A claim outliving its place would hold the name from the next run while the
-// bridge that wrote it still lives (leave by word keeps the process up); the
-// process's exit must release it too, not leave a file for the alive-check.
-test("satellite: leaving by word and the process's exit release the claim — the name is free for the next run", async (t) => {
+// Leaving by word closes the socket but does not confirm the seat's revoke: its name
+// remains reserved through process exit until the idle window has passed.
+test("satellite: leave by word retains the name until its channel term, even after exit", async (t) => {
   const fake = await withCaller(t);
   const home = mkdtempSync(join(tmpdir(), "iskron-sat-"));
   const claim = join(home, "satellites", `${CALLER}.sub-1.claim`);
-  const a = await satelliteBridge(t, fake, { dir: home });
+  const a = await satelliteBridge(t, fake, {
+    dir: home,
+    env: { ISKRON_BRIDGE_SATELLITE_TTL: "3" },
+  });
   const ra = await standAs(a, SAT_ARGS);
   assert.ok(!ra.result?.isError, `${textOf(ra)}\n${a.stderr}`);
   assert.equal(placeOf(ra), `${CALLER}.sub-1`, textOf(ra));
@@ -4506,21 +4508,32 @@ test("satellite: leaving by word and the process's exit release the claim — th
     arguments: { realm: "nks-dev", action: "leave" },
   });
   assert.ok(!left.result?.isError, textOf(left));
-  assert.ok(!existsSync(claim), "leaving by word releases the claim");
-  // The left place goes off the board with the channel's idle window.
+  const marker = readFileSync(claim, "utf8");
+  assert.match(marker, /^until \d+\n$/, "leaving by word replaces the pid with a deadline");
+  const deadline = Number(marker.trim().slice(6));
+  assert.ok(deadline > Date.now(), "the reservation is still live");
+  await a.stop();
+  assert.equal(readFileSync(claim, "utf8"), marker, "process exit preserves the marker");
+  // The board can already omit a place whose channel has not yet expired.
   await fake.control({ dropPlaces: [`931:${CALLER}.sub-1`] });
   const b = await satelliteBridge(t, fake, { dir: home });
   const rb = await standAs(b, SAT_ARGS);
   assert.ok(!rb.result?.isError, `${textOf(rb)}\n${b.stderr}`);
+  assert.equal(placeOf(rb), `${CALLER}.sub-2`, `the unconfirmed name is skipped: ${textOf(rb)}`);
+  const nextClaim = join(home, "satellites", `${CALLER}.sub-2.claim`);
   assert.equal(
-    placeOf(rb),
-    `${CALLER}.sub-1`,
-    `the name is free for the next run while the first bridge still lives: ${textOf(rb)}`,
+    readFileSync(nextClaim, "utf8"),
+    `${b.proc.pid}\n`,
+    "the next run claims its name by pid",
   );
-  assert.ok(existsSync(claim), "the next run claims it");
   await b.stop();
   assert.equal(b.proc.exitCode, 0, "the bridge goes with its run");
-  assert.ok(!existsSync(claim), "the process's exit releases the claim");
+  assert.ok(!existsSync(nextClaim), "the confirmed next run releases its claim");
+  assert.equal(readFileSync(claim, "utf8"), marker, "the next exit leaves the marker intact");
+  await new Promise((r) => setTimeout(r, Math.max(0, deadline - Date.now() + 100)));
+  const c = await satelliteBridge(t, fake, { dir: home });
+  const rc = await standAs(c, SAT_ARGS);
+  assert.equal(placeOf(rc), `${CALLER}.sub-1`, `the expired name is free: ${textOf(rc)}`);
 });
 
 // Claims cannot be kept (the claims directory is not a directory, the lock is
