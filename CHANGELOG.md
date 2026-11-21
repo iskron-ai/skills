@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.15.3](https://github.com/iskron-ai/skills/compare/v8.15.2...v8.15.3) (2026-11-20)
+
+
+### Bug Fixes
+
+* **bridge:** a satellite's next run stands anew after an unconfirmed end ([#882](https://github.com/iskron-ai/skills/issues/882)) ([451bce5](https://github.com/iskron-ai/skills/commit/451bce591d3b505770662c25a188807057fab2f3))
+
 ## [8.15.2](https://github.com/iskron-ai/skills/compare/v8.15.1...v8.15.2) (2026-11-20)
 
 
