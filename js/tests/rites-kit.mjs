@@ -57,9 +57,10 @@ const root = join(scratch, "plugin");
 mkdirSync(join(root, "hooks"), { recursive: true });
 if (existsSync(HOOK)) copyFileSync(HOOK, join(root, "hooks", "rituals.mjs"));
 
-/** The hook's whole answer: the parsed JSON it printed, or null for none. */
-export function claudeRaw(dir, input) {
-  const command = ritesOf(input.hook_event_name)[0]?.hooks[0].command ?? "true";
+/** The hook's whole answer: the parsed JSON it printed, or null for none. `wiredOn` — the event
+ * whose declared command runs (an input of an event the plugin no longer wires reaches the hook). */
+export function claudeRaw(dir, input, wiredOn = input.hook_event_name) {
+  const command = ritesOf(wiredOn)[0]?.hooks[0].command ?? "true";
   const env = { ...process.env, CLAUDE_PLUGIN_ROOT: root, ISKRON_BRIDGE_LANG: "ru" };
   const r = spawnSync(command, {
     shell: true,

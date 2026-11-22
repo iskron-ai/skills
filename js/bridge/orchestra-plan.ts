@@ -15,7 +15,7 @@ import { dshReady } from "./orchestra-dsh.ts";
 import { type Launchers, readLaunchers } from "./orchestra-launchers.ts";
 import { type OnlyInvite, selectInvite } from "./orchestra-only.ts";
 import { planLine } from "./orchestra-plan-line.ts";
-import { checkoutFor, coverRefusal, floorRefusal, homeOf } from "./orchestra-raise-gates.ts";
+import { checkoutFor, coverRefusal, homeOf } from "./orchestra-raise-gates.ts";
 import { resolveInvite } from "./orchestra-resolve.ts";
 import { roleRefusal } from "./orchestra-role.ts";
 import { readClones, readRuns, runKey } from "./orchestra-runs.ts";
@@ -99,12 +99,6 @@ export async function planTact(
       const uncovered = await coverRefusal(got, realm, Number(row.karta), canon, !!home);
       if (uncovered) {
         say(w().planRefuse(uncovered));
-        continue;
-      }
-      // The tact's floor (orchestra-start.ts), judged where the checkout is known.
-      const floor = floorRefusal(got);
-      if (floor) {
-        say(w().planRefuse(floor));
         continue;
       }
     } else if (got.code === ORCA) {
