@@ -15,6 +15,7 @@ import { PREPARE, REPO_SIGNS } from "../delivery/index.ts";
 import { repoSigns } from "../shared/reposigns.ts";
 import {
   bash,
+  claudeRaw,
   COVER,
   memory,
   opencode,
@@ -314,6 +315,38 @@ test("opencode: a rituals plugin of the repository's own keeps the delivery sile
     };
     await run("execute.after", p);
     assert.equal(p.result.content, PUSHED);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The disk floor is gone from the delivery (cleaning the disk is the user's own): its variable
+// set to 100 means nothing — a subagent and a build pass in both plugins.
+test("claude code: no rituals entry before a tool; a subagent and a build pass at any ISKRON_DISK_FLOOR_PCT", (t) => {
+  assert.deepEqual(ritesOf("PreToolUse"), []);
+  process.env.ISKRON_DISK_FLOOR_PCT = "100";
+  t.after(() => delete process.env.ISKRON_DISK_FLOOR_PCT);
+  for (const [tool_name, tool_input] of [
+    ["Bash", { command: "make all" }],
+    ["Task", { prompt: "x" }],
+    ["Agent", { prompt: "x" }],
+  ]) {
+    const input = { hook_event_name: "PreToolUse", tool_name, tool_input };
+    assert.equal(claudeRaw(repo(), input, "PostToolUse"), null, tool_name);
+  }
+});
+
+test("opencode: a subagent and a build pass at any ISKRON_DISK_FLOOR_PCT", async (t) => {
+  process.env.ISKRON_DISK_FLOOR_PCT = "100";
+  t.after(() => delete process.env.ISKRON_DISK_FLOOR_PCT);
+  const { rec, run } = await opencode(repo());
+  try {
+    for (const [tool, input] of [
+      ["shell", { command: "make all" }],
+      ["subagent", { description: "x", prompt: "y" }],
+      ["task", { description: "x", prompt: "y" }],
+    ])
+      await run("execute.before", { tool, id: `f-${tool}`, input });
   } finally {
     await rec.stop();
   }

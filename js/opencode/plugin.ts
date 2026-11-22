@@ -20,7 +20,6 @@ import { setupCommands } from "./commands.ts";
 import { createCompaction } from "./compaction.ts";
 import { setupContextGate } from "./context-gate.ts";
 import { standDirect } from "./direct.ts";
-import { setupDiskFloor } from "./diskfloor.ts";
 import { idleHalf } from "./half.ts";
 import { createHalts } from "./halts.ts";
 import { createHookContext } from "./hook-context.ts";
@@ -337,8 +336,6 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   });
   flushUsage = (s) => usage.flush(s);
   await setupContextGate(ctx, { bridgeOf: (s) => half.bridgeOf(s), flush: flushUsage });
-  // A subagent and a build on a nearly full disk are refused with the cleanup named (diskfloor.ts).
-  await setupDiskFloor(ctx).catch((e) => say(W.diskFloorDown((e as Error).message), "error"));
   // A directory unloads after 60 min without durable events — a held seat keeps it (keepalive.ts).
   const keepalive = createKeepAlive(ctx, {
     holders: () => half.holders(),

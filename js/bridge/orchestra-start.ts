@@ -8,7 +8,7 @@ import type { Launcher } from "./orchestra-launchers.ts";
 import { launchArgv, orcaLaunch } from "./orchestra-orca.ts";
 import { bindTerminal } from "./orchestra-orca-bind.ts";
 import { orcaSeesTree } from "./orchestra-orca-seen.ts";
-import { coverRefusal, floorRefusal, homeLine, homeOf } from "./orchestra-raise-gates.ts";
+import { coverRefusal, homeLine, homeOf } from "./orchestra-raise-gates.ts";
 import { type Run, writeRuns } from "./orchestra-runs.ts";
 import { prepareTree } from "./orchestra-tree.ts";
 import { dropUnlaunched } from "./orchestra-tree-drop.ts";
@@ -54,9 +54,6 @@ export async function startRun(
     words(ORCHESTRA).brief(run.realm, run.karta, run.room, run.invite);
   const { exec, dsh } = own.harnesses[run.harness];
   if (!exec && !dsh && prompt.length > BRIEF_MAX) return "brief_too_long";
-  // A nearly full volume refuses the raise before its tree; the call stays unspent (#11288).
-  const floor = floorRefusal(worktree);
-  if (floor) return floor;
   runs[key] = run;
   let treeWhy: string | null;
   try {
