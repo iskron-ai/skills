@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.16.2";
+var VERSION = "8.16.3";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -530,22 +530,6 @@ var DEAF = {
     takenByOther: (name2) => `the seat ${name2} has no hearing (left, or the token died), and the board reads it listening — another session may have taken it`,
     unknownHearing: (name2) => `the seat ${name2} has no hearing (left, or the token died), and the bridge does not know whether another session listens on it`,
     refusal: (why) => `Refused (bridge): ${why}; the call will not go under its signature — not sent. Stand again with iskron_stand: the bridge takes its own seat back by itself and stands beside another's on name.N with hearing.`
-  }
-};
-
-// js/delivery/words/diskfloor.ts
-var DISK_FLOOR = {
-  ru: {
-    refused: (path2, free, total, pct, floor, move2) => `на томе ${path2} свободно ${free} ГБ из ${total} (${pct}%) — ниже пола ${floor}%: ${move2}. Сначала убери своё: target/ и node_modules своих слитых деревьев, git worktree remove слитых; чужое не трогай. Затем повтори.`,
-    moveRaise: () => "подъём агента не запущен",
-    moveSubagent: () => "субагент не запущен",
-    moveBuild: (command) => `сборка «${command}» не запущена`
-  },
-  en: {
-    refused: (path2, free, total, pct, floor, move2) => `the volume of ${path2} has ${free} GB free of ${total} (${pct}%) — below the ${floor}% floor: ${move2}. First clear your own: target/ and node_modules of your merged trees, git worktree remove the merged ones; leave others' alone. Then retry.`,
-    moveRaise: () => "the agent was not raised",
-    moveSubagent: () => "the subagent was not started",
-    moveBuild: (command) => `the build «${command}» was not started`
   }
 };
 
@@ -16651,72 +16635,6 @@ function readCover(dir2, cover = COVER) {
   return seatOfPairs(pairs, cover);
 }
 
-// js/shared/diskfloor.ts
-import { statfsSync } from "node:fs";
-
-// js/shared/buildcmd.ts
-var set = (...s2) => new Set(s2);
-var PREFIXES = {
-  env: { valued: set("-u", "--unset", "-C", "--chdir"), split: set("-S", "--split-string") },
-  nice: { valued: set("-n", "--adjustment") },
-  time: { valued: set("-o", "--output", "-f", "--format") },
-  command: { valued: set(), names: set("-v", "-V") },
-  exec: { valued: set("-a") },
-  nohup: { valued: set() }
-};
-var RESERVED = set("!", "{", "}", "if", "then", "else", "elif", "do", "while", "until");
-var CARGO = set("build", "test", "check", "clippy", "run", "bench");
-var NODE_PM = set("ci", "install", "i", "test", "build");
-var CLEAN = set("clean", "distclean", "mostlyclean");
-var PM_VALUED = {
-  npm: set("--prefix", "-C", "-w", "--workspace"),
-  pnpm: set("-C", "--dir", "--filter", "-F"),
-  yarn: set("--cwd")
-};
-var MAKE_VALUED = set(
-  ...["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir"],
-  ...["-o", "--old-file", "--assume-old", "-W", "--what-if", "--new-file", "--assume-new"],
-  ...["-E", "--eval"]
-);
-var MAKE_NUMERIC = set("-j", "-l");
-var MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
-var CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
-var DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
-
-// js/shared/diskfloor.ts
-var DISK_FLOOR_CODE = "disk_floor";
-var GB = 1024 ** 3;
-function floorPct() {
-  const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
-function belowFloor(path2) {
-  const floor = floorPct();
-  if (floor === null) return null;
-  try {
-    const s2 = statfsSync(path2);
-    const total = Number(s2.blocks) * Number(s2.bsize);
-    const free = Number(s2.bavail) * Number(s2.bsize);
-    if (!(total > 0) || !Number.isFinite(free)) return null;
-    const pct = free / total * 100;
-    return pct < floor ? { path: path2, free, total, pct, floor } : null;
-  } catch {
-    return null;
-  }
-}
-function floorWord(short2, move2, lang2) {
-  const w14 = wordsIn(DISK_FLOOR, lang2);
-  return w14.refused(
-    short2.path,
-    (short2.free / GB).toFixed(1),
-    (short2.total / GB).toFixed(0),
-    short2.pct.toFixed(1),
-    String(short2.floor),
-    move2(w14)
-  );
-}
-
 // js/bridge/orchestra-raise-gates.ts
 var homeOf = (own, realm, karta) => own.homes?.[`${realm}#${karta}`];
 function homeLine(own, r) {
@@ -16730,10 +16648,6 @@ function checkoutFor(own, repository, orca, home) {
   if (!existsSync14(got.path) || !statSync9(got.path).isDirectory())
     return { code: "checkout_absent" };
   return got.path;
-}
-function floorRefusal(worktree) {
-  const short2 = belowFloor(worktree);
-  return short2 ? `${DISK_FLOOR_CODE} — ${floorWord(short2, (d) => d.moveRaise())}` : null;
 }
 async function coverRefusal(worktree, realm, karta, canon2, home = false) {
   const c = readCover(worktree);
@@ -18624,8 +18538,6 @@ async function startRun(authDir, row, own, repository, worktree, runs, key3, can
   const prompt = `${SPAWN_LINE} ${JSON.stringify(pair)} ` + words(ORCHESTRA).brief(run3.realm, run3.karta, run3.room, run3.invite);
   const { exec, dsh } = own.harnesses[run3.harness];
   if (!exec && !dsh && prompt.length > BRIEF_MAX) return "brief_too_long";
-  const floor = floorRefusal(worktree);
-  if (floor) return floor;
   runs[key3] = run3;
   let treeWhy;
   try {
@@ -19182,11 +19094,6 @@ async function planTact(authDir, base, token, mcpUrl, requested, boundary, only)
       const uncovered = await coverRefusal(got, realm, Number(row.karta), canon2, !!home);
       if (uncovered) {
         say3(w10().planRefuse(uncovered));
-        continue;
-      }
-      const floor = floorRefusal(got);
-      if (floor) {
-        say3(w10().planRefuse(floor));
         continue;
       }
     } else if (got.code === ORCA) {
@@ -20763,10 +20670,10 @@ var ownRealmList = (msg) => String(msg.id ?? "").startsWith(`${ID_PREFIX}thin-re
 function outsideSetRefusal(msg) {
   if (msg?.method !== "tools/call" || msg.id === void 0 || msg.id === null) return null;
   if (ownRealmList(msg)) return null;
-  const set2 = toolSet();
+  const set = toolSet();
   const name2 = String(msg.params?.name ?? "");
-  if (!set2 || set2.has(name2)) return null;
-  const list3 = [...set2].sort().join(", ");
+  if (!set || set.has(name2)) return null;
+  const list3 = [...set].sort().join(", ");
   const text9 = words(NARROW).outsideSet(name2, list3);
   return {
     jsonrpc: "2.0",
@@ -20805,9 +20712,9 @@ function channelForHarness(t) {
 function narrowToolList(reply2) {
   const tools = reply2?.result?.tools;
   if (!Array.isArray(tools) || clientName2() === SURFACE_CLIENT) return reply2;
-  const set2 = toolSet();
+  const set = toolSet();
   const fields = harnessAsksFields();
-  const shown2 = tools.filter((t) => !set2 || set2.has(String(t?.name))).map((t) => t?.name === tool("channel") ? channelForHarness(t) : t).map((t) => fields || !t || !("outputSchema" in t) ? t : withoutSchema(t));
+  const shown2 = tools.filter((t) => !set || set.has(String(t?.name))).map((t) => t?.name === tool("channel") ? channelForHarness(t) : t).map((t) => fields || !t || !("outputSchema" in t) ? t : withoutSchema(t));
   return { ...reply2, result: { ...reply2.result, tools: shown2 } };
 }
 

@@ -198,22 +198,6 @@ var FRAME_TEXT = {
   }
 };
 
-// js/delivery/words/diskfloor.ts
-var DISK_FLOOR = {
-  ru: {
-    refused: (path, free, total, pct, floor, move) => `на томе ${path} свободно ${free} ГБ из ${total} (${pct}%) — ниже пола ${floor}%: ${move}. Сначала убери своё: target/ и node_modules своих слитых деревьев, git worktree remove слитых; чужое не трогай. Затем повтори.`,
-    moveRaise: () => "подъём агента не запущен",
-    moveSubagent: () => "субагент не запущен",
-    moveBuild: (command) => `сборка «${command}» не запущена`
-  },
-  en: {
-    refused: (path, free, total, pct, floor, move) => `the volume of ${path} has ${free} GB free of ${total} (${pct}%) — below the ${floor}% floor: ${move}. First clear your own: target/ and node_modules of your merged trees, git worktree remove the merged ones; leave others' alone. Then retry.`,
-    moveRaise: () => "the agent was not raised",
-    moveSubagent: () => "the subagent was not started",
-    moveBuild: (command) => `the build «${command}» was not started`
-  }
-};
-
 // js/delivery/words/prepare.ts
 var RITE_RU = (what, where) => `свой ${what} в ${where} — ритуалы несёт поставка, а при своём она молчит: сними его, а в скрипте с ветками иных родов — лишь ветку этого (переход Шага 4 iskronify)`;
 var RITE_EN = (what, where) => `the repo's own ${what} in ${where} — the delivery carries the rituals and keeps silent beside its own: take it off, and in a script with branches of other kinds only this one's branch (the transition of iskronify Step 4)`;
@@ -806,268 +790,6 @@ function repoContractWarning(dir, lang2) {
   }
 }
 
-// js/shared/diskfloor.ts
-import { statfsSync } from "node:fs";
-
-// js/shared/shellwords.ts
-var BLANK = /* @__PURE__ */ new Set([" ", "	"]);
-var ENDS = /* @__PURE__ */ new Set([";", "(", ")"]);
-var IN_DOUBLE = /* @__PURE__ */ new Set(['"', "\\", "$", "`", "\n"]);
-var REDIRECT = /^(?:&>>?|>>|>&|>\||>|<<<|<<-|<<|<&|<>|<)/;
-function skipHeredocs(line, i, docs) {
-  for (let d = docs.shift(); d; d = docs.shift()) {
-    while (i < line.length) {
-      const end = line.indexOf("\n", i + 1);
-      const body = line.slice(i + 1, end < 0 ? line.length : end);
-      i = end < 0 ? line.length : end;
-      if ((d.tabs ? body.replace(/^\t+/, "") : body) === d.delim) break;
-    }
-  }
-  return i;
-}
-function shellCommands(line) {
-  const out = [];
-  const docs = [];
-  let words3 = [];
-  let word2 = "";
-  let open = false;
-  let quoted = false;
-  let quote = "";
-  let target = "";
-  const endWord = () => {
-    if (open && target) {
-      if (target !== "word") docs.push({ delim: word2, tabs: target === "<<-" });
-      target = "";
-    } else if (open) words3.push(word2);
-    word2 = "";
-    open = quoted = false;
-  };
-  const endCommand = () => {
-    endWord();
-    target = "";
-    if (words3.length) out.push(words3);
-    words3 = [];
-  };
-  for (let i = 0; i < line.length; i++) {
-    const c = line.charAt(i);
-    const next = line.charAt(i + 1);
-    if (quote === "'") {
-      if (c === "'") quote = "";
-      else word2 += c;
-    } else if (quote === '"') {
-      if (c === '"') quote = "";
-      else if (c === "\\" && next === "\n") i++;
-      else if (c === "\\" && IN_DOUBLE.has(next)) word2 += line.charAt(++i);
-      else word2 += c;
-    } else if (c === "'" || c === '"') {
-      quote = c;
-      open = quoted = true;
-    } else if (c === "\\" && next === "\n") i++;
-    else if (c === "\\") {
-      if (i + 1 < line.length) word2 += line.charAt(++i);
-      open = quoted = true;
-    } else if (c === "#" && !open) {
-      while (i + 1 < line.length && line.charAt(i + 1) !== "\n") i++;
-    } else if (c === ">" || c === "<" || c === "&" && next === ">") {
-      if (open && !quoted && /^\d+$/.test(word2) && !target) word2 = "";
-      else endWord();
-      open = false;
-      const op = REDIRECT.exec(line.slice(i))?.[0] ?? c;
-      i += op.length - 1;
-      target = op === "<<" || op === "<<-" ? op : "word";
-    } else if (c === "\n") {
-      endCommand();
-      i = skipHeredocs(line, i, docs);
-    } else if (BLANK.has(c)) endWord();
-    else if (ENDS.has(c) && !(c === "(" && open)) endCommand();
-    else if (c === "|") {
-      if (next === "|") i++;
-      endCommand();
-    } else if (c === "&") {
-      if (next === "&") i++;
-      endCommand();
-    } else {
-      word2 += c;
-      open = true;
-    }
-  }
-  endCommand();
-  return out;
-}
-
-// js/shared/buildcmd.ts
-var set = (...s) => new Set(s);
-var PREFIXES = {
-  env: { valued: set("-u", "--unset", "-C", "--chdir"), split: set("-S", "--split-string") },
-  nice: { valued: set("-n", "--adjustment") },
-  time: { valued: set("-o", "--output", "-f", "--format") },
-  command: { valued: set(), names: set("-v", "-V") },
-  exec: { valued: set("-a") },
-  nohup: { valued: set() }
-};
-var RESERVED = set("!", "{", "}", "if", "then", "else", "elif", "do", "while", "until");
-var ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
-function split(o, takes) {
-  const eq = o.indexOf("=");
-  if (o.startsWith("--") && eq > 0) return [o.slice(0, eq), o.slice(eq + 1)];
-  if (!o.startsWith("--") && o.length > 2 && takes(o.slice(0, 2)))
-    return [o.slice(0, 2), o.slice(2)];
-  return [o, void 0];
-}
-function unwrap(words3) {
-  let w = words3;
-  for (; ; ) {
-    const head2 = w[0] ?? "";
-    if (ASSIGN.test(head2) || RESERVED.has(head2)) {
-      w = w.slice(1);
-      continue;
-    }
-    const p = PREFIXES[head2.split("/").pop() ?? ""];
-    if (!p) return w;
-    w = w.slice(1);
-    while ((w[0] ?? "").startsWith("-") && w[0] !== "-") {
-      const o = w[0] ?? "";
-      if (o === "--") {
-        w = w.slice(1);
-        break;
-      }
-      const [name, value] = split(o, (n) => p.valued.has(n) || !!p.split?.has(n));
-      if (p.names?.has(name)) return [];
-      if (p.split?.has(name)) {
-        const command = value ?? w[1] ?? "";
-        w = [...command.split(/\s+/).filter(Boolean), ...w.slice(value === void 0 ? 2 : 1)];
-        break;
-      }
-      w = w.slice(value === void 0 && p.valued.has(name) ? 2 : 1);
-    }
-    if (w[0] === "-") w = w.slice(1);
-  }
-}
-function positionals(words3, valued) {
-  const out = [];
-  for (let i = 0; i < words3.length; i++) {
-    const w = words3[i] ?? "";
-    if (!w.startsWith("-") || w === "-") out.push(w);
-    else if (split(w, (n) => valued.has(n))[1] === void 0 && valued.has(w)) i++;
-  }
-  return out;
-}
-var CARGO = set("build", "test", "check", "clippy", "run", "bench");
-var NODE_PM = set("ci", "install", "i", "test", "build");
-var CLEAN = set("clean", "distclean", "mostlyclean");
-var PM_VALUED = {
-  npm: set("--prefix", "-C", "-w", "--workspace"),
-  pnpm: set("-C", "--dir", "--filter", "-F"),
-  yarn: set("--cwd")
-};
-var MAKE_VALUED = set(
-  ...["-C", "--directory", "-f", "--file", "--makefile", "-I", "--include-dir"],
-  ...["-o", "--old-file", "--assume-old", "-W", "--what-if", "--new-file", "--assume-new"],
-  ...["-E", "--eval"]
-);
-var MAKE_NUMERIC = set("-j", "-l");
-var MAKE_NUMERIC_LONG = set("--jobs", "--load-average", "--max-load");
-var NUMBER = /^(?:\d+\.?\d*|\.\d+)$/;
-function makeTargets(words3) {
-  const out = [];
-  for (let i = 0; i < words3.length; i++) {
-    const w = words3[i] ?? "";
-    const numeric = MAKE_NUMERIC.has(w) || MAKE_NUMERIC_LONG.has(w);
-    if (!w.startsWith("-") || w === "-") out.push(w);
-    else if (MAKE_VALUED.has(w) || numeric && NUMBER.test(words3[i + 1] ?? "")) i++;
-  }
-  return out.filter((t) => !ASSIGN.test(t));
-}
-function getopt(words3) {
-  return words3.flatMap((w) => {
-    if (!/^-[^-]./.test(w)) return [w];
-    const out = [];
-    for (let k = 1; k < w.length; k++) {
-      const f = `-${w.charAt(k)}`;
-      if (MAKE_VALUED.has(f) || MAKE_NUMERIC.has(f)) return [...out, f + w.slice(k + 1)];
-      out.push(f);
-    }
-    return out;
-  });
-}
-var CARGO_VALUED = set("--manifest-path", "--config", "-Z", "--color", "-C");
-var DOCKER_VALUED = set("-H", "--host", "-c", "--context", "--config", "-l", "--log-level");
-function heavy(words3) {
-  const program = (words3[0] ?? "").split("/").pop() ?? "";
-  const args = words3.slice(1);
-  switch (program) {
-    case "cargo":
-      return CARGO.has(positionals(args, CARGO_VALUED)[0] ?? "");
-    case "make":
-    case "gmake": {
-      const targets2 = makeTargets(getopt(args));
-      return !targets2.every((t) => CLEAN.has(t)) || !targets2.length;
-    }
-    case "npm":
-    case "pnpm":
-    case "yarn": {
-      const [sub = "", script = ""] = positionals(args, PM_VALUED[program] ?? set());
-      return NODE_PM.has(sub) || (sub === "run" || sub === "run-script") && NODE_PM.has(script);
-    }
-    case "go":
-      return set("build", "test").has(positionals(args, set("-C"))[0] ?? "");
-    case "docker": {
-      const [sub = "", then = ""] = positionals(args, DOCKER_VALUED);
-      return sub === "build" || set("buildx", "image", "builder").has(sub) && then === "build";
-    }
-    default:
-      return false;
-  }
-}
-function buildCommand(line) {
-  for (const words3 of shellCommands(line)) if (heavy(unwrap(words3))) return words3.join(" ");
-  return null;
-}
-
-// js/shared/diskfloor.ts
-var GB = 1024 ** 3;
-function floorPct() {
-  const raw = process.env[envName("DISK_FLOOR_PCT")]?.trim();
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
-var floorOn = () => floorPct() !== null;
-function belowFloor(path) {
-  const floor = floorPct();
-  if (floor === null) return null;
-  try {
-    const s = statfsSync(path);
-    const total = Number(s.blocks) * Number(s.bsize);
-    const free = Number(s.bavail) * Number(s.bsize);
-    if (!(total > 0) || !Number.isFinite(free)) return null;
-    const pct = free / total * 100;
-    return pct < floor ? { path, free, total, pct, floor } : null;
-  } catch {
-    return null;
-  }
-}
-var SHOWN = 80;
-var clip = (s) => s.length > SHOWN ? `${s.slice(0, SHOWN - 1)}…` : s;
-function callRefusal(dir, call, lang2) {
-  if (!floorOn()) return null;
-  const build = "shell" in call ? buildCommand(call.shell) : null;
-  if (!dir || "shell" in call && !build) return null;
-  const short = belowFloor(dir);
-  if (!short) return null;
-  return floorWord(short, (w) => build ? w.moveBuild(clip(build)) : w.moveSubagent(), lang2?.());
-}
-function floorWord(short, move, lang2) {
-  const w = wordsIn(DISK_FLOOR, lang2);
-  return w.refused(
-    short.path,
-    (short.free / GB).toFixed(1),
-    (short.total / GB).toFixed(0),
-    short.pct.toFixed(1),
-    String(short.floor),
-    move(w)
-  );
-}
-
 // js/shared/ritualcover.ts
 import { readdirSync, readFileSync as readFileSync4 } from "node:fs";
 import { join as join5 } from "node:path";
@@ -1525,7 +1247,6 @@ function lastTurn(path) {
 }
 
 // js/cli/rituals-hook.ts
-var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["Task", "Agent"]);
 function hookInput() {
   try {
     if (!process.stdin.isTTY) return JSON.parse(readFileSync8(0, "utf8")) ?? {};
@@ -1566,26 +1287,13 @@ function turnWord(input, dir) {
   const turn = lastTurn(input.transcript_path);
   return turn && lostWord(turn) ? wordsIn(TURN, cover?.lang).wake() : null;
 }
-function floorDenial(input, dir) {
-  const tool2 = input.tool_name;
-  const call = tool2 === "Bash" ? { shell: String(input.tool_input?.command ?? "") } : SUBAGENT_TOOLS.has(String(tool2)) ? { subagent: true } : null;
-  return call ? callRefusal(dir, call, () => ritualCover(dir)?.lang) : null;
-}
 try {
   const input = hookInput();
   const dir = typeof input.cwd === "string" && input.cwd ? input.cwd : process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  if (input.hook_event_name === "PreToolUse") {
-    const denied = floorDenial(input, dir);
-    if (denied)
-      process.stdout.write(
-        `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: denied } })}
-`
-      );
-  }
   const reason = input.hook_event_name === "Stop" ? turnWord(input, dir) : null;
   if (reason) process.stdout.write(`${JSON.stringify({ decision: "block", reason })}
 `);
-  const said = input.hook_event_name === "PreToolUse" ? [] : riteWords(input, dir);
+  const said = riteWords(input, dir);
   if (said.length) {
     const hookEventName = String(input.hook_event_name);
     const additionalContext = said.join("\n\n");
