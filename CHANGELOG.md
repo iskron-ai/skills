@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.3](https://github.com/iskron-ai/skills/compare/v8.16.2...v8.16.3) (2026-11-22)
+
+
+### Bug Fixes
+
+* the disk floor is removed from the delivery — cleaning the disk is the user's own ([#895](https://github.com/iskron-ai/skills/issues/895)) ([47591aa](https://github.com/iskron-ai/skills/commit/47591aaf16fbe56a5a620bdaff226926823b651d))
+
 ## [8.16.2](https://github.com/iskron-ai/skills/compare/v8.16.1...v8.16.2) (2026-11-21)
 
 
