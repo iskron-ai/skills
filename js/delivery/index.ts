@@ -67,6 +67,7 @@ export { CHANNEL, type ChannelWords } from "./words/channel.ts";
 export { CLI, type CliWords } from "./words/cli.ts";
 export { COMPACTION, type CompactionWords } from "./words/compaction.ts";
 export { DEAF, type DeafWords } from "./words/deaf.ts";
+export { DIRECT_READ_NAMES, DIRECT_READ_WORD } from "./words/direct-reads.ts";
 export { DOCTOR, type DoctorWords } from "./words/doctor.ts";
 export { HARNESS, type HarnessWords } from "./words/doctorharness.ts";
 export { DOOR, type DoorWords } from "./words/door.ts";
