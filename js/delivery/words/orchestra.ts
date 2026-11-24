@@ -45,6 +45,7 @@ export interface OrchestraWords {
   lead: (lines: string) => string;
   /** Исход по одному зову: граф, дело (id), номер зова в деле и код исхода (коды — слова api и моста). */
   leadRow: (realm: string, room: string, invite: number, code: string) => string;
+  seatEnded: () => string;
   dormant: (cursor: string) => string;
   /** Флаг лежит, а согласия машины в среде демона нет — ни подъёма, ни погашения. */
   leadNotAdmitted: () => string;
@@ -136,6 +137,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `клон ${repository}: ${state}${why ? ` (${why})` : ""} (${at})`,
     lead: (lines) => `ведение: ${lines}`,
     leadRow: (realm, room, invite, code) => `${realm} дело ${room} зов ${invite}: ${code}`,
+    seatEnded: () => "seat_ended",
     dormant: (cursor) => `dormant, ждёт после ${cursor || "начала журнала"}`,
     leadNotAdmitted: () =>
       "флаг лежит, но машина не допустила оркестратора (orchestra on, набранная в терминале, или ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
@@ -220,6 +222,7 @@ export const ORCHESTRA: Readonly<Record<Lang, OrchestraWords>> = {
       `clone ${repository}: ${state}${why ? ` (${why})` : ""} (${at})`,
     lead: (lines) => `leading: ${lines}`,
     leadRow: (realm, room, invite, code) => `${realm} case ${room} invite ${invite}: ${code}`,
+    seatEnded: () => "seat_ended",
     dormant: (cursor) => `dormant, waiting after ${cursor || "journal start"}`,
     leadNotAdmitted: () =>
       "the flag lies, but the machine has not admitted the orchestrator (orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",

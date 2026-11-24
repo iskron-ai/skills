@@ -69,12 +69,13 @@ test("quench: our seat's idle_due after it sat gets one composition_empty stop o
   assert.match(stops[0].body.client_id, /^orchestra-[0-9a-f]{32}$/);
   // The order carries the idle_due's n: the server lays it only if no newer signal came (#7518).
   assert.equal(stops[0].body.if_signal_n, 3);
-  // The fake knows no such live seat (410): the seat is gone, the run ended, nothing repeats.
+  // The fake knows no such live seat (410): reap the exact client, not the slot by assumption.
   assert.match(empty.out, /invite 9: seat_gone/, empty.out);
   assert.equal(o.runs()[`${REALM}|${ROOM}|9`].state, "raised");
-  assert.equal(o.closes().length, 0, "410 is neither runtime exit nor completed stop");
+  assert.deepEqual(o.closes(), [["terminal", "close", "--terminal", "term_fake", "--json"]]);
+  assert.ok(o.runs()[`${REALM}|${ROOM}|9`].tree.exit, "the exact client's exit was observed");
   await o.step();
-  assert.equal(o.closes().length, 0, "unknown runtime is never closed or cleaned");
+  assert.equal(o.closes().length, 1, "the observed client is not closed twice");
 });
 
 test("quench: a membership landing after the read cancels the end — the re-check reads the tape again", async (t) => {
@@ -883,7 +884,9 @@ test("close: after Orca restarted, the old runtime's handle is not closed — sa
   const shows = o.terminals().length;
   const again = await o.step();
   assert.doesNotMatch(again.out, /invite 9: ended/, again.out);
-  assert.equal(o.terminals().length, shows, "no close attempt for another runtime");
+  assert.ok(o.terminals().length > shows, "unconfirmed binding is retried");
+  assert.equal(o.closes().length, 0, "another runtime is never closed");
+  assert.equal(o.runs()[`${REALM}|${ROOM}|9`].tree.exit, undefined, "slot remains held");
 });
 
 test("quench: a seat the orchestrator did not launch is never stopped", async (t) => {
