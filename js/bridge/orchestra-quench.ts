@@ -13,6 +13,7 @@ import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import { signalRun } from "./orchestra-dsh-reinvite.ts";
 import type { Run } from "./orchestra-runs.ts";
+import { markEndedSeats } from "./orchestra-seat-end.ts";
 import { RAISE_WINDOW_MS } from "./orchestra-window.ts";
 export { closeEnded, expireLaunches, settleStops } from "./orchestra-run-ends.ts";
 export { stopLapsed } from "./orchestra-window.ts";
@@ -99,9 +100,10 @@ export async function quench(
   gone?: { gone: boolean },
   now = Date.now(),
 ): Promise<string[]> {
-  const said: string[] = [];
+  const said = await markEndedSeats(base, token, runs, gone);
   const isDue = (r: Run): boolean =>
     r.state === "raised" &&
+    !r.seat_ended &&
     !r.exec?.exit &&
     !r.tree?.exit &&
     r.rooms === 0 &&
@@ -129,9 +131,9 @@ export async function quench(
         }
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
-        // A missing seat proves neither exec exit nor durable suppression (#9256).
-        // Keep the live Run available to the exact-client observer.
-        if (!r.exec && !r.tree) r.state = "ended";
+        // A missing seat proves neither exit nor suppression; keep the run live (#9256).
+        if (r.exec || r.tree) r.seat_ended = true;
+        else r.state = "ended";
         said.push(w().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
       } else if (got.status === 409 && r.idle_due) {
         // The platform saw a live composition (#7518): the agent lives, the order is not repeated —

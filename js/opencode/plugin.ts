@@ -19,7 +19,7 @@ import { setupChannel } from "./channel.ts";
 import { setupCommands } from "./commands.ts";
 import { createCompaction } from "./compaction.ts";
 import { setupContextGate } from "./context-gate.ts";
-import { standDirect } from "./direct.ts";
+import { directWord, standDirect } from "./direct.ts";
 import { idleHalf } from "./half.ts";
 import { createHalts } from "./halts.ts";
 import { createHookContext } from "./hook-context.ts";
@@ -296,8 +296,10 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
           }
           if (spawnStarts.has(sid)) half.finishSeat(sid);
           const ready = hookContext.take(sid, req.messages);
+          const direct = directWord(req.tools);
           // A word laid by two prompts of one request goes into it once (#9654).
-          for (const text of new Set(ready.words)) req.system.push({ type: "text", text });
+          for (const text of new Set(direct ? [...ready.words, direct] : ready.words))
+            req.system.push({ type: "text", text });
           spawnStarts.delivered(sid, ready.words);
           // Counts wake no turn; take them only when their own root actually requests a model.
           if (ready.ride)
