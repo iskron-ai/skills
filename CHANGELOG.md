@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.4](https://github.com/iskron-ai/skills/compare/v8.16.3...v8.16.4) (2026-11-24)
+
+
+### Bug Fixes
+
+* **bridge:** bounded in-flight calls on session turnover, reap of ended seats, direct-reads word ([#898](https://github.com/iskron-ai/skills/issues/898)) ([72f7fa9](https://github.com/iskron-ai/skills/commit/72f7fa965ac57c93fdb5f272026ae05a1b49b9d3))
+
 ## [8.16.3](https://github.com/iskron-ai/skills/compare/v8.16.2...v8.16.3) (2026-11-22)
 
 

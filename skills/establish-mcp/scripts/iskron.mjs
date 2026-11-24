@@ -237,7 +237,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.16.3";
+var VERSION = "8.16.4";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -1090,6 +1090,7 @@ var ORCHESTRA = {
     cloneOut: (repository, state2, why, at3) => `клон ${repository}: ${state2}${why ? ` (${why})` : ""} (${at3})`,
     lead: (lines) => `ведение: ${lines}`,
     leadRow: (realm, room, invite, code2) => `${realm} дело ${room} зов ${invite}: ${code2}`,
+    seatEnded: () => "seat_ended",
     dormant: (cursor) => `dormant, ждёт после ${cursor || "начала журнала"}`,
     leadNotAdmitted: () => "флаг лежит, но машина не допустила оркестратора (orchestra on, набранная в терминале, или ISKRON_ORCHESTRA=1 в среде демона) — агенты не поднимаются и не гасятся",
     leadIncomplete: (errors) => `снимок требований неполон (${errors}) — по нему ничего не поднято и не погашено`,
@@ -1139,6 +1140,7 @@ ${rows}` : " зовов нет"}`,
     cloneOut: (repository, state2, why, at3) => `clone ${repository}: ${state2}${why ? ` (${why})` : ""} (${at3})`,
     lead: (lines) => `leading: ${lines}`,
     leadRow: (realm, room, invite, code2) => `${realm} case ${room} invite ${invite}: ${code2}`,
+    seatEnded: () => "seat_ended",
     dormant: (cursor) => `dormant, waiting after ${cursor || "journal start"}`,
     leadNotAdmitted: () => "the flag lies, but the machine has not admitted the orchestrator (orchestra on typed at a terminal, or ISKRON_ORCHESTRA=1 in the daemon's environment) — no agent is raised or extinguished",
     leadIncomplete: (errors) => `the demands snapshot is incomplete (${errors}) — nothing raised or extinguished by it`,
@@ -6589,7 +6591,22 @@ var TLS_REFUSALS = /* @__PURE__ */ new Set([
 ]);
 var bearer = () => CFG.pat ?? loadStore().tokens?.access_token ?? null;
 async function post2(msg, heard2) {
-  const onMessage = (m) => isListChanged(m) ? heardListChanged(msg, emit) : heard2(m);
+  let answered2 = false;
+  const onMessage = (m) => {
+    if (msg.method && msg.id !== void 0 && m.id === msg.id) answered2 = true;
+    if (isListChanged(m)) heardListChanged(msg, emit);
+    else heard2(m);
+  };
+  const requireAnswer = () => {
+    if (msg.method && msg.id !== void 0 && !answered2)
+      throw new UpstreamError(
+        "upstream ended the response without an answer",
+        "network",
+        null,
+        UpstreamError.UNKNOWN,
+        true
+      );
+  };
   const unnamed = unnamedSeatRefusal(msg);
   if (unnamed) return void onMessage(unnamed);
   const headers2 = {
@@ -6676,7 +6693,10 @@ async function post2(msg, heard2) {
     state.sessionId = sid;
     state.sessionToken = token;
   }
-  if (res.status === 202 || res.status === 204) return;
+  if (res.status === 202 || res.status === 204) {
+    requireAnswer();
+    return;
+  }
   if (!res.ok) {
     const text10 = (await res.text().catch(() => "")).slice(0, 300);
     throw new UpstreamError(
@@ -6689,8 +6709,7 @@ async function post2(msg, heard2) {
   const ctype = res.headers.get("content-type") || "";
   if (ctype.includes("text/event-stream")) {
     try {
-      if (!res.body) return;
-      for await (const data2 of sseEvents(res.body)) {
+      for await (const data2 of res.body ? sseEvents(res.body) : []) {
         try {
           onMessage(JSON.parse(data2));
         } catch {
@@ -6706,15 +6725,18 @@ async function post2(msg, heard2) {
         true
       );
     }
+    requireAnswer();
     return;
   }
   const text9 = await res.text();
-  if (!text9.trim()) return;
-  try {
-    onMessage(JSON.parse(text9));
-  } catch {
-    throw new UpstreamError(`upstream sent unparseable JSON: ${text9.slice(0, 200)}`, "http");
+  if (text9.trim()) {
+    try {
+      onMessage(JSON.parse(text9));
+    } catch {
+      throw new UpstreamError(`upstream sent unparseable JSON: ${text9.slice(0, 200)}`, "http");
+    }
   }
+  requireAnswer();
 }
 var reinit = scoped(() => ({ inFlight: null }));
 var reinitHooks = [];
@@ -15773,6 +15795,45 @@ function dormantShare(source, runs) {
   );
 }
 
+// js/bridge/orchestra-seat-end.ts
+async function seatEnded(base, token, r) {
+  try {
+    if (!r.standing_id) return false;
+    const res = await namedFetch(
+      `${base}/me/standings?standing=${encodeURIComponent(r.standing_id)}`,
+      {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(1e4)
+      }
+    );
+    if (!res.ok) return false;
+    const body = await res.json();
+    const rows = Array.isArray(body) ? body : body?.items;
+    if (!Array.isArray(rows) || rows.length !== 1) return false;
+    const row = rows[0];
+    if (!row || typeof row !== "object" || Array.isArray(row)) return false;
+    const item = row;
+    const id = item.id ?? item.standing_id;
+    return (id === void 0 || id === r.standing_id) && typeof item.ended_at === "string" && Number.isFinite(Date.parse(item.ended_at));
+  } catch {
+    return false;
+  }
+}
+async function markEndedSeats(base, token, runs, gone) {
+  const said2 = [];
+  for (const r of Object.values(runs)) {
+    if (gone?.gone) break;
+    if (r.state !== "raised" || r.exec?.exit || r.tree?.exit || r.rooms !== 0 || !r.sat || !r.standing_id || r.idle_due || r.seat_ended)
+      continue;
+    if (await seatEnded(base, token, r) && !gone?.gone) {
+      r.seat_ended = true;
+      const w14 = words(ORCHESTRA);
+      said2.push(w14.leadRow(r.realm, r.room, r.invite, w14.seatEnded()));
+    }
+  }
+  return said2;
+}
+
 // js/bridge/orchestra-window.ts
 var RAISE_WINDOW_MS = Number(process.env[envName("ORCHESTRA_RAISE_WINDOW_MS")]) || 15 * 6e4;
 var DORMANT_WINDOW_MS = Number(process.env[envName("ORCHESTRA_DORMANT_WINDOW_MS")]) || 3 * 60 * 6e4;
@@ -16030,8 +16091,8 @@ async function order(base, token, r, key3) {
   return { status: res.status, id: typeof body.id === "string" ? body.id : "" };
 }
 async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
-  const said2 = [];
-  const isDue = (r) => r.state === "raised" && !r.exec?.exit && !r.tree?.exit && r.rooms === 0 && !!r.standing_id && (!!r.idle_due || !r.sat && now2 - Date.parse(r.at) > RAISE_WINDOW_MS);
+  const said2 = await markEndedSeats(base, token, runs, gone);
+  const isDue = (r) => r.state === "raised" && !r.seat_ended && !r.exec?.exit && !r.tree?.exit && r.rooms === 0 && !!r.standing_id && (!!r.idle_due || !r.sat && now2 - Date.parse(r.at) > RAISE_WINDOW_MS);
   for (const [key3, r] of Object.entries(runs).filter(([, r2]) => isDue(r2))) {
     if (gone?.gone) break;
     try {
@@ -16052,7 +16113,8 @@ async function quench(base, token, runs, reread, gone, now2 = Date.now()) {
         }
         said2.push(w2().leadRow(r.realm, r.room, r.invite, `${why}stop_ordered`));
       } else if (got.status === 410) {
-        if (!r.exec && !r.tree) r.state = "ended";
+        if (r.exec || r.tree) r.seat_ended = true;
+        else r.state = "ended";
         said2.push(w2().leadRow(r.realm, r.room, r.invite, `${why}seat_gone`));
       } else if (got.status === 409 && r.idle_due) {
         delete r.idle_due;
@@ -17672,6 +17734,7 @@ function reapCause(r, now2 = Date.now()) {
   if (r.harness !== "opencode" || r.dsh || !(r.tree || r.exec) || !r.terminal || !r.runtime)
     return null;
   if (r.reaped || r.closed === "client_exited" || r.exec?.exit || r.tree?.exit) return null;
+  if (r.seat_ended) return "seat_ended";
   if (r.state === "stopping") {
     if (r.stop_outcome === "expired" || r.stop_outcome === "failed")
       return `stop_${r.stop_outcome}`;
@@ -20356,7 +20419,7 @@ function seatOf2(id, to) {
   return H2.door && H2.currentKey && namesMain(id, to) ? "main" : null;
 }
 var holdsSeat = (id, framed, to = {}) => framed ? seatOf2(id, to) !== null : H2.door?.standingId === id || extraPlaces().some((p) => p.door.standingId === id);
-function seatEnded(key3, frame2) {
+function seatEnded2(key3, frame2) {
   const id = noteEndedSeat(frame2.standing_id);
   const reason = typeof frame2.by === "string" ? `revoked:${frame2.by}` : frame2.reason === "silent" ? "revoked:silent" : "";
   const beside = id ? extraPlaces().find((p) => p.door.standingId === id) : void 0;
@@ -20384,7 +20447,7 @@ function namesMain(id, to) {
   return toId === id && (!name2 || name2 === (state.standing?.name ?? ""));
 }
 whenStopped(
-  (key3, code2, reason, ended) => ended ? seatEnded(key3, ended) : stopAgent(key3, `close ${code2}`, reason)
+  (key3, code2, reason, ended) => ended ? seatEnded2(key3, ended) : stopAgent(key3, `close ${code2}`, reason)
 );
 
 // js/shared/halt-phase.ts

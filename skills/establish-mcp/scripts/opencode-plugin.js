@@ -181,7 +181,7 @@ var SPAWNED_FOR = {
 };
 
 // js/delivery/version.ts
-var VERSION = "8.16.3";
+var VERSION = "8.16.4";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -339,6 +339,16 @@ var COMPACTION = {
     bare: () => `Iskron: the context was compacted. Before the first substantive move load the door (the iskron skill) and the role's skills — the door names them; only those, not all the earlier ones. The summary is a pointer, not the record: a decision, ground or fact from it you lean on — read it in the graph again (the recall skill).`,
     restand: (karta, name, realm) => ` As the first move call iskron_stand(realm="${realm}", karta="${role(karta, "<role>")}", name="${name}") without take: the seat stays, and its answer carries the human's rules.`,
     returned: (sessionID) => `Iskron: the role word after the compaction was inserted into the current request's system for session ${sessionID}`
+  }
+};
+
+// js/delivery/words/direct-reads.ts
+var DIRECT_READ_WORD = {
+  en: {
+    word: (list) => `Graph reads — ${list} — are direct tool calls outside execute; search() inside execute does not list them. Every other ${tool("*")} tool is called inside execute.`
+  },
+  ru: {
+    word: (list) => `Чтение графа — ${list} — вызывается напрямую, вне execute; search() внутри execute их не показывает. Все остальные тулы ${tool("*")} вызываются внутри execute.`
   }
 };
 
@@ -6930,9 +6940,11 @@ async function setupContextGate(ctx, opts) {
 }
 
 // js/opencode/direct.ts
-var DIRECT = ["look", "orient", "search", "semantic_search", "history"].map(tool);
+var DIRECT_READ_NAMES = ["look", "orient", "search", "semantic_search", "history"].map(tool);
+var directWord = (tools) => tools?.execute && DIRECT_READ_NAMES.some((name) => name in tools) ? words(DIRECT_READ_WORD).word(DIRECT_READ_NAMES.join(", ")) : null;
 var standDirect = (ctx) => ctx.tool.transform((editor) => {
-  for (const id of DIRECT) editor.update(id, (t) => void (t.options = { codemode: false }));
+  for (const id of DIRECT_READ_NAMES)
+    editor.update(id, (t) => void (t.options = { codemode: false }));
 });
 
 // js/opencode/hook-context.ts
@@ -9152,7 +9164,9 @@ async function setup(ctx) {
           }
           if (spawnStarts.has(sid)) half.finishSeat(sid);
           const ready = hookContext.take(sid, req.messages);
-          for (const text3 of new Set(ready.words)) req.system.push({ type: "text", text: text3 });
+          const direct = directWord(req.tools);
+          for (const text3 of new Set(direct ? [...ready.words, direct] : ready.words))
+            req.system.push({ type: "text", text: text3 });
           spawnStarts.delivered(sid, ready.words);
           if (ready.ride)
             ch?.ride(sid, (counts) => req.system.push({ type: "text", text: markFrame(counts) }));
