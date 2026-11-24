@@ -32,6 +32,42 @@ const queuedLaunch = async (rec, id = "admitted-command", session = "child") => 
 };
 const launchWord = /не встал|not seated/;
 
+test("context explains direct graph reads only when execute and a read are present", async () => {
+  const reads = [
+    "iskron_look",
+    "iskron_orient",
+    "iskron_search",
+    "iskron_semantic_search",
+    "iskron_history",
+  ];
+  const rec = await plugin(env);
+  const request = async (names, hook = "context") => {
+    const req = {
+      sessionID: "root",
+      system: [],
+      messages: [],
+      tools: Object.fromEntries(names.map((n) => [n, {}])),
+    };
+    for (const cb of rec.hooks[hook] ?? []) await cb(req);
+    return req.system.map((p) => p.text);
+  };
+  try {
+    for (let i = 0; i < 2; i++) {
+      const words = await request(["execute", ...reads]);
+      assert.equal(words.length, 1);
+      for (const name of reads) assert.ok(words[0].includes(name), name);
+      assert.match(words[0], /execute/);
+      assert.match(words[0], /search\(\)/);
+    }
+    assert.equal((await request(["execute", reads[0]])).length, 1);
+    assert.deepEqual(await request(reads), []);
+    assert.deepEqual(await request(["execute"]), []);
+    assert.deepEqual(await request(["execute", ...reads], "compaction"), []);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("real compaction checkpoint aliases a pending id once, without consuming it at compaction", async () => {
   const rec = await plugin(env, { sessions: [{ id: "root" }, { id: "child", parentID: "root" }] });
   try {

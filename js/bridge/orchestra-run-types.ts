@@ -95,6 +95,8 @@ export interface Run {
   sat?: boolean;
   /** The platform's idle_due for this seat stands, not yet followed by any other signal (#6010). */
   idle_due?: boolean;
+  /** A source read or stop 410 established that the seat ended, not that the client exited. */
+  seat_ended?: boolean;
   order_id?: string;
   stopping_at?: string;
   stop_outcome?: string;

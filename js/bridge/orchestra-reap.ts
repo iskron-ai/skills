@@ -28,6 +28,7 @@ export function reapCause(r: Run, now = Date.now()): string | null {
   if (r.harness !== "opencode" || r.dsh || !(r.tree || r.exec) || !r.terminal || !r.runtime)
     return null;
   if (r.reaped || r.closed === "client_exited" || r.exec?.exit || r.tree?.exit) return null;
+  if (r.seat_ended) return "seat_ended";
   if (r.state === "stopping") {
     if (r.stop_outcome === "expired" || r.stop_outcome === "failed")
       return `stop_${r.stop_outcome}`;
