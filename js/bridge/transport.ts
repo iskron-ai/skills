@@ -134,8 +134,22 @@ export const bearer = (): string | null => CFG.pat ?? loadStore().tokens?.access
 // server answers with (JSON body or a per-request SSE stream) via onMessage —
 // except tools/list_changed, which goes to the harness whoever asked (toolsync.ts, #6819).
 export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => void): Promise<void> {
-  const onMessage = (m: JsonRpcMessage): void =>
-    isListChanged(m) ? heardListChanged(msg, emit) : heard(m);
+  let answered = false;
+  const onMessage = (m: JsonRpcMessage): void => {
+    if (msg.method && msg.id !== undefined && m.id === msg.id) answered = true;
+    if (isListChanged(m)) heardListChanged(msg, emit);
+    else heard(m);
+  };
+  const requireAnswer = (): void => {
+    if (msg.method && msg.id !== undefined && !answered)
+      throw new UpstreamError(
+        "upstream ended the response without an answer",
+        "network",
+        null,
+        UpstreamError.UNKNOWN,
+        true,
+      );
+  };
   const unnamed = unnamedSeatRefusal(msg);
   if (unnamed) return void onMessage(unnamed);
   const headers: Record<string, string> = {
@@ -265,7 +279,10 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
     // handshake does not say which. So the register is replayed regardless:
     // one idempotent call per turnover buys attribution on both.
   }
-  if (res.status === 202 || res.status === 204) return;
+  if (res.status === 202 || res.status === 204) {
+    requireAnswer();
+    return;
+  }
   if (!res.ok) {
     const text = (await res.text().catch(() => "")).slice(0, 300);
     // A 4xx is the server judging the request and refusing it — nothing ran. A
@@ -282,8 +299,7 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   const ctype = res.headers.get("content-type") || "";
   if (ctype.includes("text/event-stream")) {
     try {
-      if (!res.body) return;
-      for await (const data of sseEvents(res.body)) {
+      for await (const data of res.body ? sseEvents(res.body) : []) {
         try {
           onMessage(JSON.parse(data) as JsonRpcMessage);
         } catch {
@@ -299,15 +315,18 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
         true,
       );
     }
+    requireAnswer();
     return;
   }
   const text = await res.text();
-  if (!text.trim()) return;
-  try {
-    onMessage(JSON.parse(text) as JsonRpcMessage);
-  } catch {
-    throw new UpstreamError(`upstream sent unparseable JSON: ${text.slice(0, 200)}`, "http");
+  if (text.trim()) {
+    try {
+      onMessage(JSON.parse(text) as JsonRpcMessage);
+    } catch {
+      throw new UpstreamError(`upstream sent unparseable JSON: ${text.slice(0, 200)}`, "http");
+    }
   }
+  requireAnswer();
 }
 
 // Transparent re-initialize after a lost session: replay the harness's own
