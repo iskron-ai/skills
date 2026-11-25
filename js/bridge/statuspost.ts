@@ -5,7 +5,14 @@ import { STATUS_POST } from "../delivery/index.ts";
 import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
-import { liveOnDispatcher, onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
+import {
+  liveOnDispatcher,
+  onDispatcher,
+  onFellBack,
+  type SeatScope,
+  statusOnMux,
+} from "./muxhold.ts";
+import { type StatusAnswer } from "./muxstatus.ts";
 import { ruleOf } from "./refusal.ts";
 import { inTurn, inTurnWithin } from "./statusturn.ts";
 import { log } from "./streams.ts";
@@ -31,16 +38,26 @@ export interface StatusOutcome {
   doing?: string;
   /** Taken trimmed (warnings[] trimmed_to_limit). */
   trimmed?: StatusTrim;
+  /**
+   * Not refused, but not known as set either (#11337), `ok` stays true: the server did not answer
+   * in time (silent — today's api never does), an unlabelled answer may be an earlier line's, or
+   * the line waits in the subscription for hello. `body` words it.
+   */
+  unconfirmed?: Unconfirmed;
 }
+
+export type Unconfirmed = "silent" | "earlier" | "held";
 
 /**
  * A line over the limit lands trimmed at a word, the full text in the seat's history
  * (graph @nks/nks-dev, nodes #6729, #6730): the POST answers 200 {doing, doing_at,
- * warnings?}, a warning is {code: trimmed_to_limit, message}.
+ * warnings?}, a warning is {code: trimmed_to_limit, message}; the dispatcher's
+ * status_trimmed also names the limit (max).
  */
 export interface StatusTrim {
   doing: string;
   message: string;
+  max?: number;
 }
 
 const TRIMMED = "trimmed_to_limit";
@@ -85,17 +102,33 @@ function acceptedIn(body: string, sent: string): Pick<StatusOutcome, "doing" | "
 
 /** The trimming nudge to the agent: the server's word, otherwise what was trimmed. */
 export function trimNudge(t: StatusTrim): string {
-  if (t.message) return words(STATUS_POST).trimmedBy(t.message);
-  return words(STATUS_POST).trimmed();
+  const w = words(STATUS_POST);
+  if (t.max) return w.trimmedTo(t.max, t.message);
+  return t.message ? w.trimmedBy(t.message) : w.trimmed();
 }
 
-// A channel the dispatcher carries takes the line into the tact, no POST (graph @nks/nks-dev,
-// node #8623): nothing answers it, so a line over the limit is named as the rule lays it.
-function byTick(url: string, text: string, scope: SeatScope): StatusOutcome | null {
-  if (!tickFor(url, scope, { status: text })) return null;
-  if ([...text].length <= LIMIT) return { ok: true, body: "", doing: text };
-  const doing = trimToWord(text, LIMIT);
-  return { ok: true, body: "", doing, trimmed: { doing, message: "" } };
+/** No live seat on the channel, by either reason the dispatcher names: re-resolved once (#11372). */
+const NO_SEAT = new Set(["unknown_standing", "no_live_standing"]);
+
+// The dispatcher's answer to a status frame (muxstatus.ts, #11337): set, set trimmed, NOT set
+// with its reason — or not known: silence, or an answer that may be an earlier line's.
+function byMux(a: StatusAnswer | "held", text: string): StatusOutcome {
+  const w = words(STATUS_POST);
+  if (a === "held") return { ok: true, unconfirmed: "held", body: w.unconfirmed("held") };
+  if (!a.sent) return { ok: false, body: w.noAnswer(w.linkClosed()) };
+  if ("silent" in a) return { ok: true, unconfirmed: "silent", body: w.unconfirmed("silent") };
+  if ("earlier" in a) return { ok: true, unconfirmed: "earlier", body: w.unconfirmed("earlier") };
+  const f = a.frame;
+  if (f.type === "status_rejected") {
+    const reason = String(f.reason ?? "");
+    const rule = NO_SEAT.has(reason) ? { rule: NO_LIVE_STANDING } : {};
+    return { ok: false, body: w.rejected(reason), ...rule };
+  }
+  if (f.type !== "status_trimmed") return { ok: true, body: "", doing: text };
+  const doing = typeof f.doing === "string" ? f.doing : trimToWord(text, LIMIT);
+  const max = typeof f.max === "number" ? f.max : undefined;
+  const message = typeof f.message === "string" ? f.message.trim() : "";
+  return { ok: true, body: "", doing, trimmed: { doing, message, ...(max ? { max } : {}) } };
 }
 
 // The same POST to a named address — for the exit, when the standing is already released.
@@ -106,10 +139,11 @@ export async function publishStatusTo(
   timeoutMs = 5000,
   standingId: SeatScope = null,
 ): Promise<StatusOutcome> {
-  const ticked = byTick(url, text, standingId);
-  if (ticked) return ticked;
-  // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
   const w = words(STATUS_POST);
+  const mux = statusOnMux(url, standingId, text);
+  const answer = mux && (await mux);
+  if (answer) return byMux(answer, text);
+  // The old status address — only on a socket per seat, never after a subscription (#8620 v11).
   if (onDispatcher(url))
     return { ok: false, body: liveOnDispatcher(url) ? w.seatUnnamed() : w.notSubscribed() };
   return inTurnWithin<StatusOutcome>(

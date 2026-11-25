@@ -47,6 +47,12 @@ export function attachMux(fake, opts = {}) {
     closeNext: new Map(), // секрет → сколько подписок ответить channel_closed 1000 вместо hello
     noIds: opts.noIds ?? false, // hello называет места без standing_id
     helloLagMs: 0, // подписка разбирается с задержкой: hello приходит позже на столько мс
+    // Кадр status (#11337): statusAck — отвечать status_set, как следующий api (сегодняшний молчит);
+    // statusEchoRef — с ref кадра; statusReason(s) — status_rejected с этой причиной (очередь — разово).
+    statusAck: false,
+    statusReason: null,
+    statusReasons: [],
+    statusEchoRef: false,
   };
   // destroy() кончает сокет сразу, событие close — следующим тиком: обрыв виден без него.
   const live = () => mux.conns.filter((c) => !c.closed && !c.socket.destroyed);
@@ -194,6 +200,36 @@ export function attachMux(fake, opts = {}) {
 
   const onFrame = (conn, frame) => {
     conn.frames.push({ at: Date.now(), frame });
+    if (frame?.type === "status") {
+      const respond = (reply) => {
+        const result = { ...reply, channel_id: frame.channel_id };
+        if (mux.statusEchoRef && frame.ref) result.ref = frame.ref;
+        send(conn, result);
+      };
+      // Канал без подписки на этом соединении: строка не ложится; ответ живого API тут не назван.
+      if (!conn.subs.has(frame.channel_id))
+        return void mux.refusedRows.push({ ...frame, code: "not_subscribed" });
+      const reason = mux.statusReasons.shift() ?? mux.statusReason;
+      if (reason) return respond({ type: "status_rejected", reason });
+      const id =
+        frame.standing_id ??
+        [...(st.channels.get(frame.channel_id)?.places.values() ?? [])][0]?.standing_id;
+      if (id) st.placeStatus.set(id, frame.text);
+      st.status = frame.text;
+      if ([...frame.text].length > STATUS_MAX) {
+        const doing = [...frame.text].slice(0, STATUS_MAX - 1).join("") + "…";
+        mux.trimmed.push({ channel_id: frame.channel_id, doing });
+        if (id) st.placeStatus.set(id, doing);
+        return respond({
+          type: "status_trimmed",
+          doing,
+          max: STATUS_MAX,
+          message: `trimmed to ${STATUS_MAX}`,
+        });
+      }
+      if (frame.ack && mux.statusAck) respond({ type: "status_set", standing_id: id ?? null });
+      return;
+    }
     if (frame?.type === "subscribe" && mux.helloLagMs)
       return void setTimeout(() => subscribe(conn, frame), mux.helloLagMs).unref();
     if (frame?.type === "subscribe") return subscribe(conn, frame);

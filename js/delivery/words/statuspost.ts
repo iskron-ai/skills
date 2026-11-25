@@ -20,6 +20,17 @@ export interface StatusPostWords {
   seatUnnamed: () => string;
   /** Why the line did not go: its time limit passed while it waited its turn. */
   late: () => string;
+  /** status_trimmed диспетчера: предел строки назван (#11337). */
+  trimmedTo: (max: number, message: string) => string;
+  /** status_rejected диспетчера: строка НЕ поставлена, reason — его слово. */
+  rejected: (reason: string) => string;
+  /** Кадр status не ушёл: соединение диспетчера не открыто в этот миг. */
+  linkClosed: () => string;
+  /**
+   * Не отказано, но и не известно как поставлено: silent — ответа не было за 3 с; earlier —
+   * ответ без ref мог быть прежней строки; held — строка ждёт hello подписки.
+   */
+  unconfirmed: (kind: "silent" | "earlier" | "held") => string;
 }
 
 export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
@@ -39,6 +50,19 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     seatUnnamed: () =>
       "Отказано (мост): подписка на канал жива, но место строки не названо — на канале несколько мест, а id своего мост не знает; строка не ушла",
     late: () => "предел вышел, пока строка ждала очереди",
+    trimmedTo: (max, message) =>
+      `сервер обрезал строку до ${max} знаков${message ? ` (${message})` : ""}; переназови короче`,
+    rejected: (reason) =>
+      `Отказано поверхностью: строка занятости НЕ поставлена — ${reason || "без причины"}`,
+    linkClosed: () => "соединение диспетчера сейчас не открыто, кадр не ушёл",
+    unconfirmed: (kind) =>
+      ({
+        silent:
+          "отправлена; сервер пока не подтверждает строку — не отказано, исход ещё не известен",
+        earlier:
+          "отправлена; исход не известен — ответ мог быть ещё прежней строки, его подтверждение в пути",
+        held: "ждёт подписки на канал через диспетчер и уйдёт, когда она оживёт",
+      })[kind],
   },
   en: {
     trimmedBy: (message) => `the server trimmed the line: ${message}`,
@@ -56,5 +80,17 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     seatUnnamed: () =>
       "Refused (bridge): the channel's subscription lives, but the line names no seat — the channel carries several and the bridge does not know its own id; the line did not go",
     late: () => "its limit passed in the turn",
+    trimmedTo: (max, message) =>
+      `the server trimmed the line to ${max} characters${message ? ` (${message})` : ""}; rename it shorter`,
+    rejected: (reason) =>
+      `Refused by the surface: the busy line was NOT set — ${reason || "no reason given"}`,
+    linkClosed: () => "the dispatcher connection is not open right now, the frame did not go",
+    unconfirmed: (kind) =>
+      ({
+        silent:
+          "sent; the server does not confirm the line yet — not refused, outcome not known yet",
+        earlier: "sent; outcome not known — an earlier line's answer may still be in flight",
+        held: "waits for the dispatcher subscription of the channel and goes once it is live",
+      })[kind],
   },
 };

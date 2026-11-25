@@ -5,6 +5,7 @@
 import { type Holder, type HoldOptions, holdSocket } from "../shared/channel.ts";
 import { muxUrlOf } from "./muxprobe.ts";
 import { createMux, type Mux } from "./muxroute.ts";
+import { type StatusAnswer, statusFrame } from "./muxstatus.ts";
 import {
   type Early,
   entryOf,
@@ -91,6 +92,33 @@ const at = (url: string | null): { m: Mux; secret: string } | null => {
   const m = url && secret ? muxes.get(muxUrlOf(url)) : undefined;
   return m && secret ? { m, secret } : null;
 };
+
+/**
+ * A busy line of a channel the dispatcher carries (#11337): a status frame asking for its answer
+ * on a live subscription — EVERY goes without standing_id, as the old POST did (#5838); before
+ * hello or after a break it waits in the subscription (#8620 v15): "held". null — not this path,
+ * or no seat to name (seatsFor).
+ */
+export function statusOnMux(
+  url: string,
+  scope: SeatScope,
+  text: string,
+): Promise<StatusAnswer | "held" | null> | "held" | null {
+  const h = at(url);
+  const s = h?.m.heldOf(h.secret);
+  if (!h || !s || !h.m.carries(h.secret)) return null;
+  const held = (): "held" => (holdEarly(s, { url, scope, fields: { status: text } }), "held");
+  if (!s.live || !s.channel) return held();
+  const seats = scope === EVERY ? [null] : seatsFor(s, scope);
+  if (seats.length !== 1) return null;
+  // A break before the line went, or before any answer: it waits for hello too — a line is set,
+  // not accumulated, so a second landing is harmless; after a fallback (null) the old address.
+  const sent = statusFrame((f) => h.m.link.send(f), s.channel, seats[0], text);
+  return sent.then((a) => {
+    if ((a.sent && !("silent" in a)) || s.live || s.closed) return a;
+    return s.fallback ? null : held();
+  });
+}
 
 /**
  * Lines of seats on a channel the dispatcher carries (`url` — its socket or status address) go

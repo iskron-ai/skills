@@ -73,6 +73,7 @@ async function busyBack(rec: HoldRecord): Promise<string> {
   }
   const st = await publishStatus(rec.status);
   const kept = st.doing ?? rec.status; // the line from the answer, not from the record
+  if (st.ok && st.unconfirmed) return resumeWords.busySent(kept, st.body);
   return st.ok ? resumeWords.busyRestored(kept) : resumeWords.busyNotRestored(short(st.body));
 }
 

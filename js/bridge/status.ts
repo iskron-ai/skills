@@ -79,7 +79,10 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
 export function busyLine(text: string, realm: string): string {
   const a = S.accepted.get(statusAddress(realm)?.key ?? "");
   const line = a?.sent === text ? a.doing : text;
-  const nudge = a?.sent === text && a.trimmed ? `; ${trimNudge(a.trimmed)}` : "";
+  const mine = a?.sent === text ? a : undefined;
+  // Sent, not confirmed (#11337): named as such, never as set.
+  const said = mine?.unconfirmed ?? (mine?.trimmed ? trimNudge(mine.trimmed) : "");
+  const nudge = said ? `; ${said}` : "";
   return words(STATUS).busyLine(placeLabel(realm), line, nudge);
 }
 
@@ -183,8 +186,14 @@ function ledIn(realm: string): Standing | undefined {
 
 const S = scoped(() => ({
   lastPublished: "",
-  /** The last accepted line per seat (address key): sent, landed (the answer's doing) and trim. */
-  accepted: new Map<string, { sent: string; doing: string; trimmed?: StatusTrim }>(),
+  /**
+   * The last accepted line per seat (address key): sent, landed (the answer's doing), trim, and
+   * `unconfirmed` — the word of a line sent but not known as set (#11337).
+   */
+  accepted: new Map<
+    string,
+    { sent: string; doing: string; trimmed?: StatusTrim; unconfirmed?: string }
+  >(),
 }));
 /** The last busy line the board accepted from this bridge; empty — cleared. */
 export const publishedStatus = (): string => S.lastPublished;
@@ -207,17 +216,19 @@ export async function publishStatus(
   // With one seat a line without id lands on it, as before.
   if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return { ok: false, body: words(STATUS).noSeatId(addr.key) };
+  // Return restores what the session asked for, even when delivery is uncertain or refused.
+  if (addr.key === statusAddress()?.key) S.lastPublished = text;
   let st = await publishStatusTo(addr.url, text, 5000, everyPlace ? EVERY : addr.standingId);
   // The channel is alive but carries no live seat (graph @nks/nks-dev, node #11372): a line is
   // sent once more to the seat resolved again; a clear raises no seat and is not.
   if (st.rule === NO_LIVE_STANDING && text !== "")
     st = await liveAgain(addr, text, realm, everyPlace);
+  // The hold record keeps the latest asked line whatever its outcome; only a clear empties it.
+  rememberStatus(text, realm);
   if (st.ok) {
-    // Keep the line as it landed: a server-trimmed one comes back trimmed after a restart.
     const kept = st.doing ?? text;
-    S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed });
-    if (addr.key === statusAddress()?.key) S.lastPublished = kept;
-    rememberStatus(kept, realm);
+    const unconfirmed = st.unconfirmed ? st.body : undefined;
+    S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed, unconfirmed });
   }
   return st;
 }

@@ -50,6 +50,8 @@ export interface ResumeWords {
   /** pending null — hello за 4 с не пришёл. */
   reopened: (pending: number | null) => string;
   busyRestored: (kept: string) => string;
+  /** Строка ушла, исход не подтверждён (#11337); why — слово исхода. */
+  busySent: (kept: string, why: string) => string;
   busyNotRestored: (body: string) => string;
   /** Строка занятости прежнего держателя не возвращается (#6017). */
   busyForeign: () => string;
@@ -110,6 +112,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
         ? "сокет переоткрыт, hello за 4 с не пришёл"
         : `сокет переоткрыт: ожидало кадров — ${pending}`,
     busyRestored: (kept) => `; занятость возвращена: ${kept}`,
+    busySent: (kept, why) => `; занятость ${kept}: ${why}`,
     busyNotRestored: (body) => `; занятость не возвращена: ${body}`,
     busyForeign: () => "; прежняя строка занятости не возвращена — скажи свою",
     fromDisk: (pending, busy) =>
@@ -168,6 +171,7 @@ export const RESUME: Readonly<Record<Lang, ResumeWords>> = {
         ? "the socket is reopened, hello did not come in 4 s"
         : `the socket is reopened: frames waiting — ${pending}`,
     busyRestored: (kept) => `; busy line restored: ${kept}`,
+    busySent: (kept, why) => `; busy line ${kept}: ${why}`,
     busyNotRestored: (body) => `; busy line not restored: ${body}`,
     busyForeign: () => "; the former busy line is not restored — say your own",
     fromDisk: (pending, busy) =>

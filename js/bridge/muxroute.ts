@@ -7,6 +7,7 @@ import { closedBy, type Ends, refusedBy } from "./muxends.ts";
 import { type FrameRoutes, routeFrame } from "./muxframe.ts";
 import { createLink, type Link } from "./muxlink.ts";
 import { pauseOf } from "./muxprobe.ts";
+import { heldLine } from "./muxstatus.ts";
 import { asSeatFrame, deliver, earlyLines, holdEarly, type Sub } from "./muxsub.ts";
 import { createTable, type SubTable } from "./muxtable.ts";
 import { createTicker, type Ticker } from "./muxtick.ts";
@@ -114,7 +115,10 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
     // From its hello the subscription earns back its resubscribe after an unasked 1000 (muxends.ts).
     Object.assign(s, { live: true, tries: 0, standings, seats: named.length, helloAt: Date.now() });
-    for (const [e, lost] of earlyLines(s, channel)) ticker.put(e, lost);
+    // A held busy line goes as a status frame, ahead of any fresh one (muxstatus.ts, #11337).
+    for (const [e, lost] of earlyLines(s, channel))
+      if (typeof e.status === "string") heldLine((x) => link.send(x), e);
+      else ticker.put(e, lost);
     link.proven(Number(f.ping_interval_seconds) * 1000);
     const seat = asSeatFrame(f);
     s.o.onFrame(seat.raw, seat.frame);
