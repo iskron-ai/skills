@@ -223,10 +223,12 @@ export async function publishStatus(
   // sent once more to the seat resolved again; a clear raises no seat and is not.
   if (st.rule === NO_LIVE_STANDING && text !== "")
     st = await liveAgain(addr, text, realm, everyPlace);
-  // The hold record keeps the latest asked line whatever its outcome; only a clear empties it.
-  rememberStatus(text, realm);
+  // The hold record keeps the latest asked line whatever its outcome — as it landed, when the
+  // server said so (a trimmed one comes back trimmed, #6729); only a clear empties it.
+  const kept = st.ok ? (st.doing ?? text) : text;
+  rememberStatus(kept, realm);
+  if (addr.key === statusAddress()?.key) S.lastPublished = kept;
   if (st.ok) {
-    const kept = st.doing ?? text;
     const unconfirmed = st.unconfirmed ? st.body : undefined;
     S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed, unconfirmed });
   }
