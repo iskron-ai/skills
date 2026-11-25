@@ -80,6 +80,8 @@ export interface KeeperDoors<S extends KeptSlot> {
   directoryOf: (root: string) => Promise<string | null>;
   /** The session still exists and its tools go through this instance. */
   exists: (root: string) => Promise<boolean>;
+  /** The session has ended or was stopped; neither reload nor watchdog can take its seat. */
+  ended: (root: string) => boolean;
 }
 
 export interface Keeper<S extends KeptSlot> {
@@ -157,11 +159,12 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   }
 
   async function once(slot: S, root: string, quiet: boolean, final: boolean): Promise<Resumed> {
+    if (doors.ended(root)) return "none";
     const mark = slot.child ? undefined : marked.get(root);
     try {
       await doors.ready(slot);
       slot.dir ??= mark?.dir ?? (await doors.directoryOf(root));
-      if (stopped) return "none";
+      if (stopped || doors.ended(root)) return "none";
       if ((!slot.dir && !slot.key) || (slot.child && !slot.key)) {
         marked.delete(root);
         if (mark) notBack(root, mark, W.noKeyNoDir());
@@ -204,6 +207,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   }
 
   async function check(root: string): Promise<void> {
+    if (doors.ended(root)) return void roots.delete(root);
     const slot = await doors.slotFor(root, false); // a dead bridge is replaced here; idleness is not refreshed
     if (slot.resume) await slot.resume;
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
@@ -266,7 +270,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         if (stopped) break;
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
-        if (!(await doors.exists(e.session))) continue;
+        if (doors.ended(e.session) || !(await doors.exists(e.session)) || doors.ended(e.session))
+          continue;
         wordFor(e.session); // preserve the marker's per-session lookup
         await doors.slotFor(e.session, false); // a new slot calls resume itself; a live one already returned
       }

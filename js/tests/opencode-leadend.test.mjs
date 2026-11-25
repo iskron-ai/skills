@@ -230,7 +230,7 @@ test("a pending leave accepted before the stop survives the reload: the end stil
 // lies next to the grant), and the next instance takes the marker while the seat returns by
 // key. A sealed end stays: neither the marker's back() nor the returned bridge's «held» nor
 // the late turn end raises a lead — «сдал ход» does not come past the seal.
-test("over a sealed end, a marker's back() and the returned bridge's late «held» raise no lead: no «сдал ход» after the end", async () => {
+test("over a sealed end, a marker does not return the child or announce its late turn", async () => {
   const calls = join(SANDBOX, "endword-late-held.calls");
   writeFileSync(calls, "");
   const { b, rec } = await leadChild("endword-late-held", { FB_CALLS: calls });
@@ -266,20 +266,14 @@ test("over a sealed end, a marker's back() and the returned bridge's late «held
   );
   try {
     await until(() => second.tools().has("iskron_case"), "the tools", 8000);
-    // The child's bridge returns by its key: the resume call names the child's session.
-    let resume = null;
-    await until(() => {
-      resume = callsIn(calls)
-        .slice(backFrom)
-        .find((c) => c.name === "iskron/resume" && c.arguments.session === "child");
-      return !!resume;
-    }, "the child's bridge back from the marker");
-    // The returned bridge says «held» again, naming the same seat — over the seal. The seal
-    // swallows the relay itself (tools.ts: no channel word of an ended child), so the held
-    // prints nothing here — its arrival had its window, its effect must stay nil.
-    appendFileSync(`${b.events}.${resume.pid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
     await delay(600);
-    // The turn's late end, delivered after the return: it must tell nothing.
+    assert.ok(
+      !callsIn(calls)
+        .slice(backFrom)
+        .some((c) => c.name === "iskron/resume" && c.arguments.session === "child"),
+      "an ended child is not automatically resumed",
+    );
+    // The turn's late end must tell nothing.
     second.emit({ type: "session.execution.succeeded", data: { sessionID: "child" } });
     await delay(500);
     assert.ok(
@@ -372,15 +366,13 @@ test("a loss marker of a session that ended while the plugin was down raises no 
   });
   try {
     await until(() => second.tools().has("iskron_case"), "the tools", 8000);
-    await until(
-      () =>
-        callsIn(calls)
-          .slice(resumed)
-          .some((c) => c.name === "iskron/resume" && c.arguments.session === "child"),
-      "the child's seat return attempted",
-      5000,
+    await delay(600);
+    assert.ok(
+      !callsIn(calls)
+        .slice(resumed)
+        .some((c) => c.name === "iskron/resume" && c.arguments.session === "child"),
+      "an ended child is not automatically resumed",
     );
-    await delay(600); // the refusal settles into its word, if any lead were raised
     assert.ok(
       !second.synthetics.some((s) => /субагент .* снят —/.test(s.text)),
       "no «снят» word over the seal",

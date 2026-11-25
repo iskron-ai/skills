@@ -26,6 +26,7 @@ import { createHookContext } from "./hook-context.ts";
 import { homeOf, sessionDirectory } from "./host.ts";
 import { createKeepAlive, keepaliveTitle } from "./keepalive.ts";
 import { teller } from "./leaddoors.ts";
+import { channelEnds } from "./leadends.ts";
 import { sliceBy } from "./mindslice.ts";
 import { annotate } from "./notice.ts";
 import { createOnboardStart } from "./onboardstart.ts";
@@ -159,7 +160,8 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // child's word (teller): an ended lead or a stopped session gets none, its live ancestor does
   // (#7505). The stops are read from the channel's registry and records (halts.ts), never written.
   const stops = createHalts((s) => parents.get(s), authDir, nothing, nothing);
-  const closed = (s: string): boolean => half.ended(s) || stops.halted(s);
+  const ends = channelEnds(authDir, say);
+  const closed = (s: string): boolean => ends.has(s) || half.ended(s) || stops.halted(s);
   // Usage comes up after the tools (it needs the session's bridge); a subagent's end flushes it first.
   let flushUsage = (_s: string): Promise<void> => Promise.resolve();
   // A seat taken or returned gets the session's last word on its turn at once (pulse.ts, #7529).
@@ -197,7 +199,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // A root of an aligned project seats itself by the cover of its directory (rootseat.ts).
   const rootSeats = createRootSeats({
     directoryOf: (s) => sessionDirectory(ctx, s),
-    halted: (s) => !ch || stops.halted(s),
+    halted: (s) => !ch || closed(s),
     seat: (s, realm, karta, cancelled) => half.seatRoot(s, realm, karta, cancelled),
     role: (s) => spawnStarts.karta(s),
     cancel: (s) => half.cancelSeat(s),
