@@ -26,9 +26,14 @@ const answer = (text, isError = false) => ({ content: [{ type: "text", text }], 
 const request = () => ({ sessionID: "production-read", system: [] });
 const text = (r) => r.system.map((p) => p.text).join("\n");
 const words = (s) => s.split("контекст сжат").length - 1;
+// The slice is one per account for the plugin's process (shared/mindcache.ts): each read here
+// is another account's — a token of its own — or the first one's slice would serve the rest.
+let accounts = 0;
+const fresh = () => void (process.env.ISKRON_BRIDGE_TOKEN = `compaction-read-${++accounts}`);
 
 for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
   test(`production compaction retries ${failure} without consuming a partial return`, async () => {
+    fresh();
     let refused = false;
     const calls = [];
     const bridge = {
@@ -77,6 +82,7 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
 
 test("production slice keeps a confirmed absent mind and an empty slice valid in strict mode", async () => {
   for (const readiness of [MISSING, READY]) {
+    fresh();
     const calls = [];
     const result = await sliceBy(
       {
@@ -100,6 +106,7 @@ test("production slice keeps a confirmed absent mind and an empty slice valid in
 
 test("ordinary production slice reads retain soft diagnostics for transport and server refusal", async () => {
   for (const failure of ["OFFLINE", "REFUSED"]) {
+    fresh();
     const result = await sliceBy({
       async request() {
         if (failure === "OFFLINE") throw new Error(failure);
@@ -112,6 +119,8 @@ test("ordinary production slice reads retain soft diagnostics for transport and 
 
 test("unknown readiness is not a successful strict slice but stays diagnostic for ordinary reads", async () => {
   const bridge = { request: async () => answer("readiness unavailable") };
+  fresh();
   await assert.rejects(sliceBy(bridge, { strict: true }), /account handle unknown/);
+  fresh();
   assert.equal(await sliceBy(bridge), MIND_SLICE.ru.unread("account handle unknown"));
 });
