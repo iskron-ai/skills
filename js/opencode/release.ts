@@ -132,17 +132,23 @@ export function launcherRevokes(d: Doors) {
      * The satellite seat of a lead that ended with no bridge of its own is taken off (leads.ts):
      * a cleanup of the plugin, not the agent's work — a service call. Nothing here throws: no
      * bridge to raise, a launcher stopped or deleted, the transport, a sign-in, the platform's
-     * refusal — all come back as the loud word that says the seat is not off.
+     * refusal — all come back as the loud word that says the seat is not off. `still` is asked
+     * right before the revoke leaves: the child stood again while its launcher was being found —
+     * the seat is its own now, nothing is revoked and nothing is said (null).
      */
-    off(child: string, place: Place, taken: string): Promise<string> {
-      return revokeAsLauncher(
+    async off(child: string, place: Place, taken: string, still: () => boolean) {
+      let stoodAgain = false;
+      const word = await revokeAsLauncher(
         { word: taken, place, off: false },
         { action: "revoke", standing: place.name },
-        (args) =>
-          d
-            .rootOf(child)
-            .then((root) => byLauncher(launcherSlot(root), tool("channel"), args, root, true)),
+        async (args) => {
+          const root = await d.rootOf(child);
+          const slot = await launcherSlot(root);
+          if (!still()) return void (stoodAgain = true);
+          return byLauncher(Promise.resolve(slot), tool("channel"), args, root, true);
+        },
       ).catch((e) => String((e as Error)?.message ?? e));
+      return stoodAgain ? null : word;
     },
   };
 }

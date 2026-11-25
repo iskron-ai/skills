@@ -64,7 +64,13 @@ export function createLeads(d: LeadDoors): Leads {
   ): Promise<void> {
     if (!over.has(child)) return;
     const who = place?.name ?? W().sessionOf(child);
-    const text = place ? await d.off(child, place, W().release(who)) : W().unrevokedUnknown(who);
+    // A stand token: a lift of the end between here and the revoke is the child standing again.
+    const lifts = over.lifts(child);
+    const still = () => over.has(child) && over.lifts(child) === lifts;
+    const text = place
+      ? await d.off(child, place, W().release(who), still)
+      : W().unrevokedUnknown(who);
+    if (text === null) return;
     const p = await (parent ?? parentOf(child));
     if (p) await d.tell(p, text, false);
     else d.say(W().noParent(text), "warning");

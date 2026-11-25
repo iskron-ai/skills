@@ -251,3 +251,50 @@ for (const [n, [what, answer, word]] of [
     }
   });
 }
+
+// The deferred revoke waits for its launcher (rootOf); the child stands again meanwhile by its own
+// explicit call — the seat is its own now: the revoke, asked right before it leaves, does not go,
+// and the parent hears nothing about a seat taken off.
+test("a child that stands again while its deferred revoke waits for the launcher: the new seat is not revoked", async () => {
+  const name = "seatoff-restood";
+  const calls = join(SANDBOX, `${name}.calls`);
+  writeFileSync(calls, "");
+  const { b, rec } = await leadChild(name, { FB_CALLS: calls });
+  const mark = endMark("child");
+  try {
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" },
+    });
+    await delay(150);
+  } finally {
+    await rec.stop();
+  }
+  writeFileSync(mark, JSON.stringify({ session: "child", at: new Date().toISOString() }), {
+    mode: 0o600,
+  });
+  const raised = pidsOf(b.log).length;
+  const sent = callsIn(calls).length;
+  const faults = { getDelays: { child: [4000] } }; // the revoke's launcher lookup answers late
+  const second = await plugin(
+    { ...b.env, FB_RESUME: rootBack(name) },
+    { keepMarker: true, sessions: SESSIONS, faults },
+  );
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await until(() => raisedIn(b, raised).length >= 1, "the root's bridge", 8000);
+    await stoodAgain(b, second, pidsIn(raisedIn(b, raised))[0]);
+    await delay(5000); // past the late lookup: the revoke would have gone by now
+    const revokes = callsIn(calls)
+      .slice(sent)
+      .filter((c) => c.name === "iskron_channel" && c.arguments?.action === "revoke");
+    assert.deepEqual(revokes, [], "the child's new seat is not revoked");
+    assert.ok(
+      !second.synthetics.some((s) => OFF.test(s.text) || NOT_OFF.test(s.text)),
+      `no word about a seat taken off: ${JSON.stringify(second.synthetics)}`,
+    );
+  } finally {
+    await second.stop();
+    rmSync(mark, { force: true });
+  }
+});

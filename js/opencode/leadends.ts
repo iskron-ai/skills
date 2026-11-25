@@ -19,6 +19,8 @@ export interface Ends {
   /** Stood again by an explicit call, or deleted: the end goes. */
   lift(session: string): void;
   has(session: string): boolean;
+  /** How many times the session's end was lifted in this process: a stand token (release.ts). */
+  lifts(session: string): number;
 }
 
 const fileOf = (dir: string, session: string): string =>
@@ -31,6 +33,9 @@ const ended = (): Set<string> =>
 /** Ends lifted in this process, with the time: a record the disk would not let go no longer ends them. */
 const lifted = (): Map<string, number> =>
   ((globalThis as any)[`${GLOBAL_PREFIX}EndLiftedAt`] ??= new Map<string, number>());
+/** Lifts counted per session, never reset by a new end: a stand in between changes the count. */
+const liftCount = (): Map<string, number> =>
+  ((globalThis as any)[`${GLOBAL_PREFIX}EndLifts`] ??= new Map<string, number>());
 
 /** The record ends the session: present, not rewritten as lifted, newer than a lift at `since`; unreadable ends it. */
 function recorded(file: string, since: number | undefined): boolean {
@@ -65,6 +70,7 @@ export function createEnds(
       const key = `${dir()}\0${session}`;
       ended().delete(key);
       lifted().set(key, Date.now());
+      liftCount().set(key, (liftCount().get(key) ?? 0) + 1);
       const file = fileOf(dir(), session);
       try {
         unlinkSync(file);
@@ -83,6 +89,7 @@ export function createEnds(
       const key = `${dir()}\0${session}`;
       return ended().has(key) || recorded(fileOf(dir(), session), lifted().get(key));
     },
+    lifts: (session) => liftCount().get(`${dir()}\0${session}`) ?? 0,
   };
 }
 

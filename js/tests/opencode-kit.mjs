@@ -131,6 +131,9 @@ function fakeCtx({
       // simply a root the probe never described.
       get: async ({ sessionID }) => {
         if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
+        // getDelays — { [session]: [ms, …] }: the next lookups of that session answer this late.
+        const late = faults.getDelays?.[sessionID]?.shift();
+        if (late) await delay(late);
         // getFails — the lookup fails another way (a storage hiccup): no word of an end.
         if (faults.getFails > 0) {
           faults.getFails--;
