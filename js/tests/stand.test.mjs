@@ -5582,6 +5582,36 @@ test("hearing watchdog with a live socket needs no upstream board read", async (
   assert.deepEqual(lists, [], "live hearing must not poll the board");
 });
 
+// Занятое место: после hello прошло больше кадров, чем держит кольцо (RING), — hello из
+// кольца вытеснен, а слух этим открытием доказан: доска сторожу всё равно не нужна.
+test("hearing watchdog needs no upstream board read once the ring has lost the hello", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "busy-probe" },
+  });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  await until(() => fake.state.ws.size === 1, "the live socket");
+  const frames = Array.from({ length: 25 }, (_, i) =>
+    JSON.stringify({ id: `busy-${i}`, type: "message", body: `frame ${i}` }),
+  );
+  await fake.control({ ws_send_many: frames });
+  const delivered = () =>
+    bridge.notifications.filter(
+      (n) => n.params?.logger === "iskron-channel" && n.params?.data?.frame?.type === "message",
+    ).length;
+  await until(() => delivered() >= frames.length, "the frames past the hello");
+  const before = fake.state.calls.length;
+  for (let n = 0; n < 3; n++) {
+    const check = await bridge.call("iskron/check", {});
+    assert.equal(check.result?.listening, true, JSON.stringify(check));
+  }
+  const lists = fake.state.calls
+    .slice(before)
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "list");
+  assert.deepEqual(lists, [], "a proven socket lost its hello in the ring — still no board read");
+});
+
 test("structuredContent: board, register and connect fields carry iskron_stand through prose of a form the bridge does not know", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ structured: true, garble: true });

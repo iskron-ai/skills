@@ -25,7 +25,7 @@ interface Fill {
 const S = scoped(() => ({ last: null as Fill | null }));
 const positive = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n > 0;
 
-/** Mark a collapse locally; the bridge does not read the role's skills. */
+/** Mark a collapse locally; the door skill alone is required to release it (context-state.ts). */
 export async function observeContext(p: Record<string, unknown>): Promise<void> {
   if (!Object.hasOwn(p, "context")) return;
   const own = seat();

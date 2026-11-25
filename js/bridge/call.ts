@@ -204,7 +204,10 @@ async function answer(name: string, args: Record<string, unknown>): Promise<Answ
   got = claimReply(msg, got);
   const structured = structuredOf(got);
   const refusal = refusalOf(got);
-  if (name === tool("realm") && args.action === "list" && !got.error && !got.result?.isError)
+  // Only the whole list says whether the account has a mind: a filtered one would cache a false "none".
+  const wholeList =
+    name === tool("realm") && args.action === "list" && Object.keys(args).length === 1;
+  if (wholeList && !got.error && !got.result?.isError)
     rememberMindRealmList(replyText(got), structured);
   if (name === tool("channel")) {
     noteLocaleEcho(args, replyText(got), structured);

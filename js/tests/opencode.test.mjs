@@ -1094,6 +1094,32 @@ test("a frame with no session seen at all is said aloud, not lost silently", asy
   }
 });
 
+test("a direct word for a session the host did not answer about still goes to that session", async () => {
+  const b = bridgeEnv("unanswered");
+  const faults = { getFails: 1000 };
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "holder", time: { updated: 1 } }],
+    faults,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "holder");
+    await delay(50);
+    // The lookup fails another way than "no such session" (a storage hiccup, a session still
+    // loading): the host said no word of an end.
+    appendFileSync(
+      `${b.events}.${pidOf(b.log)}`,
+      event("frame", { frame: frame("слово без ответа хоста"), raw: "" }),
+    );
+    await until(() => rec.prompts.length === 1, "the direct word reaches the session");
+    assert.equal(rec.prompts[0].sessionID, "holder");
+    assert.match(rec.prompts[0].text, /слово без ответа хоста/);
+    assert.doesNotMatch(rec.said(), /закрыта или в архиве/, "an error is not read as an end");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("settled hearing loss and return do not prompt an idle live session", async () => {
   const b = bridgeEnv("quiet-return-17");
   const rec = await plugin(b.env, { sessions: [{ id: "quiet-return-17" }] });
@@ -2261,9 +2287,13 @@ test("a place of a pre-session build, not resumed by the directory, is said into
   try {
     await serverTools(rec);
     await rec.call("iskron_orient", {}, "s-old");
-    await until(() => /прежней сборки без сессии/.test(rec.said()), "the legacy place logged");
-    assert.match(rec.said(), /iskron_stand\(name="proba"\)/);
-    assert.deepEqual(rec.prompts, []);
+    await until(
+      () => rec.prompts.some((p) => /прежней сборки без сессии/.test(p.text)),
+      "the legacy place said into the session",
+    );
+    const word = rec.prompts.find((p) => /прежней сборки без сессии/.test(p.text));
+    assert.equal(word.sessionID, "s-old");
+    assert.match(word.text, /iskron_stand\(name="proba"\)/, "the way back by name is said");
   } finally {
     await rec.stop();
   }
@@ -3046,9 +3076,14 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
     await serverTools(second);
     // The return failed: its outcome goes to the holder, not whichever calls first.
     await second.call("iskron_orient", {}, "s-next");
-    await until(() => /не вернулось/.test(second.said()), "the failed return logged");
-    assert.match(second.said(), /iskron_stand/);
-    assert.deepEqual(second.prompts, []);
+    await until(() => second.prompts.length >= 1, "the loss to be said");
+    const loss = second.prompts.filter((p) => /не вернулось/.test(p.text));
+    assert.deepEqual(
+      loss.map((p) => p.sessionID),
+      ["s-held"],
+      "the failed return goes into its own session",
+    );
+    assert.match(loss[0].text, /iskron_stand/);
     // Another session of the lost directory gets no key: the marker's key is a
     // hint only to the session that held its socket (graph nks-dev: #6017).
     writeFileSync(calls, "");
@@ -3177,10 +3212,16 @@ test("a place of a lost marker that does not come back is said into its session 
     sessions: [{ id: "s-held", location: { directory: "/work/held" } }],
   });
   try {
-    await until(() => /не вернулось/.test(second.said()), "the logged failed return", 1500);
-    assert.match(second.said(), /proba--931--nks-dev/);
-    assert.match(second.said(), /hello не пришёл/);
-    assert.match(second.said(), /iskron_stand/);
+    await until(
+      () => second.prompts.some((p) => /не вернулось/.test(p.text)),
+      "the word that the place did not come back",
+      1500,
+    );
+    const word = second.prompts.find((p) => /не вернулось/.test(p.text));
+    assert.equal(word.sessionID, "s-held");
+    assert.match(word.text, /proba--931--nks-dev/, "the place is named");
+    assert.match(word.text, /hello не пришёл/, "the bridge's reason is said");
+    assert.match(word.text, /iskron_stand/, "the way to stand is said");
     await until(
       () =>
         callsIn(calls).some(
@@ -3191,13 +3232,52 @@ test("a place of a lost marker that does not come back is said into its session 
     );
     // The watch tries once: its failure is said too, or the session hears nothing more.
     await until(
-      () => /на повторе сторожа/.test(second.said()),
+      () => second.prompts.some((p) => /на повторе сторожа/.test(p.text)),
       "the word that the watch's retry failed as well",
       3000,
     );
-    assert.deepEqual(second.prompts, []);
+    const again = second.prompts.find((p) => /на повторе сторожа/.test(p.text));
+    assert.equal(again.sessionID, "s-held");
+    assert.match(again.text, /iskron_stand/);
   } finally {
     await second.stop();
+  }
+});
+
+test("a bridge that gave up reopening its socket: the watch's stuck word reaches the session, once", async () => {
+  const calls = join(SANDBOX, "stuck.calls");
+  const answer = join(SANDBOX, "stuck.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    answer,
+    JSON.stringify({
+      holding: true,
+      key: "k-stuck",
+      listening: false,
+      reopened: false,
+      stuck: true,
+      word: "Искрон: доска читает место k-stuck не слушающим и после 3 переоткрытий — больше не рву",
+    }),
+  );
+  const b = bridgeEnv("stuck", { FB_CALLS: calls, FB_RESUME: answer, ISKRON_BRIDGE_WATCH_MS: 150 });
+  const rec = await plugin(b.env, { sessions: [{ id: "s-stuck" }] });
+  try {
+    await serverTools(rec);
+    await standsHeld(rec, b, calls, "s-stuck", "k-stuck");
+    await until(
+      () => callsIn(calls).filter((c) => c.name === "iskron/check").length >= 3,
+      "the watch to ask the bridge thrice",
+    );
+    await delay(200);
+    const words = rec.prompts.filter((p) => /больше не рву/.test(p.text));
+    assert.deepEqual(
+      words.map((p) => p.sessionID),
+      ["s-stuck"],
+      "the stuck word goes into its own session, once however many times the watch asks",
+      `\nlog:\n${rec.said()}\nprompts: ${JSON.stringify(rec.prompts)}`,
+    );
+  } finally {
+    await rec.stop();
   }
 });
 
@@ -3273,12 +3353,13 @@ test("after a reload two roots each hear only their own failed return", async ()
   await first.stop();
   const second = await plugin(b.env, { ...inLoc(LOC_A, "a1", "a2"), keepMarker: true });
   try {
-    await until(
-      () =>
-        /k-a1.*не вернулось|не вернулось.*k-a1/s.test(second.said()) && /k-a2/.test(second.said()),
-      "both losses logged",
-    );
-    assert.deepEqual(second.prompts, []);
+    const loss = (s) =>
+      second.prompts.find((p) => p.sessionID === s && /не вернулось/.test(p.text));
+    await until(() => loss("a1") && loss("a2"), "the loss word in both");
+    assert.match(loss("a1").text, /k-a1/);
+    assert.doesNotMatch(loss("a1").text, /k-a2/, "a1 is not named a2's place");
+    assert.match(loss("a2").text, /k-a2/);
+    assert.doesNotMatch(loss("a2").text, /k-a1/, "a2 is not named a1's place");
   } finally {
     await second.stop();
   }
@@ -3597,19 +3678,20 @@ test("a session whose own place another live bridge holds is told the return fai
   try {
     await serverTools(rec);
     await rec.call("iskron_orient", {}, "s1");
-    await until(() => /держит другой мост/.test(rec.said()), "the refusal logged");
-    const word = rec.said();
-    assert.match(word, /k-own[\s\S]*iskron_stand тем же именем, take не нужен/);
+    await until(() => rec.prompts.some((p) => /держит другой мост/.test(p.text)), "the word to s1");
+    const word = rec.prompts.find((p) => /держит другой мост/.test(p.text));
+    assert.equal(word.sessionID, "s1");
+    assert.match(word.text, /k-own[\s\S]*iskron_stand тем же именем, take не нужен/);
     assert.match(
-      word,
+      word.text,
       /своё место сессии вернётся, у чужого мост встанет рядом на имя.N со слухом/,
     );
-    assert.doesNotMatch(word, /take=true/);
+    assert.doesNotMatch(word.text, /take=true/);
     assert.ok(!rec.prompts.some((p) => RESUMED_WORD.test(p.text)));
     // The word comes once, after the wait for the other socket to go — not per attempt.
     const resumes = callsIn(calls).filter((c) => c.name === "iskron/resume").length;
     assert.ok(resumes > 1, `the resume waited for the other bridge's socket: ${resumes}`);
-    assert.deepEqual(rec.prompts, []);
+    assert.equal(rec.prompts.filter((p) => /держит другой мост/.test(p.text)).length, 1);
   } finally {
     await rec.stop();
   }
@@ -3817,11 +3899,9 @@ test("a spelling unloaded with a place and the wake fails: the twin says so loud
     await A.cleanup();
     await until(() => /не поднят — move refused/.test(twin.said()), "the loud line");
     assert.match(twin.said(), /\[iskron\/error\][^\n]*выгружен с местом \(k-w2\)/);
-    await until(
-      () => /место k-w2 отпущено[\s\S]*iskron_stand/.test(twin.said()),
-      "the word logged",
-    );
-    assert.deepEqual(twin.prompts, []);
+    await until(() => twin.prompts.some((p) => p.sessionID === "w2"), "the word in w2");
+    const word = twin.prompts.find((p) => p.sessionID === "w2").text;
+    assert.match(word, /место k-w2 отпущено[\s\S]*iskron_stand/);
   } finally {
     await twin.stop();
     A.restore();
@@ -8063,9 +8143,11 @@ test("marker-child: #9241 a seat still absent at the return deadline ends with a
 test("marker-child: the root's failed return names its own place, never its children's", async () => {
   const { second } = await reloadedChild("reload-word");
   try {
-    await until(() => /не вернулось/.test(second.said()), "the failed return logged");
-    assert.match(second.said(), /k-root/);
-    assert.deepEqual(second.prompts, []);
+    const loss = () => second.prompts.find((p) => /не вернулось/.test(p.text));
+    await until(loss, "the failed return in the root");
+    assert.equal(loss().sessionID, "root");
+    assert.match(loss().text, /k-root/);
+    assert.doesNotMatch(loss().text, /k-sub|sub-1/, "no child's place in the root's word");
   } finally {
     await second.stop();
   }

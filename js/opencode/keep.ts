@@ -113,6 +113,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   const marked = new Map<string, LostEntry>();
   // Session → a marker seat whose return failed and waits for the watchdog's retry.
   const retrying = new Map<string, string>();
+  // Roots told that their bridge gave up reopening the socket: once, until a check no longer says stuck.
+  const stuckTold = new Set<string>();
   let stopped = false;
 
   /** A marker seat did not return: a word into that session, and the session goes under the watch. */
@@ -217,6 +219,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     });
     if (typeof r?.key === "string") slot.key = r.key;
     slot.provisional = r?.provisional === true;
+    if (!r?.stuck) stuckTold.delete(root);
     if (r?.stopped) {
       slot.holding = false;
       return void stoppedRoot(root, r.word);
@@ -235,7 +238,14 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       doors.say(W.watchResumed(root, r.word), "info");
       // The same return without the agent's move (#5366).
     } else if (r?.reopened) doors.say(W.watchReopened(root, r.word), "warning");
-    else if (r?.stuck) doors.say(r.word, "error"); // the bridge sends the word into the session itself (kind=lost), once
+    else if (r?.stuck) {
+      // The bridge's own line (kind=lost) is log-only in the plugin: the word into the session is the keeper's, once.
+      doors.say(r.word, "error");
+      if (!stuckTold.has(root)) {
+        stuckTold.add(root);
+        doors.tell(root, r.word, slot.child);
+      }
+    }
   }
 
   let timer: ReturnType<typeof setTimeout>;
@@ -285,6 +295,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     forget(root) {
       roots.delete(root);
       retrying.delete(root);
+      stuckTold.delete(root);
     },
     stop() {
       stopped = true;

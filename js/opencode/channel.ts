@@ -95,7 +95,7 @@ export function setupChannel(
     (id, message) => say(W.haltUnwritten(id, message), "warning"),
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
-  const accepting = (id: string): Promise<boolean> => accepts(ctx, id);
+  const accepting = (id: string): Promise<"live" | "ended" | "unknown"> => accepts(ctx, id);
   const ends = channelEnds(authDir, say);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
@@ -108,17 +108,18 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    if (child && (!id || !(await accepting(id)))) {
+    // Only the host's "ended" drops a word: an unknown session (the host did not answer) still gets it.
+    if (child && (!id || (await accepting(id)) === "ended")) {
       // The child's seat outlived it: the frame is not the root's (#5167); it stays in the seat's history.
       say(W.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
       return null;
     }
-    if (id && !(await accepting(id))) {
+    if (id && (await accepting(id)) === "ended") {
       say(W.sessionClosed(id, frame), "warning");
       return null;
     }
     id ??= freshestRoot();
-    if (id && id !== session && !(await accepting(id))) id = null;
+    if (id && id !== session && (await accepting(id)) === "ended") id = null;
     if (!id) {
       say(W.nowhere(frame, text.slice(0, 120)), "error");
       return null;
@@ -459,10 +460,12 @@ export function setupChannel(
             say(ev.text, "warning");
           }
           return;
+        case "return_failed": // a return that did not happen: a word to act on (#5140)
         case "seat_result":
           if (ev.text) {
             say(ev.text, "warning");
-            void deliver(session, ev.text, W.resumedLabel(), "steer", child);
+            const label = ev.kind === "return_failed" ? W.returnFailedLabel() : W.resumedLabel();
+            void deliver(session, ev.text, label, "steer", child);
           }
           return;
         case "held":

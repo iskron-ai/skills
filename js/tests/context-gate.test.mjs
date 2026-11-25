@@ -43,48 +43,45 @@ test("context gate: a fill collapse refuses writes, not reads or help, until rec
   assert.ok(!(await write(b)).result?.isError, "explicit confirmation permits the retry");
 });
 
-test("context gate: all role skills and the door belong to one generation and seat", async (t) => {
+test("context gate: the door skill releases a generation, a role skill does not", async (t) => {
   const { b, up } = await seated(t, "iskron,writing,reconcile");
   await usage(b, 160000);
   await usage(b, 40000);
-  await loaded(b, "failed", "iskron", false);
   await loaded(b, "w", "writing");
   await loaded(b, "r", "reconcile");
-  assert.equal((await write(b)).result?.isError, true, "failed door did not count");
+  assert.equal((await write(b)).result?.isError, true, "role skills are not the door");
+  await loaded(b, "failed", "iskron", false);
+  assert.equal((await write(b)).result?.isError, true, "a failed load of the door did not count");
   await recovery(b, "begin", "old", "iskron");
   await usage(b, 10000);
   await recovery(b, "end", "old", "iskron");
-  await loaded(b, "d", "iskron");
-  assert.equal((await write(b)).result?.isError, true, "old generation lost its role loads");
-  const other = await up(undefined, {}, [], { name: "opencode-iskron", version: "2.0.4" });
-  await loaded(other, "foreign", "writing");
-  assert.equal((await write(b)).result?.isError, true, "another bridge cannot release this one");
-  await loaded(b, "new-w", "writing");
-  assert.equal((await write(b)).result?.isError, true, "one role skill is not the whole list");
-  await loaded(b, "new-r", "reconcile");
-  assert.equal((await write(b)).result?.isError, true, "role skills are not read automatically");
-  await stand(b, { realm: "nks-dev", context_restored: true });
-  assert.ok(!(await write(b)).result?.isError);
-});
-
-test("context gate: unknown role list never means empty; confirmed empty needs the door", async (t) => {
-  const { b, fake } = await seated(t);
-  await usage(b, 160000);
-  await usage(b, 40000);
-  await loaded(b, "d", "iskron");
-  await loaded(b, "w", "writing");
-  assert.equal((await write(b)).result?.isError, true);
-  fake.state.kartaSkills = { 931: "" };
-  await usage(b, 10000);
-  assert.equal((await write(b)).result?.isError, true);
-  await loaded(b, "d2", "iskron");
   assert.equal(
     (await write(b)).result?.isError,
     true,
-    "the bridge cannot infer an empty role list",
+    "a load of the old generation does not count",
   );
-  await stand(b, { realm: "nks-dev", context_restored: true });
-  assert.ok(!(await write(b)).result?.isError);
+  const other = await up(undefined, {}, [], { name: "opencode-iskron", version: "2.0.4" });
+  await loaded(other, "foreign", "iskron");
+  assert.equal((await write(b)).result?.isError, true, "another bridge cannot release this one");
+  const refused = await write(b);
+  assert.equal(refused.result?.isError, true, "a blind retry is no recovery");
+  const word = textOf(refused);
+  assert.match(word, /Загрузи скилл iskron|Load the iskron skill/, "the word names the load");
+  assert.doesNotMatch(word, /скиллы роли|role skills/, "the word asks for no role skills");
+  await loaded(b, "d", "iskron");
+  assert.ok(!(await write(b)).result?.isError, "the door's load ends the recovery: no loop");
+});
+
+test("context gate: the role's skill list decides nothing: unknown or empty, the door alone releases", async (t) => {
+  const { b, fake } = await seated(t);
+  await usage(b, 160000);
+  await usage(b, 40000);
+  await loaded(b, "w", "writing");
+  assert.equal((await write(b)).result?.isError, true, "a role skill is not the door");
+  fake.state.kartaSkills = { 931: "" };
+  assert.equal((await write(b)).result?.isError, true, "an empty role list is no recovery");
+  await loaded(b, "d", "iskron");
+  assert.ok(!(await write(b)).result?.isError, "the door releases whatever the role lists");
 });
 
 test("context gate: late usage cannot veto a write already sent; a model/window change is not a collapse", async (t) => {
@@ -151,11 +148,10 @@ test("context gate: other harnesses do not silently acquire the OpenCode gate", 
   }
 });
 
-test("context gate: a known pending mark survives bridge restart; old loads do not", async (t) => {
+test("context gate: a known pending mark survives bridge restart; the door's load after it releases", async (t) => {
   const { b, up } = await seated(t, "iskron,writing");
   await usage(b, 100000);
   await usage(b, 10000);
-  await loaded(b, "old-door", "iskron");
   assert.equal((await write(b)).result?.isError, true);
   b.kill();
   await b.stop();
@@ -167,7 +163,7 @@ test("context gate: a known pending mark survives bridge restart; old loads do n
     "known pending was restored before writing",
   );
   await loaded(back, "writing", "writing");
-  assert.equal((await write(back)).result?.isError, true, "pre-restart door load is not reused");
-  await stand(back, { realm: "nks-dev", context_restored: true });
-  assert.ok(!(await write(back)).result?.isError);
+  assert.equal((await write(back)).result?.isError, true, "a role skill is not the door");
+  await loaded(back, "door", "iskron");
+  assert.ok(!(await write(back)).result?.isError, "the door's load after the restart releases");
 });

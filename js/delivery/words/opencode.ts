@@ -45,6 +45,8 @@ export interface OpencodeWords {
   staleBatch: () => string;
   wakeBatch: (n: number) => string;
   resumedLabel: () => string;
+  /** The log's label of a seat return that failed — a word into the session (channel.ts). */
+  returnFailedLabel: () => string;
   tact: () => string;
   tactWaits: () => string;
   tactWaitsFolded: () => string;
@@ -131,6 +133,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     staleBatch: () => "пачка лежалых кадров",
     wakeBatch: (n) => `пачка побудки (${n})`,
     resumedLabel: () => "слово о возвращённом месте",
+    returnFailedLabel: () => "слово о месте, которое не вернулось",
     tact: () => "такт внимания",
     tactWaits: () => "Искрон: такт внимания ждёт конца хода сессии",
     tactWaitsFolded: () => "Искрон: такт внимания ждёт конца хода сессии — прежний ждущий свёрнут",
@@ -224,6 +227,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     staleBatch: () => "batch of stale frames",
     wakeBatch: (n) => `wake-up batch (${n})`,
     resumedLabel: () => "word about the returned seat",
+    returnFailedLabel: () => "word about the seat that did not return",
     tact: () => "attention tact",
     tactWaits: () => "Iskron: the attention tact waits for the end of the session's turn",
     tactWaitsFolded: () =>

@@ -472,7 +472,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // An instance of another spelling of the same directory wakes this one unloaded with a seat (twins.ts).
   const twins = createTwins(ctx, homeOf(ctx), {
     say,
-    lost: (s, text) => onChannel(s, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
+    lost: (s, t) => heard(s, { logger: LOGGERS.channel, data: { kind: "return_failed", text: t } }),
     holds: (r) => half.held(r),
     holders: () => half.holders(),
     adopt: () => half.adopt(),

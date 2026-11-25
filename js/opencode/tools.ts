@@ -153,7 +153,7 @@ export async function setupTools(
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
-      onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }, !!child),
+      onChannel(root, { logger: LOGGERS.channel, data: { kind: "return_failed", text } }, !!child),
     lost: (root, text) =>
       onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),

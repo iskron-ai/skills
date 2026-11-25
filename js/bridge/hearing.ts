@@ -38,15 +38,10 @@ import { localSocketAlive } from "./sweep.ts";
 import { state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 
-/** A live, proven socket can answer the watch without an upstream session. */
+/** A live, proven socket can answer the watch without an upstream session (the ring may have lost the hello). */
 export function liveHearing(): boolean {
   const s = state.standing;
-  return (
-    !!s &&
-    holdsKey(keyOf(s.realm, s.karta, s.name ?? "")) &&
-    !H.unheard &&
-    !!H.door?.ring.some((item) => item.frame?.type === "hello")
-  );
+  return !!s && H.proven && holdsKey(keyOf(s.realm, s.karta, s.name ?? "")) && !H.unheard;
 }
 
 /** A non-numeric role is a sentinel: the board prints roles as numbers. */

@@ -84,9 +84,7 @@ test("context gate: OpenCode preserves adjacent fill samples and observes succes
     await skill("w", "writing");
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
     await skill("door", "iskron");
-    await assert.rejects(write(), /контекст сжат|context.*compact/i);
-    await rec.call("iskron_stand", { realm: "nks-dev", context_restored: true }, "s");
-    await write();
+    await write(); // the door's own load releases the generation: no stand with context_restored is needed
     steps(1000);
     await delay(300);
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
