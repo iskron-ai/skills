@@ -70,8 +70,8 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   const leaving = heldPlaces().map((p) => p.key);
   if (leaving.length) await flushUsage(usagePlace()); // last usage snapshot while the seat is held (#6401)
   const status = publishedStatus();
-  // On the dispatcher the cleared line goes in the tact before the unsubscribe (#8620 v11);
-  // a socket per seat is cleared after it closes, as before.
+  // On the dispatcher the cleared line goes as a status frame before the unsubscribe, its
+  // answer awaited ≤3 s (#11376 over #8620 v11); a socket per seat is cleared after it closes.
   // A dispatcher subscription broken and not back: the line stays on the board till the pulse
   // runs out, as on any break (#8620 v11) — no POST, and no refusal to the agent.
   const url = statusAddress()?.url ?? null;

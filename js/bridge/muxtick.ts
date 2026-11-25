@@ -1,7 +1,9 @@
-// The daemon's batch tact (graph @nks/nks-dev, nodes #8623, #8617): pulse, busy line and usage
-// of every seat on the dispatcher connection gather between tacts and leave as one tick frame
-// per connection per interval, only what changed; an empty tact sends nothing. A seat leaving
-// sends its last lines at once, in a frame of their own, before its unsubscribe.
+// The daemon's batch tact (graph @nks/nks-dev, nodes #8623, #8617): pulse and usage of every
+// seat on the dispatcher connection gather between tacts and leave as one tick frame per
+// connection per interval, only what changed; an empty tact sends nothing. A seat leaving sends
+// its last numbers at once, in a frame of their own, before its unsubscribe. The busy line is no
+// tact line (#11376): it goes as a status frame; `status` here is only the shape of a line held
+// for hello (muxsub.ts earlyLines).
 import { envName } from "../delivery/index.ts";
 
 /** The tact interval is the pulse gap of today (pulse.ts): one seam for both. */

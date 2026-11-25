@@ -73,15 +73,14 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     if (!active().length) link.idle();
   }
 
-  // Lines put for the tact while the subscription lived wait for its next hello (#8620 v15): the
-  // server refuses them before it. The pulse is not held: the holding sends one on hello.
+  // Numbers put for the tact while the subscription lived wait for its next hello (#8620 v15): the
+  // server refuses them before it. The pulse is not held: the holding sends one on hello. A busy
+  // line never waits in the tact (#11376).
   function holdBack(s: Sub): void {
     if (!s.channel) return;
     const url = statusUrl(s.o.url);
-    for (const [{ standing_id: id, status, usage }, lost] of ticker.take(s.channel)) {
-      if (typeof status === "string") holdEarly(s, { url, scope: id ?? null, fields: { status } });
+    for (const [{ standing_id: id, usage }, lost] of ticker.take(s.channel))
       if (usage) holdEarly(s, { url, scope: id ?? null, fields: { usage }, lost });
-    }
   }
 
   // The channel stays routed meanwhile: a channel_closed before the new hello is still its word.
@@ -115,7 +114,7 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
     const standings = named.map((x) => x.standing_id ?? "").filter(Boolean);
     // From its hello the subscription earns back its resubscribe after an unasked 1000 (muxends.ts).
     Object.assign(s, { live: true, tries: 0, standings, seats: named.length, helloAt: Date.now() });
-    // A held busy line goes as a status frame, ahead of any fresh one (muxstatus.ts, #11337).
+    // A held busy line goes as a status frame, ahead of any fresh one (muxstatus.ts, #11376).
     for (const [e, lost] of earlyLines(s, channel))
       if (typeof e.status === "string") heldLine((x) => link.send(x), e);
       else ticker.put(e, lost);

@@ -110,7 +110,7 @@ export function trimNudge(t: StatusTrim): string {
 /** No live seat on the channel, by either reason the dispatcher names: re-resolved once (#11372). */
 const NO_SEAT = new Set(["unknown_standing", "no_live_standing"]);
 
-// The dispatcher's answer to a status frame (muxstatus.ts, #11337): set, set trimmed, NOT set
+// The dispatcher's answer to a status frame (muxstatus.ts, #11376): set, set trimmed, NOT set
 // with its reason — or not known: silence, or an answer that may be an earlier line's.
 function byMux(a: StatusAnswer | "held", text: string): StatusOutcome {
   const w = words(STATUS_POST);

@@ -164,7 +164,7 @@ test("dispatcher routes a wake for one graph and role only to that seat", async 
   });
 });
 
-test("N sessions: one tick frame per interval whatever N, busy lines in it, no POST to /channel/status", async () => {
+test("N sessions: one tick frame per interval whatever N, pulse in it, busy lines by status frames, no POST to /channel/status", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const names = ["tick-a", "tick-b", "tick-c"];
     const ss = [];
@@ -190,8 +190,11 @@ test("N sessions: one tick frame per interval whatever N, busy lines in it, no P
       );
     for (const name of names) {
       const id = seatIdOf(fake, name);
-      assert.equal(fake.state.placeStatus.get(id), `занят ${name}`, `${name}'s busy line by tick`);
+      assert.equal(fake.state.placeStatus.get(id), `занят ${name}`, `${name}'s busy line`);
     }
+    // The tact carries pulse and usage, the busy line goes as a status frame (#11376).
+    const lines = mux.ticks.flatMap((t) => t.entries).filter((e) => "status" in e);
+    assert.deepEqual(lines, [], "no busy line in the tact");
     assert.equal(fake.state.counts.status_requests, 0, "no POST to /channel/status");
     // Пульс — головы, по каналу (#8620 v19): его запись места не называет.
     const pulses = mux.ticks.flatMap((t) => t.entries).filter((e) => e.pulse);

@@ -61,7 +61,7 @@ export function fullBridgeSigint(leave?: (why: string) => Promise<void>): () => 
       return;
     }
     const addr = statusAddress();
-    // On the dispatcher the cleared line goes in the tact before the unsubscribe (#8620 v11).
+    // On the dispatcher the cleared line goes as a status frame before the unsubscribe (#11376).
     const line = addr && !interrupted ? leavingLine(addr.url) : "none";
     releaseStanding("SIGINT"); // else .key outlives the bridge and leads the watchdog to a dead socket
     if (interrupted) process.exit(0);
@@ -70,7 +70,7 @@ export function fullBridgeSigint(leave?: (why: string) => Promise<void>): () => 
     const clearing =
       addr && line === "post"
         ? publishStatusTo(addr.url, "", 2000).catch(() => {})
-        : line === "tick"
+        : line === "frame"
           ? released(1000)
           : null;
     if (!clearing && tokenRequestsInFlight.size === 0) process.exit(0);

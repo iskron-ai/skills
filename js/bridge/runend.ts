@@ -101,7 +101,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // @nks/nks-dev, node #6649) — the agent's end too, until its revoke is confirmed.
     if (!CFG.satellite) keepHoldRecord();
     const eras = new Map(own.map((s) => [seatKeyOf(s), recordAt(seatKeyOf(s))]));
-    // On the dispatcher the cleared busy line goes in the tact before the unsubscribe (#8620 v11).
+    // On the dispatcher the cleared busy line goes as a status frame before the unsubscribe (#11376).
     const line = addr && closing ? leavingLine(addr.url) : "none";
     // A paused seat keeps its busyness even if nobody takes the handover socket.
     releaseStanding(why, CFG.satellite && !paused, false, ended, paused);
@@ -136,7 +136,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && line === "post") await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    if (line === "tick") await released(1000);
+    if (line === "frame") await released(1000);
     return end;
   })());
 }

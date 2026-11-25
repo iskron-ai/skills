@@ -28,26 +28,27 @@ import {
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
 
-/** Пустая строка ушла одним кадром tick уходящего места, до его отписки, без POST. */
+/** Пустая строка ушла одним кадром status уходящего места, до его отписки, без POST и не тактом (#11376). */
 function clearedBeforeUnsubscribe(fake, conn, name) {
   const chan = channelOf(fake, name);
-  const { clearing, clearAt, unsubAt } = leaveFrames(conn, chan, seatIdOf(fake, name));
-  assert.ok(clearAt >= 0, `${name}: the busy line cleared by a tick on the dispatcher connection`);
+  const { clearing, clearAt, unsubAt, ticked } = leaveFrames(conn, chan, seatIdOf(fake, name));
+  assert.ok(
+    clearAt >= 0,
+    `${name}: the busy line cleared by a status frame on the dispatcher connection`,
+  );
   assert.ok(unsubAt >= 0, `${name}: unsubscribed`);
   assert.ok(
     clearAt < unsubAt,
     `${name}: the last line before the unsubscribe: ${clearAt}, ${unsubAt}`,
   );
   assert.equal(clearing.length, 1, `${name}: one leaving frame per leave`);
-  assert.ok(
-    clearing[0].entries.every((e) => e.channel_id === chan),
-    `${name}: the leaving frame carries the leaving seat only`,
-  );
+  assert.ok(clearing[0].ack === true && clearing[0].ref, `${name}: the frame asks for an answer`);
+  assert.deepEqual(ticked, [], `${name}: no busy line in the tact`);
   assert.equal(fake.state.counts.status_requests, 0, "no POST to /channel/status");
   assert.equal(busyOf(fake, name), "", `${name}: the board shows no busy line`);
 }
 
-test("the session ends: its last busy line goes in a tick before its unsubscribe, no POST", async () => {
+test("the session ends: its last busy line goes as a status frame before its unsubscribe, no POST", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const [a, b] = [await session(), await session()];
     ok(await a.stand({ realm: REALM, karta: 931, name: "last-a", status: "занят A" }), "A");
@@ -247,7 +248,7 @@ test("leave by word clears the line by status before the unsubscribe; the return
   });
 });
 
-test("SIGINT of a full bridge on the dispatcher: the cleared line in a tick before the unsubscribe, no POST", async () => {
+test("SIGINT of a full bridge on the dispatcher: the cleared line as a status frame before the unsubscribe, no POST", async () => {
   await withMux(async ({ fake, mux, full }) => {
     const f = await full();
     ok(await f.stand({ realm: REALM, karta: 931, name: "int-a", status: "занят I" }), "F stands");
@@ -293,7 +294,7 @@ test("a handover no successor takes: the seat keeps its last busy line, nothing 
       process.kill(pid, "SIGTERM");
       await waitFor("the daemon gone", () => !alive(pid), 30_000);
       const { clearAt } = leaveFrames(conn, chan, seatIdOf(fake, "hand-a"));
-      assert.equal(clearAt, -1, "no cleared line in a tick");
+      assert.equal(clearAt, -1, "no cleared line in a status frame");
       assert.equal(fake.state.counts.status_requests, 0, "no POST to /channel/status");
       assert.equal(busyOf(fake, "hand-a"), "занят H", "the last busy line stays on the board");
     },
@@ -318,8 +319,12 @@ test("superseded by another connection: the bridge touches the old seat's line n
       await sleep(1500);
       const touched = mux.conns
         .flatMap((c) => c.frames.slice(c === conn ? from : 0).map((f) => f.frame))
-        .filter((f) => f?.type === "tick" && f.entries.some((e) => e.standing_id === ida));
-      assert.deepEqual(touched, [], "no tick about the superseded seat");
+        .filter(
+          (f) =>
+            (f?.type === "tick" && f.entries.some((e) => e.standing_id === ida)) ||
+            (f?.type === "status" && f.channel_id === chan),
+        );
+      assert.deepEqual(touched, [], "no tick or status frame about the superseded seat");
       assert.equal(fake.state.counts.status_requests, 0, "no POST to /channel/status");
       assert.equal(busyOf(fake, "gone-a"), "занят G", "its line is the new holder's to change");
     } finally {

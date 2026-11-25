@@ -1,5 +1,6 @@
 // A busy line over the dispatcher connection asks for its answer (graph @nks/nks-dev, node
-// #11337): a status frame with ack and a fresh ref, one write in flight per channel. A status_*
+// #11376, which specifies #8620's busy-line items; work #11337): a status frame with ack
+// and a fresh ref, one write in flight per channel. A status_*
 // frame on the channel answers the write in flight — its ref exact, another ref ignored, none
 // taken as the write's own. After a write heard nothing in time, an unlabelled answer may be the
 // earlier one's: the next is "not known" until an exact ref resolves cleanly again. A server that
