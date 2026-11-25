@@ -50,16 +50,15 @@ export function syntheticError(
               : kind === "down"
                 ? // The server is down for the whole machine (downwindow.ts): «retry freely»
                   // here is what dozens of sessions obeying it at once did to a server
-                  // that was already down. The call is not queued and will not be sent
-                  // later by the bridge — only the bridge's own knock is.
+                  // that was already down. The call is not queued: nothing sends it later.
                   "The call never reached the server, so nothing was applied — it is not queued: " +
-                  "restart nothing and do not retry it now; say it again once the server answers."
+                  "restart nothing and do not retry it now; call again after the wait named above."
                 : "The call never reached the server, so nothing was applied — retry freely."
       : "The call went out and its answer was lost, so THE OUTCOME IS UNKNOWN — re-read the target " +
         "before retrying: a blind retry can apply a second time, and a write with no version guard " +
         "duplicates silently." +
         (kind === "down"
-          ? " The server is down for the whole machine: restart nothing — the bridge knocks it again by itself."
+          ? " The server is down for the whole machine: restart nothing — nothing repeats the call; call again after the wait named above."
           : "");
   // The attention clause stays off every hold-off: a whole grant pausing is
   // the server's own pacing, never a defect to escalate.

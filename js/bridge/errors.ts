@@ -62,9 +62,10 @@ export class DownError extends UpstreamError {
   }
 }
 
+// Nothing repeats the call without a new one: the word names the wait, not a retry (#11375).
 const downMessage = (cause: string | null, waitMs: number): string =>
-  `${cause ? `${cause} — ` : ""}server unavailable — the bridge retries by itself ` +
-  `(its next knock in about ${Math.max(1, Math.ceil(waitMs / 1000))} s)`;
+  `${cause ? `${cause} — ` : "not sent — "}server unavailable — call again in about ` +
+  `${Math.max(1, Math.ceil(waitMs / 1000))} s`;
 
 export class TokenError extends Error {
   oauthError: string | undefined;

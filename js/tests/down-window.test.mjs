@@ -187,7 +187,9 @@ test("a down server is ONE window for the whole machine: the other bridges answe
       /OUTCOME IS UNKNOWN/,
       "a 503 is the front line's word: the api may have seen the call",
     );
-    assert.match(text(first), /the bridge retries by itself/, JSON.stringify(first));
+    // Nothing repeats the call without a new one: the word names the wait, never a retry (#11375).
+    assert.match(text(first), /call again in about \d+ s/, JSON.stringify(first));
+    assert.doesNotMatch(text(first), /retries by itself|knocks it again by itself/);
     assert.doesNotMatch(text(first), /retry freely|server side needs attention/);
     // The call was knocked exactly once: with the session, the front line said 503 — a
     // 503 is not retried in-process, so no second knock for it. The handshake the api's
@@ -208,6 +210,7 @@ test("a down server is ONE window for the whole machine: the other bridges answe
     assert.match(text(second), /it is not queued/, "refused by the window: nothing was sent");
     assert.doesNotMatch(text(second), /retry freely|OUTCOME IS UNKNOWN/);
     assert.match(text(second), /about 1 s/, "the wait is named");
+    assert.match(text(second), /not sent — server unavailable — call again in about 1 s/);
     assert.ok(took < 900, `answered at once, not after the window: ${took}ms`);
     assert.equal(sessionKnocks(door), knocked, "no bridge knocked while the window stands");
     assert.ok(
