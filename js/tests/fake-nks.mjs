@@ -189,6 +189,10 @@ export async function startFakeNks(opts = {}) {
     listChangedOn: null,
     listChangedSent: [], // метод каждого запроса, в чьём ответе ушло уведомление
     initSids: [], // Mcp-Session-Id каждого рукопожатия, как пришло (null — без заголовка)
+    initAt: [], // мгновение каждого рукопожатия
+    registerAt: [], // мгновение каждого register места
+    initDelayMs: 0,
+    initRefuse: null,
     // Закрытие сессии клиентом (спека MCP, DELETE с её id; #9174): каждый DELETE как пришёл.
     deletes: [],
     // Кто спрашивал (#9972): метод, путь и user-agent каждого запроса и апгрейда, кроме
@@ -918,6 +922,9 @@ export async function startFakeNks(opts = {}) {
         "registerToolDelayMs", // hold the iskron_channel register tool open this long (возврат места при переподхвате)
         "listChangedOn",
         "listError", // tools/list отвечает ошибкой JSON-RPC (сервер снимает пометку и так, #6817)
+        "initDelayMs", // каждое рукопожатие отвечает на столько позже: видно, сколько их в полёте
+        "standingRegisterDelayMs", // каждый register места ложится на столько позже
+        "initRefuse", // { status, retryAfter } — рукопожатие отвечает этим (502/503/504 — сервер лёг)
       ]) {
         if (k in patch) st[k] = patch[k];
       }
@@ -1276,7 +1283,18 @@ export async function startFakeNks(opts = {}) {
         st.dead.add(sid);
         st.sessions.delete(sid); // credential сменился — сессия закрыта
       }
-      if (msg.method === "initialize") st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+      if (msg.method === "initialize") {
+        st.initSids.push(sid ?? null); // с каким id пришло рукопожатие
+        st.initAt.push(Date.now()); // когда: ворота возврата машины судятся по этим мгновениям
+        if (st.initRefuse) {
+          res.writeHead(st.initRefuse.status, {
+            "content-type": "text/plain",
+            "retry-after": String(st.initRefuse.retryAfter ?? 1),
+          });
+          return res.end("upstream down");
+        }
+        if (st.initDelayMs) await new Promise((r) => setTimeout(r, st.initDelayMs));
+      }
       if (sid && st.dead.has(sid) && msg.method === "initialize") {
         // Как на бою: рукопожатие под закрытой сессией — 404 unknown_session, сколько
         // бы клиент его ни повторял; клиент обязан забыть id (спека MCP).
@@ -1596,6 +1614,7 @@ export async function startFakeNks(opts = {}) {
             await new Promise((r) => setTimeout(r, st.standingRegisterDelayMs));
           st.placeAttrs.set(regKey, a.attrs);
           st.counts.register_standing++;
+          st.registerAt.push(Date.now()); // когда: перерегистрация машины судится по мгновениям
           st.placeArgs.push({
             action: "register",
             name: a.name,

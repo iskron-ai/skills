@@ -16,6 +16,7 @@ import {
 import { closedUnder, DownError, errorCode, errorMessage, UpstreamError } from "./errors.ts";
 import { loginPublished } from "./oauth/flow.ts";
 import { repeatable } from "./repeat.ts";
+import { throughGate } from "./returngate.ts";
 import { closeSession, noteOpened } from "./sessionclose.ts";
 import { loadStore, saveServerCache } from "./store.ts";
 import { debug, emit, log } from "./streams.ts";
@@ -373,9 +374,12 @@ export async function reinitialize(): Promise<void> {
       void letGo("re-initialize");
       const id = `${ID_PREFIX}bridge-reinit-${++state.reinitCounter}`;
       let result: JsonRpcMessage | null = null;
-      await post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
-        if (m.id === id) result = m;
-      });
+      // One probe per machine, the rest spread after it (returngate.ts, #11375).
+      await throughGate(CFG.serverUrl, () =>
+        post({ jsonrpc: "2.0", id, method: "initialize", params: state.initParams }, (m) => {
+          if (m.id === id) result = m;
+        }),
+      );
       const got = result as JsonRpcMessage | null;
       if (!got || got.error) {
         throw new UpstreamError(

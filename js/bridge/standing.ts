@@ -90,7 +90,8 @@ function replayStanding(): Promise<string | null> {
   if (state.standingSession === state.sessionId) return Promise.resolve(null);
   if (R.inFlight) return R.inFlight; // wait for the replay already running
   R.inFlight = (async () => {
-    const move = registerMove("returns"); // one move: the main seat and every seat beside (#7439, #11030)
+    // One move: the main seat and every seat beside (#7439, #11030); a re-registration — the return gate.
+    const move = registerMove("returns", undefined, true);
     try {
       await rebind(move);
     } catch (e) {

@@ -8,10 +8,12 @@
 import { ID_PREFIX, tool } from "../delivery/index.ts";
 import { type Answer, callTool } from "./call.ts";
 import { claimResult } from "./claimdelivery.ts";
+import { CFG } from "./config.ts";
 import { endedSince } from "./endedseats.ts";
 import { placeFields } from "./placefields.ts";
 import { type MoveSeat, type RegisterMove, seatIdOf } from "./ratelimit.ts";
 import { racedOpening, refusalOf } from "./refusal.ts";
+import { throughGate } from "./returngate.ts";
 import { noteSkills } from "./skillwatch.ts";
 import { claimRefusal, launchBasis, registeredBasis, rememberBasis } from "./spawned-for.ts";
 import { log } from "./streams.ts";
@@ -32,6 +34,14 @@ export const MAIN_SEAT: MoveSeat = Object.freeze({ id: null, main: true });
  */
 export const gateShut = (move: RegisterMove, seat: MoveSeat): string | null =>
   move.stopped() ?? (endedSince(seatIdOf(seat), move.since) ? "the seat ended in this move" : null);
+
+/**
+ * A re-registration (a rebind after a lost session, a return from disk after a reload or a
+ * handover, a skills refresh after a self-update) goes through the machine's return gate
+ * (returngate.ts, #11375): one probe, the rest spread after it. A first stand does not.
+ */
+const returning = <R>(move: RegisterMove, send: () => Promise<R>): Promise<R> =>
+  move.regate ? throughGate(CFG.serverUrl, send) : send();
 
 /**
  * A seat-open race (409 without a rule, refusal.ts) is registered once more — a claim
@@ -70,7 +80,7 @@ export async function registerByCall(
   const send = () => callTool(tool("channel"), { ...args, action: "register" });
   const claim = !!(args.spawned_for || launchBasis(args)); // callTool adds the same basis
   const raced = (a: Answer): boolean => a.isError && racedOpening(a.refusal);
-  return onceMoreIfRaced(await send(), raced, claim, move, seat, send);
+  return onceMoreIfRaced(await returning(move, send), raced, claim, move, seat, send);
 }
 
 /**
@@ -86,7 +96,7 @@ export async function registerRaw(
 ): Promise<JsonRpcMessage | null> {
   if (gateShut(move, seat) || claimRefusal()) return null;
   const send = () => postRegister(place, freshSkills);
-  const first = await send();
+  const first = await returning(move, send);
   const claim = !!registeredBasis(place ?? {}).spawned_for; // remembered by the send itself
   const raced = (m: JsonRpcMessage | null): boolean =>
     !!m?.result?.isError && racedOpening(refusalOf(m));
