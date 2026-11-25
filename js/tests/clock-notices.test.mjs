@@ -44,26 +44,66 @@ test("an agent role with no seat: the recipient unknown, the seat facts and role
   assert.doesNotMatch(absent, /: нет|человек/, absent);
 });
 
-test("a person card the server names: person wording, the server's delivery facts as they came, no seat fact", () => {
-  const to = { standing_id: null, standing: null, karta_seq: 163, kind: "person" };
-  const delivery = { fronts: ["window", "bot"], taken_by: "bot" };
-  const f = clockNotice("card_unanswered", { to, delivery, last_act_at: null });
+// The api's shape (nks-api, #11372): to.kind "person" | "agent"; for a person delivery =
+// {fronts: [{front, taken}], read: "unknown"}; the agent-seat fields stay in the frame and are
+// not printed for a person.
+const PERSON = { standing_id: null, standing: null, karta_seq: 163, kind: "person" };
+const SEAT_FIELDS = { took_text: false, listening: false, role_called: false };
+
+test("a person card with taken and queued fronts: person wording, each front's state, the server's read word, no agent-seat fact", () => {
+  const delivery = {
+    fronts: [
+      { front: "bot", taken: true },
+      { front: "pulse", taken: false },
+    ],
+    read: "unknown",
+  };
+  const f = clockNotice("card_unanswered", {
+    to: PERSON,
+    delivery,
+    last_act_at: null,
+    ...SEAT_FIELDS,
+  });
   for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
     const line = text.split("\n")[0];
     assert.match(
       line,
-      /; адресат — человек \(роль: 163\); доставка: fronts: window, bot, taken_by: bot; последний ход: неизвестно$/,
+      /; человеку \(роль: 163\); фронты: bot \(взята\), pulse \(в очереди\); прочтение: unknown; последний ход: неизвестно$/,
       line,
     );
-    assert.doesNotMatch(line, /слушает|роль позвана|адресат: /, line);
+    assert.doesNotMatch(line, /слушает|роль позвана|адресат|took_text|: нет/, line);
     assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
   }
-  const bare = batchLine(clockNotice("card_unanswered", { to, last_act_at: null }));
-  assert.match(bare, /адресат — человек \(роль: 163\); доставка: неизвестно; /, bare);
   // The details carry the server's words, not the bridge's.
   const d = cardFrame(f).provenance.notice_data;
   assert.equal(d.to.kind, "person");
-  assert.deepEqual(d.delivery, { fronts: "window, bot", taken_by: "bot" });
+  assert.deepEqual(d.delivery, delivery);
+});
+
+test("a person card sent to no front, and one without delivery facts", () => {
+  const none = clockNotice("card_unanswered", {
+    to: PERSON,
+    delivery: { fronts: [], read: "unknown" },
+    ...SEAT_FIELDS,
+  });
+  assert.match(
+    batchLine(none),
+    /; человеку \(роль: 163\); не отправлена ни одному фронту человека; прочтение: unknown; /,
+  );
+  assert.doesNotMatch(batchLine(none), /слушает|роль позвана/);
+  const bare = batchLine(clockNotice("card_unanswered", { to: PERSON, ...SEAT_FIELDS }));
+  assert.match(bare, /; человеку \(роль: 163\); доставка: неизвестно; /, bare);
+});
+
+test("kind agent: the seat facts as before, an absent one unknown", () => {
+  const to = { standing_id: "seat-id", standing: "@h:recipient", karta_seq: 163, kind: "agent" };
+  const line = batchLine(clockNotice("card_unanswered", { to, role_called: null }));
+  assert.match(
+    line,
+    /адресат: @h:recipient \(id: seat-id, роль: 163\); слушает: нет; .*роль позвана: неизвестно$/,
+    line,
+  );
+  assert.doesNotMatch(line, /человек|фронт|доставка/, line);
 });
 
 test("a seat's null flag is unknown, never no", () => {
@@ -92,16 +132,32 @@ test("English: a person card by the server's kind names the person; a seatless r
     const to = { standing_id: null, standing: null, karta_seq: 163 };
     const f = clockNotice("card_unanswered", {
       to: { ...to, kind: "person" },
-      delivery: { taken_by: "bot" },
+      delivery: {
+        fronts: [
+          { front: "bot", taken: true },
+          { front: "pulse", taken: false },
+        ],
+        read: "unknown",
+      },
       listening: false,
       last_act_at: null,
       role_called: false,
     });
     assert.match(
       batchLine(f),
-      /; recipient is a person \(role: 163\); delivery: taken_by: bot; last action: unknown$/,
+      /; to a person \(role: 163\); fronts: bot \(taken\), pulse \(queued\); read: unknown; last action: unknown$/,
     );
-    assert.doesNotMatch(batchLine(f), /listening|role called|recipient: unknown/);
+    assert.doesNotMatch(batchLine(f), /listening|role called|recipient/);
+    const none = batchLine(
+      clockNotice("card_unanswered", {
+        to: { ...to, kind: "person" },
+        delivery: { fronts: [], read: "unknown" },
+      }),
+    );
+    assert.match(
+      none,
+      /; to a person \(role: 163\); sent to no front of the person; read: unknown; /,
+    );
     const seatless = batchLine(clockNotice("card_unanswered", { to }));
     assert.match(
       seatless,

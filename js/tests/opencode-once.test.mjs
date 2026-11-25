@@ -246,7 +246,7 @@ test("a hello's card list wakes nothing and rides the next context admission", a
 });
 
 // #11372: a card the server names as a person's has no seat facts. Whatever the server sends for
-// them, the plugin names the person and prints the server's delivery facts (none — «unknown»); it
+// them, the plugin names the person and prints the server's delivery (fronts, taken or queued, read); it
 // never prints «listening: no» / «role called: no», which read as a card not delivered. A role
 // without a seat alone is no person: the bridge infers nothing (clock-notices.test.mjs).
 for (const [n, flags] of [
@@ -261,13 +261,14 @@ for (const [n, flags] of [
       const text = await prompt(
         clockNotice("card_unanswered", {
           to: { standing_id: null, standing: null, karta_seq: 163, kind: "person" },
+          delivery: { fronts: [{ front: "bot", taken: true }], read: "unknown" },
           last_act_at: null,
           ...flags,
         }),
       );
       assert.match(
         text,
-        /адресат — человек \(роль: 163\); доставка: неизвестно; последний ход: неизвестно/,
+        /человеку \(роль: 163\); фронты: bot \(взята\); прочтение: unknown; последний ход: неизвестно/,
       );
       assert.doesNotMatch(text, /слушает|роль позвана|адресат: /, text);
       for (const fact of ["4330", "[41]", "clock-key"])

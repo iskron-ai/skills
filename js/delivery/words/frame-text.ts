@@ -13,12 +13,19 @@ export interface ClockNoticeFacts {
   standingId: string | null;
   karta: number | null;
   /**
-   * Род адресата словом сервера (#11372): «person» — карточка человеку, факты места к ней не
-   * относятся; null — сервер не сказал, и мост ничего не выводит сам.
+   * Род адресата словом сервера (#11372): «person» — карточка человеку, факты места агента к ней
+   * не относятся и не печатаются; «agent» или null — факты места, как прежде; мост сам не выводит.
    */
   kind: string | null;
-  /** Факты доставки человеку от сервера — как пришли: [поле, значение]; нет — неизвестно. */
-  delivery?: [string, string][];
+  /**
+   * Доставка человеку словом сервера: fronts — фронты, которым карточка ушла (front — имя, как
+   * прислано; taken — фронт взял кадр из очереди, false — ещё в очереди), пусто — ни одному;
+   * read — слово сервера о прочтении. null или нет — неизвестно.
+   */
+  delivery?: {
+    fronts: { front: string; taken: boolean | null }[] | null;
+    read: string | null;
+  } | null;
   listening: boolean | null;
   lastAct: string | null;
   roleCalled: boolean | null;
@@ -46,23 +53,32 @@ function clockNotice(
   const ref = `${ru ? "дело" : "case"} №${f.room ?? unknown} (id: ${f.roomId ?? unknown}, ${ru ? "граф" : "realm"}: ${f.realm ?? unknown}) [${f.entry ?? unknown}], ${ru ? "ключ" : "key"}: ${f.key ?? unknown}`;
   const last = `${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}`;
   // Человек — только словом сервера (#11372): мост рода адресата не выводит; человеку — не факты
-  // места, а доставка, как её назвал сервер; не назвал — «неизвестно», не «нет».
+  // места агента, а доставка, как её назвал сервер; не назвал — «неизвестно», не «нет».
   const person = kind === "card_unanswered" && f.kind === "person";
   const role = `${ru ? "роль" : "role"}: ${f.karta ?? unknown}`;
-  const said = f.kind && !person ? `, ${ru ? "род" : "kind"}: ${f.kind}` : "";
   const who = person
-    ? `${ru ? "адресат — человек" : "recipient is a person"} (${role})`
-    : `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${role}${said})`;
-  const delivered = f.delivery?.length
-    ? f.delivery.map(([k, v]) => `${k}: ${v}`).join(", ")
-    : unknown;
+    ? `${ru ? "человеку" : "to a person"} (${role})`
+    : `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${role})`;
   const facts =
     kind === "line_due"
       ? `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`
       : person
-        ? `${ru ? "доставка" : "delivery"}: ${delivered}; ${last}`
+        ? `${delivered(ru, unknown, f.delivery)}; ${last}`
         : `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${last}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}`;
   return `${head}: ${ref}; ${who}; ${facts}`;
+}
+
+/** Доставка человеку, как её назвал сервер: фронты с «взята»/«в очереди», прочтение. */
+function delivered(ru: boolean, unknown: string, d: ClockNoticeFacts["delivery"]): string {
+  if (!d?.fronts) return `${ru ? "доставка" : "delivery"}: ${unknown}`;
+  const state = (taken: boolean | null): string =>
+    taken === null ? unknown : taken ? (ru ? "взята" : "taken") : ru ? "в очереди" : "queued";
+  const fronts = d.fronts.length
+    ? `${ru ? "фронты" : "fronts"}: ${d.fronts.map((x) => `${x.front} (${state(x.taken)})`).join(", ")}`
+    : ru
+      ? "не отправлена ни одному фронту человека"
+      : "sent to no front of the person";
+  return `${fronts}; ${ru ? "прочтение" : "read"}: ${d.read ?? unknown}`;
 }
 
 /** Карточка перечня у счёта (#11342): room — номер дела, entry — запись, asker — словами `openCardAsker`. */

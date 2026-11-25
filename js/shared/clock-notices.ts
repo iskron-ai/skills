@@ -33,26 +33,27 @@ export const wire = { rec, text, number, timestamp };
 
 /**
  * Who the card's recipient is and how it reached them, as the server says (#11372): the bridge
- * infers nothing — a role without a seat is not taken for a person. `to.kind` is the server's
- * word on the recipient; `delivery` — its facts of delivery to a person, printed as they come.
+ * infers nothing — a role without a seat is not taken for a person. `to.kind` — "person" |
+ * "agent"; for a person `delivery` = {fronts: [{front, taken}], read}: `front` — the front's name
+ * as sent, `taken` — the front took the frame from its queue (false — still queued), empty
+ * `fronts` — sent to no front; `read` is the server's word ("unknown"). No delivery — null.
  */
-const DELIVERY_MAX = 8;
-function deliveryOf(v: unknown): [string, string][] {
-  const out: [string, string][] = [];
-  for (const [k, x] of Object.entries(rec(v))) {
-    const key = text(k);
-    const value = Array.isArray(x)
-      ? x
-          .map(text)
-          .filter((s): s is string => s !== null)
-          .join(", ") || null
-      : typeof x === "boolean"
-        ? String(x)
-        : text(x);
-    if (key && value !== null) out.push([key, value]);
-    if (out.length >= DELIVERY_MAX) break;
-  }
-  return out;
+const FRONTS_MAX = 8;
+export interface Delivery {
+  fronts: { front: string; taken: boolean | null }[] | null;
+  read: string | null;
+}
+function deliveryOf(v: unknown): Delivery | null {
+  const d = rec(v);
+  if (!Object.keys(d).length) return null;
+  const fronts = Array.isArray(d.fronts)
+    ? d.fronts.slice(0, FRONTS_MAX).flatMap((x) => {
+        const f = rec(x);
+        const front = text(f.front);
+        return front ? [{ front, taken: bool(f.taken) }] : [];
+      })
+    : null;
+  return { fronts, read: text(d.read) };
 }
 
 function kind(frame: Frame): "card_unanswered" | "line_due" | null {
@@ -81,7 +82,7 @@ function dataOf(frame: Frame, notice: "card_unanswered" | "line_due") {
     ...(notice === "card_unanswered"
       ? {
           to: { ...seat, kind: text(who.kind) },
-          delivery: Object.fromEntries(deliveryOf(d.delivery)),
+          delivery: deliveryOf(d.delivery),
           listening: bool(d.listening),
           last_act_at: timestamp(d.last_act_at),
           role_called: bool(d.role_called),
@@ -117,7 +118,7 @@ export function clockNoticeText(frame: Frame): string {
     standingId: seat?.standing_id ?? null,
     karta: seat?.karta_seq ?? null,
     kind: "to" in d ? d.to.kind : null,
-    delivery: "delivery" in d ? Object.entries(d.delivery) : [],
+    delivery: "delivery" in d ? d.delivery : null,
     listening: "listening" in d ? d.listening : null,
     lastAct: "last_act_at" in d ? d.last_act_at : null,
     roleCalled: "role_called" in d ? d.role_called : null,
