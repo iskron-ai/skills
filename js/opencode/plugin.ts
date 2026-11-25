@@ -53,7 +53,6 @@ const CHANNEL_DOWN = "channel_down";
 const nothing = (): void => {};
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- SDK events and answers without a schema */
-
 async function setup(ctx: Context): Promise<() => Promise<void>> {
   // A guard registration failure must fail loading, not silently allow questions.
   await setupQuestionGuard(ctx);
@@ -498,5 +497,4 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
-
 export default { id: PRODUCT, setup };
