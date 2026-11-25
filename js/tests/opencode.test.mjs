@@ -3285,14 +3285,15 @@ test("a lost place that does not come back with no marker: the session hears it 
   const calls = join(SANDBOX, "deaf.calls");
   const resume = join(SANDBOX, "deaf.answer");
   writeFileSync(calls, "");
-  writeFileSync(
-    resume,
-    JSON.stringify({
-      holding: false,
-      resumed: false,
-      word: "возвращать нечего — deaf--931--nks-dev: hello не пришёл — запись цела",
-    }),
-  );
+  const answerIs = (x) => writeFileSync(resume, JSON.stringify(x));
+  // The place comes back until the loss: a check of the watch that lands before it must not take
+  // the place off the slot and so hide the loss from the bridge's death.
+  answerIs({
+    resumed: true,
+    holding: true,
+    key: "deaf--931--nks-dev",
+    word: "возврат места с диска",
+  });
   const b = bridgeEnv("deaf", {
     FB_CALLS: calls,
     FB_RESUME: resume,
@@ -3308,6 +3309,16 @@ test("a lost place that does not come back with no marker: the session hears it 
     await rec.call("iskron_channel", { action: "connect" }, "s-deaf");
     appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "deaf--931--nks-dev" }));
     await until(() => /мост держит место deaf--931--nks-dev/.test(rec.said()), "the held line");
+    await until(
+      () => /сторож слуха вернул место сессии s-deaf/.test(rec.said()),
+      "a check of the watch", // the next one is a period away
+      5000,
+    );
+    answerIs({
+      holding: false,
+      resumed: false,
+      word: "возвращать нечего — deaf--931--nks-dev: hello не пришёл — запись цела",
+    });
     process.kill(pidOf(b.log), "SIGKILL"); // the harness, the OS, an update — not the plugin
     await until(() => heard().length > 0, "the word that the place did not come back", 5000);
     assert.equal(lostMarkers().length, 0, "no marker names this loss");
@@ -3315,8 +3326,92 @@ test("a lost place that does not come back with no marker: the session hears it 
     assert.match(heard()[0].text, /deaf--931--nks-dev/, "the place is named");
     assert.match(heard()[0].text, /hello не пришёл/, "the bridge's reason is said");
     assert.match(heard()[0].text, /iskron_stand/, "the way to stand is said");
-    await until(() => checks().length >= 3, "the watch to stay on the session", 5000);
+    const seen = checks().length;
+    await until(() => checks().length >= seen + 3, "the watch to stay on the session", 5000);
     assert.equal(heard().length, 1, "one word: the watch's retries are silent");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// The word about a failed return goes into the session at most once per loss: a check failing on
+// every period — the bridge dies at each request — is not a model turn on every period. The mark
+// goes by a successful check, a stop, a delete — and by a new loss: a place its bridge took again
+// and lost before a check saw it is told once again.
+test("a failed check is told once per loss: five failed checks are one word, a seat back and lost again — one more", async () => {
+  const calls = join(SANDBOX, "once-told.calls");
+  const answer = join(SANDBOX, "once-told.answer");
+  writeFileSync(calls, "");
+  const key = "told--931--nks-dev";
+  const dies = { die: true }; // the bridge dies at the request: the return or the check fails
+  const back = { resumed: true, holding: true, key, word: "возврат места с диска" };
+  const reopened = { holding: false, resumed: false, reopened: true, word: "проба" };
+  const answerIs = (x) => writeFileSync(answer, JSON.stringify(x));
+  answerIs(back);
+  const b = bridgeEnv("once-told", {
+    FB_CALLS: calls,
+    FB_RESUME: answer,
+    ISKRON_BRIDGE_WATCH_MS: 400,
+  });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-told", location: { directory: "/work/told" } }],
+  });
+  const said = (re) => rec.said().match(re)?.length ?? 0;
+  const told = () =>
+    rec.prompts.filter((p) => /место .* не вернулось|сторож слуха сессии/.test(p.text));
+  const held = () => said(/мост держит место told--931--nks-dev/g);
+  const resumed = () => said(/сторож слуха вернул место сессии s-told/g);
+  const failed = () => said(/сторож слуха сессии s-told/g); // one log line per failed check
+  /** `n` failed checks of the watch more than now, then one period more — a word of that one lands there. */
+  const periods = async (n) => {
+    const from = failed();
+    await until(() => failed() >= from + n, `${n} failed checks of the watch`, 8000);
+    await delay(600);
+  };
+  /** The serving bridge dies against the plugin's will; a check of the watch may have killed it first. */
+  const lose = () => {
+    try {
+      process.kill(pidsOf(b.log).at(-1), "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  };
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-told");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key }));
+    await until(() => held() >= 1, "the held line");
+    await until(() => resumed() >= 1, "a check of the watch", 5000); // the next one is a period away
+    // The bridge dies: five checks fail — one word.
+    answerIs(dies);
+    lose();
+    await periods(5);
+    assert.equal(told().length, 1, "five failed checks — one word");
+    // A check takes the seat back: the loss is over, and nothing is told.
+    answerIs(back);
+    await until(() => resumed() >= 2, "the seat back by a check", 5000);
+    assert.equal(told().length, 1, "a success tells nothing");
+    // A new loss: one word more, however many checks fail.
+    answerIs(dies);
+    lose();
+    await periods(2);
+    assert.equal(told().length, 2, "a new loss — one word more");
+    // The seat does not come back and the bridge stays: it takes the place again and dies before a
+    // check saw it — told again all the same.
+    answerIs(reopened);
+    await until(
+      () => said(/сторож слуха переоткрыл сокет сессии s-told/g) >= 1,
+      "a live bridge",
+      5000,
+    );
+    const live = pidsOf(b.log).at(-1);
+    answerIs(dies);
+    const before = held();
+    appendFileSync(`${b.events}.${live}`, event("held", { key }));
+    await until(() => held() > before, "the place in the bridge's hands again", 1000);
+    lose();
+    await periods(2);
+    assert.equal(told().length, 3, "a place back and lost again before a check — one word more");
   } finally {
     await rec.stop();
   }
@@ -5471,6 +5566,51 @@ const settle = (rec, sessionID = "child") =>
   rec.emit({ type: "session.execution.succeeded", data: { sessionID } });
 
 const ends = (rec) => rec.synthetics.filter((s) => / КОНЧЕН —/.test(s.text));
+
+// The host archived a lead child while the plugin was down: it ended, though no local end mark
+// names it and the session is still readable — its satellite's seat is not returned to it.
+test("a marker seat of a satellite child the host archived is not returned after a reload: no resume call, no prompt", async () => {
+  const { rec: first } = await leadChild("archived-child");
+  await first.stop();
+  assert.equal(lostMarkers().length, 1, "the marker of the stopped instance");
+  const calls = join(SANDBOX, "archived-child-second.calls");
+  const answer = join(SANDBOX, "archived-child-second.answer");
+  writeFileSync(calls, "");
+  writeFileSync(answer, JSON.stringify({ resumed: true, holding: true, key: "k-root" }));
+  const b = bridgeEnv("archived-child-second", {
+    FB_CALLS: calls,
+    FB_TOOLS: LEAD_TOOLS,
+    FB_RESUME: answer,
+  });
+  const rec = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [
+      { id: "root", location: { directory: "/work/root" } },
+      {
+        id: "child",
+        parentID: "root",
+        location: { directory: "/work/child" },
+        time: { archived: 1 },
+      },
+    ],
+  });
+  try {
+    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
+    await delay(700);
+    assert.ok(
+      !callsIn(calls).some((c) => c.arguments?.key === "k-sub"),
+      "no resume call for the child's seat",
+    );
+    assert.deepEqual(rec.prompts, []);
+    assert.equal(
+      stopMarks().filter((f) => f.includes("opencode-ended")).length,
+      1,
+      "the child's end is recorded",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
 
 test("the end of a child's turn ends nothing: its bridge lives, a frame of its case wakes its session and never the root, and the parent hears it is a turn, not the result", async () => {
   const { b, rec, rootPid, childPid } = await leadChild("lead-turn", {

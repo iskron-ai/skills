@@ -98,7 +98,7 @@ export interface Keeper<S extends KeptSlot> {
   resume(slot: S, root: string, quiet?: boolean, patience?: number): Promise<Resumed>;
   /** A successful stand/connect/register — the session stands: not reaped, watched. */
   stood(slot: S): void;
-  /** The session's holding bridge died against the plugin's will: its seat is lost until a return. */
+  /** The session's holding bridge died against the plugin's will: its seat is lost until a return — a failed one is told once again. */
   seatLost(root: string): void;
   /** The session was deleted — the watchdog stops watching it. */
   forget(root: string): void;
@@ -119,7 +119,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   // Roots told that their bridge gave up reopening the socket: once, until a check no longer says stuck.
   const stuckTold = new Set<string>();
   // Roots whose holding bridge died — the seat is lost until a return takes it back, with no marker
-  // to name it; told — the root heard that the return failed: once per loss.
+  // to name it; told — the root heard that the return failed: once per loss, and a new loss is a new once.
   const lostSeats = new Set<string>();
   const lostTold = new Set<string>();
   let stopped = false;
@@ -133,16 +133,21 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   }
 
   /**
-   * A lost seat did not return with no marker to name it: a live idle agent must not stay deaf in
-   * silence — one word into its session (the retries of the watch are silent), and the root stays
-   * under the watch: the watch may take the seat back on its period.
+   * The word about a failed return — a lost seat not back, a check of the watch that failed —
+   * goes into the session once per loss: a live idle agent must not stay deaf in silence, and a
+   * transient failure must not be a turn on every period. The loss over — told again (unlost).
    */
+  function tellLost(root: string, text: string): void {
+    if (lostTold.has(root)) return;
+    lostTold.add(root);
+    doors.tell(root, text);
+  }
+
+  /** A lost seat did not return with no marker to name it: one word, and the root stays under the watch. */
   function stillLost(root: string, place: string, why: string): void {
     if (!lostSeats.has(root)) return;
     roots.add(root);
-    if (lostTold.has(root)) return;
-    lostTold.add(root);
-    doors.tell(root, W.lostNotBack(place, why));
+    tellLost(root, W.lostNotBack(place, why));
   }
 
   /** The seat is back, or the session is over: nothing of its lost seat is remembered. */
@@ -265,7 +270,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       // watch may take it on its period, without another word; any other leaves the watch, and the
       // reaper counts again.
       slot.holding = false;
-      if (!lostTold.has(root)) roots.delete(root);
+      if (!(lostSeats.has(root) && lostTold.has(root))) roots.delete(root);
       const place = retrying.get(root);
       if (place && !r?.resumed)
         doors.tell(root, W.retryFailed(place, r?.word ?? W.noWhy()), slot.child);
@@ -296,7 +301,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       void check(root).catch((e: Error) => {
         const text = W.watchFailed(root, e.message);
         doors.say(text, "warning");
-        doors.tell(root, text);
+        tellLost(root, text);
       });
     schedule(WATCH_MS * (0.8 + 0.4 * Math.random()));
   };
@@ -331,6 +336,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     },
     seatLost(root) {
       lostSeats.add(root);
+      lostTold.delete(root); // a new loss is told once again, though no check saw the seat back
     },
     forget(root) {
       roots.delete(root);

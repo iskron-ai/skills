@@ -143,7 +143,7 @@ export async function setupTools(
 
   // The instance's location: a moved session calls its tools through its new folder's instance (moves.ts).
   const mv = createMoves(ctx, say);
-  const { home, directoryOf, exists, canReturn } = mv;
+  const { home, directoryOf, canReturn } = mv;
   const relay = mv.relay(onChannel, say);
   const models = createModels(ctx); // a satellite's seat names its session's model (#7591)
   const runEnds = createRunEnds(); // ended children: a write through a seat is a refusal aloud (#6361)
@@ -172,7 +172,7 @@ export async function setupTools(
     spawn,
     keeper,
     leads,
-    exists,
+    exists: canReturn, // an archived child ended: its seat is not returned to it
     endRun,
     stopped: () => stopped,
   });
