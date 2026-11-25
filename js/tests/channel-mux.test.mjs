@@ -16,6 +16,7 @@ import {
   muxCarrying,
   rawClient,
   seatIdOf,
+  secretOf,
   sleep,
   textOf,
   TICK_MS,
@@ -25,6 +26,26 @@ import {
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
+
+test("each dispatcher subscription carries only its own harness session id", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const seats = [await session(), await session(), await session()];
+    await seats[0].rpc("iskron/resume", { cwd: "/no-record-a", session: "ses_A" });
+    await seats[1].rpc("iskron/resume", { cwd: "/no-record-b", session: "ses_B" });
+    for (const [i, seat] of seats.entries())
+      ok(await seat.stand({ realm: REALM, karta: 931 + i, name: `id-${i}` }), `seat ${i}`);
+    const channels = seats.map((_, i) => channelOf(fake, `id-${i}`));
+    await muxCarrying(fake, mux, channels);
+    const subscriptions = channels.map((c) =>
+      mux.sent("subscribe").find((s) => s.secret === secretOf(fake, c)),
+    );
+    assert.deepEqual(
+      subscriptions.map((s) => s?.session_id),
+      ["ses_A", "ses_B", undefined],
+    );
+    assert.ok(!("session_id" in subscriptions[2]));
+  });
+});
 
 test("fake self-check: the dispatcher answers by the contract on its own", async () => {
   const fake = await startFakeNks({ pat: "self" });

@@ -1035,7 +1035,7 @@ test("a frame from a bridge nobody owns yet goes to the freshest root session th
   }
 });
 
-test("a frame for a session that is gone or archived is re-addressed to a live root, and every delivery is logged by frame and session", async () => {
+test("a frame for an archived session is logged, never re-addressed to another root", async () => {
   const b = bridgeEnv("archived");
   const sessions = [
     { id: "holder", time: { updated: 1 } },
@@ -1061,17 +1061,16 @@ test("a frame for a session that is gone or archived is re-addressed to a live r
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: frame("после архива"), raw: "" }),
     );
-    await until(() => rec.prompts.length === 2, "the re-addressed frame");
-    assert.equal(rec.prompts[1].sessionID, "other", "a frame never goes into an archived session");
-    assert.match(rec.said(), /сессия holder закрыта или в архиве/);
-    // Nothing live at all — the other session is deleted (get throws): loud, not silent.
+    await until(() => /сессия holder закрыта или в архиве/.test(rec.said()), "the refusal");
+    assert.equal(rec.prompts.length, 1, "a frame is not redirected into another session");
+    // Nothing live at all — the other session is deleted (get throws): still no delivery.
     gone.add("other");
     appendFileSync(
       `${b.events}.${pidOf(b.log)}`,
       event("frame", { frame: frame("некуда"), raw: "" }),
     );
-    await until(() => /ВЛОЖИТЬ НЕКУДА/.test(rec.said()), "the loud refusal");
-    assert.equal(rec.prompts.length, 2);
+    await delay(200);
+    assert.equal(rec.prompts.length, 1);
   } finally {
     await rec.stop();
   }
@@ -8123,6 +8122,53 @@ test("OpenCode's «completed» notice of a live lead child's turn gets the plugi
 
 // A word of the child's bridge — a backlog burst, a stale pile, a lost hearing —
 // is the child's: with its session gone it is said aloud, never re-addressed to a root.
+test("a closed root's late frame never wakes another live root", async () => {
+  const gone = new Set();
+  const b = bridgeEnv("closed-root");
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "closed" }, { id: "live" }],
+    gone,
+  });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "closed");
+    const closedPid = pidOf(b.log);
+    await rec.call("iskron_orient", {}, "live");
+    gone.add("closed");
+    appendFileSync(`${b.events}.${closedPid}`, event("lost", { text: "late closed-session word" }));
+    await delay(400);
+    assert.ok(
+      !rec.prompts.some((p) => p.text.includes("late closed-session word")),
+      JSON.stringify(rec.prompts),
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a deleted root is recorded ended and its late frame is not delivered", async () => {
+  const b = bridgeEnv("deleted-root");
+  const rec = await plugin(b.env, { sessions: [{ id: "deleted" }] });
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_orient", {}, "deleted");
+    const pid = pidOf(b.log);
+    rec.emit({ type: "session.deleted", data: { sessionID: "deleted" } });
+    await until(
+      () =>
+        readdirSync(process.env.ISKRON_BRIDGE_AUTH_DIR).some((f) =>
+          f.startsWith("opencode-ended."),
+        ),
+      "the persisted end",
+    );
+    appendFileSync(`${b.events}.${pid}`, event("lost", { text: "late deleted-session word" }));
+    await delay(300);
+    assert.ok(!rec.prompts.some((p) => p.text.includes("late deleted-session word")));
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("a backlog, a stale pile and a lost hearing of a child whose session is gone never reach the root", async () => {
   const gone = new Set();
   const b = bridgeEnv("lead-leak", { FB_TOOLS: LEAD_TOOLS });

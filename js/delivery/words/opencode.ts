@@ -145,7 +145,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childEnded: (frame, id, text) =>
       `Искрон: ${frame} не вложен — субагент сессии ${id} кончен, его сессия больше не будится; запись дела остаётся в деле (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
-      `Искрон: сессия ${id} закрыта или в архиве — ${frame} идёт в свежайшую виденную`,
+      `Искрон: сессия ${id} закрыта или в архиве — ${frame} не доставлен`,
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; запись дела остаётся в деле (iskron_case history), прямое слово не дошло — ` +
       text,
@@ -239,7 +239,7 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
     childEnded: (frame, id, text) =>
       `Iskron: ${frame} not delivered — the subagent of session ${id} has ended, its session is not woken any more; a case record stays in the case (iskron_case history) — ${text}`,
     sessionClosed: (id, frame) =>
-      `Iskron: session ${id} is closed or archived — the ${frame} goes to the freshest one seen`,
+      `Iskron: session ${id} is closed or archived — the ${frame} was not delivered`,
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; a case record stays in the case (iskron_case history), a direct word did not arrive — ` +
       text,

@@ -1,9 +1,6 @@
-// The "channel" half — standing frames inside an OpenCode session (graph @nks/nks-dev, node #4266).
-//
-// The session's bridge holds the standing socket; the plugin puts a frame into the agent's
-// session as a prompt (ctx.session.prompt). steer enters the running turn at the next step,
-// queue waits for the turn's end, one prompt per turn: a live frame and a loud word go steer,
-// or frames lagged by hours (#5233). Wake-up and stale batches go queue: not urgent — but a
+// The channel half (graph @nks/nks-dev #4266): the bridge holds the socket; the plugin prompts
+// the session. steer enters the running turn, including old frames (#5233); queue waits for its
+// end. Wake-up and stale batches go queue: not urgent — but a
 // wake-up or stale batch carrying the launcher's word to its lead steers, as the word alone would (#7505).
 // Case frames for the pile go queue too, one prompt per pile: a head of counts per case and
 // below it only lines addressed to the seat (#6574). While the pile's previous prompt is not
@@ -11,10 +8,7 @@
 // only wakes no turn and rides the next prompt into the session (the prompt hook). A direct word
 // and a human's word go steer, whole. A life check goes queue, alone, to the root (case #1046). Delivery is handing control back to the agent; a frame
 // gone to a log is a silencer (#4355).
-//
-// The addressee is the session whose bridge brought the frame; a frame of a bridge given to
-// nobody yet goes to the freshest root seen; a child session is the addressee only of its own
-// bridge (#5154).
+// A frame goes to its bridge's session, or the freshest root if unnamed; a child gets only its own (#5154).
 import { type ChannelEvent } from "../bridge/hold.ts";
 import { envName, OPENCODE, PLUGIN } from "../delivery/index.ts";
 import { addressedToMine } from "../shared/addressed.ts";
@@ -31,6 +25,7 @@ import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
 import { createHalts, descendantsOf } from "./halts.ts";
 import { accepting as accepts, archiver } from "./host.ts";
+import { channelEnds } from "./leadends.ts";
 import { type ChildLeads, fromLauncher, NO_LEADS } from "./leadframes.ts";
 import { createLifeChecks } from "./lifecheck.ts";
 import {
@@ -107,6 +102,7 @@ export function setupChannel(
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
   const accepting = (id: string): Promise<boolean> => accepts(ctx, id);
+  const ends = channelEnds(authDir, say);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(
@@ -117,6 +113,7 @@ export function setupChannel(
     child = false,
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
+    if (id && ends.has(id)) return null;
     if (child && (!id || !(await accepting(id)))) {
       // The child's seat outlived it: the frame is not the root's (#5167); it stays in the seat's history.
       say(W.childGone(frame, id ?? "?", text.slice(0, 120)), "error");
@@ -124,7 +121,7 @@ export function setupChannel(
     }
     if (id && !(await accepting(id))) {
       say(W.sessionClosed(id, frame), "warning");
-      id = null;
+      return null;
     }
     id ??= freshestRoot();
     if (id && id !== session && !(await accepting(id))) id = null;
@@ -132,6 +129,7 @@ export function setupChannel(
       say(W.nowhere(frame, text.slice(0, 120)), "error");
       return null;
     }
+    if (ends.has(id)) return null;
     if (halts.halted(id)) {
       say(W.halted(frame, id), "warning");
       return null;
@@ -349,6 +347,7 @@ export function setupChannel(
       else this.taken(session);
     },
     gone(session) {
+      ends.end(session);
       for (const k of ["child", "root"]) dropPile(`${k}:${session}`);
       tacts.gone(session);
       lives.gone(session);
@@ -411,6 +410,7 @@ export function setupChannel(
     onEvent(session, params: any, child = false) {
       const ev = params?.data as ChannelEvent | undefined;
       if (!ev || typeof ev !== "object") return;
+      if (session && ends.has(session)) return;
       switch (ev.kind) {
         case "frame": {
           const frame = cardFrame(ev.frame ?? null);

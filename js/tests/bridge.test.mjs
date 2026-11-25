@@ -1467,6 +1467,28 @@ test("обновлённый токен той же учётки сохраня�
   });
 });
 
+test("a silent mid-call session turnover rebinds before the next write", async (t) => {
+  await withFake(
+    t,
+    { sessionFollowsToken: true, silentNewSession: true },
+    async ({ fake, dir, spawnBridge }) => {
+      const bridge = spawnBridge();
+      await standUp(bridge, dir);
+      const store = readStore(dir);
+      store.tokens.access_token = "new-credential-for-turnover";
+      fake.state.access = store.tokens.access_token;
+      writeFileSync(storeFile(dir), JSON.stringify(store));
+      const read = await bridge.call("tools/call", 5, { name: "nks_orient", arguments: {} });
+      assert.ok(read.result, JSON.stringify(read));
+      assert.match(bridge.stderr, /upstream replaced the session mid-call/);
+      const write = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+      assert.equal(write.result?.isError, undefined, JSON.stringify(write));
+      assert.match(write.result.content[0].text, /принято стоянием proba/);
+      assert.equal(fake.state.counts.unattributed, 0);
+    },
+  );
+});
+
 test("проходящий отказ переигрывания не стирает память о стоянии", async (t) => {
   // Сегодня любой отказ переигранного register забывает стояние насовсем, и дальше
   // мост пишет безавторно, сказав об этом только в stderr. Два отказа подряд
