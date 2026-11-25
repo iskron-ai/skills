@@ -12,6 +12,8 @@ export interface ClockNoticeFacts {
   standing: string | null;
   standingId: string | null;
   karta: number | null;
+  /** Адресат — роль без места: карточка человеку (#11372); факты места к ней не относятся. */
+  person: boolean;
   listening: boolean | null;
   lastAct: string | null;
   roleCalled: boolean | null;
@@ -37,18 +39,42 @@ function clockNotice(
         ? "срок строки"
         : "line due";
   const ref = `${ru ? "дело" : "case"} №${f.room ?? unknown} (id: ${f.roomId ?? unknown}, ${ru ? "граф" : "realm"}: ${f.realm ?? unknown}) [${f.entry ?? unknown}], ${ru ? "ключ" : "key"}: ${f.key ?? unknown}`;
-  const who = `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${ru ? "роль" : "role"}: ${f.karta ?? unknown})`;
+  const last = `${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}`;
+  // Человеку — не факты места, а то, кто он и что мосту его доставка не видна: мост не знает,
+  // дошла ли карточка (окно, Телеграм), и «нет» здесь читалось бы как недоставка (#11372).
+  const who = f.person
+    ? `${ru ? "адресат — человек" : "recipient is a person"} (${ru ? "роль" : "role"}: ${f.karta ?? unknown})`
+    : `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${ru ? "роль" : "role"}: ${f.karta ?? unknown})`;
   const facts =
-    kind === "card_unanswered"
-      ? `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${ru ? "последний ход" : "last action"}: ${f.lastAct ?? unknown}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}`
-      : `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`;
+    kind === "line_due"
+      ? `${ru ? "срок" : "due"}: ${f.due ?? unknown}; ${ru ? "передано постановщику" : "escalated"}: ${flag(f.escalated)}`
+      : f.person
+        ? `${ru ? "доставка человеку мосту не видна" : "delivery to the person is not visible to the bridge"}; ${last}`
+        : `${ru ? "слушает" : "listening"}: ${flag(f.listening)}; ${last}; ${ru ? "роль позвана" : "role called"}: ${flag(f.roleCalled)}`;
   return `${head}: ${ref}; ${who}; ${facts}`;
+}
+
+/** Карточка перечня у счёта (#11342): room — номер дела, entry — запись, asker — словами `openCardAsker`. */
+export interface OpenCardItem {
+  room: number | null;
+  entry: number | null;
+  key: string | null;
+  asker: string;
 }
 
 export interface FrameTextWords {
   clockNotice: (kind: "card_unanswered" | "line_due", facts: ClockNoticeFacts) => string;
   cardRepeat: (n: number | null) => string;
-  openCards: (count: number | null, oldest: string | null, malformed?: boolean) => string;
+  openCards: (
+    count: number | null,
+    oldest: string | null,
+    malformed?: boolean,
+    items?: readonly OpenCardItem[],
+  ) => string;
+  /** Спросивший карточки перечня: место; роль без места; неизвестно. */
+  openCardAsker: (standing: string | null, karta: number | null) => string;
+  /** Одна карточка перечня: дело, запись, ключ, спросивший. */
+  openCard: (item: OpenCardItem) => string;
   /**
    * Куда вести за не вошедшим и пропавшим: дела места — журнала канала у сервера нет
    * (граф @nks/nks-dev, узел #7636).
@@ -98,8 +124,12 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
   ru: {
     clockNotice: (kind, facts) => clockNotice("ru", kind, facts),
     cardRepeat: (n) => `повтор карточки: ${n ?? "номер неизвестен"}`,
-    openCards: (count, oldest, malformed = false) =>
-      `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}`,
+    openCards: (count, oldest, malformed = false, items) =>
+      `карточек без ответа: ${count ?? "неизвестно"}${oldest ? `; старшая с ${oldest}` : ""}${malformed ? " (неверное my_open_cards)" : ""}${items?.length ? ` — ${items.map(FRAME_TEXT.ru.openCard).join("; ")}` : ""}`,
+    openCardAsker: (standing, karta) =>
+      standing ?? (karta === null ? "неизвестно" : `роль ${karta}`),
+    openCard: ({ room, entry, key, asker }) =>
+      `дело №${room ?? "неизвестно"} [${entry ?? "неизвестно"}], ключ: ${key ?? "неизвестно"}, спросил: ${asker}`,
     myCases: () => `${tool("case")}(action="mine"), затем read каждого`,
     frame: (id) => `кадр ${id}`,
     yoursBelow: () => ` — адресованные строками ниже; `,
@@ -128,8 +158,11 @@ export const FRAME_TEXT: Readonly<Record<Lang, FrameTextWords>> = {
   en: {
     clockNotice: (kind, facts) => clockNotice("en", kind, facts),
     cardRepeat: (n) => `card repeat: ${n ?? "number unknown"}`,
-    openCards: (count, oldest, malformed = false) =>
-      `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}`,
+    openCards: (count, oldest, malformed = false, items) =>
+      `unanswered cards: ${count ?? "unknown"}${oldest ? `; oldest since ${oldest}` : ""}${malformed ? " (invalid my_open_cards)" : ""}${items?.length ? ` — ${items.map(FRAME_TEXT.en.openCard).join("; ")}` : ""}`,
+    openCardAsker: (standing, karta) => standing ?? (karta === null ? "unknown" : `role ${karta}`),
+    openCard: ({ room, entry, key, asker }) =>
+      `case №${room ?? "unknown"} [${entry ?? "unknown"}], key: ${key ?? "unknown"}, asked by: ${asker}`,
     myCases: () => `${tool("case")}(action="mine"), then read each`,
     frame: (id) => `frame ${id}`,
     yoursBelow: () => ` — yours in the lines below; `,

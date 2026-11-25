@@ -6,14 +6,27 @@ import { namedFetch } from "../shared/http.ts";
 import { words } from "../shared/lang.ts";
 import { closedUnder } from "./errors.ts";
 import { liveOnDispatcher, onDispatcher, onFellBack, type SeatScope, tickFor } from "./muxhold.ts";
+import { ruleOf } from "./refusal.ts";
 import { inTurn, inTurnWithin } from "./statusturn.ts";
 import { log } from "./streams.ts";
+
+/**
+ * The 404 rule of a channel that is alive but carries no live seat (graph @nks/nks-dev, node
+ * #11372): the address was not turned. The only new meaning of a 404 — a 404 without it keeps
+ * the meaning of a turned address.
+ */
+export const NO_LIVE_STANDING = "no_live_standing";
 
 /** The busyness POST's outcome; code — the surface's HTTP refusal code, when there was one. */
 export interface StatusOutcome {
   ok: boolean;
   body: string;
   code?: number;
+  /**
+   * The rule of a refusal read apart from its code (NO_LIVE_STANDING): such an outcome carries
+   * no `code`, so no consumer reads it as a taken or turned address.
+   */
+  rule?: string;
   /** The line the server took: the reply's doing; without it, on trimming, the one the rule derives. */
   doing?: string;
   /** Taken trimmed (warnings[] trimmed_to_limit). */
@@ -139,7 +152,12 @@ async function postStatus(
     return { ok: false, body: words(STATUS_POST).noAnswer((e as Error).message) };
   }
   const body = (await res.text().catch(() => "")).trim();
-  if (res.status === 404) return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
+  if (res.status === 404) {
+    // Only a 404 WITHOUT the rule is a turned address (graph @nks/nks-dev, node #11372).
+    if (ruleOf(body) === NO_LIVE_STANDING)
+      return { ok: false, rule: NO_LIVE_STANDING, body: words(STATUS_POST).noLiveStanding(body) };
+    return { ok: false, code: 404, body: words(STATUS_POST).gone(body) };
+  }
   if (!res.ok)
     return { ok: false, code: res.status, body: words(STATUS_POST).refused(res.status, body) };
   return { ok: true, body, ...acceptedIn(body, text) };

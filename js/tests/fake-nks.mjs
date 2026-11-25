@@ -734,8 +734,18 @@ export async function startFakeNks(opts = {}) {
         return req.socket.destroy();
       }
       if (st.statusGone) return json(res, 404, { error: "no such standing" }); // адрес повернул чужой connect
+      // Канал жив, живого места на нём нет (api: правило no_live_standing, ProblemDetail) — столько
+      // ближайших POST статуса; потом поверхность принимает строку.
+      if (st.noLiveStanding > 0) {
+        st.noLiveStanding--;
+        return json(res, 404, {
+          title: "Not Found",
+          errors: [{ rule: "no_live_standing", message: "the channel has no live standing" }],
+        });
+      }
       // opts.statusRotates: статусный адрес прежнего сокета места после чужого connect — 404, как его адрес сокета.
       const statusToken = p.slice("/channel/status/".length);
+      st.lastStatusToken = statusToken; // какой адрес получил последний POST статуса — читают пробы
       const statusName = st.wsTokens.get(statusToken);
       if (
         opts.statusRotates &&
@@ -895,6 +905,7 @@ export async function startFakeNks(opts = {}) {
         "helloPending", // what the next hello says was waiting in the queue
         "statusDelayMs", // hold the status POST open this long before answering
         "statusDrop", // close the connection under this many next status POSTs
+        "noLiveStanding", // this many next status POSTs answer 404 no_live_standing (ProblemDetail)
         "statusTrim", // a line over 64 is trimmed by word and answered 200 with warnings[] (api 0.108.0)
         "statusNormalize", // the server squeezes whitespace and names the line in doing, without a warning
         "mcpDrop", // close the connection under this many next MCP POSTs (with mcpDropAction — only of that action)
@@ -963,6 +974,8 @@ export async function startFakeNks(opts = {}) {
       if ("case_join_delay_ms" in patch) st.caseJoinDelayMs = Number(patch.case_join_delay_ms) || 0; // медленный вход в дело
       if ("send_conflict" in patch) st.sendConflict = patch.send_conflict || null; // текст отказа 409 не о безавторности
       if ("statusGone" in patch) st.statusGone = !!patch.statusGone; // статусный адрес повернули
+      if ("noLiveStanding" in patch)
+        st.noLiveStanding = Math.max(0, Number(patch.noLiveStanding) | 0); // канал жив, живого места нет
       if (patch.revoke_access) st.access = null;
       if (patch.rotate_access) st.access = mintAccess(st); // сосед провернул грант: старый bearer больше не принимается
       if (patch.drop_standings) st.standings.clear(); // платформа потеряла привязки при живых сессиях mcp

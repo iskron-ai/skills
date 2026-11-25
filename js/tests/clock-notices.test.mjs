@@ -26,17 +26,76 @@ for (const kind of ["card_unanswered", "line_due"])
     }
   });
 
-test("nullable role recipient and unknown facts are not false or zero", () => {
-  const f = clockNotice("card_unanswered", {
-    to: { standing_id: null, standing: null, karta_seq: 163 },
-    listening: null,
-    last_act_at: null,
-    role_called: null,
-  });
-  assert.match(batchLine(f), /163/);
-  assert.match(batchLine(f), /слушает: неизвестно/);
-  assert.match(batchLine(f), /последний ход: неизвестно/);
-  assert.match(batchLine(f), /роль позвана: неизвестно/);
+test("a card to a person names the person and no seat fact; a seat's null flag is unknown, never no", () => {
+  const person = { standing_id: null, standing: null, karta_seq: 163 };
+  for (const flags of [
+    {},
+    { listening: true, role_called: true },
+    { listening: null, role_called: null },
+  ]) {
+    const f = clockNotice("card_unanswered", { to: person, last_act_at: null, ...flags });
+    for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
+      const line = text.split("\n")[0];
+      assert.match(
+        line,
+        /^карточка без ответа: дело №4330 \(id: case-id, граф: @o\/s\) \[41\], ключ: clock-key/,
+        line,
+      );
+      assert.match(
+        line,
+        /; адресат — человек \(роль: 163\); доставка человеку мосту не видна; последний ход: неизвестно$/,
+        line,
+      );
+      assert.doesNotMatch(line, /слушает|роль позвана|адресат: /, line);
+      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+    }
+    // The details carry the same: a person's card has no seat facts to read as «no».
+    const { to, listening, role_called } = cardFrame(f).provenance.notice_data;
+    assert.deepEqual(
+      { to, listening, role_called },
+      { to: person, listening: null, role_called: null },
+    );
+  }
+  // A seat is a seat with or without its id; a null flag of a seat is unknown, never no.
+  for (const to of [
+    { standing_id: "seat-id", standing: "@h:recipient", karta_seq: 163 },
+    { standing_id: null, standing: "@h:recipient", karta_seq: 163 },
+    { standing_id: "seat-id", standing: "@h:recipient", karta_seq: null },
+  ]) {
+    const text = batchLine(
+      clockNotice("card_unanswered", { to, listening: null, last_act_at: null, role_called: null }),
+    );
+    assert.match(text, /адресат: @h:recipient \(/, text);
+    assert.match(
+      text,
+      /слушает: неизвестно; последний ход: неизвестно; роль позвана: неизвестно$/,
+      text,
+    );
+    assert.doesNotMatch(text, /человек|доставка|: нет|: да/, text);
+  }
+});
+
+test("English person card names the person and no seat fact", () => {
+  setLang("en");
+  try {
+    const f = clockNotice("card_unanswered", {
+      to: { standing_id: null, standing: null, karta_seq: 163 },
+      listening: false,
+      last_act_at: null,
+      role_called: false,
+    });
+    assert.match(
+      batchLine(f),
+      /; recipient is a person \(role: 163\); delivery to the person is not visible to the bridge; last action: unknown$/,
+    );
+    assert.doesNotMatch(batchLine(f), /listening|role called|recipient: unknown/);
+    assert.match(
+      batchLine(clockNotice()),
+      /listening: no; last action: 2026-11-10T12:00:00Z; role called: yes/,
+    );
+  } finally {
+    setLang("ru");
+  }
 });
 
 test("line_due distinguishes server escalation false and true", () => {

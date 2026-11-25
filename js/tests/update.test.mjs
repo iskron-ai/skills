@@ -839,10 +839,16 @@ test("the stale notice survives an errored first tool answer and rides the next 
   });
   assert.ok(failed.error, "the faulted call must come back as an error");
   await fake.control({ mcpStatus: null });
-  const next = await bridge.call("tools/call", {
-    name: "iskron_channel",
-    arguments: { action: "list", realm: "nks-dev" },
-  });
+  // The 503 opened the machine's down window (bridge/downwindow.ts): the calls inside it are
+  // refused at once, as errors without a body too — the notice waits for the first answer WITH one.
+  let next;
+  await waitFor(async () => {
+    next = await bridge.call("tools/call", {
+      name: "iskron_channel",
+      arguments: { action: "list", realm: "nks-dev" },
+    });
+    return !next.error;
+  }, "a call served once the down window is over");
   const text = (next.result?.content ?? []).map((c) => c.text ?? "").join("\n");
   assert.match(text, /ПОСТАВКА ОТСТАЛА/, "the notice was kept for the first answer with a body");
 });

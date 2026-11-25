@@ -37,11 +37,11 @@ import { createModels } from "./models.ts";
 import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { type PutDown } from "./putdown.ts";
-import { revokeAsLauncher } from "./release.ts";
+import { launcherRevokes } from "./release.ts";
 import { canonOf, type SeatAnswer } from "./rootseat-by.ts";
 import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction, readsOnly } from "./runends.ts";
-import { asSatellite, STAND_TOOL, standsBy } from "./satellite.ts";
+import { asSatellite, type Place, STAND_TOOL, standsBy } from "./satellite.ts";
 import { inSlot } from "./service.ts";
 import { IDLE_MS, REAP_MS, type Slot } from "./slot.ts";
 import { statusLines, statusTool } from "./status.ts";
@@ -82,6 +82,12 @@ export async function setupTools(
   // The human in the browser — one sign-in for all the plugin's bridges (login.ts).
   const login = createLogin(say);
   const { shake, readyFor } = slotReady<Slot>(login);
+  /**
+   * The slot's handshake raced against the sign-in: the call does not wait for the human, the
+   * address is the answer. Declared before the loss marker is taken: an ended child's seat is
+   * revoked by its launcher's bridge while the instance is still loading (leads.ts, offSeat).
+   */
+  const awaitReady = (slot: Slot): Promise<void> => login.race(() => readyFor(slot));
 
   function spawn(args: string[] = []): Slot {
     const slot: Slot = {
@@ -147,10 +153,17 @@ export async function setupTools(
   const relay = mv.relay(onChannel, say);
   const models = createModels(ctx); // a satellite's seat names its session's model (#7591)
   const runEnds = createRunEnds(); // ended children: a write through a seat is a refusal aloud (#6361)
+  // A revoke by the launcher's bridge: the launcher's own tool call, and the seat of its lead
+  // that ended with no bridge of its own (release.ts).
+  const revokes = launcherRevokes({ rootOf, farRoot: mv.farRoot, slotFor, callThrough, canonOf });
   // Lead subagents (#6625): the end is an explicit act, the outcome a synthetic message to the parent.
-  const endChild = (c: string, out: ((s: string) => void) | null = forget) =>
-    runEnds.end(c, slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
-  const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots, closed));
+  // of — the launcher's seat a child with no bridge here is refused by name (leads.ts).
+  const endChild = (c: string, out: ((s: string) => void) | null = forget, of?: Place | null) =>
+    runEnds.end(c, of ?? slots.get(c)?.satelliteOf, out, leads.released(c), leads.goneWhy(c));
+  const leads = createLeads({
+    ...leadDoors(ctx, say, flushUsage, endChild, slots, closed),
+    off: revokes.off,
+  });
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
@@ -163,10 +176,10 @@ export async function setupTools(
   });
   // A child of a previous instance has no slot here: nothing to put down (forget is called before setup ends).
   const nothing = () => {};
-  const endRun = (s: string, live = true) =>
+  const endRun = (s: string, live = true, of: Place | null = null) =>
     live
       ? void flushUsage(s).finally(() => runEnds.end(s, null, forget))
-      : runEnds.end(s, null, nothing);
+      : runEnds.end(s, of, nothing);
   const children = createChildren({
     slots,
     spawn,
@@ -209,8 +222,10 @@ export async function setupTools(
   /**
    * A root session's bridge: the load's spare first, then its own; a dead one is replaced.
    * touch=false — the watchdog's look, not a call: the idle time is not refreshed.
+   * seatless — the root sits in a folder no instance of this process serves: the bridge returns
+   * no seat here (#6626); it serves the plugin's own call in the launcher's name (release.ts).
    */
-  async function slotFor(sessionID: string, touch = true): Promise<Slot> {
+  async function slotFor(sessionID: string, touch = true, seatless = false): Promise<Slot> {
     seats.guard(sessionID);
     const root = await rootOf(sessionID);
     // A child that stood as its own satellite goes by its own bridge (#5154); the root's is read-only to it (#6550 item 2).
@@ -251,7 +266,7 @@ export async function setupTools(
     }
     // Claims bind session identity without returning an old place; ordinary roots return by directory.
     const s = slot;
-    if (far !== "foreign" && unasked.delete(s) && !closed(root))
+    if (!seatless && far !== "foreign" && unasked.delete(s) && !closed(root))
       s.resume = (
         claiming(root)
           ? awaitReady(s).then(() => s.bridge.request(method("resume"), { session: root }))
@@ -311,24 +326,8 @@ export async function setupTools(
             // The launcher's revoke of its lead's seat ends the child, then goes to the platform
             // by the launcher's bridge (#6625, #7505); a child ended by a move is answered here (adopt.ts).
             const caller = String(tool.sessionID);
-            const freed = await leads.release(caller, name, input ?? {}, (realm) =>
-              slotFor(caller).then(
-                (slot) => canonOf(slot, realm),
-                () => realm,
-              ),
-            );
-            if (freed)
-              return {
-                content: await revokeAsLauncher(freed, input ?? {}, async (args) => {
-                  const slot = await slotFor(caller);
-                  slot.busy++;
-                  try {
-                    return await callThrough(slot, name, args, caller);
-                  } finally {
-                    slot.busy--;
-                  }
-                }),
-              };
+            const freed = await leads.release(caller, name, input ?? {}, revokes.canon(caller));
+            if (freed) return { content: await revokes.own(freed, name, input ?? {}, caller) };
             const word = adopt.revoked(name, input ?? {});
             if (word) return { content: word };
             await children.settled(String(tool.sessionID)); // a marker's child: its slot is still coming up
@@ -352,9 +351,6 @@ export async function setupTools(
       });
     }
   });
-
-  /** The slot's handshake raced against the sign-in: the call does not wait for the human, the address is the answer. */
-  const awaitReady = (slot: Slot): Promise<void> => login.race(() => readyFor(slot));
 
   /** One tool call through the slot's bridge. */
   async function callThrough(

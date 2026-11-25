@@ -10,117 +10,24 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
+import {
+  alive,
+  callsIn,
+  CHILD_DIR,
+  ends,
+  event,
+  leadChild,
+  PARENT_DIR,
+  pidsOf,
+  SUB,
+  SUB_PLACE,
+  turn,
+  turnWords,
+} from "./lead-kit.mjs";
 import { delay, plugin, SANDBOX, stopMarks, until } from "./opencode-kit.mjs";
-
-const FAKE_BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "fake-bridge.mjs");
-
-function bridgeEnv(name, extra = {}) {
-  const log = join(SANDBOX, `${name}.log`);
-  const reply = join(SANDBOX, `${name}.reply`);
-  const events = join(SANDBOX, `${name}.events`);
-  writeFileSync(reply, "");
-  writeFileSync(events, "");
-  return {
-    log,
-    reply,
-    events,
-    env: {
-      ISKRON_BRIDGE_PATH: FAKE_BRIDGE,
-      FB_LOG: log,
-      FB_REPLY: reply,
-      FB_EVENTS: events,
-      ...extra,
-    },
-  };
-}
-
-const pidsOf = (log) =>
-  readFileSync(log, "utf8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => Number(l.split(/\s+/)[1]));
-const pidOf = (log) => pidsOf(log)[0];
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const ASKING = ["iskron_case", "iskron_channel", "iskron_stand"];
-const fakeTools = (names) =>
-  JSON.stringify(
-    names.map((name) => ({
-      name,
-      description: "Тул.",
-      inputSchema: ASKING.includes(name)
-        ? { type: "object", properties: { action: { type: "string" } } }
-        : { type: "object" },
-    })),
-  );
-const LEAD_NAMES = ["iskron_stand", "iskron_channel", "iskron_case", "iskron_look"];
-const LEAD_TOOLS = fakeTools(LEAD_NAMES);
-const ROOT_PLACE = { realm: "@nks/nks-dev", karta: "931", name: "host.repo.opus-5" };
-// №1237: the ended review agent and its successor stood under the same name …sub-5.
-const SUB = "host.repo.opus-5.sub-5";
-const SUB_PLACE = { ...ROOT_PLACE, name: SUB };
-
-// Synthetic held events here model an explicit caller.
-const event = (kind, extra) =>
-  JSON.stringify({ kind, ...(kind === "held" ? { automatic: false } : {}), ...extra }) + "\n";
-
-// The parent's and the child's folders of №1237: different locations, two plugin instances —
-// the child's turn events reach the deciding instance only if it is the child's own, and the
-// probe emits by hand the ones that did arrive (the started did not).
-const PARENT_DIR = "/work/nks-methodology";
-const CHILD_DIR = "/work/skills-review-1237-en";
-
-async function leadChild(name, env = {}, sessions) {
-  const b = bridgeEnv(name, { FB_TOOLS: LEAD_TOOLS, ...env });
-  const rec = await plugin(b.env, {
-    sessions: sessions ?? [
-      { id: "root", location: { directory: PARENT_DIR } },
-      { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
-    ],
-  });
-  try {
-    await until(() => rec.tools().has("iskron_case"), "the tools", 8000);
-    await rec.call("iskron_stand", { realm: "nks-dev", karta: "#931" }, "root");
-    const rootPid = pidOf(b.log);
-    appendFileSync(`${b.events}.${rootPid}`, event("held", { key: "k-root", place: ROOT_PLACE }));
-    await until(() => rec.said().includes("мост держит место k-root"), "the root's held word");
-    await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
-    const childPid = pidsOf(b.log)[1];
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: SUB_PLACE }));
-    await until(() => rec.said().includes("мост держит место k-sub"), "the child's held word");
-    return { b, rec, rootPid, childPid };
-  } catch (e) {
-    await rec.stop();
-    throw e;
-  }
-}
-
-/** One whole turn of the child: started, its text, ended. */
-function turn(rec, text, sessionID = "child") {
-  rec.emit({ type: "session.execution.started", data: { sessionID } });
-  if (text) rec.emit({ type: "session.text.ended", data: { sessionID, ordinal: 0, text } });
-  rec.emit({ type: "session.execution.succeeded", data: { sessionID } });
-}
-
-const ends = (rec) => rec.synthetics.filter((s) => / КОНЧЕН —/.test(s.text));
-const turnWords = (rec) => rec.synthetics.filter((s) => /сдал ход, не поручение/.test(s.text));
-const callsIn = (file) =>
-  readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l));
 
 // №1237 (1): the child's last turn was live — its leave call returned while the model kept
 // streaming — but the deciding instance had missed the turn's execution.started. The end of
@@ -282,6 +189,72 @@ test("over a sealed end, a marker does not return the child or announce its late
     );
     assert.equal(ends(second).length, 0, "no second end");
     assert.ok(stopMarks().includes(mark), "the seal is not lifted");
+  } finally {
+    await second.stop();
+    rmSync(mark, { force: true });
+  }
+});
+
+// №1237 (3), the bridge: the same marker over the same seal — the ended child gets no bridge
+// at all. The previous build raised a satellite for it that could return nothing (the end
+// refuses the return) and sat without a seat until the reaper; its calls went by that bridge.
+// Now its write is the plugin's refusal before any bridge — never the launcher's seat — and
+// its read goes by the root's.
+test("a marker of a child that ended raises no bridge for it: its write is refused before any bridge, its read goes by the root's", async () => {
+  const calls = join(SANDBOX, "endword-no-bridge.calls");
+  writeFileSync(calls, "");
+  const { b, rec } = await leadChild("endword-no-bridge", { FB_CALLS: calls });
+  try {
+    rec.emit({
+      type: "session.text.ended",
+      data: { sessionID: "child", ordinal: 0, text: "EN-голова закреплена" },
+    });
+    await delay(150);
+  } finally {
+    await rec.stop(); // the marker goes down with the holding bridge
+  }
+  // The child ended meanwhile — the end record, as any instance would lay it.
+  const mark = join(
+    process.env.ISKRON_BRIDGE_AUTH_DIR,
+    `opencode-ended.${createHash("sha256").update("child").digest("hex").slice(0, 16)}.json`,
+  );
+  writeFileSync(mark, JSON.stringify({ session: "child", at: new Date().toISOString() }), {
+    mode: 0o600,
+  });
+  const raised = pidsOf(b.log).length;
+  const sent = callsIn(calls).length;
+  const second = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [
+      { id: "root", location: { directory: PARENT_DIR } },
+      { id: "child", parentID: "root", location: { directory: CHILD_DIR } },
+    ],
+  });
+  try {
+    await until(() => second.tools().has("iskron_case"), "the tools", 8000);
+    await delay(600);
+    const lines = readFileSync(b.log, "utf8").trim().split("\n").filter(Boolean).slice(raised);
+    assert.ok(lines.length >= 1, "the root's own marker entry raises its bridge");
+    assert.ok(
+      !lines.some((l) => /--satellite/.test(l)),
+      `no bridge is raised for an ended child: ${lines.join(" | ")}`,
+    );
+    await assert.rejects(
+      second.call("iskron_case", { realm: "nks-dev", action: "join", room: "#5" }, "child"),
+      /дочерняя сессия кончена[^\n]*satellite_of="host\.repo\.opus-5"/,
+    );
+    const went = callsIn(calls).slice(sent);
+    assert.ok(!went.some((c) => c.name === "iskron_case"), "the write reached no bridge");
+    await second.call("iskron_look", { node_id: "#1" }, "child");
+    const read = callsIn(calls)
+      .slice(sent)
+      .filter((c) => c.name === "iskron_look");
+    assert.equal(read.length, 1, "the read goes through");
+    const roots = lines.map((l) => Number(l.split(/\s+/)[1]));
+    assert.ok(
+      roots.includes(read[0].pid),
+      "the read goes by a bridge raised for the root, not by a satellite",
+    );
   } finally {
     await second.stop();
     rmSync(mark, { force: true });

@@ -28,6 +28,16 @@ const timestamp = (v: unknown): string | null => {
     : null;
 };
 
+/** The platform's field readers, shared with the card list (open-cards.ts). */
+export const wire = { rec, text, number, timestamp };
+
+/**
+ * A card to a role that has no seat is a card to a person (#11372): the seat facts do not
+ * apply to it. A role the server does not name is no person — an unknown recipient.
+ */
+const person = (seat: { standing: string | null; karta_seq: number | null }): boolean =>
+  !seat.standing && seat.karta_seq !== null;
+
 function kind(frame: Frame): "card_unanswered" | "line_due" | null {
   const p = frame.provenance;
   return frame.type === "message" &&
@@ -47,6 +57,7 @@ function dataOf(frame: Frame, notice: "card_unanswered" | "line_due") {
     standing: text(who.standing),
     karta_seq: number(who.karta_seq),
   };
+  const toAPerson = notice === "card_unanswered" && person(seat);
   return {
     room: { id: text(r.id), number: number(r.number), realm: text(r.realm) },
     entry_id: number(d.entry_id),
@@ -54,9 +65,10 @@ function dataOf(frame: Frame, notice: "card_unanswered" | "line_due") {
     ...(notice === "card_unanswered"
       ? {
           to: seat,
-          listening: bool(d.listening),
+          // A person's seat facts are not a «no» in the details either: unknown.
+          listening: toAPerson ? null : bool(d.listening),
           last_act_at: timestamp(d.last_act_at),
-          role_called: bool(d.role_called),
+          role_called: toAPerson ? null : bool(d.role_called),
         }
       : { holder: seat, due_at: timestamp(d.due_at), escalated: bool(d.escalated) }),
   };
@@ -88,6 +100,7 @@ export function clockNoticeText(frame: Frame): string {
     standing: seat?.standing ?? null,
     standingId: seat?.standing_id ?? null,
     karta: seat?.karta_seq ?? null,
+    person: "to" in d ? person(d.to) : false,
     listening: "listening" in d ? d.listening : null,
     lastAct: "last_act_at" in d ? d.last_act_at : null,
     roleCalled: "role_called" in d ? d.role_called : null,

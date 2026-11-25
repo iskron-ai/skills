@@ -22,6 +22,19 @@ export function refusalOf(reply: JsonRpcMessage | null): Refusal | null {
   };
 }
 
+/**
+ * `errors[0].rule` of a ProblemDetail body as text — the rule of an HTTP refusal the bridge
+ * reads itself (statuspost.ts, deadstop.ts); null — no rule, or no JSON.
+ */
+export function ruleOf(body: string): string | null {
+  try {
+    const rule = (JSON.parse(body) as { errors?: { rule?: unknown }[] })?.errors?.[0]?.rule;
+    return typeof rule === "string" ? rule : null;
+  } catch {
+    return null;
+  }
+}
+
 const SEAT_GONE_RULES = new Set([
   "standing_already_ended",
   "standing_not_found",

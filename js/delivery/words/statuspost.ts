@@ -9,6 +9,10 @@ export interface StatusPostWords {
   noAnswer: (error: string) => string;
   /** body — тело ответа, может быть пустым. */
   gone: (body: string) => string;
+  /** 404 no_live_standing: канал жив, живого места на нём нет — адрес не повернут. */
+  noLiveStanding: (body: string) => string;
+  /** Строка НЕ поставлена: повтор тоже отказан; why — последнее слово поверхности или register. */
+  notSet: (why: string) => string;
   refused: (status: number, body: string) => string;
   /** The channel goes through the dispatcher and no subscription carries it now. */
   notSubscribed: () => string;
@@ -25,6 +29,10 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     noAnswer: (error) => `Отказано (мост): статусный адрес не ответил — ${error}`,
     gone: (body) =>
       `Отказано (404) поверхностью: ${body || "без тела"} — этот адрес места больше не адресует: его мог повернуть connect другого держателя, а мог держать другой экземпляр моста той же сессии. Чей он теперь, мост отсюда не знает.`,
+    noLiveStanding: (body) =>
+      `Отказано (404) поверхностью: ${body || "без тела"} — канал жив, но живого места на нём нет`,
+    notSet: (why) =>
+      `Отказано (мост): строка занятости НЕ поставлена${why ? ` — ${why}` : ""}; перезайми место явным stand и скажи строку снова`,
     refused: (status, body) => `Отказано (${status}) поверхностью: ${body || "без тела"}`,
     notSubscribed: () =>
       "Отказано (мост): канал идёт через диспетчер, а подписки на него сейчас нет — строка не ушла; старый адрес статуса мост зовёт только при откате на сокет",
@@ -38,6 +46,10 @@ export const STATUS_POST: Readonly<Record<Lang, StatusPostWords>> = {
     noAnswer: (error) => `Refused (bridge): the status address did not answer — ${error}`,
     gone: (body) =>
       `Refused (404) by the surface: ${body || "no body"} — this seat address no longer addresses: another holder's connect may have turned it, or another instance of the same session's bridge may have held it. Whose it is now, the bridge cannot know from here.`,
+    noLiveStanding: (body) =>
+      `Refused (404) by the surface: ${body || "no body"} — the channel is alive but carries no live seat`,
+    notSet: (why) =>
+      `Refused (bridge): the busy line was NOT set${why ? ` — ${why}` : ""}; take the seat again with an explicit stand and say the line once more`,
     refused: (status, body) => `Refused (${status}) by the surface: ${body || "no body"}`,
     notSubscribed: () =>
       "Refused (bridge): the channel goes through the dispatcher and no subscription carries it now — the line did not go; the old status address is called only after falling back to a socket",
