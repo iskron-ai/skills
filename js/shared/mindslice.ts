@@ -125,12 +125,23 @@ async function readSlice(call: MindCall, key: object): Promise<SliceRead> {
 export async function mindSlice(call: MindCall, options: MindSliceOptions = {}): Promise<string> {
   const unread = (text: string): string => words(MIND_SLICE).unread(brief(text));
   const key = options.cacheKey ?? call;
+  // A strict reader (recovery) takes a cached slice too; no slice is its failure to retry.
+  const fail = (why: string): never => {
+    throw new Error(why);
+  };
   try {
-    if (options.account && !options.strict)
-      return await cachedSlice(options.account, () => readSlice(call, key), {
-        unread,
-        pending: () => words(MIND_SLICE).pending(),
-      });
+    if (options.account)
+      return await cachedSlice(
+        options.account,
+        () => readSlice(call, key),
+        options.strict
+          ? {
+              unread: fail,
+              pending: () => fail("the rules slice is still being read"),
+              retry: true,
+            }
+          : { unread, pending: () => words(MIND_SLICE).pending() },
+      );
     return (await readSlice(call, key)).block;
   } catch (e) {
     if (options.strict) throw new Error(brief((e as Error).message), { cause: e });

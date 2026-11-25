@@ -133,6 +133,41 @@ test("a seated session after a compaction reads the human's rules in the first r
   }
 });
 
+// One slice per account for the plugin's process (shared/mindcache.ts): two seated sessions after
+// a compaction read the rules by one search, not one each.
+test("two seated sessions of one plugin read the human's rules by one search", async () => {
+  const { files, env } = lay("compact-two");
+  writeFileSync(`${files.reply}.iskron_me`, READINESS);
+  writeFileSync(`${files.reply}.iskron_realm`, REALMS);
+  writeFileSync(`${files.reply}.iskron_search`, SEARCH);
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const systems = [];
+    for (const s of ["s-one", "s-two"]) {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pids = readFileSync(files.log, "utf8").trim().split("\n");
+      const pid = Number(pids.at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+    }
+    for (const s of ["s-one", "s-two"]) {
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      systems.push(req.system.map((p) => p.text).join("\n"));
+    }
+    for (const text of systems) assert.ok(text.includes(BLOCK), text);
+    const searches = sent(files.calls).filter((c) => c.name === "iskron_search");
+    assert.equal(searches.length, 1, "one search for the account, not one per session");
+  } finally {
+    await rec.stop();
+  }
+});
+
 test(
   "a root seated by its cover reads the human's rules beside its seating word",
   { timeout: 90_000 },

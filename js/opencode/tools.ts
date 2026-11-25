@@ -10,6 +10,7 @@
 import { LOGGERS, method, OPENCODE, PLUGIN, SPAWNED_FOR_ENV } from "../delivery/index.ts";
 import { Bridge, toParameters } from "../shared/bridge-client.ts";
 import { words } from "../shared/lang.ts";
+import { wroteTo } from "../shared/mindcache.ts";
 import { createAdopt } from "./adopt.ts";
 import {
   authDir,
@@ -393,6 +394,7 @@ export async function setupTools(
     if (!service && slot.child && slot.satelliteOf && slot.session === sessionID)
       leads.dispatched(sessionID, name, args);
     const result = await slot.bridge.request("tools/call", { name, arguments: args }, { service });
+    wroteTo(name, args); // a write to the own mind drops the plugin's cached rules slice
     verifyClaim(sessionID, args, result);
     const out = seats.answer(
       slot,

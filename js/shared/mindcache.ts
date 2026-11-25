@@ -74,6 +74,8 @@ const pause = (ms: number): Promise<null> =>
 export interface SliceWords {
   unread: (why: string) => string;
   pending: () => string;
+  /** A recovery's read (compaction): it retries a failed fetch, the back-off does not hold it. */
+  retry?: boolean;
 }
 
 /**
@@ -90,7 +92,7 @@ export async function cachedSlice(
   const age = Date.now() - e.at;
   const stale = e.block !== null && age < STALE_MS ? e.block : null;
   if (stale !== null && age < FRESH_MS) return stale;
-  if (Date.now() < e.until) return stale ?? w.unread(e.error);
+  if (!w.retry && Date.now() < e.until) return stale ?? w.unread(e.error);
   const got = await Promise.race([e.flight ?? start(e, read), pause(WAIT_MS)]);
   if (got) return got.block ?? stale ?? w.unread(got.error ?? "");
   return stale ?? w.pending();
