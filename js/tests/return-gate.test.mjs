@@ -98,16 +98,18 @@ test("re-registration of seats after the lost session goes the same way: one fir
         assert.ok(!(await s.stand({ realm: REALM, karta: 931, name: `rg-${i}` })).result?.isError);
       const regs = () => fake.state.registerAt ?? [];
       const from = regs().length;
-      await fake.control({ kill_session: true, initDelayMs: INIT_MS });
+      // Each register lies INIT_MS long: at most two in flight leave at most two ends in any
+      // INIT_MS window (the fake stamps a register when it lies).
+      await fake.control({
+        kill_session: true,
+        initDelayMs: INIT_MS,
+        standingRegisterDelayMs: INIT_MS,
+      });
       await Promise.all(all.map(look));
       const at = regs().slice(from);
       assert.ok(at.length >= 5, `every seat registered again: ${at.length}`);
-      const [first, ...rest] = at;
-      assert.ok(
-        rest.every((t) => t >= first),
-        "the probe's first",
-      );
-      assert.ok(peak(rest) <= 3, `spread, not a volley: ${at.map((t) => t - first)}`);
+      const first = at[0];
+      assert.ok(peak(at) <= 2, `spread, at most two at once: ${at.map((t) => t - first)}`);
     },
     { daemonEnv: ENV },
   );

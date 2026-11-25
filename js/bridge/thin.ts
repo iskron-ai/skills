@@ -32,6 +32,7 @@ import {
   helloFrame,
   NO_DAEMON_ENV,
   patShaOf,
+  REPLAY_ID_PREFIX,
   SeamError,
   type SeamLink,
 } from "../shared/seam.ts";
@@ -259,7 +260,7 @@ export function thinMain(argv: string[]): void {
   const replay = (send: (m: JsonRpcMessage) => void) => {
     if (!initCopy || !initSent) return;
     if (!queue.some((m) => m.method === "initialize")) {
-      const id = `${ID_PREFIX}thin-replay-${++replays}`;
+      const id = `${REPLAY_ID_PREFIX}${++replays}`;
       replayIds.add(key(id));
       closeGate(key(id));
       send({ ...initCopy, id });

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { stood, withFake } from "./lifeend-kit.mjs";
+import { journalOf, stood, waitFor, withFake } from "./lifeend-kit.mjs";
 
 const REG_MS = 300; // каждый register идёт столько: видно, сколько их в полёте
 const N = 4;
@@ -44,5 +44,41 @@ test("seats returning from disk after a reload or a self-update: one register fi
       `the probe's register answered before any other went: ${at.map((t) => t - first)}`,
     );
     assert.ok(peak(rest) <= 2, `at most two at once: ${at.map((t) => t - first)}`);
+  });
+});
+
+/** The machine's daemons by their «listening» lines, in order. */
+const daemonsOf = (dir) =>
+  [...journalOf(dir).matchAll(/ pid=(\d+) \S+ listening /g)].map((m) => +m[1]);
+
+// A daemon handover (a self-update's crest, #11375; №5817 [292]): every thin bridge replays the
+// harness's initialize to the successor — a return, not a session's first handshake: one first,
+// then at most two in flight, spread.
+test("a daemon handover: the successor's upstream initializes for the sessions it took over — one first, then at most two in flight", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const all = [];
+    for (let i = 0; i < N; i++) {
+      const b = await bridge();
+      const r = await b.request("tools/call", { name: "iskron_orient", arguments: {} });
+      assert.ok(r.result && !r.error, JSON.stringify(r));
+      all.push(b);
+    }
+    const [first] = await waitFor("the daemon", () => daemonsOf(dir).length && daemonsOf(dir));
+    const from = fake.state.initAt.length;
+    await fake.control({ initDelayMs: REG_MS });
+    process.kill(first, "SIGKILL");
+    await waitFor("the successor", () => daemonsOf(dir).length >= 2, 20_000);
+    const back = await Promise.all(
+      all.map((b) => b.request("tools/call", { name: "iskron_orient", arguments: {} })),
+    );
+    for (const r of back) assert.ok(r.result && !r.error, JSON.stringify(r));
+    const at = fake.state.initAt.slice(from).sort((a, b) => a - b);
+    assert.ok(at.length >= N, `every session opened again: ${at.length}`);
+    const [probe, ...rest] = at;
+    assert.ok(
+      rest.every((t) => t - probe >= REG_MS),
+      `the probe's initialize answered before any other went: ${at.map((t) => t - probe)}`,
+    );
+    assert.ok(peak(rest) <= 2, `at most two in flight: ${at.map((t) => t - probe)}`);
   });
 });

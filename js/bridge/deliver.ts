@@ -1,6 +1,7 @@
 import { ID_PREFIX, NOTICE_MARK, tool } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
 import { wroteTo } from "../shared/mindcache.ts";
+import { REPLAY_ID_PREFIX } from "../shared/seam.ts";
 import { parseSpawn } from "../shared/spawned-for.ts";
 import {
   absorbChannelReply,
@@ -19,6 +20,7 @@ import {
   refuseLaunch,
   refuseUnbound,
 } from "./claimdelivery.ts";
+import { CFG } from "./config.ts";
 import { contextCall, refuseContext } from "./context-gate.ts";
 import { deafRefusal } from "./deaf.ts";
 // The window's ladder (downwindow.ts) begins with the call's own retry pauses: unsent calls
@@ -49,6 +51,7 @@ import { localRealm } from "./realmask.ts";
 import { isRead } from "./repeat.ts";
 import { noteReply } from "./replynotes.ts";
 import { isCheckCall, isResumeCall } from "./resume.ts";
+import { throughGate } from "./returngate.ts";
 import { localEnd } from "./runend.ts";
 import { satelliteChannelRefusal } from "./satellite.ts";
 import { withCallOrigin } from "./seatorigin.ts";
@@ -283,7 +286,14 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
       // Raw connect/mint runs under an intent until the hold record (graph @nks/nks-dev, node #6706).
       endTaking =
         msg.params?.name === tool("channel") ? beginTaking(msg.params.arguments ?? {}) : null;
-      await (takes ? withCallOrigin(msg.id, () => post(msg, forward)) : post(msg, forward));
+      const send = () =>
+        takes ? withCallOrigin(msg.id, () => post(msg, forward)) : post(msg, forward);
+      // A thin bridge's replayed handshake to a session new to it (a successor after a handover
+      // or a self-update) is a return: the machine's gate (returngate.ts, #11375); a session's
+      // first handshake is not.
+      await (isInit && String(msg.id).startsWith(REPLAY_ID_PREFIX)
+        ? throughGate(CFG.serverUrl, send)
+        : send());
       const held = heldReply as JsonRpcMessage | null;
       if (held && msg.params?.name === tool("channel") && msg.params.arguments)
         noteLocaleEcho(msg.params.arguments, replyText(held), structuredOf(held));
