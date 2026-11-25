@@ -32,11 +32,28 @@ const timestamp = (v: unknown): string | null => {
 export const wire = { rec, text, number, timestamp };
 
 /**
- * A card to a role that has no seat is a card to a person (#11372): the seat facts do not
- * apply to it. A role the server does not name is no person — an unknown recipient.
+ * Who the card's recipient is and how it reached them, as the server says (#11372): the bridge
+ * infers nothing — a role without a seat is not taken for a person. `to.kind` is the server's
+ * word on the recipient; `delivery` — its facts of delivery to a person, printed as they come.
  */
-const person = (seat: { standing: string | null; karta_seq: number | null }): boolean =>
-  !seat.standing && seat.karta_seq !== null;
+const DELIVERY_MAX = 8;
+function deliveryOf(v: unknown): [string, string][] {
+  const out: [string, string][] = [];
+  for (const [k, x] of Object.entries(rec(v))) {
+    const key = text(k);
+    const value = Array.isArray(x)
+      ? x
+          .map(text)
+          .filter((s): s is string => s !== null)
+          .join(", ") || null
+      : typeof x === "boolean"
+        ? String(x)
+        : text(x);
+    if (key && value !== null) out.push([key, value]);
+    if (out.length >= DELIVERY_MAX) break;
+  }
+  return out;
+}
 
 function kind(frame: Frame): "card_unanswered" | "line_due" | null {
   const p = frame.provenance;
@@ -57,18 +74,17 @@ function dataOf(frame: Frame, notice: "card_unanswered" | "line_due") {
     standing: text(who.standing),
     karta_seq: number(who.karta_seq),
   };
-  const toAPerson = notice === "card_unanswered" && person(seat);
   return {
     room: { id: text(r.id), number: number(r.number), realm: text(r.realm) },
     entry_id: number(d.entry_id),
     key: text(d.key),
     ...(notice === "card_unanswered"
       ? {
-          to: seat,
-          // A person's seat facts are not a «no» in the details either: unknown.
-          listening: toAPerson ? null : bool(d.listening),
+          to: { ...seat, kind: text(who.kind) },
+          delivery: Object.fromEntries(deliveryOf(d.delivery)),
+          listening: bool(d.listening),
           last_act_at: timestamp(d.last_act_at),
-          role_called: toAPerson ? null : bool(d.role_called),
+          role_called: bool(d.role_called),
         }
       : { holder: seat, due_at: timestamp(d.due_at), escalated: bool(d.escalated) }),
   };
@@ -100,7 +116,8 @@ export function clockNoticeText(frame: Frame): string {
     standing: seat?.standing ?? null,
     standingId: seat?.standing_id ?? null,
     karta: seat?.karta_seq ?? null,
-    person: "to" in d ? person(d.to) : false,
+    kind: "to" in d ? d.to.kind : null,
+    delivery: "delivery" in d ? Object.entries(d.delivery) : [],
     listening: "listening" in d ? d.listening : null,
     lastAct: "last_act_at" in d ? d.last_act_at : null,
     roleCalled: "role_called" in d ? d.role_called : null,

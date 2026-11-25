@@ -26,36 +26,47 @@ for (const kind of ["card_unanswered", "line_due"])
     }
   });
 
-test("a card to a person names the person and no seat fact; a seat's null flag is unknown, never no", () => {
-  const person = { standing_id: null, standing: null, karta_seq: 163 };
-  for (const flags of [
-    {},
-    { listening: true, role_called: true },
-    { listening: null, role_called: null },
-  ]) {
-    const f = clockNotice("card_unanswered", { to: person, last_act_at: null, ...flags });
-    for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
-      const line = text.split("\n")[0];
-      assert.match(
-        line,
-        /^карточка без ответа: дело №4330 \(id: case-id, граф: @o\/s\) \[41\], ключ: clock-key/,
-        line,
-      );
-      assert.match(
-        line,
-        /; адресат — человек \(роль: 163\); доставка человеку мосту не видна; последний ход: неизвестно$/,
-        line,
-      );
-      assert.doesNotMatch(line, /слушает|роль позвана|адресат: /, line);
-      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
-    }
-    // The details carry the same: a person's card has no seat facts to read as «no».
-    const { to, listening, role_called } = cardFrame(f).provenance.notice_data;
-    assert.deepEqual(
-      { to, listening, role_called },
-      { to: person, listening: null, role_called: null },
-    );
+// #11372: the bridge infers nothing. A role without a seat is no proof of a person — an agent's
+// role card with no seat prints its seat facts (absent — «unknown») and its role_called.
+test("an agent role with no seat: the recipient unknown, the seat facts and role_called shown, no person word", () => {
+  const to = { standing_id: null, standing: null, karta_seq: 163 };
+  const f = clockNotice("card_unanswered", { to, last_act_at: null });
+  for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
+    const line = text.split("\n")[0];
+    assert.match(line, /; адресат: неизвестно \(id: неизвестно, роль: 163\); /, line);
+    assert.match(line, /слушает: нет; последний ход: неизвестно; роль позвана: да$/, line);
+    assert.doesNotMatch(line, /человек|доставка/, line);
   }
+  const absent = batchLine(
+    clockNotice("card_unanswered", { to, listening: null, role_called: null }),
+  );
+  assert.match(absent, /слушает: неизвестно; .*роль позвана: неизвестно$/, absent);
+  assert.doesNotMatch(absent, /: нет|человек/, absent);
+});
+
+test("a person card the server names: person wording, the server's delivery facts as they came, no seat fact", () => {
+  const to = { standing_id: null, standing: null, karta_seq: 163, kind: "person" };
+  const delivery = { fronts: ["window", "bot"], taken_by: "bot" };
+  const f = clockNotice("card_unanswered", { to, delivery, last_act_at: null });
+  for (const text of [frameToText(f, ""), batchLine(f), batchText([f])]) {
+    const line = text.split("\n")[0];
+    assert.match(
+      line,
+      /; адресат — человек \(роль: 163\); доставка: fronts: window, bot, taken_by: bot; последний ход: неизвестно$/,
+      line,
+    );
+    assert.doesNotMatch(line, /слушает|роль позвана|адресат: /, line);
+    assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+  }
+  const bare = batchLine(clockNotice("card_unanswered", { to, last_act_at: null }));
+  assert.match(bare, /адресат — человек \(роль: 163\); доставка: неизвестно; /, bare);
+  // The details carry the server's words, not the bridge's.
+  const d = cardFrame(f).provenance.notice_data;
+  assert.equal(d.to.kind, "person");
+  assert.deepEqual(d.delivery, { fronts: "window, bot", taken_by: "bot" });
+});
+
+test("a seat's null flag is unknown, never no", () => {
   // A seat is a seat with or without its id; a null flag of a seat is unknown, never no.
   for (const to of [
     { standing_id: "seat-id", standing: "@h:recipient", karta_seq: 163 },
@@ -75,20 +86,28 @@ test("a card to a person names the person and no seat fact; a seat's null flag i
   }
 });
 
-test("English person card names the person and no seat fact", () => {
+test("English: a person card by the server's kind names the person; a seatless role without it does not", () => {
   setLang("en");
   try {
+    const to = { standing_id: null, standing: null, karta_seq: 163 };
     const f = clockNotice("card_unanswered", {
-      to: { standing_id: null, standing: null, karta_seq: 163 },
+      to: { ...to, kind: "person" },
+      delivery: { taken_by: "bot" },
       listening: false,
       last_act_at: null,
       role_called: false,
     });
     assert.match(
       batchLine(f),
-      /; recipient is a person \(role: 163\); delivery to the person is not visible to the bridge; last action: unknown$/,
+      /; recipient is a person \(role: 163\); delivery: taken_by: bot; last action: unknown$/,
     );
     assert.doesNotMatch(batchLine(f), /listening|role called|recipient: unknown/);
+    const seatless = batchLine(clockNotice("card_unanswered", { to }));
+    assert.match(
+      seatless,
+      /recipient: unknown \(id: unknown, role: 163\); listening: no; .*role called: yes$/,
+    );
+    assert.doesNotMatch(seatless, /person/);
     assert.match(
       batchLine(clockNotice()),
       /listening: no; last action: 2026-11-10T12:00:00Z; role called: yes/,
