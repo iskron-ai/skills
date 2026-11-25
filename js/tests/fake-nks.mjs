@@ -516,7 +516,7 @@ export async function startFakeNks(opts = {}) {
     state: p.state ?? "active",
     listening: !!p.listening,
     pending: p.pending ?? 0,
-    ...(p.incoming ? { inbound: p.incoming } : {}),
+    ...("incoming" in p ? { inbound: p.incoming } : {}),
     ...(p.realm ? { realm: slug(p.realm) } : {}),
   });
 
@@ -1221,6 +1221,10 @@ export async function startFakeNks(opts = {}) {
         );
       }
       let sid = req.headers["mcp-session-id"];
+      if (sid && st.credentialMismatch) {
+        st.credentialMismatch = false;
+        return json(res, 401, { error: "credential_mismatch" });
+      }
       st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
       // A keep-alive connection the server already closed: the request is read and
@@ -2261,7 +2265,9 @@ export async function startFakeNks(opts = {}) {
       const mindCall =
         msg.method === "tools/call" &&
         (msg.params?.name === "iskron_me" ||
-          (msg.params?.name === "iskron_search" && msg.params.arguments?.realm === "mind"));
+          (msg.params?.name === "iskron_search" &&
+            ["mind", "@tester/mind"].includes(msg.params.arguments?.realm) &&
+            msg.params.arguments?.attrs_filter === "slice:agents,ways"));
       if (mindCall) {
         const m = st.mind;
         const rules = m?.rules ?? [];
@@ -2354,11 +2360,14 @@ export async function startFakeNks(opts = {}) {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
         // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
         if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
-        const text = realmListText(st.realms);
+        const realms = st.mind?.missing
+          ? st.realms.filter((r) => r.canon !== "@tester/mind")
+          : st.realms;
+        const text = realmListText(realms);
         const result = structuredClone(
           st.realmResult ?? {
             content: [{ type: "text", text }],
-            structuredContent: realmListFields(st.realms),
+            structuredContent: realmListFields(realms),
           },
         );
         if (!st.realmStructuredSessions.has(sid)) delete result.structuredContent;

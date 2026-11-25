@@ -365,7 +365,7 @@ test("a status-only call after the seat went from under the bridge names the ful
   assert.ok(!first.result?.isError, textOf(first));
   b.kill(); // плагин перезапущен: место не отпущено, запись держания цела
   const next = await up(dir);
-  const r = await stand(next, { realm: "nks-dev", status: "занят" });
+  const r = await stand(next, { realm: "@nks/nks-dev", status: "занят" });
   const text = textOf(r);
   assert.equal(r.result?.isError, true, text);
   assert.match(text, /iskron_stand\(realm="[^"]*nks-dev", karta=931, name="proba"\)/, text);
@@ -399,7 +399,7 @@ test("the full call after a restart names this session's seat, not a newer recor
   plant("alien.hold", { realm: "@alien/nks-dev", name: "chuzhoe", key: "alien" });
   plant("other.hold", { name: "drugoi-harness", client: "another-harness", key: "other" });
   const next = await up(dir);
-  const r = await stand(next, { realm: "nks-dev", status: "занят" });
+  const r = await stand(next, { realm: "@nks/nks-dev", status: "занят" });
   const text = textOf(r);
   assert.match(text, /iskron_stand\(realm="[^"]*nks-dev", karta=931, name="proba"\)/, text);
   assert.doesNotMatch(text, /chuzhoe|drugoi-harness|@alien/, text);

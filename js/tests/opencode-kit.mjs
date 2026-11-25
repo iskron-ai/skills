@@ -131,6 +131,11 @@ function fakeCtx({
       // simply a root the probe never described.
       get: async ({ sessionID }) => {
         if (gone.has(sessionID)) throw new Error(`Session not found: ${sessionID}`);
+        // getFails — the lookup fails another way (a storage hiccup): no word of an end.
+        if (faults.getFails > 0) {
+          faults.getFails--;
+          throw new Error("storage unavailable");
+        }
         return sessions.find((x) => x.id === sessionID) ?? { id: sessionID };
       },
       // OpenCode answers a prompt with its inbox item; the id comes back in

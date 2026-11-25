@@ -16,8 +16,11 @@ writeFileSync(
     "\nexport { createCompaction, sliceBy };\n",
 );
 const { createCompaction, sliceBy } = await import(pathToFileURL(copy).href);
-const READY = "  personal_mind «Личная память» — present · scope: person · ready: да";
-const MISSING = "  personal_mind «Личная память» — missing";
+const WHO = "Вызывающая идентичность: @tester · handle @tester";
+const READY =
+  "Доступные графы (1) — адресуй их как @owner/slug:\n    @tester/mind  r204  mind · 2026-09-23";
+const MISSING =
+  "Доступные графы (1) — адресуй их как @owner/slug:\n    @other/mind  r35  mind · 2026-09-23";
 const PAGE = "Найдено 1 узлов:\n  📌 Правило (#31, phenomenon, Pt/Va/Ad, v1) — читать источник";
 const answer = (text, isError = false) => ({ content: [{ type: "text", text }], isError });
 const request = () => ({ sessionID: "production-read", system: [] });
@@ -36,7 +39,7 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
           if (failure === "OFFLINE") throw new Error("OFFLINE");
           return answer("REFUSED", true);
         }
-        return answer(p.name === "iskron_me" ? READY : PAGE);
+        return answer(p.name === "iskron_me" ? WHO : p.name === "iskron_realm" ? READY : PAGE);
       },
     };
     const c = createCompaction({
@@ -52,13 +55,23 @@ for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
     const before = calls.length;
     const retry = request();
     await c.tell(retry);
-    assert.deepEqual(calls.slice(before), ["iskron_me", "iskron_search"], "fresh production read");
+    assert.deepEqual(
+      calls.slice(before),
+      failure === "search refusal"
+        ? ["iskron_search"]
+        : ["iskron_me", "iskron_realm", "iskron_search"],
+      "retry the failed read",
+    );
     assert.equal(words(text(retry)), 1);
     assert.match(text(retry), /📌 Правило/);
     const again = request();
     await c.tell(again);
     assert.equal(text(again), "");
-    assert.equal(calls.length, before + 2, "one complete return consumes the obligation");
+    assert.equal(
+      calls.length,
+      before + (failure === "search refusal" ? 1 : 3),
+      "one complete return consumes the obligation",
+    );
   });
 }
 
@@ -69,13 +82,19 @@ test("production slice keeps a confirmed absent mind and an empty slice valid in
       {
         async request(_method, p) {
           calls.push(p.name);
-          return answer(p.name === "iskron_me" ? readiness : "Найдено 0 узлов:");
+          return answer(
+            p.name === "iskron_me"
+              ? WHO
+              : p.name === "iskron_realm"
+                ? readiness
+                : "Найдено 0 узлов:",
+          );
         },
       },
       { strict: true },
     );
     assert.equal(result, readiness === MISSING ? MIND_SLICE.ru.absent() : MIND_SLICE.ru.empty());
-    assert.equal(calls.length, readiness === MISSING ? 1 : 2);
+    assert.equal(calls.length, readiness === MISSING ? 2 : 3);
   }
 });
 
@@ -93,6 +112,6 @@ test("ordinary production slice reads retain soft diagnostics for transport and 
 
 test("unknown readiness is not a successful strict slice but stays diagnostic for ordinary reads", async () => {
   const bridge = { request: async () => answer("readiness unavailable") };
-  await assert.rejects(sliceBy(bridge, { strict: true }), /mind readiness unknown/);
-  assert.equal(await sliceBy(bridge), MIND_SLICE.ru.unknown());
+  await assert.rejects(sliceBy(bridge, { strict: true }), /account handle unknown/);
+  assert.equal(await sliceBy(bridge), MIND_SLICE.ru.unread("account handle unknown"));
 });

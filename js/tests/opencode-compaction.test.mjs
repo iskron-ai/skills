@@ -28,8 +28,12 @@ async function standUp(name, sessions) {
   const events = join(SANDBOX, `${name}.events`);
   const reply = join(SANDBOX, `${name}.reply`);
   for (const f of [log, events, reply]) writeFileSync(f, "");
-  // Recovery needs a proven result, not the fake bridge's generic "ok" readiness.
-  writeFileSync(`${reply}.iskron_me`, "  personal_mind «Личная память» — missing");
+  // Recovery needs a proven account and graph list, not the fake bridge's generic "ok".
+  writeFileSync(`${reply}.iskron_me`, "Вызывающая идентичность: @tester · handle @tester");
+  writeFileSync(
+    `${reply}.iskron_realm`,
+    "Доступные графы (1) — адресуй их как @owner/slug:\n    @other/mind  r35  mind · 2026-09-23",
+  );
   const rec = await plugin({
     ISKRON_BRIDGE_PATH: FAKE_BRIDGE,
     FB_LOG: log,

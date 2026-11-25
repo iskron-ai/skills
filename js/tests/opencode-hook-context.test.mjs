@@ -130,7 +130,7 @@ for (const invalid of [
       if (invalid === "unload") await rec.stop();
       if (invalid === "ended")
         createEnds(
-          () => `${SANDBOX}/.iskron-bridge`,
+          () => process.env.ISKRON_BRIDGE_AUTH_DIR,
           () => {},
           () => {},
         ).end("child");
@@ -296,7 +296,7 @@ for (const end of ["deleted", "unload", "stopped", "ended"]) {
       } else if (end === "unload") await rec.stop();
       else if (end === "ended")
         createEnds(
-          () => `${SANDBOX}/.iskron-bridge`,
+          () => process.env.ISKRON_BRIDGE_AUTH_DIR,
           () => {},
           () => {},
         ).end("child");

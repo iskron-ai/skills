@@ -16,6 +16,7 @@ import {
   muxCarrying,
   rawClient,
   seatIdOf,
+  secretOf,
   sleep,
   textOf,
   TICK_MS,
@@ -25,6 +26,26 @@ import {
 
 const REALM = "nks-dev";
 const ok = (r, what) => assert.ok(r.result && !r.result.isError, `${what}: ${textOf(r)}`);
+
+test("each dispatcher subscription carries only its own harness session id", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const seats = [await session(), await session(), await session()];
+    await seats[0].rpc("iskron/resume", { cwd: "/no-record-a", session: "ses_A" });
+    await seats[1].rpc("iskron/resume", { cwd: "/no-record-b", session: "ses_B" });
+    for (const [i, seat] of seats.entries())
+      ok(await seat.stand({ realm: REALM, karta: 931 + i, name: `id-${i}` }), `seat ${i}`);
+    const channels = seats.map((_, i) => channelOf(fake, `id-${i}`));
+    await muxCarrying(fake, mux, channels);
+    const subscriptions = channels.map((c) =>
+      mux.sent("subscribe").find((s) => s.secret === secretOf(fake, c)),
+    );
+    assert.deepEqual(
+      subscriptions.map((s) => s?.session_id),
+      ["ses_A", "ses_B", undefined],
+    );
+    assert.ok(!("session_id" in subscriptions[2]));
+  });
+});
 
 test("fake self-check: the dispatcher answers by the contract on its own", async () => {
   const fake = await startFakeNks({ pat: "self" });
@@ -126,6 +147,20 @@ test("two sessions of one graph on one daemon: one dispatcher connection, B's fr
     await sleep(300);
     assert.equal(a.heard("слово для B"), 0, "B's frame does not reach A");
     assert.equal(b.heard("слово для A"), 0, "A's frame does not reach B");
+  });
+});
+
+test("dispatcher routes a wake for one graph and role only to that seat", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const [a, b] = [await session(), await session()];
+    ok(await a.stand({ realm: "@nks/nks-dev", karta: 931, name: "route-a" }), "A stands");
+    ok(await b.stand({ realm: "@nks/drugoy", karta: 932, name: "route-b" }), "B stands");
+    await muxCarrying(fake, mux, [channelOf(fake, "route-a"), channelOf(fake, "route-b")]);
+    assert.equal(mux.conns.length, 1, "both seats share the dispatcher");
+    mux.say("route-a", "wake: A role cases only", "wake-route-a");
+    await waitFor("A receives its wake", () => a.heard("wake: A role cases only"));
+    await sleep(300);
+    assert.equal(b.heard("wake: A role cases only"), 0, "B never receives A's wake");
   });
 });
 

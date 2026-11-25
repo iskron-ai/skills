@@ -10,7 +10,7 @@ import { besideBack, registerRecord } from "./besideback.ts";
 import { listens, nameOf, readBoard, undelivered } from "./board.ts";
 import { callTool, short } from "./call.ts";
 import { CFG } from "./config.ts";
-import { localHolder } from "./hearing.ts";
+import { liveHearing, localHolder } from "./hearing.ts";
 import {
   awaitHello,
   holdsKey,
@@ -430,7 +430,11 @@ export async function runCheck(msg: JsonRpcMessage): Promise<JsonRpcMessage> {
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
-  const board = await callTool(tool("channel"), { action: "list", realm: s.realm });
+  if (liveHearing()) {
+    D.reopens = 0;
+    return reply(msg, { holding: true, key, listening: true, word: resumeWords.listening() });
+  }
+  const board = await callTool(tool("channel"), { action: "list", realm: s.realm, karta: s.karta });
   if (board.isError)
     return reply(msg, { holding: true, key, word: resumeWords.boardUnread(short(board.text)) });
   const mine = readBoard(board).entries.find(

@@ -48,12 +48,7 @@ export const state = scoped(() => ({
   // it and are replayed with it after every session turnover.
   places: [] as Standing[],
   standingSession: null as string | null, // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
+  // The bearer last associated with the session; refresh alone does not end it.
   sessionToken: null as string | null,
   // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
   goneSession: null as string | null,
@@ -247,14 +242,17 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   noteServerDate(res);
 
   if (res.status === 401) {
-    res.body?.cancel?.();
+    const challenge = res.headers.get("www-authenticate") || "";
+    const body = await res.text().catch(() => "");
+    if (sentSession && /credential_mismatch/i.test(`${challenge} ${body}`))
+      throw new UpstreamError(
+        "session credential mismatch",
+        "session",
+        null,
+        UpstreamError.NOT_SENT,
+      );
     // The server answered, and its answer was a refusal: nothing was applied.
-    throw new UpstreamError(
-      res.headers.get("www-authenticate") || "unauthorized",
-      "auth",
-      token,
-      UpstreamError.NOT_SENT,
-    );
+    throw new UpstreamError(challenge || "unauthorized", "auth", token, UpstreamError.NOT_SENT);
   }
   if (res.status === 404 && sentSession) {
     res.body?.cancel?.();

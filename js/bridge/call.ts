@@ -2,6 +2,7 @@
 // an accepted register is remembered by the standing.
 import { CALL, SPAWNED_FOR, tool } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
+import { rememberMindRealmList } from "../shared/mindslice.ts";
 import { scoped } from "../shared/scope.ts";
 import { absorbChannelReply } from "./absorb.ts";
 import { claimReply } from "./claimdelivery.ts";
@@ -203,6 +204,11 @@ async function answer(name: string, args: Record<string, unknown>): Promise<Answ
   got = claimReply(msg, got);
   const structured = structuredOf(got);
   const refusal = refusalOf(got);
+  // Only the whole list says whether the account has a mind: a filtered one would cache a false "none".
+  const wholeList =
+    name === tool("realm") && args.action === "list" && Object.keys(args).length === 1;
+  if (wholeList && !got.error && !got.result?.isError)
+    rememberMindRealmList(replyText(got), structured);
   if (name === tool("channel")) {
     noteLocaleEcho(args, replyText(got), structured);
     if (!got.error && !got.result?.isError) noteTaken(args); // the stand call's stop guard (standundo.ts)

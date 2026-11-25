@@ -380,6 +380,8 @@ process.stdin.on("data", (chunk) => {
       } catch {
         /* no answer prepared — nothing to resume */
       }
+      // {die: true} — the bridge dies on this request without an answer: a crash at the return.
+      if (result?.die) process.exit(1);
       // FB_RESUME_DELAY_MS: the return is answered this much later — a register waiting out a 429.
       const resumeDelayMs = Number(process.env.FB_RESUME_DELAY_MS || 0);
       if (resumeDelayMs) setTimeout(() => ok(msg.id, result), resumeDelayMs);

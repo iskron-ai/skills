@@ -69,6 +69,7 @@ const cases = [
   ["OPENCODE_KEEP.elsewhere", ["agent"], 260, [/agent/, /iskron_stand/, /take не нужен/, /имя.N/]],
   ["OPENCODE_KEEP.notBack", ["agent", "отказ"], 170, [/agent/, /отказ/, /сторож/i, /iskron_stand/]],
   ["OPENCODE_KEEP.retryFailed", ["agent", "отказ"], 130, [/agent/, /отказ/, /iskron_stand/]],
+  ["OPENCODE_KEEP.lostNotBack", ["agent", "отказ"], 200, [/умер/, /agent/, /не вернулось/, /отказ/, /слуха нет/i, /сторож/i, /молча/, /iskron_stand/]],
   ["OPENCODE_KEEP.lostWord", ["12:34", "agent"], 210, [/12:34/, /agent/, /подожди/, /iskron_stand/, /не удался/]],
   ["WATCHDOG.noHeld", [], 110, [/iskron_stand/, /слушания/]],
   ["WATCHDOG.noThread", [], 120, [/CODEX_THREAD_ID/, /оболочки сессии Codex/]],

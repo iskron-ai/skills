@@ -10,6 +10,8 @@ export interface OpencodeKeepWords {
   /** keys — места через запятую. */
   elsewhere: (keys: string) => string;
   notBack: (place: string, why: string) => string;
+  /** Место, потерянное со смертью моста (маркера нет), не вернулось: слово одно, сторож следит молча. */
+  lostNotBack: (place: string, why: string) => string;
   noKeyNoDir: () => string;
   noAnswer: () => string;
   legacy: (word: string) => string;
@@ -62,6 +64,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
       `Искрон: ${keys} держит другой мост, здесь слуха нет. iskron_stand тем же именем, take не нужен: своё место сессии вернётся, у чужого мост встанет рядом на имя.N со слухом.`,
     notBack: (place, why) =>
       `Искрон: ${place} не вернулось: ${why}. Сторож слуха повторит один раз — жди; повтор не удался — iskron_stand.`,
+    lostNotBack: (place, why) =>
+      `Искрон: мост сессии умер, место ${place} не вернулось: ${why}. Слуха нет: свои ходы — iskron_stand тем же именем. ` +
+      "Сторож слуха следит и повторяет возврат молча, слова о повторах не будет.",
     noKeyNoDir: () => "ни ключа места, ни каталога сессии",
     noAnswer: () => "мост не ответил",
     legacy: (word) => `Искрон: ${word}.`,
@@ -140,6 +145,9 @@ export const OPENCODE_KEEP: Readonly<Record<Lang, OpencodeKeepWords>> = {
     notBack: (place, why) =>
       `Iskron: the seat ${place} did not return from disk: ${why}. ` +
       "The seat is returning: the hearing watchdog retries the return once — wait for its word; if it did not return on the retry either — iskron_stand.",
+    lostNotBack: (place, why) =>
+      `Iskron: the session's bridge died and the seat ${place} did not return: ${why}. There is no hearing here: to act now — iskron_stand with this name. ` +
+      "The hearing watchdog keeps watching and retries the return silently; no further word.",
     noKeyNoDir: () => "neither a seat key nor a session directory",
     noAnswer: () => "the bridge did not answer",
     legacy: (word) => `Iskron: ${word}.`,
