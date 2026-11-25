@@ -1,8 +1,9 @@
-// Конец отдельного прогона (граф @nks/nks-dev, #6593, #11359): `opencode run --standalone` новой
-// сессии обслуживается своим «serve --stdio» — его остановка и есть конец прогона, конец агента:
-// мосту — `end`, место снимает свой мост сразу, не окно слуха. Прогон, продолживший сессию
-// (--session), кончается, а сессия живёт — `away`, как перезагрузка; общий сервис конца прогона
-// не узнаёт — у прогона по умолчанию его нет, как и прежде.
+// Конец отдельного прогона (граф @nks/nks-dev, #6593, #11359): остановка экземпляра
+// `opencode run --standalone` — ещё не конец прогона: перезагрузка плагина посреди живого
+// прогона останавливает его так же, и сессия места не теряет. Любая остановка — отлучка (`away`,
+// маркер возврата пишется), а мосту называется pid прогона: место кончает демон, только если
+// прогон ушёл за окно (lifeend-run.test.mjs). Прогон, продолживший сессию (--session), и общий
+// сервис — отлучка без прогона, как прежде.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -10,7 +11,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { bridgeEnv, callsIn, event, pidOf } from "./lead-kit.mjs";
-import { plugin, SANDBOX, until } from "./opencode-kit.mjs";
+import { lostMarkers, plugin, SANDBOX, until } from "./opencode-kit.mjs";
 
 const names = (rec) => [...rec.tools().keys()];
 
@@ -24,8 +25,8 @@ function run(t, args) {
   return p;
 }
 
-/** Корень держит место через мост; остановка плагина — что услышал мост. */
-async function stopHeard(t, name, args) {
+/** Корень держит место через мост; остановка плагина посреди хода — что услышал мост и что лежит на диске. */
+async function reloadMidTurn(t, name, args) {
   const calls = join(SANDBOX, `${name}.calls`);
   writeFileSync(calls, "");
   const client = run(t, args);
@@ -33,32 +34,52 @@ async function stopHeard(t, name, args) {
     FB_CALLS: calls,
     ...(client ? { ISKRON_OPENCODE_CLIENT_PID: String(client.pid) } : {}),
   });
-  const rec = await plugin(b.env, { sessions: [{ id: `s-${name}`, time: {} }] });
+  const session = `s-${name}`;
+  const rec = await plugin(b.env, {
+    sessions: [{ id: session, time: {}, location: { directory: `/work/${name}` } }],
+  });
   await until(() => names(rec).length === 3, "the server's tools", 8000);
-  await rec.call("iskron_channel", { action: "connect" }, `s-${name}`);
+  await rec.call("iskron_channel", { action: "connect" }, session);
   const pid = pidOf(b.log);
   appendFileSync(`${b.events}.${pid}`, event("held", { key: `${name}--931--nks-dev` }));
   await until(() => rec.said().includes(`мост держит место ${name}--931--nks-dev`), "held");
+  rec.emit({ type: "session.execution.started", data: { sessionID: session } }); // mid-turn
   await rec.stop();
-  await until(
-    () => callsIn(calls).some((c) => c.pid === pid && /^iskron\/(end|away)$/.test(c.name)),
-    "the bridge's last word",
-  );
-  return callsIn(calls)
-    .filter((c) => c.pid === pid && /^iskron\/(end|away)$/.test(c.name))
-    .map((c) => c.name);
+  const said = () =>
+    callsIn(calls).filter((c) => c.pid === pid && /^iskron\/(end|away)$/.test(c.name));
+  await until(() => said().length, "the bridge's last word");
+  return { said: said(), client, markers: lostMarkers() };
 }
 
-test("the end of a standalone run of a new session is its agent's end: the bridge is told end, not away", async (t) => {
-  const heard = await stopHeard(t, "run-new", ["opencode", "run", "--standalone", "do it"]);
-  assert.deepEqual(heard, ["iskron/end"], "the seat ends with the run");
+test("a reload inside a live standalone run of a new session: away with the run's pid, the return marker kept — no end", async (t) => {
+  const { said, client, markers } = await reloadMidTurn(t, "run-new", [
+    "opencode",
+    "run",
+    "--standalone",
+    "do it",
+  ]);
+  assert.deepEqual(
+    said.map((c) => [c.name, c.arguments]),
+    [["iskron/away", { run_pid: client.pid }]],
+    "an absence naming the run — the daemon ends the seat only once the run is gone",
+  );
+  assert.ok(markers.length >= 1, "the return marker is written");
 });
 
-test("a standalone run resuming a session (--session) ends, the session lives on: away, not end", async (t) => {
+test("a standalone run resuming a session (--session): a plain absence, no run named", async (t) => {
   const args = ["opencode", "run", "--standalone", "--session", "ses_x", "go on"];
-  assert.deepEqual(await stopHeard(t, "run-resumed", args), ["iskron/away"]);
+  const { said, markers } = await reloadMidTurn(t, "run-resumed", args);
+  assert.deepEqual(
+    said.map((c) => [c.name, c.arguments]),
+    [["iskron/away", {}]],
+  );
+  assert.ok(markers.length >= 1);
 });
 
-test("a stop of the shared service (a default-shape run, a reload) stays an absence: away", async (t) => {
-  assert.deepEqual(await stopHeard(t, "run-shared", null), ["iskron/away"]);
+test("a stop of the shared service (a default-shape run, a reload): a plain absence", async (t) => {
+  const { said } = await reloadMidTurn(t, "run-shared", null);
+  assert.deepEqual(
+    said.map((c) => [c.name, c.arguments]),
+    [["iskron/away", {}]],
+  );
 });

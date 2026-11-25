@@ -1,13 +1,14 @@
-// How this instance's stop reads (graph @nks/nks-dev, nodes #6593, #11359). `opencode run
-// --standalone` of a new session serves exactly that run from its own "serve --stdio": the
-// instance's stop is the run's end — the agent's end, `end`, its seat finished by its own bridge
-// at once, not left to the hearing watchdog. A run resuming a session (--session, -s,
-// --continue, -c) ends while the session lives on: an absence, `away`, as a reload is. The
-// shared service never learns a run's end — a default-shape run records none (README).
+// Which run this instance's stop may be the end of (graph @nks/nks-dev, nodes #6593, #11359).
+// `opencode run --standalone` of a new session serves exactly that run from its own "serve
+// --stdio". The instance's stop is no proof the run is over — a plugin reload inside a live run
+// stops it too, and that session must keep its seat. So every stop is an absence (`away`, the
+// return marker written), and the bridge is told the run's pid: the daemon ends the seats only
+// if that run is gone within the death window, not left to the hearing watchdog (runend.ts). A
+// run resuming a session (--session, -s, --continue, -c) ends while the session lives on: a
+// plain absence. The shared service never learns a run's end — a default-shape run records none.
 import { execFileSync } from "node:child_process";
 
 import { standaloneClient } from "./client.ts";
-import type { PutDown } from "./putdown.ts";
 
 const RESUMES = /(?:^|\s)(?:--session|-s|--continue|-c)(?:=|\s|$)/;
 
@@ -27,11 +28,11 @@ function commandOf(pid: number): string | null {
 }
 
 /**
- * The word the instance's stop puts its root seats down with — read at start, while the run
- * that started this instance is alive. A run whose line is not readable is not called ended.
+ * The standalone run of a new session this instance serves — read at start, while it is alive;
+ * null — no such run (the shared service, a resumed session, a line not readable).
  */
-export function stopWordOfRun(): PutDown {
+export function runOfInstance(): number | null {
   const run = standaloneClient();
   const line = run === null ? null : commandOf(run);
-  return line !== null && !RESUMES.test(line) ? "end" : "away";
+  return run !== null && line !== null && !RESUMES.test(line) ? run : null;
 }
