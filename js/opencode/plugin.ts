@@ -66,6 +66,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
   // and an ownerless bridge's frame goes to the freshest one seen — the v2 context lists no sessions.
   const roots = new Map<string, string>();
   const seen = new Map<string, number>();
+  const createdHere = new Set<string>();
   const spawnStarts = createSpawnStarts(
     (sessionID) => ctx.session.context({ sessionID } as any),
     (word) => say(word, "error"),
@@ -108,7 +109,6 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     }
     return best;
   }
-
   // Each half under its own try: a failed one takes neither the other nor the plugin's load.
   let onChannel: (session: string | null, params: unknown, child?: boolean) => void = () => {};
   let ch: ReturnType<typeof setupChannel> | null = null;
@@ -254,7 +254,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
         // Raised for an invite: the case it was taken for, by the delivery, not the brief (#10043).
         prepared.put(spawnStarts.taken(sid));
         // A service seating's stand was not read by the model; its rules go beside it.
-        if (start.length) prepared.put(await (rulesOf(sid) ?? null));
+        if (start.length && createdHere.has(sid)) prepared.put(await (rulesOf(sid) ?? null));
         spawnStarts.guard(sid);
         if (root) prepared.ride();
       } catch (e) {
@@ -379,6 +379,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             rites.forget(id);
             roots.delete(id);
             seen.delete(id);
+            createdHere.delete(id);
             parents.delete(id);
             ch?.gone(id);
             void usage.flush(id).finally(() => {
@@ -390,6 +391,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
             // data.parentID is the parent, not the root: a grandchild takes its parent's root.
             if (!id) break;
             if (ev.data?.title === keepaliveTitle()) break; // the keepalive service session is no activity
+            createdHere.add(id);
             const parent = ev.data?.parentID;
             if (typeof parent === "string") {
               parents.set(id, parent);
