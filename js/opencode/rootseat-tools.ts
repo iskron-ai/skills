@@ -9,6 +9,7 @@ import { writeLostMarker } from "./marker.ts";
 import { type PutDown, putDown } from "./putdown.ts";
 import type { Home } from "./records.ts";
 import { seatBy, type SeatDoors } from "./rootseat-by.ts";
+import { stopWordOfRun } from "./runshape.ts";
 import { asSatellite, heldPlace, type Place, standsBy } from "./satellite.ts";
 import type { Slot } from "./slot.ts";
 
@@ -48,6 +49,7 @@ export function createSeatLife(d: Doors) {
   >();
   const epochs = new Map<string, number>();
   let awaying: Promise<void> = Promise.resolve();
+  const stopWord = stopWordOfRun(); // read while the run that started this instance lives
   const cancelled = (s: string) =>
     d.stopped() ||
     deleted.has(s) ||
@@ -198,7 +200,8 @@ export function createSeatLife(d: Doors) {
     },
     stopSlots(home: Home | null, spare: Slot | null) {
       const slots = [...d.slots.values()];
-      const left = writeLostMarker(d.authDir(), slots, home);
+      // A standalone run's end leaves nothing for a next instance to return (#11359).
+      const left = stopWord === "end" ? [] : writeLostMarker(d.authDir(), slots, home);
       if (spare) {
         spare.ownStop = true;
         spare.bridge.stop();
@@ -206,8 +209,9 @@ export function createSeatLife(d: Doors) {
       const going = slots.filter((slot) => !(slot.session && attempts.get(slot.session)?.onWire));
       for (const slot of going) slot.ownStop = true;
       d.slots.clear();
-      // A reload is an announced absence: the seats wait for the next instance (#7493).
-      awaying = Promise.all(going.map((slot) => putDown(slot, "away"))).then(() => {});
+      // A reload is an announced absence: the seats wait for the next instance (#7493); the
+      // stop of a standalone run of a new session is its agent's end (runshape.ts, #6593).
+      awaying = Promise.all(going.map((slot) => putDown(slot, stopWord))).then(() => {});
       return left;
     },
     /** The `away` words of the last stopSlots, answered or timed out. */
