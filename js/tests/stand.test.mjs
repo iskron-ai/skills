@@ -1945,7 +1945,11 @@ test("English surface: a place the English board reads listening under another h
   await f2.control({ places: [{ karta: "931", name: "proba", listening: true, pending: 2 }] });
   const check = await b2.call("iskron/check", {});
   assert.equal(check.result?.listening, true, JSON.stringify(check));
-  assert.equal(check.result.pending, 2, JSON.stringify(check));
+  assert.equal(
+    check.result.pending,
+    undefined,
+    "local hearing cannot know the board's pending count",
+  );
   assert.notEqual(check.result.reopened, true, "a listening place is not reopened");
 });
 
@@ -2540,6 +2544,22 @@ test("iskron_stand: an explicit name a live bridge of ANOTHER session holds is n
   assert.deepEqual(connects(), ["proba", "proba.2"], "the other session's seat is not rotated");
   assert.equal(fake.state.ws.size, 2, "the other session keeps its socket");
   assert.equal(fake.state.counts.webhooks_added, 0, "no role-inbox hook for the seat beside");
+});
+
+test("raw seat hearing checks only the requested role", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "register", realm: "nks-dev", karta: 931, name: "hearing-probe" },
+  });
+  const lists = fake.state.calls.filter(
+    (c) => c.name === "iskron_channel" && c.arguments.action === "list",
+  );
+  assert.ok(lists.length, "hearing was checked upstream");
+  assert.ok(
+    lists.every((c) => String(c.arguments.karta) === "931"),
+    JSON.stringify(lists),
+  );
 });
 
 // leave отпускает только место этого моста (#6975): названное другое место — отказ
@@ -5526,6 +5546,42 @@ test("satellite: the model-clearing PATCH of a seat held as r5 names its graph b
 // текстом ключами api ({action, seats[]}, отказ — _meta["iskron/refusal"]), и мост
 // читает поле, когда оно есть и по форме, — проза тогда хоть на другом языке. Без
 // полей — прежний шаблон и строка в лог.
+test("structured channel board accepts a null inbound without falling back to prose", async (t) => {
+  const { fake, bridge } = await ready(t);
+  await fake.control({
+    structured: true,
+    garble: true,
+    places: [{ karta: 931, name: "other", listening: true }],
+  });
+  fake.state.places.get("931:other").incoming = null;
+  const reply = await bridge.call("tools/call", {
+    name: "iskron_channel",
+    arguments: { action: "register", realm: "nks-dev", karta: 931, name: "other" },
+  });
+  assert.equal(fake.state.lastStructured?.seats?.[0]?.inbound, null, "the board carried null");
+  assert.ok(reply.result?.isError, "another listener is not overwritten");
+  assert.doesNotMatch(bridge.stderr, /structuredContent iskron_channel list:.*prose template/);
+});
+
+test("hearing watchdog with a live socket needs no upstream board read", async (t) => {
+  const { fake, bridge } = await ready(t);
+  const stood = await bridge.call("tools/call", {
+    name: "iskron_stand",
+    arguments: { realm: "nks-dev", karta: 931, name: "watch-probe" },
+  });
+  assert.ok(!stood.result?.isError, textOf(stood));
+  await until(() => fake.state.ws.size === 1, "the live socket");
+  const before = fake.state.calls.length;
+  for (let n = 0; n < 3; n++) {
+    const check = await bridge.call("iskron/check", {});
+    assert.equal(check.result?.listening, true, JSON.stringify(check));
+  }
+  const lists = fake.state.calls
+    .slice(before)
+    .filter((c) => c.name === "iskron_channel" && c.arguments.action === "list");
+  assert.deepEqual(lists, [], "live hearing must not poll the board");
+});
+
 test("structuredContent: board, register and connect fields carry iskron_stand through prose of a form the bridge does not know", async (t) => {
   const { fake, bridge } = await ready(t);
   await fake.control({ structured: true, garble: true });
@@ -5547,7 +5603,11 @@ test("structuredContent: board, register and connect fields carry iskron_stand t
   await fake.control({ places: [{ karta: "931", name: "proba", listening: true, pending: 3 }] });
   const check = await bridge.call("iskron/check", {});
   assert.equal(check.result?.listening, true, JSON.stringify(check));
-  assert.equal(check.result.pending, 3, JSON.stringify(check));
+  assert.equal(
+    check.result.pending,
+    undefined,
+    "local hearing cannot know the board's pending count",
+  );
   assert.doesNotMatch(bridge.stderr, /the prose template/, bridge.stderr);
 });
 

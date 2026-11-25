@@ -3219,8 +3219,8 @@ test("a bridge with no named session does not carry the previous holder's sessio
 // The plugin's watch: every N minutes a session that stood asks its bridge
 // `iskron/check` — a held place the board reads deaf with frames waiting has
 // its socket reopened on the same address; a listening one is left alone.
-test("iskron/check: a held place the board reads deaf with waiting frames gets its socket reopened; a listening one is left alone", async (t) => {
-  const { fake, dir, bridge } = await connected(t);
+test("iskron/check trusts a proven live socket over a stale deaf board", async (t) => {
+  const { fake, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   const known = new Set(fake.state.ws);
   const fresh = () => [...fake.state.ws].filter((x) => !known.has(x));
@@ -3235,21 +3235,17 @@ test("iskron/check: a held place the board reads deaf with waiting frames gets i
     helloPending: 2,
   });
   const deaf = await bridge.call("iskron/check", 6, { cwd: "" });
-  assert.equal(deaf.result?.reopened, true, JSON.stringify(deaf));
-  assert.equal(deaf.result.pending, 0);
-  await waitFor(() => fresh().length === 1, "the socket to be reopened on the same address");
+  assert.equal(deaf.result?.listening, true, JSON.stringify(deaf));
+  assert.equal(deaf.result.pending, undefined, "pending is unknown without reading the board");
+  assert.equal(fresh().length, 0, "a proven socket is not reopened");
   assert.equal(fake.state.counts.connect, 1, "no connect — the same address");
-  assert.match(
-    readFileSync(join(dir, "standings.log"), "utf8"),
-    /reopen proba--931--_nks_nks-dev: board reads deaf/,
-  );
 });
 
 // A board that keeps reading the place deaf after a reopen must not have its
 // socket torn every tick forever: two fruitless reopens in a row, and the third
 // tick says so aloud (once, into the session) instead of reopening.
-test("iskron/check stops reopening after two fruitless reopens and says so aloud once; hearing back resets the count", async (t) => {
-  const { fake, dir, bridge } = await connected(t);
+test("iskron/check never reopens proven hearing because the board reads deaf", async (t) => {
+  const { fake, bridge } = await connected(t);
   await waitFor(() => fake.state.ws.size === 1, "the socket");
   // Reopens are counted by upgrades: a reopen closes the previous socket, and the fake now
   // drops a closed socket (it used to keep every one — the count once rode on that).
@@ -3259,36 +3255,12 @@ test("iskron/check stops reopening after two fruitless reopens and says so aloud
   // The fake reads the board off the socket: each reopen makes it «слушает» again,
   // so the probe re-deafens the board after each one, as a stuck server would.
   await deaf();
-  const first = await bridge.call("iskron/check", 5, {});
-  assert.equal(first.result?.reopened, true, JSON.stringify(first));
-  await waitFor(() => fresh().length === 1, "the first reopen");
-  await deaf();
-  const second = await bridge.call("iskron/check", 6, {});
-  assert.equal(second.result?.reopened, true, JSON.stringify(second));
-  await waitFor(() => fresh().length === 2, "the second reopen");
-  await deaf();
-  const third = await bridge.call("iskron/check", 7, {});
-  assert.equal(third.result?.reopened, false, JSON.stringify(third));
-  assert.equal(third.result.stuck, true, "the third tick gives up instead of reopening");
-  assert.match(third.result.word, /не рву/);
-  assert.match(third.result.word, /take=true/);
-  await new Promise((r) => setTimeout(r, 300));
-  assert.equal(fresh().length, 2, "no third socket");
-  const lost = () => bridge.notifications.filter((n) => n.params?.data?.kind === "lost");
-  assert.equal(lost().length, 1, "the word goes to the session once");
-  assert.match(lost()[0].params.data.text, /не слушающим и после 2 переоткрытий/);
-  const fourth = await bridge.call("iskron/check", 8, {});
-  assert.equal(fourth.result.stuck, true);
-  assert.equal(lost().length, 1, "said once, not every tick");
-  assert.match(readFileSync(join(dir, "standings.log"), "utf8"), /gave up after 2/);
-  // Hearing back resets the count: the next deafness is reopened again.
-  await fake.control({ places: [{ karta: 931, name: "proba", listening: true }] });
-  const back = await bridge.call("iskron/check", 9, {});
-  assert.equal(back.result.word, "слушаю");
-  await deaf();
-  const again = await bridge.call("iskron/check", 10, {});
-  assert.equal(again.result?.reopened, true, "after hearing came back, deafness is reopened anew");
-  await waitFor(() => fresh().length === 3, "the reopen after the reset");
+  for (let id = 5; id < 9; id++) {
+    const check = await bridge.call("iskron/check", id, {});
+    assert.equal(check.result?.listening, true, JSON.stringify(check));
+  }
+  assert.equal(fresh().length, 0, "the socket remains held");
+  assert.equal(bridge.notifications.filter((n) => n.params?.data?.kind === "lost").length, 0);
 });
 
 // #6649: the plugin idle longer than the hold record's term (6 h; seen 30–32 h) — the

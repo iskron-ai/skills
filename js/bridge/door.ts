@@ -48,7 +48,7 @@ export interface ChannelEvent {
   // handover — the machine daemon hands the seat to a successor: the door reopens at the same path (watchdog/client.ts)
   // stopped — the owner took the seat off (4001, #7439): every holder stops, nothing wakes or reconnects
   // prettier-ignore
-  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "handover" | "beside" | "beside-gone" | "stopped";
+  kind: "attached" | "frame" | "note" | "dead" | "alive" | "evicted" | "stale" | "released" | "held" | "backlog" | "lost" | "resumed" | "seat_result" | "handover" | "beside" | "beside-gone" | "stopped";
   key?: string;
   raw?: string;
   frame?: Frame | null;

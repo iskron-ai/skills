@@ -278,6 +278,31 @@ test("spawned_for thin satellite: the parent's environment pair is never its bas
   });
 });
 
+test("three daemon seats with live hearing do not poll the board", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const seats = Array.from({ length: 3 }, () => bridge({}, [], INIT_PI));
+    await Promise.all(seats.map(handshake));
+    for (const [i, seat] of seats.entries()) {
+      const result = await stand(seat, { realm: "nks-dev", karta: 931 + i, name: `watch-${i}` });
+      assert.ok(!result.result?.isError, textOf(result));
+    }
+    await waitFor("three live sockets", () => fake.state.ws.size === 3);
+    const pids = seats.map((s) => daemonPidIn(s.stderr)[0]);
+    assert.equal(new Set(pids).size, 1);
+    assert.equal(daemonPids(dir).length, 1);
+    const before = fake.state.calls.length;
+    for (let turn = 0; turn < 10; turn++) {
+      const checks = await Promise.all(seats.map((s) => s.request("iskron/check")));
+      for (const check of checks)
+        assert.equal(check.result?.listening, true, JSON.stringify(check));
+    }
+    const lists = fake.state.calls
+      .slice(before)
+      .filter((c) => c.name === "iskron_channel" && c.arguments.action === "list");
+    assert.deepEqual(lists, [], "live hearing does not read the board");
+  });
+});
+
 test("two sessions of one daemon at once keep their places, output, writes and satellite claims apart", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const a = bridge({}, [], INIT_PI);

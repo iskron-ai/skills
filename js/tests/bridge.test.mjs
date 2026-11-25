@@ -610,6 +610,44 @@ test("a fresh process reuses the stored grant with no browser trip at all", asyn
 
 // --- keeping the grant alive -----------------------------------------------
 
+test("refreshed bearer keeps three existing sessions open", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const first = spawnBridge();
+    await authorize(first, dir);
+    const bridges = [first, spawnBridge(), spawnBridge()];
+    for (const [i, bridge] of bridges.entries()) {
+      if (i) assert.ok((await bridge.call("initialize", i + 1, INIT_PARAMS)).result);
+      assert.ok((await bridge.call("tools/list", 10 + i)).result);
+    }
+    const inits = fake.state.initSids.length;
+    const deletes = fake.state.deletes.length;
+    const store = readStore(dir);
+    store.tokens.access_token = "same-subject-refreshed";
+    fake.state.access = store.tokens.access_token;
+    writeFileSync(storeFile(dir), JSON.stringify(store));
+    for (const [i, bridge] of bridges.entries()) {
+      assert.ok((await bridge.call("tools/list", 20 + i)).result);
+    }
+    assert.equal(fake.state.initSids.length, inits, "refresh must not reopen sessions");
+    assert.equal(fake.state.deletes.length, deletes, "refresh must not delete sessions");
+  });
+});
+
+test("credential mismatch reopens exactly once", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await authorize(bridge, dir);
+    assert.ok((await bridge.call("tools/list", 2)).result);
+    const inits = fake.state.initSids.length;
+    const refreshes = fake.state.counts.refresh;
+    fake.state.credentialMismatch = true;
+    const answer = await bridge.call("tools/list", 3);
+    assert.ok(answer.result, JSON.stringify(answer));
+    assert.equal(fake.state.initSids.length, inits + 1);
+    assert.equal(fake.state.counts.refresh, refreshes, "mismatch is not an expired grant");
+  });
+});
+
 test("an expired access token is refreshed silently, without touching the browser", async (t) => {
   await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
     const first = spawnBridge();
@@ -1410,29 +1448,23 @@ test("параллельные вызовы после смены сессии �
   });
 });
 
-test("смена токена закрыла сессию, сервер молча открыл новую — запись следом всё равно несёт автора", async (t) => {
-  // Сессия открыта credential'ом и умирает с ним (#188). Мост после 401 обновляет
-  // токен и повторяет вызов со СТАРЫМ id; сервер, открывающий на него новую сессию
-  // молча, исполняет вызов безавторным и лишь в ответе сообщает новый id.
-  // Первый случай #3919 совпал ровно с отказом обновления токена.
-  await withFake(
-    t,
-    { sessionFollowsToken: true, silentNewSession: true },
-    async ({ fake, dir, spawnBridge }) => {
-      const bridge = spawnBridge();
-      await standUp(bridge, dir);
-      await fake.control({ rotate_access: true }); // сосед провернул грант: наш bearer мёртв, сессия с ним
+test("обновлённый токен той же учётки сохраняет сессию и автора записи", async (t) => {
+  await withFake(t, {}, async ({ fake, dir, spawnBridge }) => {
+    const bridge = spawnBridge();
+    await standUp(bridge, dir);
+    const inits = fake.state.initSids.length;
+    await fake.control({ rotate_access: true }); // сосед провернул грант
 
-      const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
-      assert.equal(
-        send.result?.isError,
-        undefined,
-        `запись после смены токена: ${JSON.stringify(send)}`,
-      );
-      assert.match(send.result.content[0].text, /принято стоянием proba/);
-      assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
-    },
-  );
+    const send = await bridge.call("tools/call", 6, { name: "iskron_channel", arguments: SEND });
+    assert.equal(
+      send.result?.isError,
+      undefined,
+      `запись после смены токена: ${JSON.stringify(send)}`,
+    );
+    assert.match(send.result.content[0].text, /принято стоянием proba/);
+    assert.equal(fake.state.counts.unattributed, 0, "ни одна запись не должна лечь безавторной");
+    assert.equal(fake.state.initSids.length, inits, "сессия не переоткрывается");
+  });
 });
 
 test("проходящий отказ переигрывания не стирает память о стоянии", async (t) => {

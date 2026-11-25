@@ -516,7 +516,7 @@ export async function startFakeNks(opts = {}) {
     state: p.state ?? "active",
     listening: !!p.listening,
     pending: p.pending ?? 0,
-    ...(p.incoming ? { inbound: p.incoming } : {}),
+    ...("incoming" in p ? { inbound: p.incoming } : {}),
     ...(p.realm ? { realm: slug(p.realm) } : {}),
   });
 
@@ -1221,6 +1221,10 @@ export async function startFakeNks(opts = {}) {
         );
       }
       let sid = req.headers["mcp-session-id"];
+      if (sid && st.credentialMismatch) {
+        st.credentialMismatch = false;
+        return json(res, 401, { error: "credential_mismatch" });
+      }
       st.acceptLanguage.add(String(req.headers["accept-language"] ?? "")); // язык, которым мост просил прозу (#6080)
       const msg = JSON.parse(await body(req));
       // A keep-alive connection the server already closed: the request is read and

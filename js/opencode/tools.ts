@@ -131,8 +131,7 @@ export async function setupTools(
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
         const text = W.hearingLost(new Date().toTimeString().slice(0, 5), e.message);
-        const lost = { logger: LOGGERS.channel, data: { kind: "lost", text } };
-        onChannel(slot.session, lost, !!slot.child); // a child's hearing — a word only to it (#6625)
+        say(text, "warning");
       },
       args,
     );
@@ -154,7 +153,7 @@ export async function setupTools(
   const keeper = createKeeper({
     say,
     tell: (root, text, child) =>
-      onChannel(root, { logger: LOGGERS.channel, data: { kind: "resumed", text } }, !!child),
+      onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }, !!child),
     lost: (root, text) =>
       onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),

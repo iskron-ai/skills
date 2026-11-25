@@ -22,7 +22,7 @@ export interface Seat {
   /** undelivered frames */
   pending?: number;
   /** incoming address */
-  inbound?: string;
+  inbound?: string | null;
   locale?: string;
   satellite_of?: string | null;
   realm?: string;
@@ -50,7 +50,7 @@ const SEAT_KEYS: Record<string, (v: unknown) => boolean> = {
   listening: is.bool,
   state: is.str,
   pending: is.num,
-  inbound: is.str,
+  inbound: is.strOrNull,
   locale: is.str,
   satellite_of: is.strOrNull,
   realm: is.str,

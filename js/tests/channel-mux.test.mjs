@@ -129,6 +129,20 @@ test("two sessions of one graph on one daemon: one dispatcher connection, B's fr
   });
 });
 
+test("dispatcher routes a wake for one graph and role only to that seat", async () => {
+  await withMux(async ({ fake, mux, session }) => {
+    const [a, b] = [await session(), await session()];
+    ok(await a.stand({ realm: "@nks/nks-dev", karta: 931, name: "route-a" }), "A stands");
+    ok(await b.stand({ realm: "@nks/drugoy", karta: 932, name: "route-b" }), "B stands");
+    await muxCarrying(fake, mux, [channelOf(fake, "route-a"), channelOf(fake, "route-b")]);
+    assert.equal(mux.conns.length, 1, "both seats share the dispatcher");
+    mux.say("route-a", "wake: A role cases only", "wake-route-a");
+    await waitFor("A receives its wake", () => a.heard("wake: A role cases only"));
+    await sleep(300);
+    assert.equal(b.heard("wake: A role cases only"), 0, "B never receives A's wake");
+  });
+});
+
 test("N sessions: one tick frame per interval whatever N, busy lines in it, no POST to /channel/status", async () => {
   await withMux(async ({ fake, mux, session }) => {
     const names = ["tick-a", "tick-b", "tick-c"];

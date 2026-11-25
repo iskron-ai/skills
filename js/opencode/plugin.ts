@@ -205,7 +205,7 @@ async function setup(ctx: Context): Promise<() => Promise<void>> {
     finished: (s) => {
       if (!spawnStarts.has(s)) half.finishSeat(s);
     },
-    tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "resumed", text } }),
+    tell: (s, text) => heard(s, { logger: LOGGERS.channel, data: { kind: "seat_result", text } }),
     steer: (s, text) => teller(ctx, say, closed)(s, text, false),
   });
   // A root waiting for its cover's alignment looks at the cover after a tool call of its own or its child's.

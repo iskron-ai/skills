@@ -2124,7 +2124,7 @@ test("a new root session with a directory asks its bridge to resume that directo
 // Other places of the directory are not named to it (e2e6: two roots of one folder were
 // each named the other's key): the return takes the record this session stood (the
 // bridge checks the session), and a foreign key in its word would call it to the foreign.
-test("a place resumed by the bridge itself is announced into the session with its name — and only its own", async () => {
+test("a settled automatic return is not steered into the session", async () => {
   const calls = join(SANDBOX, "resumed.calls");
   const resume = join(SANDBOX, "resumed.answer");
   writeFileSync(calls, "");
@@ -2145,13 +2145,47 @@ test("a place resumed by the bridge itself is announced into the session with it
   try {
     await serverTools(rec);
     await rec.call("iskron_orient", {}, "s-shared");
-    await until(() => rec.prompts.some((p) => RESUMED_WORD.test(p.text)), "the resumed prompt");
-    const word = rec.prompts.find((p) => RESUMED_WORD.test(p.text));
-    assert.equal(word.sessionID, "s-shared");
-    assert.match(word.text, /(?:место |мост вернул )brat--931--nks-dev/, "the taken name is said");
-    assert.doesNotMatch(word.text, /proba--931--nks-dev/, "no other place is named to it");
-    assert.match(word.text, /iskron_stand/, "the way to take one's own place is said");
-    assert.equal(word.delivery, "steer", "into the going turn, not after it");
+    await delay(300);
+    assert.ok(
+      !rec.prompts.some((p) => RESUMED_WORD.test(p.text)),
+      "a settled return does not wake the model",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("hearing watch starts at a random phase before its full period", async () => {
+  const calls = join(SANDBOX, "watch-phase.calls");
+  const resume = join(SANDBOX, "watch-phase.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({ holding: true, resumed: true, key: "phase--931--nks-dev" }),
+  );
+  const b = bridgeEnv("watch-phase", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_BRIDGE_WATCH_MS: 3000,
+  });
+  const random = Math.random;
+  let rec;
+  try {
+    Math.random = () => 0.5;
+    rec = await plugin(b.env, {
+      sessions: [{ id: "s-phase", location: { directory: "/work/phase" } }],
+    });
+  } finally {
+    Math.random = random;
+  }
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-phase");
+    await until(
+      () => callsIn(calls).some((c) => c.name === "iskron/check"),
+      "the first phased check",
+      2200,
+    );
   } finally {
     await rec.stop();
   }
@@ -2159,7 +2193,7 @@ test("a place resumed by the bridge itself is announced into the session with it
 
 // The bridge proved the place its own (the session stood it): the word into the session
 // does not suspect another's place nor call to release it.
-test("a place the bridge proved its own is announced without the call to release another's", async () => {
+test("a place the bridge proved its own returns without waking the session", async () => {
   const calls = join(SANDBOX, "resumed-own.calls");
   const resume = join(SANDBOX, "resumed-own.answer");
   writeFileSync(calls, "");
@@ -2180,10 +2214,8 @@ test("a place the bridge proved its own is announced without the call to release
   try {
     await serverTools(rec);
     await rec.call("iskron_orient", {}, "s-own");
-    await until(() => rec.prompts.some((p) => RESUMED_WORD.test(p.text)), "the resumed prompt");
-    const word = rec.prompts.find((p) => RESUMED_WORD.test(p.text));
-    assert.match(word.text, /место proba--931--nks-dev/, "the taken name is said");
-    assert.doesNotMatch(word.text, /чужое|action="leave"/, word.text);
+    await delay(300);
+    assert.ok(!rec.prompts.some((p) => RESUMED_WORD.test(p.text)));
   } finally {
     await rec.stop();
   }
@@ -2756,12 +2788,7 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
     appendFileSync(`${b.events}.${pid}`, event("held", { key: "lost--931--nks-dev" }));
     await until(() => /мост держит место lost--931--nks-dev/.test(rec.said()), "the held line");
     process.kill(pid, "SIGKILL"); // the harness, the OS, an update — not the plugin
-    await until(() => rec.prompts.some((p) => /слух потерян/.test(p.text)), "the loss prompt");
-    const loss = rec.prompts.find((p) => /слух потерян/.test(p.text));
-    assert.equal(loss.sessionID, "s-lost");
-    assert.match(loss.text, /слух потерян в \d\d:\d\d/);
-    assert.match(loss.text, /iskron_stand/);
-    assert.match(rec.said(), /\[iskron\/error\] .*слух потерян/, "the human sees it too");
+    await until(() => /слух потерян/.test(rec.said()), "the human sees the loss");
     await until(() => pidsOf(b.log).length === 2, "the watch to raise a fresh bridge", 5000);
     await until(
       () =>
@@ -2784,10 +2811,7 @@ test("a holding bridge that dies is announced into its session as lost hearing, 
     );
     // The watch's return is the same return without a move of the agent (#5366):
     // the taken name goes into the session, not only into the log.
-    await until(
-      () => rec.prompts.some((p) => RESUMED_WORD.test(p.text) && p.sessionID === "s-lost"),
-      "the watch's resumed prompt",
-    );
+    assert.ok(!rec.prompts.some((p) => /слух потерян/.test(p.text) || RESUMED_WORD.test(p.text)));
   } finally {
     await rec.stop();
   }
@@ -3006,14 +3030,14 @@ test("stopping the plugin with a holding bridge leaves a marker, and the next in
       session: "s-held",
     });
     await serverTools(second);
-    // The loss is said into the session that held the place, not into whichever calls first.
+    // The return failed: its outcome goes to the holder, not whichever calls first.
     await second.call("iskron_orient", {}, "s-next");
     await until(() => second.prompts.length >= 1, "the loss to be said");
-    const loss = second.prompts.filter((p) => LOST_WORD.test(p.text));
+    const loss = second.prompts.filter((p) => /не вернулось/.test(p.text));
     assert.deepEqual(
       loss.map((p) => p.sessionID),
       ["s-held"],
-      "the loss goes into its own session",
+      "the failed return goes into its own session",
     );
     assert.match(loss[0].text, /iskron_stand/);
     // Another session of the lost directory gets no key: the marker's key is a
@@ -3089,15 +3113,8 @@ test("the place of a lost marker comes back at once, without a call of the agent
       !callsIn(calls).some((c) => !c.name.startsWith("iskron/")),
       "no tool call went out — the resume did not wait for one",
     );
-    await until(() => second.prompts.some((p) => LOST_WORD.test(p.text)), "the loss word", 1000);
-    const loss = second.prompts.find((p) => LOST_WORD.test(p.text));
-    assert.equal(loss.sessionID, "s-held", "the loss goes into the session that held");
-    await until(
-      () => second.prompts.some((p) => RESUMED_WORD.test(p.text)),
-      "the resumed word",
-      1000,
-    );
-    assert.equal(second.prompts.find((p) => RESUMED_WORD.test(p.text)).sessionID, "s-held");
+    await delay(300);
+    assert.ok(!second.prompts.some((p) => LOST_WORD.test(p.text) || RESUMED_WORD.test(p.text)));
   } finally {
     await second.stop();
   }
@@ -3219,7 +3236,7 @@ async function reloadedLocations(name) {
 // e2e6: two root sessions of one folder both held places; after the reload each got
 // the same «hearing was lost … <both keys>» — each named the other's key. A session's
 // word names its own places only.
-test("after a reload two roots of one folder each hear the loss of their own place only", async () => {
+test("after a reload two roots each hear only their own failed return", async () => {
   const calls = join(SANDBOX, "two-roots.calls");
   writeFileSync(calls, "");
   const b = bridgeEnv("two-roots", { FB_CALLS: calls });
@@ -3230,7 +3247,8 @@ test("after a reload two roots of one folder each hear the loss of their own pla
   await first.stop();
   const second = await plugin(b.env, { ...inLoc(LOC_A, "a1", "a2"), keepMarker: true });
   try {
-    const loss = (s) => second.prompts.find((p) => p.sessionID === s && LOST_WORD.test(p.text));
+    const loss = (s) =>
+      second.prompts.find((p) => p.sessionID === s && /не вернулось/.test(p.text));
     await until(() => loss("a1") && loss("a2"), "the loss word in both");
     assert.match(loss("a1").text, /k-a1/);
     assert.doesNotMatch(loss("a1").text, /k-a2/, "a1 is not named a2's place");
@@ -3257,12 +3275,8 @@ test("a reload of every location's instance at once: each takes back only its ow
   assert.equal(lostMarkers().length, 2, "a marker per instance");
   const { A, B, calls: sent } = await reloadedLocations("locs");
   try {
-    assert.deepEqual(
-      takenBack(A),
-      ["a1:k-a1", "a2:k-a2"],
-      "A tells its own sessions, each its own place",
-    );
-    assert.deepEqual(takenBack(B), ["b1:k-b1"], "B tells its own session");
+    assert.deepEqual(takenBack(A), [], "settled returns do not wake A's sessions");
+    assert.deepEqual(takenBack(B), [], "settled returns do not wake B's session");
     assert.ok(!A.prompts.some((p) => p.sessionID === "b1"), "A says nothing into B's session");
     assert.ok(!B.prompts.some((p) => /^a/.test(p.sessionID)), "B says nothing into A's");
     // The place is bound where the session's calls go: its busy line goes by the bridge that took it back.
@@ -3300,8 +3314,8 @@ test("a marker of the previous build, without a location: each location's instan
   );
   const { A, B } = await reloadedLocations("locs-legacy");
   try {
-    assert.deepEqual(takenBack(A), ["a1:k-a1", "a2:k-a2"]);
-    assert.deepEqual(takenBack(B), ["b1:k-b1"]);
+    assert.deepEqual(takenBack(A), []);
+    assert.deepEqual(takenBack(B), []);
     assert.ok(!A.prompts.some((p) => p.sessionID === "b1"), "A says nothing into B's session");
   } finally {
     await A.stop();
@@ -3609,8 +3623,8 @@ test("a session moved to another folder: the old location's instance lets its pl
       );
     await until(back, "the new instance's resume of s1");
     assert.equal(back().arguments.cwd, LOC_B.directory, "asked by its new folder and session");
-    await until(() => takenBack(B).length === 1, "the word in s1");
-    assert.deepEqual(takenBack(B), ["s1:k-s1"]);
+    await delay(300);
+    assert.deepEqual(takenBack(B), [], "the settled return does not wake s1");
     assert.deepEqual(
       A.prompts.slice(saidBefore),
       [],
@@ -3623,7 +3637,7 @@ test("a session moved to another folder: the old location's instance lets its pl
       (c) => c.name === "iskron/resume" && c.arguments.session === "s1" && c.pid !== oldPid,
     );
     assert.equal(resumes.length, 1, "one return, not two");
-    assert.equal(takenBack(B).length, 1);
+    assert.equal(takenBack(B).length, 0);
   } finally {
     await A.stop();
     await B.stop();
@@ -4087,8 +4101,8 @@ test("a session moved into a folder whose instance loads after the event: the pl
       3000,
     );
     assert.ok(!callsIn(calls).some((c) => !c.name.startsWith("iskron/")), "no tool call needed");
-    await until(() => takenBack(B).length === 1, "the word in s1");
-    assert.deepEqual(takenBack(B), ["s1:k-s1"]);
+    await delay(300);
+    assert.deepEqual(takenBack(B), [], "the settled return does not wake s1");
     assert.ok(!B.prompts.some((p) => LOST_WORD.test(p.text)), "a move is no lost hearing");
   } finally {
     await A.stop();
@@ -8020,11 +8034,11 @@ test("marker-child: #9241 a seat still absent at the return deadline ends with a
 // The children's places come back quietly by their own bridges: the root's loss
 // word names the root's places only — a child's key there would call the root to
 // take back a place that is not its own.
-test("marker-child: the root's loss word after a reload names its own place, never its children's", async () => {
+test("marker-child: the root's failed return names its own place, never its children's", async () => {
   const { second } = await reloadedChild("reload-word");
   try {
-    const loss = () => second.prompts.find((p) => LOST_WORD.test(p.text));
-    await until(loss, "the loss word in the root");
+    const loss = () => second.prompts.find((p) => /не вернулось/.test(p.text));
+    await until(loss, "the failed return in the root");
     assert.equal(loss().sessionID, "root");
     assert.match(loss().text, /k-root/);
     assert.doesNotMatch(loss().text, /k-sub|sub-1/, "no child's place in the root's word");

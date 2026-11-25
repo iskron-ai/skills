@@ -459,6 +459,11 @@ export function setupChannel(
           // The bridge returned the seat itself (#5366): the taken name goes into the session.
           if (ev.text) {
             say(ev.text, "warning");
+          }
+          return;
+        case "seat_result":
+          if (ev.text) {
+            say(ev.text, "warning");
             void deliver(session, ev.text, W.resumedLabel(), "steer", child);
           }
           return;

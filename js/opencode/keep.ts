@@ -194,8 +194,6 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       doors.say(W.sessionResumed(root, r.word), "info");
       // The name was taken from the directory's record, which does not tell standings of one role apart (#5366);
       // a child whose seat returned by its own key after a reload — silently: it waits (#6625).
-      if (typeof r.key === "string" && !quiet)
-        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
       return "held";
     } catch (e) {
       marked.delete(root);
@@ -232,18 +230,26 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     if (r?.resumed) {
       doors.say(W.watchResumed(root, r.word), "info");
       // The same return without the agent's move (#5366).
-      if (typeof r.key === "string")
-        doors.tell(root, resumedWord(r.key, r.own === true), slot.child);
     } else if (r?.reopened) doors.say(W.watchReopened(root, r.word), "warning");
     else if (r?.stuck) doors.say(r.word, "error"); // the bridge sends the word into the session itself (kind=lost), once
   }
 
-  const timer = setInterval(() => {
+  let timer: ReturnType<typeof setTimeout>;
+  const schedule = (delay: number): void => {
+    timer = setTimeout(tick, delay);
+    timer.unref?.();
+  };
+  const tick = (): void => {
     if (stopped) return;
     for (const root of roots)
-      void check(root).catch((e: Error) => doors.say(W.watchFailed(root, e.message), "warning"));
-  }, WATCH_MS);
-  timer.unref?.();
+      void check(root).catch((e: Error) => {
+        const text = W.watchFailed(root, e.message);
+        doors.say(text, "warning");
+        doors.tell(root, text);
+      });
+    schedule(WATCH_MS * (0.8 + 0.4 * Math.random()));
+  };
+  schedule(WATCH_MS * Math.random());
 
   return {
     hint(entries) {
@@ -261,8 +267,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         if (e.child || !e.session || seen.has(e.session)) continue;
         seen.add(e.session);
         if (!(await doors.exists(e.session))) continue;
-        const word = wordFor(e.session); // its own seats only
-        if (word) doors.lost(e.session, word);
+        wordFor(e.session); // preserve the marker's per-session lookup
         await doors.slotFor(e.session, false); // a new slot calls resume itself; a live one already returned
       }
     },
@@ -278,7 +283,7 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     },
     stop() {
       stopped = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     },
   };
 }

@@ -31,7 +31,7 @@ import {
 } from "./errors.ts";
 import { evictedRefusal } from "./evicted.ts";
 import { forHarness, structuredOf } from "./fields.ts";
-import { rawSeatRefusal, seatRealm } from "./hearing.ts";
+import { liveHearing, rawSeatRefusal, seatRealm } from "./hearing.ts";
 import { initializeSession } from "./initialize.ts";
 import { localLeave } from "./leave.ts";
 import { annotateToolList } from "./moment.ts";
@@ -58,7 +58,7 @@ import { emit, log } from "./streams.ts";
 import { localSuspend } from "./suspend.ts";
 import { beginTaking } from "./taking.ts";
 import { harnessListing, noteServedTools, recheckTools, watchHarnessListing } from "./toolsync.ts";
-import { currentAccessToken, onReinitialized, post, reinitialize, state } from "./transport.ts";
+import { onReinitialized, post, reinitialize, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
 import { takeNotice } from "./update.ts";
 import { isUsageCall, runUsage } from "./usage.ts";
@@ -257,18 +257,9 @@ async function deliverOne(msg: JsonRpcMessage): Promise<void> {
   let endTaking: (() => void) | null = null;
   for (;;) {
     try {
-      if (
-        !isInit &&
-        state.sessionId &&
-        state.sessionToken &&
-        currentAccessToken() !== state.sessionToken
-      ) {
-        // The credential this session was opened with is gone; so is the session,
-        // whatever the server says next. Re-open — bound by header — before the call.
-        log(
-          "the access token changed since the session was opened — re-initializing before the call",
-        );
-        await reinitialize();
+      if (isCheckCall(msg) && liveHearing()) {
+        emit(await resumeByOrigin(msg));
+        return;
       }
       if (!isInit && !state.sessionId && state.initParams) {
         // The harness's own initialize was answered by us, not the server (a
