@@ -160,6 +160,7 @@ export async function setupTools(
     ready: readyFor,
     directoryOf,
     exists: ours,
+    ended: closed,
   });
   // A child of a previous instance has no slot here: nothing to put down (forget is called before setup ends).
   const nothing = () => {};
@@ -251,7 +252,7 @@ export async function setupTools(
     }
     // Claims bind session identity without returning an old place; ordinary roots return by directory.
     const s = slot;
-    if (far !== "foreign" && unasked.delete(s))
+    if (far !== "foreign" && unasked.delete(s) && !closed(root))
       s.resume = (
         claiming(root)
           ? awaitReady(s).then(() => s.bridge.request(method("resume"), { session: root }))

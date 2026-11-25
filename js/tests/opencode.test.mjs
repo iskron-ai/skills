@@ -3080,6 +3080,31 @@ async function heldThenStopped(name) {
   assert.equal(lostMarkers().length, 1, "the marker of the stopped instance");
 }
 
+test("an ended root's saved seat is not automatically resumed after plugin reload", async () => {
+  await heldThenStopped("ended-no-return");
+  const id = "s-held";
+  const file = `opencode-ended.${createHash("sha256").update(id).digest("hex").slice(0, 16)}.json`;
+  writeFileSync(
+    join(process.env.ISKRON_BRIDGE_AUTH_DIR, file),
+    JSON.stringify({ session: id, at: new Date().toISOString() }),
+  );
+  const calls = join(SANDBOX, "ended-no-return.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("ended-no-return-second", { FB_CALLS: calls, ISKRON_BRIDGE_WATCH_MS: 100 });
+  const rec = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id, location: { directory: "/work/held" } }],
+  });
+  try {
+    await serverTools(rec);
+    await delay(700);
+    assert.ok(!callsIn(calls).some((c) => c.name === "iskron/resume" || c.name === "iskron/check"));
+    assert.deepEqual(rec.prompts, []);
+  } finally {
+    await rec.stop();
+  }
+});
+
 const callsIn = (file) =>
   readFileSync(file, "utf8")
     .split("\n")
