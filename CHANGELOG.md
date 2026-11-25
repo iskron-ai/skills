@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.16.5](https://github.com/iskron-ai/skills/compare/v8.16.4...v8.16.5) (2026-11-25)
+
+
+### Bug Fixes
+
+* **bridge:** no reconnect volley — token refresh keeps the session, the watchdog reads no graph, ended sessions stay ended ([#900](https://github.com/iskron-ai/skills/issues/900)) ([cc1bc17](https://github.com/iskron-ai/skills/commit/cc1bc17931a919b77f7b4aca7e1ced24273721ff))
+
 ## [8.16.4](https://github.com/iskron-ai/skills/compare/v8.16.3...v8.16.4) (2026-11-24)
 
 
