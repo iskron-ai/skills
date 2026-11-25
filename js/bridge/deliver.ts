@@ -1,5 +1,6 @@
 import { ID_PREFIX, NOTICE_MARK, tool } from "../delivery/index.ts";
 import { OWN_CLIENTS } from "../shared/clients.ts";
+import { wroteTo } from "../shared/mindcache.ts";
 import { parseSpawn } from "../shared/spawned-for.ts";
 import {
   absorbChannelReply,
@@ -134,6 +135,7 @@ export async function deliver(msg: JsonRpcMessage): Promise<void> {
     settleOwnRevoke(msg);
     // Publication follows the final answer, not an intermediate retry.
     if (msg.method === "tools/call") void refreshSkills();
+    if (msg.method === "tools/call") wroteTo(String(msg.params?.name), msg.params?.arguments); // the mind slice cache
   }
 }
 const LOCAL = [localStatus, localLeave, localSuspend, localAway, localEnd, localHalted, localRealm];

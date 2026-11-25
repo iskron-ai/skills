@@ -6,6 +6,7 @@
 // or commits — the owner's word on #9818; the words themselves live in MIND_SLICE.
 import { LANGS, MIND_ROW, MIND_SLICE, tool } from "../delivery/index.ts";
 import { words } from "./lang.ts";
+import { cachedSlice, type SliceRead } from "./mindcache.ts";
 import { scoped } from "./scope.ts";
 
 /** One tool call on the account's behalf: the answer's text and whether it was a refusal. */
@@ -94,30 +95,42 @@ const brief = (s: string): string => {
 export interface MindSliceOptions {
   strict?: boolean;
   cacheKey?: object;
+  /** The credential's account: the slice is cached for the whole process by it (mindcache.ts). */
+  account?: string;
+}
+
+/** One read of the slice; a refused read or an unknown account throws. */
+async function readSlice(call: MindCall, key: object): Promise<SliceRead> {
+  const W = words(MIND_SLICE);
+  const realm = await ownMind(call, key);
+  if (!realm) return { block: W.absent(), mind: null };
+  const got = await call(tool("search"), { ...SLICE_ARGS, realm });
+  if (got.isError) throw new Error(brief(got.text));
+  // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
+  const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
+  const rows = got.text.split("\n").flatMap((l) => {
+    const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
+    return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
+  });
+  const full = listed >= LIMIT;
+  const block = rows.length
+    ? [W.head(rows.length), ...rows, W.foot(full, LIMIT)].join("\n")
+    : full
+      ? `${W.empty()}\n${W.foot(true, LIMIT)}`
+      : W.empty();
+  return { block, mind: realm };
 }
 
 /** The slice as a block of lines; strict recovery propagates failures instead of rendering them. */
 export async function mindSlice(call: MindCall, options: MindSliceOptions = {}): Promise<string> {
-  const W = words(MIND_SLICE);
-  const unread = (text: string): string => {
-    if (options.strict) throw new Error(brief(text));
-    return W.unread(brief(text));
-  };
+  const unread = (text: string): string => words(MIND_SLICE).unread(brief(text));
+  const key = options.cacheKey ?? call;
   try {
-    const realm = await ownMind(call, options.cacheKey ?? call);
-    if (!realm) return W.absent();
-    const got = await call(tool("search"), { ...SLICE_ARGS, realm });
-    if (got.isError) return unread(got.text);
-    // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
-    const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
-    const rows = got.text.split("\n").flatMap((l) => {
-      const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
-      return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
-    });
-    if (!rows.length) return listed >= LIMIT ? `${W.empty()}\n${W.foot(true, LIMIT)}` : W.empty();
-    return [W.head(rows.length), ...rows, W.foot(listed >= LIMIT, LIMIT)].join("\n");
+    if (options.account && !options.strict)
+      return await cachedSlice(options.account, () => readSlice(call, key), unread);
+    return (await readSlice(call, key)).block;
   } catch (e) {
-    if (options.strict) throw e;
+    if (options.strict) throw new Error(brief((e as Error).message), { cause: e });
     return unread((e as Error).message);
   }
 }

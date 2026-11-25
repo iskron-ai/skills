@@ -45,7 +45,7 @@ test("stands never ask readiness and search only the caller's fully addressed mi
   const searches = calls.filter(
     (c) => c.name === "iskron_search" && c.arguments?.attrs_filter === "slice:agents,ways",
   );
-  assert.equal(searches.length, 2);
+  assert.equal(searches.length, 1, "the second stand takes the slice from the account's cache");
   assert.ok(searches.every((c) => c.arguments.realm === "@tester/mind"));
   assert.equal(
     calls.filter((c) => c.name === "iskron_me" && c.arguments?.action === "whoami").length,
