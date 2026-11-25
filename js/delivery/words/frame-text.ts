@@ -17,8 +17,8 @@ export interface ClockNoticeFacts {
    * относятся; null — сервер не сказал, и мост ничего не выводит сам.
    */
   kind: string | null;
-  /** Факты доставки человеку от сервера — как пришли: [поле, значение]. */
-  delivery: [string, string][];
+  /** Факты доставки человеку от сервера — как пришли: [поле, значение]; нет — неизвестно. */
+  delivery?: [string, string][];
   listening: boolean | null;
   lastAct: string | null;
   roleCalled: boolean | null;
@@ -53,7 +53,7 @@ function clockNotice(
   const who = person
     ? `${ru ? "адресат — человек" : "recipient is a person"} (${role})`
     : `${kind === "card_unanswered" ? (ru ? "адресат" : "recipient") : ru ? "держатель" : "holder"}: ${f.standing ?? unknown} (id: ${f.standingId ?? unknown}, ${role}${said})`;
-  const delivered = f.delivery.length
+  const delivered = f.delivery?.length
     ? f.delivery.map(([k, v]) => `${k}: ${v}`).join(", ")
     : unknown;
   const facts =
