@@ -72,13 +72,14 @@ export interface KeeperDoors<S extends KeptSlot> {
   say: Say;
   /** A word into the session as the agent's move, not a log line (#5366); child — only its own child session. */
   tell: (root: string, text: string, child?: boolean) => void;
-  /** A loud word about lost hearing into the session (#5140). */
-  lost: (root: string, text: string) => void;
   /** The root session's slot: live or raised again; touch=false — do not refresh idleness (a watch is not a call). */
   slotFor: (root: string, touch: boolean) => Promise<S>;
   ready: (slot: S) => Promise<void>;
   directoryOf: (root: string) => Promise<string | null>;
-  /** The session still exists and its tools go through this instance. */
+  /**
+   * The session takes its lost seat back here: it exists, is not archived and its tools go through
+   * this instance. An archived session ended — the door records the end and says false.
+   */
   exists: (root: string) => Promise<boolean>;
   /** The session has ended or was stopped; neither reload nor watchdog can take its seat. */
   ended: (root: string) => boolean;
@@ -97,6 +98,8 @@ export interface Keeper<S extends KeptSlot> {
   resume(slot: S, root: string, quiet?: boolean, patience?: number): Promise<Resumed>;
   /** A successful stand/connect/register — the session stands: not reaped, watched. */
   stood(slot: S): void;
+  /** The session's holding bridge died against the plugin's will: its seat is lost until a return. */
+  seatLost(root: string): void;
   /** The session was deleted — the watchdog stops watching it. */
   forget(root: string): void;
   stop(): void;
@@ -115,6 +118,10 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
   const retrying = new Map<string, string>();
   // Roots told that their bridge gave up reopening the socket: once, until a check no longer says stuck.
   const stuckTold = new Set<string>();
+  // Roots whose holding bridge died — the seat is lost until a return takes it back, with no marker
+  // to name it; told — the root heard that the return failed: once per loss.
+  const lostSeats = new Set<string>();
+  const lostTold = new Set<string>();
   let stopped = false;
 
   /** A marker seat did not return: a word into that session, and the session goes under the watch. */
@@ -125,10 +132,27 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
     doors.tell(root, W.notBack(place, why));
   }
 
+  /**
+   * A lost seat did not return with no marker to name it: a live idle agent must not stay deaf in
+   * silence — one word into its session (the retries of the watch are silent), and the root stays
+   * under the watch: the watch may take the seat back on its period.
+   */
+  function stillLost(root: string, place: string, why: string): void {
+    if (!lostSeats.has(root)) return;
+    roots.add(root);
+    if (lostTold.has(root)) return;
+    lostTold.add(root);
+    doors.tell(root, W.lostNotBack(place, why));
+  }
+
+  /** The seat is back, or the session is over: nothing of its lost seat is remembered. */
+  const unlost = (root: string): void => void (lostSeats.delete(root), lostTold.delete(root));
+
   /** A seat its owner took off (#7439): the watch ends, the human hears why, the session is not woken. */
   function stoppedRoot(root: string, word: unknown): Resumed {
     roots.delete(root);
     retrying.delete(root);
+    unlost(root);
     doors.say(typeof word === "string" ? word : W.noWhy(), "warning");
     return "none";
   }
@@ -181,7 +205,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       marked.delete(root);
       if (r?.stopped) return stoppedRoot(root, r.word); // taken off by its owner: no word into the session (#7439)
       if (!r?.resumed) {
-        if (mark) notBack(root, mark, typeof r?.word === "string" ? r.word : W.noAnswer());
+        const why = typeof r?.word === "string" ? r.word : W.noAnswer();
+        if (mark) notBack(root, mark, why);
         // Another session's live bridge holds this session's seat: say so (#6626); a paused child — silently.
         else if (elsewhere) {
           if (!quiet) doors.tell(root, elsewhereWord(elsewhere), slot.child);
@@ -189,6 +214,8 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
         // An older build's seat without a session is not returned by directory, but named (#6017).
         else if (Array.isArray(r?.legacy) && r.legacy.length && typeof r.word === "string")
           doors.tell(root, W.legacy(r.word), slot.child);
+        // A seat lost by a dead bridge and nothing else explains the refusal.
+        else stillLost(root, slot.key ?? slot.dir ?? root, why);
         return elsewhere ? "elsewhere" : "none";
       }
       slot.holding = true;
@@ -196,20 +223,27 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.provisional = r.provisional === true;
       if (typeof r.key === "string") slot.key = r.key;
       roots.add(root);
+      unlost(root);
       doors.say(W.sessionResumed(root, r.word), "info");
       // The name was taken from the directory's record, which does not tell standings of one role apart (#5366);
       // a child whose seat returned by its own key after a reload — silently: it waits (#6625).
       return "held";
     } catch (e) {
+      const why = (e as Error).message;
       marked.delete(root);
-      doors.say(W.resumeFailed(root, (e as Error).message), "warning");
-      if (mark && !stopped) notBack(root, mark, (e as Error).message);
+      doors.say(W.resumeFailed(root, why), "warning");
+      if (mark && !stopped) notBack(root, mark, why);
+      else if (!stopped) stillLost(root, slot.key ?? slot.dir ?? root, why);
       return "none";
     }
   }
 
   async function check(root: string): Promise<void> {
-    if (doors.ended(root)) return void roots.delete(root);
+    if (doors.ended(root)) {
+      roots.delete(root);
+      unlost(root);
+      return;
+    }
     const slot = await doors.slotFor(root, false); // a dead bridge is replaced here; idleness is not refreshed
     if (slot.resume) await slot.resume;
     if (!slot.dir) slot.dir = await doors.directoryOf(root);
@@ -224,11 +258,14 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.holding = false;
       return void stoppedRoot(root, r.word);
     }
+    if (r?.holding || r?.resumed) unlost(root); // the lost seat is back
     if (r?.holding) slot.holding = true;
     else if (r?.holding === false) {
-      // The bridge leads no seat and has nothing to return: the watch ends, the reaper counts again.
+      // The bridge leads no seat: a root that heard its lost seat is not back stays watched — the
+      // watch may take it on its period, without another word; any other leaves the watch, and the
+      // reaper counts again.
       slot.holding = false;
-      roots.delete(root);
+      if (!lostTold.has(root)) roots.delete(root);
       const place = retrying.get(root);
       if (place && !r?.resumed)
         doors.tell(root, W.retryFailed(place, r?.word ?? W.noWhy()), slot.child);
@@ -292,10 +329,14 @@ export function createKeeper<S extends KeptSlot>(doors: KeeperDoors<S>): Keeper<
       slot.stood = true;
       if (slot.session) roots.add(slot.session);
     },
+    seatLost(root) {
+      lostSeats.add(root);
+    },
     forget(root) {
       roots.delete(root);
       retrying.delete(root);
       stuckTold.delete(root);
+      unlost(root);
     },
     stop() {
       stopped = true;

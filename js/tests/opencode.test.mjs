@@ -3140,6 +3140,39 @@ test("an ended root's saved seat is not automatically resumed after plugin reloa
   }
 });
 
+// The host archived the session while the plugin was down: by the end law it ended, though no
+// local end mark names it — and it is still readable, so "exists" alone lets a reload resume its
+// dead bridge's seat. The end is recorded instead; nothing is resumed, nothing is laid into it.
+test("a marker of a session the host archived is never resumed after a reload: the end is recorded, no resume call, no prompt", async () => {
+  await heldThenStopped("archived-no-return");
+  const calls = join(SANDBOX, "archived-no-return.calls");
+  writeFileSync(calls, "");
+  const b = bridgeEnv("archived-no-return-second", {
+    FB_CALLS: calls,
+    ISKRON_BRIDGE_WATCH_MS: 100,
+  });
+  const rec = await plugin(b.env, {
+    keepMarker: true,
+    sessions: [{ id: "s-held", location: { directory: "/work/held" }, time: { archived: 1 } }],
+  });
+  try {
+    await serverTools(rec);
+    await delay(700);
+    assert.ok(
+      !callsIn(calls).some((c) => c.name === "iskron/resume" || c.name === "iskron/check"),
+      "no resume call, no watch",
+    );
+    assert.deepEqual(rec.prompts, []);
+    assert.equal(
+      stopMarks().filter((f) => f.includes("opencode-ended")).length,
+      1,
+      "the end is recorded for every instance, past a reload",
+    );
+  } finally {
+    await rec.stop();
+  }
+});
+
 const callsIn = (file) =>
   readFileSync(file, "utf8")
     .split("\n")
@@ -3241,6 +3274,51 @@ test("a place of a lost marker that does not come back is said into its session 
     assert.match(again.text, /iskron_stand/);
   } finally {
     await second.stop();
+  }
+});
+
+// A bridge holding a seat died — not the plugin, so no marker names the loss. The watch raises a
+// fresh bridge and the place does not come back: a live idle agent must not stay deaf in silence —
+// one word into its session (the bridge's reason, the way to stand), and the watch stays on the
+// session; its retries are silent.
+test("a lost place that does not come back with no marker: the session hears it once, and the watch stays on it", async () => {
+  const calls = join(SANDBOX, "deaf.calls");
+  const resume = join(SANDBOX, "deaf.answer");
+  writeFileSync(calls, "");
+  writeFileSync(
+    resume,
+    JSON.stringify({
+      holding: false,
+      resumed: false,
+      word: "возвращать нечего — deaf--931--nks-dev: hello не пришёл — запись цела",
+    }),
+  );
+  const b = bridgeEnv("deaf", {
+    FB_CALLS: calls,
+    FB_RESUME: resume,
+    ISKRON_BRIDGE_WATCH_MS: 300,
+  });
+  const rec = await plugin(b.env, {
+    sessions: [{ id: "s-deaf", location: { directory: "/work/deaf" } }],
+  });
+  const checks = () => callsIn(calls).filter((c) => c.name === "iskron/check");
+  const heard = () => rec.prompts.filter((p) => /не вернулось/.test(p.text));
+  try {
+    await serverTools(rec);
+    await rec.call("iskron_channel", { action: "connect" }, "s-deaf");
+    appendFileSync(`${b.events}.${pidOf(b.log)}`, event("held", { key: "deaf--931--nks-dev" }));
+    await until(() => /мост держит место deaf--931--nks-dev/.test(rec.said()), "the held line");
+    process.kill(pidOf(b.log), "SIGKILL"); // the harness, the OS, an update — not the plugin
+    await until(() => heard().length > 0, "the word that the place did not come back", 5000);
+    assert.equal(lostMarkers().length, 0, "no marker names this loss");
+    assert.equal(heard()[0].sessionID, "s-deaf");
+    assert.match(heard()[0].text, /deaf--931--nks-dev/, "the place is named");
+    assert.match(heard()[0].text, /hello не пришёл/, "the bridge's reason is said");
+    assert.match(heard()[0].text, /iskron_stand/, "the way to stand is said");
+    await until(() => checks().length >= 3, "the watch to stay on the session", 5000);
+    assert.equal(heard().length, 1, "one word: the watch's retries are silent");
+  } finally {
+    await rec.stop();
   }
 });
 

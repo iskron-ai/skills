@@ -130,6 +130,7 @@ export async function setupTools(
         // A holding bridge exited against our will — a word into the session, not a log line (#5140).
         if (slot.ownStop || stopped || !slot.holding) return;
         slot.holding = false;
+        if (slot.session && !slot.child) keeper.seatLost(slot.session); // no marker names this loss
         const text = W.hearingLost(new Date().toTimeString().slice(0, 5), e.message);
         say(text, "warning");
       },
@@ -141,8 +142,8 @@ export async function setupTools(
   }
 
   // The instance's location: a moved session calls its tools through its new folder's instance (moves.ts).
-  const mv = createMoves(ctx);
-  const { home, directoryOf, exists, ours } = mv;
+  const mv = createMoves(ctx, say);
+  const { home, directoryOf, exists, canReturn } = mv;
   const relay = mv.relay(onChannel, say);
   const models = createModels(ctx); // a satellite's seat names its session's model (#7591)
   const runEnds = createRunEnds(); // ended children: a write through a seat is a refusal aloud (#6361)
@@ -154,12 +155,10 @@ export async function setupTools(
     say,
     tell: (root, text, child) =>
       onChannel(root, { logger: LOGGERS.channel, data: { kind: "return_failed", text } }, !!child),
-    lost: (root, text) =>
-      onChannel(root, { logger: LOGGERS.channel, data: { kind: "lost", text } }),
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,
-    exists: ours,
+    exists: canReturn,
     ended: closed,
   });
   // A child of a previous instance has no slot here: nothing to put down (forget is called before setup ends).
