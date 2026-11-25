@@ -7,19 +7,18 @@ import { fileURLToPath } from "node:url";
 
 // js/delivery/context-gate.ts
 var CONTEXT_DOOR = "iskron";
-var ROLE_SKILLS = /(?:^|\n) {2}(?:АТРИБУТЫ|ATTRIBUTES):\r?\n([\s\S]*)$/;
 var CONTEXT_GATE = {
   ru: {
     storage: (why) => `Ограда контекста не сохранена или не прочитана: ${why}. Запись не отправлена; чтение доступно. Ошибка хранения не подтверждает готовность.`,
-    refused: "Возможно, контекст сжат (эвристика обвала заполненности). Запись не отправлена. Загрузи iskron и все скиллы роли, затем повтори. Чтение доступно. Если загрузка не наблюдаема, явно подтверди перечитывание: iskron_stand(realm=<свой граф>, context_restored=true).",
+    refused: "Возможно, контекст сжат (эвристика обвала заполненности). Запись не отправлена. Загрузи скилл iskron (дверь), затем повтори. Чтение доступно. Если загрузка не наблюдаема, явно подтверди перечитывание: iskron_stand(realm=<свой граф>, context_restored=true).",
     confirmed: "Перечитывание явно подтверждено для своего места и текущего поколения; запись разрешена.",
-    field: "Явно подтвердить перечитывание двери и всех скиллов роли после обвала контекста. Только своё уже удерживаемое место; локально, без register и нового стояния."
+    field: "Явно подтвердить перечитывание двери (скилла iskron) после обвала контекста. Только своё уже удерживаемое место; локально, без register и нового стояния."
   },
   en: {
     storage: (why) => `Context recovery metadata could not be saved or read: ${why}. The write was not sent; reads remain available. Storage failure does not confirm readiness.`,
-    refused: "Context may have been compacted (fill-collapse heuristic). The write was not sent. Load iskron and all role skills, then retry. Reads remain available. If loading is not observable, explicitly confirm rereading: iskron_stand(realm=<your graph>, context_restored=true).",
+    refused: "Context may have been compacted (fill-collapse heuristic). The write was not sent. Load the iskron skill (the door), then retry. Reads remain available. If loading is not observable, explicitly confirm rereading: iskron_stand(realm=<your graph>, context_restored=true).",
     confirmed: "Rereading explicitly confirmed for this seat and recovery generation; writes are allowed.",
-    field: "Explicitly confirm rereading the door and all role skills after a context collapse. Only your already held seat; local, without register or taking a new seat."
+    field: "Explicitly confirm rereading the door (the iskron skill) after a context collapse. Only your already held seat; local, without register or taking a new seat."
   }
 };
 
@@ -125,8 +124,6 @@ var LAUNCH_LINE = new RegExp(
 );
 
 // js/delivery/patterns/mind.ts
-var MIND_PRESENT = /^\s*personal_mind\b[^\n]*—\s*present\b/m;
-var MIND_MISSING = /^\s*personal_mind\b[^\n]*—\s*missing\b/m;
 var MIND_ROW = /^\s+(\S[^\n]*?) \(#(\d+), [^\s,)]+[^)\n]*\)(?: — ([^\n]*))?$/;
 
 // js/delivery/patterns/satprobe.ts
@@ -237,7 +234,7 @@ var spawnedForSchema = (description) => ({
 });
 
 // js/delivery/version.ts
-var VERSION = "8.16.4";
+var VERSION = "8.16.5";
 var BUILD_MARK = "iskron-build";
 var CHANNEL_MARK = "iskron-build:release";
 
@@ -6535,12 +6532,7 @@ var state = scoped(() => ({
   places: [],
   standingSession: null,
   // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
+  // The bearer last associated with the session; refresh alone does not end it.
   sessionToken: null,
   // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
   goneSession: null
@@ -6559,7 +6551,6 @@ function standingHeader() {
   if (!/^[\x21-\x7e]+ [\x21-\x7e]+ [\x21-\x7e]+$/.test(h)) return null;
   return h;
 }
-var currentAccessToken = () => CFG.pat ?? loadStore().tokens?.access_token ?? null;
 async function* sseEvents(body) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -6669,13 +6660,16 @@ async function post2(msg, heard2) {
   }
   noteServerDate(res);
   if (res.status === 401) {
-    res.body?.cancel?.();
-    throw new UpstreamError(
-      res.headers.get("www-authenticate") || "unauthorized",
-      "auth",
-      token,
-      UpstreamError.NOT_SENT
-    );
+    const challenge = res.headers.get("www-authenticate") || "";
+    const body = await res.text().catch(() => "");
+    if (sentSession && /credential_mismatch/i.test(`${challenge} ${body}`))
+      throw new UpstreamError(
+        "session credential mismatch",
+        "session",
+        null,
+        UpstreamError.NOT_SENT
+      );
+    throw new UpstreamError(challenge || "unauthorized", "auth", token, UpstreamError.NOT_SENT);
   }
   if (res.status === 404 && sentSession) {
     res.body?.cancel?.();
@@ -8301,6 +8295,8 @@ var H2 = scoped(() => ({
   parked: false,
   /** socket reopened on the same address without this opening's hello yet: another may have rotated it (deaf.ts) */
   unheard: false,
+  /** this opening's hello came: hearing is proven until the socket drops, is left or reopened — the ring may forget the hello (RING) */
+  proven: false,
   /** key of a place whose socket was released but binding remembered, until hello proves hearing (deaf.ts) */
   deafKey: null,
   /** places of other graphs on the channel at the 4001: the server remembers the binding, no hearing (deaf.ts) */
@@ -8546,6 +8542,7 @@ var entryOf2 = (channel2, id, fields) => ({
 function newSub(secret, o) {
   return {
     secret,
+    sessionId: bindScope(sessionOfBridge),
     o,
     ref: null,
     channel: null,
@@ -8888,7 +8885,13 @@ function createMux(url, onSocket) {
     if (!link.open) return link.connect();
     s2.ref = `r${++refs}`;
     byRef.set(s2.ref, s2);
-    link.send({ type: "subscribe", secret: s2.secret, ref: s2.ref });
+    const session = s2.sessionId();
+    link.send({
+      type: "subscribe",
+      secret: s2.secret,
+      ref: s2.ref,
+      ...session && session.length <= 128 ? { session_id: session } : {}
+    });
   }
   function toSocket(s2) {
     subs.delete(s2);
@@ -9740,7 +9743,7 @@ function releaseStanding(reason, forget = false, keepBeside = false, own = false
   }
   const busy = keepBusy ? null : H2.currentStatusUrl;
   letGo2(H2.holder, handover && !forget ? key3 ?? null : null, reason, busy);
-  H2.holder = null;
+  Object.assign(H2, { holder: null, proven: false });
   for (const w14 of [...H2.helloWaiters]) w14(null);
   H2.door?.close();
   H2.door = null;
@@ -9784,14 +9787,14 @@ function parkStanding(reason) {
   H2.heardAt = Math.max(H2.heardAt, H2.holder.heardAt);
   letGo2(H2.holder, null, reason);
   H2.holder = null;
-  Object.assign(H2, { parked: true, unheard: false });
+  Object.assign(H2, { parked: true, unheard: false, proven: false });
   standingLog(`parked ${H2.currentKey}: ${reason}`);
   const text9 = holdWords().parked(reason);
   broadcast({ kind: "note", text: text9 });
   return H2.currentKey;
 }
 function expectHello() {
-  H2.unheard = true;
+  Object.assign(H2, { unheard: true, proven: false });
   for (const d of doors())
     d.ring.splice(0, d.ring.length, ...d.ring.filter((r) => r.frame?.type !== "hello"));
 }
@@ -9819,7 +9822,7 @@ function deliverTo(d, raw, frame2, full) {
   const text9 = full === frame2 && full?.addressed === void 0 ? raw : JSON.stringify(full);
   const hello = full?.type === "hello";
   for (const x of hello ? doors() : [d]) x.push(text9, full);
-  if (hello) Object.assign(H2, { unheard: false, deafKey: null });
+  if (hello) Object.assign(H2, { unheard: false, deafKey: null, proven: true });
   if (hello) for (const w14 of [...H2.helloWaiters]) w14(full);
   const ev = frameEvent(text9, full, seenPath);
   const msg = full?.type === "message" && !again ? full : null;
@@ -9967,7 +9970,7 @@ var SEAT_KEYS = {
   listening: is.bool,
   state: is.str,
   pending: is.num,
-  inbound: is.str,
+  inbound: is.strOrNull,
   locale: is.str,
   satellite_of: is.strOrNull,
   realm: is.str,
@@ -10074,6 +10077,94 @@ function undelivered(e) {
   if (e.undelivered != null) return e.undelivered;
   const m = FORM.undelivered.exec(e.rest);
   return m ? Number(m[1]) : 0;
+}
+
+// js/shared/mindslice.ts
+var LIMIT2 = 100;
+var NODE_ROW = /^\s+\S.* \(#\d+, /;
+var SLICE_ARGS = {
+  q: "",
+  attrs_filter: "slice:agents,ways",
+  limit: LIMIT2,
+  include_description: true
+};
+var C = scoped(() => ({
+  entries: /* @__PURE__ */ new WeakMap(),
+  listing: null
+}));
+var cacheFor = (key3) => {
+  let cache = C.entries.get(key3);
+  if (!cache) {
+    cache = { listing: null, handle: "", result: null, expires: 0 };
+    C.entries.set(key3, cache);
+  }
+  return cache;
+};
+function rememberMindRealmList(text9, structured) {
+  C.listing = { text: text9, structured, at: Date.now() };
+}
+async function ownMind(call, key3) {
+  const cache = cacheFor(key3);
+  if (!cache.handle) {
+    const who = await call(tool("me"), { action: "whoami" });
+    if (who.isError) throw new Error(who.text);
+    cache.handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(who.text)?.[1] ?? "";
+    if (!cache.handle) throw new Error("account handle unknown");
+  }
+  const address = `@${cache.handle}/mind`;
+  if (cache.result !== null && Date.now() < cache.expires) return cache.result ? address : null;
+  cache.listing = C.listing && Date.now() - (C.listing.at ?? 0) < 1e4 ? C.listing : null;
+  if (!cache.listing) {
+    const listing2 = await call(tool("realm"), { action: "list" });
+    if (listing2.isError) throw new Error(listing2.text);
+    cache.listing = listing2;
+  }
+  const { text: text9, structured } = cache.listing;
+  C.listing = null;
+  cache.listing = null;
+  const data2 = structured;
+  let addresses;
+  if (data2?.action === "list" && Array.isArray(data2.realms)) {
+    addresses = data2.realms.flatMap(
+      (r) => typeof r?.ref === "string" ? [r.ref] : []
+    );
+  } else {
+    if (!/^\s*[^\n]*\(\d+\).*@owner\/slug/m.test(text9)) throw new Error("realm list unknown");
+    addresses = [...text9.matchAll(/^\s{4}(@[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\s{2}r\d+\s{2}/gm)].map(
+      (m) => m[1]
+    );
+  }
+  cache.result = addresses.includes(address);
+  cache.expires = Date.now() + (cache.result ? 6 * 60 * 6e4 : 10 * 6e4);
+  return cache.result ? address : null;
+}
+var brief = (s2) => {
+  const t = s2.replace(/\s+/g, " ").trim();
+  return t.length > 120 ? `${t.slice(0, 119)}…` : t || "-";
+};
+async function mindSlice(call, options = {}) {
+  const W4 = words(MIND_SLICE);
+  const unread = (text9) => {
+    if (options.strict) throw new Error(brief(text9));
+    return W4.unread(brief(text9));
+  };
+  try {
+    const realm = await ownMind(call, options.cacheKey ?? call);
+    if (!realm) return W4.absent();
+    const got = await call(tool("search"), { ...SLICE_ARGS, realm });
+    if (got.isError) return unread(got.text);
+    const listed2 = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
+    const rows = got.text.split("\n").flatMap((l) => {
+      const [, name2, seq4, line] = MIND_ROW.exec(l) ?? [];
+      return name2 ? [`  ${name2} (#${seq4})${line ? ` — ${line}` : ""}`] : [];
+    });
+    if (!rows.length) return listed2 >= LIMIT2 ? `${W4.empty()}
+${W4.foot(true, LIMIT2)}` : W4.empty();
+    return [W4.head(rows.length), ...rows, W4.foot(listed2 >= LIMIT2, LIMIT2)].join("\n");
+  } catch (e) {
+    if (options.strict) throw e;
+    return unread(e.message);
+  }
 }
 
 // js/bridge/listen.ts
@@ -11229,7 +11320,7 @@ function clearContextMark(mark) {
 var S3 = scoped(() => ({ pending: null, fault: null }));
 var fresh = (mark) => ({
   mark,
-  required: null,
+  required: /* @__PURE__ */ new Set([CONTEXT_DOOR]),
   loaded: /* @__PURE__ */ new Set(),
   calls: /* @__PURE__ */ new Map()
 });
@@ -11283,211 +11374,6 @@ function finishRecovery(r) {
   }
 }
 
-// js/bridge/hearing.ts
-import { readdirSync as readdirSync7, readFileSync as readFileSync20 } from "node:fs";
-import { join as join16 } from "node:path";
-
-// js/shared/canon.ts
-import { realpathSync as realpathSync3 } from "node:fs";
-import { sep } from "node:path";
-function canonDir(p) {
-  let real2 = p;
-  try {
-    real2 = realpathSync3.native(p);
-  } catch {
-  }
-  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
-  return real2;
-}
-var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
-
-// js/bridge/holdcanon.ts
-import { existsSync as existsSync4, readdirSync as readdirSync6, readFileSync as readFileSync19, renameSync as renameSync11, unlinkSync as unlinkSync15 } from "node:fs";
-import { basename as basename5, join as join15 } from "node:path";
-var unsaid = scoped(() => /* @__PURE__ */ new Set());
-var run = null;
-var MEMORY = /\.(seen|asks|base)$/;
-var bare = (r) => {
-  const t = String(r ?? "").trim();
-  return !!t && !t.startsWith("@") && t !== OWN_REALM;
-};
-var hashOf2 = (key3) => basename5(holdFilePathOf(CFG.authDir, key3), ".hold");
-var live = (rec6) => !!rec6 && typeof rec6.url === "string" && !!rec6.realm && rec6.karta != null && typeof rec6.at === "number" && Date.now() - rec6.at <= HOLD_RECORD_MAX_AGE_MS;
-function readAll(dir2) {
-  const out7 = [];
-  for (const f of readdirSync6(dir2).filter((x) => x.endsWith(".hold"))) {
-    try {
-      const rec6 = JSON.parse(readFileSync19(join15(dir2, f), "utf8"));
-      if (live(rec6) && bare(rec6.realm)) out7.push({ file: join15(dir2, f), rec: rec6 });
-    } catch {
-    }
-  }
-  return out7;
-}
-function moveMemory(dir2, from, to) {
-  const a = hashOf2(from);
-  const b = hashOf2(to);
-  for (const f of readdirSync6(dir2).filter((x) => x.startsWith(`${a}.`) && MEMORY.test(x))) {
-    const dest = join15(dir2, b + f.slice(a.length));
-    try {
-      if (!existsSync4(dest)) renameSync11(join15(dir2, f), dest);
-    } catch {
-    }
-  }
-}
-function move(dir2, file2, rec6, canon2) {
-  const from = keyOf(rec6.realm, rec6.karta, rec6.name);
-  const to = keyOf(canon2, rec6.karta, rec6.name);
-  const dest = holdFilePathOf(CFG.authDir, to);
-  const formerKey = (kept3) => {
-    const all2 = [.../* @__PURE__ */ new Set([...formerKeysIn(kept3, to), from, ...formerKeysIn(rec6, to)])];
-    return all2.length === 1 ? all2[0] : all2;
-  };
-  try {
-    if (!existsSync4(file2)) return true;
-    const there = existsSync4(dest) ? JSON.parse(readFileSync19(dest, "utf8")) : null;
-    const next = there ? { ...there, formerKey: formerKey(there) } : { ...rec6, realm: canon2, key: to, formerKey: formerKey(null) };
-    writeOwned(dest, JSON.stringify(next) + "\n");
-    try {
-      unlinkSync15(file2);
-    } catch (e) {
-      if (e.code !== "ENOENT") throw e;
-      return true;
-    }
-    moveMemory(dir2, from, to);
-    log(`hold record ${from}: the graph ${rec6.realm} is ${canon2} — moved to ${to}`);
-    return true;
-  } catch (e) {
-    log(`hold record ${from} not moved to ${to}: ${e.message}`);
-    return false;
-  }
-}
-function canonHoldRecords() {
-  if (CFG.satellite) return Promise.resolve();
-  run ??= moveAll().finally(() => {
-    run = null;
-  });
-  return run;
-}
-async function moveAll() {
-  const dir2 = standingsDirOf(CFG.authDir);
-  if (!existsSync4(dir2)) return;
-  const all2 = readAll(dir2);
-  const open = [];
-  for (const x of all2)
-    if (!await localSocketAlive(
-      socketPathOf(CFG.authDir, keyOf(x.rec.realm, x.rec.karta, x.rec.name))
-    ))
-      open.push(x);
-  if (!open.length) return;
-  const ask3 = open.map((x) => x.rec.realm).filter((r) => !unsaid.has(r) && !canonRealm(r).startsWith("@"));
-  const answered2 = ask3.length ? await resolveRealms(ask3, realmList) : true;
-  for (const { file: file2, rec: rec6 } of open) {
-    const canon2 = canonRealm(rec6.realm);
-    if (canon2.startsWith("@")) move(dir2, file2, rec6, canon2);
-    else if (unsaid.has(rec6.realm)) continue;
-    else if (answered2) {
-      unsaid.add(rec6.realm);
-      log(
-        `hold record ${keyOf(rec6.realm, rec6.karta, rec6.name)}: the graph ${rec6.realm} is not in the graph list — left as it is; a bare name reaches only the own graph`
-      );
-    } else
-      log(
-        `hold record ${keyOf(rec6.realm, rec6.karta, rec6.name)}: the graph list did not answer — ${rec6.realm} left as it is, asked again at the next stand or return`
-      );
-  }
-}
-
-// js/bridge/hearing.ts
-var isSentinel = (karta) => !/^\d+$/.test(karta);
-function seatKarta(realm, karta, name2 = "") {
-  const k = normKarta(karta);
-  if (k !== "agent") return k;
-  const r = String(realm ?? "").trim();
-  const here = (x) => x === r || sameRealm(r, x);
-  const led = [state.standing, ...state.places].find((p) => p && here(p.realm));
-  if (led) return String(led.karta);
-  const me = sessionOfBridge();
-  const rec6 = me && name2 ? holdRecordsNamed(name2).find((x) => x.session === me && here(x.realm)) : null;
-  return rec6 ? normKarta(rec6.karta) : k;
-}
-var unresolvedAgent = (karta, what) => karta !== "agent" ? null : words(HEARING).unresolvedAgent(what);
-async function seatRealm(given) {
-  const realm = typeof given === "string" ? given.trim() : "";
-  if (!realm) return realm;
-  await canonHoldRecords();
-  await resolveAgainstLed(realm);
-  return canonicalRealm(realm, realmList);
-}
-var ofSeat = (e, karta, name2) => (isSentinel(karta) || e.karta === karta) && nameOf(e.address) === name2;
-function boardHearing(bd, karta, name2) {
-  if (!bd?.recognized) return "unknown";
-  const at3 = bd.entries.filter((e) => ofSeat(e, karta, name2));
-  if (at3.some(listens)) return "other";
-  const unread = bd.declared != null && bd.declared !== bd.entries.length;
-  return unread && (at3.length === 0 || isSentinel(karta)) ? "unknown" : "free";
-}
-function keysNamed(realm, name2) {
-  const dir2 = standingsDirOf(CFG.authDir);
-  try {
-    return readdirSync7(dir2).filter((f) => f.endsWith(".key")).map((f) => readFileSync20(join16(dir2, f), "utf8").trim()).filter((k) => {
-      const m = /^.*?--(.+)--/.exec(k);
-      return !!m && keyOf(realm, m[1], name2) === k;
-    });
-  } catch {
-    return [];
-  }
-}
-var unsignedHere = (rec6, cwd) => !rec6.session && !rec6.left && rec6.client === harnessName() && sameDir(rec6.cwd, cwd);
-async function localHolder(key3, cwd) {
-  if (!await localSocketAlive(localSocketPathOf(key3))) return null;
-  if (doors().some((d) => d.key === key3 && d.ownsSocket)) return "self";
-  const me = sessionOfBridge();
-  const rec6 = me ? readHoldRecord(key3, true) : null;
-  if (!rec6) return "other";
-  return rec6.session === me || cwd != null && unsignedHere(rec6, cwd) ? "session" : "other";
-}
-async function heldLocally(realm, karta, name2, cwd) {
-  let own = false;
-  for (const key3 of isSentinel(karta) ? keysNamed(realm, name2) : [keyOf(realm, karta, name2)]) {
-    const h = await localHolder(key3, cwd);
-    if (h === "other") return "other";
-    own ||= h === "session";
-  }
-  return own ? "session" : null;
-}
-async function askedHearing(realm, karta, name2, cwd = H2.standCwd ?? sessionCwd()) {
-  const local = await heldLocally(realm, karta, name2, cwd);
-  if (local === "other") return "other";
-  if (local === "session") return "free";
-  const b = await callTool(tool("channel"), { action: "list", realm }).catch(() => null);
-  return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name2);
-}
-async function rawSeatRefusal(msg) {
-  if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
-  const a = msg.params.arguments ?? {};
-  const action = String(a.action);
-  if (!["connect", "mint", "register"].includes(action)) return null;
-  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
-  const name2 = normName(a.name);
-  const karta = seatKarta(realm, normKarta(a.karta) || "agent", name2);
-  if (!realm) return null;
-  const agent = unresolvedAgent(karta, action);
-  if (agent) return agent;
-  if (ledHere(realm, karta, name2)) return null;
-  const hearing = await askedHearing(realm, karta, name2);
-  if (hearing === "free") return null;
-  const seat2 = keyOf(realm, karta, name2);
-  const w14 = words(HEARING);
-  const who = hearing === "other" ? w14.otherListens(seat2) : w14.unknownListens(seat2);
-  return w14.rawSeatRefusal(who, action);
-}
-function ledHere(realm, karta, name2) {
-  if (holdsStanding(realm, karta, name2)) return true;
-  return ledKey() === keyOf(realm, karta, name2) && !H2.unheard && // back on the same address without hello — another may have turned it
-  !wasEvicted(realm, karta, name2) && !isParked(realm, karta, name2);
-}
-
 // js/bridge/context-gate.ts
 var S4 = scoped(() => ({ last: null }));
 var positive = (n) => typeof n === "number" && Number.isFinite(n) && n > 0;
@@ -11500,22 +11386,7 @@ async function observeContext(p) {
   currentRecovery();
   if (!next || !previous || previous.seat !== next.seat || previous.model !== next.model || previous.window !== next.window || next.context > previous.context / 2)
     return;
-  await roleSkills(beginRecovery(next.seat));
-}
-async function roleSkills(pending2) {
-  const place = usagePlace();
-  if (!place) return;
-  try {
-    const got = await callTool(tool("look"), { realm: place.realm, node_id: place.karta });
-    if (got.isError || currentRecovery() !== pending2) return;
-    const attrs = ROLE_SKILLS.exec(got.text)?.[1];
-    const raw = attrs === void 0 ? void 0 : /^ {2}skills:[ \t]*([^\r\n]*)$/m.exec(attrs)?.[1];
-    if (raw === void 0) return;
-    const skills = raw.trim() ? raw.split(",").map((s2) => s2.trim()) : [];
-    if (skills.some((s2) => !/^[a-z][a-z0-9-]*$/.test(s2))) return;
-    pending2.required = /* @__PURE__ */ new Set([CONTEXT_DOOR, ...skills]);
-  } catch {
-  }
+  beginRecovery(next.seat);
 }
 async function observeSkill(p) {
   const r = currentRecovery();
@@ -11523,7 +11394,6 @@ async function observeSkill(p) {
   const v = p;
   if (typeof v.id !== "string" || typeof v.skill !== "string") return;
   if (v.phase === "begin") {
-    if (!r.required) await roleSkills(r);
     if (currentRecovery() !== r) return;
     if (r.calls.size < 128 && !r.calls.has(v.id)) r.calls.set(v.id, v.skill);
     return;
@@ -11555,7 +11425,7 @@ function contextCall(msg) {
     return (async () => {
       const valid = place && own && Object.keys(args).every(
         (k) => ["realm", "karta", "name", "context_restored"].includes(k)
-      ) && (args.karta === void 0 || String(args.karta).replace(/^#/, "") === String(place.karta).replace(/^#/, "")) && (args.name === void 0 || args.name === place.name) && args.realm !== void 0 && await seatRealm(args.realm) === place.realm;
+      ) && (args.karta === void 0 || String(args.karta).replace(/^#/, "") === String(place.karta).replace(/^#/, "")) && (args.name === void 0 || args.name === place.name) && args.realm !== void 0 && sameRealm(args.realm, place.realm);
       if (!valid || recoverySeat() !== own || currentRecovery() !== r) return answer(msg, refusalReason(), true);
       try {
         if (r) finishRecovery(r);
@@ -11733,6 +11603,215 @@ async function throughRateLimit(call, waitOf, move2, seat2) {
   }
 }
 var throughRateLimitAnswer = (call, move2, seat2) => throughRateLimit(call, rateLimitedWait, move2, seat2);
+
+// js/bridge/hearing.ts
+import { readdirSync as readdirSync7, readFileSync as readFileSync20 } from "node:fs";
+import { join as join16 } from "node:path";
+
+// js/shared/canon.ts
+import { realpathSync as realpathSync3 } from "node:fs";
+import { sep } from "node:path";
+function canonDir(p) {
+  let real2 = p;
+  try {
+    real2 = realpathSync3.native(p);
+  } catch {
+  }
+  while (real2.length > 1 && (real2.endsWith("/") || real2.endsWith(sep))) real2 = real2.slice(0, -1);
+  return real2;
+}
+var sameDir = (a, b) => !!a && !!b && (a === b || canonDir(a) === canonDir(b));
+
+// js/bridge/holdcanon.ts
+import { existsSync as existsSync4, readdirSync as readdirSync6, readFileSync as readFileSync19, renameSync as renameSync11, unlinkSync as unlinkSync15 } from "node:fs";
+import { basename as basename5, join as join15 } from "node:path";
+var unsaid = scoped(() => /* @__PURE__ */ new Set());
+var run = null;
+var MEMORY = /\.(seen|asks|base)$/;
+var bare = (r) => {
+  const t = String(r ?? "").trim();
+  return !!t && !t.startsWith("@") && t !== OWN_REALM;
+};
+var hashOf2 = (key3) => basename5(holdFilePathOf(CFG.authDir, key3), ".hold");
+var live = (rec6) => !!rec6 && typeof rec6.url === "string" && !!rec6.realm && rec6.karta != null && typeof rec6.at === "number" && Date.now() - rec6.at <= HOLD_RECORD_MAX_AGE_MS;
+function readAll(dir2) {
+  const out7 = [];
+  for (const f of readdirSync6(dir2).filter((x) => x.endsWith(".hold"))) {
+    try {
+      const rec6 = JSON.parse(readFileSync19(join15(dir2, f), "utf8"));
+      if (live(rec6) && bare(rec6.realm)) out7.push({ file: join15(dir2, f), rec: rec6 });
+    } catch {
+    }
+  }
+  return out7;
+}
+function moveMemory(dir2, from, to) {
+  const a = hashOf2(from);
+  const b = hashOf2(to);
+  for (const f of readdirSync6(dir2).filter((x) => x.startsWith(`${a}.`) && MEMORY.test(x))) {
+    const dest = join15(dir2, b + f.slice(a.length));
+    try {
+      if (!existsSync4(dest)) renameSync11(join15(dir2, f), dest);
+    } catch {
+    }
+  }
+}
+function move(dir2, file2, rec6, canon2) {
+  const from = keyOf(rec6.realm, rec6.karta, rec6.name);
+  const to = keyOf(canon2, rec6.karta, rec6.name);
+  const dest = holdFilePathOf(CFG.authDir, to);
+  const formerKey = (kept3) => {
+    const all2 = [.../* @__PURE__ */ new Set([...formerKeysIn(kept3, to), from, ...formerKeysIn(rec6, to)])];
+    return all2.length === 1 ? all2[0] : all2;
+  };
+  try {
+    if (!existsSync4(file2)) return true;
+    const there = existsSync4(dest) ? JSON.parse(readFileSync19(dest, "utf8")) : null;
+    const next = there ? { ...there, formerKey: formerKey(there) } : { ...rec6, realm: canon2, key: to, formerKey: formerKey(null) };
+    writeOwned(dest, JSON.stringify(next) + "\n");
+    try {
+      unlinkSync15(file2);
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+      return true;
+    }
+    moveMemory(dir2, from, to);
+    log(`hold record ${from}: the graph ${rec6.realm} is ${canon2} — moved to ${to}`);
+    return true;
+  } catch (e) {
+    log(`hold record ${from} not moved to ${to}: ${e.message}`);
+    return false;
+  }
+}
+function canonHoldRecords() {
+  if (CFG.satellite) return Promise.resolve();
+  run ??= moveAll().finally(() => {
+    run = null;
+  });
+  return run;
+}
+async function moveAll() {
+  const dir2 = standingsDirOf(CFG.authDir);
+  if (!existsSync4(dir2)) return;
+  const all2 = readAll(dir2);
+  const open = [];
+  for (const x of all2)
+    if (!await localSocketAlive(
+      socketPathOf(CFG.authDir, keyOf(x.rec.realm, x.rec.karta, x.rec.name))
+    ))
+      open.push(x);
+  if (!open.length) return;
+  const ask3 = open.map((x) => x.rec.realm).filter((r) => !unsaid.has(r) && !canonRealm(r).startsWith("@"));
+  const answered2 = ask3.length ? await resolveRealms(ask3, realmList) : true;
+  for (const { file: file2, rec: rec6 } of open) {
+    const canon2 = canonRealm(rec6.realm);
+    if (canon2.startsWith("@")) move(dir2, file2, rec6, canon2);
+    else if (unsaid.has(rec6.realm)) continue;
+    else if (answered2) {
+      unsaid.add(rec6.realm);
+      log(
+        `hold record ${keyOf(rec6.realm, rec6.karta, rec6.name)}: the graph ${rec6.realm} is not in the graph list — left as it is; a bare name reaches only the own graph`
+      );
+    } else
+      log(
+        `hold record ${keyOf(rec6.realm, rec6.karta, rec6.name)}: the graph list did not answer — ${rec6.realm} left as it is, asked again at the next stand or return`
+      );
+  }
+}
+
+// js/bridge/hearing.ts
+function liveHearing() {
+  const s2 = state.standing;
+  return !!s2 && H2.proven && holdsKey(keyOf(s2.realm, s2.karta, s2.name ?? "")) && !H2.unheard;
+}
+var isSentinel = (karta) => !/^\d+$/.test(karta);
+function seatKarta(realm, karta, name2 = "") {
+  const k = normKarta(karta);
+  if (k !== "agent") return k;
+  const r = String(realm ?? "").trim();
+  const here = (x) => x === r || sameRealm(r, x);
+  const led = [state.standing, ...state.places].find((p) => p && here(p.realm));
+  if (led) return String(led.karta);
+  const me = sessionOfBridge();
+  const rec6 = me && name2 ? holdRecordsNamed(name2).find((x) => x.session === me && here(x.realm)) : null;
+  return rec6 ? normKarta(rec6.karta) : k;
+}
+var unresolvedAgent = (karta, what) => karta !== "agent" ? null : words(HEARING).unresolvedAgent(what);
+async function seatRealm(given) {
+  const realm = typeof given === "string" ? given.trim() : "";
+  if (!realm) return realm;
+  await canonHoldRecords();
+  await resolveAgainstLed(realm);
+  return canonicalRealm(realm, realmList);
+}
+var ofSeat = (e, karta, name2) => (isSentinel(karta) || e.karta === karta) && nameOf(e.address) === name2;
+function boardHearing(bd, karta, name2) {
+  if (!bd?.recognized) return "unknown";
+  const at3 = bd.entries.filter((e) => ofSeat(e, karta, name2));
+  if (at3.some(listens)) return "other";
+  const unread = bd.declared != null && bd.declared !== bd.entries.length;
+  return unread && (at3.length === 0 || isSentinel(karta)) ? "unknown" : "free";
+}
+function keysNamed(realm, name2) {
+  const dir2 = standingsDirOf(CFG.authDir);
+  try {
+    return readdirSync7(dir2).filter((f) => f.endsWith(".key")).map((f) => readFileSync20(join16(dir2, f), "utf8").trim()).filter((k) => {
+      const m = /^.*?--(.+)--/.exec(k);
+      return !!m && keyOf(realm, m[1], name2) === k;
+    });
+  } catch {
+    return [];
+  }
+}
+var unsignedHere = (rec6, cwd) => !rec6.session && !rec6.left && rec6.client === harnessName() && sameDir(rec6.cwd, cwd);
+async function localHolder(key3, cwd) {
+  if (!await localSocketAlive(localSocketPathOf(key3))) return null;
+  if (doors().some((d) => d.key === key3 && d.ownsSocket)) return "self";
+  const me = sessionOfBridge();
+  const rec6 = me ? readHoldRecord(key3, true) : null;
+  if (!rec6) return "other";
+  return rec6.session === me || cwd != null && unsignedHere(rec6, cwd) ? "session" : "other";
+}
+async function heldLocally(realm, karta, name2, cwd) {
+  let own = false;
+  for (const key3 of isSentinel(karta) ? keysNamed(realm, name2) : [keyOf(realm, karta, name2)]) {
+    const h = await localHolder(key3, cwd);
+    if (h === "other") return "other";
+    own ||= h === "session";
+  }
+  return own ? "session" : null;
+}
+async function askedHearing(realm, karta, name2, cwd = H2.standCwd ?? sessionCwd()) {
+  const local = await heldLocally(realm, karta, name2, cwd);
+  if (local === "other") return "other";
+  if (local === "session") return "free";
+  const b = await callTool(tool("channel"), { action: "list", realm, karta }).catch(() => null);
+  return boardHearing(b && !b.isError ? readBoard(b) : null, karta, name2);
+}
+async function rawSeatRefusal(msg) {
+  if (msg?.method !== "tools/call" || msg.params?.name !== tool("channel")) return null;
+  const a = msg.params.arguments ?? {};
+  const action = String(a.action);
+  if (!["connect", "mint", "register"].includes(action)) return null;
+  const realm = typeof a.realm === "string" ? a.realm.trim() : "";
+  const name2 = normName(a.name);
+  const karta = seatKarta(realm, normKarta(a.karta) || "agent", name2);
+  if (!realm) return null;
+  const agent = unresolvedAgent(karta, action);
+  if (agent) return agent;
+  if (ledHere(realm, karta, name2)) return null;
+  const hearing = await askedHearing(realm, karta, name2);
+  if (hearing === "free") return null;
+  const seat2 = keyOf(realm, karta, name2);
+  const w14 = words(HEARING);
+  const who = hearing === "other" ? w14.otherListens(seat2) : w14.unknownListens(seat2);
+  return w14.rawSeatRefusal(who, action);
+}
+function ledHere(realm, karta, name2) {
+  if (holdsStanding(realm, karta, name2)) return true;
+  return ledKey() === keyOf(realm, karta, name2) && !H2.unheard && // back on the same address without hello — another may have turned it
+  !wasEvicted(realm, karta, name2) && !isParked(realm, karta, name2);
+}
 
 // js/bridge/deaf.ts
 var UNSIGNED = /* @__PURE__ */ new Set(["list", "leave", "close", "revoke", "?"]);
@@ -13543,7 +13622,11 @@ async function runCheck(msg) {
     const r = await resumeBy(sel);
     return reply(msg, { holding: r.resumed, ...r });
   }
-  const board = await callTool(tool("channel"), { action: "list", realm: s2.realm });
+  if (liveHearing()) {
+    D.reopens = 0;
+    return reply(msg, { holding: true, key: key3, listening: true, word: resumeWords.listening() });
+  }
+  const board = await callTool(tool("channel"), { action: "list", realm: s2.realm, karta: s2.karta });
   if (board.isError)
     return reply(msg, { holding: true, key: key3, word: resumeWords.boardUnread(short(board.text)) });
   const mine = readBoard(board).entries.find(
@@ -14526,6 +14609,9 @@ async function answer2(name2, args) {
   got = claimReply(msg, got);
   const structured = structuredOf(got);
   const refusal2 = refusalOf(got);
+  const wholeList = name2 === tool("realm") && args.action === "list" && Object.keys(args).length === 1;
+  if (wholeList && !got.error && !got.result?.isError)
+    rememberMindRealmList(replyText(got), structured);
   if (name2 === tool("channel")) {
     noteLocaleEcho(args, replyText(got), structured);
     if (!got.error && !got.result?.isError) noteTaken(args);
@@ -15672,9 +15758,9 @@ var ORCHESTRA_SESSION_HEADER = "X-NKS-Session-Id";
 var ORCHESTRA_SESSION_ID = randomUUID5();
 
 // js/bridge/orchestra-case-read.ts
-var LIMIT2 = 200;
+var LIMIT3 = 200;
 var TIMEOUT_MS = 1e4;
-var historyPath = (room, since) => `/rooms/${encodeURIComponent(room)}/history?since=${since}&limit=${LIMIT2}&advance=false`;
+var historyPath = (room, since) => `/rooms/${encodeURIComponent(room)}/history?since=${since}&limit=${LIMIT3}&advance=false`;
 async function caseGet(base, token, path2) {
   const res = await namedFetch(`${base}${path2}`, {
     headers: {
@@ -16958,7 +17044,7 @@ function cloneArgv(project, url, parent) {
 
 // js/bridge/orchestra-launchers.ts
 var SLICE = "slice:orchestra";
-var LIMIT3 = 50;
+var LIMIT4 = 50;
 var HANDLE = /^@[^\s:@/]+$/;
 var LAUNCHER_MAX = 64;
 var str3 = (v) => typeof v === "string" && v.trim() !== "";
@@ -17028,7 +17114,7 @@ async function readLaunchers(serverUrl, token) {
       realm: "mind",
       q: "",
       attrs_filter: SLICE,
-      limit: LIMIT3
+      limit: LIMIT4
     });
     const seqs = [...new Set([...found.matchAll(/\(#(\d+), /g)].map((m) => m[1]))];
     const mine = [];
@@ -17436,7 +17522,7 @@ async function stepDormant(authDir, base, token, runs, ls, gone, now2 = Date.now
 import { mkdirSync as mkdirSync21, readFileSync as readFileSync35, writeFileSync as writeFileSync20 } from "node:fs";
 import { join as join35 } from "node:path";
 var w4 = () => words(ORCHESTRA);
-var LIMIT4 = 200;
+var LIMIT5 = 200;
 var MAX_PAGES = 50;
 var OPEN = /* @__PURE__ */ new Set(["issued", "accepted"]);
 var SKEW_MS = 6e4;
@@ -17487,7 +17573,7 @@ async function foreignStops(authDir, base, token, runs) {
   let held2;
   try {
     for (let n = 0; n < MAX_PAGES; n++) {
-      const res = await namedFetch(`${base}/me/orders?limit=${LIMIT4}&since=${since}`, {
+      const res = await namedFetch(`${base}/me/orders?limit=${LIMIT5}&since=${since}`, {
         headers: { authorization: `Bearer ${token}` },
         redirect: "error",
         signal: AbortSignal.timeout(1e4)
@@ -18112,7 +18198,7 @@ function canonIn(index, name2) {
 }
 
 // js/bridge/orchestra-demands.ts
-var LIMIT5 = 200;
+var LIMIT6 = 200;
 var MAX_PAGES2 = 50;
 async function get(base, token, path2, control = false) {
   const r = await namedFetch(`${base}${path2}`, {
@@ -18160,7 +18246,7 @@ async function readDemands(base, token, requested, boundary, gone, owned, invite
       return result;
     }
     try {
-      const index = realmIndexOf(items(await get(base, token, `/realms?limit=${LIMIT5}`)));
+      const index = realmIndexOf(items(await get(base, token, `/realms?limit=${LIMIT6}`)));
       canonicalBoundary = boundary.map((r) => {
         if (!/^r\d+$/i.test(r.trim())) return r;
         const canonical = canonIn(index, r);
@@ -18201,7 +18287,7 @@ async function readDemands(base, token, requested, boundary, gone, owned, invite
   try {
     for (let n = 0; n < MAX_PAGES2; n++) {
       if (gone?.gone) throw new Error("caller_gone");
-      const q = `open=true&limit=${LIMIT5}${since ? `&since=${since}` : ""}`;
+      const q = `open=true&limit=${LIMIT6}${since ? `&since=${since}` : ""}`;
       const body = await get(base, token, `/me/orders?${q}`, true);
       const rows = items(body);
       if (!rows.length) return result;
@@ -18775,7 +18861,7 @@ async function raiseRows(authDir, start, ls, runs, canon2, role, gone) {
 import { mkdirSync as mkdirSync25, readFileSync as readFileSync37, writeFileSync as writeFileSync22 } from "node:fs";
 import { join as join39 } from "node:path";
 var w8 = () => words(ORCHESTRA);
-var LIMIT6 = 200;
+var LIMIT7 = 200;
 var TIMEOUT_MS4 = 1e4;
 var cursorsFile = (authDir) => join39(seamRunDir(authDir), "orchestra-cursors.json");
 function readTactState(authDir) {
@@ -18811,7 +18897,7 @@ async function resolveRealms2(base, token, realms) {
   const short2 = realms.filter(isShort);
   if (!short2.length) return { realms: [...new Set(realms)] };
   if (!token) return { unresolved: short2[0], why: "no key to the server" };
-  const listed2 = itemsOf(await getJson(base, token, `/realms?limit=${LIMIT6}`));
+  const listed2 = itemsOf(await getJson(base, token, `/realms?limit=${LIMIT7}`));
   if (!listed2) return { unresolved: short2[0], why: "realm list is not a list" };
   const canonById = realmIndexOf(listed2).byShort;
   const out7 = [];
@@ -18829,7 +18915,7 @@ async function resolveRealms2(base, token, realms) {
 function realmCanon(base, token) {
   let index;
   return async (name2) => {
-    index ??= getJson(base, token, `/realms?limit=${LIMIT6}`).then((v) => {
+    index ??= getJson(base, token, `/realms?limit=${LIMIT7}`).then((v) => {
       const listed2 = itemsOf(v);
       return listed2 ? realmIndexOf(listed2) : null;
     }).catch(() => null);
@@ -18838,7 +18924,7 @@ function realmCanon(base, token) {
   };
 }
 async function readTape(base, token, realm, since) {
-  const q = new URLSearchParams({ limit: String(LIMIT6) });
+  const q = new URLSearchParams({ limit: String(LIMIT7) });
   if (since) q.set("since", since);
   const tape = itemsOf(
     await getJson(base, token, `/realms/${encodeURIComponent(realm)}/raised?${q}`)
@@ -18855,7 +18941,7 @@ async function readRealm(base, token, realm, since) {
   );
   const invited = itemsOf(inviteResponse);
   if (!invited) throw new Error("invites: not a list");
-  const q = new URLSearchParams({ limit: String(LIMIT6) });
+  const q = new URLSearchParams({ limit: String(LIMIT7) });
   if (since) q.set("since", since);
   const raised = await getJson(
     base,
@@ -19836,10 +19922,6 @@ async function formerSeat(realm, karta) {
   const recs = holdRecordsWhere(
     (r) => !!r.realm && r.cwd === cwd && (!karta || String(r.karta) === karta) && (!r.client || !client || r.client === client) && (!r.session || r.session === me)
   );
-  await resolveRealms([realm, ...recs.map((r) => r.realm)], async () => {
-    const r = await callTool(tool("realm"), { action: "list" });
-    return r.isError ? null : r.text;
-  });
   const best = recs.filter((r) => sameRealm(r.realm, realm)).sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0];
   return best ? { realm: best.realm, karta: best.karta, name: best.name } : null;
 }
@@ -19883,54 +19965,13 @@ var isDirectory2 = (p) => {
   }
 };
 
-// js/shared/mindslice.ts
-var LIMIT7 = 100;
-var NODE_ROW = /^\s+\S.* \(#\d+, /;
-var SLICE_ARGS = {
-  realm: "mind",
-  q: "",
-  attrs_filter: "slice:agents,ways",
-  limit: LIMIT7,
-  include_description: true
-};
-var brief = (s2) => {
-  const t = s2.replace(/\s+/g, " ").trim();
-  return t.length > 120 ? `${t.slice(0, 119)}…` : t || "-";
-};
-async function mindSlice(call, options = {}) {
-  const W4 = words(MIND_SLICE);
-  const unread = (text9) => {
-    if (options.strict) throw new Error(brief(text9));
-    return W4.unread(brief(text9));
-  };
-  try {
-    const ready = await call(tool("me"), { action: "readiness" });
-    if (ready.isError) return unread(ready.text);
-    if (MIND_MISSING.test(ready.text)) return W4.absent();
-    if (!MIND_PRESENT.test(ready.text)) {
-      if (options.strict) throw new Error("mind readiness unknown");
-      return W4.unknown();
-    }
-    const got = await call(tool("search"), SLICE_ARGS);
-    if (got.isError) return unread(got.text);
-    const listed2 = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
-    const rows = got.text.split("\n").flatMap((l) => {
-      const [, name2, seq4, line] = MIND_ROW.exec(l) ?? [];
-      return name2 ? [`  ${name2} (#${seq4})${line ? ` — ${line}` : ""}`] : [];
-    });
-    if (!rows.length) return listed2 >= LIMIT7 ? `${W4.empty()}
-${W4.foot(true, LIMIT7)}` : W4.empty();
-    return [W4.head(rows.length), ...rows, W4.foot(listed2 >= LIMIT7, LIMIT7)].join("\n");
-  } catch (e) {
-    if (options.strict) throw e;
-    return unread(e.message);
-  }
-}
-
 // js/bridge/standtail.ts
 async function standTail(stood) {
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
-  return [...stale ? [stale] : [], ...stood ? [await mindSlice(callTool)] : []];
+  return [
+    ...stale ? [stale] : [],
+    ...stood && !automaticSeat() ? [await mindSlice(callTool)] : []
+  ];
 }
 
 // js/bridge/standundo.ts
@@ -21080,11 +21121,9 @@ async function deliverOne(msg) {
   let endTaking = null;
   for (; ; ) {
     try {
-      if (!isInit && state.sessionId && state.sessionToken && currentAccessToken() !== state.sessionToken) {
-        log(
-          "the access token changed since the session was opened — re-initializing before the call"
-        );
-        await reinitialize();
+      if (isCheckCall(msg) && liveHearing()) {
+        emit(await resumeByOrigin(msg));
+        return;
       }
       if (!isInit && !state.sessionId && state.initParams) {
         log("no upstream session yet — initializing before the call");

@@ -58,7 +58,7 @@ var HALTS_CAPABILITY = `${PRODUCT}/halts`;
 var SPAWNED_FOR_ENV = envName("SPAWNED_FOR");
 
 // js/delivery/version.ts
-var VERSION = "8.16.4";
+var VERSION = "8.16.5";
 var BUILD_MARK = "iskron-build";
 
 // js/delivery/words/asks.ts
@@ -1407,12 +1407,7 @@ var state = scoped(() => ({
   places: [],
   standingSession: null,
   // the session id that registration is known to hold in
-  // The access token the session was opened with. A session is opened BY a
-  // credential and dies with it (the surface's own word): once the token in the
-  // store is no longer the one this session was opened with — expired, refreshed
-  // after a 401, rotated by a sibling bridge — the old id is a dead letter, and a
-  // server that opens a fresh session on it silently runs the call unattributed
-  // before we learn the new id. So a changed token means: re-open first.
+  // The bearer last associated with the session; refresh alone does not end it.
   sessionToken: null,
   // The last session id the server answered 404 for: it is gone there, closing it is moot (#9174).
   goneSession: null
@@ -1881,6 +1876,8 @@ var H2 = scoped(() => ({
   parked: false,
   /** socket reopened on the same address without this opening's hello yet: another may have rotated it (deaf.ts) */
   unheard: false,
+  /** this opening's hello came: hearing is proven until the socket drops, is left or reopened — the ring may forget the hello (RING) */
+  proven: false,
   /** key of a place whose socket was released but binding remembered, until hello proves hearing (deaf.ts) */
   deafKey: null,
   /** places of other graphs on the channel at the 4001: the server remembers the binding, no hearing (deaf.ts) */
@@ -2507,6 +2504,10 @@ function resultToContent(result) {
 }
 
 // js/shared/mindslice.ts
+var C = scoped(() => ({
+  entries: /* @__PURE__ */ new WeakMap(),
+  listing: null
+}));
 function sliceIn(text2) {
   for (const lang2 of LANGS) {
     const mark = MIND_SLICE[lang2].mark();
