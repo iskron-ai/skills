@@ -731,6 +731,77 @@ test("a limit whose reset the machine clock already sees as past is retried afte
   );
 });
 
+// A fixed beat from start fired 2 s before the cache's expiry, read the cache and so checked
+// every second period (#11337): the next check is planned from the expiry, spread ±10%.
+test("the release check runs every period from the cache's expiry, not every second one", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t, `v${MINE}`);
+  const authDir = join(h.root, "auth");
+  const PERIOD = 1500;
+  const bridge = startBridge(fake.mcpUrl, authDir, {
+    HOME: h.root,
+    ...rel.env,
+    ISKRON_BRIDGE_CHECK_INTERVAL_MS: String(PERIOD),
+  });
+  t.after(async () => {
+    await bridge.stop();
+    await fake.stop();
+  });
+  assert.ok((await bridge.call("initialize", INIT)).result);
+  const seen = new Set();
+  const until = Date.now() + 5.5 * PERIOD;
+  while (Date.now() < until) {
+    const at = readLatestAt(authDir);
+    if (at) seen.add(at);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const at = [...seen].sort((a, b) => a - b);
+  assert.ok(at.length >= 4, `a check each period: ${at.length} checks in 5.5 periods`);
+  const gaps = at.slice(1).map((x, i) => x - at[i]);
+  assert.ok(
+    gaps.every((g) => g >= 0.85 * PERIOD && g <= 1.35 * PERIOD),
+    `each gap one period ±10%: ${gaps}`,
+  );
+});
+
+test("the first check over an expired cache waits a random pause up to ten minutes; a good cache is read at once", async (t) => {
+  const fake = await startFakeNks({ pat: PAT });
+  const h = home(t);
+  const rel = await releases(t, `v${MINE}`);
+  const { ISKRON_BRIDGE_UPDATE_DELAY_MS: _none, ...noDelay } = rel.env;
+  const authDir = join(h.root, "auth");
+  const firstIn = async (what) => {
+    const bridge = startBridge(fake.mcpUrl, authDir, { HOME: h.root, ...noDelay });
+    try {
+      assert.ok((await bridge.call("initialize", INIT)).result);
+      const re = /release check: the first in (\d+) s/;
+      await waitFor(() => re.test(bridge.stderr), `the first check planned (${what})`);
+      const s = Number(re.exec(bridge.stderr)[1]);
+      if (s > 3) await new Promise((r) => setTimeout(r, 2500)); // the old beat checked at 2 s
+      return s;
+    } finally {
+      await bridge.stop();
+    }
+  };
+  t.after(() => fake.stop());
+  const cold = await firstIn("no cache");
+  assert.ok(cold >= 0 && cold <= 600, `within ten minutes: ${cold} s`);
+  if (cold > 3) assert.equal(rel.hits.length, 0, "no question to the releases before the pause");
+  mkdirSync(authDir, { recursive: true });
+  const fresh = { checked_at: Date.now(), version: MINE, tag: `v${MINE}`, downloaded: [] };
+  writeFileSync(join(authDir, "latest.json"), JSON.stringify(fresh));
+  assert.equal(await firstIn("a good cache"), 2, "a good cache is read in a couple of seconds");
+});
+
+const readLatestAt = (authDir) => {
+  try {
+    return JSON.parse(readFileSync(join(authDir, "latest.json"), "utf8")).checked_at;
+  } catch {
+    return null;
+  }
+};
+
 for (const [what, seed] of [
   [
     "a rate limit that has reset",
