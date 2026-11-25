@@ -49,6 +49,21 @@ test("a refused slice read backs off: the next sessions do not hammer the server
   });
 });
 
+test("a slow server with nothing cached: the stand answers by ~3 s without rules, the one fetch fills the cache", async () => {
+  await withMux(async (ctx) => {
+    await ctx.fake.control({ mind: { rules: RULES, delayMs: 6000 } });
+    const t0 = Date.now();
+    const { texts } = await wave(ctx, 1, "slow");
+    const took = Date.now() - t0;
+    assert.ok(took < 5000, `the stand waited ${took} ms for the slice`);
+    assert.equal(sliceIn(texts[0]), W.pending(), texts[0]);
+    await new Promise((r) => setTimeout(r, 4000)); // the one fetch lands
+    const { texts: next } = await wave(ctx, 1, "filled");
+    assert.equal(sliceIn(next[0])?.split("\n")[0], W.head(1), next[0]);
+    assert.equal(slices(ctx.fake), 1, "one fetch, the next stand served from it");
+  });
+});
+
 test("a write to the own mind drops the cached slice: the next stand reads it again", async () => {
   await withMux(async (ctx) => {
     await ctx.fake.control({ mind: { rules: RULES } });

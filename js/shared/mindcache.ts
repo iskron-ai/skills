@@ -1,7 +1,7 @@
 // The human's rules slice, cached per account for the whole process (graph @nks/nks-dev, kriya
 // #9817): N sessions of one daemon starting together read it once. Fresh 15 min; stale served up
-// to 24 h — a reader waits for a refresh no longer than 3 s, else takes the stale; one fetch in
-// flight per account; a failed fetch backs off with a jittered, growing pause, and while it does
+// to 24 h — a reader waits for a fetch no longer than 3 s, else takes the stale (none — it goes
+// on without rules, told they are not loaded yet); one fetch in flight per account; a failed fetch backs off with a jittered, growing pause, and while it does
 // no reader fetches; a write to the account's own mind drops the cached slice.
 import { tool } from "../delivery/index.ts";
 
@@ -70,24 +70,30 @@ function start(e: Entry, read: () => Promise<SliceRead>): Flight {
 const pause = (ms: number): Promise<null> =>
   new Promise((r) => setTimeout(() => r(null), ms).unref?.());
 
-/** The account's slice block; `unread` words a failure when nothing stale is left to serve. */
+/** What a reader says without a slice: a failure's word, or that the read still goes on. */
+export interface SliceWords {
+  unread: (why: string) => string;
+  pending: () => string;
+}
+
+/**
+ * The account's slice block. No reader waits longer than 3 s: past that it goes on with the
+ * stale slice, or — none left — with the word that the rules are not loaded yet; the one fetch
+ * goes on and fills the cache for the next.
+ */
 export async function cachedSlice(
   account: string,
   read: () => Promise<SliceRead>,
-  unread: (why: string) => string,
+  w: SliceWords,
 ): Promise<string> {
   const e = entryOf(account);
   const age = Date.now() - e.at;
   const stale = e.block !== null && age < STALE_MS ? e.block : null;
   if (stale !== null && age < FRESH_MS) return stale;
-  if (Date.now() < e.until) return stale ?? unread(e.error);
-  const flight = e.flight ?? start(e, read);
-  if (stale === null) {
-    const got = await flight;
-    return got.block ?? unread(got.error ?? "");
-  }
-  const got = await Promise.race([flight, pause(WAIT_MS)]);
-  return got?.block ?? stale;
+  if (Date.now() < e.until) return stale ?? w.unread(e.error);
+  const got = await Promise.race([e.flight ?? start(e, read), pause(WAIT_MS)]);
+  if (got) return got.block ?? stale ?? w.unread(got.error ?? "");
+  return stale ?? w.pending();
 }
 
 /** Tools that only read: a call of any other names a write to its realm. */

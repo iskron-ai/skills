@@ -2284,6 +2284,9 @@ export async function startFakeNks(opts = {}) {
       if (mindCall) {
         const m = st.mind;
         const rules = m?.rules ?? [];
+        // { delayMs } — медленный сервер: поиск среза отвечает на столько позже.
+        if (msg.params.name === "iskron_search" && m?.delayMs)
+          await new Promise((r) => setTimeout(r, m.delayMs));
         if (msg.params.name === "iskron_search" && m?.refuse)
           return json(
             res,

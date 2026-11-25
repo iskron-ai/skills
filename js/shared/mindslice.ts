@@ -127,7 +127,10 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
   const key = options.cacheKey ?? call;
   try {
     if (options.account && !options.strict)
-      return await cachedSlice(options.account, () => readSlice(call, key), unread);
+      return await cachedSlice(options.account, () => readSlice(call, key), {
+        unread,
+        pending: () => words(MIND_SLICE).pending(),
+      });
     return (await readSlice(call, key)).block;
   } catch (e) {
     if (options.strict) throw new Error(brief((e as Error).message), { cause: e });
