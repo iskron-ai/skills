@@ -56,10 +56,8 @@ test("context gate: OpenCode preserves adjacent fill samples and observes succes
       "graph reads do not wait for the fill queue/model metadata",
     );
     releaseWindows(await listModels());
-    await until(
-      () => (fake.state.counts.look ?? 0) > before,
-      "collapse reaches bridge without debounce",
-    );
+    await delay(300);
+    assert.equal(fake.state.counts.look ?? 0, before, "collapse reads no role card");
     const write = () => rec.call("iskron_add_vimarsha", { realm: "nks-dev", name: "probe" }, "s");
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
     await rec.context("s");
@@ -86,33 +84,16 @@ test("context gate: OpenCode preserves adjacent fill samples and observes succes
     await skill("w", "writing");
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
     await skill("door", "iskron");
+    await assert.rejects(write(), /контекст сжат|context.*compact/i);
+    await rec.call("iskron_stand", { realm: "nks-dev", context_restored: true }, "s");
     await write();
-    const looked = fake.state.counts.look;
     steps(1000);
-    await until(() => fake.state.counts.look > looked, "another collapse");
+    await delay(300);
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
-    fake.state.realms.push({ short: "r888", canon: "@nks/nks-dev", ownerKind: "organization" });
-    fake.state.realmDelayMs = 300;
     const listings = fake.state.counts.realm_list;
-    const confirming = rec
-      .call("iskron_stand", { realm: "r888", context_restored: true }, "s")
-      .then(
-        () => null,
-        (e) => e,
-      );
-    await until(() => fake.state.counts.realm_list > listings, "confirmation awaiting alias");
-    const previousGeneration = fake.state.counts.look;
-    steps(100);
-    await until(
-      () => fake.state.counts.look > previousGeneration,
-      "new generation during confirmation",
-    );
-    assert.ok(
-      (await confirming) instanceof Error,
-      "old confirmation cannot clear the new generation",
-    );
+    await assert.rejects(rec.call("iskron_stand", { realm: "r888", context_restored: true }, "s"));
+    assert.equal(fake.state.counts.realm_list, listings, "unknown aliases are not looked up");
     await assert.rejects(write(), /контекст сжат|context.*compact/i);
-    fake.state.realmDelayMs = 0;
     const registers = fake.state.placeArgs.filter((p) => p.action === "register").length;
     await rec.call("iskron_stand", { realm: "nks-dev", context_restored: true }, "s");
     await write();

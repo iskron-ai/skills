@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { loaded, recovery, seated, usage } from "./context-gate-kit.mjs";
-import { setup, stand, textOf, until, write } from "./ownseat-kit.mjs";
+import { setup, stand, textOf, write } from "./ownseat-kit.mjs";
 
 test("context gate: a fill collapse refuses writes, not reads or help, until recovery", async (t) => {
   const { up, fake } = await setup(t);
@@ -62,6 +62,8 @@ test("context gate: all role skills and the door belong to one generation and se
   await loaded(b, "new-w", "writing");
   assert.equal((await write(b)).result?.isError, true, "one role skill is not the whole list");
   await loaded(b, "new-r", "reconcile");
+  assert.equal((await write(b)).result?.isError, true, "role skills are not read automatically");
+  await stand(b, { realm: "nks-dev", context_restored: true });
   assert.ok(!(await write(b)).result?.isError);
 });
 
@@ -76,6 +78,12 @@ test("context gate: unknown role list never means empty; confirmed empty needs t
   await usage(b, 10000);
   assert.equal((await write(b)).result?.isError, true);
   await loaded(b, "d2", "iskron");
+  assert.equal(
+    (await write(b)).result?.isError,
+    true,
+    "the bridge cannot infer an empty role list",
+  );
+  await stand(b, { realm: "nks-dev", context_restored: true });
   assert.ok(!(await write(b)).result?.isError);
 });
 
@@ -119,17 +127,15 @@ test("context gate: exact half is a collapse, half plus one is not; missing/zero
   }
 });
 
-test("context gate: confirmation awaiting realm resolution cannot clear a newer collapse", async (t) => {
+test("context gate: an unknown alias cannot clear a collapse or trigger graph resolution", async (t) => {
   const { b, fake } = await seated(t);
   await usage(b, 160000);
   await usage(b, 40000);
-  fake.state.realms.push({ short: "r777", canon: "@nks/nks-dev", ownerKind: "organization" });
-  fake.state.realmDelayMs = 300;
   const before = fake.state.counts.realm_list;
-  const confirming = stand(b, { realm: "r777", context_restored: true });
-  await until(() => fake.state.counts.realm_list > before, "confirmation resolving fresh alias");
+  const confirming = await stand(b, { realm: "r777", context_restored: true });
+  assert.equal(fake.state.counts.realm_list, before);
   await usage(b, 10000);
-  assert.equal((await confirming).result?.isError, true, "old confirmation was stale");
+  assert.equal(confirming.result?.isError, true, "unknown alias is not confirmed");
   assert.equal((await write(b)).result?.isError, true, "new generation remains gated");
 });
 

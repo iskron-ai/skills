@@ -47,10 +47,10 @@ test("the graph list is read only for a name not yet resolved — not on every s
   assert.ok(
     !(await stand(b, { realm: "@nks/nks-dev", karta: 931, name: "proba" })).result?.isError,
   );
-  assert.equal(lists(), 0, "a full address needs no list");
+  assert.equal(lists(), 1, "a full address needs no alias list, but the personal slice needs one");
   const c = await up();
   assert.ok(!(await stand(c, { realm: "nks-dev", karta: 932, name: "vtoroy" })).result?.isError);
-  assert.equal(lists(), 1, "a bare slug: one list");
+  assert.equal(lists(), 2, "a bare slug: one list reused by the personal slice");
   assert.ok(!(await stand(c, { realm: "nks-dev", karta: 932, name: "vtoroy" })).result?.isError);
   assert.ok(!(await stand(c, { realm: "r5", karta: 932, name: "vtoroy" })).result?.isError);
   const reg = await channel(c, {
@@ -60,7 +60,7 @@ test("the graph list is read only for a name not yet resolved — not on every s
     name: "vtoroy",
   });
   assert.ok(!reg.result?.isError, textOf(reg));
-  assert.equal(lists(), 1, "the learnt aliases serve the next moves");
+  assert.equal(lists(), 2, "the learnt aliases serve the next moves");
   assert.deepEqual([...new Set(sent(fake, "register"))], ["@nks/nks-dev"]);
 });
 

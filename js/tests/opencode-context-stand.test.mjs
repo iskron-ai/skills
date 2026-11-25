@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { plugin, REAL_BRIDGE, SANDBOX, until } from "./opencode-kit.mjs";
+import { delay, plugin, REAL_BRIDGE, SANDBOX, until } from "./opencode-kit.mjs";
 import { setup } from "./ownseat-kit.mjs";
 
 process.on("exit", () => rmSync(SANDBOX, { recursive: true, force: true }));
@@ -83,7 +83,8 @@ test("context confirmation: true is local to its held seat; false and absent kee
           },
         });
     }
-    await until(() => fake.state.counts.look >= before + 2, "both seats gated");
+    await delay(300);
+    assert.equal(fake.state.counts.look ?? 0, before, "the gate reads no role cards");
     await assert.rejects(write("root"), /контекст сжат|context.*compact/i);
     await assert.rejects(write("child"), /контекст сжат|context.*compact/i);
     const writesBefore = moves().length;

@@ -20,7 +20,9 @@ const rules = (n) =>
   }));
 const mindCalls = (fake) =>
   fake.state.calls.filter(
-    (c) => c.name === "iskron_me" || (c.name === "iskron_search" && c.arguments?.realm === "mind"),
+    (c) =>
+      c.name === "iskron_me" ||
+      (c.name === "iskron_search" && c.arguments?.attrs_filter === "slice:agents,ways"),
   );
 
 async function stood(t, mind) {
@@ -50,11 +52,11 @@ test("iskron_stand: the answer closes with the human's rules — personal mark, 
   assert.ok(!block.includes("↳"), "the server's tail is not a rule");
   const sent = mindCalls(fake).map((c) => [c.name, c.arguments]);
   assert.deepEqual(sent, [
-    ["iskron_me", { action: "readiness" }],
+    ["iskron_me", { action: "whoami" }],
     [
       "iskron_search",
       {
-        realm: "mind",
+        realm: "@tester/mind",
         q: "",
         attrs_filter: "slice:agents,ways",
         limit: 100,
@@ -91,12 +93,12 @@ test("iskron_stand: no own mind — one line, mind is not read", async (t) => {
   );
 });
 
-test("iskron_stand: readiness without the sign — one line «not read», mind is not read", async (t) => {
+test("iskron_stand: own graph exists without readiness data", async (t) => {
   const { fake, text } = await stood(t, null);
-  assert.equal(sliceIn(text), W.unknown());
+  assert.equal(sliceIn(text), W.empty());
   assert.deepEqual(
     mindCalls(fake).map((c) => c.name),
-    ["iskron_me"],
+    ["iskron_me", "iskron_search"],
   );
 });
 

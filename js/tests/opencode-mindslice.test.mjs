@@ -24,8 +24,9 @@ const BLOCK = [
   "  📌 Итог — одной строкой (#31) — Фрагмент правила",
   W.foot(false, 100),
 ].join("\n");
-const READINESS =
-  "признаки (1):\n  personal_mind «Личная память» — present · scope: person · ready: да";
+const READINESS = "Вызывающая идентичность: @tester · handle @tester";
+const REALMS =
+  "Доступные графы (1) — адресуй их как @owner/slug:\n    @tester/mind  r204  mind · 2026-09-23";
 const SEARCH =
   "Найдено 1 узлов:\n  📌 Итог — одной строкой (#31, phenomenon, Pt/Va/Ad, v1) — Фрагмент правила\n\n" +
   '↳ Выбери один узел и иди по стрелкам: iskron_look(realm="mind", node_id="#31")';
@@ -93,6 +94,7 @@ test("a launched child reads the human's rules from its own stand answer, under 
 test("a seated session after a compaction reads the human's rules in the first request's system, by service calls of its bridge", async () => {
   const { files, env } = lay("compact");
   writeFileSync(`${files.reply}.iskron_me`, READINESS);
+  writeFileSync(`${files.reply}.iskron_realm`, REALMS);
   writeFileSync(`${files.reply}.iskron_search`, SEARCH);
   const rec = await plugin(env);
   try {
@@ -118,10 +120,10 @@ test("a seated session after a compaction reads the human's rules in the first r
     const mind = sent(files.calls).filter((c) => c.name !== "iskron_channel");
     assert.deepEqual(
       mind.map((c) => c.name),
-      ["iskron_me", "iskron_search"],
+      ["iskron_me", "iskron_realm", "iskron_search"],
     );
-    assert.equal(mind[1].arguments.realm, "mind");
-    assert.equal(mind[1].arguments.attrs_filter, "slice:agents,ways");
+    assert.equal(mind[2].arguments.realm, "@tester/mind");
+    assert.equal(mind[2].arguments.attrs_filter, "slice:agents,ways");
     assert.ok(
       mind.every((c) => String(c.id).startsWith("iskron-service-")),
       "a service move, not the agent's work",
@@ -155,6 +157,7 @@ test(
 test("the plugin uses strict production reads only for compaction and retries a refused read", async () => {
   const { files, env } = lay("compact-refused");
   writeFileSync(`${files.reply}.iskron_me`, "__ERROR__READ_REFUSED");
+  writeFileSync(`${files.reply}.iskron_realm`, REALMS);
   writeFileSync(`${files.reply}.iskron_search`, SEARCH);
   const rec = await plugin(env);
   try {
@@ -181,7 +184,7 @@ test("the plugin uses strict production reads only for compaction and retries a 
       sent(files.calls)
         .filter((c) => c.name !== "iskron_channel")
         .map((c) => c.name),
-      ["iskron_me", "iskron_me", "iskron_search"],
+      ["iskron_me", "iskron_me", "iskron_realm", "iskron_search"],
     );
   } finally {
     await rec.stop();

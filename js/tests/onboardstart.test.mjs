@@ -51,8 +51,8 @@ for (const mode of ["cover", "fresh-repo", "outside", "halted"]) {
       }
       assert.equal(
         s.fake.state.calls.filter((c) => ["iskron_me", "iskron_realm"].includes(c.name)).length,
-        // A seated root reads the human's rules once — readiness before mind (#9817); not a sign.
-        mode === "cover" ? 1 : 0,
+        // A seated root reads identity and its graph list for the personal slice; not signs.
+        mode === "cover" ? 2 : 0,
         "the signs are local: no call to the graph",
       );
       const second = await oc.promptOnly(sid, "second");

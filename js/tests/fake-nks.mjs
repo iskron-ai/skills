@@ -2265,7 +2265,9 @@ export async function startFakeNks(opts = {}) {
       const mindCall =
         msg.method === "tools/call" &&
         (msg.params?.name === "iskron_me" ||
-          (msg.params?.name === "iskron_search" && msg.params.arguments?.realm === "mind"));
+          (msg.params?.name === "iskron_search" &&
+            ["mind", "@tester/mind"].includes(msg.params.arguments?.realm) &&
+            msg.params.arguments?.attrs_filter === "slice:agents,ways"));
       if (mindCall) {
         const m = st.mind;
         const rules = m?.rules ?? [];
@@ -2358,11 +2360,14 @@ export async function startFakeNks(opts = {}) {
         st.counts.realm_list = (st.counts.realm_list ?? 0) + 1;
         // Медленный список: окно, в котором вызовы харнеса стоят до алиасов из него.
         if (st.realmDelayMs) await new Promise((r) => setTimeout(r, st.realmDelayMs));
-        const text = realmListText(st.realms);
+        const realms = st.mind?.missing
+          ? st.realms.filter((r) => r.canon !== "@tester/mind")
+          : st.realms;
+        const text = realmListText(realms);
         const result = structuredClone(
           st.realmResult ?? {
             content: [{ type: "text", text }],
-            structuredContent: realmListFields(st.realms),
+            structuredContent: realmListFields(realms),
           },
         );
         if (!st.realmStructuredSessions.has(sid)) delete result.structuredContent;

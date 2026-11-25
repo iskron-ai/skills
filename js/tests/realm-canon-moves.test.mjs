@@ -90,9 +90,10 @@ test("an answered list without the graph is said once as «not in the graph list
 
 test("an expired record of a bare slug asks no graph list in a new session", async (t) => {
   const { fake, up } = await earlierRecord(t, { age: 7 * 3600_000 });
+  const before = fake.state.counts.realm_list ?? 0;
   const next = await up();
   await touch(next, fake);
-  assert.equal(fake.state.counts.realm_list ?? 0, 0, "no return takes it — no list for it");
+  assert.equal(fake.state.counts.realm_list ?? 0, before, "no return takes it — no list for it");
 });
 
 test("a record already under the canonical key keeps the earlier record's key when that one goes", async (t) => {
