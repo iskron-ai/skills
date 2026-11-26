@@ -38,6 +38,7 @@ import { createMoves } from "./moves.ts";
 import type { Context } from "./plugin.ts";
 import { type PutDown } from "./putdown.ts";
 import { revokeAsLauncher } from "./release.ts";
+import { replyNotes } from "./replynotes.ts";
 import { canonOf, type SeatAnswer } from "./rootseat-by.ts";
 import { createSeatLife, explicitHeld } from "./rootseat-tools.ts";
 import { childWriteRefusal, createRunEnds, declaresAction, readsOnly } from "./runends.ts";
@@ -73,6 +74,7 @@ export async function setupTools(
   const path = found.path;
   const builds = buildsLine(path, import.meta.url);
   const hostEnv = await hostEnvOf(ctx); // OpenCode's version and the set's root — once per plugin
+  const notes = await replyNotes(ctx); // the plugin's own words ride the next tool reply
 
   const slots = new Map<string, Slot>();
   const unasked = new WeakSet<Slot>(); // a root's slot that has not asked for its seat from disk yet
@@ -153,8 +155,7 @@ export async function setupTools(
   const leads = createLeads(leadDoors(ctx, say, flushUsage, endChild, slots, closed));
   const keeper = createKeeper({
     say,
-    tell: (root, text, child) =>
-      onChannel(root, { logger: LOGGERS.channel, data: { kind: "return_failed", text } }, !!child),
+    tell: (root, text) => (say(text, "warning"), notes.put(root, text)), // no turn (replynotes.ts)
     slotFor: (root, touch) => slotFor(root, touch),
     ready: readyFor,
     directoryOf,

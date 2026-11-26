@@ -410,6 +410,20 @@ export async function plugin(env = {}, ctxOpts = {}) {
     await rec.cleanup?.();
     restore();
   };
+  // The plugin's own words ride a session's next tool reply, never a turn (replynotes.ts):
+  // told(sessions) makes one tool reply in each and gathers what rode it, as {sessionID, text}.
+  rec.notes = [];
+  let replies = 0;
+  rec.told = (sessions) => {
+    for (const sessionID of sessions) {
+      const t = { tool: "read", sessionID, agent: "build", messageID: "m", input: {} };
+      Object.assign(t, { id: `reply-${++replies}`, status: "completed", result: { content: "" } });
+      for (const cb of rec.hooks["tool.execute.after"] ?? []) void cb(t);
+      const text = String(t.result.content ?? "");
+      if (text) rec.notes.push({ sessionID, text });
+    }
+    return rec.notes;
+  };
   rec.call = (name, input, sessionID) => {
     const t = rec.tools().get(name);
     assert.ok(t, `tool ${name} must be registered`);
