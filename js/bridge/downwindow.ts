@@ -84,6 +84,11 @@ export function admit(): Gate {
   };
 }
 
+// Who goes after an answered knock: the closes the window held (sessionclose.ts) — behind the
+// probe, never as it.
+const afterAnswer: (() => void)[] = [];
+export const onAnswered = (f: () => void): void => void afterAnswer.push(f);
+
 /** The server answered this knock with anything under 500: the window, if this was its probe, is over. */
 export function answered(knock: Knock): void {
   try {
@@ -94,6 +99,7 @@ export function answered(knock: Knock): void {
   } finally {
     knock.release();
   }
+  for (const f of afterAnswer) f();
 }
 
 /**

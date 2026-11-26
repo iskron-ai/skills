@@ -169,6 +169,11 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
   // No grant and a login already out: the server can only answer 401 — say it here.
   else if (loginPublished())
     throw new UpstreamError("unauthorized (login pending)", "auth", null, UpstreamError.NOT_SENT);
+  // The machine's down window (downwindow.ts): while it stands this knock does not go
+  // out — the call answers «not sent» at once, and a refused initialize lets nothing go; the
+  // first knock after it is the one probe.
+  const gate = admit();
+  if (gate.refused) throw new DownError(null, UpstreamError.NOT_SENT, false, gate.waitMs);
   const isInit = msg?.method === "initialize";
   if (isInit && state.sessionId) {
     // An initialize opens a session and never rides one (the MCP spec): the id
@@ -196,10 +201,6 @@ export async function post(msg: JsonRpcMessage, heard: (m: JsonRpcMessage) => vo
       body: JSON.stringify(sent),
       signal: AbortSignal.timeout(CFG.timeoutMs),
     });
-  // The machine's down window (downwindow.ts): while it stands this knock does not go
-  // out — the call answers «not sent» at once; the first knock after it is the one probe.
-  const gate = admit();
-  if (gate.refused) throw new DownError(null, UpstreamError.NOT_SENT, false, gate.waitMs);
   let res: Response;
   try {
     // The connection closed under the request before the reply (a pooled keep-alive

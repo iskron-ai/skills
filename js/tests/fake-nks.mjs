@@ -1206,6 +1206,10 @@ export async function startFakeNks(opts = {}) {
       const sid = req.headers["mcp-session-id"] ?? null;
       const bearer = (req.headers.authorization || "").replace(/^Bearer /, "");
       st.deletes.push({ sid, bearer, protocol: req.headers["mcp-protocol-version"] ?? null });
+      // DELETEs in flight and their peak (a probe resets it).
+      st.deleteOut = (st.deleteOut ?? 0) + 1;
+      st.deletePeak = Math.max(st.deletePeak ?? 0, st.deleteOut);
+      res.once("close", () => st.deleteOut--);
       if (st.deleteHangMs) await new Promise((r) => setTimeout(r, st.deleteHangMs));
       if (st.deleteStatus) {
         res.writeHead(st.deleteStatus);
