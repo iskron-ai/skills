@@ -1571,7 +1571,9 @@ for (const compact of [false, true])
       const text = data.text;
       // The parts ride along, so a giver with waiting counts of the case puts them in (#9654).
       assert.deepEqual(data.body?.shown, [0], JSON.stringify(data));
-      assert.ok(text.startsWith(`${data.body.head}\n\n`), text);
+      // No head of the bridge's own (#11359): the text is the server's frames, grouped by case.
+      assert.equal(data.body.head, "", JSON.stringify(data));
+      assert.match(text, /^№7 /, text);
       assert.match(text, /тебе 0/);
       assert.equal(text.includes("адресованных месту нет"), !compact, text);
       assert.equal(quiet(text), true, text);
@@ -2335,7 +2337,8 @@ test("hello with pending and a platform wake each open a backlog window: the fra
     "the queue is handed over in the order it was received, not the order it came",
   );
   assert.equal(burst.pending, 2);
-  assert.match(burst.text, /Побудка: кадров 2 \(ожидало в очереди: 2\)/);
+  // A whole batch has no head of the bridge's own (#11359): the server's frames only.
+  assert.doesNotMatch(burst.text, /Побудка/, burst.text);
   assert.match(burst.text, /первое в очереди[\s\S]*второе в очереди/);
   assert.doesNotMatch(
     burst.text,
@@ -2374,7 +2377,7 @@ test("hello with pending and a platform wake each open a backlog window: the fra
     ["wake"],
   );
   assert.ok(frames().includes("peer"), "the neighbour's word as its own notification");
-  assert.match(backlogs()[1].params.data.text, /Прямых слов 1 — отдельно, целиком/);
+  assert.match(backlogs()[1].params.data.text, /^платформа — побудка\n/, "the server's frame only");
   assert.match(backlogs()[1].params.data.text, /платформа — побудка/);
   // Outside a window a frame rides alone, as before.
   await new Promise((r) => setTimeout(r, 800));
@@ -6416,7 +6419,11 @@ for (const name of ["opencode-iskron", "pi-iskron"]) {
       burst.text,
       /Побудка: кадров 23 \(ожидало в очереди: 25\), здесь первые 20, не вошло 3/,
     );
-    assert.match(burst.text, /Прямых слов 2 — отдельно, целиком/);
+    assert.doesNotMatch(
+      burst.text,
+      /Прямых слов/,
+      "the direct words are their own, not the head's",
+    );
   });
 }
 
@@ -6439,7 +6446,7 @@ test("a wake with a record to the seat and one not, of one case: one count «з�
   });
   await waitFor(() => data().some((d) => d.kind === "backlog"), "the wake batch", 5000);
   const burst = data().find((d) => d.kind === "backlog");
-  assert.match(burst.text, /\n№7 «Стенд»: записей 2, тебе 1; /);
+  assert.match(burst.text, /^№7 «Стенд»: записей 2, тебе 1; /, burst.text);
   assert.doesNotMatch(burst.text, /тебе 0/, burst.text);
   assert.match(burst.text, /\[45\] слово от @aleksei:probe[^\n]*\nслово со стопкой defer/);
   assert.doesNotMatch(burst.text, /пробы зелёные/, burst.text);

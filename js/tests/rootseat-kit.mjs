@@ -146,6 +146,7 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     });
   const hooks = {};
   const prompts = []; // ctx.session.prompt и synthetic — слова плагина в сессию
+  const notes = []; // слова плагина с ответом тула (noted)
   const interrupts = [];
   const tools = { list: new Map(), transforms: [] };
   const replay = () => {
@@ -307,6 +308,16 @@ export async function rootPlugin({ fake, dir }, project, env = {}, known = []) {
     said: () => stderr.join(""),
     /** Слова плагина в сессию мимо промпта (prompt/synthetic). */
     wordsTo: (id) => prompts.filter((p) => p.sessionID === id).map((p) => p.text),
+    /** Свои слова плагина, приехавшие с ответом следующего тула сессии (replynotes.ts), все доныне. */
+    noted(id) {
+      const ev = { tool: "read", sessionID: id, agent: "build", messageID: `msg-${++seq}` };
+      Object.assign(ev, { id: `call-${++seq}`, input: {}, status: "completed" });
+      ev.result = { content: "" };
+      for (const cb of hooks["tool.execute.after"] ?? []) void cb(ev);
+      const text = String(ev.result.content ?? "");
+      if (text) notes.push({ id, text });
+      return notes.filter((n) => n.id === id).map((n) => n.text);
+    },
     /** Сессия есть в project; emit=false — её session.created ушло до загрузки экземпляра. */
     create(id, { parentID, emit: send = true, directory = project } = {}) {
       const s = { id, location: { directory }, ...(parentID ? { parentID } : {}) };

@@ -42,6 +42,8 @@ const door = () => {
   return { ...d, stale: new StaleBurst(has), roomBatch: new RoomBatch(has) };
 };
 const none = () => false;
+/** Graph events a batch text shows — the batch has no head of its own to count them (#11359). */
+const events = (text) => text.split("событие графа").length - 1;
 
 // Копия инбокса, ждущая в пачке лежалых, ещё не вошла текстом: копия дела идёт своим
 // путём и не считается, когда текст события уже помечен внёсшим его (граф @nks/nks-dev, узел #5842).
@@ -139,8 +141,8 @@ test("a wake-up batch does not count past its cut a case copy whose inbox copy i
   b.open(0, (ev) => (text = ev.text));
   for (const f of pastCut()) b.note(f);
   b.flushNow();
-  assert.match(text, /Побудка: кадров 20/, text);
-  assert.doesNotMatch(text, /не вошло/, text);
+  assert.equal(events(text), 20, text);
+  assert.doesNotMatch(text, /не вошло|Побудка/, text);
 });
 
 test("a stale burst does not count past its cut a case copy whose inbox copy it shows", async () => {
@@ -149,8 +151,8 @@ test("a stale burst does not count past its cut a case copy whose inbox copy it 
   for (const f of pastCut({ stale: true })) s.note(f, (ev) => (got = ev));
   await pause(1700);
   assert.ok(got, "the burst went out");
-  assert.match(got.text, /Лежалых кадров: 20/, got.text);
-  assert.doesNotMatch(got.text, /не вошло/, got.text);
+  assert.equal(events(got.text), 20, got.text);
+  assert.doesNotMatch(got.text, /не вошло|Лежалых/, got.text);
   assert.ok(got.marks?.includes("room-msg-60"), "the absorbed copy is still marked handed out");
 });
 
@@ -163,7 +165,8 @@ test("a wake-up batch with an inbox frame and its case copy says one frame", () 
   b.note(inbox());
   b.note(caseCopy());
   b.flushNow();
-  assert.match(text, /Побудка: кадров 1\./, text);
+  assert.equal(events(text), 1, text);
+  assert.doesNotMatch(text, /записей/, "the case copy is not counted beside its event");
 });
 
 test("a stale burst with an inbox frame and its case copy says one frame", async () => {
@@ -175,7 +178,8 @@ test("a stale burst with an inbox frame and its case copy says one frame", async
   ])
     s.note(f, (ev) => (got = ev));
   await pause(1700);
-  assert.match(got?.text ?? "", /Лежалых кадров: 1\./, got?.text);
+  assert.equal(events(got?.text ?? ""), 1, got?.text);
+  assert.doesNotMatch(got.text, /записей/, "the case copy is not counted beside its event");
   assert.ok(got.marks?.includes("room-msg-60"), "the absorbed copy is marked handed out");
 });
 
@@ -189,7 +193,7 @@ test("a wake-up batch shows twenty frames past the case copies it absorbs", () =
   for (let i = 0; i < 19; i++) b.note(otherQuestion(i));
   b.flushNow();
   assert.equal(ev.frames.length, 20);
-  assert.match(ev.text, /Побудка: кадров 20\./, ev.text);
+  assert.equal(events(ev.text), 20, ev.text);
   assert.doesNotMatch(ev.text, /не вошло/, ev.text);
 });
 
@@ -210,7 +214,7 @@ test("a wake-up batch of three tacts shows the last one, counts one and marks al
   b.open(0, (e) => (ev = e));
   for (const n of [1, 2, 3]) b.note(tact(n));
   b.flushNow();
-  assert.match(ev.text, /Побудка: кадров 1\./, ev.text);
+  assert.equal(ev.text.split("платформа — побудка").length - 1, 1, ev.text);
   assert.match(ev.text, /вахта 3/);
   assert.doesNotMatch(ev.text, /вахта [12]/, ev.text);
   for (const n of [1, 2, 3]) assert.ok(ev.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
@@ -221,7 +225,7 @@ test("a stale burst of three tacts shows the last one and marks all", async () =
   let got = null;
   for (const n of [1, 2, 3]) s.note(tact(n, { stale: true }), (ev) => (got = ev));
   await pause(1700);
-  assert.match(got?.text ?? "", /Лежалых кадров: 1\./, got?.text);
+  assert.equal((got?.text ?? "").split("платформа — побудка").length - 1, 1, got?.text);
   assert.doesNotMatch(got.text, /вахта [12]/, got.text);
   for (const n of [1, 2, 3]) assert.ok(got.marks.includes(`tact-${n}`), `tact-${n} unmarked`);
 });

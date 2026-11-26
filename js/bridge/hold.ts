@@ -11,7 +11,7 @@ import { isGraphInbox } from "../shared/graph-inbox.ts";
 import { bindAll } from "../shared/scope.ts";
 import { deliveryKeys, isLifeCheck, noteSeen } from "../shared/seen.ts";
 import { socketPathOf } from "../shared/standings.ts";
-import { markAddressed } from "./addressmark.ts";
+import { countedBefore } from "./caseseen.ts";
 import { harnessName, notifiedClient } from "./client.ts";
 import { stampOrigin } from "./complete.ts";
 import { CFG } from "./config.ts";
@@ -343,7 +343,7 @@ function deliverTo(d: Door, raw: string, frame: Frame | null, full: Frame | null
   const id = full?.type === "message" && typeof full.id === "string" ? full.id : "";
   // A copy of a graph event already offered or delivered (fanout.ts) goes to no one.
   if (!d.approveGraph(raw, full) || redundantCopy(full, d)) return;
-  if (full?.type === "message") markAddressed(full, seenPath, d.seen); // before repeat and stale checks
+  if (countedBefore(full, d)) return; // addressing marked; a record counted before goes to no one
   // A repeat of a delivered frame (same id, re-sent after the place returned) is broadcast to no one; clients mark delivered frames themselves, in the file.
   const again = isDelivered(id ? [id] : [], d.seen, seenPath);
   // A stale frame (accepted while unheard, e.g. the predecessor's mail after revoke, or a

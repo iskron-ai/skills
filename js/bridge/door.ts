@@ -136,8 +136,8 @@ export class Door {
   /** The bridge's memory plus the .seen file written by whoever delivered the frame. */
   readonly marks: Marks = (k) => marksOf(this.seen, this.seenPath)(k);
   /** Stale and wake batches are per seat (#5838). */
-  readonly stale = new StaleBurst(this.marks);
-  readonly backlog = new Backlog(this.marks);
+  readonly stale = new StaleBurst(this.marks, () => this.key);
+  readonly backlog = new Backlog(this.marks, () => this.key);
   /** Room batch for watchdogs, not notification clients (roomstack.ts, #5851). */
   readonly roomBatch = new RoomBatch(this.marks);
   /** Platform seat id (hello standings[].standing_id): a frame finds its door by it. */
