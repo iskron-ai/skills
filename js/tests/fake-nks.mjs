@@ -1476,6 +1476,10 @@ export async function startFakeNks(opts = {}) {
           );
         }
         if (a.action === "register") {
+          // Registers in flight, refused ones included, and their peak (a probe resets it).
+          st.registerOut = (st.registerOut ?? 0) + 1;
+          st.registerPeak = Math.max(st.registerPeak ?? 0, st.registerOut);
+          res.once("close", () => st.registerOut--);
           if (st.registerToolGate) await st.registerToolGate;
           if (st.registerToolDelayMs)
             await new Promise((r) => setTimeout(r, st.registerToolDelayMs));

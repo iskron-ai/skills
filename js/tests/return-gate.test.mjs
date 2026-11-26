@@ -90,6 +90,39 @@ test("the probe meets 503: the waiting do not knock and answer «not sent»; the
   );
 });
 
+// The reviewer's scene (№5817 [573]): each seat's first re-registration meets a seat-open race
+// (409 without a rule) and goes once more. The retry is a register of the same return: through
+// the gate, counted in flight — first tries and retries together never more than two at once,
+// however short the window.
+test("a re-registration's retry after a seat-open race goes through the gate too: at most two registers in flight, first tries and retries together", async () => {
+  await withMux(
+    async ({ fake, session }) => {
+      const all = await sessions(session, 5);
+      for (const [i, s] of all.entries())
+        assert.ok(!(await s.stand({ realm: REALM, karta: 931, name: `rr-${i}` })).result?.isError);
+      const before = fake.state.counts.register_standing;
+      await fake.control({
+        kill_session: true,
+        structured: true, // the race is told by the refusal's status, 409 without a rule
+        registerConcurrentNext: 5,
+        registerToolDelayMs: 200,
+      });
+      fake.state.registerPeak = 0;
+      await Promise.all(all.map(look));
+      assert.equal(fake.state.counts.register_concurrent, 5, "each seat's first try met the race");
+      assert.ok(
+        fake.state.registerPeak <= 2,
+        `at most two registers in flight: ${fake.state.registerPeak}`,
+      );
+      assert.ok(
+        fake.state.counts.register_standing - before >= 5,
+        `every seat registered again: ${fake.state.counts.register_standing - before}`,
+      );
+    },
+    { daemonEnv: { ISKRON_BRIDGE_RETURN_STEP_MS: "1", ISKRON_BRIDGE_RETURN_CAP_MS: "1" } },
+  );
+});
+
 test("re-registration of seats after the lost session goes the same way: one first, then at most two at once", async () => {
   await withMux(
     async ({ fake, session }) => {

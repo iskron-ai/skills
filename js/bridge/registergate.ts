@@ -2,7 +2,8 @@
 // register of a seat goes to the server only through this file. Every send — the first one,
 // the retry after a waited 429, the retry after a 409 opened concurrently (it lives here and
 // nowhere else, call.ts has none) — asks its move first: stopped since the move began (the stop
-// watch) or this seat ended since then (endedseats.ts) — nothing is sent. A path past the gate
+// watch) or this seat ended since then (endedseats.ts) — nothing is sent; a re-registration's
+// every send, its 409 retry too, goes through the machine's return gate. A path past the gate
 // is a defect; the probe register-gate.test.mjs fails on one: the literal of a register's
 // arguments or a 409 retry (racedOpening) outside this file.
 import { ID_PREFIX, tool } from "../delivery/index.ts";
@@ -61,7 +62,9 @@ async function returning<R>(
 /**
  * A seat-open race (409 without a rule, refusal.ts) is registered once more — a claim
  * (spawned_for) never: its refusal stands. The gate is asked again before the retry, and the
- * journal says what happened: the retry went, or it did not and why.
+ * journal says what happened: the retry went, or it did not and why. `again` — the retry as the
+ * first went: a re-registration's through the machine's return gate, counted in flight, the
+ * stop and the seat's end asked once more right before it leaves (returning).
  */
 async function onceMoreIfRaced<R>(
   first: R,
@@ -69,7 +72,7 @@ async function onceMoreIfRaced<R>(
   claim: boolean,
   move: RegisterMove,
   seat: MoveSeat,
-  send: () => Promise<R>,
+  again: () => Promise<R>,
 ): Promise<R> {
   if (claim || !raced(first)) return first;
   const shut = gateShut(move, seat);
@@ -78,7 +81,7 @@ async function onceMoreIfRaced<R>(
     return first;
   }
   log("register refused by a concurrent opening (409, no rule) — registering again once");
-  return send();
+  return again();
 }
 
 /**
@@ -95,8 +98,8 @@ export async function registerByCall(
   const send = () => callTool(tool("channel"), { ...args, action: "register" });
   const claim = !!(args.spawned_for || launchBasis(args)); // callTool adds the same basis
   const raced = (a: Answer): boolean => a.isError && racedOpening(a.refusal);
-  const first = await returning(move, seat, send, (text): Answer => ({ isError: true, text }));
-  return onceMoreIfRaced(first, raced, claim, move, seat, send);
+  const gated = () => returning(move, seat, send, (text): Answer => ({ isError: true, text }));
+  return onceMoreIfRaced(await gated(), raced, claim, move, seat, gated);
 }
 
 /**
@@ -112,11 +115,12 @@ export async function registerRaw(
 ): Promise<JsonRpcMessage | null> {
   if (gateShut(move, seat) || claimRefusal()) return null;
   const send = () => postRegister(place, freshSkills);
-  const first = await returning(move, seat, send, () => null);
+  const gated = () => returning(move, seat, send, () => null);
+  const first = await gated();
   const claim = !!registeredBasis(place ?? {}).spawned_for; // remembered by the send itself
   const raced = (m: JsonRpcMessage | null): boolean =>
     !!m?.result?.isError && racedOpening(refusalOf(m));
-  return onceMoreIfRaced(first, raced, claim, move, seat, send);
+  return onceMoreIfRaced(first, raced, claim, move, seat, gated);
 }
 
 async function postRegister(
