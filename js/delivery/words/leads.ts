@@ -26,6 +26,7 @@ export interface LeadWords {
   /** why — ответ платформы на revoke запустившего. */
   unreleased: (who: string, why: string) => string;
   /** Отложенный конец: токен сокета ребёнка уже не текущий — имя держит другой, его место не тронуто. */
+  /** Также 200, чей ended[] не называет место ребёнка: его держит другой живой канал (#7621). */
   heldByOther: (who: string) => string;
   /** Отложенный конец: токена сокета ребёнка нет (запись прежней сборки) — место уйдёт по сроку. */
   noStopToken: (who: string) => string;
@@ -110,7 +111,7 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `Искрон: субагент ${who} кончен и его мост погашен, но место НЕ снято — платформа ответила: ${why}. ` +
       `Оно висит на доске: повтори iskron_channel(action="revoke", standing="${who}", karta) или скажи человеку.`,
     heldByOther: (who) =>
-      `Искрон: субагент ${who} кончен и его мост погашен; его места на платформе уже нет — имя держит другой держатель, его место не тронуто.`,
+      `Искрон: субагент ${who} кончен и его мост погашен; место держит другой держатель — оставлено ему, не снято.`,
     noStopToken: (who) =>
       `Искрон: субагент ${who} кончен и его мост погашен; токен его сокета мосту не известен (запись прежней сборки) — место не снимается по имени и уйдёт по сроку канала.`,
     failed: (who, why) =>
@@ -208,7 +209,7 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `Iskron: subagent ${who} has ended and its bridge is down, but its seat is NOT revoked — the platform answered: ${why}. ` +
       `It hangs on the board: repeat iskron_channel(action="revoke", standing="${who}", karta) or tell the human.`,
     heldByOther: (who) =>
-      `Iskron: subagent ${who} has ended and its bridge is down; its seat is gone from the platform — another holder holds the name now, and its seat is left alone.`,
+      `Iskron: subagent ${who} has ended and its bridge is down; another holder has the seat — left alone, not removed.`,
     noStopToken: (who) =>
       `Iskron: subagent ${who} has ended and its bridge is down; its socket's token is not known to the bridge (an older build's record) — the seat is not revoked by name and lapses by the channel's term.`,
     failed: (who, why) =>

@@ -188,7 +188,12 @@ for (const [n, [what, answer, word]] of [
   [
     "held by another now (the token not current) and left alone",
     "moved 404 ws_token_not_current",
-    /имя держит другой держатель, его место не тронуто/,
+    /место держит другой держатель — оставлено ему, не снято/,
+  ],
+  [
+    "held by another live channel (a 200 whose ended[] names not the seat) and left alone",
+    "moved 200 ended[] names not the seat",
+    /место держит другой держатель — оставлено ему, не снято/,
   ],
   [
     "NOT taken off — the loud word carries the reason",
@@ -240,6 +245,7 @@ for (const [n, [what, answer, word]] of [
       assert.match(seat.text, new RegExp(`субагент ${SUB} `));
       assert.equal(seat.sessionID, "root");
       assert.equal(seat.resume, false, "the seat's word does not wake the parent");
+      if (word !== OFF) assert.doesNotMatch(seat.text, OFF, "never «removed» when not removed");
       assert.ok(!second.said().includes("снял ли он место"), "the seat's outcome is known");
       assert.ok(stopMarks().includes(mark), "the end record stays");
       await assert.rejects(

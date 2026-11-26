@@ -67,14 +67,8 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
   const url = trim(socket);
   const statusUrl = status ? trim(status) : deriveStatusUrl(url);
   // Answered after the run's end: nobody is left to listen, no socket opens (runend.ts).
-  const late =
-    !!state.standing &&
-    lateSeat(
-      state.standing,
-      url,
-      statusUrl,
-      seatField(structuredOf(reply), a.action)?.seat_id ?? null,
-    );
+  const seatId = seatField(structuredOf(reply), a.action)?.seat_id ?? null;
+  const late = !!state.standing && lateSeat(state.standing, url, statusUrl, seatId);
   if (!late) {
     // A connect onto another place than the held one is a stand on it: its era is now (case №954).
     // The same place again (a pause's re-arm, a repeat) keeps its era; a return does not come here.
@@ -82,8 +76,8 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     const at = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
     if (at && at !== H.currentKey) noteStoodAt(at, Date.now());
     // A satellite's deferred end stops by this socket's token; the hold's event names the
-    // record's incarnation, so it is written first (stoprecord.ts, #7621).
-    if (CFG.satellite && at) writeStopRecord(at, url);
+    // record's incarnation, so it is written first (stoprecord.ts, #7621); the seat's id with it.
+    if (CFG.satellite && at) writeStopRecord(at, url, seatId);
     holdStanding(url, statusUrl);
   }
   const content = reply.result?.content;

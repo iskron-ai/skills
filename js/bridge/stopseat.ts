@@ -16,8 +16,9 @@ import { type JsonRpcMessage } from "./types.ts";
 
 /**
  * The plugin's `stopseat {key, incarnation}`: the child's seat stopped by its socket's token.
- * The answer — stopped (with the ids really ended), moved (the record is of another incarnation,
- * or the token is not current: another holder has the seat now — left alone), absent (an api
+ * The answer — stopped (`ended[]` names the child's seat), moved (the record is of another
+ * incarnation, the token is not current, or a 200 whose `ended[]` does not name the seat: another
+ * holder has it — left alone), absent (an api
  * without the stop), unknown (with why), or none (no record, or no incarnation asked).
  */
 export function localStopSeat(msg: JsonRpcMessage): Promise<JsonRpcMessage> | null {
@@ -36,8 +37,11 @@ export function localStopSeat(msg: JsonRpcMessage): Promise<JsonRpcMessage> | nu
     log(`stopseat ${key}: the record is of a newer holder — left alone`);
     return Promise.resolve(answer({ how: "moved", why: "another incarnation", ended: [] }));
   }
-  return stopBySocket(rec.url).then(({ how, why, ended }) => {
-    log(`stopseat ${key}: ${how} (${why})`);
+  return stopBySocket(rec.url).then(({ how: said, why, ended }) => {
+    // The authority is `ended[]` alone (#7621): a 200 that does not name the child's seat left
+    // it to another live channel — the token was ours and is dead, the seat is not ours to end.
+    const how = said === "stopped" && !(rec.seat && ended.includes(rec.seat)) ? "moved" : said;
+    log(`stopseat ${key}: ${how} (${why})${how !== said ? " — ended[] names not its seat" : ""}`);
     if (how === "stopped" || how === "moved") dropStopRecord(key, incarnation);
     return answer({ how, why, ended });
   });

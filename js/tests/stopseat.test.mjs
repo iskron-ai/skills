@@ -93,14 +93,36 @@ test("the child's name re-taken by another holder before the deferred end: the o
 test("the plain deferred end: the child's own socket's token ends its seat, its record goes", async () => {
   await withFake(async ({ fake, dir, bridge }) => {
     const { path, rec } = await pausedSatellite(fake, dir, bridge);
+    const { seat } = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(typeof seat, "string", "the record names the seat's id");
     const launcher = await bridge();
     const got = await launcher.request("iskron/stopseat", {
       key: rec.key,
       incarnation: rec.incarnation,
     });
     assert.equal(got.result?.how, "stopped", JSON.stringify(got));
+    assert.ok(got.result.ended.includes(seat), "ended[] names the child's seat");
     assert.ok(closed(fake, NAME), "the child's seat is ended");
     assert.ok(!existsSync(path), "the record of the ended incarnation goes");
+  });
+});
+
+// #7621: the authority is `ended[]` alone. A 200 that does not name the child's seat (another
+// live channel holds it) is no removal: moved — the record goes (its socket was ours and is
+// dead), the seat stays its holder's, and nobody is told it was removed.
+test("a 200 whose ended[] does not name the child's seat: moved, the seat stays, the record goes", async () => {
+  await withFake(async ({ fake, dir, bridge }) => {
+    const { path, rec } = await pausedSatellite(fake, dir, bridge);
+    fake.state.stopKeeps.add(`931:${NAME}`); // another live channel holds the seat
+    const launcher = await bridge();
+    const got = await launcher.request("iskron/stopseat", {
+      key: rec.key,
+      incarnation: rec.incarnation,
+    });
+    assert.equal(got.result?.how, "moved", JSON.stringify(got));
+    assert.deepEqual(got.result.ended, [], "the 200 ended nothing");
+    assert.ok(!closed(fake, NAME), "the seat stays its holder's");
+    assert.ok(!existsSync(path), "the record of the dead socket goes");
   });
 });
 
