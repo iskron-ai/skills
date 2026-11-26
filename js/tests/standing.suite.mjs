@@ -1767,7 +1767,9 @@ test("a seat with no local listener: past the old window the bridge neither leav
     "the place is kept: the key file stays",
   );
   assert.ok(
-    !bridge.notifications.some((n) => ["dead", "evicted", "released"].includes(n.params?.data?.kind)),
+    !bridge.notifications.some((n) =>
+      ["dead", "evicted", "released"].includes(n.params?.data?.kind),
+    ),
     "no word of a dead token, an eviction or a release",
   );
   const left = await bridge.call("tools/call", 5, {
