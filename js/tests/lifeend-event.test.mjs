@@ -131,8 +131,13 @@ test("a lead subagent's end goes as one end event by its own token, subagent_end
       await waitFor("the satellite listens", () =>
         [...fake.state.ws].some((w) => fake.state.wsNames.get(w) === name),
       ).catch(fail(dir));
+      const id = [...fake.state.channels.values()]
+        .flatMap((c) => [...c.places.values()])
+        .find((p) => p.name === name)?.standing_id;
       const r = await s.request("iskron/end", { event: "subagent_ended" });
       assert.equal(r.result?.ended, true, JSON.stringify(r));
+      // The plugin names the child by them in the parent's child_ended (childended.ts).
+      assert.deepEqual(r.result.ids, [id], `the end answers its seat's id: ${JSON.stringify(r)}`);
       assert.deepEqual(fake.state.endEvents, [{ event: "subagent_ended" }], journalOf(dir));
       assert.equal(revokesOf(fake, name), 0, `no revoke by name:\n${journalOf(dir)}`);
       assert.ok(closed(fake, name), "the satellite's seat is off the board");
