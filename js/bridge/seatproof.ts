@@ -2,6 +2,7 @@
 // Consumers must not infer that capability by reading a record an older daemon may ignore.
 import { readHoldRecord, sessionOfBridge } from "./holdrecord.ts";
 import { automaticSeat } from "./seatorigin.ts";
+import { incarnationOf } from "./stoprecord.ts";
 
 export function seatProof(key: string | null): {
   place?: { realm: string; karta: string; name: string };
@@ -22,5 +23,7 @@ export const heldProof = (key: string, place?: { realm: string; karta: string; n
   key,
   ...(place ? { place } : {}),
   ...seatProof(key),
+  // A satellite's: the incarnation its deferred stop must name (stoprecord.ts, #7621).
+  ...(incarnationOf(key) ? { incarnation: incarnationOf(key) } : {}),
   automatic: automaticSeat(),
 });

@@ -160,6 +160,7 @@ export function createSeatLife(d: Doors) {
       kind: string | null,
       data?: {
         key?: unknown;
+        incarnation?: unknown;
         place?: Partial<Place>;
         provisional?: unknown;
         automatic?: unknown;
@@ -172,6 +173,8 @@ export function createSeatLife(d: Doors) {
         slot.key = data.key;
       if (kind === "held") {
         slot.place = heldPlace(data) ?? slot.place;
+        // A satellite's hold incarnation: a return onto the same socket names none and keeps it.
+        if (typeof data?.incarnation === "string") slot.incarnation = data.incarnation;
         slot.provisional = data?.provisional === true;
         if (data?.automatic === false && slot.session) {
           epochs.set(slot.session, (epochs.get(slot.session) ?? 0) + 1);

@@ -15,7 +15,7 @@
 import { refusalOf, seatAlreadyOff } from "../bridge/refusal.ts";
 import type { JsonRpcMessage } from "../bridge/types.ts";
 import { method, PRODUCT } from "../delivery/index.ts";
-import type { Released } from "./leaddoors.ts";
+import type { Released, StopName } from "./leaddoors.ts";
 import { W } from "./leadwords.ts";
 import { type Place } from "./satellite.ts";
 import type { Slot } from "./slot.ts";
@@ -145,12 +145,13 @@ export function launcherRevokes(d: Doors) {
       place: Place,
       taken: string,
       still: () => boolean,
-      key: string | null,
+      stop: StopName | null,
     ): Promise<string | null> {
       // By the child's own socket's token (bridge stopseat.ts, #7621): it ends only seats that
-      // socket still holds — a holder who re-took the name meanwhile keeps its seat. No token
-      // known (an older marker) — no revoke by name: the seat lapses by its term.
-      if (!key) {
+      // socket still holds, and only of the child's own incarnation — a holder who re-took the
+      // name or the seat key meanwhile keeps its seat. No key or incarnation known (an older
+      // marker) — no revoke by name: the seat lapses by its term.
+      if (!stop) {
         process.stderr.write(`[${PRODUCT}] ${W().noStopToken(place.name)}\n`);
         return W().noStopToken(place.name);
       }
@@ -160,7 +161,7 @@ export function launcherRevokes(d: Doors) {
         if (!still()) return null;
         slot.busy++;
         const got = (await slot.bridge
-          .request(method("stopseat"), { key }, { service: true, timeoutMs: STOP_MS })
+          .request(method("stopseat"), { ...stop }, { service: true, timeoutMs: STOP_MS })
           .finally(() => slot.busy--)) as { how?: string; why?: string } | null;
         if (got?.how === "stopped") return taken;
         if (got?.how === "moved") return W().heldByOther(place.name);

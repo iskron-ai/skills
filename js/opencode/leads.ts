@@ -19,7 +19,14 @@ import { sameSeat } from "../shared/seat.ts";
 import { holdFilePathOf } from "../shared/standings.ts";
 import { authDir } from "./bridge-io.ts";
 import { createCascade } from "./cascade.ts";
-import type { LeadDoors, Leads, Returned, RunEnd } from "./leaddoors.ts";
+import {
+  type LeadDoors,
+  type Leads,
+  type Returned,
+  type RunEnd,
+  type StopName,
+  stopNameOf,
+} from "./leaddoors.ts";
 import type { Up } from "./leadframes.ts";
 import { endWord, unrevokedWord, W } from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
@@ -35,7 +42,7 @@ interface Lead {
   leaving?: string; // leaving said mid-turn — the end waits for the turn's end and its text
   last?: string;
   /** No bridge of its own ends its run (a marker's return, children.ts): its satellite seat is taken off by its launcher's bridge. of — that seat, for the refusal. */
-  unbridged?: { of: Place | null; key: string | null };
+  unbridged?: { of: Place | null; stop: StopName | null };
 }
 
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
@@ -71,15 +78,15 @@ export function createLeads(d: LeadDoors): Leads {
 
   /**
    * The satellite seat of a child that ended with no bridge of its own (a marker's return):
-   * stopped by its launcher's bridge by the child's own socket's token (`key` — the child's seat
-   * key, release.ts); the word to the parent does not wake it — the end woke it, or spoke before
-   * the reload. Stood again meanwhile — the seat is its own now: nothing is stopped, nothing is
-   * said. No seat named by the record — nothing can be stopped.
+   * stopped by its launcher's bridge by the child's own socket's token (`stop` — the child's seat
+   * key and hold incarnation, release.ts); the word to the parent does not wake it — the end woke
+   * it, or spoke before the reload. Stood again meanwhile — the seat is its own now: nothing is
+   * stopped, nothing is said. No seat named by the record — nothing can be stopped.
    */
   async function offSeat(
     child: string,
     place: Place | null,
-    key: string | null,
+    stop: StopName | null,
     parent?: string | null | Promise<string | null>,
   ): Promise<void> {
     if (!over.has(child)) return;
@@ -88,7 +95,7 @@ export function createLeads(d: LeadDoors): Leads {
     const lifts = over.lifts(child);
     const still = () => over.has(child) && over.lifts(child) === lifts;
     const text = place
-      ? await d.off(child, place, W().release(who), still, key)
+      ? await d.off(child, place, W().release(who), still, stop)
       : W().unrevokedUnknown(who);
     if (text === null) return;
     const p = await (parent ?? parentOf(child));
@@ -140,7 +147,7 @@ export function createLeads(d: LeadDoors): Leads {
       await d
         .end(child, l.unbridged.of)
         .catch((e: Error) => d.say(W().notDown(who(l, child), e.message), "warning"));
-      await offSeat(child, l.place ?? null, l.unbridged.key, parent);
+      await offSeat(child, l.place ?? null, l.unbridged.stop, parent);
       return null;
     }
     // The bridge ends its run after the word: after it, the word landed later than OpenCode's
@@ -292,7 +299,7 @@ export function createLeads(d: LeadDoors): Leads {
       // Ended while the plugin was down — the seal stays, the marker raises no lead (#1237):
       // no bridge comes up for it. Its satellite seat is still taken off — by its launcher's
       // bridge, with a word that does not wake: the errand's end has already spoken.
-      if (over.has(child)) return void offSeat(child, seatOf(was), was.key ?? null);
+      if (over.has(child)) return void offSeat(child, seatOf(was), stopNameOf(was));
       const l = stood(child, false);
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
@@ -303,7 +310,7 @@ export function createLeads(d: LeadDoors): Leads {
       // that never arrives anywhere stays an open risk, not this path).
       if (was.leaving && !l.running) {
         // Its end comes with no bridge of its own: the launcher's bridge takes its seat off.
-        l.unbridged = { of: was.of ?? null, key: was.key ?? null };
+        l.unbridged = { of: was.of ?? null, stop: stopNameOf(was) };
         void finish(child, was.leaving);
       }
     },

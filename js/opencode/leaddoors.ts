@@ -85,6 +85,18 @@ export interface Snapshot {
   leaving?: string;
 }
 
+/** What names a child's seat to its deferred stop: the seat key and the hold's incarnation (#7621). */
+export interface StopName {
+  key: string;
+  incarnation: string;
+}
+
+/** Both known — else no stop: an older marker's seat lapses by its term. */
+export const stopNameOf = (r: {
+  key?: string | null;
+  incarnation?: string | null;
+}): StopName | null => (r.key && r.incarnation ? { key: r.key, incarnation: r.incarnation } : null);
+
 /** What a loss marker record of a child says about its lead. */
 export type Returned = Partial<Snapshot> & {
   name?: string;
@@ -92,6 +104,8 @@ export type Returned = Partial<Snapshot> & {
   /** The child's own seat as held; an older marker without it — its hold record by `key`. */
   seat?: Place | null;
   key?: string | null;
+  /** The child's hold incarnation: the deferred stop names it (bridge stoprecord.ts). */
+  incarnation?: string | null;
 };
 
 export interface LeadDoors {
@@ -114,18 +128,18 @@ export interface LeadDoors {
   end(child: string, of?: Place | null): Promise<void>;
   /**
    * A child without a bridge of its own (a marker's return ends it, children.ts): its satellite
-   * seat is stopped by its launcher's bridge by the child's own socket's token (`key` — the
-   * child's seat key the stop record lies under; none — nothing is stopped, the seat lapses by
-   * its term). The word — `taken` when the stop ended the seat; the name held by another — left
-   * alone; any other outcome says it is not off and why. Never a throw. `still` — asked right
-   * before the stop; false (stood again) — nothing, null.
+   * seat is stopped by its launcher's bridge by the child's own socket's token (`stop` — the
+   * child's seat key the stop record lies under and its hold's incarnation; none — nothing is
+   * stopped, the seat lapses by its term). The word — `taken` when the stop ended the seat; the
+   * name held by another — left alone; any other outcome says it is not off and why. Never a
+   * throw. `still` — asked right before the stop; false (stood again) — nothing, null.
    */
   off(
     child: string,
     place: Place,
     taken: string,
     still: () => boolean,
-    key: string | null,
+    stop: StopName | null,
   ): Promise<string | null>;
   /** The child's seat name when it is not its satellite; satellite or no seat — null. */
   ownPlace(child: string): string | null;

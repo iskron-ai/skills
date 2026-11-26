@@ -55,7 +55,14 @@ export function createChildren(d: ChildDoors) {
     const have = d.slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
     const was =
-      have ?? (back && { satelliteOf: back.of, dir: back.dir, key: back.key, stood: true });
+      have ??
+      (back && {
+        satelliteOf: back.of,
+        dir: back.dir,
+        key: back.key,
+        incarnation: back.incarnation,
+        stood: true,
+      });
     // The root holds a seat — the child's bridge is its satellite (satellite.ts).
     const of = was?.satelliteOf ?? parent?.place ?? null;
     const own = d.spawn(of ? ["--satellite"] : []);
@@ -64,6 +71,7 @@ export function createChildren(d: ChildDoors) {
     own.child = true;
     own.dir = was?.dir ?? null;
     own.key = was?.key ?? null;
+    own.incarnation = was?.incarnation ?? null;
     d.slots.set(sessionID, own);
     // A dead child bridge's replacement returns its seat at once by key: the child's writes in that window would go authorless.
     if (was?.stood && own.key)

@@ -11,6 +11,8 @@ export interface LostEntry {
   session: string;
   dir: string | null;
   key: string | null;
+  /** A child's hold incarnation: its deferred stop names it — an older marker without it, no stop (#7621). */
+  incarnation?: string | null;
   child?: boolean;
   /** A record of the session's move to another folder (moves.ts), not of an instance stop. */
   moved?: boolean;
@@ -44,6 +46,7 @@ export const entryOf = (e: LostEntry): LostEntry => ({
         ...(e.noted ? { noted: true } : {}),
         ...(e.name ? { name: e.name } : {}),
         ...(e.seat ? { seat: e.seat } : {}),
+        ...(e.incarnation ? { incarnation: e.incarnation } : {}),
         ...(e.last ? { last: e.last } : {}),
         ...(e.leaving ? { leaving: e.leaving } : {}),
       }

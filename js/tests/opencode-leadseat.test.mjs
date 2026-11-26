@@ -64,7 +64,11 @@ function oneRevoke(went, roots) {
   const all = went.filter((c) => c.name === "iskron/stopseat");
   assert.equal(all.length, 1, `one stop by the launcher's bridge: ${JSON.stringify(all)}`);
   const [call] = all;
-  assert.deepEqual(call.arguments, { key: "k-sub" }, "the child's own seat key");
+  assert.deepEqual(
+    call.arguments,
+    { key: "k-sub", incarnation: "inc-sub" },
+    "the child's own seat key and hold incarnation",
+  );
   assert.match(String(call.id), /^iskron-service-/, "the plugin's own move, not agent work");
   assert.ok(roots.includes(call.pid), "spoken by a bridge raised for the root, not a satellite");
   return call;
@@ -337,12 +341,21 @@ async function endedChild(name, own = SUB_PLACE, marker = null) {
   return { second, mark, went: () => callsIn(calls).slice(sent) };
 }
 
-// An older build's marker names no seat key: the stop record cannot be found — no stop, and no
-// revoke by name either: the seat lapses by its term, and the parent is told so.
-test("an older marker without the child's key: no stop and no revoke by name — the seat lapses by its term", async () => {
-  const { second, mark, went } = await endedChild("seatoff-nokey", SUB_PLACE, (m) => ({
+// An older build's marker names no seat key, or no hold incarnation: the stop cannot name the
+// child's own record — no stop, and no revoke by name either: the seat lapses by its term, and
+// the parent is told so.
+for (const [what, drop] of [
+  ["key", { key: null }],
+  ["incarnation", { incarnation: undefined }],
+])
+  test(`an older marker without the child's ${what}: no stop and no revoke by name — the seat lapses by its term`, async () => {
+    await lapses(`seatoff-no-${what}`, drop);
+  });
+
+async function lapses(name, drop) {
+  const { second, mark, went } = await endedChild(name, SUB_PLACE, (m) => ({
     ...m,
-    entries: m.entries.map((e) => (e.child ? { ...e, key: null } : e)),
+    entries: m.entries.map((e) => (e.child ? { ...e, ...drop } : e)),
   }));
   try {
     await until(
@@ -360,7 +373,7 @@ test("an older marker without the child's key: no stop and no revoke by name —
     await second.stop();
     rmSync(mark, { force: true });
   }
-});
+}
 
 // The child stood on another role than its parent (#1172 under a root on #931): its seat goes by
 // its own socket's token, named by its own seat key — no revoke under the launcher's role.
@@ -394,7 +407,7 @@ test("a child on another role than its parent: its own seat is stopped by its ke
     const went = callsIn(calls).slice(sent);
     assert.deepEqual(
       went.filter((c) => c.name === "iskron/stopseat").map((c) => c.arguments),
-      [{ key: "k-sub" }],
+      [{ key: "k-sub", incarnation: "inc-sub" }],
       "the child's own seat, by its key",
     );
     assert.deepEqual(

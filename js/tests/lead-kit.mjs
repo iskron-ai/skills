@@ -106,7 +106,10 @@ export async function leadChild(name, env = {}, sessions, childPlace = SUB_PLACE
     await until(() => rec.said().includes("мост держит место k-root"), "the root's held word");
     await rec.call("iskron_stand", { realm: "nks-dev" }, "child");
     const childPid = pidsOf(b.log)[1];
-    appendFileSync(`${b.events}.${childPid}`, event("held", { key: "k-sub", place: childPlace }));
+    appendFileSync(
+      `${b.events}.${childPid}`,
+      event("held", { key: "k-sub", incarnation: "inc-sub", place: childPlace }),
+    );
     await until(() => rec.said().includes("мост держит место k-sub"), "the child's held word");
     return { b, rec, rootPid, childPid };
   } catch (e) {

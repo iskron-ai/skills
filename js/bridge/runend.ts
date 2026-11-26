@@ -27,6 +27,7 @@ import { handoverPauseKey, suspended } from "./pauserecord.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
+import { dropOwnStopRecord } from "./stoprecord.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
@@ -113,8 +114,10 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     let end: RunEnd = paused
       ? { failed: [], revoked: [], probably: [] }
       : await revokeSatellitePlaces(places);
-    if (CFG.satellite && !paused)
+    if (CFG.satellite && !paused) {
       releaseSatelliteClaims(end.failed.length > 0 || end.probably.length > 0);
+      dropOwnStopRecord(); // ended by itself: no deferred stop is left to make (stoprecord.ts)
+    }
     const status = addr?.url ?? null;
     // The end awaited its exits: a seat another bridge of this home took meanwhile is not ended
     // and its record not touched — the death window's guard (notHeldAgain); one of another

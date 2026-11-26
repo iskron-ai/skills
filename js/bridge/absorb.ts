@@ -24,7 +24,7 @@ import { dropExtra, extraIn, extraPlaces } from "./places.ts";
 import { otherRealm } from "./realms.ts";
 import { lateSeat } from "./runend.ts";
 import { rememberedPlace, replyText } from "./standing.ts";
-import { writeStopRecord } from "./stopseat.ts";
+import { writeStopRecord } from "./stoprecord.ts";
 import { log } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -79,11 +79,12 @@ export function absorbChannelReply(msg: JsonRpcMessage, reply: JsonRpcMessage): 
     // A connect onto another place than the held one is a stand on it: its era is now (case №954).
     // The same place again (a pause's re-arm, a repeat) keeps its era; a return does not come here.
     const s = state.standing;
-    if (s && keyOf(s.realm, s.karta, s.name ?? "") !== H.currentKey)
-      noteStoodAt(keyOf(s.realm, s.karta, s.name ?? ""), Date.now());
-    const key = holdStanding(url, statusUrl);
-    // A satellite's deferred end stops by this socket's token (stopseat.ts, #7621).
-    if (CFG.satellite) writeStopRecord(key, url);
+    const at = s ? keyOf(s.realm, s.karta, s.name ?? "") : null;
+    if (at && at !== H.currentKey) noteStoodAt(at, Date.now());
+    // A satellite's deferred end stops by this socket's token; the hold's event names the
+    // record's incarnation, so it is written first (stoprecord.ts, #7621).
+    if (CFG.satellite && at) writeStopRecord(at, url);
+    holdStanding(url, statusUrl);
   }
   const content = reply.result?.content;
   if (Array.isArray(content)) {
