@@ -9,7 +9,6 @@ import { appendFileSync, readFileSync, renameSync, writeFileSync } from "node:fs
 import { addressedToMine } from "./addressed.ts";
 import { type Frame } from "./channel.ts";
 import { graphFolds, isGraphInbox } from "./graph-inbox.ts";
-import { numberedKey } from "./numbering.ts";
 
 /**
  * How many marks the memory keeps: a day of a seat's traffic plus the whole queue the
@@ -49,21 +48,18 @@ export function eventKeyOf(frame: Frame | null | undefined): string {
 }
 
 /**
- * Case record mark: `rec:` with graph, case and record number — "" for a frame outside a
- * case, a server card repeat (repeat: true stays intentional) and a two-phase body. Copies
- * of one record arrive with different frame ids (a role's fan-out, the server's stale
- * replay); a case room frame rarely carries event_id, so the record is its identity.
+ * Case record mark `rec:<room.id>|<entry_id>` — the record's contract key on the wire, the same
+ * on every copy of one record (graph @nks/nks-dev, node #11359). "" for a frame outside a case
+ * or without room.id, a frame with event_id (its event is its key), a server card repeat
+ * (repeat: true stays intentional) and a two-phase body.
  */
 export function recordKeyOf(frame: Frame | null | undefined): string {
-  if (!frame || frame.type !== "message" || frame.repeat === true) return "";
+  if (!frame || frame.type !== "message" || frame.repeat === true || eventKeyOf(frame)) return "";
   const f = frame as Record<string, unknown>;
-  const room = objOf(f.room);
+  const room = idOf(objOf(f.room).id);
   const line = objOf(f.line);
-  const no = idOf(room.seq) || idOf(room.id);
   const entry = idOf(f.entry_id ?? line.entry_id);
-  if (!no || !entry || line.kind === "body") return "";
-  const realm = idOf(room.realm) || idOf(f.realm);
-  return `rec:${numberedKey(frame, `${realm}|${no}|${entry}`)}`;
+  return room && entry && line.kind !== "body" ? `rec:${room}|${entry}` : "";
 }
 
 const objOf = (v: unknown): Record<string, unknown> =>
