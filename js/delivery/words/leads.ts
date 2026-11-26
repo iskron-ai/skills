@@ -37,6 +37,8 @@ export interface LeadWords {
   endUnwritten: (sessionID: string, message: string) => string;
   endUnlifted: (sessionID: string, message: string) => string;
   notDown: (who: string, message: string) => string;
+  /** The server's child_ended told the parent: the plugin's own end word is not sent. */
+  serverSaidEnd: (who: string) => string;
   leftSeat: () => string;
   leftCases: () => string;
   leftCase: (room: string) => string;
@@ -124,6 +126,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
     endUnlifted: (sessionID, message) =>
       `Искрон: субагент сессии ${sessionID} встал снова, но запись его конца на диске не снята (${message}) — после перезагрузки плагина он снова будет считаться кончившимся`,
     notDown: (who, message) => `Искрон: мост субагента ${who} не погашен после итога — ${message}`,
+    serverSaidEnd: (who) =>
+      `Искрон: о конце субагента ${who} родителю сказал сервер (child_ended) — своё слово плагин не шлёт`,
     leftSeat: () => "ушёл с места по исходу",
     leftCases: () => "ушёл из дел по исходу",
     leftCase: (room) => `вышел из дела №${room} по исходу`,
@@ -221,6 +225,8 @@ export const LEAD: Readonly<Record<Lang, LeadWords>> = {
       `Iskron: the subagent of session ${sessionID} stood again, but the record of its end was not removed from disk (${message}) — after a plugin reload it will count as ended again`,
     notDown: (who, message) =>
       `Iskron: the bridge of subagent ${who} was not put down after the outcome — ${message}`,
+    serverSaidEnd: (who) =>
+      `Iskron: the server told the parent of subagent ${who}'s end (child_ended) — the plugin sends no word of its own`,
     leftSeat: () => "left its seat by the outcome",
     leftCases: () => "left its cases by the outcome",
     leftCase: (room) => `left case №${room} by the outcome`,

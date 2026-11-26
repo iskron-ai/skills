@@ -10897,3 +10897,87 @@ test("the bridge the plugin raises speaks the session language: accept-language 
     }
   }
 });
+
+// child_ended (graph @nks/nks-dev, nodes #11362, #11359): the parent of an ended child gets the
+// server's platform notice — as any frame, steering — and the plugin's own «КОНЧЕН» is then not
+// also sent. The rule for a server without it: until the first notice is seen in the process the
+// end goes as before (word first, then the run's end, №147), and a notice of an end already told
+// is not delivered; once seen, the run ends first and the plugin's word goes only if no notice
+// came within the window. The process-wide mark is reset around each probe.
+const KNOWN = "__iskronChildEndedKnown";
+const childEnded = (standing) => ({
+  type: "notice",
+  notice: "child_ended",
+  standing_id: "sid-sub-1",
+  standing,
+  by: "self",
+  reason: "session_closed",
+  body: `child_ended: ${standing} (session_closed)`,
+});
+const noticeTo = (b, pid, standing) => {
+  const f = childEnded(standing);
+  appendFileSync(`${b.events}.${pid}`, event("frame", { frame: f, raw: JSON.stringify(f) }));
+};
+const rootTurns = (rec) =>
+  rec.prompts.filter((p) => p.sessionID === "root").length +
+  rec.synthetics.filter((s) => s.sessionID === "root").length;
+
+test("child_ended on a server first seen sending it: the plugin's word went first, the notice of that end is not a second turn", async () => {
+  delete globalThis[KNOWN];
+  const { b, rec, rootPid } = await leadChild("ce-first");
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await until(() => ends(rec).length === 1, "the plugin's word in the parent, as before");
+    noticeTo(b, rootPid, `@tester:${SUB}`);
+    await until(() => /child_ended сервера о @tester:/.test(rec.said()), "the notice held back");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+    assert.ok(globalThis[KNOWN], "the server is now known to send the notice");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+test("child_ended on a server known to send it: one parent turn — the server's notice only, steering", async () => {
+  globalThis[KNOWN] = true;
+  const { b, rec, rootPid, calls } = await leadChild("ce-known", {
+    ISKRON_OPENCODE_CHILD_ENDED_MS: 5000,
+  });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await until(
+      () => callsIn(calls).some((c) => c.name === "iskron/end"),
+      "the child's run ends first",
+    );
+    noticeTo(b, rootPid, SUB);
+    await until(() => /о конце субагента .* сказал сервер/.test(rec.said()), "the end heard");
+    await delay(300);
+    assert.equal(ends(rec).length, 0, "no «КОНЧЕН» of the plugin's own");
+    const into = rec.prompts.filter((p) => p.sessionID === "root");
+    assert.equal(into.length, 1, `the server's notice in the parent:\n${rec.said()}`);
+    assert.equal(into[0].delivery, "steer");
+    assert.match(into[0].text, /child_ended/);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});
+
+test("child_ended known but silent this time: after the window the plugin's own word, once", async () => {
+  globalThis[KNOWN] = true;
+  const { rec } = await leadChild("ce-silent", { ISKRON_OPENCODE_CHILD_ENDED_MS: 300 });
+  try {
+    await rec.call("iskron_channel", { realm: "nks-dev", action: "leave" }, "child");
+    settle(rec);
+    await until(() => ends(rec).length === 1, "the plugin's word after the window");
+    await delay(300);
+    assert.equal(rootTurns(rec), 1, "one turn in the parent");
+  } finally {
+    await rec.stop();
+    delete globalThis[KNOWN];
+  }
+});

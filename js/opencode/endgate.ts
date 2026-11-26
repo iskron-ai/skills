@@ -49,13 +49,20 @@ interface Hold {
   asking: boolean;
 }
 
-/** `again` — a held word re-enters delivery once the host calls its session live. */
+/** `deliver` — a held word re-enters delivery once the host calls its session live. */
 export function createHolds(
   ctx: Context,
   say: Say,
   W: OpencodeWords,
-  again: (w: Word) => Promise<unknown>,
+  deliver: (
+    session: string | null,
+    text: string,
+    frame: string,
+    delivery: Word["delivery"],
+    child: boolean,
+  ) => Promise<unknown>,
 ): Holds {
+  const again = (w: Word) => deliver(w.session, w.text, w.frame, w.delivery, w.child);
   const holds = new Map<string, Hold>();
 
   const dropped = (w: Word, session: string | null): void =>

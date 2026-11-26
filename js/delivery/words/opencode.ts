@@ -66,6 +66,8 @@ export interface OpencodeWords {
   sessionUnknown: (id: string, frame: string) => string;
   /** The hold of a session not known to be live is full: its oldest frame goes. */
   holdFull: (id: string, frame: string) => string;
+  /** The server's child_ended for an end the plugin already told the parent of: not delivered. */
+  childEndedTold: (standing: string) => string;
   nowhere: (frame: string, text: string) => string;
   halted: (frame: string, id: string) => string;
   /** The pulse (#7529): the session holds so many frames laid and not taken by its turn yet. */
@@ -157,6 +159,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Искрон: сессия ${id} — неизвестно, жива ли: хост не ответил — ${frame} держится в памяти плагина, пока хост не скажет; ход не открывается`,
     holdFull: (id, frame) =>
       `Искрон: сессия ${id} — держится слишком много кадров, пока хост молчит о ней; старейший (${frame}) не доставлен`,
+    childEndedTold: (standing) =>
+      `Искрон: child_ended сервера о ${standing} не вложен — о том конце родителю уже сказал плагин`,
     nowhere: (frame, text) =>
       `Искрон: ${frame} ВЛОЖИТЬ НЕКУДА — плагин не видел живой корневой сессии; запись дела остаётся в деле (iskron_case history), прямое слово не дошло — ` +
       text,
@@ -256,6 +260,8 @@ export const OPENCODE: Readonly<Record<Lang, OpencodeWords>> = {
       `Iskron: session ${id} — not known to be live: the host did not answer — the ${frame} is held in the plugin's memory until the host tells; no turn opens`,
     holdFull: (id, frame) =>
       `Iskron: session ${id} — too many frames held while the host is silent about it; the oldest (${frame}) was not delivered`,
+    childEndedTold: (standing) =>
+      `Iskron: the server's child_ended of ${standing} was not delivered — the plugin already told the parent of that end`,
     nowhere: (frame, text) =>
       `Iskron: ${frame} HAS NOWHERE TO GO — the plugin has seen no live root session; a case record stays in the case (iskron_case history), a direct word did not arrive — ` +
       text,

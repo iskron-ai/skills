@@ -15,6 +15,7 @@ import { cardFrame } from "../shared/open-cards.ts";
 import { carryGraphMarks, deliveryKeys, isLifeCheck } from "../shared/seen.ts";
 import { separateGraphBatch } from "../shared/softbatch.ts";
 import { authDir } from "./bridge-io.ts";
+import { endToldAlready } from "./childended.ts";
 import { createCuts } from "./cuts.ts";
 import { processDescendants, processParent, shareLineage } from "./cutwait.ts";
 import { createHolds, live } from "./endgate.ts";
@@ -97,9 +98,7 @@ export function setupChannel(
     (id, message, kept) => say(W.haltUnlifted(id, message, kept), "warning"),
   );
   const ends = channelEnds(authDir, say);
-  const holds = createHolds(ctx, say, W, (w) =>
-    deliver(w.session, w.text, w.frame, w.delivery, w.child),
-  );
+  const holds = createHolds(ctx, say, W, deliver);
 
   // Every delivery is a log line with the address and the frame, a refusal is loud (#4355).
   async function deliver(
@@ -111,8 +110,7 @@ export function setupChannel(
   ): Promise<{ session: string; inbox: string | null } | null> {
     let id = session;
     if (id && ends.has(id)) return null;
-    // Only a session the host calls live gets a word: ended — dropped, unknown — held until the
-    // host tells; no turn opens meanwhile (end gate, endgate.ts).
+    // The end gate (endgate.ts): live — the word goes; ended — dropped; unknown — held, no turn.
     if (!(await holds.admit({ session: id, text, frame, delivery, child }))) return null;
     id ??= freshestRoot();
     if (id && id !== session && !(await live(ctx, id))) id = null;
@@ -421,6 +419,8 @@ export function setupChannel(
             return say(P.listening(), "info");
           }
           if (frame?.type === "status") return;
+          const told = endToldAlready(frame); // child_ended goes as any frame (childended.ts)
+          if (told) return say(W.childEndedTold(told), "info");
           // The frame's path (#5851): with event_kind — the kind's rule, without — its own stack (#4957).
           // The launcher's word to its working lead steers its turn whatever its stack (#7505).
           if (isLifeCheck(frame)) return lifeCheck(session, child, frame as Frame);
