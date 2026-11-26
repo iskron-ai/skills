@@ -22,12 +22,12 @@ const mb = (bytes: number): string => (bytes / MIB).toFixed(1);
 
 /** What the cut reply said, so the refusal states the server's own outcome. */
 function cutOf(msg: JsonRpcMessage): LineCut {
-  if (msg.error !== undefined) {
-    const code: unknown = (msg.error as { code?: unknown } | null)?.code;
-    return {
-      kind: "error",
-      code: typeof code === "number" || typeof code === "string" ? code : "?",
-    };
+  if (msg.error !== undefined && msg.error !== null) {
+    // The code is the one part of the cut answer that reaches the short refusal: it is named
+    // as a number or a short string, anything else as «?».
+    const code: unknown = msg.error.code;
+    const named = typeof code === "number" || (typeof code === "string" && code.length <= 32);
+    return { kind: "error", code: named ? code : "?" };
   }
   return (msg.result as { isError?: unknown } | null)?.isError === true
     ? { kind: "refusal" }
