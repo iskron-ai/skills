@@ -129,7 +129,8 @@ test("a re-registration's retry after a seat-open race goes through the gate too
       await fake.control({
         kill_session: true,
         structured: true, // the race is told by the refusal's status, 409 without a rule
-        registerConcurrentNext: 5,
+        // each seat's own first try, whatever order they come in under load
+        registerConcurrentOnce: Array.from({ length: 5 }, (_, i) => `931:rr-${i}`),
         registerToolDelayMs: 200,
       });
       fake.state.registerPeak = 0;

@@ -84,7 +84,13 @@ test("seats returning from disk, each first register raced (409): the retries go
       await a.gone();
     }
     const before = fake.state.counts.register_standing;
-    await fake.control({ structured: true, registerConcurrentNext: n, registerToolDelayMs: 200 });
+    // Each seat's own first register meets the race, whatever order they come in under load:
+    // a count of «the next n» would let a fast seat's retry take a slow seat's refusal.
+    await fake.control({
+      structured: true,
+      registerConcurrentOnce: Array.from({ length: n }, (_, i) => `931:rrd-${i}`),
+      registerToolDelayMs: 200,
+    });
     fake.state.registerPeak = 0;
     const back = await Promise.all(
       Array.from({ length: n }, async (_, i) => {

@@ -892,6 +892,7 @@ export async function startFakeNks(opts = {}) {
         "standingRefuseNext",
         "standingSeatGoneNext",
         "registerConcurrentNext", // столько ближайших register отказать гонкой открытия (409 без rule)
+        "registerConcurrentOnce", // ["karta:name"]: первый register каждого из этих мест — гонка открытия, один раз
         "registerNoId", // ответ register без standing_id — id места мосту не известен
         "helloNoIds", // hello без standing_id мест — с registerNoId мост своего id не узнаёт вовсе
         "registerStandsInRealmNext", // столько ближайших register отказать 409 channel_already_stands_in_realm (английский текст api)
@@ -1558,8 +1559,13 @@ export async function startFakeNks(opts = {}) {
               extra,
             );
           }
-          if (st.registerConcurrentNext > 0) {
-            st.registerConcurrentNext--;
+          // Once per named seat, whatever the order the registers come in (a probe without a race).
+          const onceAt = (st.registerConcurrentOnce ?? []).indexOf(
+            `${String(a.karta).trim().replace(/^#/, "")}:${String(a.name ?? "").trim()}`,
+          );
+          if (onceAt >= 0) st.registerConcurrentOnce.splice(onceAt, 1);
+          if (onceAt >= 0 || st.registerConcurrentNext > 0) {
+            if (onceAt < 0) st.registerConcurrentNext--;
             st.counts.register_concurrent = (st.counts.register_concurrent ?? 0) + 1;
             // Гонка открытия места у api: 409 без rule — «register again».
             return json(

@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -154,6 +154,13 @@ const sessionKnocks = (door) => door.knocks.filter((_, i) => door.session[i]).le
 
 const downRecord = (dir) => readdirSync(dir).find((f) => f.endsWith(".json.down")) ?? null;
 
+/** The window's time is up: its record says so, as a clock past its end would. */
+function lapse(dir) {
+  const path = join(dir, downRecord(dir));
+  const rec = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...rec, notBefore: Date.now() - 1 }));
+}
+
 async function machine(t, fn) {
   const fake = await startFakeNks({ pat: "nks_pat_probe" });
   const door = await frontDoor(fake.mcpUrl);
@@ -195,13 +202,14 @@ test("a long 503 body naming retry_after_secs, no header: the window lasts the s
   });
 });
 
-// The Retry-After of the front line (one second) stands in for a window the test can
-// wait out; the ladder here draws its jitter under 300 ms, so a refusal after that is
-// the server's own word honored, not the jitter.
+// The Retry-After of the front line (thirty seconds) is a window no load outlasts; the
+// ladder here draws its jitter under 300 ms, so a refusal after that is the server's own
+// word honored, not the jitter. The window's end is not waited out on the wall clock: the
+// probe lapses it on disk (lapse), so nothing here races the machine's load.
 test("a down server is ONE window for the whole machine: the other bridges answer «not sent» at once and knock nothing", async (t) => {
   await machine(t, async ({ door, dir, seat }) => {
     const [a, b] = [await seat(), await seat()];
-    await door.set("down", { retryAfter: 1 });
+    await door.set("down", { retryAfter: 30 });
     const first = await a.call("tools/call", 2, ORIENT);
     assert.match(text(first), /server unavailable/, JSON.stringify(first));
     assert.match(
@@ -231,9 +239,10 @@ test("a down server is ONE window for the whole machine: the other bridges answe
     assert.match(text(second), /server unavailable/, JSON.stringify(second));
     assert.match(text(second), /it is not queued/, "refused by the window: nothing was sent");
     assert.doesNotMatch(text(second), /retry freely|OUTCOME IS UNKNOWN/);
-    assert.match(text(second), /about 1 s/, "the wait is named");
-    assert.match(text(second), /not sent — server unavailable — call again in about 1 s/);
-    assert.ok(took < 900, `answered at once, not after the window: ${took}ms`);
+    const named = Number(/call again in about (\d+) s/.exec(text(second))?.[1]);
+    assert.ok(named >= 20 && named <= 30, `the window's wait is named: ${text(second)}`);
+    assert.match(text(second), /not sent — server unavailable — call again in about \d+ s/);
+    assert.ok(took < 10_000, `answered at once, not after the window: ${took}ms`);
     assert.equal(sessionKnocks(door), knocked, "no bridge knocked while the window stands");
     assert.ok(
       downRecord(dir),
@@ -246,7 +255,7 @@ test("a down server is ONE window for the whole machine: the other bridges answe
     assert.equal(sessionKnocks(door), knocked);
 
     await door.set("open");
-    await pause(450);
+    lapse(dir); // the window's time is up — on disk, not by the wall clock
     const served = await b.call("tools/call", 4, ORIENT);
     assert.ok(
       served.result && !served.error,
