@@ -9,6 +9,8 @@ export interface TurnWords {
   wake: () => string;
   /** Плагину в stderr сервиса: слово в сессию не легло. */
   notLaid: (session: string, why: string) => string;
+  /** OpenCode: the word goes to the service's log — a turn opens only by a server frame (#11359). */
+  logged: (session: string, text: string) => string;
 }
 
 export const TURN: Readonly<Record<Lang, TurnWords>> = {
@@ -16,10 +18,14 @@ export const TURN: Readonly<Record<Lang, TurnWords>> = {
     wake: () =>
       `${FRAME_MARK} человека в консоли нет: ход и исход — ${tool("case")} line по ключу; say с to — за ответом или действием; человеку ask или ответ на его вопрос. Нечего передать — ход кончен, без текста.`,
     notLaid: (session, why) => `слово конца хода в сессию ${session} не легло: ${why}`,
+    logged: (session, text) =>
+      `слово конца хода сессии ${session} — в журнал, ход плагин не открывает: ${text}`,
   },
   en: {
     wake: () =>
       `${FRAME_MARK} no human at the console: progress and outcome — ${tool("case")} line by key; say with to for a reply or action; to the human — ask or answer their question. Nothing to pass on — the turn is over, no text needed.`,
     notLaid: (session, why) => `the turn's end word did not enter session ${session}: ${why}`,
+    logged: (session, text) =>
+      `the turn's end word of session ${session} — to the log, the plugin opens no turn: ${text}`,
   },
 };
