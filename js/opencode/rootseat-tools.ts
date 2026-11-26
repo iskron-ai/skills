@@ -9,6 +9,7 @@ import { writeLostMarker } from "./marker.ts";
 import { type PutDown, putDown } from "./putdown.ts";
 import type { Home } from "./records.ts";
 import { seatBy, type SeatDoors } from "./rootseat-by.ts";
+import { runOfInstance } from "./runshape.ts";
 import { asSatellite, heldPlace, type Place, standsBy } from "./satellite.ts";
 import type { Slot } from "./slot.ts";
 
@@ -48,6 +49,7 @@ export function createSeatLife(d: Doors) {
   >();
   const epochs = new Map<string, number>();
   let awaying: Promise<void> = Promise.resolve();
+  const run = runOfInstance(); // read while the run that started this instance lives
   const cancelled = (s: string) =>
     d.stopped() ||
     deleted.has(s) ||
@@ -158,6 +160,7 @@ export function createSeatLife(d: Doors) {
       kind: string | null,
       data?: {
         key?: unknown;
+        incarnation?: unknown;
         place?: Partial<Place>;
         provisional?: unknown;
         automatic?: unknown;
@@ -170,6 +173,8 @@ export function createSeatLife(d: Doors) {
         slot.key = data.key;
       if (kind === "held") {
         slot.place = heldPlace(data) ?? slot.place;
+        // A satellite's hold incarnation: a return onto the same socket names none and keeps it.
+        if (typeof data?.incarnation === "string") slot.incarnation = data.incarnation;
         slot.provisional = data?.provisional === true;
         if (data?.automatic === false && slot.session) {
           epochs.set(slot.session, (epochs.get(slot.session) ?? 0) + 1);
@@ -206,8 +211,11 @@ export function createSeatLife(d: Doors) {
       const going = slots.filter((slot) => !(slot.session && attempts.get(slot.session)?.onWire));
       for (const slot of going) slot.ownStop = true;
       d.slots.clear();
-      // A reload is an announced absence: the seats wait for the next instance (#7493).
-      awaying = Promise.all(going.map((slot) => putDown(slot, "away"))).then(() => {});
+      // A reload is an announced absence: the seats wait for the next instance (#7493). An
+      // instance of a standalone run names the run: the daemon ends the seats only if the run
+      // is gone — a reload inside a live run keeps them (runshape.ts, #6593, #11359).
+      const away = run === null ? {} : { run_pid: run };
+      awaying = Promise.all(going.map((slot) => putDown(slot, "away", away))).then(() => {});
       return left;
     },
     /** The `away` words of the last stopSlots, answered or timed out. */

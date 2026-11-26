@@ -39,6 +39,8 @@ export interface KeptSlot {
   dir: string | null;
   /** The key of the standing the bridge held (from `held` or a return) — the record's exact address. */
   key: string | null;
+  /** A satellite's: the incarnation of its hold (from `held`) its deferred stop names (#7621). */
+  incarnation?: string | null;
   /** A return in flight: a tool call waits for it so as not to take the seat twice. */
   resume: Promise<unknown> | null;
   /** A child session's bridge (its own standing, #5154): its record is no hint for the root. */

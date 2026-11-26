@@ -21,6 +21,7 @@ import { H, handoverReason } from "./holdstate.ts";
 import { normKarta, normName } from "./names.ts";
 import type { SeatHolder } from "./orchestra-reap-held.ts";
 import { canonRealm, learnRealm, sameRealm } from "./realms.ts";
+import { noteStopSeat } from "./stoprecord.ts";
 import { standingLog } from "./store.ts";
 import { emit } from "./streams.ts";
 import { type Standing, state } from "./transport.ts";
@@ -243,6 +244,7 @@ export function learnFromHello(hello: Frame | null, primary: Place | null): void
     if (!e) continue;
     if (e.realm && unresolved(p.standing.realm)) learnRealm(p.standing.realm, e.realm);
     if (typeof e.standing_id === "string" && e.standing_id) p.door.standingId = e.standing_id;
+    if (p.door === H.door) noteStopSeat(p.door.standingId); // a satellite's record (stoprecord.ts)
     if (typeof e.standing === "string" && e.standing) {
       p.door.address = e.standing;
       p.door.addressDerived = false;

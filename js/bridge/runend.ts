@@ -5,7 +5,7 @@ import { method, RUN_END } from "../delivery/index.ts";
 import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
 import { ownPidAlive } from "../shared/seam-entrance.ts";
-import { awayAnnounced } from "./away.ts";
+import { awayAnnounced, awayRunPid } from "./away.ts";
 import {
   leaveJoinedCases,
   ownPlaces,
@@ -27,6 +27,7 @@ import { handoverPauseKey, suspended } from "./pauserecord.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { publishStatusTo } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
+import { dropOwnStopRecord } from "./stoprecord.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
@@ -63,6 +64,8 @@ interface Dead {
   status: string | null;
   socket: string | null;
   now?: boolean;
+  /** An absence lasting with this standalone run (away.ts): the seats end only once it is gone. */
+  runPid?: number | null;
 }
 
 /**
@@ -82,7 +85,10 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     const spent = closing || paused ? usagePlace() : null;
     // The agent's end closes its seat (graph @nks/nks-dev, node #7493): at once on the harness's
     // word, else after the death window (endDeadRun) — not on an announced absence or a handover.
-    const mortal = !CFG.satellite && !paused && !handover && !awayAnnounced();
+    // An absence lasting with a standalone run (away.ts) goes with the window, which ends the
+    // seat only if that run is gone (closeDeadRun): a reload in the run keeps it for the return.
+    const runPid = awayRunPid();
+    const mortal = !CFG.satellite && !paused && !handover && (!awayAnnounced() || runPid !== null);
     // A satellite's end is its death, as the harness's word is: a seat answered late goes at once (lateSeat).
     R.late = mortal && !now ? "window" : (CFG.satellite || mortal) && !paused ? "now" : "hold";
     const dying = mortal && !!H.currentKey;
@@ -96,7 +102,7 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     // @nks/nks-dev, node #6649) — the agent's end too, until its revoke is confirmed.
     if (!CFG.satellite) keepHoldRecord();
     const eras = new Map(own.map((s) => [seatKeyOf(s), recordAt(seatKeyOf(s))]));
-    // On the dispatcher the cleared busy line goes in the tact before the unsubscribe (#8620 v11).
+    // On the dispatcher the cleared busy line goes as a status frame before the unsubscribe (#11376).
     const line = addr && closing ? leavingLine(addr.url) : "none";
     // A paused seat keeps its busyness even if nobody takes the handover socket.
     releaseStanding(why, CFG.satellite && !paused, false, ended, paused);
@@ -108,8 +114,10 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     let end: RunEnd = paused
       ? { failed: [], revoked: [], probably: [] }
       : await revokeSatellitePlaces(places);
-    if (CFG.satellite && !paused)
+    if (CFG.satellite && !paused) {
       releaseSatelliteClaims(end.failed.length > 0 || end.probably.length > 0);
+      dropOwnStopRecord(); // ended by itself: no deferred stop is left to make (stoprecord.ts)
+    }
     const status = addr?.url ?? null;
     // The end awaited its exits: a seat another bridge of this home took meanwhile is not ended
     // and its record not touched — the death window's guard (notHeldAgain); one of another
@@ -118,13 +126,20 @@ export function closeRun(why: string, handover: boolean, now = false): Promise<R
     let left = own;
     if (ended) ({ end, left } = await endOnWord(free, free[0] === own[0] ? socket : null, ids));
     if (dying && left.length) {
-      const mine = { places: left, ids, eras, status, socket: left[0] === own[0] ? socket : null };
+      const mine = {
+        places: left,
+        ids,
+        eras,
+        status,
+        socket: left[0] === own[0] ? socket : null,
+        runPid,
+      };
       R.dead = R.dead ? withLate(mine, R.dead) : mine;
     }
     // Busyness ends with the session, else the board shows a doer where nobody is; a satellite's
     // goes even on handover (it has no return from disk).
     if (addr && line === "post") await publishStatusTo(addr.url, "", 3000).catch(() => {});
-    if (line === "tick") await released(1000);
+    if (line === "frame") await released(1000);
     return end;
   })());
 }
@@ -166,7 +181,8 @@ export function lateSeat(
   const others = R.dead?.places.filter((s) => seatKeyOf(s) !== key) ?? [];
   const ids = new Map(R.dead?.ids ?? []).set(key, id);
   const eras = new Map(R.dead?.eras ?? []).set(key, recordAt(key));
-  R.dead = { places: [seat, ...others], ids, eras, status, socket, now: R.late === "now" };
+  const runPid = awayRunPid();
+  R.dead = { places: [seat, ...others], ids, eras, status, socket, now: R.late === "now", runPid };
   log(
     `${key}: connect answered after the run's end — no socket opened, it ends ${R.late === "now" ? "at once" : "with the window"}`,
   );
@@ -239,11 +255,23 @@ async function closeDeadRun(waitMs: number): Promise<void> {
   const dead = R.dead;
   R.dead = null;
   if (!dead?.places.length) return;
-  if (!dead.now) await sleep(waitMs);
+  if (dead.runPid) {
+    if (!(await runGone(dead.runPid, waitMs)))
+      return log(`the standalone run ${dead.runPid} lives on — an absence, its seats wait`);
+    log(`the standalone run ${dead.runPid} is over — its seats end with it (#6593)`);
+  } else if (!dead.now) await sleep(waitMs);
   const kept = await notHeldAgain(dead.places, dead.eras);
   const [first] = dead.places;
   const main = dead.socket && kept[0] === first ? { seat: first, socket: dead.socket } : null;
   if (kept.length) await closeDeadSeats(kept, main, dead.status, dead.ids);
+}
+
+/** The run's process gone within `waitMs` — looked at every 250 ms. */
+async function runGone(pid: number, waitMs: number): Promise<boolean> {
+  for (const until = Date.now() + waitMs; ; await sleep(250)) {
+    if (!ownPidAlive(pid)) return true;
+    if (Date.now() > until) return false;
+  }
 }
 
 /** The seats no live bridge holds again since this run's end (`eras`): only those are this run's to close. */

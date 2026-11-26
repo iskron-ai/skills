@@ -5,6 +5,8 @@ export interface LeaveWords {
   notHolding: () => string;
   cleared: () => string;
   notCleared: (body: string) => string;
+  /** Снятие ушло, но сервер его не подтвердил (#11337): не «снята». */
+  clearSent: () => string;
   /** Подписка диспетчера оборвана: строка на доске до истечения пульса, отказа нет. */
   keptOnBoard: () => string;
   /** keys — ключи мест канала, уже через ", ". */
@@ -32,6 +34,7 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
     notHolding: () => "мост места не держит — уходить неоткуда",
     cleared: () => "занятость снята",
     notCleared: (body) => `занятость не снята (${body})`,
+    clearSent: () => "снятие занятости отправлено; сервер его пока не подтверждает",
     keptOnBoard: () =>
       "занятость на доске останется до истечения пульса — соединение диспетчера сейчас оборвано; при возвращении она вернётся",
     seats: (keys) => `с мест ${keys} (сокет канала у них общий)`,
@@ -61,6 +64,7 @@ export const LEAVE: Readonly<Record<Lang, LeaveWords>> = {
     notHolding: () => "the bridge holds no seat — nothing to leave",
     cleared: () => "busyness cleared",
     notCleared: (body) => `busyness not cleared (${body})`,
+    clearSent: () => "busyness clear sent; the server does not confirm it yet",
     keptOnBoard: () =>
       "the busy line stays on the board till the pulse runs out — the dispatcher connection is broken now; it comes back with the return",
     seats: (keys) => `the seats ${keys} (they share the channel socket)`,

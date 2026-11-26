@@ -2,6 +2,7 @@
 // answer to a subscribe names its ref, every other frame its channel_id. A frame that is not
 // JSON, has no channel or names a channel no session holds goes to the journal and no further.
 import { type Frame } from "../shared/channel.ts";
+import { statusAnswer } from "./muxstatus.ts";
 import { type Sub } from "./muxsub.ts";
 import { log } from "./streams.ts";
 
@@ -32,10 +33,11 @@ export function routeFrame(raw: string, r: FrameRoutes): void {
   const channel = typeof f.channel_id === "string" ? f.channel_id : "";
   if (!channel) return log(`dispatcher: a ${String(f.type)} frame without a channel — dropped`);
   if (f.type === "error") return log(`dispatcher: ${channel} refused a frame: ${String(f.code)}`);
-  // The answer to a tact's busy line (#2287) has no author and no body: the bridge's, never the
-  // agent's turn (#9320) — the tool reply already names the trimming (statuspost.ts).
-  if (f.type === "status_trimmed" || f.type === "status_rejected")
+  // Status answers are bridge control frames, never agent turns (#9320).
+  if (f.type === "status_trimmed" || f.type === "status_rejected" || f.type === "status_set") {
+    statusAnswer(channel, f);
     return log(`dispatcher: ${channel} ${f.type}: ${String(f.code ?? f.reason ?? "")}`);
+  }
   const s = r.byChannel.get(channel);
   if (f.type === "channel_closed")
     return s ? r.closed(s, Number(f.code), String(f.reason ?? "")) : undefined;

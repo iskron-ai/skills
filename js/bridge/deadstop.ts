@@ -11,6 +11,7 @@ import { namedFetch } from "../shared/http.ts";
 import { revokeOwnPlaces } from "./caseexit.ts";
 import { dropConfirmed, seatKeyOf, stillOwn } from "./deadseat.ts";
 import { dropOwnHoldRecord } from "./holdrecord.ts";
+import { ruleOf } from "./refusal.ts";
 import { log } from "./streams.ts";
 import { type Standing } from "./transport.ts";
 
@@ -18,16 +19,6 @@ import { type Standing } from "./transport.ts";
 const NOT_CURRENT = "ws_token_not_current";
 
 export type Stop = "stopped" | "moved" | "absent" | "unknown";
-
-/** errors[0].rule of a ProblemDetail body; null — no rule (or no JSON). */
-function ruleOf(body: string): string | null {
-  try {
-    const rule = (JSON.parse(body) as { errors?: { rule?: unknown }[] })?.errors?.[0]?.rule;
-    return typeof rule === "string" ? rule : null;
-  } catch {
-    return null;
-  }
-}
 
 /** standing_id of each ended[] entry of a 200 {channel_id, ended_by, ended:[{standing_id, ended_at}]}. */
 function endedOf(body: string): string[] {

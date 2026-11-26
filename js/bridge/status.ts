@@ -6,7 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-import { STATUS, tool } from "../delivery/index.ts";
+import { STATUS, STATUS_POST, tool } from "../delivery/index.ts";
 import { takingArgs } from "../shared/busyargs.ts";
 import { words } from "../shared/lang.ts";
 import { scoped } from "../shared/scope.ts";
@@ -23,14 +23,21 @@ import {
   rememberStatus,
   wasEvicted,
 } from "./hold.ts";
-import { type HoldRecord, keyOf } from "./holdrecord.ts";
+import { type HoldRecord, keyOf, readHoldRecord } from "./holdrecord.ts";
 import { unheardListenBlock } from "./listen.ts";
 import { EVERY } from "./muxhold.ts";
 import { normKarta, normName } from "./names.ts";
 import { extraIn } from "./places.ts";
 import { sameRealm } from "./realms.ts";
 import { statusAddress } from "./statusaddr.ts";
-import { publishStatusTo, type StatusOutcome, type StatusTrim, trimNudge } from "./statuspost.ts";
+import {
+  NO_LIVE_STANDING,
+  publishStatusTo,
+  type StatusOutcome,
+  type StatusTrim,
+  trimNudge,
+} from "./statuspost.ts";
+import { log } from "./streams.ts";
 import { localSocketAlive } from "./sweep.ts";
 import { type Standing, state } from "./transport.ts";
 import { type JsonRpcMessage } from "./types.ts";
@@ -70,7 +77,10 @@ async function statusWord(text: string, realm: string): Promise<[string, boolean
 export function busyLine(text: string, realm: string): string {
   const a = S.accepted.get(statusAddress(realm)?.key ?? "");
   const line = a?.sent === text ? a.doing : text;
-  const nudge = a?.sent === text && a.trimmed ? `; ${trimNudge(a.trimmed)}` : "";
+  const mine = a?.sent === text ? a : undefined;
+  // Sent, not confirmed (#11337): named as such, never as set.
+  const said = mine?.unconfirmed ?? (mine?.trimmed ? trimNudge(mine.trimmed) : "");
+  const nudge = said ? `; ${said}` : "";
   return words(STATUS).busyLine(placeLabel(realm), line, nudge);
 }
 
@@ -174,8 +184,14 @@ function ledIn(realm: string): Standing | undefined {
 
 const S = scoped(() => ({
   lastPublished: "",
-  /** The last accepted line per seat (address key): sent, landed (the answer's doing) and trim. */
-  accepted: new Map<string, { sent: string; doing: string; trimmed?: StatusTrim }>(),
+  /**
+   * The last accepted line per seat (address key): sent, landed (the answer's doing), trim, and
+   * `unconfirmed` — the word of a line sent but not known as set (#11337).
+   */
+  accepted: new Map<
+    string,
+    { sent: string; doing: string; trimmed?: StatusTrim; unconfirmed?: string }
+  >(),
 }));
 /** The last busy line the board accepted from this bridge; empty — cleared. */
 export const publishedStatus = (): string => S.lastPublished;
@@ -198,15 +214,47 @@ export async function publishStatus(
   // With one seat a line without id lands on it, as before.
   if (!everyPlace && !addr.standingId && heldPlaces().length > 1)
     return { ok: false, body: words(STATUS).noSeatId(addr.key) };
-  const st = await publishStatusTo(addr.url, text, 5000, everyPlace ? EVERY : addr.standingId);
+  // Return restores what the session asked for, even when delivery is uncertain or refused.
+  if (addr.key === statusAddress()?.key) S.lastPublished = text;
+  let st = await publishStatusTo(addr.url, text, 5000, everyPlace ? EVERY : addr.standingId);
+  // The channel is alive but carries no live seat (graph @nks/nks-dev, nodes #4235, #11376): the
+  // hold record's other address gets the line once, else NOT set — no register; a clear never.
+  if (st.rule === NO_LIVE_STANDING && text !== "") st = await liveAgain(addr, text, everyPlace);
+  // The hold record keeps the latest asked line whatever its outcome — as it landed, when the
+  // server said so (a trimmed one comes back trimmed, #6729); only a clear empties it.
+  const kept = st.ok ? (st.doing ?? text) : text;
+  rememberStatus(kept, realm);
+  if (addr.key === statusAddress()?.key) S.lastPublished = kept;
   if (st.ok) {
-    // Keep the line as it landed: a server-trimmed one comes back trimmed after a restart.
-    const kept = st.doing ?? text;
-    S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed });
-    if (addr.key === statusAddress()?.key) S.lastPublished = kept;
-    rememberStatus(kept, realm);
+    const unconfirmed = st.unconfirmed ? st.body : undefined;
+    S.accepted.set(addr.key, { sent: text, doing: kept, trimmed: st.trimmed, unconfirmed });
   }
   return st;
+}
+
+/**
+ * The channel lives but carries no live seat (no_live_standing or unknown_standing — the POST's
+ * 404 rule or the status frame's reason). A busy line does no connect and no register (graph
+ * @nks/nks-dev, node #4235, the owner's decision; the frame — #11376): the bridge reads its hold
+ * record again — a different seat address there gets the line, once; otherwise the line is NOT
+ * set and the agent is told to stand again. The outcome carries no code: nothing reads it as a
+ * turned address.
+ */
+async function liveAgain(
+  addr: NonNullable<ReturnType<typeof statusAddress>>,
+  text: string,
+  everyPlace: boolean,
+): Promise<StatusOutcome> {
+  const w = words(STATUS_POST);
+  const held = readHoldRecord(addr.key)?.statusUrl ?? null;
+  if (!held || held === addr.url) {
+    log("busy line: the channel has no live seat — not set; the agent is told to stand again");
+    return { ok: false, body: w.noLiveSeat() };
+  }
+  log("busy line: the channel has no live seat — sent once to the address the hold record names");
+  const st = await publishStatusTo(held, text, 5000, everyPlace ? EVERY : addr.standingId);
+  if (st.ok) return st;
+  return { ok: false, body: st.rule === NO_LIVE_STANDING ? w.noLiveSeat() : w.notSet(st.body) };
 }
 
 /** The whole path of moving the hearing (graph @nks/nks-dev, node #5395). */

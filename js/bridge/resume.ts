@@ -73,6 +73,7 @@ async function busyBack(rec: HoldRecord): Promise<string> {
   }
   const st = await publishStatus(rec.status);
   const kept = st.doing ?? rec.status; // the line from the answer, not from the record
+  if (st.ok && st.unconfirmed) return resumeWords.busySent(kept, st.body);
   return st.ok ? resumeWords.busyRestored(kept) : resumeWords.busyNotRestored(short(st.body));
 }
 
@@ -221,7 +222,7 @@ export async function resumeBy(
   takeOwn = false,
 ): Promise<ResumeOutcome> {
   // The move begins here, before any disk read or wait: a seat ended since then is not registered (#7439).
-  const move = registerMove("returns");
+  const move = registerMove("returns", undefined, true); // a re-registration: the return gate
   await canonHoldRecords(); // an earlier build's record of rN or a bare slug returns as @owner/slug (#8677)
   const { own: recs, sameDir, legacy: legacyRecs, left, neighbour, stale } = recordsFor(sel);
   // A keyed seat older than the session's other record: a journal line and the outcome (refused),

@@ -225,18 +225,24 @@ export async function muxCarrying(fake, mux, channels, ms = 6000) {
 }
 
 /**
- * Уход места на соединении: кадры tick, очищающие его занятость (status ""), и позиции
- * первого из них и отписки канала в порядке кадров соединения.
+ * Уход места на соединении (#11376): кадры status, очищающие его занятость (text "", без
+ * standing_id — все места канала, иначе это место), позиции первого из них и отписки канала в
+ * порядке кадров соединения; ticked — записи такта со строкой занятости канала (их быть не должно).
  */
 export function leaveFrames(conn, chan, standingId) {
   const frames = conn.frames.map((f) => f.frame);
   const clears = (f) =>
-    f?.type === "tick" &&
-    f.entries.some((e) => e.channel_id === chan && e.standing_id === standingId && e.status === "");
+    f?.type === "status" &&
+    f.channel_id === chan &&
+    f.text === "" &&
+    (!("standing_id" in f) || f.standing_id === standingId);
   return {
     clearing: frames.filter(clears),
     clearAt: frames.findIndex(clears),
     unsubAt: frames.findIndex((f) => f?.type === "unsubscribe" && f.channel_id === chan),
+    ticked: frames.flatMap((f) =>
+      f?.type === "tick" ? f.entries.filter((e) => e.channel_id === chan && "status" in e) : [],
+    ),
   };
 }
 

@@ -54,6 +54,39 @@ const COMPACT = new RegExp(
 );
 
 // A server card snapshot is context, not another wake-up (#10167).
+const KEY = "\u0003";
+const WHO = "\u0004";
+/** A listed card's room number and entry are numbers on the wire; so are their placeholders. */
+const ENTRY = 7654321;
+const ANY = `[^${HEAD}${ARGS}${KEY}${WHO}]`;
+/** The server's «unknown» of a language, read back from its words. */
+const unknownWord = (lang: (typeof LANGS)[number]): string =>
+  flat(FRAME_TEXT[lang].openCards(null, null)).slice(
+    flat(FRAME_TEXT[lang].openCards(N, null)).indexOf(String(N)),
+  );
+/** One named card of the list (#11342): a number or the unknown word; text otherwise. */
+const card = (lang: (typeof LANGS)[number]): string => {
+  const listed = flat(
+    FRAME_TEXT[lang].openCards(N, null, false, [{ room: N, entry: ENTRY, key: KEY, asker: WHO }]),
+  );
+  const oneOf = `(?:\\d+|${esc(unknownWord(lang))})`;
+  const by: Record<string, string> = {
+    [N]: oneOf,
+    [ENTRY]: oneOf,
+    [KEY]: `${ANY}*`,
+    [WHO]: `${ANY}+`,
+  };
+  // One pass: the text put in for a placeholder is not searched for the next one.
+  return esc(listed.slice(flat(FRAME_TEXT[lang].openCards(N, null)).length + 1)).replace(
+    new RegExp(`[${KEY}${WHO}]|${N}|${ENTRY}`, "g"),
+    (at) => by[at],
+  );
+};
+const LISTED = LANGS.map((lang) => {
+  const one = card(lang);
+  return `—${one}(?:;${one}){0,4}`;
+}).join("|");
+
 const CARDS = new RegExp(
   `(?:${LANGS.flatMap((lang) => {
     const T = FRAME_TEXT[lang];
@@ -65,7 +98,7 @@ const CARDS = new RegExp(
         .replace(NUM, String.raw`\d+`)
         .replace(ARGS, String.raw`[0-9T:.+Z-]+`),
     ];
-  }).join("|")})$`,
+  }).join("|")})(?:${LISTED})?$`,
 );
 
 /** A frame's text (under the delivery's mark or not) that addresses nothing to the seat. */

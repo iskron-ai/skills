@@ -6,6 +6,7 @@
 // or commits — the owner's word on #9818; the words themselves live in MIND_SLICE.
 import { LANGS, MIND_ROW, MIND_SLICE, tool } from "../delivery/index.ts";
 import { words } from "./lang.ts";
+import { cachedSlice, identityOf, type SliceRead, within } from "./mindcache.ts";
 import { scoped } from "./scope.ts";
 
 /** One tool call on the account's behalf: the answer's text and whether it was a refusal. */
@@ -49,14 +50,23 @@ export function rememberMindRealmList(text: string, structured?: unknown): void 
   C.listing = { text, structured, at: Date.now() };
 }
 
-async function ownMind(call: MindCall, key: object): Promise<string | null> {
+/** The account the server answers this call's credential for: its handle from whoami. */
+export async function whoami(call: MindCall): Promise<string> {
+  const who = await call(tool("me"), { action: "whoami" });
+  if (who.isError) throw new Error(who.text);
+  const handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(who.text)?.[1] ?? "";
+  if (!handle) throw new Error("account handle unknown");
+  return handle;
+}
+
+/**
+ * The account's own mind, or null. `handle` — the account as whoami named it just now; another
+ * one than this key remembered drops what it remembered (an account switched under the bridge).
+ */
+async function ownMind(call: MindCall, key: object, handle?: string): Promise<string | null> {
   const cache = cacheFor(key);
-  if (!cache.handle) {
-    const who = await call(tool("me"), { action: "whoami" });
-    if (who.isError) throw new Error(who.text);
-    cache.handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(who.text)?.[1] ?? "";
-    if (!cache.handle) throw new Error("account handle unknown");
-  }
+  if (handle && handle !== cache.handle) Object.assign(cache, { handle, result: null, expires: 0 });
+  if (!cache.handle) cache.handle = await whoami(call);
   const address = `@${cache.handle}/mind`;
   if (cache.result !== null && Date.now() < cache.expires) return cache.result ? address : null;
   cache.listing = C.listing && Date.now() - (C.listing.at ?? 0) < 10_000 ? C.listing : null;
@@ -94,30 +104,78 @@ const brief = (s: string): string => {
 export interface MindSliceOptions {
   strict?: boolean;
   cacheKey?: object;
+  /**
+   * The cache's first part: the slice is cached for the whole process by it and the account
+   * whoami names (mindcache.ts). With no `identify`, it is the credential too — server, grant
+   * directory, the fingerprint of the token presented now: whoami is kept per this string.
+   */
+  account?: string;
+  /**
+   * The account asked anew on every read — a plugin asks its bridge, which keeps whoami per the
+   * token it presents at that moment (bridge ownwhoami.ts): nothing here remembers it. `server` —
+   * the cache's first part in place of `account`: the server THAT bridge speaks to, as it says.
+   */
+  identify?: () => Promise<{ handle: string; server: string }>;
+}
+
+/** One read of the slice; a refused read or an unknown account throws. */
+async function readSlice(call: MindCall, key: object, handle?: string): Promise<SliceRead> {
+  const W = words(MIND_SLICE);
+  const realm = await ownMind(call, key, handle);
+  if (!realm) return { block: W.absent(), mind: null };
+  const got = await call(tool("search"), { ...SLICE_ARGS, realm });
+  if (got.isError) throw new Error(brief(got.text));
+  // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
+  const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
+  const rows = got.text.split("\n").flatMap((l) => {
+    const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
+    return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
+  });
+  const full = listed >= LIMIT;
+  const block = rows.length
+    ? [W.head(rows.length), ...rows, W.foot(full, LIMIT)].join("\n")
+    : full
+      ? `${W.empty()}\n${W.foot(true, LIMIT)}`
+      : W.empty();
+  return { block, mind: realm };
 }
 
 /** The slice as a block of lines; strict recovery propagates failures instead of rendering them. */
 export async function mindSlice(call: MindCall, options: MindSliceOptions = {}): Promise<string> {
-  const W = words(MIND_SLICE);
-  const unread = (text: string): string => {
-    if (options.strict) throw new Error(brief(text));
-    return W.unread(brief(text));
+  const unread = (text: string): string => words(MIND_SLICE).unread(brief(text));
+  const key = options.cacheKey ?? call;
+  // A strict reader (recovery) takes a cached slice too; no slice is its failure to retry.
+  const fail = (why: string): never => {
+    throw new Error(why);
   };
   try {
-    const realm = await ownMind(call, options.cacheKey ?? call);
-    if (!realm) return W.absent();
-    const got = await call(tool("search"), { ...SLICE_ARGS, realm });
-    if (got.isError) return unread(got.text);
-    // A rule's line: its name, number and the description's fragment — the badges stay in the graph.
-    const listed = got.text.split("\n").filter((l) => NODE_ROW.test(l)).length;
-    const rows = got.text.split("\n").flatMap((l) => {
-      const [, name, seq, line] = MIND_ROW.exec(l) ?? [];
-      return name ? [`  ${name} (#${seq})${line ? ` — ${line}` : ""}`] : [];
-    });
-    if (!rows.length) return listed >= LIMIT ? `${W.empty()}\n${W.foot(true, LIMIT)}` : W.empty();
-    return [W.head(rows.length), ...rows, W.foot(listed >= LIMIT, LIMIT)].join("\n");
+    if (options.account || options.identify) {
+      const credential = options.account ?? "";
+      const w = options.strict
+        ? { unread: fail, pending: () => fail("the rules slice is still being read"), retry: true }
+        : { unread, pending: () => words(MIND_SLICE).pending() };
+      // Personal rules never cross accounts: the shared slice is keyed by the account the server
+      // answers the credential for — whoami, kept per the fingerprint of the token presented now
+      // (the bridge), or asked of the bridge on every read with the server it speaks to (a
+      // plugin, `identify`); unknown — the read throws, nothing shared. The whole read, whoami
+      // included, waits ≤3 s; past it the read goes on in the background.
+      const asked =
+        options.identify?.() ??
+        identityOf(credential, () => whoami(call)).then((handle) => ({
+          handle,
+          server: credential,
+        }));
+      const whole = asked.then(({ handle, server }) =>
+        cachedSlice(`${server}\n@${handle}`, () => readSlice(call, key, handle), w),
+      );
+      const got = await within(whole);
+      if (!got) return w.pending();
+      if ("e" in got) throw got.e;
+      return got.v;
+    }
+    return (await readSlice(call, key)).block;
   } catch (e) {
-    if (options.strict) throw e;
+    if (options.strict) throw new Error(brief((e as Error).message), { cause: e });
     return unread((e as Error).message);
   }
 }

@@ -5,12 +5,16 @@
 // the errand case and the told turn go into the loss marker (keep.ts). The new instance raises
 // the child's bridge as the same satellite and returns the seat by key, silently to the child;
 // the parent is the session's parentID (leads.ts). Not returned — an end with a word to the parent.
+// An ended child gets no bridge: its run is over, its write is the plugin's refusal (leadends.ts);
+// its satellite seat is taken off by its launcher's bridge, with one word to the parent that
+// does not wake it (leads.ts).
 import { envName, method } from "../delivery/index.ts";
 import { sleep } from "./bridge-io.ts";
 import type { Keeper } from "./keep.ts";
 import type { Leads } from "./leaddoors.ts";
 import { W } from "./leadwords.ts";
 import type { LostEntry } from "./records.ts";
+import type { Place } from "./satellite.ts";
 import type { Slot } from "./tools.ts";
 import { handedOver } from "./twins.ts";
 
@@ -33,8 +37,11 @@ export interface ChildDoors {
   /** Readable, not archived and in this location (moves.ts canReturn): an archived child ended — the door records its end. */
   exists(session: string): Promise<boolean>;
   stopped(): boolean;
-  /** A child's run is over: usage to the bridge, the bridge goes down (live), a write by the root's bridge is a refusal (#6361). */
-  endRun(session: string, live?: boolean): void;
+  /**
+   * A child's run is over: usage to the bridge, the bridge goes down (live), a write by the
+   * root's bridge is a refusal (#6361); of — the launcher's seat that refusal names.
+   */
+  endRun(session: string, live?: boolean, of?: Place | null): void;
 }
 
 export function createChildren(d: ChildDoors) {
@@ -48,7 +55,14 @@ export function createChildren(d: ChildDoors) {
     const have = d.slots.get(sessionID);
     if (have && !have.bridge.failure) return have;
     const was =
-      have ?? (back && { satelliteOf: back.of, dir: back.dir, key: back.key, stood: true });
+      have ??
+      (back && {
+        satelliteOf: back.of,
+        dir: back.dir,
+        key: back.key,
+        incarnation: back.incarnation,
+        stood: true,
+      });
     // The root holds a seat — the child's bridge is its satellite (satellite.ts).
     const of = was?.satelliteOf ?? parent?.place ?? null;
     const own = d.spawn(of ? ["--satellite"] : []);
@@ -57,6 +71,7 @@ export function createChildren(d: ChildDoors) {
     own.child = true;
     own.dir = was?.dir ?? null;
     own.key = was?.key ?? null;
+    own.incarnation = was?.incarnation ?? null;
     d.slots.set(sessionID, own);
     // A dead child bridge's replacement returns its seat at once by key: the child's writes in that window would go authorless.
     if (was?.stood && own.key)
@@ -70,8 +85,12 @@ export function createChildren(d: ChildDoors) {
   async function back(e: LostEntry): Promise<void> {
     // Not a satellite — not a lead (#6550 item 4): its run ended with the previous instance.
     if (!e.of) return d.endRun(e.session, false);
-    const until = Date.now() + BACK_MS;
     d.leads.back(e.session, e);
+    // Ended while the plugin was down, or ending by a leave it accepted before the stop: no
+    // bridge is raised for it. Its run is over; its write is the plugin's refusal — never a
+    // call by the root's bridge under the launcher's seat (#6361).
+    if (d.leads.ended(e.session)) return d.endRun(e.session, false, e.of ?? null);
+    const until = Date.now() + BACK_MS;
     // A child's call that came before its slot waits for it (coming), not for the root's bridge.
     const ready = (async () => {
       // The session is unreadable — the child has ended: its write would go by the root's bridge (#6361).

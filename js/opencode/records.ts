@@ -11,6 +11,8 @@ export interface LostEntry {
   session: string;
   dir: string | null;
   key: string | null;
+  /** A child's hold incarnation: its deferred stop names it — an older marker without it, no stop (#7621). */
+  incarnation?: string | null;
   child?: boolean;
   /** A record of the session's move to another folder (moves.ts), not of an instance stop. */
   moved?: boolean;
@@ -18,6 +20,8 @@ export interface LostEntry {
   noted?: boolean;
   /** The child's seat name and last text — the outcome at the end after a reload. */
   name?: string;
+  /** The child's own seat as held — its graph, role and name; a revoke names it, never the launcher's role. */
+  seat?: { realm: string; karta: string; name: string } | null;
   last?: string;
   /** A leave accepted before the stop, waiting for its turn's end — the end must still come (№1317 [19]). */
   leaving?: string;
@@ -41,6 +45,8 @@ export const entryOf = (e: LostEntry): LostEntry => ({
         of: e.of ?? null,
         ...(e.noted ? { noted: true } : {}),
         ...(e.name ? { name: e.name } : {}),
+        ...(e.seat ? { seat: e.seat } : {}),
+        ...(e.incarnation ? { incarnation: e.incarnation } : {}),
         ...(e.last ? { last: e.last } : {}),
         ...(e.leaving ? { leaving: e.leaving } : {}),
       }

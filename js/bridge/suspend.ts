@@ -14,6 +14,7 @@ import { HOLD_RECORD_MAX_AGE_MS, readHoldRecord, writeHoldRecord } from "./holdr
 import { H } from "./holdstate.ts";
 import { P, pauseRecord } from "./pauserecord.ts";
 import { placeFields } from "./placefields.ts";
+import { adoptStopRecord } from "./stoprecord.ts";
 import { sleep } from "./store.ts";
 import { log } from "./streams.ts";
 import { state } from "./transport.ts";
@@ -119,6 +120,7 @@ export function afterResume(key: string | undefined): void {
   if (!CFG.satellite || !key) return;
   const rec = readHoldRecord(key);
   seedJoined(rec?.cases);
+  adoptStopRecord(key, H.currentKey === key ? H.currentUrl : null); // its end drops it (stoprecord.ts)
   if (rec && H.currentKey === key && H.currentUrl)
     writeHoldRecord(
       key,

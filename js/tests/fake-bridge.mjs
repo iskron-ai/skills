@@ -60,6 +60,17 @@
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
+// The token this bridge starts with, as the real one reads it: the variable, else the file
+// beside the grant — read once; a later rewrite of the file is not this bridge's credential.
+const START_TOKEN = (() => {
+  const env = process.env.ISKRON_BRIDGE_TOKEN?.trim();
+  if (env) return env;
+  try {
+    return readFileSync(`${process.env.ISKRON_BRIDGE_AUTH_DIR}/token`, "utf8").trim();
+  } catch {
+    return "";
+  }
+})();
 if (process.env.FB_ENV)
   appendFileSync(
     process.env.FB_ENV,
@@ -202,8 +213,10 @@ function callResult(name, a = {}) {
   }
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
-    // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY.
-    for (const file of [`${process.env.FB_REPLY}.${name}`, process.env.FB_REPLY]) {
+    // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY;
+    // <FB_REPLY>.<tool>@<token> — only a bridge started with that token (a live bridge keeps it).
+    const own = START_TOKEN ? [`${process.env.FB_REPLY}.${name}@${START_TOKEN}`] : [];
+    for (const file of [...own, `${process.env.FB_REPLY}.${name}`, process.env.FB_REPLY]) {
       try {
         text = readFileSync(file, "utf8");
         break;
@@ -435,6 +448,42 @@ process.stdin.on("data", (chunk) => {
       // A graph's name as the bridge's table names it (js/bridge/realmask.ts); unknown — as given.
       const realm = String(msg.params?.realm ?? "").trim();
       ok(msg.id, { realm: REALMS[realm] ?? realm });
+    } else if (msg.method === "iskron/whoami") {
+      // The bridge's own whoami (js/bridge/ownwhoami.ts): the handle its iskron_me reply names
+      // (per the token it started with, as callResult reads it) and its server (FB_SERVER); no
+      // handle there — no such method, as a bridge of an older build answers.
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({ name: msg.method, pid: process.pid, id: msg.id }) + "\n",
+        );
+      const r = callResult("iskron_me", { action: "whoami" });
+      const text = r.content?.map((c) => c.text).join("\n") ?? "";
+      const handle = /\bhandle @([A-Za-z0-9_.-]+)/.exec(text)?.[1];
+      if (r.isError) send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: text } });
+      else if (!handle)
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "no such method" } });
+      else ok(msg.id, { handle, server: process.env.FB_SERVER || "https://fake.test/mcp" });
+    } else if (msg.method === "iskron/stopseat") {
+      // The launcher's bridge stops an ended child's seat by its socket's token (js/bridge/
+      // stopseat.ts); the answer's `how` from `${FB_REPLY}.stopseat` (stopped by default),
+      // optionally "how why…".
+      if (process.env.FB_CALLS)
+        appendFileSync(
+          process.env.FB_CALLS,
+          JSON.stringify({
+            name: msg.method,
+            arguments: msg.params,
+            pid: process.pid,
+            id: msg.id,
+          }) + "\n",
+        );
+      let said = "stopped";
+      try {
+        said = readFileSync(`${process.env.FB_REPLY}.stopseat`, "utf8").trim() || said;
+      } catch {}
+      const [how, ...why] = said.split(" ");
+      ok(msg.id, { how, why: why.join(" "), ended: [] });
     } else if (msg.method === "iskron/end") {
       // The plugin ends a lead child's run before its stop (js/bridge/runend.ts);
       // FB_END_FAILED — places the bridge could not revoke (comma-separated).

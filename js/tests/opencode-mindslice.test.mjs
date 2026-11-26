@@ -5,7 +5,14 @@
 // cover reads them beside its seating word. Fake bridge (opencode-kit.mjs) and the real bridge
 // over the fake server (rootseat-kit.mjs); ISKRON_OPENCODE_PLUGIN aims it at any copy.
 import assert from "node:assert/strict";
-import { appendFileSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -53,7 +60,7 @@ const sent = (file) =>
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l))
-    .filter((c) => c.name?.startsWith("iskron_"));
+    .filter((c) => c.name?.startsWith("iskron_") || c.name === "iskron/whoami");
 
 test("a launched child reads the human's rules from its own stand answer, under its launch word", async () => {
   const { files, env } = lay("launch", {
@@ -120,7 +127,8 @@ test("a seated session after a compaction reads the human's rules in the first r
     const mind = sent(files.calls).filter((c) => c.name !== "iskron_channel");
     assert.deepEqual(
       mind.map((c) => c.name),
-      ["iskron_me", "iskron_realm", "iskron_search"],
+      ["iskron/whoami", "iskron_realm", "iskron_search"],
+      "the account by the bridge's own whoami, then its mind",
     );
     assert.equal(mind[2].arguments.realm, "@tester/mind");
     assert.equal(mind[2].arguments.attrs_filter, "slice:agents,ways");
@@ -130,6 +138,168 @@ test("a seated session after a compaction reads the human's rules in the first r
     );
   } finally {
     await rec.stop();
+  }
+});
+
+// One slice per account for the plugin's process (shared/mindcache.ts): two seated sessions after
+// a compaction read the rules by one search, not one each.
+test("two seated sessions of one plugin read the human's rules by one search", async () => {
+  const { files, env } = lay("compact-two");
+  writeFileSync(`${files.reply}.iskron_me`, READINESS);
+  writeFileSync(`${files.reply}.iskron_realm`, REALMS);
+  writeFileSync(`${files.reply}.iskron_search`, SEARCH);
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const systems = [];
+    for (const s of ["s-one", "s-two"]) {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pids = readFileSync(files.log, "utf8").trim().split("\n");
+      const pid = Number(pids.at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+    }
+    for (const s of ["s-one", "s-two"]) {
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      systems.push(req.system.map((p) => p.text).join("\n"));
+    }
+    for (const text of systems) assert.ok(text.includes(BLOCK), text);
+    const searches = sent(files.calls).filter((c) => c.name === "iskron_search");
+    assert.equal(searches.length, 1, "one search for the account, not one per session");
+  } finally {
+    await rec.stop();
+  }
+});
+
+// Personal rules never cross accounts: the account switched under the same grant directory (a new
+// login), the next bridge asks whoami, reads its own account's slice — never the previous one's.
+test("an account switched under the same grant directory: Bob's bridge reads Bob's slice, never Alice's", async () => {
+  const { files, env } = lay("account-switch");
+  const as = (who, rule) => {
+    writeFileSync(`${files.reply}.iskron_me`, `Вызывающая идентичность: @${who} · handle @${who}`);
+    writeFileSync(
+      `${files.reply}.iskron_realm`,
+      `Доступные графы (1) — адресуй их как @owner/slug:\n    @${who}/mind  r204  mind · 2026-09-23`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_search`,
+      `Найдено 1 узлов:\n  📌 ${rule} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${who}\n`,
+    );
+  };
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const rulesOf = async (s) => {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pid = Number(readFileSync(files.log, "utf8").trim().split("\n").at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    };
+    as("alice", "Правило Алисы");
+    assert.match(await rulesOf("s-alice"), /Правило Алисы/);
+    const before = sent(files.calls).filter((c) => c.name === "iskron_search").length;
+    // Bob signs in under the same grant directory: the new login rewrites the grant on disk.
+    const auth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+    mkdirSync(auth, { recursive: true });
+    writeFileSync(join(auth, "account-switch-grant.json"), JSON.stringify({ who: "bob" }));
+    as("bob", "Правило Боба");
+    const bob = await rulesOf("s-bob");
+    assert.match(bob, /Правило Боба/, bob);
+    assert.doesNotMatch(bob, /Алис/, "never Alice's block");
+    const searches = sent(files.calls)
+      .filter((c) => c.name === "iskron_search")
+      .slice(before);
+    assert.deepEqual(
+      searches.map((c) => c.arguments.realm),
+      ["@bob/mind"],
+      "one request for Bob",
+    );
+  } finally {
+    await rec.stop();
+    rmSync(join(process.env.ISKRON_BRIDGE_AUTH_DIR, "account-switch-grant.json"), { force: true });
+  }
+});
+
+// The reviewer's scene (№5817 [567]): a running bridge keeps the token it started with, whatever
+// lies on disk now. Alice's bridge reads with PAT_A; the token file is replaced with PAT_B; Alice's
+// bridge reads again — still Alice; Bob's bridge, started with PAT_B, is asked itself and reads
+// Bob's rules — never Alice's filed under a key the disk named.
+test("a token file switched under a live bridge: that bridge stays its own account; the next bridge asks its own whoami", async () => {
+  const { files, env } = lay("token-switch");
+  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  mkdirSync(auth, { recursive: true });
+  const tokenFile = join(auth, "token");
+  const as = (token, who, rule) => {
+    writeFileSync(
+      `${files.reply}.iskron_me@${token}`,
+      `Вызывающая идентичность: @${who} · handle @${who}`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_realm@${token}`,
+      `Доступные графы (1) — адресуй их как @owner/slug:\n    @${who}/mind  r204  mind · 2026-09-23`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_search@${token}`,
+      `Найдено 1 узлов:\n  📌 ${rule} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${who}\n`,
+    );
+  };
+  as("PAT_A", "alice", "Правило alice");
+  as("PAT_B", "bob", "Правило bob");
+  writeFileSync(tokenFile, "PAT_A\n", { mode: 0o600 });
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const stand = async (s) => {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pid = Number(readFileSync(files.log, "utf8").trim().split("\n").at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+      return pid;
+    };
+    const rulesOf = async (s) => {
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    };
+    const alicePid = await stand("s-alice");
+    assert.match(await rulesOf("s-alice"), /Правило alice/);
+    writeFileSync(tokenFile, "PAT_B\n", { mode: 0o600 });
+    assert.match(await rulesOf("s-alice"), /Правило alice/, "Alice's live bridge is still Alice");
+    const before = sent(files.calls).length;
+    const bobPid = await stand("s-bob");
+    assert.notEqual(bobPid, alicePid, "Bob's session has a bridge of its own");
+    const bob = await rulesOf("s-bob");
+    assert.match(bob, /Правило bob/, bob);
+    assert.doesNotMatch(bob, /Правило alice/, "never Alice's rules");
+    const asked = readFileSync(files.calls, "utf8")
+      .trim()
+      .split("\n")
+      .slice(before)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_me" || c.name === "iskron/whoami");
+    assert.ok(
+      asked.some((c) => c.pid === bobPid),
+      `Bob's bridge is asked its own whoami: ${JSON.stringify(asked)}`,
+    );
+  } finally {
+    await rec.stop();
+    rmSync(tokenFile, { force: true });
   }
 });
 
@@ -184,7 +354,7 @@ test("the plugin uses strict production reads only for compaction and retries a 
       sent(files.calls)
         .filter((c) => c.name !== "iskron_channel")
         .map((c) => c.name),
-      ["iskron_me", "iskron_me", "iskron_realm", "iskron_search"],
+      ["iskron/whoami", "iskron/whoami", "iskron_realm", "iskron_search"],
     );
   } finally {
     await rec.stop();

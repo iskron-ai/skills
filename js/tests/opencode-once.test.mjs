@@ -191,6 +191,107 @@ test("hello card context wakes nothing and rides the next context admission", as
   }
 });
 
+// #11342: next to its count the envelope names the open cards (room, entry_id, key, asked_at,
+// asker) — the plugin prints the list where it prints the count, and it is context like the
+// count: it rides, it never opens a turn.
+const CARDS = [
+  {
+    room: { id: "case-id", number: 7, realm: "@o/s" },
+    entry_id: 41,
+    key: "ask:one",
+    asked_at: "2026-11-10T12:00:00Z",
+    asker: { standing_id: "seat-id", standing: "@h:aleksei", karta_seq: 9 },
+  },
+  {
+    room: { id: "case-id-2", number: 4330, realm: "@o/s" },
+    entry_id: 42,
+    key: "ask:two",
+    asked_at: "2026-11-10T12:05:00Z",
+    asker: { standing_id: null, standing: null, karta_seq: 163 },
+  },
+];
+const LIST =
+  "дело №7 [41], ключ: ask:one, спросил: @h:aleksei; дело №4330 [42], ключ: ask:two, спросил: роль 163";
+const SNAPSHOT = { count: 2, oldest_at: "2026-11-10T12:00:00Z", items: CARDS };
+const COUNT = "карточек без ответа: 2; старшая с 2026-11-10T12:00:00Z";
+const LISTED = new RegExp(`${COUNT} — ${LIST}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
+test("the server's card list is printed with the count in the frame's text, once", async () => {
+  const { rec, prompt } = await seated("cards-list", "s-cards-list");
+  try {
+    const text = await prompt({ ...word, id: "cards-list", my_open_cards: SNAPSHOT });
+    assert.match(text, LISTED);
+    assert.equal(times(text, "спросил:"), 2, text);
+    assert.equal(times(text, "карточек без ответа"), 1, text);
+    assert.match(text, /ТЕЛО-СЛОВА-201/);
+  } finally {
+    await rec.stop();
+  }
+});
+
+test("a hello's card list wakes nothing and rides the next context admission", async () => {
+  const { rec, ride } = await seated("cards-list-hello", "s-cards-list-hello");
+  try {
+    const hello = { type: "hello", my_open_cards: SNAPSHOT };
+    await ride(hello);
+    await ride(hello);
+    await rec.promptRaw("s-cards-list-hello", "go");
+    const text = await rec.context("s-cards-list-hello");
+    assert.match(text, LISTED);
+    assert.equal(times(text, "спросил:"), 2, text);
+    assert.equal(times(text, "карточек без ответа"), 1, text);
+  } finally {
+    await rec.stop();
+  }
+});
+
+// #11372: a card the server names as a person's has no seat facts. Whatever the server sends for
+// them, the plugin names the person and prints the server's delivery (fronts, taken or queued, read); it
+// never prints «listening: no» / «role called: no», which read as a card not delivered. A role
+// without a seat alone is no person: the bridge infers nothing (clock-notices.test.mjs).
+for (const [n, flags] of [
+  ["no", { listening: false, role_called: false }],
+  ["yes", { listening: true, role_called: true }],
+  ["unknown", { listening: null, role_called: null }],
+  ["absent", {}],
+])
+  test(`a card to a person names the person and no seat fact (server flags ${n})`, async () => {
+    const { rec, prompt } = await seated(`clock-person-${n}`, `s-clock-person-${n}`);
+    try {
+      const text = await prompt(
+        clockNotice("card_unanswered", {
+          to: { standing_id: null, standing: null, karta_seq: 163, kind: "person" },
+          delivery: { fronts: [{ front: "bot", taken: true }], read: "unknown" },
+          last_act_at: "2026-11-10T12:00:00Z",
+          ...flags,
+        }),
+      );
+      assert.match(text, /человеку \(роль: 163\); фронты: bot \(взята\); прочтение: unknown/);
+      assert.doesNotMatch(text, /слушает|роль позвана|последний ход|12:00:00|адресат: /, text);
+      for (const fact of ["4330", "[41]", "clock-key"])
+        assert.ok(text.includes(fact), `${fact} missing: ${text}`);
+      assert.doesNotMatch(text, /SERVER-BODY|notice_data|\[object Object\]/);
+    } finally {
+      await rec.stop();
+    }
+  });
+
+test("a card to a seat keeps its seat facts; a flag the server left out is unknown, never no", async () => {
+  const { rec, prompt } = await seated("clock-seat-unknown", "s-clock-seat-unknown");
+  try {
+    const text = await prompt(
+      clockNotice("card_unanswered", { listening: null, last_act_at: null, role_called: null }),
+    );
+    assert.match(
+      text,
+      /адресат: @h:recipient .*; слушает: неизвестно; последний ход: неизвестно; роль позвана: неизвестно/,
+    );
+    assert.doesNotMatch(text, /: нет|: да|человек|доставка/, text);
+  } finally {
+    await rec.stop();
+  }
+});
+
 test("an intentional card repeat with a new frame id retains its entry and names the server repeat number", async () => {
   const { rec, prompt } = await seated("cards-repeat", "s-cards-repeat");
   try {

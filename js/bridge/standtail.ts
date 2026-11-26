@@ -5,13 +5,17 @@
 import { mindSlice } from "../shared/mindslice.ts";
 import { callTool } from "./call.ts";
 import { CFG } from "./config.ts";
+import { credentialKey as account } from "./ownwhoami.ts";
 import { automaticSeat } from "./seatorigin.ts";
 import { readLatest, staleNotice } from "./update.ts";
+
+// The cache key's first part is the session's credential (ownwhoami.ts): server, grant directory
+// and the fingerprint of the token the bridge presents now; whoami, kept per it, completes it.
 
 export async function standTail(stood: boolean): Promise<string[]> {
   const stale = staleNotice(readLatest(CFG.authDir), CFG.authDir);
   return [
     ...(stale ? [stale] : []),
-    ...(stood && !automaticSeat() ? [await mindSlice(callTool)] : []),
+    ...(stood && !automaticSeat() ? [await mindSlice(callTool, { account: account() })] : []),
   ];
 }

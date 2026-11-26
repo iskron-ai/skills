@@ -166,19 +166,22 @@ async function threeLinesWhileDown(fake, mux, a, name) {
   assert.equal(fake.state.counts.status_posts, 0, "no POST while no fallback");
 }
 
-test("busy lines given before hello collapse to the last per seat: after hello — the tact, the last only", async () => {
+test("busy lines given before hello collapse to the last per seat: after hello — one status frame, the last only", async () => {
   await withMux(
     async ({ fake, mux, session }) => {
       const a = await session();
       await threeLinesWhileDown(fake, mux, a, "last-h");
       mux.mode = "mux";
       await muxCarrying(fake, mux, [channelOf(fake, "last-h")], 15_000);
-      await waitFor("the last line by tick", () => busyOf(fake, "last-h") === "занят 3");
+      await waitFor("the last line by status", () => busyOf(fake, "last-h") === "занят 3");
       const id = seatIdOf(fake, "last-h");
-      const lines = mux.ticks.flatMap((t) =>
-        t.entries.filter((e) => e.standing_id === id && "status" in e).map((e) => e.status),
-      );
+      const lines = mux
+        .sent("status")
+        .filter((f) => f.standing_id === id)
+        .map((f) => f.text);
       assert.deepEqual(lines, ["занят 3"], "only the last line goes");
+      const ticked = mux.ticks.flatMap((t) => t.entries.filter((e) => "status" in e));
+      assert.deepEqual(ticked, [], "no busy line in the tact");
       assert.equal(fake.state.counts.status_posts, 0, "no POST");
     },
     { mode: "down" },

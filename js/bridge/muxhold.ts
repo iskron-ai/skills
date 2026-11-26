@@ -2,9 +2,12 @@
 // #8620, #8622, #8623): the same Holder a socket per seat gives (../shared/channel.ts), so the
 // holding (hold.ts) does not tell the paths apart. Without a dispatcher — the socket per seat,
 // as before, until the process restarts. Process-wide: one connection per api for all sessions.
+import { randomBytes } from "node:crypto";
+
 import { type Holder, type HoldOptions, holdSocket } from "../shared/channel.ts";
 import { muxUrlOf } from "./muxprobe.ts";
 import { createMux, type Mux } from "./muxroute.ts";
+import { type StatusAnswer, statusFrame } from "./muxstatus.ts";
 import {
   type Early,
   entryOf,
@@ -27,7 +30,7 @@ let replay: Replay | null = null;
 export const onFellBack = (fn: Replay): void => void (replay = fn);
 
 /**
- * No dispatcher after all (#8620 v15): the held busy lines (the last per seat, holdEarly) go by
+ * No dispatcher after all (#8620 v15, #11376): the held busy lines (the last per seat, holdEarly) go by
  * POST in their order, ahead of any fresh one (statuspost.ts); held numbers go their own way.
  */
 function fell(s: Sub): void {
@@ -93,15 +96,44 @@ const at = (url: string | null): { m: Mux; secret: string } | null => {
 };
 
 /**
- * Lines of seats on a channel the dispatcher carries (`url` — its socket or status address) go
- * into the tact instead of a POST: true — taken; false — not this path, or no seat to name
- * (seatsFor). Before hello they wait in the subscription; `lost` — what to do if no dispatcher,
- * then or after a break with the line still in the tact (muxroute.ts holdBack).
+ * A busy line of a channel the dispatcher carries (graph @nks/nks-dev, node #11376, which
+ * specifies #8620's busy-line items): a status frame asking for its answer on a live
+ * subscription — EVERY goes without standing_id: all seats of the channel; before hello or after
+ * a break it waits in the subscription and goes as a status frame after hello: "held". null —
+ * not this path, or no seat to name (seatsFor).
+ */
+export function statusOnMux(
+  url: string,
+  scope: SeatScope,
+  text: string,
+): Promise<StatusAnswer | "held" | null> | "held" | null {
+  const h = at(url);
+  const s = h?.m.heldOf(h.secret);
+  if (!h || !s || !h.m.carries(h.secret)) return null;
+  const held = (): "held" => (holdEarly(s, { url, scope, fields: { status: text } }), "held");
+  if (!s.live || !s.channel) return held();
+  const seats = scope === EVERY ? [null] : seatsFor(s, scope);
+  if (seats.length !== 1) return null;
+  // A break before the line went, or before any answer: it waits for hello too — a line is set,
+  // not accumulated, so a second landing is harmless; after a fallback (null) the old address.
+  const sent = statusFrame((f) => h.m.link.send(f), s.channel, seats[0], text);
+  return sent.then((a) => {
+    if ((a.sent && !("silent" in a)) || s.live || s.closed) return a;
+    return s.fallback ? null : held();
+  });
+}
+
+/**
+ * Usage numbers of seats on a channel the dispatcher carries (`url` — its socket or status
+ * address) go into the tact: true — taken; false — not this path, or no seat to name
+ * (seatsFor). The tact carries pulse and usage only — a busy line goes as a status frame
+ * (statusOnMux, graph @nks/nks-dev, node #11376). Before hello they wait in the subscription;
+ * `lost` — what to do if no dispatcher, then or after a break (muxroute.ts holdBack).
  */
 export function tickFor(
   url: string | null,
   scope: SeatScope,
-  fields: Early["fields"],
+  fields: { usage: NonNullable<Early["fields"]["usage"]> },
   lost?: () => void,
 ): boolean {
   const h = at(url);
@@ -120,13 +152,19 @@ export const onDispatcher = (url: string | null): boolean => {
 };
 
 /**
- * How a leaving seat's cleared busy line goes (graph @nks/nks-dev, node #8620 v11): "tick" —
- * into the tact now, sent before the unsubscribe; "post" — a socket per seat, as before;
- * "none" — the dispatcher's channel with no live subscription: the line stays till the pulse runs out.
+ * How a leaving seat's cleared busy line goes (graph @nks/nks-dev, node #11376 over #8620 v11):
+ * "frame" — a status frame now, on the wire before the unsubscribe, its answer not awaited (the
+ * process is going); "post" — a socket per seat, as before; "none" — the dispatcher's channel
+ * with no live subscription: the line stays till the pulse runs out. The tact carries no line.
  */
-export function leavingLine(url: string): "tick" | "post" | "none" {
+export function leavingLine(url: string): "frame" | "post" | "none" {
   if (!onDispatcher(url)) return "post";
-  return liveOnDispatcher(url) && tickFor(url, EVERY, { status: "" }) ? "tick" : "none";
+  const h = at(url);
+  const s = h?.m.liveOf(h.secret);
+  if (!h || !s?.channel) return "none";
+  const ref = randomBytes(8).toString("hex");
+  const sent = h.m.link.send({ type: "status", channel_id: s.channel, text: "", ack: true, ref });
+  return sent ? "frame" : "none";
 }
 
 /** A live subscription carries the channel of this address now. */

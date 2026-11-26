@@ -31,7 +31,7 @@ import { H } from "./holdstate.ts";
 import { liveOnDispatcher, onDispatcher } from "./muxhold.ts";
 import { otherRealm } from "./realms.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
-import { publishedStatus, publishStatus } from "./status.ts";
+import { publishedStatus, publishStatus, type StatusOutcome } from "./status.ts";
 import { statusAddress } from "./statusaddr.ts";
 import { emit, log } from "./streams.ts";
 import { state } from "./transport.ts";
@@ -42,8 +42,10 @@ import { flushUsage, usagePlace } from "./usage.ts";
 const DEAF_MS = Number(process.env[envName("BRIDGE_DEAF_MS")]) || 15 * 60_000;
 const TICK_MS = Math.min(60_000, Math.max(200, Math.floor(DEAF_MS / 5)));
 
-const clearedLine = (st: { ok: boolean; body: string }): string =>
-  st.ok ? words(LEAVE).cleared() : words(LEAVE).notCleared(st.body);
+const clearedLine = (st: StatusOutcome): string => {
+  if (!st.ok) return words(LEAVE).notCleared(st.body);
+  return st.unconfirmed ? words(LEAVE).clearSent() : words(LEAVE).cleared();
+};
 
 /** Frames reach this harness only through the bridge's local client. */
 const deafWithoutListener = (): boolean => !notifiedClient();
@@ -68,8 +70,8 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   const leaving = heldPlaces().map((p) => p.key);
   if (leaving.length) await flushUsage(usagePlace()); // last usage snapshot while the seat is held (#6401)
   const status = publishedStatus();
-  // On the dispatcher the cleared line goes in the tact before the unsubscribe (#8620 v11);
-  // a socket per seat is cleared after it closes, as before.
+  // On the dispatcher the cleared line goes as a status frame before the unsubscribe, its
+  // answer awaited ≤3 s (#11376 over #8620 v11); a socket per seat is cleared after it closes.
   // A dispatcher subscription broken and not back: the line stays on the board till the pulse
   // runs out, as on any break (#8620 v11) — no POST, and no refusal to the agent.
   const url = statusAddress()?.url ?? null;
@@ -83,7 +85,7 @@ export async function leaveStanding(reason: string, byWord = false): Promise<str
   // cleared on all seats of the channel
   const st = early ?? (kept ? null : await publishStatus("", undefined, true));
   // Kept in the hold record; restored only when the same session returns (#6017).
-  if ((st?.ok ?? true) && K.status) rememberStatus(K.status);
+  if (K.status) rememberStatus(K.status);
   // A leave by word holds: only a stand by name raises the seat again (#6017).
   if (byWord) for (const k of leaving) markLeft(k, true);
   const line = st ? clearedLine(st) : W.keptOnBoard();

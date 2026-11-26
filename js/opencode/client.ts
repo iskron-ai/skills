@@ -35,7 +35,7 @@ function processes(): Proc[] {
 }
 
 /** This instance serves one run's session only: OpenCode started it as that run's "serve --stdio". */
-function standaloneClient(): number | null {
+export function standaloneClient(): number | null {
   const seam = Number(process.env[envName("OPENCODE_CLIENT_PID")]); // a probe's stand-in for the run
   if (seam > 1) return seam;
   const a = process.argv;

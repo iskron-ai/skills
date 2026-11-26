@@ -86,7 +86,7 @@ function cachePath(): string {
  * signed in and the handshake is worth repeating; not earlier: asking a bridge without a
  * grant after its sign-in ended would open the browser again.
  */
-function grantStamp(): string {
+export function grantStamp(): string {
   const dir = authDir();
   try {
     return readdirSync(dir)

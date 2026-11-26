@@ -43,8 +43,11 @@ export interface Leads {
   goneWhy(child: string): string | undefined;
   /** The child's bridge word: "held" names the seat. true — the child is ended, do not deliver to it. */
   heard(child: string, kind: unknown, place?: Place | null): boolean;
-  /** A child of a previous plugin instance returns as a lead — with its errand case, said turn, last text. */
-  back(child: string, was: Partial<Snapshot> & { name?: string; of?: Place | null }): void;
+  /**
+   * A child of a previous plugin instance returns as a lead — with its errand case, said turn,
+   * last text; name and of — its satellite seat (the launcher's graph and role, its own name).
+   */
+  back(child: string, was: Returned): void;
   /** The seat could not be returned — the bridge goes down, the parent gets a word without a wake-up. */
   fail(child: string, why: string): Promise<void>;
   /** What of the lead survives a reload — into the loss marker. */
@@ -82,6 +85,29 @@ export interface Snapshot {
   leaving?: string;
 }
 
+/** What names a child's seat to its deferred stop: the seat key and the hold's incarnation (#7621). */
+export interface StopName {
+  key: string;
+  incarnation: string;
+}
+
+/** Both known — else no stop: an older marker's seat lapses by its term. */
+export const stopNameOf = (r: {
+  key?: string | null;
+  incarnation?: string | null;
+}): StopName | null => (r.key && r.incarnation ? { key: r.key, incarnation: r.incarnation } : null);
+
+/** What a loss marker record of a child says about its lead. */
+export type Returned = Partial<Snapshot> & {
+  name?: string;
+  of?: Place | null;
+  /** The child's own seat as held; an older marker without it — its hold record by `key`. */
+  seat?: Place | null;
+  key?: string | null;
+  /** The child's hold incarnation: the deferred stop names it (bridge stoprecord.ts). */
+  incarnation?: string | null;
+};
+
 export interface LeadDoors {
   say: Say;
   parentOf(child: string): Promise<string | null>;
@@ -94,11 +120,31 @@ export interface LeadDoors {
   close(child: string): Promise<RunEnd | null>;
   /** How many cases the child's session sits in, by the platform (casesleft.ts); unasked or unread — a throw with the reason. */
   sits(child: string, realm: string): Promise<number>;
-  /** The session is marked ended while its bridge still finishes the run: any write is refused. */
-  seal(child: string): void;
-  end(child: string): Promise<void>;
+  /**
+   * The session is marked ended while its bridge still finishes the run: any write is refused.
+   * of — the launcher's seat the refusal names when the child has no bridge here.
+   */
+  seal(child: string, of?: Place | null): void;
+  end(child: string, of?: Place | null): Promise<void>;
+  /**
+   * A child without a bridge of its own (a marker's return ends it, children.ts): its satellite
+   * seat is stopped by its launcher's bridge by the child's own socket's token (`stop` — the
+   * child's seat key the stop record lies under and its hold's incarnation; none — nothing is
+   * stopped, the seat lapses by its term). The word — `taken` when the stop ended the seat; the
+   * name held by another — left alone; any other outcome says it is not off and why. Never a
+   * throw. `still` — asked right before the stop; false (stood again) — nothing, null.
+   */
+  off(
+    child: string,
+    place: Place,
+    taken: string,
+    still: () => boolean,
+    stop: StopName | null,
+  ): Promise<string | null>;
   /** The child's seat name when it is not its satellite; satellite or no seat — null. */
   ownPlace(child: string): string | null;
+  /** The child has a bridge in this plugin instance: its run ends by that bridge, not by its launcher's. */
+  here(child: string): boolean;
   /** Ended leads of every instance of the process, past a reload (leadends.ts). */
   ends: Ends;
 }
@@ -114,13 +160,15 @@ export function leadDoors(
   ctx: Context,
   say: Say,
   flush: (session: string) => Promise<void>,
-  end: (child: string, out?: ((s: string) => void) | null) => void,
+  end: (child: string, out?: ((s: string) => void) | null, of?: Place | null) => void,
   slots: Map<string, SatelliteSlot & { child?: boolean; bridge: Pick<Bridge, "request"> }>,
   closed: Closed = () => false,
-): LeadDoors {
+  // `off` goes by the launcher's bridge: tools.ts, the owner of that bridge, adds it.
+): Omit<LeadDoors, "off"> {
   return {
     say,
     ownPlace: (child) => ownPlace(slots.get(child)),
+    here: (child) => slots.has(child),
     async close(child) {
       // Ends the run after the word to the parent; a failed seat release is a separate word.
       await flush(child).catch(() => {});
@@ -134,9 +182,9 @@ export function leadDoors(
       return { failed: got.failed ?? [], revoked };
     },
     sits: (child, realm) => casesLeft(slots.get(child)?.bridge, realm),
-    seal: (child) => end(child, null),
-    async end(child) {
-      end(child);
+    seal: (child, of) => end(child, null, of),
+    async end(child, of) {
+      end(child, undefined, of);
     },
     parentOf: (child) => parentOf(ctx, child),
     tell: teller(ctx, say, closed),

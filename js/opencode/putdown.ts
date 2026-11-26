@@ -32,12 +32,16 @@ const unconfirmed = (got: Ended): string | null =>
  * root's bridge — a first connect in flight has no seat here yet, and the bridge itself knows
  * whether a seat waits or answers late (case №677, №2264).
  */
-export async function putDown(slot: Slot, word: PutDown | null): Promise<void> {
+export async function putDown(
+  slot: Slot,
+  word: PutDown | null,
+  params: Record<string, unknown> = {},
+): Promise<void> {
   if (word && !slot.child) {
     // Without a seat known here an unanswered `end` says nothing: there may be none to revoke.
     const seated = slot.holding || !!slot.key;
     const got = await slot.bridge
-      .request(method(word), {}, { timeoutMs: SAY_MS[word], service: true })
+      .request(method(word), params, { timeoutMs: SAY_MS[word], service: true })
       .catch((e: Error) => (seated ? { ended: false, word: e.message } : null));
     const left = word === "end" && got ? unrevoked(got) : null;
     const maybe = word === "end" ? unconfirmed(got) : null;

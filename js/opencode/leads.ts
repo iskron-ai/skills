@@ -7,12 +7,26 @@
 // that cut it by cascade is a word to the parent (cascade.ts). No idle ceiling: waiting for a
 // human is not neglect. A plugin reload is no end: the child returns (children.ts). At the end
 // the child's bridge goes down, the outcome goes to the parent as a synthetic message, and
-// nothing reaches the child's session any more (#7505). Contract — leaddoors.ts, words — leadwords.ts.
+// nothing reaches the child's session any more (#7505). Ended with no bridge of its own — a
+// leave the previous instance had accepted, an end that overtook the plugin — its satellite
+// seat is taken off by its launcher's bridge (offSeat), and the parent hears one word that
+// does not wake it. Contract — leaddoors.ts, words — leadwords.ts.
+
+import { readFileSync } from "node:fs";
 
 import { tool } from "../delivery/index.ts";
 import { sameSeat } from "../shared/seat.ts";
+import { holdFilePathOf } from "../shared/standings.ts";
+import { authDir } from "./bridge-io.ts";
 import { createCascade } from "./cascade.ts";
-import type { LeadDoors, Leads, RunEnd } from "./leaddoors.ts";
+import {
+  type LeadDoors,
+  type Leads,
+  type Returned,
+  type RunEnd,
+  type StopName,
+  stopNameOf,
+} from "./leaddoors.ts";
 import type { Up } from "./leadframes.ts";
 import { endWord, unrevokedWord, W } from "./leadwords.ts";
 import { type Place, standsBy } from "./satellite.ts";
@@ -27,11 +41,30 @@ interface Lead {
   failing?: boolean; // its last turn failed — the parent was told (#9046)
   leaving?: string; // leaving said mid-turn — the end waits for the turn's end and its text
   last?: string;
+  /** No bridge of its own ends its run (a marker's return, children.ts): its satellite seat is taken off by its launcher's bridge. of — that seat, for the refusal. */
+  unbridged?: { of: Place | null; stop: StopName | null };
 }
 
 const roomNo = (room: unknown): string => String(room ?? "").replace(/^\s*[#№]\s*|\s+$/g, "");
 const names = (place: Place | undefined, child: string, s: string): boolean =>
   s === child || (!!place?.name && (s === place.name || s.endsWith(`:${place.name}`)));
+/**
+ * The child's own seat a marker record names — its graph, role and name as it held them; an
+ * older record without it — the child's hold record by its key. Never the launcher's role: a
+ * child may stand on another role than its parent, and a revoke by the parent's role misses the
+ * child's seat. Not known — null: nothing is revoked by a guess.
+ */
+function seatOf(was: Returned): Place | null {
+  if (was.seat?.name && was.seat.realm && was.seat.karta) return was.seat;
+  if (!was.key || !was.name) return null;
+  try {
+    const rec = JSON.parse(readFileSync(holdFilePathOf(authDir(), was.key), "utf8"));
+    if (rec?.name !== was.name || !rec.realm || rec.karta == null) return null;
+    return { realm: String(rec.realm), karta: String(rec.karta), name: was.name };
+  } catch {
+    return null;
+  }
+}
 
 export function createLeads(d: LeadDoors): Leads {
   const leads = new Map<string, Lead>();
@@ -42,6 +75,33 @@ export function createLeads(d: LeadDoors): Leads {
   const cascade = createCascade();
   const who = (l: Lead, child: string): string => l.place?.name ?? W().sessionOf(child);
   const parentOf = (child: string) => d.parentOf(child).catch(() => null);
+
+  /**
+   * The satellite seat of a child that ended with no bridge of its own (a marker's return):
+   * stopped by its launcher's bridge by the child's own socket's token (`stop` — the child's seat
+   * key and hold incarnation, release.ts); the word to the parent does not wake it — the end woke
+   * it, or spoke before the reload. Stood again meanwhile — the seat is its own now: nothing is
+   * stopped, nothing is said. No seat named by the record — nothing can be stopped.
+   */
+  async function offSeat(
+    child: string,
+    place: Place | null,
+    stop: StopName | null,
+    parent?: string | null | Promise<string | null>,
+  ): Promise<void> {
+    if (!over.has(child)) return;
+    const who = place?.name ?? W().sessionOf(child);
+    // A stand token: a lift of the end between here and the revoke is the child standing again.
+    const lifts = over.lifts(child);
+    const still = () => over.has(child) && over.lifts(child) === lifts;
+    const text = place
+      ? await d.off(child, place, W().release(who), still, stop)
+      : W().unrevokedUnknown(who);
+    if (text === null) return;
+    const p = await (parent ?? parentOf(child));
+    if (p) await d.tell(p, text, false);
+    else d.say(W().noParent(text), "warning");
+  }
 
   /**
    * The end: the outcome to the parent, then the bridge ends its run and goes down (ended).
@@ -68,7 +128,8 @@ export function createLeads(d: LeadDoors): Leads {
     const kept = ended && kind === "end" ? d.ownPlace(child) : null;
     if (kept) d.say(W().keptSaid(who(l, child), kept), "warning");
     // Ended from the first word: while the bridge ends its run, the child's write is a refusal (№147).
-    if (ended && !kept) d.seal(child);
+    // With no bridge of its own the refusal names the launcher's seat the record named.
+    if (ended && !kept) d.seal(child, l.unbridged?.of);
     const parent = await l.parent;
     const last = (l.last ?? "").trim();
     const tell = async (text: string, wakes: boolean) => {
@@ -80,6 +141,15 @@ export function createLeads(d: LeadDoors): Leads {
       wake,
     );
     if (!ended || kept) return null;
+    // No bridge of its own ends this run: nothing goes down here, the mark stays without the
+    // seal, and its seat is its launcher's bridge's to take off — one word, no wake (№1237).
+    if (l.unbridged && !d.here(child)) {
+      await d
+        .end(child, l.unbridged.of)
+        .catch((e: Error) => d.say(W().notDown(who(l, child), e.message), "warning"));
+      await offSeat(child, l.place ?? null, l.unbridged.stop, parent);
+      return null;
+    }
     // The bridge ends its run after the word: after it, the word landed later than OpenCode's
     // synthetic and the parent woke twice (№147). A failed release is a correction that does not wake.
     const run = await d.close(child).catch(() => null);
@@ -227,17 +297,22 @@ export function createLeads(d: LeadDoors): Leads {
     },
     back(child, was) {
       // Ended while the plugin was down — the seal stays, the marker raises no lead (#1237):
-      // the seat returns by its bridge, the errand's end has already spoken.
-      if (over.has(child)) return;
+      // no bridge comes up for it. Its satellite seat is still taken off — by its launcher's
+      // bridge, with a word that does not wake: the errand's end has already spoken.
+      if (over.has(child)) return void offSeat(child, seatOf(was), stopNameOf(was));
       const l = stood(child, false);
       if (was.noted) l.noted = true; // the turn was told to the parent by the previous instance
       if (was.last) l.last ??= was.last; // the outcome at the end — after a reload too
-      if (was.name && was.of) l.place ??= { ...was.of, name: was.name }; // revoke by name before "held"
+      l.place ??= seatOf(was) ?? undefined; // revoke by name before "held"
       // A leave the previous instance had already accepted is not lost to the reload: the
       // turn's end it waited for may never reach this instance — its end still comes, with
       // the freshest text the marker carried (the regression of №1317 [19]; a terminal event
       // that never arrives anywhere stays an open risk, not this path).
-      if (was.leaving && !l.running) void finish(child, was.leaving);
+      if (was.leaving && !l.running) {
+        // Its end comes with no bridge of its own: the launcher's bridge takes its seat off.
+        l.unbridged = { of: was.of ?? null, stop: stopNameOf(was) };
+        void finish(child, was.leaving);
+      }
     },
     fail: async (child, why) => void (await finish(child, why, true, false, "lost")),
     snapshot: (child) => {

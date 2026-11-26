@@ -17,6 +17,8 @@ export interface MindSliceWords {
   unknown: () => string;
   /** Отказ readiness или поиска; why — его проза. */
   unread: (why: string) => string;
+  /** Чтение среза ещё идёт дольше 3 с: правила пока не поданы, они лягут в кэш для следующего. */
+  pending: () => string;
 }
 
 const RU_MARK = "Искрон · личное человека:";
@@ -38,6 +40,8 @@ export const MIND_SLICE: Readonly<Record<Lang, MindSliceWords>> = {
     unknown: () =>
       `${RU_MARK} свой граф mind не подтверждён (iskron_me readiness) — срез правил не прочитан, работа идёт без него.`,
     unread: (why) => `${RU_MARK} срез правил из mind не прочитан (${why}) — работа идёт без него.`,
+    pending: () =>
+      `${RU_MARK} срез правил из mind ещё читается — правила пока не поданы, работа идёт без них.`,
   },
   en: {
     mark: () => EN_MARK,
@@ -53,5 +57,7 @@ export const MIND_SLICE: Readonly<Record<Lang, MindSliceWords>> = {
       `${EN_MARK} no own mind graph confirmed (iskron_me readiness) — the rules slice was not read; the work goes on without it.`,
     unread: (why) =>
       `${EN_MARK} the rules slice of mind was not read (${why}) — the work goes on without it.`,
+    pending: () =>
+      `${EN_MARK} the rules slice of mind is still being read — no rules given yet; the work goes on without them.`,
   },
 };
