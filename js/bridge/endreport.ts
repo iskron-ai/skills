@@ -8,6 +8,7 @@
 import { apiBase } from "../shared/channel.ts";
 import { namedFetch } from "../shared/http.ts";
 import { endedOf, ruleOf, type Stop, stopBySocket } from "./deadstop.ts";
+import { seatsEnded } from "./muxlifecheck.ts";
 import { log } from "./streams.ts";
 
 /** How the agent's session ended, as the harness or the daemon saw it. */
@@ -55,7 +56,9 @@ export async function reportEnd(
   const why = `${res.status} ${body.slice(0, 120)}`;
   if (res.ok) {
     log(`the end (${event}) reported by the socket's token: ${why}`);
-    return { how: "stopped", why, ended: endedOf(body) };
+    const ended = endedOf(body);
+    seatsEnded(ended); // only these are gone: a seat another live channel carries is spared
+    return { how: "stopped", why, ended };
   }
   const rule = ruleOf(body);
   // Not current: another holder took the token or the seat ended — nothing ended, no fallback stop.
@@ -67,5 +70,7 @@ export async function reportEnd(
   }
   if (res.status !== 405 && (res.status !== 404 || rule)) return { how: "unknown", why, ended: [] };
   log(`no end-event route on this api (${why}) — the end (${event}) goes the former way, once`);
-  return fallback();
+  const r = await fallback();
+  if (r.how === "stopped") seatsEnded(r.ended);
+  return r;
 }

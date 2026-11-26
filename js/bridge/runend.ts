@@ -23,7 +23,7 @@ import { keepHoldRecord } from "./holdkeep.ts";
 import { dropHoldRecord, readHoldRecord } from "./holdrecord.ts";
 import { H } from "./holdstate.ts";
 import { holdLate } from "./latehold.ts";
-import { leavingLine, lifeEnded, released } from "./muxhold.ts";
+import { leavingLine, released } from "./muxhold.ts";
 import { handoverPauseKey, suspended } from "./pauserecord.ts";
 import { releaseSatelliteClaims } from "./satellite.ts";
 import { endSatellite } from "./satend.ts";
@@ -114,9 +114,8 @@ export function closeRun(
     const line = addr && closing ? leavingLine(addr.url) : "none";
     // A paused seat keeps its busyness even if nobody takes the handover socket.
     // The end at once (the harness's word, a satellite's end) is the agent's: its watchdogs
-    // open no turn more (the end gate, #11359), its life check is gone (muxlifecheck.ts); a
-    // death window's end is not known yet.
-    if (R.late === "now") lifeEnded(H.currentUrl);
+    // open no turn more (the end gate, #11359); a death window's end is not known yet. Which
+    // seats are gone the server's ended[] says (endreport.ts, muxlifecheck.ts).
     releaseStanding(why, CFG.satellite && !paused, false, ended, paused, R.late === "now");
     if (paused) R.held = { places, addr };
     // The satellite leaves its cases while still on the board; the last usage snapshot goes before revoke
@@ -267,9 +266,7 @@ async function closeDeadRun(waitMs: number): Promise<void> {
   const kept = await notHeldAgain(dead.places, dead.eras);
   const [first] = dead.places;
   const main = dead.socket && kept[0] === first ? { seat: first, socket: dead.socket } : null;
-  if (!kept.length) return;
-  lifeEnded(dead.socket); // no bridge took it back within the window: the session is over
-  await closeDeadSeats(kept, main, dead.status, dead.ids);
+  if (kept.length) await closeDeadSeats(kept, main, dead.status, dead.ids);
 }
 
 /** The seats no live bridge holds again since this run's end (`eras`): only those are this run's to close. */

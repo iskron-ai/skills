@@ -99,6 +99,36 @@ test("on the dispatcher: present while the session holds the channel, gone once 
   });
 });
 
+// nks-api #48 (4eb7c184): an end spares a seat another live channel carries — it leaves the
+// event's channel, lives on there, and is not in ended[]. gone is only what ended[] names: the
+// spared seat is unknown, its sibling on the same channel gone. On the former build the whole
+// channel of an ended run said gone.
+for (const endEvent of [true, 404])
+  test(`on the dispatcher after an end (${endEvent === true ? "end event" : "the stop, no route"}): a seat the server spared is unknown, its ended sibling gone`, async () => {
+    await withMux(async ({ fake, mux, session, journal }) => {
+      fake.state.endEvent = endEvent;
+      const s = await session();
+      const r = await s.stand({ realm: "nks-dev", karta: 931, name: "life-k" });
+      assert.ok(r.result && !r.result.isError, textOf(r));
+      const rb = await s.stand({ realm: "drugoy", karta: 48, name: "life-k" });
+      assert.ok(rb.result && !rb.result.isError, textOf(rb));
+      const chan = channelOf(fake, "life-k");
+      const seat = (karta) =>
+        [...fake.state.channels.get(chan).places.values()].find((p) => p.karta === karta)
+          ?.standing_id;
+      const [main, beside] = [seat("931"), seat("48")];
+      assert.ok(main && beside && main !== beside, "two seats on one channel");
+      await muxCarrying(fake, mux, [chan]);
+      fake.state.stopKeeps.add("48:life-k"); // another live channel carries the seat beside
+      const ended = await s.rpc("iskron/end", { event: "session_closed" });
+      assert.equal(ended.result?.ended, true, JSON.stringify(ended));
+      await sleep(300);
+      assert.equal((await asked(mux, chan, main, journal)).state, "gone", journal());
+      assert.equal((await asked(mux, chan, beside, journal)).state, "unknown", journal());
+      noCheckIn(s);
+    });
+  });
+
 // Not an end of the session: an away (a reload), a plain leave inside the death window, a
 // supersede by another holder (4000) — unknown; a gone there could end a live seat.
 for (const [how, act] of [

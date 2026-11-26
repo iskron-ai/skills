@@ -5,7 +5,7 @@
 import { type Frame, holdSocket, statusUrl } from "../shared/channel.ts";
 import { closedBy, type Ends, refusedBy } from "./muxends.ts";
 import { type FrameRoutes, routeFrame } from "./muxframe.ts";
-import { lifeGone, lifeOfLetGo } from "./muxlifecheck.ts";
+import { lifeOfLetGo } from "./muxlifecheck.ts";
 import { createLink, type Link } from "./muxlink.ts";
 import { pauseOf } from "./muxprobe.ts";
 import { asSeatFrame, deliver, earlyLines, holdEarly, type Sub } from "./muxsub.ts";
@@ -18,8 +18,6 @@ export interface Mux extends Pick<SubTable, "liveOf" | "heldOf" | "settled"> {
   add(s: Sub): void;
   /** The holder lets the subscription go: its leaving lines in one tick, then unsubscribe. */
   release(s: Sub): void;
-  /** The session of the secret's channel really ended: a life check of it is answered gone. */
-  ended(secret: string): void;
   /** The secret's channel goes through the dispatcher, not a socket per seat. */
   carries(secret: string): boolean;
 }
@@ -65,8 +63,6 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
   }
 
   function end(s: Sub, word?: () => void): void {
-    // Which channel the secret was: a real end of its session, said later, makes it gone (ended).
-    if (s.channel) lifeGone(letGo, s.channel, s.secret);
     Object.assign(s, { closed: true, live: false });
     subs.delete(s);
     if (s.channel && byChannel.get(s.channel) === s) byChannel.delete(s.channel);
@@ -132,11 +128,8 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
   const ends: Ends = { end, again, toSocket };
   const refused = (s: Sub, code: string): void => refusedBy(ends, s, code);
   const closed = (s: Sub, code: number, why: string): void => closedBy(ends, s, code, why);
-  // Channels whose session really ended (the end word, a run's or a satellite's end, the death
-  // window): their life check is answered gone; a leave, an away, a supersede — unknown.
-  const ended = new Set<string>();
-  const letGo = new Map<string, string>(); // secret → the channel its subscription carried
-  const life = (channel: string, f: Frame): void => lifeOfLetGo(link, ended, channel, f);
+  // A life check of a channel no subscription holds: gone only for a seat the server ended.
+  const life = (channel: string, f: Frame): void => lifeOfLetGo(link, channel, f);
   const routes: FrameRoutes = { byRef, byChannel, hello, refused, closed, frame, life };
 
   return {
@@ -156,11 +149,6 @@ export function createMux(url: string, onSocket?: (s: Sub) => void): Mux {
       }
       if (!s.live && !(s.ref && byRef.has(s.ref))) end(s);
       else if (!active().length) link.idle();
-    },
-    ended(secret) {
-      const live = [...subs].find((s) => s.secret === secret && s.channel)?.channel;
-      const channel = live ?? letGo.get(secret);
-      if (channel) lifeGone(ended, channel);
     },
     liveOf: table.liveOf,
     heldOf: table.heldOf,
