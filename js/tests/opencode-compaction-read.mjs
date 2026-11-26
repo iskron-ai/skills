@@ -26,10 +26,12 @@ const answer = (text, isError = false) => ({ content: [{ type: "text", text }], 
 const request = () => ({ sessionID: "production-read", system: [] });
 const text = (r) => r.system.map((p) => p.text).join("\n");
 const words = (s) => s.split("контекст сжат").length - 1;
-// The slice is one per account for the plugin's process (shared/mindcache.ts): each read here
-// is another account's — a token of its own — or the first one's slice would serve the rest.
+// The slice is one per server and account for the plugin's process (shared/mindcache.ts), the
+// account the bridge's own whoami names: each read here is another server's — or the first
+// one's slice would serve the rest under the same @tester.
 let accounts = 0;
-const fresh = () => void (process.env.ISKRON_BRIDGE_TOKEN = `compaction-read-${++accounts}`);
+const fresh = () =>
+  void (process.env.ISKRON_BRIDGE_URL = `https://compaction-read-${++accounts}.test/mcp`);
 
 for (const failure of ["OFFLINE", "readiness refusal", "search refusal"]) {
   test(`production compaction retries ${failure} without consuming a partial return`, async () => {

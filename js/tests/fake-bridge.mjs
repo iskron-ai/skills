@@ -60,6 +60,17 @@
 import { appendFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 
 const MODE = process.env.FB_MODE || "ok";
+// The token this bridge starts with, as the real one reads it: the variable, else the file
+// beside the grant — read once; a later rewrite of the file is not this bridge's credential.
+const START_TOKEN = (() => {
+  const env = process.env.ISKRON_BRIDGE_TOKEN?.trim();
+  if (env) return env;
+  try {
+    return readFileSync(`${process.env.ISKRON_BRIDGE_AUTH_DIR}/token`, "utf8").trim();
+  } catch {
+    return "";
+  }
+})();
 if (process.env.FB_ENV)
   appendFileSync(
     process.env.FB_ENV,
@@ -202,8 +213,10 @@ function callResult(name, a = {}) {
   }
   let text = `ok:${name}`;
   if (process.env.FB_REPLY) {
-    // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY.
-    for (const file of [`${process.env.FB_REPLY}.${name}`, process.env.FB_REPLY]) {
+    // <FB_REPLY>.<tool>, when it exists, answers that one tool — the rest keep FB_REPLY;
+    // <FB_REPLY>.<tool>@<token> — only a bridge started with that token (a live bridge keeps it).
+    const own = START_TOKEN ? [`${process.env.FB_REPLY}.${name}@${START_TOKEN}`] : [];
+    for (const file of [...own, `${process.env.FB_REPLY}.${name}`, process.env.FB_REPLY]) {
       try {
         text = readFileSync(file, "utf8");
         break;

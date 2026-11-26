@@ -231,6 +231,77 @@ test("an account switched under the same grant directory: Bob's bridge reads Bob
   }
 });
 
+// The reviewer's scene (№5817 [567]): a running bridge keeps the token it started with, whatever
+// lies on disk now. Alice's bridge reads with PAT_A; the token file is replaced with PAT_B; Alice's
+// bridge reads again — still Alice; Bob's bridge, started with PAT_B, is asked itself and reads
+// Bob's rules — never Alice's filed under a key the disk named.
+test("a token file switched under a live bridge: that bridge stays its own account; the next bridge asks its own whoami", async () => {
+  const { files, env } = lay("token-switch");
+  const auth = process.env.ISKRON_BRIDGE_AUTH_DIR;
+  mkdirSync(auth, { recursive: true });
+  const tokenFile = join(auth, "token");
+  const as = (token, who, rule) => {
+    writeFileSync(
+      `${files.reply}.iskron_me@${token}`,
+      `Вызывающая идентичность: @${who} · handle @${who}`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_realm@${token}`,
+      `Доступные графы (1) — адресуй их как @owner/slug:\n    @${who}/mind  r204  mind · 2026-09-23`,
+    );
+    writeFileSync(
+      `${files.reply}.iskron_search@${token}`,
+      `Найдено 1 узлов:\n  📌 ${rule} (#31, phenomenon, Pt/Va/Ad, v1) — правило ${who}\n`,
+    );
+  };
+  as("PAT_A", "alice", "Правило alice");
+  as("PAT_B", "bob", "Правило bob");
+  writeFileSync(tokenFile, "PAT_A\n", { mode: 0o600 });
+  const rec = await plugin(env);
+  try {
+    await until(() => rec.tools().has("iskron_channel"), "the server's tools", 8000);
+    const stand = async (s) => {
+      await rec.call("iskron_channel", { action: "connect" }, s);
+      const pid = Number(readFileSync(files.log, "utf8").trim().split("\n").at(-1).split(/\s+/)[1]);
+      appendFileSync(
+        `${files.events}.${pid}`,
+        JSON.stringify({ kind: "held", automatic: false, key: `k-${s}`, place: PLACE }) + "\n",
+      );
+      await until(() => rec.said().includes(`мост держит место k-${s}`), `held ${s}`);
+      return pid;
+    };
+    const rulesOf = async (s) => {
+      for (const cb of rec.hooks.compaction ?? []) await cb({ sessionID: s, system: [] });
+      const req = { sessionID: s, system: [], messages: [], tools: {}, options: {} };
+      for (const cb of rec.hooks.context ?? []) await cb(req);
+      return req.system.map((p) => p.text).join("\n");
+    };
+    const alicePid = await stand("s-alice");
+    assert.match(await rulesOf("s-alice"), /Правило alice/);
+    writeFileSync(tokenFile, "PAT_B\n", { mode: 0o600 });
+    assert.match(await rulesOf("s-alice"), /Правило alice/, "Alice's live bridge is still Alice");
+    const before = sent(files.calls).length;
+    const bobPid = await stand("s-bob");
+    assert.notEqual(bobPid, alicePid, "Bob's session has a bridge of its own");
+    const bob = await rulesOf("s-bob");
+    assert.match(bob, /Правило bob/, bob);
+    assert.doesNotMatch(bob, /Правило alice/, "never Alice's rules");
+    const asked = readFileSync(files.calls, "utf8")
+      .trim()
+      .split("\n")
+      .slice(before)
+      .map((l) => JSON.parse(l))
+      .filter((c) => c.name === "iskron_me");
+    assert.ok(
+      asked.some((c) => c.pid === bobPid),
+      `Bob's bridge is asked its own whoami: ${JSON.stringify(asked)}`,
+    );
+  } finally {
+    await rec.stop();
+    rmSync(tokenFile, { force: true });
+  }
+});
+
 test(
   "a root seated by its cover reads the human's rules beside its seating word",
   { timeout: 90_000 },

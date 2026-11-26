@@ -99,23 +99,33 @@ export async function cachedSlice(
 }
 
 /**
- * The account a credential speaks for, by its fingerprint (`credential` — server, grant
- * directory, the token's fingerprint): one whoami in flight per credential, the answer kept for
- * it. A new login or another token is another fingerprint — asked anew; a failure is not kept.
+ * The account a credential speaks for: one whoami in flight per `who`, the answer kept for it.
+ * `who` — the fingerprint of the token the asking bridge itself presents (the daemon: server,
+ * grant directory, the token's fingerprint — a new login is another one), or a live bridge
+ * object (a plugin: the token that bridge started with is its own, whatever lies on disk now —
+ * kept for that bridge's lifetime). A failure is not kept.
  */
-const identities = new Map<string, { handle?: string; flight?: Promise<string> }>();
-export function identityOf(credential: string, ask: () => Promise<string>): Promise<string> {
-  const known = identities.get(credential);
+type Known = { handle?: string; flight?: Promise<string> };
+const identities = new Map<string, Known>();
+const bridges = new WeakMap<object, Known>();
+export function identityOf(who: string | object, ask: () => Promise<string>): Promise<string> {
+  const get = (): Known | undefined =>
+    typeof who === "string" ? identities.get(who) : bridges.get(who);
+  const set = (k: Known | null): void => {
+    if (typeof who === "string") void (k ? identities.set(who, k) : identities.delete(who));
+    else void (k ? bridges.set(who, k) : bridges.delete(who));
+  };
+  const known = get();
   if (known?.handle) return Promise.resolve(known.handle);
   if (known?.flight) return known.flight;
   const flight = ask().then(
-    (handle) => (identities.set(credential, { handle }), handle),
+    (handle) => (set({ handle }), handle),
     (e: unknown) => {
-      identities.delete(credential);
+      set(null);
       throw e;
     },
   );
-  identities.set(credential, { flight });
+  set({ flight });
   return flight;
 }
 

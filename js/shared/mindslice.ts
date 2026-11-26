@@ -104,8 +104,14 @@ const brief = (s: string): string => {
 export interface MindSliceOptions {
   strict?: boolean;
   cacheKey?: object;
-  /** The credential's account: the slice is cached for the whole process by it (mindcache.ts). */
+  /**
+   * The cache's server part: the slice is cached for the whole process by it and the account
+   * whoami names (mindcache.ts). With no `identity`, it names the credential too: whoami is kept
+   * per this string.
+   */
   account?: string;
+  /** The live bridge whose own credential whoami names: kept per that bridge, never from disk. */
+  identity?: object;
 }
 
 /** One read of the slice; a refused read or an unknown account throws. */
@@ -145,10 +151,11 @@ export async function mindSlice(call: MindCall, options: MindSliceOptions = {}):
         ? { unread: fail, pending: () => fail("the rules slice is still being read"), retry: true }
         : { unread, pending: () => words(MIND_SLICE).pending() };
       // Personal rules never cross accounts: the shared slice is keyed by the account the server
-      // answers this credential for — whoami, kept per the credential's fingerprint (a new login
-      // or another token is another one); unknown — the read throws, nothing shared. The whole
-      // read, whoami included, waits ≤3 s; past it the read goes on in the background.
-      const whole = identityOf(credential, () => whoami(call)).then((handle) =>
+      // answers the asking bridge's own credential for — whoami, kept per that bridge (a plugin)
+      // or per the fingerprint of the token it presents (the daemon); unknown — the read throws,
+      // nothing shared. The whole read, whoami included, waits ≤3 s; past it the read goes on in
+      // the background.
+      const whole = identityOf(options.identity ?? credential, () => whoami(call)).then((handle) =>
         cachedSlice(`${credential}\n@${handle}`, () => readSlice(call, key, handle), w),
       );
       const got = await within(whole);
